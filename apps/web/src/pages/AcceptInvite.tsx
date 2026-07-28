@@ -150,7 +150,7 @@ export function AcceptInvite() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-gradient-to-br from-midnight via-navy to-navy-secondary">
+    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <Logo size="xl" className="mx-auto mb-4 rounded-xl" alt="Alto HR" />
@@ -162,7 +162,7 @@ export function AcceptInvite() {
           </p>
         </div>
 
-        <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 shadow-2xl">
+        <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3">
           {loading && (
             <div>
               <Skeleton className="h-7 w-2/3 mb-3" />
@@ -309,7 +309,7 @@ export function AcceptInvite() {
               >
                 {submitting ? 'Setting up…' : 'Set password & sign in'}
               </Button>
-              <p className="text-[10px] text-silver/70 text-center mt-4">
+              <p className="text-2xs text-silver/70 text-center mt-4">
                 This link expires {fmtDateTime(invite.expiresAt)}.
               </p>
             </form>

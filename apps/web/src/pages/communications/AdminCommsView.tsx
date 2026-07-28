@@ -38,6 +38,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
@@ -54,18 +55,32 @@ import {
 
 function statusVariant(
   s: Notification['status'],
-): 'default' | 'success' | 'destructive' | 'accent' {
+): 'pending' | 'success' | 'destructive' | 'info' {
   switch (s) {
     case 'SENT':
       return 'success';
     case 'FAILED':
       return 'destructive';
     case 'READ':
-      return 'accent';
+      return 'info';
     case 'QUEUED':
-      return 'default';
+      return 'pending';
   }
 }
+
+const STATUS_LABELS: Record<NotificationStatus, string> = {
+  QUEUED: 'Queued',
+  SENT: 'Sent',
+  READ: 'Read',
+  FAILED: 'Failed',
+};
+
+const CHANNEL_LABELS: Record<NotificationChannel, string> = {
+  IN_APP: 'In-app',
+  EMAIL: 'Email',
+  SMS: 'SMS',
+  PUSH: 'Push',
+};
 
 interface AdminCommsViewProps {
   canManage: boolean;
@@ -224,11 +239,18 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
         </CardHeader>
         <CardContent className="pt-0">
           {error && (
-            <p role="alert" className="text-sm text-alert mb-3">
+            <ErrorBanner
+              className="mb-3"
+              action={
+                <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+                  Retry
+                </Button>
+              }
+            >
               {error}
-            </p>
+            </ErrorBanner>
           )}
-          {!items && <SkeletonRows count={5} rowHeight="h-12" />}
+          {!items && !error && <SkeletonRows count={5} rowHeight="h-12" />}
           {items && items.length === 0 && (
             <EmptyState
               icon={Inbox}
@@ -305,7 +327,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
                             {fmtTimeOnly(n.createdAt)}
                           </TableCell>
                           <TableCell className="hidden sm:table-cell">
-                            <Badge variant="outline">{n.channel}</Badge>
+                            <Badge variant="outline">{CHANNEL_LABELS[n.channel]}</Badge>
                           </TableCell>
                           <TableCell className="text-silver">
                             <div className="flex items-center gap-2.5 min-w-0">
@@ -329,7 +351,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
                             <div className="lg:hidden mt-1 text-xs text-silver truncate max-w-[60vw]">
                               {n.subject ?? '(no subject)'}
                             </div>
-                            <div className="md:hidden text-[10px] text-silver/70 tabular-nums">
+                            <div className="md:hidden text-2xs text-silver/70 tabular-nums">
                               {fmtTimeOnly(n.createdAt)}
                             </div>
                           </TableCell>
@@ -342,9 +364,11 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
                             </div>
                           </TableCell>
                           <TableCell>
-                            <Badge variant={statusVariant(n.status)}>{n.status}</Badge>
+                            <Badge variant={statusVariant(n.status)}>
+                              {STATUS_LABELS[n.status]}
+                            </Badge>
                             {n.failureReason && (
-                              <div className="text-[10px] mt-1 text-alert">
+                              <div className="text-2xs mt-1 text-alert">
                                 {n.failureReason}
                               </div>
                             )}
@@ -418,16 +442,16 @@ function NotificationDetailPanel({ n }: { n: Notification }) {
               {n.subject ?? '(no subject)'}
             </DrawerTitle>
             <DrawerDescription>
-              {recipient} · {n.channel}
+              {recipient} · {CHANNEL_LABELS[n.channel]}
             </DrawerDescription>
           </div>
         </div>
       </DrawerHeader>
       <DrawerBody>
         <div className="flex items-center gap-2 mb-4">
-          <Badge variant={statusVariant(n.status)}>{n.status}</Badge>
+          <Badge variant={statusVariant(n.status)}>{STATUS_LABELS[n.status]}</Badge>
           {n.category && (
-            <Badge variant="outline" className="text-[10px]">
+            <Badge variant="outline" className="text-2xs">
               {n.category}
             </Badge>
           )}
@@ -448,8 +472,8 @@ function NotificationDetailPanel({ n }: { n: Notification }) {
         )}
 
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm">
-          <DetailRow label="Channel">{n.channel}</DetailRow>
-          <DetailRow label="Status">{n.status}</DetailRow>
+          <DetailRow label="Channel">{CHANNEL_LABELS[n.channel]}</DetailRow>
+          <DetailRow label="Status">{STATUS_LABELS[n.status]}</DetailRow>
           <DetailRow label="Recipient email">
             {n.recipientEmail ?? <Mute>—</Mute>}
           </DetailRow>
@@ -485,7 +509,7 @@ function NotificationDetailPanel({ n }: { n: Notification }) {
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[10px] uppercase tracking-widest text-silver/80">
+      <dt className="text-2xs uppercase tracking-widest text-silver/80">
         {label}
       </dt>
       <dd className="text-white text-sm mt-0.5 break-words">{children}</dd>
@@ -630,7 +654,7 @@ function ComposeDialog({ open, onOpenChange, onSent }: ComposeDialogProps) {
                 onChange={(v) => void onPickAssociate(v)}
               />
               {resolveNote && (
-                <p className="text-[11px] text-warning mt-1">{resolveNote}</p>
+                <p className="text-xs2 text-warning mt-1">{resolveNote}</p>
               )}
             </Field>
             <Field label="Recipient email (for EMAIL / external)">
@@ -661,11 +685,7 @@ function ComposeDialog({ open, onOpenChange, onSent }: ComposeDialogProps) {
               onChange={(e) => setBody(e.target.value)}
             />
           </Field>
-          {error && (
-            <p role="alert" className="text-sm text-alert">
-              {error}
-            </p>
-          )}
+          {error && <ErrorBanner>{error}</ErrorBanner>}
           <DialogFooter>
             <Button
               type="button"
@@ -768,11 +788,7 @@ function BroadcastDialog({
               onChange={(e) => setBody(e.target.value)}
             />
           </Field>
-          {error && (
-            <p role="alert" className="text-sm text-alert">
-              {error}
-            </p>
-          )}
+          {error && <ErrorBanner>{error}</ErrorBanner>}
           <DialogFooter>
             <Button
               type="button"
@@ -803,7 +819,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="block text-[11px] uppercase tracking-wider text-silver mb-1">
+      <span className="block text-xs2 uppercase tracking-wider text-silver mb-1">
         {label}
         {required && <span className="text-alert"> *</span>}
       </span>

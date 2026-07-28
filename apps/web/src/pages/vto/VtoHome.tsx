@@ -29,8 +29,12 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
+  MetricCard,
   PageHeader,
+  SearchInput,
+  SegmentedControl,
   Select,
   SkeletonRows,
   Table,
@@ -50,9 +54,19 @@ const STATUS_VARIANT: Record<
   'pending' | 'success' | 'destructive' | 'accent'
 > = {
   PENDING: 'pending',
-  APPROVED: 'accent',
+  // Badge contract: APPROVED is a success state (accent is reserved for
+  // in-flight/being-worked states).
+  APPROVED: 'success',
   REJECTED: 'destructive',
   MATCHED: 'success',
+};
+
+// Human-readable labels — raw enum values never reach the user's eyes.
+const STATUS_LABELS: Record<VtoStatus, string> = {
+  PENDING: 'Pending',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+  MATCHED: 'Matched',
 };
 
 export function VtoHome() {
@@ -221,29 +235,31 @@ export function VtoHome() {
       />
 
       <div className="flex items-center justify-between">
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant={tab === 'mine' ? 'primary' : 'ghost'}
-            onClick={() => setTab('mine')}
-          >
-            My hours
-          </Button>
-          {canManage && (
-            <Button
-              size="sm"
-              variant={tab === 'queue' ? 'primary' : 'ghost'}
-              onClick={() => setTab('queue')}
-            >
-              Queue
-              {summary && summary.pendingCount > 0 && (
-                <Badge variant="destructive" className="ml-2">
-                  {summary.pendingCount}
-                </Badge>
-              )}
-            </Button>
-          )}
-        </div>
+        <SegmentedControl<'mine' | 'queue'>
+          options={[
+            { value: 'mine', label: 'My hours' },
+            ...(canManage
+              ? [
+                  {
+                    value: 'queue' as const,
+                    label: (
+                      <span className="inline-flex items-center">
+                        Queue
+                        {summary && summary.pendingCount > 0 && (
+                          <Badge variant="destructive" className="ml-2">
+                            {summary.pendingCount}
+                          </Badge>
+                        )}
+                      </span>
+                    ),
+                  },
+                ]
+              : []),
+          ]}
+          value={tab}
+          onChange={setTab}
+          ariaLabel="Volunteer time view"
+        />
         <div className="flex gap-2">
           {canManage && tab === 'queue' && (
             <Select
@@ -271,8 +287,9 @@ export function VtoHome() {
 
       {tab === 'queue' && queue !== null && (
         <div className="flex flex-wrap items-center gap-2">
-          <Input
-            className="h-8 w-56 text-xs"
+          <SearchInput
+            wrapperClassName="w-56"
+            className="h-8 text-xs"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search associate name…"
@@ -338,16 +355,15 @@ export function VtoHome() {
       )}
 
       {tab === 'queue' && summaryError && (
-        <Card>
-          <CardContent className="p-4 space-y-3">
-            <p role="alert" className="text-sm text-alert">
-              {summaryError}
-            </p>
+        <ErrorBanner
+          action={
             <Button size="sm" variant="secondary" onClick={refreshSummary}>
               Retry
             </Button>
-          </CardContent>
-        </Card>
+          }
+        >
+          {summaryError}
+        </ErrorBanner>
       )}
 
       {tab === 'mine' && mine && (
@@ -355,7 +371,7 @@ export function VtoHome() {
           <CardContent className="p-4">
             <div className="flex justify-between items-baseline mb-2">
               <div>
-                <div className="text-xs uppercase tracking-wider text-silver">
+                <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
                   {mine.year} approved hours
                 </div>
                 <div className="text-2xl font-semibold text-white mt-1">
@@ -382,11 +398,15 @@ export function VtoHome() {
 
       {tab === 'queue' && summary && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <SummaryCard label="Pending review" value={summary.pendingCount} />
-          <SummaryCard label="Hours YTD" value={summary.hoursYtd} />
-          <SummaryCard
+          <MetricCard
+            label="Pending review"
+            value={summary.pendingCount}
+            accent={summary.pendingCount > 0}
+          />
+          <MetricCard label="Hours YTD" value={summary.hoursYtd} />
+          <MetricCard
             label="Matched $ YTD"
-            value={`$${summary.matchedAmountYtd}`}
+            value={fmtMoney(summary.matchedAmountYtd)}
           />
         </div>
       )}
@@ -396,13 +416,16 @@ export function VtoHome() {
           <CardContent className="p-0">
             {mine === null ? (
               mineError ? (
-                <div className="p-6 space-y-3">
-                  <p role="alert" className="text-sm text-alert">
+                <div className="p-6">
+                  <ErrorBanner
+                    action={
+                      <Button size="sm" variant="secondary" onClick={refresh}>
+                        Retry
+                      </Button>
+                    }
+                  >
                     {mineError}
-                  </p>
-                  <Button size="sm" variant="secondary" onClick={refresh}>
-                    Retry
-                  </Button>
+                  </ErrorBanner>
                 </div>
               ) : (
                 <div className="p-6">
@@ -420,7 +443,7 @@ export function VtoHome() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Date</TableHead>
-                    <TableHead>Hours</TableHead>
+                    <TableHead className="text-right">Hours</TableHead>
                     <TableHead className="hidden md:table-cell">Organization</TableHead>
                     <TableHead className="hidden lg:table-cell">Cause</TableHead>
                     <TableHead>Status</TableHead>
@@ -436,12 +459,12 @@ export function VtoHome() {
                     >
                       <TableCell className="text-xs text-silver">
                         {fmtDate(parseYmd(e.activityDate))}
-                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        <div className="md:hidden text-xs2 text-silver/70 truncate">
                           {e.organization}{e.cause ? ` · ${e.cause}` : ''}
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm font-medium text-white">
-                        {e.hours}
+                      <TableCell className="text-sm font-medium text-white text-right tabular-nums">
+                        {Number(e.hours).toFixed(2)}
                       </TableCell>
                       <TableCell className="text-sm hidden md:table-cell">
                         {e.organization}
@@ -451,7 +474,7 @@ export function VtoHome() {
                       </TableCell>
                       <TableCell>
                         <Badge variant={STATUS_VARIANT[e.status]}>
-                          {e.status}
+                          {STATUS_LABELS[e.status] ?? e.status}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm hidden md:table-cell">
@@ -473,13 +496,16 @@ export function VtoHome() {
           <CardContent className="p-0">
             {queue === null ? (
               queueError ? (
-                <div className="p-6 space-y-3">
-                  <p role="alert" className="text-sm text-alert">
+                <div className="p-6">
+                  <ErrorBanner
+                    action={
+                      <Button size="sm" variant="secondary" onClick={refresh}>
+                        Retry
+                      </Button>
+                    }
+                  >
                     {queueError}
-                  </p>
-                  <Button size="sm" variant="secondary" onClick={refresh}>
-                    Retry
-                  </Button>
+                  </ErrorBanner>
                 </div>
               ) : (
                 <div className="p-6">
@@ -519,7 +545,7 @@ export function VtoHome() {
                     </TableHead>
                     <TableHead>Associate</TableHead>
                     <TableHead className="hidden md:table-cell">Date</TableHead>
-                    <TableHead>Hours</TableHead>
+                    <TableHead className="text-right">Hours</TableHead>
                     <TableHead className="hidden md:table-cell">Organization</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="hidden lg:table-cell">Match</TableHead>
@@ -547,20 +573,22 @@ export function VtoHome() {
                         <div className="text-xs text-silver">
                           {e.associateEmail}
                         </div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        <div className="md:hidden text-xs2 text-silver/70 truncate">
                           {fmtDate(parseYmd(e.activityDate))} · {e.organization}
                         </div>
                       </TableCell>
                       <TableCell className="text-xs text-silver hidden md:table-cell">
                         {fmtDate(parseYmd(e.activityDate))}
                       </TableCell>
-                      <TableCell className="text-sm">{e.hours}</TableCell>
+                      <TableCell className="text-sm text-right tabular-nums">
+                        {Number(e.hours).toFixed(2)}
+                      </TableCell>
                       <TableCell className="text-sm hidden md:table-cell">
                         {e.organization}
                       </TableCell>
                       <TableCell>
                         <Badge variant={STATUS_VARIANT[e.status]}>
-                          {e.status}
+                          {STATUS_LABELS[e.status] ?? e.status}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-xs hidden lg:table-cell">
@@ -611,25 +639,6 @@ export function VtoHome() {
         />
       )}
     </div>
-  );
-}
-
-function SummaryCard({
-  label,
-  value,
-}: {
-  label: string;
-  value: number | string;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-3">
-        <div className="text-xs uppercase tracking-wider text-silver">
-          {label}
-        </div>
-        <div className="text-xl font-semibold text-white mt-1">{value}</div>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -797,7 +806,9 @@ function MyDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[entry.status]}>{entry.status}</Badge>
+          <Badge variant={STATUS_VARIANT[entry.status]}>
+            {STATUS_LABELS[entry.status] ?? entry.status}
+          </Badge>
           <span className="text-sm text-silver">
             {fmtDate(parseYmd(entry.activityDate))} · {entry.hours} hours
           </span>
@@ -902,7 +913,9 @@ function QueueDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[row.status]}>{row.status}</Badge>
+          <Badge variant={STATUS_VARIANT[row.status]}>
+            {STATUS_LABELS[row.status] ?? row.status}
+          </Badge>
           <span className="text-sm text-silver">
             {fmtDate(parseYmd(row.activityDate))} · {row.hours} hours
           </span>
@@ -1005,10 +1018,10 @@ function QueueDetailDrawer({
               placeholder="Auto from policy if blank"
             />
             {policyError && (
-              <p role="alert" className="text-xs text-alert">
+              <ErrorBanner severity="warning" className="text-xs">
                 Couldn’t load the policy ratio — leaving this blank still
                 applies the server-side policy, or enter an amount manually.
-              </p>
+              </ErrorBanner>
             )}
             {policyEstimate !== null && matchAmount === '' && (
               <p className="text-xs text-silver">

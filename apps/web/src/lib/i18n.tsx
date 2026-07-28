@@ -285,6 +285,7 @@ const en = {
   // Login
   'login.title': 'Sign in',
   'login.subtitle': 'Use your Alto HR credentials.',
+  'login.brandTagline': 'Your schedule, time clock, and pay',
   'login.email': 'Email',
   'login.password': 'Password',
   'login.forgot': 'Forgot password?',
@@ -553,6 +554,7 @@ const es: Record<MessageKey, string> = {
 
   'login.title': 'Iniciar sesión',
   'login.subtitle': 'Usa tus credenciales de Alto HR.',
+  'login.brandTagline': 'Tu horario, tu reloj y tu pago',
   'login.email': 'Correo electrónico',
   'login.password': 'Contraseña',
   'login.forgot': '¿Olvidaste tu contraseña?',

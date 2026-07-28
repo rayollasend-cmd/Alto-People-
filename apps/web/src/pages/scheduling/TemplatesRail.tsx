@@ -158,7 +158,7 @@ export function TemplatesRail({ clientId, onManage }: Props) {
           <Plus className="h-3.5 w-3.5" />
           New template
         </Button>
-        <div className="mt-1.5 text-[10px] text-silver/70 text-center">
+        <div className="mt-1.5 text-2xs text-silver/70 text-center">
           Drag a template onto a cell to apply.
         </div>
       </div>
@@ -204,10 +204,10 @@ function TemplateChip({ template }: { template: ShiftTemplate }) {
         style={{ backgroundColor: color.accent }}
       />
       <div className="text-xs text-white font-medium truncate">{template.name}</div>
-      <div className="text-[10px] text-silver/80 tabular-nums truncate">
+      <div className="text-2xs text-silver/80 tabular-nums truncate">
         {DAYS[template.dayOfWeek]} · {fmtMin(template.startMinute)}–{fmtMin(template.endMinute)}
       </div>
-      <div className="text-[10px] text-silver/70 truncate">
+      <div className="text-2xs text-silver/70 truncate">
         {template.position}
         {template.clientName && ` · ${template.clientName}`}
       </div>

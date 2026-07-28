@@ -179,14 +179,14 @@ export function ShiftHoverCard({
         <div className="mt-2">
           <span
             className={cn(
-              'inline-flex items-center text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border',
+              'inline-flex items-center text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded border',
               status.cls,
             )}
           >
             {status.label}
           </span>
           {shift.publishedAt === null && (
-            <span className="ml-1.5 inline-flex items-center text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-silver/30 text-silver/70">
+            <span className="ml-1.5 inline-flex items-center text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded border border-silver/30 text-silver/70">
               Unpublished
             </span>
           )}

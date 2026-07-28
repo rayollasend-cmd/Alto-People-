@@ -46,6 +46,21 @@ const TYPES: CustomFieldType[] = [
   'MULTISELECT',
 ];
 
+// Human labels for the raw enum values (option values stay unchanged).
+const ENTITY_LABELS: Record<CustomFieldEntity, string> = {
+  ASSOCIATE: 'Associate',
+  POSITION: 'Position',
+  CLIENT: 'Client',
+};
+const TYPE_LABELS: Record<CustomFieldType, string> = {
+  TEXT: 'Text',
+  NUMBER: 'Number',
+  DATE: 'Date',
+  BOOLEAN: 'Yes/no',
+  SELECT: 'Select',
+  MULTISELECT: 'Multi-select',
+};
+
 export function CustomFieldsTab({
   clientId,
   canManage,
@@ -85,7 +100,16 @@ export function CustomFieldsTab({
           </Button>
         )}
       </div>
-      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner className="mb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -128,7 +152,7 @@ export function CustomFieldsTab({
                 <TableCell className="font-medium">
                   <div className="min-w-0">
                     <div className="truncate">{d.label}</div>
-                    <div className="md:hidden text-[11px] text-silver/70 truncate">
+                    <div className="md:hidden text-xs2 text-silver/70 truncate">
                       <span className="font-mono">{d.key}</span>
                       {` · ${d.clientId ? 'Per-client' : 'Global'}`}
                     </div>
@@ -136,10 +160,10 @@ export function CustomFieldsTab({
                 </TableCell>
                 <TableCell className="hidden md:table-cell text-silver font-mono text-xs">{d.key}</TableCell>
                 <TableCell>
-                  <Badge variant="outline">{d.entityType}</Badge>
+                  <Badge variant="outline">{ENTITY_LABELS[d.entityType]}</Badge>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="default">{d.type}</Badge>
+                  <Badge variant="default">{TYPE_LABELS[d.type]}</Badge>
                 </TableCell>
                 <TableCell className="hidden md:table-cell text-silver">{d.isRequired ? 'Yes' : '—'}</TableCell>
                 <TableCell className="hidden md:table-cell text-silver">
@@ -223,10 +247,10 @@ function DefinitionDrawer({
       };
       if (isNew) {
         await createDefinition(payload);
-        toast.success('Custom field created');
+        toast.success('Custom field created.');
       } else {
         await updateDefinition(initial!.id, payload);
-        toast.success('Custom field updated');
+        toast.success('Custom field updated.');
       }
       onSaved();
     } catch (err) {
@@ -242,7 +266,7 @@ function DefinitionDrawer({
     setSubmitting(true);
     try {
       await deleteDefinition(initial!.id);
-      toast.success('Deleted');
+      toast.success('Custom field deleted.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Delete failed.');
@@ -273,7 +297,7 @@ function DefinitionDrawer({
                 {...p}
               >
                 {ENTITY_TYPES.map((t) => (
-                  <option key={t} value={t}>{t}</option>
+                  <option key={t} value={t}>{ENTITY_LABELS[t]}</option>
                 ))}
               </Select>
             )}
@@ -299,7 +323,7 @@ function DefinitionDrawer({
                   {...p}
                 >
                   {TYPES.map((t) => (
-                    <option key={t} value={t}>{t}</option>
+                    <option key={t} value={t}>{TYPE_LABELS[t]}</option>
                   ))}
                 </Select>
               )}

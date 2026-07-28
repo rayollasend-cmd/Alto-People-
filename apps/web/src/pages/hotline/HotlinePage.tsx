@@ -15,6 +15,7 @@ import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Badge } from '@/components/ui/Badge';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import {
@@ -33,6 +34,27 @@ const CATEGORY_LABELS: Record<ReportCategory, string> = {
   SAFETY: 'Safety concern',
   RETALIATION: 'Retaliation',
   OTHER: 'Other',
+};
+
+/** Reporter-facing status wording — the raw enum never reaches this page. */
+const STATUS_LABELS: Record<PublicReport['status'], string> = {
+  RECEIVED: 'Received',
+  TRIAGING: 'Triaging',
+  INVESTIGATING: 'Investigating',
+  RESOLVED: 'Resolved',
+  CLOSED: 'Closed',
+};
+
+const STATUS_VARIANT: Record<
+  PublicReport['status'],
+  'pending' | 'accent' | 'success' | 'outline'
+> = {
+  RECEIVED: 'pending',
+  TRIAGING: 'pending',
+  // In-flight work reads gold per the status contract.
+  INVESTIGATING: 'accent',
+  RESOLVED: 'success',
+  CLOSED: 'outline',
 };
 
 /**
@@ -65,25 +87,34 @@ export function HotlinePage() {
           you can follow up later.
         </p>
 
-        <div
-          role="tablist"
-          aria-label="Report mode"
-          className="flex gap-2 mb-6 border-b border-navy-secondary"
-        >
-          <TabButton
-            active={mode === 'file'}
-            onClick={() => {
-              setMode('file');
-              setFiled(null);
+        <div className="mb-6">
+          <SegmentedControl
+            ariaLabel="Report mode"
+            value={mode}
+            onChange={(v) => {
+              setMode(v);
+              if (v === 'file') setFiled(null);
             }}
-            icon={FileText}
-            label="File a report"
-          />
-          <TabButton
-            active={mode === 'lookup'}
-            onClick={() => setMode('lookup')}
-            icon={Search}
-            label="Look up a report"
+            options={[
+              {
+                value: 'file' as const,
+                label: (
+                  <span className="inline-flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
+                    File a report
+                  </span>
+                ),
+              },
+              {
+                value: 'lookup' as const,
+                label: (
+                  <span className="inline-flex items-center gap-2">
+                    <Search className="h-4 w-4" />
+                    Look up a report
+                  </span>
+                ),
+              },
+            ]}
           />
         </div>
 
@@ -424,8 +455,8 @@ function LookupForm() {
       <div className="rounded-md border border-navy-secondary bg-navy/40 p-4 space-y-2">
         <div className="flex items-start justify-between gap-3">
           <div className="text-base font-semibold">{report.subject}</div>
-          <Badge variant="default" className="shrink-0">
-            {report.status}
+          <Badge variant={STATUS_VARIANT[report.status]} className="shrink-0">
+            {STATUS_LABELS[report.status]}
           </Badge>
         </div>
         <div className="text-xs text-silver">
@@ -503,29 +534,3 @@ function LookupForm() {
   );
 }
 
-interface TabButtonProps {
-  active: boolean;
-  onClick: () => void;
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-}
-
-function TabButton({ active, onClick, icon: Icon, label }: TabButtonProps) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      onClick={onClick}
-      className={cn(
-        'inline-flex items-center gap-2 px-4 py-2 text-sm border-b-2 -mb-px transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-t',
-        active
-          ? 'border-gold text-white'
-          : 'border-transparent text-silver hover:text-white',
-      )}
-    >
-      <Icon className="h-4 w-4" />
-      {label}
-    </button>
-  );
-}

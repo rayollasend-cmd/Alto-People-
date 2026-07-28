@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/Dialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { SearchInput } from '@/components/ui/FilterBar';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
@@ -52,6 +53,16 @@ const CATEGORIES: TimeOffCategory[] = [
   'JURY_DUTY',
   'OTHER',
 ];
+
+// Human-readable labels — raw enum values never reach the user's eyes.
+const CATEGORY_LABELS: Record<TimeOffCategory, string> = {
+  SICK: 'Sick',
+  VACATION: 'Vacation',
+  PTO: 'PTO',
+  BEREAVEMENT: 'Bereavement',
+  JURY_DUTY: 'Jury duty',
+  OTHER: 'Other',
+};
 
 const MONTH_NAMES = [
   'January',
@@ -128,7 +139,7 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
       ],
       ...visible.map((e) => [
         e.associateName,
-        e.category,
+        CATEGORY_LABELS[e.category] ?? e.category,
         e.annualMinutes / 60,
         e.carryoverMaxMinutes / 60,
         fmtAnchor(e.policyAnchorMonth, e.policyAnchorDay),
@@ -147,9 +158,9 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
               Annual entitlements
             </CardTitle>
             <CardDescription>
-              VACATION / PTO / etc. lump-sum granted at the policy anchor
-              each year. Carryover cap applies excess balance forward;
-              anything beyond is forfeited. SICK uses the per-worked-hour
+              Vacation, PTO, and similar lump sums granted at the policy
+              anchor each year. Carryover cap applies excess balance forward;
+              anything beyond is forfeited. Sick time uses the per-worked-hour
               accrual model and isn't shown here.
             </CardDescription>
           </div>
@@ -172,12 +183,12 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 mt-3">
-          <Input
+          <SearchInput
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search associate…"
             aria-label="Search by associate name"
-            className="w-full sm:w-56"
+            wrapperClassName="w-full sm:w-56"
           />
           <Select
             value={categoryFilter}
@@ -190,7 +201,7 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
             <option value="ALL">All categories</option>
             {CATEGORIES.map((c) => (
               <option key={c} value={c}>
-                {c}
+                {CATEGORY_LABELS[c]}
               </option>
             ))}
           </Select>
@@ -205,12 +216,16 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
       </CardHeader>
       <CardContent className="p-0">
         {error && (
-          <div className="m-4 space-y-3">
-            <ErrorBanner>{error}</ErrorBanner>
-            <Button size="sm" variant="secondary" onClick={refresh}>
-              Retry
-            </Button>
-          </div>
+          <ErrorBanner
+            className="m-4"
+            action={
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            }
+          >
+            {error}
+          </ErrorBanner>
         )}
         {!error && !items && (
           <div className="p-4 space-y-2">
@@ -223,7 +238,7 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
             <EmptyState
               icon={CalendarRange}
               title="No entitlements yet"
-              description="Set up a VACATION or PTO allowance for an associate to start granting annual balances."
+              description="Set up a vacation or PTO allowance for an associate to start granting annual balances."
               action={
                 canManage ? (
                   <Button onClick={() => setCreating(true)}>
@@ -258,8 +273,8 @@ export function AdminTimeOffEntitlementsView({ canManage }: Props) {
                 <TableRow key={e.id}>
                   <TableCell className="text-white">{e.associateName}</TableCell>
                   <TableCell>
-                    <Badge variant="outline" className="text-[10px]">
-                      {e.category}
+                    <Badge variant="outline" className="text-2xs">
+                      {CATEGORY_LABELS[e.category] ?? e.category}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right text-silver tabular-nums">
@@ -356,17 +371,17 @@ function EntitlementDialog({ open, onOpenChange, existing, onSaved }: DialogProp
   const submit = async () => {
     const aId = assoc?.id ?? '';
     if (!aId) {
-      toast.error('Pick an associate');
+      toast.error('Pick an associate.');
       return;
     }
     const annual = Number(annualHours);
     const carry = Number(carryoverHours);
     if (!Number.isFinite(annual) || annual < 0) {
-      toast.error('Annual hours must be a non-negative number');
+      toast.error('Annual hours must be a non-negative number.');
       return;
     }
     if (!Number.isFinite(carry) || carry < 0) {
-      toast.error('Carryover hours must be a non-negative number');
+      toast.error('Carryover hours must be a non-negative number.');
       return;
     }
 
@@ -380,10 +395,10 @@ function EntitlementDialog({ open, onOpenChange, existing, onSaved }: DialogProp
         policyAnchorMonth: anchorMonth,
         policyAnchorDay: anchorDay,
       });
-      toast.success('Entitlement saved');
+      toast.success('Entitlement saved.');
       onSaved();
     } catch (err) {
-      toast.error('Could not save', {
+      toast.error('Could not save.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -425,7 +440,7 @@ function EntitlementDialog({ open, onOpenChange, existing, onSaved }: DialogProp
               >
                 {CATEGORIES.map((c) => (
                   <option key={c} value={c}>
-                    {c}
+                    {CATEGORY_LABELS[c]}
                   </option>
                 ))}
               </Select>

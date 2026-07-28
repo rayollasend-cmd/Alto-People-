@@ -21,12 +21,45 @@ export default {
         success: 'rgb(var(--color-success) / <alpha-value>)',
         warning: 'rgb(var(--color-warning) / <alpha-value>)',
         muted: 'rgb(var(--color-muted) / <alpha-value>)',
+        // Theme-STABLE text colors for use on colored fills. `text-navy` /
+        // `text-white` flip meaning in light mode (the vars are remapped),
+        // which made the primary gold button render white-on-gold there.
+        // These two never flip: on-accent = dark ink on gold, on-solid =
+        // white on saturated fills (alert/steel/success).
+        'on-accent': 'rgb(var(--color-on-accent) / <alpha-value>)',
+        'on-solid': 'rgb(var(--color-on-solid) / <alpha-value>)',
       },
       fontFamily: {
         // Variable fonts loaded from @fontsource-variable/*. The "Variable"
         // suffix is the family name those packages register.
         display: ['"Cormorant Garamond Variable"', '"Cormorant Garamond"', 'Georgia', 'serif'],
         sans: ['"Geist Variable"', 'Geist', 'Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        // Map font-serif to the brand face so a stray `font-serif` (the
+        // kiosk clock rendered in Georgia for months) can never fall
+        // through to the platform serif again.
+        serif: ['"Cormorant Garamond Variable"', '"Cormorant Garamond"', 'Georgia', 'serif'],
+      },
+      fontSize: {
+        // The micro tier the app actually uses — previously 585 arbitrary
+        // values (text-[10px] ×299, text-[11px] ×266...). Tokenized so the
+        // whole tier can be retuned globally.
+        '3xs': ['0.5625rem', { lineHeight: '0.875rem' }], // 9px
+        '2xs': ['0.625rem', { lineHeight: '0.875rem' }], // 10px — eyebrow/micro-label
+        'xs2': ['0.6875rem', { lineHeight: '1rem' }], // 11px — meta/caption
+        hero: ['2rem', { lineHeight: '1.1', letterSpacing: '-0.02em' }],
+        'hero-lg': ['2.5rem', { lineHeight: '1.1', letterSpacing: '-0.02em' }],
+      },
+      borderRadius: {
+        // Bare `rounded` (4px) was a fourth, off-system radius used 184
+        // times next to the kit's 6px controls. Alias it to md so legacy
+        // and future bare `rounded` land on-system.
+        DEFAULT: '0.375rem',
+      },
+      ringOffsetColor: {
+        DEFAULT: 'rgb(var(--color-navy))',
+      },
+      ringOffsetWidth: {
+        DEFAULT: '2px',
       },
       keyframes: {
         'accordion-down': {

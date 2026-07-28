@@ -151,11 +151,11 @@ export function SupervisorDashboard() {
       {/* Greeting strip */}
       <header>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-silver flex items-center gap-2">
+          <div className="text-xs2 uppercase tracking-[0.18em] text-silver flex items-center gap-2">
             <Calendar className="h-3 w-3" aria-hidden="true" />
             {fmtDate(now)}
           </div>
-          <span className="inline-flex items-center gap-1 rounded-full border border-steel/60 bg-steel/20 px-2 py-0.5 text-[10px] uppercase tracking-widest text-white">
+          <span className="inline-flex items-center gap-1 rounded-full border border-steel/60 bg-steel/20 px-2 py-0.5 text-2xs uppercase tracking-widest text-white">
             Supervisor view
           </span>
           {clientName && (
@@ -375,7 +375,7 @@ function TodaySection({
                             'Unassigned'
                           ))}
                       </div>
-                      <div className="text-[11px] text-silver/80 truncate tabular-nums">
+                      <div className="text-xs2 text-silver/80 truncate tabular-nums">
                         {s.position} ·{' '}
                         {fmtShiftRangeTz(s.startsAt, s.endsAt, s.timezone)}
                         {s.locationName ? ` · ${s.locationName}` : ''}
@@ -406,12 +406,13 @@ function ShiftStatusPill({
   activeEntry: ActiveDashboardEntry | undefined;
   nowMs: number;
 }) {
+  // Sentence-case status chips on the Badge variant contract: success =
+  // live on the clock, default = finished, info = scheduled/upcoming.
   if (activeEntry) {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] bg-success/15 text-success border border-success/30 shrink-0">
-        <span className="h-1.5 w-1.5 rounded-full bg-success" />
+      <Badge variant="success" className="shrink-0 normal-case tracking-normal">
         On the clock · since {fmtTime(activeEntry.clockInAt)}
-      </span>
+      </Badge>
     );
   }
   const ended =
@@ -419,15 +420,15 @@ function ShiftStatusPill({
     new Date(shift.endsAt).getTime() < nowMs;
   if (ended) {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] bg-navy-secondary/50 text-silver border border-navy-secondary shrink-0">
+      <Badge variant="default" className="shrink-0 normal-case tracking-normal">
         Done
-      </span>
+      </Badge>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] bg-steel/15 text-sky border border-steel/40 shrink-0">
+    <Badge variant="info" className="shrink-0 normal-case tracking-normal">
       Upcoming
-    </span>
+    </Badge>
   );
 }
 
@@ -566,9 +567,11 @@ function DecisionCard({
     <Link
       to={to}
       className={cn(
-        'group flex flex-col rounded-lg border bg-navy p-5 transition-all',
+        // Same elevation ladder as the AdminDashboard cards: rest at
+        // elev-1, lift to elev-2 on hover.
+        'group flex flex-col rounded-lg border bg-navy p-5 elev-1 transition-all',
         'border-warning/25 hover:border-warning/55',
-        'hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/20',
+        'hover:-translate-y-0.5 hover:elev-2',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight',
       )}
     >
@@ -609,13 +612,14 @@ function KpiTile({
     <Link
       to={to}
       className={cn(
-        'group block rounded-lg border border-navy-secondary border-l-2 border-l-gold/40 bg-navy p-5 transition-all',
-        'hover:-translate-y-0.5 hover:border-l-gold-bright hover:shadow-lg hover:shadow-black/20',
+        'group block rounded-lg border border-navy-secondary border-l-2 border-l-gold/40 bg-navy p-5 elev-1 transition-all',
+        'hover:-translate-y-0.5 hover:border-l-gold-bright hover:elev-2',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight',
       )}
     >
       <div className="flex items-center justify-between">
-        <div className="text-[10px] md:text-[11px] uppercase tracking-[0.15em] text-silver">
+        {/* Canonical KPI label spec (matches MetricCard). */}
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
           {label}
         </div>
         <Icon
@@ -623,7 +627,7 @@ function KpiTile({
           aria-hidden="true"
         />
       </div>
-      <div className="font-display text-3xl md:text-[2rem] text-gold-bright mt-3 leading-none tabular-nums">
+      <div className="font-display text-3xl md:text-hero text-gold-bright mt-3 leading-none tabular-nums">
         {value}
       </div>
       {hint && <div className="text-xs text-silver mt-2 truncate">{hint}</div>}

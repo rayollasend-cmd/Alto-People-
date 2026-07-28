@@ -36,6 +36,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
@@ -53,7 +54,8 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
 import { toast } from 'sonner';
 
 type Tab = 'osha' | 'wc' | 'eeo';
@@ -77,7 +79,7 @@ export function OshaWcEeoHome() {
       />
       <Card>
         <CardContent className="p-4 flex items-center gap-3">
-          <span className="text-[11px] uppercase tracking-wider text-silver">Client</span>
+          <span className="text-xs2 uppercase tracking-wider text-silver">Client</span>
           <Select
             size="sm"
             value={clientId}
@@ -110,26 +112,6 @@ export function OshaWcEeoHome() {
   );
 }
 
-// ============ CSV export helper ============
-
-// Client-side CSV from already-loaded data — same Blob/anchor pattern as
-// AnalyticsHome's downloadCsv, plus RFC-4180 quoting for safety.
-function csvCell(v: string | number): string {
-  const s = String(v);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-function downloadCsv(filename: string, rows: Array<Array<string | number>>) {
-  const text = rows.map((r) => r.map(csvCell).join(',')).join('\n');
-  const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
 // ============ OSHA ============
 
 const SEVERITY_COLOR: Record<OshaSeverity, 'default' | 'pending' | 'destructive'> = {
@@ -140,8 +122,32 @@ const SEVERITY_COLOR: Record<OshaSeverity, 'default' | 'pending' | 'destructive'
   FATAL: 'destructive',
 };
 
+const SEVERITY_LABELS: Record<OshaSeverity, string> = {
+  FIRST_AID: 'First aid',
+  MEDICAL_TREATMENT: 'Medical treatment',
+  RESTRICTED_DUTY: 'Restricted duty',
+  DAYS_AWAY: 'Days away',
+  FATAL: 'Fatal',
+};
+
+const OSHA_STATUS_VARIANT: Record<OshaStatus, 'pending' | 'accent' | 'success' | 'destructive'> = {
+  REPORTED: 'pending',
+  // In-flight work reads gold per the status contract.
+  INVESTIGATING: 'accent',
+  RESOLVED: 'success',
+  ESCALATED: 'destructive',
+};
+
+const OSHA_STATUS_LABELS: Record<OshaStatus, string> = {
+  REPORTED: 'Reported',
+  INVESTIGATING: 'Investigating',
+  RESOLVED: 'Resolved',
+  ESCALATED: 'Escalated',
+};
+
 function OshaTab({ clientId }: { clientId: string }) {
   const [rows, setRows] = useState<OshaIncident[] | null>(null);
+  const [rowsError, setRowsError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<OshaIncident | null>(null);
   const [year, setYear] = useState(new Date().getFullYear());
@@ -153,11 +159,11 @@ function OshaTab({ clientId }: { clientId: string }) {
   const refresh = () => setReloadTick((t) => t + 1);
   useEffect(() => {
     setRows(null);
+    setRowsError(null);
     listOshaIncidents(clientId)
       .then((r) => setRows(r.incidents))
       .catch((err) => {
-        setRows([]);
-        toast.error(
+        setRowsError(
           err instanceof ApiError ? err.message : 'Could not load incidents.',
         );
       });
@@ -213,7 +219,7 @@ function OshaTab({ clientId }: { clientId: string }) {
                 />
               </div>
               <Button variant="secondary" onClick={download300aCsv} disabled={!summary}>
-                <Download className="mr-2 h-4 w-4" /> Download CSV
+                <Download className="mr-2 h-4 w-4" /> Export CSV
               </Button>
             </div>
           </div>
@@ -226,7 +232,19 @@ function OshaTab({ clientId }: { clientId: string }) {
       </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {rowsError ? (
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {rowsError}
+              </ErrorBanner>
+            </div>
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -241,7 +259,7 @@ function OshaTab({ clientId }: { clientId: string }) {
                   <TableHead>Associate</TableHead>
                   <TableHead>Severity</TableHead>
                   <TableHead className="hidden md:table-cell">Body part</TableHead>
-                  <TableHead className="hidden md:table-cell">Days away</TableHead>
+                  <TableHead className="hidden md:table-cell text-right">Days away</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -253,18 +271,22 @@ function OshaTab({ clientId }: { clientId: string }) {
                     <TableCell>{fmtDate(i.occurredAt)}</TableCell>
                     <TableCell>
                       {i.associateName ?? '—'}
-                      <div className="text-[11px] text-silver/70 md:hidden">
+                      <div className="text-xs2 text-silver/70 md:hidden">
                         {i.bodyPart ?? '—'}{i.daysAway ? ` · ${i.daysAway}d away` : ''}
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={SEVERITY_COLOR[i.severity]}>{i.severity}</Badge>
+                      <Badge variant={SEVERITY_COLOR[i.severity]}>
+                        {SEVERITY_LABELS[i.severity]}
+                      </Badge>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{i.bodyPart ?? '—'}</TableCell>
-                    <TableCell className="hidden md:table-cell">{i.daysAway}</TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums">
+                      {i.daysAway}
+                    </TableCell>
                     <TableCell>
-                      <Badge variant={i.status === 'RESOLVED' ? 'success' : 'pending'}>
-                        {i.status}
+                      <Badge variant={OSHA_STATUS_VARIANT[i.status]}>
+                        {OSHA_STATUS_LABELS[i.status]}
                       </Badge>
                     </TableCell>
                   </TableRow>
@@ -301,8 +323,10 @@ function OshaTab({ clientId }: { clientId: string }) {
 function Stat({ label, value }: { label: string; value: string | number }) {
   return (
     <div>
-      <div className="text-[11px] uppercase tracking-wider text-silver">{label}</div>
-      <div className="mt-0.5 text-white font-medium">{value}</div>
+      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
+        {label}
+      </div>
+      <div className="mt-0.5 text-white font-medium tabular-nums">{value}</div>
     </div>
   );
 }
@@ -447,7 +471,7 @@ function NewIncidentDrawer({
             {(['FIRST_AID', 'MEDICAL_TREATMENT', 'RESTRICTED_DUTY', 'DAYS_AWAY', 'FATAL'] as const).map(
               (s) => (
                 <option key={s} value={s}>
-                  {s}
+                  {SEVERITY_LABELS[s]}
                 </option>
               ),
             )}
@@ -538,13 +562,15 @@ function EditIncidentDrawer({
           <Stat label="Body part" value={incident.bodyPart ?? '—'} />
         </div>
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-silver">Severity</div>
+          <div className="text-xs2 uppercase tracking-wider text-silver">Severity</div>
           <div className="mt-1">
-            <Badge variant={SEVERITY_COLOR[incident.severity]}>{incident.severity}</Badge>
+            <Badge variant={SEVERITY_COLOR[incident.severity]}>
+              {SEVERITY_LABELS[incident.severity]}
+            </Badge>
           </div>
         </div>
         <div>
-          <div className="text-[11px] uppercase tracking-wider text-silver">Description</div>
+          <div className="text-xs2 uppercase tracking-wider text-silver">Description</div>
           <div className="mt-1 text-sm text-white whitespace-pre-wrap">{incident.description}</div>
         </div>
         <div>
@@ -557,7 +583,7 @@ function EditIncidentDrawer({
           >
             {OSHA_STATUSES.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {OSHA_STATUS_LABELS[s]}
               </option>
             ))}
           </Select>
@@ -603,7 +629,7 @@ function EditIncidentDrawer({
             />
             OSHA recordable
           </label>
-          <div className="mt-1 text-[11px] text-silver/70">
+          <div className="mt-1 text-xs2 text-silver/70">
             First-aid-only cases are not recordable — 29 CFR 1904.7
           </div>
         </div>
@@ -624,13 +650,19 @@ function EditIncidentDrawer({
 
 function WcTab() {
   const [rows, setRows] = useState<WcClassCode[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 
   const refresh = () => {
     setRows(null);
+    setError(null);
     listWcClassCodes()
       .then((r) => setRows(r.codes))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setError(
+          err instanceof ApiError ? err.message : 'Could not load class codes.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
@@ -645,7 +677,19 @@ function WcTab() {
       </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {error ? (
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {error}
+              </ErrorBanner>
+            </div>
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -659,7 +703,7 @@ function WcTab() {
                   <TableHead>State</TableHead>
                   <TableHead>Code</TableHead>
                   <TableHead>Description</TableHead>
-                  <TableHead className="hidden md:table-cell">Rate / $100</TableHead>
+                  <TableHead className="hidden md:table-cell text-right">Rate / $100</TableHead>
                   <TableHead className="hidden lg:table-cell">Effective</TableHead>
                 </TableRow>
               </TableHeader>
@@ -669,16 +713,21 @@ function WcTab() {
                     <TableCell>{c.stateCode ?? 'FED'}</TableCell>
                     <TableCell className="font-mono">
                       {c.code}
-                      <div className="text-[11px] text-silver/70 md:hidden">${c.ratePer100} / $100</div>
-                      <div className="text-[11px] text-silver/70 lg:hidden">
-                        {c.effectiveFrom}{c.effectiveTo ? ` – ${c.effectiveTo}` : ''}
+                      <div className="text-xs2 text-silver/70 md:hidden tabular-nums">
+                        {fmtMoney(c.ratePer100, { precise: true })} / $100
+                      </div>
+                      <div className="text-xs2 text-silver/70 lg:hidden">
+                        {fmtDate(parseYmd(c.effectiveFrom))}
+                        {c.effectiveTo ? ` – ${fmtDate(parseYmd(c.effectiveTo))}` : ''}
                       </div>
                     </TableCell>
                     <TableCell>{c.description}</TableCell>
-                    <TableCell className="hidden md:table-cell">${c.ratePer100}</TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums">
+                      {fmtMoney(c.ratePer100, { precise: true })}
+                    </TableCell>
                     <TableCell className="hidden lg:table-cell">
-                      {c.effectiveFrom}
-                      {c.effectiveTo ? ` – ${c.effectiveTo}` : ''}
+                      {fmtDate(parseYmd(c.effectiveFrom))}
+                      {c.effectiveTo ? ` – ${fmtDate(parseYmd(c.effectiveTo))}` : ''}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -797,23 +846,87 @@ function NewWcDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
 
 // ============ EEO-1 ============
 
+const EEO_CATEGORY_LABELS: Record<string, string> = {
+  EXEC_SR_OFFICIALS: 'Executive/senior officials',
+  FIRST_MID_OFFICIALS: 'First/mid-level officials',
+  PROFESSIONALS: 'Professionals',
+  TECHNICIANS: 'Technicians',
+  SALES_WORKERS: 'Sales workers',
+  ADMIN_SUPPORT: 'Administrative support',
+  CRAFT_WORKERS: 'Craft workers',
+  OPERATIVES: 'Operatives',
+  LABORERS_HELPERS: 'Laborers & helpers',
+  SERVICE_WORKERS: 'Service workers',
+};
+
+const EEO_RACE_LABELS: Record<string, string> = {
+  HISPANIC_LATINO: 'Hispanic or Latino',
+  WHITE: 'White',
+  BLACK_AFRICAN_AMERICAN: 'Black or African American',
+  NATIVE_HAWAIIAN_PACIFIC_ISLANDER: 'Native Hawaiian or Pacific Islander',
+  ASIAN: 'Asian',
+  AMERICAN_INDIAN_ALASKA_NATIVE: 'American Indian or Alaska Native',
+  TWO_OR_MORE: 'Two or more races',
+  NOT_DISCLOSED: 'Declined to disclose',
+};
+
+const EEO_GENDER_LABELS: Record<string, string> = {
+  MALE: 'Male',
+  FEMALE: 'Female',
+  NON_BINARY: 'Non-binary',
+  NOT_DISCLOSED: 'Declined to disclose',
+};
+
 function EeoTab({ clientId }: { clientId: string }) {
   const [data, setData] = useState<Awaited<ReturnType<typeof getEeoReport>> | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   useEffect(() => {
     setData(null);
+    setError(null);
     getEeoReport(clientId)
       .then(setData)
-      .catch(() => setData(null));
+      .catch((err) =>
+        setError(
+          err instanceof ApiError ? err.message : 'Could not load the EEO report.',
+        ),
+      );
   }, [clientId, reloadTick]);
 
   const downloadEeoCsv = () => {
     if (!data) return;
-    downloadCsv(`eeo1-report-${new Date().toISOString().slice(0, 10)}.csv`, [
+    downloadCsv(`eeo1-report-${ymdLocal()}.csv`, [
       ['Category', 'Race', 'Gender', 'Count'],
-      ...data.buckets.map((b) => [b.category, b.race, b.gender, b.count]),
+      ...data.buckets.map((b) => [
+        EEO_CATEGORY_LABELS[b.category] ?? b.category,
+        EEO_RACE_LABELS[b.race] ?? b.race,
+        EEO_GENDER_LABELS[b.gender] ?? b.gender,
+        b.count,
+      ]),
     ]);
   };
+
+  if (error) {
+    return (
+      <Card>
+        <CardContent className="p-6">
+          <ErrorBanner
+            action={
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => setReloadTick((t) => t + 1)}
+              >
+                Retry
+              </Button>
+            }
+          >
+            {error}
+          </ErrorBanner>
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (data === null) {
     return <Card><CardContent className="p-6"><SkeletonRows count={5} /></CardContent></Card>;
@@ -834,7 +947,7 @@ function EeoTab({ clientId }: { clientId: string }) {
             onClick={downloadEeoCsv}
             disabled={data.buckets.length === 0}
           >
-            <Download className="mr-2 h-4 w-4" /> Download CSV
+            <Download className="mr-2 h-4 w-4" /> Export CSV
           </Button>
         </CardContent>
       </Card>
@@ -860,12 +973,16 @@ function EeoTab({ clientId }: { clientId: string }) {
                 {data.buckets.map((b, i) => (
                   <TableRow key={i}>
                     <TableCell>
-                      {b.category}
-                      <div className="text-[11px] text-silver/70 md:hidden">{b.race}</div>
+                      {EEO_CATEGORY_LABELS[b.category] ?? b.category}
+                      <div className="text-xs2 text-silver/70 md:hidden">
+                        {EEO_RACE_LABELS[b.race] ?? b.race}
+                      </div>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell">{b.race}</TableCell>
-                    <TableCell>{b.gender}</TableCell>
-                    <TableCell className="text-right">{b.count}</TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      {EEO_RACE_LABELS[b.race] ?? b.race}
+                    </TableCell>
+                    <TableCell>{EEO_GENDER_LABELS[b.gender] ?? b.gender}</TableCell>
+                    <TableCell className="text-right tabular-nums">{b.count}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -875,11 +992,6 @@ function EeoTab({ clientId }: { clientId: string }) {
       </Card>
     </div>
   );
-}
-
-/** "Declined to disclose" reads better than the raw enum in a form. */
-function eeoOptionLabel(value: string): string {
-  return value === 'NOT_DISCLOSED' ? 'Declined to disclose' : value;
 }
 
 function EeoCapturePanel({ onSaved }: { onSaved: () => void }) {
@@ -943,7 +1055,7 @@ function EeoCapturePanel({ onSaved }: { onSaved: () => void }) {
               <option value="">—</option>
               {EEO_CATEGORIES.map((c) => (
                 <option key={c} value={c}>
-                  {c}
+                  {EEO_CATEGORY_LABELS[c] ?? c}
                 </option>
               ))}
             </Select>
@@ -959,7 +1071,7 @@ function EeoCapturePanel({ onSaved }: { onSaved: () => void }) {
               <option value="">—</option>
               {EEO_RACES.map((r) => (
                 <option key={r} value={r}>
-                  {eeoOptionLabel(r)}
+                  {EEO_RACE_LABELS[r] ?? r}
                 </option>
               ))}
             </Select>
@@ -975,7 +1087,7 @@ function EeoCapturePanel({ onSaved }: { onSaved: () => void }) {
               <option value="">—</option>
               {EEO_GENDERS.map((g) => (
                 <option key={g} value={g}>
-                  {eeoOptionLabel(g)}
+                  {EEO_GENDER_LABELS[g] ?? g}
                 </option>
               ))}
             </Select>

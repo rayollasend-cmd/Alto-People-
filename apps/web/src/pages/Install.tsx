@@ -40,7 +40,7 @@ export function Install() {
       <Page>
         <div className="text-center">
           <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
-          <h1 className="text-2xl font-medium text-white mb-2">You're all set</h1>
+          <h1 className="font-display text-3xl text-white mb-2">You're all set</h1>
           <p className="text-silver mb-6">Alto People is already installed on this device.</p>
           <Link
             to="/"
@@ -57,7 +57,7 @@ export function Install() {
     <Page>
       <header className="text-center mb-8">
         <Logo size="xl" className="mx-auto mb-4 rounded-2xl" alt="Alto People" />
-        <h1 className="text-2xl sm:text-3xl font-medium text-white mb-2">
+        <h1 className="font-display text-3xl sm:text-4xl text-white mb-2">
           Install Alto People
         </h1>
         <p className="text-silver text-sm sm:text-base max-w-md mx-auto">
@@ -157,7 +157,7 @@ function DesktopInstructions() {
 function Page({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen flex items-start sm:items-center justify-center px-4 py-10 bg-login-aurora">
-      <div className="w-full max-w-xl bg-navy/80 backdrop-blur border border-navy-secondary rounded-2xl shadow-xl p-6 sm:p-8">
+      <div className="w-full max-w-xl bg-navy/80 backdrop-blur border border-navy-secondary rounded-2xl elev-2 p-6 sm:p-8">
         {children}
       </div>
     </div>

@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Command } from 'cmdk';
 import {
   Banknote,
-  Briefcase,
   Building2,
   CalendarPlus,
   ClipboardCheck,
@@ -58,11 +57,26 @@ interface PerformCtx {
 /** Shared row styling so entity rows look identical to static rows. */
 const ITEM_CLASS = cn(
   'flex items-center gap-3 px-2.5 py-2 rounded-md text-sm cursor-pointer text-white',
-  'data-[selected=true]:bg-navy-secondary data-[selected=true]:text-gold'
+  // Gold left rail marks the active row — reads at a glance even when the
+  // background tint is subtle.
+  'border-l-2 border-transparent',
+  'data-[selected=true]:bg-navy-secondary data-[selected=true]:text-gold data-[selected=true]:border-gold'
 );
 
-const GROUP_CLASS =
-  'text-[10px] uppercase tracking-widest text-silver/80 px-2 pt-2 pb-1';
+const GROUP_CLASS = cn(
+  'text-2xs uppercase tracking-widest text-silver/80 px-2 pt-2 pb-1',
+  // Hairline between groups so Pages / People / Actions scan as sections.
+  '[&:not(:first-of-type)]:mt-1 [&:not(:first-of-type)]:border-t [&:not(:first-of-type)]:border-navy-secondary/60'
+);
+
+/** Chromed key hint used in the palette footer. */
+function Kbd({ children }: { children: ReactNode }) {
+  return (
+    <kbd className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded border border-navy-secondary bg-navy-secondary/40 font-mono text-3xs text-silver">
+      {children}
+    </kbd>
+  );
+}
 
 /**
  * App-wide command palette. Open with Cmd/Ctrl+K. Searches across module
@@ -289,7 +303,7 @@ export function CommandPalette({
             <div className="flex-1 min-w-0">
               <div className="truncate">{item.label}</div>
               {item.hint && (
-                <div className="text-[11px] text-silver/70 truncate">{item.hint}</div>
+                <div className="text-xs2 text-silver/70 truncate">{item.hint}</div>
               )}
             </div>
           </Command.Item>
@@ -300,7 +314,7 @@ export function CommandPalette({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl p-0 overflow-hidden gap-0">
+      <DialogContent className="max-w-xl p-0 overflow-hidden gap-0 rounded-xl elev-3 ring-1 ring-white/[0.06]">
         <DialogTitle className="sr-only">Command palette</DialogTitle>
         <DialogDescription className="sr-only">
           Search to navigate, find people and clients, run quick actions, or
@@ -319,9 +333,6 @@ export function CommandPalette({
                 'outline-none border-0 focus:ring-0'
               )}
             />
-            <span className="ml-2 hidden sm:inline-flex items-center gap-1 text-[10px] text-silver/70 border border-navy-secondary rounded px-1.5 py-0.5 font-mono">
-              ESC
-            </span>
           </div>
           <Command.List className="max-h-[60vh] overflow-y-auto p-1">
             {/* Suppress "No results." while a people search is pending so
@@ -355,7 +366,7 @@ export function CommandPalette({
                       <div className="flex-1 min-w-0">
                         <div className="truncate">{fullName}</div>
                         {hint && (
-                          <div className="text-[11px] text-silver/70 truncate">
+                          <div className="text-xs2 text-silver/70 truncate">
                             {hint}
                           </div>
                         )}
@@ -394,7 +405,7 @@ export function CommandPalette({
                     <div className="flex-1 min-w-0">
                       <div className="truncate">{c.name}</div>
                       {c.industry && (
-                        <div className="text-[11px] text-silver/70 truncate">
+                        <div className="text-xs2 text-silver/70 truncate">
                           {c.industry}
                         </div>
                       )}
@@ -408,14 +419,22 @@ export function CommandPalette({
             {renderStaticGroup('Account', 'Account')}
             {renderStaticGroup('Help', 'Help')}
           </Command.List>
-          <div className="flex items-center justify-between border-t border-navy-secondary px-3 py-2 text-[10px] text-silver/80">
-            <div className="inline-flex items-center gap-1.5">
-              <Briefcase className="h-3 w-3" aria-hidden="true" />
-              Alto People
-            </div>
+          <div className="flex items-center justify-between border-t border-navy-secondary px-3 py-2 text-2xs text-silver/80">
             <div className="inline-flex items-center gap-1.5">
               <Sparkles className="h-3 w-3 text-gold" aria-hidden="true" />
-              Cmd+K from anywhere
+              Alto People
+            </div>
+            <div className="hidden sm:inline-flex items-center gap-3">
+              <span className="inline-flex items-center gap-1">
+                <Kbd>↑</Kbd>
+                <Kbd>↓</Kbd> navigate
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <Kbd>↵</Kbd> select
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <Kbd>esc</Kbd> close
+              </span>
             </div>
           </div>
         </Command>

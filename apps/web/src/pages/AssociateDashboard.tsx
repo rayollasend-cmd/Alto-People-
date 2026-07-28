@@ -371,7 +371,7 @@ function ActionNeededCard({ shifts }: { shifts: Shift[] | null | undefined }) {
   return (
     <Card className="mb-4 border-gold/40">
       <CardContent className="pt-5 pb-3">
-        <div className="text-[11px] uppercase tracking-widest text-gold flex items-center gap-1.5">
+        <div className="text-xs2 uppercase tracking-widest text-gold flex items-center gap-1.5">
           <AlertCircle className="h-3 w-3" aria-hidden="true" />
           {t('dash.actionNeeded')}
         </div>
@@ -442,7 +442,7 @@ function LoadFailedCard({
   return (
     <Card className={className}>
       <CardContent className="pt-5">
-        <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
           <Icon className="h-3 w-3" aria-hidden="true" />
           {label}
         </div>
@@ -491,7 +491,7 @@ function ClockCard({ active, isClockedIn }: ClockCardProps) {
       )}
     >
       <CardContent className="pt-5">
-        <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
           <Clock className="h-3 w-3" aria-hidden="true" />
           {t('dash.clock')}
         </div>
@@ -552,7 +552,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
     return (
       <Card className="md:col-span-2">
         <CardContent className="pt-5">
-          <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
             <Timer className="h-3 w-3" aria-hidden="true" />
             {t('dash.nextShift')}
           </div>
@@ -574,7 +574,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
   return (
     <Card className="md:col-span-2">
       <CardContent className="pt-5">
-        <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
           <Timer className="h-3 w-3" aria-hidden="true" />
           {t('dash.nextShift')}
         </div>
@@ -643,7 +643,7 @@ function PaystubCard({
     return (
       <Card>
         <CardContent className="pt-5">
-          <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
             <DollarSign className="h-3 w-3" aria-hidden="true" />
             {t('dash.lastPaystub')}
           </div>
@@ -665,7 +665,7 @@ function PaystubCard({
   return (
     <Card>
       <CardContent className="pt-5">
-        <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
           <DollarSign className="h-3 w-3" aria-hidden="true" />
           {t('dash.lastPaystub')}
         </div>
@@ -723,7 +723,7 @@ function TimeOffCard({
     return (
       <Card>
         <CardContent className="pt-5">
-          <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
             <CalendarOff className="h-3 w-3" aria-hidden="true" />
             {t('dash.timeOff')}
           </div>
@@ -748,7 +748,7 @@ function TimeOffCard({
   return (
     <Card>
       <CardContent className="pt-5">
-        <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
           <CalendarOff className="h-3 w-3" aria-hidden="true" />
           {t('dash.timeOff')}
         </div>

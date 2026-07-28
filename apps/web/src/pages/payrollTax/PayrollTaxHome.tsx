@@ -71,6 +71,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
@@ -88,7 +89,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtMoney } from '@/lib/format';
 import { toast } from 'sonner';
 
 type Tab = 'garnishments' | 'taxforms';
@@ -137,6 +138,13 @@ const GARN_BADGE: Record<GarnishmentStatus, 'success' | 'pending' | 'default' | 
   TERMINATED: 'destructive',
 };
 
+const GARN_STATUS_LABEL: Record<GarnishmentStatus, string> = {
+  ACTIVE: 'Active',
+  SUSPENDED: 'Suspended',
+  COMPLETED: 'Completed',
+  TERMINATED: 'Terminated',
+};
+
 const GARN_KIND_LABEL: Record<GarnishmentKind, string> = {
   CHILD_SUPPORT: 'Child support',
   TAX_LEVY: 'Tax levy',
@@ -149,17 +157,20 @@ const GARN_KIND_LABEL: Record<GarnishmentKind, string> = {
 function GarnishmentsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [rows, setRows] = useState<Garnishment[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [historyTarget, setHistoryTarget] = useState<Garnishment | null>(null);
   const [deductTarget, setDeductTarget] = useState<Garnishment | null>(null);
 
   const refresh = () => {
     setRows(null);
+    setLoadError(null);
     listGarnishments()
       .then((r) => setRows(r.garnishments))
       .catch((err) => {
-        setRows([]);
-        toast.error(err instanceof ApiError ? err.message : "Couldn't load garnishments.");
+        setLoadError(
+          err instanceof ApiError ? err.message : "Couldn't load garnishments.",
+        );
       });
   };
   useEffect(() => {
@@ -168,21 +179,22 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
 
   const onStatus = async (g: Garnishment, status: GarnishmentStatus) => {
     if (status === g.status) return;
+    const nextLabel = GARN_STATUS_LABEL[status];
     const ok = await confirm({
-      title: `Change status to ${status}?`,
+      title: `Change status to ${nextLabel.toLowerCase()}?`,
       description:
-        `${g.associateName}'s garnishment moves from ${g.status} to ${status}. ` +
+        `${g.associateName}'s garnishment moves from ${GARN_STATUS_LABEL[g.status].toLowerCase()} to ${nextLabel.toLowerCase()}. ` +
         'The change takes effect immediately and is recorded.' +
         (status === 'TERMINATED'
           ? ' Terminated garnishments stop withholding entirely.'
           : ''),
-      confirmLabel: `Change to ${status}`,
+      confirmLabel: `Change to ${nextLabel.toLowerCase()}`,
       destructive: status === 'TERMINATED',
     });
     if (!ok) return; // controlled select re-renders back to g.status
     try {
       await setGarnishmentStatus(g.id, status);
-      toast.success(`Garnishment status changed to ${status}.`);
+      toast.success(`Garnishment status changed to ${nextLabel.toLowerCase()}.`);
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Couldn't update garnishment status. Try again.");
@@ -200,7 +212,19 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
       )}
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {loadError}
+              </ErrorBanner>
+            </div>
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -214,8 +238,8 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
                 <TableRow>
                   <TableHead>Associate</TableHead>
                   <TableHead className="hidden md:table-cell">Kind</TableHead>
-                  <TableHead className="hidden sm:table-cell">Withhold</TableHead>
-                  <TableHead className="hidden lg:table-cell">Cap / progress</TableHead>
+                  <TableHead className="hidden sm:table-cell text-right">Withhold</TableHead>
+                  <TableHead className="hidden lg:table-cell text-right">Cap / progress</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -226,11 +250,11 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
                         <div className="truncate">{g.associateName}</div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                        <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                           {GARN_KIND_LABEL[g.kind]}
                           <span className="sm:hidden">
                             {g.amountPerRun
-                              ? ` · $${g.amountPerRun}/run`
+                              ? ` · ${fmtMoney(g.amountPerRun)}/run`
                               : g.percentOfDisp
                                 ? ` · ${(Number(g.percentOfDisp) * 100).toFixed(2)}% of disp.`
                                 : ''}
@@ -239,20 +263,22 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{GARN_KIND_LABEL[g.kind]}</TableCell>
-                    <TableCell className="hidden sm:table-cell">
+                    <TableCell className="hidden sm:table-cell text-right tabular-nums">
                       {g.amountPerRun
-                        ? `$${g.amountPerRun}/run`
+                        ? `${fmtMoney(g.amountPerRun)}/run`
                         : g.percentOfDisp
                           ? `${(Number(g.percentOfDisp) * 100).toFixed(2)}% of disp.`
                           : '—'}
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell">
+                    <TableCell className="hidden lg:table-cell text-right tabular-nums">
                       {g.totalCap
-                        ? `$${g.amountWithheld} / $${g.totalCap}`
-                        : `$${g.amountWithheld}`}
+                        ? `${fmtMoney(g.amountWithheld)} / ${fmtMoney(g.totalCap)}`
+                        : fmtMoney(g.amountWithheld)}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={GARN_BADGE[g.status]}>{g.status}</Badge>
+                      <Badge variant={GARN_BADGE[g.status]}>
+                        {GARN_STATUS_LABEL[g.status]}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -289,9 +315,9 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
                             value={g.status}
                             onChange={(e) => onStatus(g, e.target.value as GarnishmentStatus)}
                           >
-                            <option value="ACTIVE">ACTIVE</option>
-                            <option value="SUSPENDED">SUSPENDED</option>
-                            <option value="TERMINATED">TERMINATED</option>
+                            <option value="ACTIVE">{GARN_STATUS_LABEL.ACTIVE}</option>
+                            <option value="SUSPENDED">{GARN_STATUS_LABEL.SUSPENDED}</option>
+                            <option value="TERMINATED">{GARN_STATUS_LABEL.TERMINATED}</option>
                           </Select>
                         )}
                       </div>
@@ -550,10 +576,10 @@ function GarnishmentHistoryDrawer({
         <div className="space-y-3 text-sm">
           <div className="text-xs text-silver/70">
             {GARN_KIND_LABEL[garnishment.kind]} · case {garnishment.caseNumber ?? '—'} ·
-            withheld ${garnishment.amountWithheld}
-            {garnishment.totalCap && <> of ${garnishment.totalCap}</>}
+            withheld {fmtMoney(garnishment.amountWithheld)}
+            {garnishment.totalCap && <> of {fmtMoney(garnishment.totalCap)}</>}
           </div>
-          {error && <div className="text-alert">{error}</div>}
+          {error && <ErrorBanner>{error}</ErrorBanner>}
           {rows === null && !error && <SkeletonRows count={4} />}
           {rows && rows.length === 0 && (
             <EmptyState
@@ -574,11 +600,13 @@ function GarnishmentHistoryDrawer({
               <TableBody>
                 {rows.map((d) => (
                   <TableRow key={d.id}>
-                    <TableCell>{new Date(d.deductedOn).toLocaleString()}</TableCell>
+                    <TableCell>{fmtDateTime(d.deductedOn)}</TableCell>
                     <TableCell className="text-xs text-silver/70">
                       {d.payrollRunId ? d.payrollRunId.slice(0, 8) : 'Manual'}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">${d.amount}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {fmtMoney(d.amount)}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -618,7 +646,7 @@ function GarnishmentManualDeductDrawer({
       const r = await deductGarnishment(garnishment.id, n, null);
       toast.success(
         r.completed
-          ? 'Deduction recorded. Garnishment cap reached → status COMPLETED.'
+          ? 'Deduction recorded — the cap is reached, so the garnishment is now completed.'
           : 'Deduction recorded.',
       );
       onSaved();
@@ -637,8 +665,8 @@ function GarnishmentManualDeductDrawer({
         <div className="space-y-3 text-sm">
           <p className="text-xs text-silver/70">
             Use this when a deduction needs to be recorded outside a payroll run (e.g.
-            retroactive correction). The garnishment's amountWithheld is incremented and the
-            status flips to COMPLETED if the cap is reached.
+            retroactive correction). The amount withheld is incremented and the garnishment
+            is marked completed if the cap is reached.
           </p>
           <Label htmlFor="manual-deduct-amount">Amount</Label>
           <Input
@@ -682,6 +710,13 @@ const FORM_STATUS_BADGE: Record<TaxForm['status'], 'pending' | 'success' | 'defa
   VOIDED: 'destructive',
 };
 
+const FORM_STATUS_LABEL: Record<TaxForm['status'], string> = {
+  DRAFT: 'Draft',
+  FILED: 'Filed',
+  AMENDED: 'Amended',
+  VOIDED: 'Voided',
+};
+
 /**
  * Five-step pipeline header. Each step is "done" once any row in the
  * current list reaches that stage. Helps cold-start operators understand
@@ -711,7 +746,7 @@ function TaxFormsWorkflowSteps({ rows }: { rows: TaxForm[] | null }) {
       key: 'file',
       label: '4. File',
       done: !!rows && rows.some((r) => r.status === 'FILED'),
-      hint: 'Mark forms FILED. Filed forms are immutable; corrections require a W-2c or 1099-MISC amendment.',
+      hint: 'Mark forms filed. Filed forms are immutable; corrections require a W-2c or 1099-MISC amendment.',
     },
     {
       key: 'distribute',
@@ -749,6 +784,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const prompt = usePrompt();
   const [rows, setRows] = useState<TaxForm[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [show941Builder, setShow941Builder] = useState(false);
   const [show940Builder, setShow940Builder] = useState(false);
@@ -764,12 +800,14 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
 
   const refresh = () => {
     setRows(null);
+    setLoadError(null);
     setSelected(new Set());
     listTaxForms()
       .then((r) => setRows(r.forms))
       .catch((err) => {
-        setRows([]);
-        toast.error(err instanceof ApiError ? err.message : "Couldn't load tax forms.");
+        setLoadError(
+          err instanceof ApiError ? err.message : "Couldn't load tax forms.",
+        );
       });
   };
   useEffect(() => {
@@ -832,7 +870,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
     setBulkBusy(true);
     try {
       const r = await bulkFileTaxForms(ids);
-      toast.success(`Filed ${r.filed}${skippedSummary(r.skipped)}`);
+      toast.success(`Filed ${r.filed}${skippedSummary(r.skipped)}.`);
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Couldn't file the selected forms. Try again.");
@@ -848,7 +886,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
     try {
       const r = await bulkSendTaxFormCopies(ids);
       toast.success(
-        `Sent ${r.sent} recipient cop${r.sent === 1 ? 'y' : 'ies'}${skippedSummary(r.skipped)}`,
+        `Sent ${r.sent} recipient cop${r.sent === 1 ? 'y' : 'ies'}${skippedSummary(r.skipped)}.`,
       );
       refresh();
     } catch (err) {
@@ -991,10 +1029,11 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
               onChange={(e) => setStatusFilter(e.target.value as 'all' | TaxFormStatus)}
             >
               <option value="all">All statuses</option>
-              <option value="DRAFT">DRAFT</option>
-              <option value="FILED">FILED</option>
-              <option value="AMENDED">AMENDED</option>
-              <option value="VOIDED">VOIDED</option>
+              {(Object.keys(FORM_STATUS_LABEL) as TaxFormStatus[]).map((s) => (
+                <option key={s} value={s}>
+                  {FORM_STATUS_LABEL[s]}
+                </option>
+              ))}
             </Select>
           </div>
           <div>
@@ -1021,11 +1060,17 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
           <span className="text-sm text-white">
             {selected.size} selected
           </span>
-          <Button size="sm" onClick={onBulkFile} disabled={bulkBusy}>
-            {bulkBusy ? 'Working…' : `File selected (${selected.size})`}
+          <Button size="sm" onClick={onBulkFile} loading={bulkBusy} disabled={bulkBusy}>
+            File selected ({selected.size})
           </Button>
-          <Button size="sm" variant="ghost" onClick={onBulkSendCopies} disabled={bulkBusy}>
-            {bulkBusy ? 'Working…' : `Send copies (${selected.size})`}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onBulkSendCopies}
+            loading={bulkBusy}
+            disabled={bulkBusy}
+          >
+            Send copies ({selected.size})
           </Button>
           <Button
             size="sm"
@@ -1039,7 +1084,19 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
       )}
       <Card>
         <CardContent className="p-0">
-          {rows === null || filtered === null ? (
+          {loadError ? (
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {loadError}
+              </ErrorBanner>
+            </div>
+          ) : rows === null || filtered === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -1091,7 +1148,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
                         <div className="truncate">{FORM_KIND_LABEL[f.kind]}</div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                        <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                           {f.associateName ?? 'Aggregate'}
                         </div>
                       </div>
@@ -1102,7 +1159,9 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{f.associateName ?? 'Aggregate'}</TableCell>
                     <TableCell>
-                      <Badge variant={FORM_STATUS_BADGE[f.status]}>{f.status}</Badge>
+                      <Badge variant={FORM_STATUS_BADGE[f.status]}>
+                        {FORM_STATUS_LABEL[f.status]}
+                      </Badge>
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
                       {fmtDate(f.filedAt)}
@@ -1307,7 +1366,7 @@ function W2GenerateDrawer({
       <DrawerBody className="space-y-4">
         <div className="text-sm text-silver">
           Walks every associate with at least one disbursed paystub in the
-          year and creates a DRAFT W-2. Idempotent — already-generated forms
+          year and creates a draft W-2. Idempotent — already-generated forms
           are skipped. Void an existing W-2 first to force regeneration.
         </div>
         <div>
@@ -2246,7 +2305,7 @@ function BuilderAmounts({
   const fmt = (v: string | number) => {
     const n = typeof v === 'number' ? v : Number(v);
     if (Number.isFinite(n) && String(v).match(/^-?\d*\.?\d+$/)) {
-      return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+      return fmtMoney(n);
     }
     return String(v);
   };
@@ -2264,7 +2323,7 @@ function BuilderAmounts({
         ))}
       </dl>
       <p className="mt-2 text-xs text-silver/60">
-        Use "Create draft from these amounts" to save these as a DRAFT form —
+        Use "Create draft from these amounts" to save these as a draft form —
         you can still review and edit the draft before filing — or transcribe
         them into the official IRS form.
       </p>
@@ -2551,7 +2610,7 @@ function SubmitterProfileDrawer({ onClose }: { onClose: () => void }) {
             </div>
             {profile && (
               <div className="text-xs text-silver">
-                Last updated: {new Date(profile.updatedAt).toLocaleString()}
+                Last updated: {fmtDateTime(profile.updatedAt)}
               </div>
             )}
           </>

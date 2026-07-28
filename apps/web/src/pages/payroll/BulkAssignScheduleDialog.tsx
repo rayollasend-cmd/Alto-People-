@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { Input } from '@/components/ui/Input';
+import { SkeletonRows } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
 
 interface Props {
@@ -96,9 +97,7 @@ export function BulkAssignScheduleDialog({ open, schedule, onOpenChange, onSaved
             />
           </div>
           <div className="max-h-72 overflow-y-auto rounded border border-silver/20 bg-black/30">
-            {!people && (
-              <div className="p-4 text-sm text-silver/70">Loading directory…</div>
-            )}
+            {!people && <SkeletonRows count={5} rowHeight="h-8" className="p-3" />}
             {people && filtered.length === 0 && (
               <div className="p-4 text-sm text-silver/70">No matching associates.</div>
             )}
@@ -120,7 +119,7 @@ export function BulkAssignScheduleDialog({ open, schedule, onOpenChange, onSaved
                   <span className="ml-2 text-xs text-silver/70">{p.email}</span>
                 </span>
                 {p.workplaceClientName && (
-                  <span className="text-[10px] uppercase tracking-wide text-silver/70">
+                  <span className="text-2xs uppercase tracking-wide text-silver/70">
                     {p.workplaceClientName}
                   </span>
                 )}

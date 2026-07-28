@@ -28,9 +28,13 @@ export function BillingHome() {
   const [activeSeats, setActiveSeats] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Bumped by the Retry button to re-run the loader effect.
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setError(null);
     // getUserCounts is uncapped — the /admin/users list truncates at the
     // server page size, so its length undercounts seats on large orgs.
     Promise.all([getOrgBranding(), getUserCounts()])
@@ -49,7 +53,7 @@ export function BillingHome() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadTick]);
 
   const supportLine = supportEmail ?? 'your account manager';
 
@@ -81,7 +85,16 @@ export function BillingHome() {
       </div>
 
       {error ? (
-        <ErrorBanner>{error}</ErrorBanner>
+        <div className="space-y-3">
+          <ErrorBanner>{error}</ErrorBanner>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setReloadTick((t) => t + 1)}
+          >
+            Retry
+          </Button>
+        </div>
       ) : (
         <div className="grid gap-6 md:grid-cols-2">
           <Card>

@@ -30,7 +30,11 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  FilterBar,
+  FilterChip,
   Input,
+  MetricCard,
   PageHeader,
   Select,
   SkeletonRows,
@@ -226,74 +230,73 @@ export function SuccessionHome() {
         title="Succession planning"
         subtitle="Designate successors for each position. Track who's ready now, in 1–2 years, or beyond."
         breadcrumbs={[{ label: 'Performance' }, { label: 'Succession' }]}
+        secondaryActions={
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onExportCsv}
+            disabled={!filtered || filtered.length === 0}
+            loading={candLoading}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Export CSV
+          </Button>
+        }
       />
 
       {summaryError ? (
-        <Card>
-          <CardContent className="p-4 flex items-center justify-between gap-3">
-            <p role="alert" className="text-sm text-alert">{summaryError}</p>
-            <Button size="sm" variant="secondary" onClick={refreshSummary}>
+        <ErrorBanner>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>{summaryError}</span>
+            <Button size="sm" variant="outline" onClick={refreshSummary}>
               Retry
             </Button>
-          </CardContent>
-        </Card>
+          </div>
+        </ErrorBanner>
       ) : (
         summary && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <KpiCard label="Positions" value={String(summary.positionCount)} />
-            <KpiCard
+            <MetricCard label="Positions" value={summary.positionCount} />
+            <MetricCard
               label="With successor"
               value={`${summary.positionsWithSuccessor} / ${summary.positionCount}`}
-              sub={`${summary.coverage}% coverage`}
+              hint={`${summary.coverage}% coverage`}
             />
-            <KpiCard
+            <MetricCard
               label="Ready now"
-              value={String(summary.byReadiness.READY_NOW)}
+              value={summary.byReadiness.READY_NOW}
             />
-            <KpiCard
+            <MetricCard
               label="Emergency cover"
-              value={String(summary.byReadiness.EMERGENCY_COVER)}
+              value={summary.byReadiness.EMERGENCY_COVER}
             />
           </div>
         )
       )}
 
-      <div className="flex flex-wrap items-center gap-2 justify-end">
+      <FilterBar>
         {READINESS_KEYS.map((r) => (
-          <Button
+          <FilterChip
             key={r}
-            size="sm"
-            variant={readinessFilter.has(r) ? 'secondary' : 'ghost'}
-            aria-pressed={readinessFilter.has(r)}
+            active={readinessFilter.has(r)}
             onClick={() => toggleReadiness(r)}
           >
             {READINESS_LABELS[r]}
-          </Button>
+          </FilterChip>
         ))}
-        <Button
-          size="sm"
-          variant={atRiskOnly ? 'secondary' : 'ghost'}
-          aria-pressed={atRiskOnly}
+        <FilterChip
+          active={atRiskOnly}
           onClick={() => setAtRiskOnly((v) => !v)}
         >
           At risk only
-        </Button>
+        </FilterChip>
         <Input
           placeholder="Filter positions, codes, departments…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="max-w-sm"
+          className="ml-auto max-w-sm"
         />
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={onExportCsv}
-          disabled={!filtered || filtered.length === 0 || candLoading}
-        >
-          <Download className="mr-2 h-4 w-4" />
-          {candLoading ? 'Loading…' : 'Export CSV'}
-        </Button>
-      </div>
+      </FilterBar>
       {readinessFilter.size > 0 && !candMap && candLoading && (
         <div className="text-xs text-silver text-right">
           Loading successor details to apply the readiness filter…
@@ -303,11 +306,15 @@ export function SuccessionHome() {
       <Card>
         <CardContent className="p-0">
           {rowsError ? (
-            <div className="p-6 space-y-3">
-              <p role="alert" className="text-sm text-alert">{rowsError}</p>
-              <Button size="sm" variant="secondary" onClick={refreshPositions}>
-                Retry
-              </Button>
+            <div className="p-6">
+              <ErrorBanner>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{rowsError}</span>
+                  <Button size="sm" variant="outline" onClick={refreshPositions}>
+                    Retry
+                  </Button>
+                </div>
+              </ErrorBanner>
             </div>
           ) : filtered === null ? (
             <div className="p-6">
@@ -344,7 +351,7 @@ export function SuccessionHome() {
                     <TableCell>
                       <div className="font-medium text-white">{p.title}</div>
                       <div className="text-xs text-silver font-mono">{p.code}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {p.departmentName ?? '—'} · {p.incumbent ? p.incumbent.name : 'Vacant'}
                       </div>
                     </TableCell>
@@ -398,26 +405,6 @@ export function SuccessionHome() {
         />
       )}
     </div>
-  );
-}
-
-function KpiCard({
-  label,
-  value,
-  sub,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="text-xs uppercase tracking-wider text-silver">{label}</div>
-        <div className="text-2xl font-semibold text-white mt-1">{value}</div>
-        {sub && <div className="text-xs text-silver mt-1">{sub}</div>}
-      </CardContent>
-    </Card>
   );
 }
 
@@ -497,12 +484,14 @@ function PositionDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         {loadError ? (
-          <div className="space-y-3">
-            <p role="alert" className="text-sm text-alert">{loadError}</p>
-            <Button size="sm" variant="secondary" onClick={refresh}>
-              Retry
-            </Button>
-          </div>
+          <ErrorBanner>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>{loadError}</span>
+              <Button size="sm" variant="outline" onClick={refresh}>
+                Retry
+              </Button>
+            </div>
+          </ErrorBanner>
         ) : !data ? (
           <SkeletonRows count={3} />
         ) : (

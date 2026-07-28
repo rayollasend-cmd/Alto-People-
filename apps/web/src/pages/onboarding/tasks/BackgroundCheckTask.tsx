@@ -52,7 +52,7 @@ export function BackgroundCheckTask() {
         typedName: typedName.trim(),
         authorize: true,
       });
-      toast.success('Background check authorized');
+      toast.success('Background check authorized.');
       navigate(backTo, { replace: true });
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;

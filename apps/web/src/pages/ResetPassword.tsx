@@ -115,7 +115,7 @@ export function ResetPassword() {
         </div>
 
         {done ? (
-          <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 shadow-2xl animate-zoom-in text-center">
+          <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in text-center">
             <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
             <h2 className="font-display text-xl md:text-2xl text-white mb-2">
               Password updated
@@ -128,7 +128,7 @@ export function ResetPassword() {
           <form
             ref={formRef}
             onSubmit={handleSubmit}
-            className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 shadow-2xl animate-zoom-in"
+            className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in"
             noValidate
           >
             <h2 className="font-display text-2xl md:text-3xl text-white mb-1">

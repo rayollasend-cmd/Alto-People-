@@ -22,7 +22,6 @@ import {
   Pencil,
   Phone,
   Plus,
-  Search,
   Send,
   ShieldAlert,
   Upload,
@@ -98,10 +97,15 @@ import {
   EmptyState,
   ErrorBanner,
   Field,
+  FilterBar,
+  FilterChip,
   Input,
   Label,
+  MetricCard,
   PageHeader,
+  SearchInput,
   Select,
+  Skeleton,
   SkeletonRows,
   SortableTableHead,
   Table,
@@ -123,11 +127,11 @@ import { usePersistentState } from '@/lib/usePersistentState';
 
 const STATUS_VARIANT: Record<
   DirectoryStatus,
-  'success' | 'pending' | 'default'
+  'success' | 'pending' | 'destructive'
 > = {
   ACTIVE: 'success',
   PENDING: 'pending',
-  INACTIVE: 'default',
+  INACTIVE: 'destructive',
 };
 
 const STATUS_LABEL: Record<DirectoryStatus, string> = {
@@ -379,7 +383,7 @@ export function PeopleDirectory() {
       setStatus('');
       setClientId('');
       setLocationId('');
-      toast('Cleared filters to show this person');
+      toast('Cleared filters to show this person.');
       return;
     }
     toast.error("Couldn't find that person in the directory.");
@@ -450,116 +454,17 @@ export function PeopleDirectory() {
         title="People directory"
         subtitle="Every associate Alto HR knows about — active, pending onboarding, and inactive — with workplace, pay, and contact in one row."
         breadcrumbs={[{ label: 'Workforce' }, { label: 'People' }]}
-      />
-
-      {/* KPI strip */}
-      {stats && (
-        <Card>
-          <CardContent className="flex flex-wrap gap-x-6 gap-y-2 py-3">
-            <Kpi label="Total" value={stats.total} />
-            <Kpi label="Active" value={stats.ACTIVE} tone="text-success" />
-            <Kpi
-              label="Pending onboarding"
-              value={stats.PENDING}
-              tone={stats.PENDING > 0 ? 'text-warning' : 'text-silver'}
-              active={status === 'PENDING'}
-              onClick={() =>
-                setStatus((s) => (s === 'PENDING' ? '' : 'PENDING'))
-              }
-            />
-            <Kpi label="Inactive" value={stats.INACTIVE} tone="text-silver" />
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Filter row */}
-      <Card>
-        <CardContent className="flex flex-wrap items-end gap-3 py-3">
-          <div className="flex-1 w-full sm:min-w-[220px]">
-            <label className="text-[10px] uppercase tracking-wider text-silver">
-              Search
-            </label>
-            <div className="relative mt-1">
-              <Search className="h-3.5 w-3.5 text-silver/70 absolute left-2.5 top-1/2 -translate-y-1/2" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Name or email"
-                className="pl-8 pr-8"
-              />
-              {search && (
-                <button
-                  type="button"
-                  onClick={() => setSearch('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-silver/70 hover:text-white"
-                  aria-label="Clear search"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          </div>
-          <FilterPicker
-            label="Status"
-            value={status}
-            onChange={(v) => setStatus(v as DirectoryStatus | '')}
-            options={[
-              { value: '', label: 'All' },
-              { value: 'ACTIVE', label: 'Active' },
-              { value: 'PENDING', label: 'Pending' },
-              { value: 'INACTIVE', label: 'Inactive' },
-            ]}
-          />
-          <FilterPicker
-            label="Workplace"
-            value={clientId}
-            onChange={(v) => {
-              // Changing the workplace drops any location filter — a store
-              // from the previous client would match nothing here.
-              setClientId(v);
-              setLocationId('');
-            }}
-            options={[
-              { value: '', label: 'All' },
-              ...clients.map((c) => ({ value: c.id, label: c.name })),
-            ]}
-          />
-          {clientId && locations.length > 0 && (
-            <FilterPicker
-              label="Location"
-              value={locationId}
-              onChange={setLocationId}
-              options={[
-                { value: '', label: 'All' },
-                ...locations.map((l) => ({ value: l.id, label: l.name })),
-              ]}
-            />
-          )}
-          {departments.length > 0 && (
-            <FilterPicker
-              label="Department"
-              value={departmentId}
-              onChange={setDepartmentId}
-              options={[
-                { value: '', label: 'All' },
-                ...departments.map((d) => ({ value: d.id, label: d.name })),
-              ]}
-            />
-          )}
-          <FilterPicker
-            label="Employment type"
-            value={employmentType}
-            onChange={(v) => setEmploymentType(v as EmploymentTypeFilter | '')}
-            options={[
-              { value: '', label: 'All' },
-              { value: 'W2_EMPLOYEE', label: 'W-2' },
-              { value: 'CONTRACTOR_1099_INDIVIDUAL', label: '1099 Individual' },
-              { value: 'CONTRACTOR_1099_BUSINESS', label: '1099 Business' },
-            ]}
-          />
+        primaryAction={
+          <Button asChild>
+            <Link to="/onboarding">
+              <Plus className="h-4 w-4" />
+              Invite associates
+            </Link>
+          </Button>
+        }
+        secondaryActions={
           <Button
             variant="outline"
-            size="sm"
             onClick={exportCsv}
             disabled={!rows || rows.length === 0}
             title="Download the current filtered list as CSV"
@@ -567,8 +472,138 @@ export function PeopleDirectory() {
             <Download className="h-3.5 w-3.5" />
             Export CSV
           </Button>
-        </CardContent>
-      </Card>
+        }
+      />
+
+      {/* KPI strip */}
+      {stats && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <MetricCard label="Total" value={stats.total} />
+          <MetricCard label="Active" value={stats.ACTIVE} />
+          {/* Interactive tile: toggles the Pending status filter. Wrapped
+              outside MetricCard so the canonical tile stays presentational. */}
+          <button
+            type="button"
+            onClick={() => setStatus((s) => (s === 'PENDING' ? '' : 'PENDING'))}
+            aria-pressed={status === 'PENDING'}
+            title={
+              status === 'PENDING'
+                ? 'Clear filter'
+                : 'Filter to pending onboarding'
+            }
+            className={cn(
+              'text-left rounded-lg transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+              status === 'PENDING' && 'ring-1 ring-gold/40',
+            )}
+          >
+            <MetricCard
+              label="Pending onboarding"
+              value={stats.PENDING}
+              accent={stats.PENDING > 0}
+              className="h-full"
+            />
+          </button>
+          <MetricCard label="Inactive" value={stats.INACTIVE} />
+        </div>
+      )}
+
+      {/* Filter row */}
+      <FilterBar>
+        <div className="w-full sm:w-64">
+          <SearchInput
+            size="sm"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name or email"
+            aria-label="Search people"
+          />
+        </div>
+        {(['ACTIVE', 'PENDING', 'INACTIVE'] as const).map((s) => (
+          <FilterChip
+            key={s}
+            active={status === s}
+            onClick={() => setStatus(status === s ? '' : s)}
+          >
+            {STATUS_LABEL[s]}
+          </FilterChip>
+        ))}
+        <Select
+          size="sm"
+          value={clientId}
+          onChange={(e) => {
+            // Changing the workplace drops any location filter — a store
+            // from the previous client would match nothing here.
+            setClientId(e.target.value);
+            setLocationId('');
+          }}
+          aria-label="Filter by workplace"
+          className="w-auto"
+        >
+          <option value="">All workplaces</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
+        {clientId && locations.length > 0 && (
+          <Select
+            size="sm"
+            value={locationId}
+            onChange={(e) => setLocationId(e.target.value)}
+            aria-label="Filter by location"
+            className="w-auto"
+          >
+            <option value="">All locations</option>
+            {locations.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </Select>
+        )}
+        {departments.length > 0 && (
+          <Select
+            size="sm"
+            value={departmentId}
+            onChange={(e) => setDepartmentId(e.target.value)}
+            aria-label="Filter by department"
+            className="w-auto"
+          >
+            <option value="">All departments</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </Select>
+        )}
+        <Select
+          size="sm"
+          value={employmentType}
+          onChange={(e) =>
+            setEmploymentType(e.target.value as EmploymentTypeFilter | '')
+          }
+          aria-label="Filter by employment type"
+          className="w-auto"
+        >
+          <option value="">All employment types</option>
+          <option value="W2_EMPLOYEE">W-2</option>
+          <option value="CONTRACTOR_1099_INDIVIDUAL">1099 Individual</option>
+          <option value="CONTRACTOR_1099_BUSINESS">1099 Business</option>
+        </Select>
+        {hasActiveFilters && (
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={clearAllFilters}
+            className="ml-auto"
+          >
+            <X className="h-3.5 w-3.5" />
+            Clear filters
+          </Button>
+        )}
+      </FilterBar>
 
       {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
@@ -646,79 +681,6 @@ export function PeopleDirectory() {
           />
         )}
       </Drawer>
-    </div>
-  );
-}
-
-function Kpi({
-  label,
-  value,
-  tone = 'text-white',
-  onClick,
-  active,
-}: {
-  label: string;
-  value: number;
-  tone?: string;
-  onClick?: () => void;
-  active?: boolean;
-}) {
-  const body = (
-    <>
-      <div className="text-[10px] uppercase tracking-wider text-silver">{label}</div>
-      <div className={cn('text-2xl font-semibold tabular-nums', tone)}>{value}</div>
-    </>
-  );
-  if (!onClick) {
-    return <div className="min-w-[7rem]">{body}</div>;
-  }
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        'min-w-[7rem] text-left rounded-md -mx-1.5 px-1.5 py-0.5 transition-colors',
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-        active
-          ? 'bg-gold/10 ring-1 ring-gold/40'
-          : 'hover:bg-navy-secondary/40',
-      )}
-      title={active ? 'Clear filter' : `Filter to ${label.toLowerCase()}`}
-    >
-      {body}
-    </button>
-  );
-}
-
-function FilterPicker({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: Array<{ value: string; label: string }>;
-}) {
-  return (
-    <div className="min-w-[150px]">
-      <label className="text-[10px] uppercase tracking-wider text-silver">
-        {label}
-      </label>
-      <Select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        size="sm"
-        className="mt-1"
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </Select>
     </div>
   );
 }
@@ -922,7 +884,7 @@ const DirectoryRow = memo(function DirectoryRow({
             <div className="text-xs text-silver truncate">{r.email}</div>
           </div>
           {r.j1Status && (
-            <Badge variant="default" className="ml-1 text-[10px]">
+            <Badge variant="default" className="ml-1 text-2xs">
               J-1
             </Badge>
           )}
@@ -932,7 +894,7 @@ const DirectoryRow = memo(function DirectoryRow({
         <div className="flex items-center gap-2">
           <Badge variant={STATUS_VARIANT[r.status]}>{STATUS_LABEL[r.status]}</Badge>
           {r.status === 'PENDING' && r.onboardingPercent !== null && (
-            <span className="text-[10px] tabular-nums text-silver">
+            <span className="text-2xs tabular-nums text-silver">
               {r.onboardingPercent}%
             </span>
           )}
@@ -1021,7 +983,7 @@ const DirectoryPhoneCard = memo(function DirectoryPhoneCard({
             </div>
             <div className="text-xs text-silver truncate">{r.email}</div>
             {(r.workplaceClientName || r.position) && (
-              <div className="mt-1 text-[11px] text-silver/80 truncate">
+              <div className="mt-1 text-xs2 text-silver/80 truncate">
                 {r.workplaceClientName && (
                   <span className="inline-flex items-center gap-1">
                     <Building2 className="h-3 w-3" />
@@ -1035,12 +997,12 @@ const DirectoryPhoneCard = memo(function DirectoryPhoneCard({
               </div>
             )}
             {r.status === 'PENDING' && r.onboardingPercent !== null && (
-              <div className="mt-1 text-[10px] tabular-nums text-silver">
+              <div className="mt-1 text-2xs tabular-nums text-silver">
                 Onboarding {r.onboardingPercent}%
               </div>
             )}
             {r.j1Status && (
-              <Badge variant="default" className="mt-1.5 text-[10px]">
+              <Badge variant="default" className="mt-1.5 text-2xs">
                 J-1
               </Badge>
             )}
@@ -1073,7 +1035,7 @@ function DirectoryDrawer({
               {a.firstName} {a.lastName}
             </DrawerTitle>
             <DrawerDescription className="truncate flex items-center gap-2">
-              <Badge variant={STATUS_VARIANT[a.status]} className="text-[10px]">
+              <Badge variant={STATUS_VARIANT[a.status]} className="text-2xs">
                 {STATUS_LABEL[a.status]}
               </Badge>
               <span>{EMPLOYMENT_LABEL[a.employmentType] ?? a.employmentType}</span>
@@ -1105,12 +1067,11 @@ function DirectoryDrawer({
         <Button variant="ghost" onClick={onClose}>
           Close
         </Button>
-        <Link
-          to={`/org?tab=people&associateId=${a.id}`}
-          className="text-xs px-3 py-2 rounded bg-navy-secondary/60 text-silver hover:text-white border border-navy-secondary"
-        >
-          Edit org assignment
-        </Link>
+        <Button asChild variant="outline" size="sm">
+          <Link to={`/org?tab=people&associateId=${a.id}`}>
+            Edit org assignment
+          </Link>
+        </Button>
       </DrawerFooter>
     </>
   );
@@ -1305,14 +1266,14 @@ function PhoneField({
       return;
     }
     if (next !== null && next.length < 7) {
-      toast.error('Phone must be at least 7 characters');
+      toast.error('Phone must be at least 7 characters.');
       return;
     }
     setSaving(true);
     try {
       const r = await patchAssociateProfile(a.id, { phone: next });
       onSaved(r.phone);
-      toast.success('Phone updated');
+      toast.success('Phone updated.');
       setEditing(false);
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Could not save.';
@@ -1433,7 +1394,7 @@ function PendingActions({
       });
       setOpen(false);
       toast.success(
-        r.emailSent ? `Nudge sent to ${r.recipientEmail}` : 'Nudge logged',
+        r.emailSent ? `Nudge sent to ${r.recipientEmail}.` : 'Nudge logged.',
       );
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Could not send.';
@@ -1446,13 +1407,12 @@ function PendingActions({
   return (
     <Section title="Onboarding">
       <div className="flex flex-wrap gap-2">
-        <Link
-          to={`/onboarding/applications/${applicationId}`}
-          className="inline-flex items-center gap-1.5 text-xs px-3 py-2 rounded bg-navy-secondary/60 text-silver hover:text-white border border-navy-secondary"
-        >
-          <ExternalLink className="h-3.5 w-3.5" />
-          Open application
-        </Link>
+        <Button asChild variant="outline" size="sm">
+          <Link to={`/onboarding/applications/${applicationId}`}>
+            <ExternalLink className="h-3.5 w-3.5" />
+            Open application
+          </Link>
+        </Button>
         <Button
           variant="ghost"
           onClick={() => setOpen(true)}
@@ -1507,7 +1467,7 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
         <CardContent className="py-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="text-[10px] uppercase tracking-wider text-silver">
+              <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
                 Current rate
               </div>
               <div className="text-3xl font-semibold tabular-nums text-white mt-1">
@@ -1516,7 +1476,7 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
                   : fmtPay(a.payAmount, a.payType, a.payCurrency)}
               </div>
               {current && (
-                <div className="text-[11px] text-silver mt-1">
+                <div className="text-xs2 text-silver mt-1">
                   {REASON_LABEL[current.reason]} · effective{' '}
                   {fmtDate(current.effectiveFrom)}
                 </div>
@@ -1532,7 +1492,7 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
 
       <div>
         <div className="flex items-center justify-between mb-2 border-b border-navy-secondary pb-1">
-          <div className="text-[10px] uppercase tracking-widest text-silver/80">
+          <div className="text-2xs uppercase tracking-widest text-silver/80">
             History
           </div>
           {records && records.length > 0 && (
@@ -1557,7 +1517,7 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
               }
             >
               <Download className="h-3.5 w-3.5" />
-              CSV
+              Export CSV
             </Button>
           )}
         </div>
@@ -1599,7 +1559,7 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
                   <TableCell className="text-silver text-xs">
                     {REASON_LABEL[r.reason]}
                     {r.notes && (
-                      <span className="block text-[10px] text-silver/70 truncate max-w-[180px]">
+                      <span className="block text-2xs text-silver/70 truncate max-w-[180px]">
                         {r.notes}
                       </span>
                     )}
@@ -1681,7 +1641,7 @@ function TransferDialog({
         reason: reason.trim() || null,
         notes: notes.trim() || null,
       });
-      toast.success(`Transferred to ${targetLocation.name}`);
+      toast.success(`Transferred to ${targetLocation.name}.`);
       onSaved(targetLocation.id, targetLocation.name);
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Could not transfer.';
@@ -1814,7 +1774,7 @@ function PayoutMethodSection({ associateId }: { associateId: string }) {
     <>
       <Section title="Pay setup">
         {isLoading ? (
-          <div className="text-xs text-silver">Loading…</div>
+          <Skeleton className="h-4 w-48" />
         ) : !data || !data.hasPayoutMethod ? (
           <InfoRow
             icon={<Landmark className="h-3.5 w-3.5" />}
@@ -2081,7 +2041,7 @@ function SsnSection({ associateId }: { associateId: string }) {
     <>
       <Section title="Tax identity">
         {isLoading ? (
-          <div className="text-xs text-silver">Loading…</div>
+          <Skeleton className="h-4 w-48" />
         ) : !data || !data.hasSsn ? (
           <InfoRow
             label={data?.source === 'TIN' ? 'TIN' : 'SSN'}
@@ -2191,7 +2151,7 @@ function W4Section({ associateId }: { associateId: string }) {
   return (
     <Section title="Federal W-4">
       {isLoading ? (
-        <div className="text-xs text-silver">Loading…</div>
+        <Skeleton className="h-4 w-48" />
       ) : !data || !data.hasSubmission ? (
         <InfoRow
           label="W-4"
@@ -2488,7 +2448,7 @@ function NewRateDialog({
         notes: notes.trim() || undefined,
         effectiveFrom,
       });
-      toast.success('Rate updated');
+      toast.success('Rate updated.');
       onSaved();
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Could not save.';
@@ -2539,7 +2499,7 @@ function NewRateDialog({
                     {...p}
                   />
                   {currentRecord && deltaPct !== null && (
-                    <p className="mt-1 text-[11px] text-silver tabular-nums">
+                    <p className="mt-1 text-xs2 text-silver tabular-nums">
                       was{' '}
                       {fmtPayRate(currentRecord.amount, currentRecord.payType)}{' '}
                       → {fmtPayRate(amountNum, payType)} (
@@ -2564,7 +2524,7 @@ function NewRateDialog({
                     {...p}
                   />
                   {backdated && (
-                    <p className="mt-1 text-[11px] text-warning" role="alert">
+                    <p className="mt-1 text-xs2 text-warning" role="alert">
                       Before the current rate&apos;s start (
                       {fmtDate(parseYmd(minEffectiveFrom!) ?? minEffectiveFrom)}
                       ) — this back-dates pay history.
@@ -2682,12 +2642,19 @@ const HR_UPLOAD_KINDS: ReadonlyArray<DocumentKind> = [
 
 const DOC_STATUS_VARIANT: Record<
   DocumentRecord['status'],
-  'success' | 'pending' | 'default'
+  'success' | 'pending' | 'destructive'
 > = {
   VERIFIED: 'success',
   UPLOADED: 'pending',
-  REJECTED: 'default',
-  EXPIRED: 'default',
+  REJECTED: 'destructive',
+  EXPIRED: 'destructive',
+};
+
+const DOC_STATUS_LABEL: Record<DocumentRecord['status'], string> = {
+  VERIFIED: 'Verified',
+  UPLOADED: 'Uploaded',
+  REJECTED: 'Rejected',
+  EXPIRED: 'Expired',
 };
 
 function DocumentsTab({ associateId }: { associateId: string }) {
@@ -2728,7 +2695,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
     try {
       const updated = await verifyDocument(d.id);
       replaceDoc(updated);
-      toast.success('Document verified');
+      toast.success('Document verified.');
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not verify.');
     } finally {
@@ -2743,7 +2710,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
     try {
       const updated = await rejectDocument(id, { reason });
       replaceDoc(updated);
-      toast.success('Document rejected');
+      toast.success('Document rejected.');
       setRejectTarget(null);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not reject.');
@@ -2788,7 +2755,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
   return (
     <>
       <div className="flex items-center justify-between mb-3">
-        <div className="text-[10px] uppercase tracking-widest text-silver/80">
+        <div className="text-2xs uppercase tracking-widest text-silver/80">
           {docs.length} document{docs.length === 1 ? '' : 's'}
         </div>
         {uploadButton}
@@ -2809,23 +2776,23 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                 <div className="font-medium text-white text-sm">
                   {DOCUMENT_KIND_LABEL[d.kind] ?? d.kind}
                 </div>
-                <div className="text-[10px] text-silver truncate max-w-[220px]">
+                <div className="text-2xs text-silver truncate max-w-[220px]">
                   {d.filename}
                 </div>
                 {!d.fileAvailable && (
-                  <div className="text-[10px] text-alert mt-0.5">
+                  <div className="text-2xs text-alert mt-0.5">
                     File missing on server — please re-upload
                   </div>
                 )}
                 {d.status === 'REJECTED' && d.rejectionReason && (
-                  <div className="text-[10px] text-alert mt-0.5 truncate max-w-[220px]">
+                  <div className="text-2xs text-alert mt-0.5 truncate max-w-[220px]">
                     {d.rejectionReason}
                   </div>
                 )}
               </TableCell>
               <TableCell>
                 <Badge variant={DOC_STATUS_VARIANT[d.status]}>
-                  {d.status.charAt(0) + d.status.slice(1).toLowerCase()}
+                  {DOC_STATUS_LABEL[d.status]}
                 </Badge>
               </TableCell>
               <TableCell className="hidden sm:table-cell text-xs text-silver tabular-nums">
@@ -2961,10 +2928,10 @@ function UploadResultDialog({
     try {
       const created = await uploadAdminDocument(file, kind, associateId);
       onUploaded(created);
-      toast.success('Result uploaded');
+      toast.success('Result uploaded.');
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Upload failed');
+      toast.error(err instanceof Error ? err.message : 'Upload failed.');
       setBusy(false);
     }
   }
@@ -3026,7 +2993,7 @@ function UploadResultDialog({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-2 border-b border-navy-secondary pb-1">
+      <div className="text-2xs uppercase tracking-widest text-silver/80 mb-2 border-b border-navy-secondary pb-1">
         {title}
       </div>
       <div className="space-y-1.5">{children}</div>

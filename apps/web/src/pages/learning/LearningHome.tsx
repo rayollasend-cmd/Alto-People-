@@ -35,8 +35,11 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
+  SearchInput,
+  SegmentedControl,
   Select,
   SkeletonRows,
   Table,
@@ -92,21 +95,30 @@ export function LearningHome() {
 /** Shared load-failure block: message + Retry. Never fake an empty state. */
 function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="p-6 space-y-3">
-      <p role="alert" className="text-sm text-alert">
+    <div className="p-6">
+      <ErrorBanner
+        action={
+          <Button size="sm" variant="secondary" onClick={onRetry}>
+            Retry
+          </Button>
+        }
+      >
         {message}
-      </p>
-      <Button size="sm" variant="secondary" onClick={onRetry}>
-        Retry
-      </Button>
+      </ErrorBanner>
     </div>
   );
 }
 
 const COURSE_BADGE: Record<Course['status'], 'pending' | 'success' | 'default'> = {
-  DRAFT: 'pending',
+  DRAFT: 'default',
   PUBLISHED: 'success',
   ARCHIVED: 'default',
+};
+
+const COURSE_STATUS_LABELS: Record<Course['status'], string> = {
+  DRAFT: 'Draft',
+  PUBLISHED: 'Published',
+  ARCHIVED: 'Archived',
 };
 
 function CoursesTab({ canManage }: { canManage: boolean }) {
@@ -141,8 +153,8 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Input
-          className="h-8 w-56"
+        <SearchInput
+          className="h-8 w-64"
           placeholder="Search courses…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -193,8 +205,8 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                   <TableHead>Title</TableHead>
                   <TableHead className="hidden md:table-cell">Required</TableHead>
                   <TableHead className="hidden lg:table-cell">Validity</TableHead>
-                  <TableHead className="hidden lg:table-cell">Modules</TableHead>
-                  <TableHead className="hidden md:table-cell">Enrolled</TableHead>
+                  <TableHead className="hidden lg:table-cell text-right">Modules</TableHead>
+                  <TableHead className="hidden md:table-cell text-right">Enrolled</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -204,7 +216,7 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                   <TableRow key={c.id} className="group">
                     <TableCell className="font-medium text-white">
                       {c.title}
-                      <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                         {c.isRequired ? 'Required · ' : ''}{c.enrollmentCount} enrolled
                       </div>
                     </TableCell>
@@ -214,10 +226,16 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="hidden lg:table-cell">
                       {c.validityDays ? `${c.validityDays}d` : 'Never expires'}
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell">{c.moduleCount}</TableCell>
-                    <TableCell className="hidden md:table-cell">{c.enrollmentCount}</TableCell>
+                    <TableCell className="hidden lg:table-cell text-right tabular-nums">
+                      {c.moduleCount}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums">
+                      {c.enrollmentCount}
+                    </TableCell>
                     <TableCell>
-                      <Badge variant={COURSE_BADGE[c.status]}>{c.status}</Badge>
+                      <Badge variant={COURSE_BADGE[c.status]}>
+                        {COURSE_STATUS_LABELS[c.status]}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && c.status === 'DRAFT' && (
@@ -279,7 +297,11 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                               await deleteCourse(c.id);
                               refresh();
                             } catch (err) {
-                              toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                              toast.error(
+                                err instanceof ApiError
+                                  ? err.message
+                                  : 'Could not delete the course.',
+                              );
                             }
                           }}
                           className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
@@ -347,7 +369,7 @@ function NewCourseDrawer({
       toast.success('Course drafted.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the course.');
     } finally {
       setSaving(false);
     }
@@ -447,7 +469,7 @@ function EnrollDrawer({
       }
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not enroll the associates.');
     } finally {
       setSaving(false);
     }
@@ -516,6 +538,14 @@ const ENROLL_BADGE: Record<EnrollmentStatus, 'pending' | 'accent' | 'success' | 
   WAIVED: 'default',
 };
 
+const ENROLL_STATUS_LABELS: Record<EnrollmentStatus, string> = {
+  ASSIGNED: 'Assigned',
+  IN_PROGRESS: 'In progress',
+  COMPLETED: 'Completed',
+  EXPIRED: 'Expired',
+  WAIVED: 'Waived',
+};
+
 function EnrollmentsTab({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<Enrollment[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -557,7 +587,7 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
       ...filtered.map((e) => [
         e.courseTitle,
         e.associateName,
-        e.status,
+        ENROLL_STATUS_LABELS[e.status],
         e.completedAt ? fmtDate(e.completedAt) : '',
         e.expiresAt ? fmtDate(e.expiresAt) : '',
         e.score ?? '',
@@ -569,8 +599,8 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Input
-          className="h-8 w-56"
+        <SearchInput
+          className="h-8 w-64"
           placeholder="Search associate or course…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -627,7 +657,7 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
                 <TableHead>Status</TableHead>
                 <TableHead className="hidden lg:table-cell">Completed</TableHead>
                 <TableHead className="hidden md:table-cell">Expires</TableHead>
-                <TableHead className="hidden lg:table-cell">Score</TableHead>
+                <TableHead className="hidden lg:table-cell text-right">Score</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -636,17 +666,21 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
                 <TableRow key={e.id}>
                   <TableCell className="font-medium text-white">
                     {e.courseTitle}
-                    <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                    <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                       Expires {fmtDate(e.expiresAt)}
                     </div>
                   </TableCell>
                   <TableCell>{e.associateName}</TableCell>
                   <TableCell>
-                    <Badge variant={ENROLL_BADGE[e.status]}>{e.status}</Badge>
+                    <Badge variant={ENROLL_BADGE[e.status]}>
+                      {ENROLL_STATUS_LABELS[e.status]}
+                    </Badge>
                   </TableCell>
                   <TableCell className="hidden lg:table-cell">{fmtDate(e.completedAt)}</TableCell>
                   <TableCell className="hidden md:table-cell">{fmtDate(e.expiresAt)}</TableCell>
-                  <TableCell className="hidden lg:table-cell">{e.score ?? '—'}</TableCell>
+                  <TableCell className="hidden lg:table-cell text-right tabular-nums">
+                    {e.score ?? '—'}
+                  </TableCell>
                   <TableCell className="text-right space-x-2">
                     {(e.status === 'ASSIGNED' || e.status === 'IN_PROGRESS') && (
                       <Button size="sm" onClick={() => onComplete(e.id)}>
@@ -690,7 +724,9 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
             setCompleteId(null);
             refresh();
           } catch (err) {
-            toast.error(err instanceof ApiError ? err.message : 'Failed.');
+            toast.error(
+              err instanceof ApiError ? err.message : 'Could not mark the enrollment complete.',
+            );
           } finally {
             setCompleting(false);
           }
@@ -713,7 +749,9 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
             setWaiveId(null);
             refresh();
           } catch (err) {
-            toast.error(err instanceof ApiError ? err.message : 'Failed.');
+            toast.error(
+              err instanceof ApiError ? err.message : 'Could not waive the enrollment.',
+            );
           } finally {
             setWaiving(false);
           }
@@ -765,17 +803,15 @@ function ExpiringTab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs uppercase tracking-wider text-silver">Window</span>
-        {EXPIRING_WINDOWS.map((w) => (
-          <Button
-            key={w}
-            size="xs"
-            variant={days === w ? 'primary' : 'outline'}
-            aria-pressed={days === w}
-            onClick={() => setDays(w)}
-          >
-            {w} days
-          </Button>
-        ))}
+        <SegmentedControl<number>
+          ariaLabel="Expiration window"
+          value={days}
+          onChange={setDays}
+          options={EXPIRING_WINDOWS.map((w) => ({
+            value: w,
+            label: `${w} days`,
+          }))}
+        />
         <Button
           size="sm"
           variant="secondary"
@@ -814,7 +850,7 @@ function ExpiringTab() {
                   <TableRow key={e.id}>
                     <TableCell className="font-medium text-white">
                       {e.courseTitle}
-                      <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                         Expires {fmtDate(e.expiresAt)}{e.isRequired ? ' · Required' : ''}
                       </div>
                     </TableCell>

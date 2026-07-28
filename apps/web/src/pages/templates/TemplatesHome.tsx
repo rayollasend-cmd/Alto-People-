@@ -25,6 +25,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
@@ -39,6 +40,7 @@ import {
 } from '@/components/ui';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
+import { fmtDateTime } from '@/lib/format';
 import { toast } from 'sonner';
 
 const KIND_LABEL: Record<DocumentTemplateKind, string> = {
@@ -68,14 +70,20 @@ const ASSOCIATE_TOKEN_PATHS = [
 export function TemplatesHome() {
   const confirm = useConfirm();
   const [rows, setRows] = useState<DocumentTemplate[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [active, setActive] = useState<DocumentTemplate | null>(null);
 
   const refresh = () => {
     setRows(null);
+    setLoadError(null);
     listTemplates()
       .then((r) => setRows(r.templates))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setLoadError(
+          err instanceof ApiError ? err.message : 'Could not load templates.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
@@ -105,7 +113,19 @@ export function TemplatesHome() {
       </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {loadError}
+              </ErrorBanner>
+            </div>
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -134,7 +154,7 @@ export function TemplatesHome() {
                   >
                     <TableCell className="font-medium text-white">
                       {t.name}
-                      <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                         {KIND_LABEL[t.kind]} · {t.versionCount} version{t.versionCount === 1 ? '' : 's'}
                       </div>
                     </TableCell>
@@ -143,7 +163,7 @@ export function TemplatesHome() {
                       {t.currentVersion ? (
                         <Badge variant="success">v{t.currentVersion}</Badge>
                       ) : (
-                        <Badge variant="pending">Draft only</Badge>
+                        <Badge variant="default">Draft only</Badge>
                       )}
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">{t.versionCount}</TableCell>
@@ -260,6 +280,7 @@ function TemplateDrawer({
   onChanged: () => void;
 }) {
   const [versions, setVersions] = useState<DocumentTemplateVersion[] | null>(null);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [renderResult, setRenderResult] = useState<{
@@ -289,6 +310,7 @@ function TemplateDrawer({
   };
 
   const refresh = () => {
+    setVersionsError(null);
     listVersions(template.id)
       .then((r) => {
         setVersions(r.versions);
@@ -298,7 +320,11 @@ function TemplateDrawer({
           setBody(latest.body);
         }
       })
-      .catch(() => setVersions([]));
+      .catch((err) =>
+        setVersionsError(
+          err instanceof ApiError ? err.message : 'Could not load versions.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
@@ -315,7 +341,7 @@ function TemplateDrawer({
         subject: subject.trim() || null,
         body,
       });
-      toast.success('New version saved (DRAFT).');
+      toast.success('New version saved as draft.');
       refresh();
       onChanged();
     } catch (err) {
@@ -419,12 +445,12 @@ function TemplateDrawer({
                       type="button"
                       title="Insert at cursor"
                       onClick={() => insertToken(p)}
-                      className="rounded border border-navy-secondary bg-navy-secondary/40 px-1.5 py-0.5 font-mono text-[11px] text-steel transition hover:border-steel hover:text-white"
+                      className="rounded border border-navy-secondary bg-navy-secondary/40 px-1.5 py-0.5 font-mono text-xs2 text-steel transition hover:border-steel hover:text-white"
                     >
                       {`{{ ${p} }}`}
                     </button>
                   ))}
-                  <div className="w-full pt-1 text-[11px] text-silver/70">
+                  <div className="w-full pt-1 text-xs2 text-silver/70">
                     Associate tokens resolve when an associate is picked at
                     render time. Any custom key passed in the render data (e.g.{' '}
                     {'{{ startDate }}'}) also resolves.
@@ -443,7 +469,17 @@ function TemplateDrawer({
         <Card>
           <CardContent className="p-4 space-y-3">
             <div className="text-sm font-medium text-white">Versions</div>
-            {versions === null ? (
+            {versionsError ? (
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {versionsError}
+              </ErrorBanner>
+            ) : versions === null ? (
               <SkeletonRows count={3} />
             ) : versions.length === 0 ? (
               <div className="text-sm text-silver">
@@ -464,19 +500,19 @@ function TemplateDrawer({
                     <TableRow key={v.id}>
                       <TableCell>
                         v{v.version}
-                        <div className="md:hidden text-[11px] text-silver/70 truncate">
-                          {v.publishedAt ? new Date(v.publishedAt).toLocaleString() : '—'}
+                        <div className="md:hidden text-xs2 text-silver/70 truncate">
+                          {fmtDateTime(v.publishedAt)}
                         </div>
                       </TableCell>
                       <TableCell>
                         {v.publishedAt ? (
                           <Badge variant="success">Published</Badge>
                         ) : (
-                          <Badge variant="pending">Draft</Badge>
+                          <Badge variant="default">Draft</Badge>
                         )}
                       </TableCell>
                       <TableCell className="hidden md:table-cell">
-                        {v.publishedAt ? new Date(v.publishedAt).toLocaleString() : '—'}
+                        {fmtDateTime(v.publishedAt)}
                       </TableCell>
                       <TableCell className="text-right">
                         {!v.publishedAt && (

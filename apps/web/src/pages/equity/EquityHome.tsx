@@ -36,7 +36,11 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
+  MetricCard,
   PageHeader,
+  SearchInput,
+  SegmentedControl,
+  type SegmentedControlOption,
   Select,
   SkeletonRows,
   Textarea,
@@ -73,13 +77,14 @@ const fmtStrike = (price: string | null, currency: string) =>
 function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="p-6">
-      <ErrorBanner>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <span>{message}</span>
+      <ErrorBanner
+        action={
           <Button size="sm" variant="secondary" onClick={onRetry}>
             Retry
           </Button>
-        </div>
+        }
+      >
+        {message}
       </ErrorBanner>
     </div>
   );
@@ -95,13 +100,21 @@ const GRANT_TYPE_LABELS: Record<EquityGrantType, string> = {
 
 const STATUS_VARIANT: Record<
   EquityGrantStatus,
-  'pending' | 'success' | 'destructive' | 'accent' | 'outline'
+  'pending' | 'success' | 'destructive' | 'info'
 > = {
   PROPOSED: 'pending',
   GRANTED: 'success',
   CANCELLED: 'destructive',
-  EXERCISED: 'accent',
-  EXPIRED: 'outline',
+  EXERCISED: 'info',
+  EXPIRED: 'destructive',
+};
+
+const STATUS_LABELS: Record<EquityGrantStatus, string> = {
+  PROPOSED: 'Proposed',
+  GRANTED: 'Granted',
+  CANCELLED: 'Cancelled',
+  EXERCISED: 'Exercised',
+  EXPIRED: 'Expired',
 };
 
 export function EquityHome() {
@@ -176,6 +189,28 @@ export function EquityHome() {
       (g.associateEmail ?? '').toLowerCase().includes(q),
   );
 
+  // The admin segment only exists for comp managers; building the option
+  // list up front keeps the conditional out of the JSX and the generic
+  // parameter explicit (inference would otherwise narrow to 'mine').
+  const tabOptions: SegmentedControlOption<'mine' | 'admin'>[] = [
+    { value: 'mine', label: 'My grants' },
+  ];
+  if (canManageComp) {
+    tabOptions.push({
+      value: 'admin',
+      label: (
+        <>
+          All grants
+          {summary && summary.proposedCount > 0 && (
+            <Badge variant="pending" className="ml-2">
+              {summary.proposedCount}
+            </Badge>
+          )}
+        </>
+      ),
+    });
+  }
+
   const exportCsv = () => {
     // Cap-table extract of what's currently on screen (filter + search).
     downloadCsv(`equity-grants-${ymdLocal()}.csv`, [
@@ -186,7 +221,7 @@ export function EquityHome() {
         g.totalShares,
         g.strikePrice ? `${g.currency} ${g.strikePrice}` : '',
         g.vestingStartDate,
-        g.status,
+        STATUS_LABELS[g.status],
       ]),
     ]);
   };
@@ -200,34 +235,17 @@ export function EquityHome() {
       />
 
       <div className="flex items-center justify-between">
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant={tab === 'mine' ? 'primary' : 'ghost'}
-            onClick={() => setTab('mine')}
-          >
-            My grants
-          </Button>
-          {canManageComp && (
-            <Button
-              size="sm"
-              variant={tab === 'admin' ? 'primary' : 'ghost'}
-              onClick={() => setTab('admin')}
-            >
-              All grants
-              {summary && summary.proposedCount > 0 && (
-                <Badge variant="pending" className="ml-2">
-                  {summary.proposedCount}
-                </Badge>
-              )}
-            </Button>
-          )}
-        </div>
+        <SegmentedControl<'mine' | 'admin'>
+          ariaLabel="Grant view"
+          value={tab}
+          onChange={setTab}
+          options={tabOptions}
+        />
         <div className="flex gap-2 flex-wrap justify-end">
           {canManageComp && tab === 'admin' && (
             <>
-              <Input
-                className="h-8 w-44 text-sm"
+              <SearchInput
+                className="h-8 w-52 text-sm"
                 placeholder="Search associate…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -266,28 +284,29 @@ export function EquityHome() {
       </div>
 
       {tab === 'admin' && summaryError && (
-        <ErrorBanner>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span>{summaryError}</span>
+        <ErrorBanner
+          action={
             <Button size="sm" variant="secondary" onClick={refreshSummary}>
               Retry
             </Button>
-          </div>
+          }
+        >
+          {summaryError}
         </ErrorBanner>
       )}
 
       {tab === 'admin' && summary && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <SummaryCard label="Proposed" value={summary.proposedCount} />
-          <SummaryCard
+          <MetricCard label="Proposed" value={summary.proposedCount} />
+          <MetricCard
             label="Active recipients"
             value={summary.activeRecipients}
           />
-          <SummaryCard
+          <MetricCard
             label="Shares granted"
             value={summary.sharesGranted.toLocaleString()}
           />
-          <SummaryCard
+          <MetricCard
             label="Shares vested"
             value={summary.sharesVested.toLocaleString()}
           />
@@ -314,10 +333,10 @@ export function EquityHome() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Type</TableHead>
-                    <TableHead>Total</TableHead>
-                    <TableHead>Vested</TableHead>
-                    <TableHead className="hidden md:table-cell">Unvested</TableHead>
-                    <TableHead className="hidden lg:table-cell">Strike</TableHead>
+                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="text-right">Vested</TableHead>
+                    <TableHead className="hidden md:table-cell text-right">Unvested</TableHead>
+                    <TableHead className="hidden lg:table-cell text-right">Strike</TableHead>
                     <TableHead className="hidden md:table-cell">Grant date</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -330,23 +349,23 @@ export function EquityHome() {
                     >
                       <TableCell className="font-medium text-white">
                         <div className="truncate">{GRANT_TYPE_LABELS[g.grantType]}</div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        <div className="md:hidden text-xs2 text-silver/70 truncate">
                           {fmtYmd(g.grantDate)}
                           {g.strikePrice
                             ? ` · ${fmtStrike(g.strikePrice, g.currency)}`
                             : ''}
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="text-sm text-right tabular-nums">
                         {g.totalShares.toLocaleString()}
                       </TableCell>
-                      <TableCell className="text-sm text-success">
+                      <TableCell className="text-sm text-success text-right tabular-nums">
                         {g.vestedShares.toLocaleString()}
                       </TableCell>
-                      <TableCell className="text-sm text-silver hidden md:table-cell">
+                      <TableCell className="text-sm text-silver hidden md:table-cell text-right tabular-nums">
                         {g.unvestedShares.toLocaleString()}
                       </TableCell>
-                      <TableCell className="text-sm hidden lg:table-cell">
+                      <TableCell className="text-sm hidden lg:table-cell text-right tabular-nums">
                         {fmtStrike(g.strikePrice, g.currency)}
                       </TableCell>
                       <TableCell className="text-xs text-silver hidden md:table-cell">
@@ -401,7 +420,7 @@ export function EquityHome() {
                   <TableRow>
                     <TableHead>Associate</TableHead>
                     <TableHead className="hidden md:table-cell">Type</TableHead>
-                    <TableHead>Shares</TableHead>
+                    <TableHead className="text-right">Shares</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="hidden md:table-cell">Grant date</TableHead>
                   </TableRow>
@@ -420,19 +439,19 @@ export function EquityHome() {
                         <div className="text-xs text-silver">
                           {g.associateEmail ?? ''}
                         </div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        <div className="md:hidden text-xs2 text-silver/70 truncate">
                           {GRANT_TYPE_LABELS[g.grantType]} · {fmtYmd(g.grantDate)}
                         </div>
                       </TableCell>
                       <TableCell className="text-sm hidden md:table-cell">
                         {GRANT_TYPE_LABELS[g.grantType]}
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="text-sm text-right tabular-nums">
                         {g.totalShares.toLocaleString()}
                       </TableCell>
                       <TableCell>
                         <Badge variant={STATUS_VARIANT[g.status]}>
-                          {g.status}
+                          {STATUS_LABELS[g.status]}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-xs text-silver hidden md:table-cell">
@@ -472,25 +491,6 @@ export function EquityHome() {
         />
       )}
     </div>
-  );
-}
-
-function SummaryCard({
-  label,
-  value,
-}: {
-  label: string;
-  value: number | string;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-3">
-        <div className="text-xs uppercase tracking-wider text-silver">
-          {label}
-        </div>
-        <div className="text-xl font-semibold text-white mt-1">{value}</div>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -572,10 +572,10 @@ function NewGrantDrawer({
         vestingMonths: parseInt(vestingMonths, 10),
         notes: notes.trim() || null,
       });
-      toast.success('Grant created (PROPOSED).');
+      toast.success('Grant created as proposed.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the grant.');
     } finally {
       setBusy(false);
     }
@@ -706,7 +706,7 @@ function NewGrantDrawer({
           Cancel
         </Button>
         <Button onClick={submit} disabled={busy}>
-          {busy ? 'Creating…' : 'Create as PROPOSED'}
+          {busy ? 'Creating…' : 'Create proposed grant'}
         </Button>
       </DrawerFooter>
     </Drawer>
@@ -734,7 +734,7 @@ function MyDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[row.status]}>{row.status}</Badge>
+          <Badge variant={STATUS_VARIANT[row.status]}>{STATUS_LABELS[row.status]}</Badge>
           <span className="text-sm text-silver">
             Granted {fmtYmd(row.grantDate)} · Vesting from {fmtYmd(row.vestingStartDate)}
           </span>
@@ -851,7 +851,7 @@ function AdminDetailDrawer({
       toast.success(successMessage);
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not update the grant.');
     } finally {
       setBusy(false);
     }
@@ -877,9 +877,7 @@ function AdminDetailDrawer({
         <DrawerTitle>
           {grant
             ? `${grant.associateName} · ${GRANT_TYPE_LABELS[grant.grantType]}`
-            : loadError
-              ? 'Grant'
-              : 'Loading…'}
+            : 'Grant details'}
         </DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
@@ -891,7 +889,7 @@ function AdminDetailDrawer({
           <>
             <div className="flex items-center gap-2">
               <Badge variant={STATUS_VARIANT[grant.status]}>
-                {grant.status}
+                {STATUS_LABELS[grant.status]}
               </Badge>
               <span className="text-sm text-silver">
                 {grant.totalShares.toLocaleString()} total ·{' '}
@@ -965,7 +963,7 @@ function AdminDetailDrawer({
                   <TableHeader>
                     <TableRow>
                       <TableHead>Date</TableHead>
-                      <TableHead>Shares</TableHead>
+                      <TableHead className="text-right">Shares</TableHead>
                       <TableHead className="hidden md:table-cell">Type</TableHead>
                       <TableHead>Vested</TableHead>
                     </TableRow>
@@ -975,11 +973,11 @@ function AdminDetailDrawer({
                       <TableRow key={e.id}>
                         <TableCell className="text-xs">
                           <div className="truncate">{fmtYmd(e.vestDate)}</div>
-                          <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          <div className="md:hidden text-xs2 text-silver/70 truncate">
                             {e.isCliff ? 'Cliff' : 'Monthly'}
                           </div>
                         </TableCell>
-                        <TableCell className="text-sm">
+                        <TableCell className="text-sm text-right tabular-nums">
                           {e.shares.toLocaleString()}
                         </TableCell>
                         <TableCell className="text-xs text-silver hidden md:table-cell">
@@ -987,7 +985,7 @@ function AdminDetailDrawer({
                         </TableCell>
                         <TableCell>
                           {e.vested ? (
-                            <Badge variant="success">vested</Badge>
+                            <Badge variant="success">Vested</Badge>
                           ) : (
                             <span className="text-silver text-xs">—</span>
                           )}

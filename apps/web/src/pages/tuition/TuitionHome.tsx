@@ -31,8 +31,13 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
+  MetricCard,
   PageHeader,
+  SearchInput,
+  SegmentedControl,
+  type SegmentedControlOption,
   Select,
   SkeletonRows,
   Textarea,
@@ -55,6 +60,13 @@ const STATUS_VARIANT: Record<
   PAID: 'success',
 };
 
+const STATUS_LABELS: Record<TuitionStatus, string> = {
+  SUBMITTED: 'Submitted',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+  PAID: 'Paid',
+};
+
 const GRADE_OPTIONS = [
   'A',
   'A-',
@@ -74,13 +86,16 @@ const GRADE_OPTIONS = [
 /** Shared load-failure block: message + Retry. Never fake an empty state. */
 function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="p-6 space-y-3">
-      <p role="alert" className="text-sm text-alert">
+    <div className="p-6">
+      <ErrorBanner
+        action={
+          <Button size="sm" variant="secondary" onClick={onRetry}>
+            Retry
+          </Button>
+        }
+      >
         {message}
-      </p>
-      <Button size="sm" variant="secondary" onClick={onRetry}>
-        Retry
-      </Button>
+      </ErrorBanner>
     </div>
   );
 }
@@ -116,7 +131,7 @@ export function TuitionHome() {
         .then((r) => setMine(r.requests))
         .catch((err) =>
           setMineError(
-            err instanceof ApiError ? err.message : 'Failed to load your requests.',
+            err instanceof ApiError ? err.message : 'Could not load your requests.',
           ),
         );
     } else {
@@ -127,7 +142,7 @@ export function TuitionHome() {
         .then((r) => setQueue(r.requests))
         .catch((err) =>
           setQueueError(
-            err instanceof ApiError ? err.message : 'Failed to load the queue.',
+            err instanceof ApiError ? err.message : 'Could not load the queue.',
           ),
         );
     }
@@ -141,7 +156,7 @@ export function TuitionHome() {
       .catch((err) => {
         setSummary(null);
         setSummaryError(
-          err instanceof ApiError ? err.message : 'Failed to load the summary.',
+          err instanceof ApiError ? err.message : 'Could not load the summary.',
         );
       });
   };
@@ -187,6 +202,28 @@ export function TuitionHome() {
     });
   };
 
+  // The queue segment only exists for payroll processors; building the
+  // option list up front keeps the conditional out of the JSX and the
+  // generic parameter explicit (inference would otherwise narrow to 'mine').
+  const tabOptions: SegmentedControlOption<'mine' | 'queue'>[] = [
+    { value: 'mine', label: 'My requests' },
+  ];
+  if (canProcessPayroll) {
+    tabOptions.push({
+      value: 'queue',
+      label: (
+        <>
+          Queue
+          {summary && summary.pendingCount > 0 && (
+            <Badge variant="destructive" className="ml-2">
+              {summary.pendingCount}
+            </Badge>
+          )}
+        </>
+      ),
+    });
+  }
+
   const exportQueueCsv = () => {
     downloadCsv(`tuition-queue-${ymdLocal()}.csv`, [
       [
@@ -213,7 +250,7 @@ export function TuitionHome() {
         r.termEndDate,
         r.amount,
         r.currency,
-        r.status,
+        STATUS_LABELS[r.status],
         r.gradeReceived ?? '',
         r.reviewerNotes ?? '',
       ]),
@@ -242,7 +279,9 @@ export function TuitionHome() {
       if (failed === 0) {
         toast.success(`Approved ${ok} request${ok === 1 ? '' : 's'}.`);
       } else if (ok === 0) {
-        toast.error(`Failed to approve ${failed} request${failed === 1 ? '' : 's'}.`);
+        toast.error(
+          `Could not approve ${failed} request${failed === 1 ? '' : 's'}.`,
+        );
       } else {
         toast.error(`Approved ${ok}; ${failed} failed.`);
       }
@@ -262,29 +301,12 @@ export function TuitionHome() {
       />
 
       <div className="flex items-center justify-between">
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant={tab === 'mine' ? 'primary' : 'ghost'}
-            onClick={() => setTab('mine')}
-          >
-            My requests
-          </Button>
-          {canProcessPayroll && (
-            <Button
-              size="sm"
-              variant={tab === 'queue' ? 'primary' : 'ghost'}
-              onClick={() => setTab('queue')}
-            >
-              Queue
-              {summary && summary.pendingCount > 0 && (
-                <Badge variant="destructive" className="ml-2">
-                  {summary.pendingCount}
-                </Badge>
-              )}
-            </Button>
-          )}
-        </div>
+        <SegmentedControl<'mine' | 'queue'>
+          ariaLabel="Tuition view"
+          value={tab}
+          onChange={setTab}
+          options={tabOptions}
+        />
         <div className="flex gap-2">
           {canProcessPayroll && tab === 'queue' && (
             <Select
@@ -310,49 +332,24 @@ export function TuitionHome() {
       </div>
 
       {tab === 'queue' && summaryError && (
-        <Card>
-          <CardContent className="p-4 flex flex-wrap items-center gap-3">
-            <p role="alert" className="text-sm text-alert">
-              {summaryError}
-            </p>
+        <ErrorBanner
+          action={
             <Button size="sm" variant="secondary" onClick={refreshSummary}>
               Retry
             </Button>
-          </CardContent>
-        </Card>
+          }
+        >
+          {summaryError}
+        </ErrorBanner>
       )}
       {tab === 'queue' && summary && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <Card>
-            <CardContent className="p-3">
-              <div className="text-xs uppercase tracking-wider text-silver">
-                Pending
-              </div>
-              <div className="text-xl font-semibold text-white mt-1">
-                {summary.pendingCount}
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3">
-              <div className="text-xs uppercase tracking-wider text-silver">
-                Approved (awaiting pay)
-              </div>
-              <div className="text-xl font-semibold text-white mt-1">
-                {summary.approvedAwaitingPayment}
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-3">
-              <div className="text-xs uppercase tracking-wider text-silver">
-                Paid YTD
-              </div>
-              <div className="text-xl font-semibold text-white mt-1">
-                {fmtMoney(summary.paidYtdAmount)}
-              </div>
-            </CardContent>
-          </Card>
+          <MetricCard label="Pending" value={summary.pendingCount} accent />
+          <MetricCard
+            label="Approved (awaiting pay)"
+            value={summary.approvedAwaitingPayment}
+          />
+          <MetricCard label="Paid YTD" value={fmtMoney(summary.paidYtdAmount)} />
         </div>
       )}
 
@@ -378,7 +375,7 @@ export function TuitionHome() {
                     <TableHead>Course</TableHead>
                     <TableHead className="hidden md:table-cell">School</TableHead>
                     <TableHead className="hidden lg:table-cell">Term</TableHead>
-                    <TableHead>Amount</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="hidden md:table-cell">Grade</TableHead>
                   </TableRow>
@@ -392,7 +389,7 @@ export function TuitionHome() {
                     >
                       <TableCell className="font-medium text-white">
                         {r.courseName}
-                        <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                        <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                           {r.schoolName}{r.gradeReceived ? ` · ${r.gradeReceived}` : ''}
                         </div>
                       </TableCell>
@@ -407,12 +404,12 @@ export function TuitionHome() {
                       <TableCell className="text-xs text-silver hidden lg:table-cell">
                         {fmtDate(parseYmd(r.termStartDate))} → {fmtDate(parseYmd(r.termEndDate))}
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="text-sm text-right tabular-nums">
                         {fmtMoney(r.amount, { currency: r.currency })}
                       </TableCell>
                       <TableCell>
                         <Badge variant={STATUS_VARIANT[r.status]}>
-                          {r.status}
+                          {STATUS_LABELS[r.status]}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm hidden md:table-cell">
@@ -430,8 +427,9 @@ export function TuitionHome() {
       ) : (
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2">
-            <Input
-              className="h-8 w-56"
+            <SearchInput
+              className="h-8"
+              wrapperClassName="w-64 max-w-full"
               placeholder="Search associate or school…"
               value={queueSearch}
               onChange={(e) => setQueueSearch(e.target.value)}
@@ -495,7 +493,7 @@ export function TuitionHome() {
                       <TableHead>Associate</TableHead>
                       <TableHead className="hidden md:table-cell">Course</TableHead>
                       <TableHead className="hidden lg:table-cell">School</TableHead>
-                      <TableHead>Amount</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="hidden lg:table-cell">Grade</TableHead>
                     </TableRow>
@@ -524,18 +522,18 @@ export function TuitionHome() {
                           <div className="text-xs text-silver">
                             {r.associateEmail}
                           </div>
-                          <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          <div className="md:hidden text-xs2 text-silver/70 truncate">
                             {r.courseName} · {r.schoolName}
                           </div>
                         </TableCell>
                         <TableCell className="text-sm hidden md:table-cell">{r.courseName}</TableCell>
                         <TableCell className="text-sm hidden lg:table-cell">{r.schoolName}</TableCell>
-                        <TableCell className="text-sm">
+                        <TableCell className="text-sm text-right tabular-nums">
                           {fmtMoney(r.amount, { currency: r.currency })}
                         </TableCell>
                         <TableCell>
                           <Badge variant={STATUS_VARIANT[r.status]}>
-                            {r.status}
+                            {STATUS_LABELS[r.status]}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-sm hidden lg:table-cell">
@@ -633,10 +631,10 @@ function NewRequestDrawer({
         amount: parseFloat(amount),
         receiptUrl: receiptUrl.trim() || null,
       });
-      toast.success('Submitted.');
+      toast.success('Request submitted.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not submit the request.');
     } finally {
       setSaving(false);
     }
@@ -755,8 +753,10 @@ function MyDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[row.status]}>{row.status}</Badge>
-          <span className="text-sm text-silver">
+          <Badge variant={STATUS_VARIANT[row.status]}>
+            {STATUS_LABELS[row.status]}
+          </Badge>
+          <span className="text-sm text-silver tabular-nums">
             {fmtMoney(row.amount, { currency: row.currency })}
           </span>
         </div>
@@ -816,7 +816,7 @@ function MyDetailDrawer({
                   onSaved();
                 } catch (err) {
                   toast.error(
-                    err instanceof ApiError ? err.message : 'Failed.',
+                    err instanceof ApiError ? err.message : 'Could not save the grade.',
                   );
                 } finally {
                   setBusy(false);
@@ -857,8 +857,10 @@ function QueueDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[row.status]}>{row.status}</Badge>
-          <span className="text-sm text-silver">
+          <Badge variant={STATUS_VARIANT[row.status]}>
+            {STATUS_LABELS[row.status]}
+          </Badge>
+          <span className="text-sm text-silver tabular-nums">
             {fmtMoney(row.amount, { currency: row.currency })}
           </span>
         </div>
@@ -901,11 +903,11 @@ function QueueDetailDrawer({
                   setBusy(true);
                   try {
                     await decideTuition(row.id, 'APPROVED', notes.trim());
-                    toast.success('Approved.');
+                    toast.success('Request approved.');
                     onSaved();
                   } catch (err) {
                     toast.error(
-                      err instanceof ApiError ? err.message : 'Failed.',
+                      err instanceof ApiError ? err.message : 'Could not approve the request.',
                     );
                   } finally {
                     setBusy(false);
@@ -922,11 +924,11 @@ function QueueDetailDrawer({
                   setBusy(true);
                   try {
                     await decideTuition(row.id, 'REJECTED', notes.trim());
-                    toast.success('Rejected.');
+                    toast.success('Request rejected.');
                     onSaved();
                   } catch (err) {
                     toast.error(
-                      err instanceof ApiError ? err.message : 'Failed.',
+                      err instanceof ApiError ? err.message : 'Could not reject the request.',
                     );
                   } finally {
                     setBusy(false);
@@ -949,7 +951,9 @@ function QueueDetailDrawer({
                   toast.success('Marked paid.');
                   onSaved();
                 } catch (err) {
-                  toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                  toast.error(
+                    err instanceof ApiError ? err.message : 'Could not mark it paid.',
+                  );
                 } finally {
                   setBusy(false);
                 }

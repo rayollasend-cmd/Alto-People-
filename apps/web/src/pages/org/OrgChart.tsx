@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronDown, ChevronRight, Download, Network, Search, Users } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, Network, Users } from 'lucide-react';
 import type { AssociateOrgSummary } from '@alto-people/shared';
 import { listOrgAssociates } from '@/lib/orgApi';
 import { ApiError } from '@/lib/api';
@@ -12,8 +12,8 @@ import {
   CardContent,
   EmptyState,
   ErrorBanner,
-  Input,
   PageHeader,
+  SearchInput,
   SkeletonRows,
 } from '@/components/ui';
 
@@ -130,15 +130,25 @@ export function OrgChart() {
         title="Org chart"
         subtitle="Reporting hierarchy across the company. Search to focus on a person or team."
         breadcrumbs={[{ label: 'Org' }, { label: 'Chart' }]}
+        secondaryActions={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={exportCsv}
+            disabled={!rows || rows.length === 0}
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export CSV
+          </Button>
+        }
       />
       <div className="flex items-end gap-2 flex-wrap">
-        <div className="max-w-sm flex-1 min-w-[220px] relative">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-silver pointer-events-none" />
-          <Input
-            className="pl-8"
+        <div className="max-w-sm flex-1 min-w-[220px]">
+          <SearchInput
             placeholder="Search by name, title, department…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            aria-label="Search the org chart"
           />
         </div>
         <Button
@@ -157,15 +167,6 @@ export function OrgChart() {
         >
           Collapse all
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={exportCsv}
-          disabled={!rows || rows.length === 0}
-        >
-          <Download className="h-3.5 w-3.5" />
-          Export CSV
-        </Button>
       </div>
       {outOfViewManagerCount > 0 && (
         <ErrorBanner severity="warning">
@@ -175,14 +176,14 @@ export function OrgChart() {
         </ErrorBanner>
       )}
       {error && (
-        <div className="space-y-2">
-          <p role="alert" className="text-sm text-alert">
-            {error}
-          </p>
-          <Button variant="outline" size="sm" onClick={load}>
-            Retry
-          </Button>
-        </div>
+        <ErrorBanner>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span>{error}</span>
+            <Button variant="outline" size="sm" onClick={load}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
       )}
       {!error && (
       <Card>

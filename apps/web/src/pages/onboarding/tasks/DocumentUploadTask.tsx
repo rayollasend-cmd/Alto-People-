@@ -13,6 +13,7 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { TaskShell, Field } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Select } from '@/components/ui/Select';
@@ -41,11 +42,17 @@ const STATUS_LABEL: Record<string, string> = {
   EXPIRED: 'Expired',
 };
 
-const STATUS_TONE: Record<string, string> = {
-  UPLOADED: 'text-warning border-warning/40 bg-warning/[0.06]',
-  VERIFIED: 'text-success border-success/40 bg-success/[0.06]',
-  REJECTED: 'text-alert border-alert/40 bg-alert/[0.07]',
-  EXPIRED: 'text-alert border-alert/40 bg-alert/[0.07]',
+const STATUS_VARIANT: Record<string, 'pending' | 'success' | 'destructive'> = {
+  UPLOADED: 'pending',
+  VERIFIED: 'success',
+  REJECTED: 'destructive',
+  EXPIRED: 'destructive',
+};
+
+const KIND_LABEL: Record<string, string> = {
+  ID: 'Photo ID',
+  SSN_CARD: 'Social Security card',
+  I9_SUPPORTING: 'I-9 supporting document',
 };
 
 export function DocumentUploadTask() {
@@ -116,9 +123,9 @@ export function DocumentUploadTask() {
         } catch {
           /* best-effort — the new upload is what matters */
         }
-        toast.success(`Replaced ${target.filename} with ${file.name}`);
+        toast.success(`Replaced ${target.filename} with ${file.name}.`);
       } else {
-        toast.success(`Uploaded ${file.name}`);
+        toast.success(`Uploaded ${file.name}.`);
       }
       await refresh();
     } catch (err) {
@@ -141,7 +148,7 @@ export function DocumentUploadTask() {
       setDeleteTarget(null);
       await refresh();
     } catch (err) {
-      toast.error('Could not remove', {
+      toast.error('Could not remove the document.', {
         description: err instanceof ApiError ? err.message : undefined,
       });
     } finally {
@@ -242,7 +249,8 @@ export function DocumentUploadTask() {
                       {d.filename}
                     </div>
                     <div className="text-xs text-silver/70 tabular-nums">
-                      {d.kind.replace(/_/g, ' ')} · {fmtSize(d.size)}
+                      {KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' ')} ·{' '}
+                      {fmtSize(d.size)}
                     </div>
                     {d.rejectionReason && (
                       <div className="text-xs text-alert mt-1">
@@ -250,15 +258,13 @@ export function DocumentUploadTask() {
                       </div>
                     )}
                   </div>
-                  <span
-                    className={cn(
-                      'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border whitespace-nowrap',
-                      STATUS_TONE[d.status] ?? STATUS_TONE.UPLOADED
-                    )}
+                  <Badge
+                    size="sm"
+                    variant={STATUS_VARIANT[d.status] ?? 'pending'}
                     data-status={d.status}
                   >
                     {STATUS_LABEL[d.status] ?? d.status}
-                  </span>
+                  </Badge>
                   {d.status !== 'VERIFIED' && (
                     <button
                       type="button"

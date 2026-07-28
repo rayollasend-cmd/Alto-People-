@@ -69,6 +69,17 @@ const ENTITIES: ReportEntity[] = [
   'CANDIDATE',
 ];
 
+/** Human labels for the entity enum — never show ASSOCIATE/TIME_ENTRY raw. */
+const ENTITY_LABELS: Record<ReportEntity, string> = {
+  ASSOCIATE: 'Associate',
+  TIME_ENTRY: 'Time entry',
+  PAYROLL_ITEM: 'Payroll item',
+  PAYROLL_RUN: 'Payroll run',
+  APPLICATION: 'Application',
+  EXPENSE: 'Expense',
+  CANDIDATE: 'Candidate',
+};
+
 /**
  * Column-type heuristics. The columns endpoint returns plain names
  * (see reports96Api.listColumns → { columns: string[] }) with no
@@ -185,7 +196,7 @@ export function ReportsHome() {
               >
                 <option value="">All entities</option>
                 {ENTITIES.map((e) => (
-                  <option key={e} value={e}>{e}</option>
+                  <option key={e} value={e}>{ENTITY_LABELS[e]}</option>
                 ))}
               </Select>
             </div>
@@ -239,10 +250,10 @@ export function ReportsHome() {
                   <TableRow key={r.id} className="group">
                     <TableCell className="font-medium text-white">
                       {r.name}
-                      <div className="text-[11px] text-silver/70 md:hidden font-mono font-normal">{r.entity}</div>
-                      <div className="text-[11px] text-silver/70 lg:hidden font-normal">{fmtDate(r.createdAt)}</div>
+                      <div className="text-xs2 text-silver/70 md:hidden font-normal">{ENTITY_LABELS[r.entity] ?? r.entity}</div>
+                      <div className="text-xs2 text-silver/70 lg:hidden font-normal">{fmtDate(r.createdAt)}</div>
                     </TableCell>
-                    <TableCell className="font-mono text-xs hidden md:table-cell">{r.entity}</TableCell>
+                    <TableCell className="text-xs hidden md:table-cell">{ENTITY_LABELS[r.entity] ?? r.entity}</TableCell>
                     <TableCell>
                       {r.isPublic ? (
                         <Badge variant="success">Shared</Badge>
@@ -580,7 +591,7 @@ function ReportBuilder({
           >
             {ENTITIES.map((e) => (
               <option key={e} value={e}>
-                {e}
+                {ENTITY_LABELS[e]}
               </option>
             ))}
           </Select>
@@ -840,6 +851,12 @@ function ReportBuilder({
 
 const CADENCES: ReportSchedule['cadence'][] = ['DAILY', 'WEEKLY', 'MONTHLY'];
 
+const CADENCE_LABELS: Record<ReportSchedule['cadence'], string> = {
+  DAILY: 'Daily',
+  WEEKLY: 'Weekly',
+  MONTHLY: 'Monthly',
+};
+
 /**
  * Scheduling for a saved report. The API shape (reports96Api) is a
  * cadence enum + a recipients string — there is no time-of-day field
@@ -934,7 +951,7 @@ function SchedulesDrawer({
               >
                 <div className="min-w-0 flex-1 space-y-1">
                   <div className="flex items-center gap-2">
-                    <Badge variant="outline">{s.cadence}</Badge>
+                    <Badge variant="outline">{CADENCE_LABELS[s.cadence] ?? s.cadence}</Badge>
                     {s.isActive ? (
                       <Badge variant="success">Active</Badge>
                     ) : (
@@ -942,7 +959,7 @@ function SchedulesDrawer({
                     )}
                   </div>
                   <div className="text-xs text-white truncate">{s.recipients}</div>
-                  <div className="text-[11px] text-silver">
+                  <div className="text-xs2 text-silver">
                     Next run {fmtDateTime(s.nextRunAt)}
                     {' · '}Last run {fmtDateTime(s.lastRunAt)}
                   </div>
@@ -961,7 +978,7 @@ function SchedulesDrawer({
         )}
 
         <div className="pt-3 border-t border-navy-secondary space-y-3">
-          <div className="text-[10px] uppercase tracking-widest text-silver/80">
+          <div className="text-2xs uppercase tracking-widest text-silver/80">
             New schedule
           </div>
           <div>
@@ -972,7 +989,7 @@ function SchedulesDrawer({
               onChange={(e) => setCadence(e.target.value as ReportSchedule['cadence'])}
             >
               {CADENCES.map((c) => (
-                <option key={c} value={c}>{c}</option>
+                <option key={c} value={c}>{CADENCE_LABELS[c]}</option>
               ))}
             </Select>
           </div>

@@ -240,15 +240,15 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
 
   const submit = async () => {
     if (!clientId) {
-      toast.error('Pick a client');
+      toast.error('Pick a client.');
       return;
     }
     if (!templateId) {
-      toast.error('Pick a template');
+      toast.error('Pick a template.');
       return;
     }
     if (validRows.length === 0) {
-      toast.error('Paste at least one valid email');
+      toast.error('Paste at least one valid email.');
       return;
     }
     setSubmitting(true);
@@ -278,18 +278,18 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
       setResults(res.results);
       if (res.succeeded > 0) onCreated();
       if (res.failed === 0) {
-        toast.success(`Invited ${res.succeeded} applicant${res.succeeded === 1 ? '' : 's'}`);
+        toast.success(`Invited ${res.succeeded} applicant${res.succeeded === 1 ? '' : 's'}.`);
       } else if (res.succeeded === 0) {
-        toast.error(`All ${res.failed} invites failed`);
+        toast.error(`All ${res.failed} invites failed.`);
       } else {
-        toast.message(`Invited ${res.succeeded}, ${res.failed} failed`, {
+        toast.message(`Invited ${res.succeeded}, ${res.failed} failed.`, {
           description: 'Check the result list and retry the failed rows.',
         });
       }
     } catch (err) {
       const msg =
-        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Bulk invite failed';
-      toast.error('Could not bulk invite', { description: msg });
+        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Bulk invite failed.';
+      toast.error('Could not bulk invite.', { description: msg });
     } finally {
       setSubmitting(false);
     }

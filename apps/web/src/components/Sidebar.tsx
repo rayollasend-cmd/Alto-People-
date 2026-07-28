@@ -340,7 +340,7 @@ function SidebarSection({
         type="button"
         onClick={onToggle}
         aria-expanded={!collapsed}
-        className="w-full flex items-center justify-between px-4 py-1 text-[10px] font-semibold uppercase tracking-widest text-silver/80 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-md"
+        className="w-full flex items-center justify-between px-4 py-1 text-2xs font-semibold uppercase tracking-widest text-silver/80 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-md"
       >
         <span>{label}</span>
         {collapsed ? (
@@ -467,7 +467,7 @@ function SidebarLink({ to, label, icon: Icon, active, railCollapsed, badge }: Si
       {!railCollapsed && <span className="truncate">{label}</span>}
       {!!badge && !railCollapsed && (
         <span
-          className="ml-auto shrink-0 min-w-[1.25rem] h-5 px-1.5 grid place-items-center rounded-full bg-gold/15 border border-gold/40 text-gold text-[10px] font-semibold tabular-nums"
+          className="ml-auto shrink-0 min-w-[1.25rem] h-5 px-1.5 grid place-items-center rounded-full bg-gold/15 border border-gold/40 text-gold text-2xs font-semibold tabular-nums"
           aria-label={`${badge} pending`}
         >
           {badge > 99 ? '99+' : badge}
@@ -508,7 +508,7 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
       return <div className="h-12 border-t border-navy-secondary" />;
     }
     return (
-      <div className="px-4 py-3 border-t border-navy-secondary text-[10px] uppercase tracking-widest text-silver/70">
+      <div className="px-4 py-3 border-t border-navy-secondary text-2xs uppercase tracking-widest text-silver/70">
         Alto Etho LLC · v0.1.0
       </div>
     );
@@ -560,7 +560,7 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
       >
         {avatar}
         <div className="min-w-0 flex-1 text-left leading-tight">
-          <div className="text-[10px] uppercase tracking-widest text-silver truncate">
+          <div className="text-2xs uppercase tracking-widest text-silver truncate">
             {ROLE_LABELS[user.role]}
           </div>
           <div className="text-sm text-white truncate">{displayName}</div>
@@ -609,7 +609,7 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
                 <Sun className="h-4 w-4" />
                 Light
                 {preference === 'light' && (
-                  <span className="ml-auto text-[10px] uppercase tracking-widest text-gold">
+                  <span className="ml-auto text-2xs uppercase tracking-widest text-gold">
                     Active
                   </span>
                 )}
@@ -618,7 +618,7 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
                 <Moon className="h-4 w-4" />
                 Dark
                 {preference === 'dark' && (
-                  <span className="ml-auto text-[10px] uppercase tracking-widest text-gold">
+                  <span className="ml-auto text-2xs uppercase tracking-widest text-gold">
                     Active
                   </span>
                 )}
@@ -628,11 +628,11 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
                 <Monitor className="h-4 w-4" />
                 System
                 {preference === 'system' ? (
-                  <span className="ml-auto text-[10px] uppercase tracking-widest text-gold">
+                  <span className="ml-auto text-2xs uppercase tracking-widest text-gold">
                     Active
                   </span>
                 ) : (
-                  <span className="ml-auto text-[10px] text-silver/70 capitalize">
+                  <span className="ml-auto text-2xs text-silver/70 capitalize">
                     {theme}
                   </span>
                 )}
@@ -654,7 +654,7 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
                 <Rows3 className="h-4 w-4" />
                 Comfortable
                 {density === 'comfortable' && (
-                  <span className="ml-auto text-[10px] uppercase tracking-widest text-gold">
+                  <span className="ml-auto text-2xs uppercase tracking-widest text-gold">
                     Active
                   </span>
                 )}
@@ -663,7 +663,7 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
                 <Rows4 className="h-4 w-4" />
                 Compact
                 {density === 'compact' && (
-                  <span className="ml-auto text-[10px] uppercase tracking-widest text-gold">
+                  <span className="ml-auto text-2xs uppercase tracking-widest text-gold">
                     Active
                   </span>
                 )}
@@ -679,7 +679,7 @@ function SidebarAccount({ railCollapsed }: SidebarAccountProps) {
           >
             <Keyboard className="h-4 w-4" />
             Keyboard shortcuts
-            <span className="ml-auto text-[10px] font-mono text-silver/80 border border-navy-secondary rounded px-1">
+            <span className="ml-auto text-2xs font-mono text-silver/80 border border-navy-secondary rounded px-1">
               ?
             </span>
           </DropdownMenuItem>

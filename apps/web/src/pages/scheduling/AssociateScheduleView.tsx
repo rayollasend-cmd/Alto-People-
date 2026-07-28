@@ -18,6 +18,7 @@ import { ApiError } from '@/lib/api';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -372,15 +373,19 @@ export function AssociateScheduleView() {
       )}
 
       {error && (
-        <div role="alert" className="mb-4 flex items-center gap-3">
-          <p className="text-sm text-alert">{error}</p>
-          {!loaded && (
-            <Button variant="secondary" size="sm" onClick={load}>
-              <RefreshCw className="h-4 w-4" />
-              Retry
-            </Button>
-          )}
-        </div>
+        <ErrorBanner
+          className="mb-4"
+          action={
+            !loaded ? (
+              <Button variant="secondary" size="sm" onClick={load}>
+                <RefreshCw className="h-4 w-4" />
+                Retry
+              </Button>
+            ) : undefined
+          }
+        >
+          {error}
+        </ErrorBanner>
       )}
       {!shifts && !error && <SkeletonRows count={4} rowHeight="h-20" />}
 
@@ -426,13 +431,13 @@ export function AssociateScheduleView() {
               <h2 className="mb-2 flex items-baseline justify-between gap-3">
                 <span
                   className={[
-                    'text-[11px] uppercase tracking-wider',
+                    'text-xs2 uppercase tracking-wider',
                     group.isToday ? 'text-gold font-semibold' : 'text-silver/80',
                   ].join(' ')}
                 >
                   {group.heading}
                 </span>
-                <span className="text-[11px] text-silver/60 tabular-nums">
+                <span className="text-xs2 text-silver/60 tabular-nums">
                   {t(group.items.length === 1 ? 'sched.shiftsWord' : 'sched.shiftsWordPlural', {
                     count: group.items.length,
                   })}
@@ -521,7 +526,7 @@ function ScheduleStat({
 }) {
   return (
     <div className="px-3.5 py-2 first:pl-4 last:pr-4">
-      <div className="text-[10px] uppercase tracking-widest text-silver/80 whitespace-nowrap">
+      <div className="text-2xs uppercase tracking-widest text-silver/80 whitespace-nowrap">
         {label}
       </div>
       <div
@@ -614,7 +619,7 @@ function OpenShiftsSection() {
 
   return (
     <section className="mt-6">
-      <h2 className="text-[11px] uppercase tracking-wider text-silver/80 mb-2 flex items-center gap-1.5">
+      <h2 className="text-xs2 uppercase tracking-wider text-silver/80 mb-2 flex items-center gap-1.5">
         <HandHelping className="h-3.5 w-3.5" aria-hidden="true" />
         Open shifts you can pick up ({items.length})
       </h2>
@@ -778,7 +783,7 @@ function CalendarSubscribeCard() {
             anyone with the link can see your schedule.
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <code className="flex-1 min-w-0 truncate text-[11px] text-silver bg-navy-secondary/40 border border-navy-secondary rounded px-2 py-1.5 tabular-nums">
+            <code className="flex-1 min-w-0 truncate text-xs2 text-silver bg-navy-secondary/40 border border-navy-secondary rounded px-2 py-1.5 tabular-nums">
               {feed.url}
             </code>
             <Button onClick={onCopy} variant="secondary" className="shrink-0">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -22,6 +22,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
+import { Celebrate } from '@/components/ui/Celebrate';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
@@ -91,11 +92,20 @@ export function AssociateChecklist() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const [detail, setDetail] = useState<ApplicationDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Confetti fires only when 100% is REACHED in this session — someone
+  // revisiting an already-complete checklist shouldn't get the party again.
+  const [celebrate, setCelebrate] = useState(false);
+  const prevPercent = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
     if (!applicationId) return;
     try {
-      setDetail(await getApplication(applicationId));
+      const next = await getApplication(applicationId);
+      if (prevPercent.current !== null && prevPercent.current < 100 && next.percentComplete === 100) {
+        setCelebrate(true);
+      }
+      prevPercent.current = next.percentComplete;
+      setDetail(next);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
@@ -167,7 +177,8 @@ export function AssociateChecklist() {
         </div>
       )}
 
-      <Card className="mb-6 overflow-hidden">
+      <Card className="relative mb-6 overflow-hidden">
+        {celebrate && <Celebrate />}
         <CardHeader className="pb-2">
           <div className="flex items-baseline justify-between gap-4">
             <CardTitle className="text-base text-silver/80 uppercase tracking-wider font-sans">
@@ -301,7 +312,7 @@ function AssociateTaskRow({ task, applicationId, isNext }: AssociateTaskRowProps
         {isComplete ? (
           <span
             className={cn(
-              'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded',
+              'text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded',
               tone.bg === 'bg-navy' ? 'bg-silver/15' : 'bg-success/15',
               tone.labelCx
             )}
@@ -322,7 +333,7 @@ function AssociateTaskRow({ task, applicationId, isNext }: AssociateTaskRowProps
             <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
           </span>
         ) : (
-          <span className="text-[10px] uppercase tracking-wider text-silver/70 px-1.5 py-0.5 rounded bg-silver/10">
+          <span className="text-2xs uppercase tracking-wider text-silver/70 px-1.5 py-0.5 rounded bg-silver/10">
             Coming soon
           </span>
         )}

@@ -44,6 +44,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
@@ -124,6 +125,32 @@ const LIFE_EVENT_KINDS = [
   'NAME_CHANGE',
   'OTHER',
 ] as const;
+
+// Indexed by the server's raw `kind`, which is typed as a bare string —
+// hence the wide index signature. `satisfies` still forces every known
+// kind to carry a label, so adding one to LIFE_EVENT_KINDS breaks here.
+const LIFE_EVENT_LABEL: Record<string, string> = {
+  MARRIAGE: 'Marriage',
+  DIVORCE: 'Divorce',
+  BIRTH: 'Birth',
+  ADOPTION: 'Adoption',
+  DEATH_OF_DEPENDENT: 'Death of a dependent',
+  ADDRESS_CHANGE: 'Address change',
+  NAME_CHANGE: 'Name change',
+  OTHER: 'Other',
+} satisfies Record<(typeof LIFE_EVENT_KINDS)[number], string>;
+
+const LIFE_EVENT_STATUS_LABELS: Record<string, string> = {
+  PENDING: 'Pending',
+  IN_REVIEW: 'In review',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+};
+
+const BENEFICIARY_KIND_LABEL: Record<string, string> = {
+  PRIMARY: 'Primary',
+  CONTINGENT: 'Contingent',
+};
 
 const TAX_DOC_LABEL: Record<TaxDoc['kind'], string> = {
   W2: 'Form W-2',
@@ -242,16 +269,15 @@ export function MeHome() {
       />
 
       {error && (
-        <Card>
-          <CardContent className="p-4 space-y-3">
-            <p role="alert" className="text-sm text-alert">
-              {error}
-            </p>
+        <ErrorBanner
+          action={
             <Button size="sm" variant="secondary" onClick={refresh}>
               Retry
             </Button>
-          </CardContent>
-        </Card>
+          }
+        >
+          {error}
+        </ErrorBanner>
       )}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
@@ -332,13 +358,16 @@ function SectionError({
   onRetry: () => void;
 }) {
   return (
-    <div className="p-6 space-y-3">
-      <p role="alert" className="text-sm text-alert">
+    <div className="p-6">
+      <ErrorBanner
+        action={
+          <Button size="sm" variant="secondary" onClick={onRetry}>
+            Retry
+          </Button>
+        }
+      >
         {message}
-      </p>
-      <Button size="sm" variant="secondary" onClick={onRetry}>
-        Retry
-      </Button>
+      </ErrorBanner>
     </div>
   );
 }
@@ -541,7 +570,11 @@ function FaceConsentRow() {
           : 'Face verification is off — stored photos and template deleted.',
       );
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(
+        err instanceof ApiError
+          ? err.message
+          : 'Could not change your face-verification setting.',
+      );
     } finally {
       setBusy(false);
     }
@@ -549,22 +582,24 @@ function FaceConsentRow() {
 
   return (
     <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-4">
-      <div className="text-xs uppercase tracking-widest text-silver">
+      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
         Kiosk face verification
       </div>
       {loadError ? (
-        <div className="mt-2 flex flex-wrap items-center gap-3">
-          <p role="alert" className="text-sm text-alert">
-            {loadError}
-          </p>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => setAttempt((a) => a + 1)}
-          >
-            Retry
-          </Button>
-        </div>
+        <ErrorBanner
+          className="mt-2"
+          action={
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setAttempt((a) => a + 1)}
+            >
+              Retry
+            </Button>
+          }
+        >
+          {loadError}
+        </ErrorBanner>
       ) : consent === null ? (
         <Skeleton className="mt-2 h-9 w-56" />
       ) : (
@@ -606,7 +641,7 @@ function EmployeeNumberRow({
 }) {
   return (
     <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-4">
-      <div className="text-xs uppercase tracking-widest text-silver">
+      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
         Employee number
       </div>
       {employeeNumber === null ? (
@@ -763,7 +798,7 @@ function EmergencyPanel({
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
                         <div className="truncate">{row.name}</div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        <div className="md:hidden text-xs2 text-silver/70 truncate">
                           {row.email ?? '—'}{row.isPrimary ? ' · Primary' : ''}
                         </div>
                       </div>
@@ -1012,7 +1047,7 @@ function DependentsPanel({
                         <div className="truncate">
                           {row.firstName} {row.lastName}
                         </div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        <div className="md:hidden text-xs2 text-silver/70 truncate">
                           {row.dob ? `DOB ${fmtDate(parseYmd(row.dob))}` : '—'}
                           {row.ssnLast4 ? ` · •••-••-${row.ssnLast4}` : ''}
                         </div>
@@ -1295,7 +1330,7 @@ function BeneficiariesPanel({
                   <TableHead>Name</TableHead>
                   <TableHead className="hidden md:table-cell">Relation</TableHead>
                   <TableHead>Kind</TableHead>
-                  <TableHead>Percentage</TableHead>
+                  <TableHead className="text-right">Percentage</TableHead>
                   <TableHead className="w-32 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -1318,7 +1353,7 @@ function BeneficiariesPanel({
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
                         <div className="truncate">{row.name}</div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        <div className="md:hidden text-xs2 text-silver/70 truncate">
                           {RELATION_LABEL[row.relation] ?? row.relation}
                         </div>
                       </div>
@@ -1326,10 +1361,12 @@ function BeneficiariesPanel({
                     <TableCell className="hidden md:table-cell">{RELATION_LABEL[row.relation] ?? row.relation}</TableCell>
                     <TableCell>
                       <Badge variant={row.kind === 'PRIMARY' ? 'accent' : 'default'}>
-                        {row.kind}
+                        {BENEFICIARY_KIND_LABEL[row.kind] ?? row.kind}
                       </Badge>
                     </TableCell>
-                    <TableCell>{row.percentage}%</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {row.percentage}%
+                    </TableCell>
                     <TableCell className="text-right">
                       <button
                         data-no-row-click
@@ -1524,7 +1561,8 @@ function BeneficiaryDrawer({
               tierTotalAfter === 100 ? 'text-success' : 'text-silver'
             }`}
           >
-            {draft.kind} tier will total {tierTotalAfter}% after saving
+            {BENEFICIARY_KIND_LABEL[draft.kind] ?? draft.kind} tier will total{' '}
+            {tierTotalAfter}% after saving
             {tierTotalAfter !== 100 && ' (must reach exactly 100%)'}.
           </p>
         </div>
@@ -1630,8 +1668,11 @@ function LifeEventsPanel({
                   <TableRow key={row.id}>
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
-                        <div className="truncate">{row.kind.replace(/_/g, ' ')}</div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        <div className="truncate">
+                          {LIFE_EVENT_LABEL[row.kind] ??
+                            row.kind.replace(/_/g, ' ')}
+                        </div>
+                        <div className="md:hidden text-xs2 text-silver/70 truncate">
                           Submitted {fmtDate(row.createdAt)}
                           {row.notes ? ` · ${row.notes}` : ''}
                         </div>
@@ -1648,7 +1689,8 @@ function LifeEventsPanel({
                               : 'pending'
                         }
                       >
-                        {row.status.replace(/_/g, ' ')}
+                        {LIFE_EVENT_STATUS_LABELS[row.status] ??
+                          row.status.replace(/_/g, ' ')}
                       </Badge>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{fmtDate(row.createdAt)}</TableCell>
@@ -1674,7 +1716,7 @@ function LifeEventsPanel({
             >
               {LIFE_EVENT_KINDS.map((k) => (
                 <option key={k} value={k}>
-                  {k.replace(/_/g, ' ')}
+                  {LIFE_EVENT_LABEL[k]}
                 </option>
               ))}
             </Select>
@@ -1744,9 +1786,11 @@ function TaxDocsPanel({
             <TableHeader>
               <TableRow>
                 <TableHead>Form</TableHead>
-                <TableHead>Tax year</TableHead>
+                <TableHead className="text-right">Tax year</TableHead>
                 <TableHead className="hidden md:table-cell">Issued</TableHead>
-                <TableHead className="hidden md:table-cell">Size</TableHead>
+                <TableHead className="hidden md:table-cell text-right">
+                  Size
+                </TableHead>
                 <TableHead className="w-32 text-right">Action</TableHead>
               </TableRow>
             </TableHeader>
@@ -1758,15 +1802,17 @@ function TaxDocsPanel({
                       <div className="truncate">
                         {TAX_DOC_LABEL[row.kind] ?? row.kind}
                       </div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         Issued {fmtDate(row.issuedAt)}
                         {row.fileSize ? ` · ${Math.round(row.fileSize / 1024)} KB` : ''}
                       </div>
                     </div>
                   </TableCell>
-                  <TableCell>{row.taxYear}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {row.taxYear}
+                  </TableCell>
                   <TableCell className="hidden md:table-cell">{fmtDate(row.issuedAt)}</TableCell>
-                  <TableCell className="hidden md:table-cell">
+                  <TableCell className="hidden md:table-cell text-right tabular-nums whitespace-nowrap">
                     {row.fileSize ? `${Math.round(row.fileSize / 1024)} KB` : '—'}
                   </TableCell>
                   <TableCell className="text-right">

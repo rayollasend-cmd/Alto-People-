@@ -9,7 +9,7 @@ import {
 } from '@/lib/i9Api';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtDateTime } from '@/lib/format';
 import {
   Avatar,
   Badge,
@@ -23,10 +23,11 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
-  Input,
+  ErrorBanner,
   Select,
   SkeletonRows,
 } from '@/components/ui';
+import { FilterChip, SearchInput } from '@/components/ui/FilterBar';
 
 /* ---------------- Section 2 deadline helpers ----------------
  * Date-only strings ("YYYY-MM-DD") are parsed at LOCAL midnight —
@@ -73,11 +74,16 @@ function toneForDays(days: number): string {
 const WORK_AUTH_WINDOW_DAYS = 90;
 
 const I9_FILTERS = [
-  { value: 'pending', label: 'pending' },
-  { value: 'complete', label: 'complete' },
-  { value: 'all', label: 'all' },
-  { value: 'work_auth', label: 'work auth expiring' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'complete', label: 'Complete' },
+  { value: 'all', label: 'All' },
+  { value: 'work_auth', label: 'Work auth expiring' },
 ] as const;
+
+const DOC_LIST_LABELS: Record<I9DocumentList, string> = {
+  LIST_A: 'List A',
+  LIST_B_AND_C: 'Lists B + C',
+};
 type I9Filter = (typeof I9_FILTERS)[number]['value'];
 
 export function I9Tab({ canManage }: { canManage: boolean }) {
@@ -149,22 +155,16 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     <section>
       <div className="flex flex-wrap items-center gap-2 mb-4">
         {I9_FILTERS.map((f) => (
-          <button
+          <FilterChip
             key={f.value}
-            type="button"
+            active={filter === f.value}
             onClick={() => setFilter(f.value)}
-            className={cn(
-              'px-3 py-1.5 rounded text-xs uppercase tracking-wider border transition-colors',
-              filter === f.value
-                ? 'border-gold text-gold bg-gold/10'
-                : 'border-navy-secondary text-silver hover:text-white',
-            )}
           >
             {f.label}
-          </button>
+          </FilterChip>
         ))}
         <div className="w-full sm:w-64 sm:ml-auto">
-          <Input
+          <SearchInput
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by name…"
@@ -174,9 +174,16 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-alert mb-3">
+        <ErrorBanner
+          className="mb-3"
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          }
+        >
           {error}
-        </p>
+        </ErrorBanner>
       )}
       {!displayRows && <SkeletonRows count={4} rowHeight="h-20" />}
       {displayRows && displayRows.length === 0 && (
@@ -220,12 +227,14 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
                           <SectionBadge label="Sec 1" done={sec1Done} />
                           <SectionBadge label="Sec 2" done={sec2Done} />
                           {r.documentList && (
-                            <Badge variant="outline">{r.documentList}</Badge>
+                            <Badge variant="outline">
+                              {DOC_LIST_LABELS[r.documentList]}
+                            </Badge>
                           )}
                         </div>
                         {r.workAuthExpiresAt && (
                           <div className="text-right">
-                            <div className="text-[10px] uppercase tracking-widest text-silver/80">
+                            <div className="text-2xs uppercase tracking-widest text-silver/80">
                               Work auth
                             </div>
                             <div
@@ -241,7 +250,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
                           </div>
                         )}
                         <div className="text-right min-w-[84px]">
-                          <div className="text-[10px] uppercase tracking-widest text-silver/80">
+                          <div className="text-2xs uppercase tracking-widest text-silver/80">
                             Sec 2 due
                           </div>
                           <Section2DueCell row={r} />
@@ -341,19 +350,15 @@ function I9DetailPanel({
           <SectionBadge label="Section 1" done={sec1Done} />
           <SectionBadge label="Section 2" done={sec2Done} />
           {current.documentList && (
-            <Badge variant="outline">{current.documentList}</Badge>
+            <Badge variant="outline">{DOC_LIST_LABELS[current.documentList]}</Badge>
           )}
         </div>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs mb-5">
           <DetailRow label="Section 1 completed">
-            {current.section1CompletedAt
-              ? new Date(current.section1CompletedAt).toLocaleString()
-              : '—'}
+            {fmtDateTime(current.section1CompletedAt)}
           </DetailRow>
           <DetailRow label="Section 2 completed">
-            {current.section2CompletedAt
-              ? new Date(current.section2CompletedAt).toLocaleString()
-              : '—'}
+            {fmtDateTime(current.section2CompletedAt)}
           </DetailRow>
           <DetailRow label="Verifier">
             {current.section2VerifierEmail ?? '—'}
@@ -405,7 +410,7 @@ function I9DetailPanel({
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-[10px] uppercase tracking-widest text-silver/80">{label}</dt>
+      <dt className="text-2xs uppercase tracking-widest text-silver/80">{label}</dt>
       <dd className="text-white text-sm mt-0.5">{children}</dd>
     </div>
   );
@@ -475,11 +480,11 @@ function Section2Verifier({
 
   return (
     <div className="space-y-4">
-      <div className="text-[10px] uppercase tracking-widest text-silver/80">
+      <div className="text-2xs uppercase tracking-widest text-silver/80">
         Section 2 verification
       </div>
       <div className="flex flex-wrap gap-3 items-center">
-        <span className="block text-[11px] uppercase tracking-wider text-silver">
+        <span className="block text-xs2 uppercase tracking-wider text-silver">
           Document list
         </span>
         {(['LIST_A', 'LIST_B_AND_C'] as const).map((opt) => (
@@ -498,11 +503,7 @@ function Section2Verifier({
         ))}
       </div>
 
-      {loadError && (
-        <p role="alert" className="text-sm text-alert">
-          {loadError}
-        </p>
-      )}
+      {loadError && <ErrorBanner>{loadError}</ErrorBanner>}
 
       {docs === null && <SkeletonRows count={2} rowHeight="h-24" />}
       {docs !== null && docs.length === 0 && !loadError && (
@@ -514,7 +515,7 @@ function Section2Verifier({
 
       {docs && docs.length > 0 && (
         <div>
-          <p className="text-[11px] uppercase tracking-wider text-silver mb-2">
+          <p className="text-xs2 uppercase tracking-wider text-silver mb-2">
             Pick the documents you inspected (need at least {minDocs})
           </p>
           <ul className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -544,7 +545,7 @@ function Section2Verifier({
                     />
                     <div className="aspect-[3/2] bg-navy-secondary rounded mb-2 overflow-hidden flex items-center justify-center">
                       {missing ? (
-                        <span className="text-[10px] text-alert text-center px-2 leading-tight">
+                        <span className="text-2xs text-alert text-center px-2 leading-tight">
                           File missing on server
                         </span>
                       ) : isImage ? (
@@ -558,7 +559,7 @@ function Section2Verifier({
                       )}
                     </div>
                     <div className="text-xs text-white truncate">{doc.kind}</div>
-                    <div className="text-[10px] text-silver">
+                    <div className="text-2xs text-silver">
                       {doc.side ?? 'document'}
                       {missing ? (
                         <> · <span className="text-alert">re-upload required</span></>
@@ -587,11 +588,7 @@ function Section2Verifier({
         </div>
       )}
 
-      {submitError && (
-        <p role="alert" className="text-sm text-alert">
-          {submitError}
-        </p>
-      )}
+      {submitError && <ErrorBanner>{submitError}</ErrorBanner>}
       <DrawerFooter className="-mx-6 -mb-6 mt-2">
         <Button
           type="button"
@@ -647,7 +644,7 @@ function I9EditForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
-      <div className="text-[10px] uppercase tracking-widest text-silver/80">
+      <div className="text-2xs uppercase tracking-widest text-silver/80">
         Manual edit
       </div>
       <div className="flex flex-wrap gap-4 items-end">
@@ -668,7 +665,7 @@ function I9EditForm({
           Section 2 complete (HR verifies)
         </label>
         <label className="block">
-          <span className="block text-[11px] uppercase tracking-wider text-silver mb-1">
+          <span className="block text-xs2 uppercase tracking-wider text-silver mb-1">
             Document list
           </span>
           <div className="w-48">

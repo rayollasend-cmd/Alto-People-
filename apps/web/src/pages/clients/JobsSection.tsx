@@ -5,6 +5,7 @@ import type { Job } from '@alto-people/shared';
 import { createJob, deleteJob, listJobs, updateJob } from '@/lib/jobsApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { fmtMoney } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -34,9 +35,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table';
-
-const fmtRate = (n: number | null) =>
-  n === null ? '—' : n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
 
 interface Props {
   clientId: string;
@@ -79,11 +77,11 @@ export function JobsSection({ clientId }: Props) {
     setBusy(true);
     try {
       await deleteJob(job.id);
-      toast.success(`Archived ${job.name}`);
+      toast.success(`Archived ${job.name}.`);
       setConfirmDelete(null);
       refresh();
     } catch (err) {
-      toast.error('Could not archive', {
+      toast.error('Could not archive.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -125,7 +123,16 @@ export function JobsSection({ clientId }: Props) {
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        {error && <ErrorBanner className="m-4">{error}</ErrorBanner>}
+        {error && (
+          <ErrorBanner className="m-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>{error}</span>
+              <Button size="sm" variant="outline" onClick={() => refresh()}>
+                Retry
+              </Button>
+            </div>
+          </ErrorBanner>
+        )}
         {!items && (
           <div className="p-4 space-y-2">
             <Skeleton className="h-10" />
@@ -155,22 +162,22 @@ export function JobsSection({ clientId }: Props) {
                   <TableCell className="text-white">
                     <div className="min-w-0">
                       <div className="truncate">{j.name}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate tabular-nums">
-                        Bill {fmtRate(j.billRate)}
+                      <div className="md:hidden text-xs2 text-silver/70 truncate tabular-nums">
+                        Bill {fmtMoney(j.billRate)}
                       </div>
                     </div>
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-silver hidden md:table-cell">
-                    {fmtRate(j.billRate)}
+                    {fmtMoney(j.billRate)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-silver">
-                    {fmtRate(j.payRate)}
+                    {fmtMoney(j.payRate)}
                   </TableCell>
                   <TableCell>
                     {j.isActive ? (
                       <Badge variant="success">Active</Badge>
                     ) : (
-                      <Badge variant="outline">Archived</Badge>
+                      <Badge variant="destructive">Archived</Badge>
                     )}
                   </TableCell>
                   <TableCell className="text-right">
@@ -289,11 +296,11 @@ function JobDialog({ open, onOpenChange, clientId, existing, onSaved }: JobDialo
     const billN = billRate.trim() ? Number(billRate) : null;
     const payN = payRate.trim() ? Number(payRate) : null;
     if (billN !== null && !Number.isFinite(billN)) {
-      toast.error('Bill rate must be numeric');
+      toast.error('Bill rate must be numeric.');
       return;
     }
     if (payN !== null && !Number.isFinite(payN)) {
-      toast.error('Pay rate must be numeric');
+      toast.error('Pay rate must be numeric.');
       return;
     }
 
@@ -306,7 +313,7 @@ function JobDialog({ open, onOpenChange, clientId, existing, onSaved }: JobDialo
           payRate: payN,
           isActive,
         });
-        toast.success('Job updated');
+        toast.success('Job updated.');
       } else {
         await createJob({
           clientId,
@@ -316,15 +323,15 @@ function JobDialog({ open, onOpenChange, clientId, existing, onSaved }: JobDialo
           ...(billN !== null ? { billRate: billN } : {}),
           ...(payN !== null ? { payRate: payN } : {}),
         });
-        toast.success('Job created');
+        toast.success('Job created.');
       }
       onSaved();
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'job_name_taken') {
-        toast.error('A job with that name already exists for this client');
+        toast.error('A job with that name already exists for this client.');
       } else {
-        toast.error('Could not save', {
+        toast.error('Could not save.', {
           description: err instanceof Error ? err.message : String(err),
         });
       }

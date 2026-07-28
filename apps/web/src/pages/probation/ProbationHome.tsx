@@ -28,8 +28,10 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
+  SegmentedControl,
   SkeletonRows,
   Table,
   TableBody,
@@ -51,6 +53,13 @@ const STATUS_VARIANT: Record<
   FAILED: 'destructive',
 };
 
+const STATUS_LABELS: Record<ProbationStatus, string> = {
+  ACTIVE: 'Active',
+  PASSED: 'Passed',
+  EXTENDED: 'Extended',
+  FAILED: 'Failed',
+};
+
 /** Parse a YYYY-MM-DD string as a local date (no timezone shift). */
 function parseLocalDate(s: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
@@ -66,15 +75,22 @@ export function ProbationHome() {
   const [summary, setSummary] = useState<ProbationSummary | null>(null);
   const [rows, setRows] = useState<ProbationRow[] | null>(null);
   const [filter, setFilter] = useState<ProbationStatus | 'ALL'>('ACTIVE');
+  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [decideRow, setDecideRow] = useState<ProbationRow | null>(null);
   const [extendRow, setExtendRow] = useState<ProbationRow | null>(null);
 
   const refresh = () => {
+    setError(null);
     setRows(null);
     listProbations(filter === 'ALL' ? undefined : filter)
       .then((r) => setRows(r.probations))
-      .catch(() => setRows([]));
+      .catch((err) => {
+        setRows([]);
+        setError(
+          err instanceof ApiError ? err.message : 'Failed to load probations.',
+        );
+      });
     getProbationSummary()
       .then(setSummary)
       .catch(() => setSummary(null));
@@ -119,27 +135,37 @@ export function ProbationHome() {
         </div>
       )}
 
-      <div className="flex items-center justify-between">
-        <div className="flex gap-1">
-          {(['ACTIVE', 'PASSED', 'EXTENDED', 'FAILED', 'ALL'] as const).map(
-            (s) => (
-              <Button
-                key={s}
-                size="sm"
-                variant={filter === s ? 'primary' : 'ghost'}
-                onClick={() => setFilter(s)}
-              >
-                {s}
-              </Button>
-            ),
-          )}
-        </div>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <SegmentedControl
+          ariaLabel="Filter by probation status"
+          options={[
+            { value: 'ACTIVE', label: 'Active' },
+            { value: 'PASSED', label: 'Passed' },
+            { value: 'EXTENDED', label: 'Extended' },
+            { value: 'FAILED', label: 'Failed' },
+            { value: 'ALL', label: 'All' },
+          ]}
+          value={filter}
+          onChange={setFilter}
+        />
         {canManage && (
           <Button onClick={() => setShowNew(true)}>
             <Plus className="mr-2 h-4 w-4" /> Start probation
           </Button>
         )}
       </div>
+
+      {error && (
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              Retry
+            </Button>
+          }
+        >
+          {error}
+        </ErrorBanner>
+      )}
 
       <Card>
         <CardContent className="p-0">
@@ -181,13 +207,15 @@ export function ProbationHome() {
                         <div className="text-xs text-silver">
                           {p.currentTitle ?? p.associateEmail}
                         </div>
-                        <div className="text-[11px] text-silver/70 md:hidden">
-                          {p.startDate} → {p.endDate}
+                        <div className="text-xs2 text-silver/70 md:hidden">
+                          {fmtDate(parseLocalDate(p.startDate))} →{' '}
+                          {fmtDate(parseLocalDate(p.endDate))}
                           {overdue && ' · Overdue'}
                         </div>
                       </TableCell>
                       <TableCell className="hidden md:table-cell text-sm text-silver">
-                        {p.startDate} → {p.endDate}
+                        {fmtDate(parseLocalDate(p.startDate))} →{' '}
+                        {fmtDate(parseLocalDate(p.endDate))}
                         {overdue && (
                           <Badge variant="destructive" className="ml-2">
                             Overdue
@@ -196,7 +224,7 @@ export function ProbationHome() {
                       </TableCell>
                       <TableCell>
                         <Badge variant={STATUS_VARIANT[p.status]}>
-                          {p.status}
+                          {STATUS_LABELS[p.status]}
                         </Badge>
                       </TableCell>
                       <TableCell className="hidden lg:table-cell text-xs text-silver max-w-xs truncate">
@@ -287,7 +315,7 @@ function KpiCard({
       <CardContent className="p-4 flex items-center gap-3">
         <Icon className={`h-5 w-5 ${toneClass}`} />
         <div>
-          <div className="text-xs uppercase tracking-wider text-silver">
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
             {label}
           </div>
           <div className={`text-2xl font-semibold mt-0.5 ${toneClass}`}>
@@ -337,7 +365,9 @@ function NewProbationDrawer({
       toast.success('Probation started.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not start probation.',
+      );
     } finally {
       setSaving(false);
     }
@@ -416,7 +446,9 @@ function DecideDrawer({
       toast.success(decision === 'PASSED' ? 'Probation passed.' : 'Probation failed.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not save the decision.',
+      );
     } finally {
       setSaving(false);
     }
@@ -429,7 +461,8 @@ function DecideDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="text-sm text-silver">
-          Period: {row.startDate} → {row.endDate}
+          Period: {fmtDate(parseLocalDate(row.startDate))} →{' '}
+          {fmtDate(parseLocalDate(row.endDate))}
         </div>
         <div>
           <Label>Decision</Label>
@@ -501,7 +534,9 @@ function ExtendDrawer({
       toast.success('Probation extended.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not extend probation.',
+      );
     } finally {
       setSaving(false);
     }
@@ -514,7 +549,8 @@ function ExtendDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="text-sm text-silver">
-          Current period: {row.startDate} → {row.endDate}
+          Current period: {fmtDate(parseLocalDate(row.startDate))} →{' '}
+          {fmtDate(parseLocalDate(row.endDate))}
         </div>
         <div>
           <Label>New end date</Label>

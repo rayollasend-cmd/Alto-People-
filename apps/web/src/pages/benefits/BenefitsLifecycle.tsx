@@ -89,13 +89,14 @@ const MONTHS_SHORT = [
 function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="p-6">
-      <ErrorBanner>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <span>{message}</span>
+      <ErrorBanner
+        action={
           <Button size="sm" variant="secondary" onClick={onRetry}>
             Retry
           </Button>
-        </div>
+        }
+      >
+        {message}
       </ErrorBanner>
     </div>
   );
@@ -138,9 +139,15 @@ export function BenefitsLifecycle() {
 }
 
 const OE_BADGE: Record<OpenEnrollmentWindow['status'], 'pending' | 'success' | 'default'> = {
-  DRAFT: 'pending',
+  DRAFT: 'default',
   OPEN: 'success',
   CLOSED: 'default',
+};
+
+const OE_STATUS_LABELS: Record<OpenEnrollmentWindow['status'], string> = {
+  DRAFT: 'Draft',
+  OPEN: 'Open',
+  CLOSED: 'Closed',
 };
 
 function OeTab({ canManage }: { canManage: boolean }) {
@@ -224,10 +231,10 @@ function OeTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{w.name}</div>
                       {/* Phone-only secondary line replacing the hidden cells. */}
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {w.clientName}
                       </div>
-                      <div className="sm:hidden text-[10px] text-silver/80 tabular-nums">
+                      <div className="sm:hidden text-2xs text-silver/80 tabular-nums">
                         {fmtYmd(w.startsOn)} → {fmtYmd(w.endsOn)}
                       </div>
                     </TableCell>
@@ -237,7 +244,7 @@ function OeTab({ canManage }: { canManage: boolean }) {
                     </TableCell>
                     <TableCell className="hidden lg:table-cell tabular-nums">{fmtYmd(w.effectiveOn)}</TableCell>
                     <TableCell>
-                      <Badge variant={OE_BADGE[w.status]}>{w.status}</Badge>
+                      <Badge variant={OE_BADGE[w.status]}>{OE_STATUS_LABELS[w.status]}</Badge>
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && w.status === 'DRAFT' && (
@@ -311,7 +318,7 @@ function NewOeDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
       toast.success('Window created.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the window.');
     } finally {
       setSaving(false);
     }
@@ -325,9 +332,9 @@ function NewOeDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
         <div>
           <Label htmlFor="bl-oe-client">Client</Label>
           {clientsError ? (
-            <ErrorBanner className="mt-1">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span>Could not load the client list.</span>
+            <ErrorBanner
+              className="mt-1"
+              action={
                 <Button
                   size="sm"
                   variant="secondary"
@@ -335,7 +342,9 @@ function NewOeDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
                 >
                   Retry
                 </Button>
-              </div>
+              }
+            >
+              Could not load the client list.
             </ErrorBanner>
           ) : (
             <Select
@@ -426,7 +435,14 @@ const QLE_BADGE: Record<Qle['status'], 'pending' | 'success' | 'destructive' | '
   PENDING: 'pending',
   APPROVED: 'success',
   DENIED: 'destructive',
-  EXPIRED: 'default',
+  EXPIRED: 'destructive',
+};
+
+const QLE_STATUS_LABELS: Record<Qle['status'], string> = {
+  PENDING: 'Pending',
+  APPROVED: 'Approved',
+  DENIED: 'Denied',
+  EXPIRED: 'Expired',
 };
 
 function QleTab({ canManage }: { canManage: boolean }) {
@@ -527,10 +543,10 @@ function QleTab({ canManage }: { canManage: boolean }) {
                           Kind first (the why), then a single date line
                           (event → window-close). Mirrors the OE-windows
                           table pattern above. */}
-                      <div className="sm:hidden text-[11px] text-silver/70 truncate">
+                      <div className="sm:hidden text-xs2 text-silver/70 truncate">
                         {QLE_KIND_LABEL[q.kind]}
                       </div>
-                      <div className="md:hidden text-[10px] text-silver/80 tabular-nums">
+                      <div className="md:hidden text-2xs text-silver/80 tabular-nums">
                         {fmtYmd(q.eventDate)} → {fmtYmd(q.allowedUntil)}
                       </div>
                     </TableCell>
@@ -538,7 +554,7 @@ function QleTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="hidden md:table-cell tabular-nums">{fmtYmd(q.eventDate)}</TableCell>
                     <TableCell className="hidden md:table-cell tabular-nums">{fmtYmd(q.allowedUntil)}</TableCell>
                     <TableCell>
-                      <Badge variant={QLE_BADGE[q.status]}>{q.status}</Badge>
+                      <Badge variant={QLE_BADGE[q.status]}>{QLE_STATUS_LABELS[q.status]}</Badge>
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && q.status === 'PENDING' && (
@@ -609,7 +625,7 @@ function NewQleDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
       toast.success('QLE submitted.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not submit the QLE.');
     } finally {
       setSaving(false);
     }
@@ -693,6 +709,14 @@ const COBRA_BADGE: Record<CobraOffer['status'], 'pending' | 'success' | 'default
   TERMINATED: 'default',
 };
 
+const COBRA_STATUS_LABELS: Record<CobraOffer['status'], string> = {
+  NOTIFIED: 'Notified',
+  ELECTED: 'Elected',
+  WAIVED: 'Waived',
+  EXPIRED: 'Expired',
+  TERMINATED: 'Terminated',
+};
+
 function CobraTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [rows, setRows] = useState<CobraOffer[] | null>(null);
@@ -718,7 +742,7 @@ function CobraTab({ canManage }: { canManage: boolean }) {
     if (
       !(await confirm({
         title: `Record COBRA election for ${c.associateName}?`,
-        description: `Marks this offer as ELECTED — continuation coverage runs through ${fmtYmd(c.coverageEndsOn)}.`,
+        description: `Marks this offer as elected — continuation coverage runs through ${fmtYmd(c.coverageEndsOn)}.`,
         confirmLabel: 'Record election',
       }))
     ) {
@@ -738,7 +762,7 @@ function CobraTab({ canManage }: { canManage: boolean }) {
       !(await confirm({
         title: `Waive COBRA for ${c.associateName}?`,
         description:
-          'Marks this offer as WAIVED. The associate declines continuation coverage — this closes their election window.',
+          'Marks this offer as waived. The associate declines continuation coverage — this closes their election window.',
         confirmLabel: 'Waive coverage',
         destructive: true,
       }))
@@ -798,10 +822,10 @@ function CobraTab({ canManage }: { canManage: boolean }) {
                           they have to decide by). The QE-date itself
                           drops off mobile — admins use this view to act,
                           not audit. */}
-                      <div className="sm:hidden text-[11px] text-silver/70 truncate">
+                      <div className="sm:hidden text-xs2 text-silver/70 truncate">
                         {c.qualifyingEvent}
                       </div>
-                      <div className="md:hidden text-[10px] text-silver/80 tabular-nums">
+                      <div className="md:hidden text-2xs text-silver/80 tabular-nums">
                         {c.premiumPerMonth ? `${fmtMoney(c.premiumPerMonth)}/mo` : '—'}
                         {' · elect by '}
                         {fmtYmd(c.electionDeadline)}
@@ -812,7 +836,7 @@ function CobraTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="hidden lg:table-cell tabular-nums">{fmtYmd(c.electionDeadline)}</TableCell>
                     <TableCell className="hidden md:table-cell tabular-nums">{fmtMoney(c.premiumPerMonth)}</TableCell>
                     <TableCell>
-                      <Badge variant={COBRA_BADGE[c.status]}>{c.status}</Badge>
+                      <Badge variant={COBRA_BADGE[c.status]}>{COBRA_STATUS_LABELS[c.status]}</Badge>
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && c.status === 'NOTIFIED' && (
@@ -886,7 +910,7 @@ function NewCobraDrawer({
       toast.success('COBRA notified.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not send the COBRA notice.');
     } finally {
       setSaving(false);
     }
@@ -1138,7 +1162,7 @@ function AcaTab() {
                           key={i}
                           className="rounded border border-navy-secondary bg-navy-secondary/30 px-2 py-1.5"
                         >
-                          <div className="text-[10px] uppercase tracking-wider text-silver">
+                          <div className="text-2xs uppercase tracking-wider text-silver">
                             {MONTHS_SHORT[i]}
                           </div>
                           <div className="font-mono text-xs text-white truncate">

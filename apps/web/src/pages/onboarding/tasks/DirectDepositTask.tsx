@@ -9,6 +9,7 @@ import {
 } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { fmtDateTime } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Field, SubmitRow, TaskShell, inputCls } from './ProfileInfoTask';
@@ -243,7 +244,7 @@ function PayoutOnFileCard({
               Account
             </span>
             <div className="font-mono">
-              {status.accountType ?? 'CHECKING'} ••••{' '}
+              {status.accountType === 'SAVINGS' ? 'Savings' : 'Checking'} ••••{' '}
               {status.accountLast4 ?? '••••'}
             </div>
           </div>
@@ -266,7 +267,7 @@ function PayoutOnFileCard({
       )}
       {status.updatedAt && (
         <div className="text-xs text-silver/70 mt-2">
-          Updated {new Date(status.updatedAt).toLocaleString()}
+          Updated {fmtDateTime(status.updatedAt)}
           {status.verifiedAt
             ? ' · Verified'
             : ' · Pending verification'}
@@ -284,6 +285,11 @@ function PayoutOnFileCard({
   );
 }
 
+/**
+ * Kept as role="tab" (not SegmentedControl's radiogroup) — the task's
+ * test suite drives this switcher via getByRole('tab'). Styling matches
+ * the app-wide segmented-pill selection language.
+ */
 function TabButton({
   active,
   onClick,
@@ -300,13 +306,14 @@ function TabButton({
       aria-selected={active}
       onClick={onClick}
       className={cn(
-        'px-4 py-2 rounded text-sm border',
+        'px-3 py-1 rounded-full border text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40 coarse:min-h-11 inline-flex items-center',
         active
-          ? 'border-gold text-gold bg-gold/10'
-          : 'border-navy-secondary text-silver hover:text-white'
+          ? 'bg-gold/15 border-gold/50 text-gold'
+          : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
       )}
     >
       {children}
     </button>
   );
 }
+

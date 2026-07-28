@@ -13,6 +13,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { fmtDateTz, fmtWeekdayTz } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 
@@ -225,9 +226,20 @@ export function AvailabilityEditor() {
             >
               {submitting ? 'Saving…' : 'Save'}
             </Button>
-            {error && <span className="text-sm text-alert ml-2">{error}</span>}
             {info && <span className="text-sm text-success ml-2">{info}</span>}
           </div>
+          {error && (
+            <ErrorBanner
+              className="mt-2"
+              action={
+                <Button size="sm" variant="secondary" onClick={refresh}>
+                  Retry
+                </Button>
+              }
+            >
+              {error}
+            </ErrorBanner>
+          )}
 
           <DaysOffEditor />
         </>
@@ -310,7 +322,7 @@ function DaysOffEditor() {
 
   return (
     <div className="mt-5 pt-4 border-t border-navy-secondary">
-      <h3 className="text-[11px] uppercase tracking-wider text-silver/80 mb-2">
+      <h3 className="text-xs2 uppercase tracking-wider text-silver/80 mb-2">
         Days off (one-time)
       </h3>
       {exceptions && exceptions.length > 0 && (
@@ -363,8 +375,10 @@ function DaysOffEditor() {
         <Button type="button" variant="outline" size="sm" onClick={add} disabled={!date || saving}>
           Add day off
         </Button>
-        {error && <span className="text-xs text-alert">{error}</span>}
       </div>
+      {error && (
+        <ErrorBanner className="mt-2 text-xs">{error}</ErrorBanner>
+      )}
     </div>
   );
 }

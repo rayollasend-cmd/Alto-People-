@@ -34,6 +34,18 @@ const STAGE_LABEL: Record<CandidateStage, string> = {
   REJECTED: 'Rejected',
 };
 
+/** Human labels for the stored source slugs — mirrors RecruitingHome. */
+const SOURCE_LABEL: Record<string, string> = {
+  referral: 'Referral',
+  'careers-page': 'Careers page',
+  indeed: 'Indeed',
+  linkedin: 'LinkedIn',
+  'walk-in': 'Walk-in',
+  agency: 'Agency',
+  other: 'Other',
+  manual: 'Manual',
+};
+
 const STAGE_COL_TONE: Record<CandidateStage, string> = {
   APPLIED: 'border-t-silver/50',
   SCREENING: 'border-t-warning',
@@ -143,7 +155,7 @@ function Column({
       )}
     >
       <div className="px-3 py-2 flex items-center justify-between border-b border-navy-secondary">
-        <span className="text-[11px] uppercase tracking-widest text-silver">
+        <span className="text-xs2 uppercase tracking-widest text-silver">
           {STAGE_LABEL[stage]}
         </span>
         <Badge variant="outline" className="tabular-nums">
@@ -152,7 +164,7 @@ function Column({
       </div>
       <div className="p-2 min-h-[120px] max-h-[calc(100vh-22rem)] overflow-y-auto space-y-2">
         {candidates.length === 0 ? (
-          <div className="text-[11px] text-silver/70 text-center py-6 select-none">
+          <div className="text-xs2 text-silver/70 text-center py-6 select-none">
             Drop here
           </div>
         ) : (
@@ -196,7 +208,7 @@ function CandidateCard({
       {...(locked ? {} : attributes)}
       {...(locked ? {} : listeners)}
       className={cn(
-        'rounded-md border border-navy-secondary bg-navy p-3 text-sm shadow-sm transition-all',
+        'rounded-md border border-navy-secondary bg-navy p-3 text-sm elev-1 transition-all',
         !locked && 'cursor-grab active:cursor-grabbing hover:border-silver/40',
         locked && 'opacity-80',
         isDragging && 'opacity-60 ring-1 ring-gold/60',
@@ -208,18 +220,18 @@ function CandidateCard({
         <div className="min-w-0 flex-1">
           <div className="font-medium text-white truncate">{fullName}</div>
           {candidate.position && (
-            <div className="text-[11px] text-gold/90 truncate">
+            <div className="text-xs2 text-gold/90 truncate">
               {candidate.position}
             </div>
           )}
-          <div className="text-[11px] text-silver/70 truncate">
+          <div className="text-xs2 text-silver/70 truncate">
             {candidate.email}
           </div>
         </div>
       </div>
       <div className="mt-2 flex items-center justify-between gap-2">
-        <span className="text-[10px] uppercase tracking-wider text-silver/70 truncate">
-          {candidate.source ?? 'manual'}
+        <span className="text-2xs uppercase tracking-wider text-silver/70 truncate">
+          {SOURCE_LABEL[candidate.source ?? 'manual'] ?? candidate.source}
         </span>
         <div className="flex items-center gap-1.5 shrink-0">
           {candidate.resumeUrl && (
@@ -251,12 +263,12 @@ function CandidateCard({
         </div>
       </div>
       {candidate.rejectedReason && (
-        <div className="mt-2 text-[10px] text-alert/90 line-clamp-2">
+        <div className="mt-2 text-2xs text-alert/90 line-clamp-2">
           {candidate.rejectedReason}
         </div>
       )}
       {candidate.withdrawnReason && (
-        <div className="mt-2 text-[10px] text-silver/70 line-clamp-2">
+        <div className="mt-2 text-2xs text-silver/70 line-clamp-2">
           {candidate.withdrawnReason}
         </div>
       )}

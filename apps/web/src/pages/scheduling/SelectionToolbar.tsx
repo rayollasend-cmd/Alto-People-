@@ -259,7 +259,7 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
     <div className="fixed left-1/2 -translate-x-1/2 z-40 no-print bottom-[max(1.5rem,calc(env(safe-area-inset-bottom)+0.5rem))]">
       {panel === 'reassign' && (
         <div className="mb-2 rounded-lg bg-navy border border-navy-secondary elev-3 p-3 w-80">
-          <div className="mb-1 text-[10px] uppercase tracking-widest text-silver">
+          <div className="mb-1 text-2xs uppercase tracking-widest text-silver">
             Assign all {selected.length} to
           </div>
           <AssociatePicker value={reassignTo} onChange={setReassignTo} />
@@ -280,7 +280,7 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
       )}
       {panel === 'move' && (
         <div className="mb-2 rounded-lg bg-navy border border-navy-secondary elev-3 p-3 w-72">
-          <div className="mb-1 text-[10px] uppercase tracking-widest text-silver">
+          <div className="mb-1 text-2xs uppercase tracking-widest text-silver">
             Move all {selected.length} by (days)
           </div>
           <Input
@@ -292,7 +292,7 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
             onChange={(e) => setMoveDays(e.target.value)}
             aria-label="Days to move by (negative = earlier)"
           />
-          <p className="mt-1 text-[10px] text-silver/60">
+          <p className="mt-1 text-2xs text-silver/60">
             7 = one week later, -1 = a day earlier. Times stay the same.
           </p>
           <div className="mt-2 flex justify-end gap-2">

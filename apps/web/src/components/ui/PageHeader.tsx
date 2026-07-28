@@ -65,7 +65,7 @@ export function PageHeader({
               opens the title block so it doesn't read as a one-liner.
               max-w on subtitle keeps line length scannable on wide
               monitors. */}
-          <h1 className="font-display text-[2rem] md:text-[2.5rem] leading-[1.1] tracking-tight text-white">
+          <h1 className="font-display text-hero md:text-hero-lg leading-[1.1] tracking-tight text-white">
             {title}
           </h1>
           {subtitle && (

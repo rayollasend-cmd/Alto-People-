@@ -128,7 +128,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
         <form onSubmit={submit} className="grid gap-3">
           {isReason && (
             <div className="grid gap-1">
-              <label className="text-[11px] uppercase tracking-wider text-silver">
+              <label className="text-xs2 uppercase tracking-wider text-silver">
                 {reasonProps?.reasonLabel ??
                   (reasonOptional ? 'Notes (optional)' : 'Reason')}
               </label>
@@ -145,7 +145,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
           )}
           {isNumeric && (
             <div className="grid gap-1">
-              <label className="text-[11px] uppercase tracking-wider text-silver">
+              <label className="text-xs2 uppercase tracking-wider text-silver">
                 {numericProps?.numericLabel ?? 'Value'}
               </label>
               <input

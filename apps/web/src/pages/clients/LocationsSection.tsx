@@ -90,11 +90,11 @@ export function LocationsSection({ clientId }: Props) {
     setBusy(true);
     try {
       await archiveLocation(clientId, loc.id);
-      toast.success(`Archived ${loc.name}`);
+      toast.success(`Archived ${loc.name}.`);
       setConfirmDelete(null);
       refresh();
     } catch (err) {
-      toast.error('Could not archive', {
+      toast.error('Could not archive.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -137,7 +137,16 @@ export function LocationsSection({ clientId }: Props) {
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        {error && <ErrorBanner className="m-4">{error}</ErrorBanner>}
+        {error && (
+          <ErrorBanner className="m-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>{error}</span>
+              <Button size="sm" variant="outline" onClick={() => refresh()}>
+                Retry
+              </Button>
+            </div>
+          </ErrorBanner>
+        )}
         {!items && (
           <div className="p-4 space-y-2">
             <Skeleton className="h-10" />
@@ -168,7 +177,7 @@ export function LocationsSection({ clientId }: Props) {
                   <TableCell className="text-white">
                     <div className="min-w-0">
                       <div className="truncate">{l.name}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {TIMEZONE_LABELS[
                           l.timezone as (typeof SUPPORTED_TIMEZONES)[number]
                         ] ?? l.timezone}
@@ -194,7 +203,7 @@ export function LocationsSection({ clientId }: Props) {
                     {l.isActive ? (
                       <Badge variant="success">Active</Badge>
                     ) : (
-                      <Badge variant="outline">Archived</Badge>
+                      <Badge variant="destructive">Archived</Badge>
                     )}
                   </TableCell>
                   <TableCell className="text-right">
@@ -342,7 +351,7 @@ function LocationDialog({ open, onOpenChange, clientId, existing, onSaved }: Dia
     const anyGeo = latN !== null || lngN !== null || radN !== null;
     const allGeo = latN !== null && lngN !== null && radN !== null;
     if (anyGeo && !allGeo) {
-      toast.error('Geofence needs latitude, longitude AND radius — or none of them.');
+      toast.error('Geofence needs latitude, longitude, and radius — or none of them.');
       return;
     }
     const stateUpper = state.trim().toUpperCase();
@@ -367,14 +376,14 @@ function LocationDialog({ open, onOpenChange, clientId, existing, onSaved }: Dia
       };
       if (existing) {
         await updateLocation(clientId, existing.id, { ...payload, isActive });
-        toast.success(`Updated ${trimmed}`);
+        toast.success(`Updated ${trimmed}.`);
       } else {
         await createLocation(clientId, payload);
-        toast.success(`Created ${trimmed}`);
+        toast.success(`Created ${trimmed}.`);
       }
       onSaved();
     } catch (err) {
-      toast.error('Could not save', {
+      toast.error('Could not save.', {
         description: err instanceof ApiError ? err.message : String(err),
       });
     } finally {

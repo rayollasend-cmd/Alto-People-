@@ -197,7 +197,7 @@ function CreateAgreementDialog({
     const t = title.trim();
     const b = body.trim();
     if (t.length === 0 || b.length === 0) {
-      toast.error('Title and body are required');
+      toast.error('Title and body are required.');
       return;
     }
     setSubmitting(true);
@@ -207,11 +207,11 @@ function CreateAgreementDialog({
         body: b,
         taskId: taskId || null,
       });
-      toast.success('Agreement drafted — associate can now sign');
+      toast.success('Agreement drafted — the associate can now sign.');
       reset();
       onCreated();
     } catch (err) {
-      toast.error('Could not create', {
+      toast.error('Could not create the agreement.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -256,7 +256,7 @@ function CreateAgreementDialog({
           {esignTasks.length > 0 && (
             <Field
               label="Link to checklist task (optional)"
-              hint="When linked, signing the agreement also marks the checklist task DONE."
+              hint="When linked, signing the agreement also marks the checklist task done."
             >
               {(p) => (
                 <Select

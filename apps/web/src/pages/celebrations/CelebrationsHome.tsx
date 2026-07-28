@@ -18,9 +18,11 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
-  Input,
+  ErrorBanner,
+  FilterBar,
   PageHeader,
-  Select,
+  SearchInput,
+  SegmentedControl,
   SkeletonRows,
   Textarea,
 } from '@/components/ui';
@@ -80,38 +82,30 @@ export function CelebrationsHome() {
         subtitle="Upcoming birthdays and work anniversaries across the team."
         breadcrumbs={[{ label: 'Celebrations' }]}
       />
-      <div className="flex flex-wrap items-center gap-2">
-        <Select
-          size="sm"
-          value={String(days)}
-          onChange={(e) => setDays(Number(e.target.value))}
-          aria-label="Look-ahead window"
-        >
-          {WINDOW_OPTIONS.map((d) => (
-            <option key={d} value={d}>
-              Next {d} days
-            </option>
-          ))}
-        </Select>
-        <Input
+      <FilterBar>
+        <SegmentedControl<number>
+          ariaLabel="Look-ahead window"
+          options={WINDOW_OPTIONS.map((d) => ({ value: d, label: `Next ${d} days` }))}
+          value={days}
+          onChange={(d) => setDays(d)}
+        />
+        <SearchInput
           className="h-8 w-56 text-xs"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search by name…"
           aria-label="Search by name"
         />
-      </div>
+      </FilterBar>
       {error ? (
-        <Card>
-          <CardContent className="p-4 space-y-3">
-            <p role="alert" className="text-sm text-alert">
-              {error}
-            </p>
-            <Button size="sm" variant="secondary" onClick={() => load(days)}>
+        <ErrorBanner>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => load(days)}>
               Retry
             </Button>
-          </CardContent>
-        </Card>
+          </div>
+        </ErrorBanner>
       ) : items === null ? (
         <Card><CardContent><SkeletonRows count={4} /></CardContent></Card>
       ) : !filtered || filtered.length === 0 ? (

@@ -82,7 +82,7 @@ export function AssociatePicker({
         onFocus={() => results.length > 0 && setOpen(true)}
       />
       {open && results.length > 0 && (
-        <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-navy-secondary bg-navy shadow-lg">
+        <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-navy-secondary bg-navy elev-2">
           {results.map((r) => (
             <button
               key={r.id}

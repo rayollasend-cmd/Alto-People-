@@ -142,7 +142,7 @@ export const TableHead = React.forwardRef<
     ref={ref}
     scope="col"
     className={cn(
-      'h-10 px-3 text-left align-middle text-[10px] font-semibold uppercase tracking-widest text-silver',
+      'h-10 px-3 text-left align-middle text-2xs font-semibold uppercase tracking-widest text-silver',
       className
     )}
     {...props}
@@ -264,7 +264,7 @@ export function SortableTableHead<K extends string>({
         type="button"
         onClick={() => onSort(sortKey)}
         className={cn(
-          'flex h-10 w-full items-center gap-1 px-3 text-left text-[10px] font-semibold uppercase tracking-widest transition-colors',
+          'flex h-10 w-full items-center gap-1 px-3 text-left text-2xs font-semibold uppercase tracking-widest transition-colors',
           'focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-bright',
           active ? 'text-gold' : 'text-silver hover:text-white',
         )}

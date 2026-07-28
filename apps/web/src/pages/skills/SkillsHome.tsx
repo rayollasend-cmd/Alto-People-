@@ -25,6 +25,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
@@ -47,6 +48,13 @@ import { ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
 
 const LEVELS: SkillLevel[] = ['BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'EXPERT'];
+
+const LEVEL_LABELS: Record<SkillLevel, string> = {
+  BEGINNER: 'Beginner',
+  INTERMEDIATE: 'Intermediate',
+  ADVANCED: 'Advanced',
+  EXPERT: 'Expert',
+};
 
 function distinctCategories(entries: SkillCatalogEntry[]): string[] {
   return Array.from(
@@ -181,7 +189,7 @@ function SearchTab({ canManage }: { canManage: boolean }) {
                 onKeyDown={(e) => e.key === 'Enter' && runSearch(q)}
               />
               {dropOpen && matches.length > 0 && (
-                <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-navy-secondary bg-navy shadow-lg">
+                <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-navy-secondary bg-navy elev-2">
                   {matches.map((s) => (
                     <button
                       key={s.id}
@@ -210,7 +218,9 @@ function SearchTab({ canManage }: { canManage: boolean }) {
                 onChange={(e) => setMinLevel(e.target.value as SkillLevel | '')}
               >
                 <option value="">Any</option>
-                {LEVELS.map((l) => <option key={l} value={l}>{l}</option>)}
+                {LEVELS.map((l) => (
+                  <option key={l} value={l}>{LEVEL_LABELS[l]}</option>
+                ))}
               </Select>
             </div>
             <Button onClick={() => runSearch(q)} disabled={loading}>
@@ -275,7 +285,7 @@ function SearchTab({ canManage }: { canManage: boolean }) {
                       <TableRow key={`${a.associateId}-${a.skillName}`}>
                         <TableCell className="font-medium text-white">
                           <div className="truncate">{a.name}</div>
-                          <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          <div className="md:hidden text-xs2 text-silver/70 truncate">
                             {a.verified ? 'Verified' : 'Self-attested'}
                             {a.yearsExperience ? ` · ${a.yearsExperience}y` : ''}
                           </div>
@@ -283,9 +293,9 @@ function SearchTab({ canManage }: { canManage: boolean }) {
                         <TableCell className="text-silver hidden md:table-cell">{a.email}</TableCell>
                         <TableCell>{a.skillName}</TableCell>
                         <TableCell>
-                          <Badge variant={levelVariant(a.level)}>{a.level}</Badge>
+                          <Badge variant={levelVariant(a.level)}>{LEVEL_LABELS[a.level]}</Badge>
                         </TableCell>
-                        <TableCell className="hidden lg:table-cell">{a.yearsExperience ?? '—'}</TableCell>
+                        <TableCell className="hidden lg:table-cell tabular-nums">{a.yearsExperience ?? '—'}</TableCell>
                         <TableCell className="hidden md:table-cell">
                           {a.verified ? (
                             <ShieldCheck className="h-4 w-4 text-success" />
@@ -385,11 +395,15 @@ function CatalogTab({ canManage }: { canManage: boolean }) {
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <div className="p-6 space-y-3">
-              <p role="alert" className="text-sm text-alert">{loadError}</p>
-              <Button size="sm" variant="secondary" onClick={refresh}>
-                Retry
-              </Button>
+            <div className="p-6">
+              <ErrorBanner>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{loadError}</span>
+                  <Button size="sm" variant="outline" onClick={refresh}>
+                    Retry
+                  </Button>
+                </div>
+              </ErrorBanner>
             </div>
           ) : filtered === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
@@ -409,7 +423,7 @@ function CatalogTab({ canManage }: { canManage: boolean }) {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead className="hidden md:table-cell">Category</TableHead>
-                  <TableHead>Holders</TableHead>
+                  <TableHead className="text-right">Holders</TableHead>
                   {canManage && <TableHead className="text-right">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
@@ -419,13 +433,13 @@ function CatalogTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{s.name}</div>
                       {s.category && (
-                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        <div className="md:hidden text-xs2 text-silver/70 truncate">
                           {s.category}
                         </div>
                       )}
                     </TableCell>
                     <TableCell className="text-silver hidden md:table-cell">{s.category ?? '—'}</TableCell>
-                    <TableCell>{s.associateCount}</TableCell>
+                    <TableCell className="text-right tabular-nums">{s.associateCount}</TableCell>
                     {canManage && (
                       <TableCell className="text-right">
                         <button

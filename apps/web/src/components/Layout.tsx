@@ -157,7 +157,11 @@ export function Layout() {
                 app, and it kept 42 KB gz of animation runtime in the
                 blocking first-paint path. index.css flattens the
                 keyframes under prefers-reduced-motion. */}
-            <div key={location.pathname} className="route-fade">
+            {/* max-w: 49 page roots carry a no-op `mx-auto` (no max-width
+                anywhere in the chain), so ultrawide monitors stretched
+                every table to 2400px+. One content ceiling here fixes all
+                of them. */}
+            <div key={location.pathname} className="route-fade mx-auto w-full max-w-[1600px]">
               <Suspense fallback={<RouteFallback />}>
                 <Outlet />
               </Suspense>

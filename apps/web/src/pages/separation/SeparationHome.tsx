@@ -32,8 +32,10 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
+  SegmentedControl,
   Select,
   SkeletonRows,
   Table,
@@ -156,19 +158,18 @@ export function SeparationHome() {
         </div>
       )}
 
-      <div className="flex items-center justify-between">
-        <div className="flex gap-1">
-          {(['PLANNED', 'IN_PROGRESS', 'COMPLETE', 'ALL'] as const).map((s) => (
-            <Button
-              key={s}
-              size="sm"
-              variant={filter === s ? 'primary' : 'ghost'}
-              onClick={() => setFilter(s)}
-            >
-              {s === 'ALL' ? 'All' : STATUS_LABELS[s]}
-            </Button>
-          ))}
-        </div>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <SegmentedControl
+          ariaLabel="Filter by separation status"
+          options={(['PLANNED', 'IN_PROGRESS', 'COMPLETE', 'ALL'] as const).map(
+            (s) => ({
+              value: s,
+              label: s === 'ALL' ? 'All' : STATUS_LABELS[s],
+            }),
+          )}
+          value={filter}
+          onChange={setFilter}
+        />
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button
             size="sm"
@@ -189,13 +190,16 @@ export function SeparationHome() {
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <div className="p-6 space-y-3">
-              <p role="alert" className="text-sm text-alert">
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
                 {loadError}
-              </p>
-              <Button size="sm" variant="secondary" onClick={refresh}>
-                Retry
-              </Button>
+              </ErrorBanner>
             </div>
           ) : rows === null ? (
             <div className="p-6">
@@ -235,7 +239,7 @@ export function SeparationHome() {
                         {s.associateName}
                       </div>
                       <div className="text-xs text-silver">{s.associateEmail}</div>
-                      <div className="text-[11px] text-silver/70 md:hidden">
+                      <div className="text-xs2 text-silver/70 md:hidden">
                         {fmtDate(parseYmd(s.lastDayWorked))} ·{' '}
                         {REASON_LABELS[s.reason]}
                       </div>
@@ -304,7 +308,9 @@ function KpiCard({ label, value }: { label: string; value: string }) {
   return (
     <Card>
       <CardContent className="p-4">
-        <div className="text-xs uppercase tracking-wider text-silver">{label}</div>
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
+          {label}
+        </div>
         <div className="text-2xl font-semibold text-white mt-1">{value}</div>
       </CardContent>
     </Card>
@@ -350,7 +356,11 @@ function NewSeparationDrawer({
       toast.success('Separation initiated.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(
+        err instanceof ApiError
+          ? err.message
+          : 'Could not initiate the separation.',
+      );
     } finally {
       setSaving(false);
     }
@@ -462,7 +472,7 @@ function DetailDrawer({
       const ok = await confirm({
         title: 'Complete this separation?',
         description:
-          `This marks ${row.associateName}'s separation COMPLETE. Their ` +
+          `This marks ${row.associateName}'s separation complete. Their ` +
           'access is revoked and their biometric consent data (check-in ' +
           'selfies and face reference) is permanently purged — it cannot ' +
           'be recovered.',
@@ -477,7 +487,11 @@ function DetailDrawer({
       toast.success(`Advanced to ${STATUS_LABELS[r.status]}.`);
       onChanged();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(
+        err instanceof ApiError
+          ? err.message
+          : 'Could not advance the separation.',
+      );
     } finally {
       setBusy(false);
     }
@@ -598,7 +612,11 @@ function DetailDrawer({
                   toast.success('Exit interview saved.');
                   onChanged();
                 } catch (err) {
-                  toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                  toast.error(
+                    err instanceof ApiError
+                      ? err.message
+                      : 'Could not save the exit interview.',
+                  );
                 } finally {
                   setBusy(false);
                 }

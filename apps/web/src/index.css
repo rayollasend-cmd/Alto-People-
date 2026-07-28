@@ -71,6 +71,12 @@
   --color-warning:        237 178  60;  /* #EDB23C */
   --color-muted:          102 102 102;  /* #666666 */
   --color-fg:             255 255 255;  /* primary text, swaps in light */
+  /* Theme-STABLE ink for colored fills. These do NOT flip with theme:
+     gold buttons always carry dark ink, saturated fills (alert/steel/
+     success) always carry white. Using text-navy/text-white on fills
+     broke in light mode because those vars are remapped. */
+  --color-on-accent:       11  24  50;  /* dark ink on gold */
+  --color-on-solid:       255 255 255;  /* white on saturated fills */
 }
 
 :root[data-theme='light'] {
@@ -96,6 +102,9 @@
   --color-muted:          148 163 184;  /* #94A3B8 */
   /* Primary text in light mode. */
   --color-fg:              15  23  42;  /* #0F172A — slate-900 */
+  /* Same values as dark — that is the point (see above). */
+  --color-on-accent:       11  24  50;
+  --color-on-solid:       255 255 255;
 }
 
 @layer base {
@@ -158,8 +167,11 @@
 :root[data-theme='light'] .border-white { border-color: rgb(var(--color-navy-secondary)); }
 
 /* Light theme has a faint shadow under cards so they don't merge with the
-   page background — the dark theme relies on contrast instead. */
-:root[data-theme='light'] .bg-navy {
+   page background — the dark theme relies on contrast instead.
+   :not([class*='elev-']) keeps this from colliding with the elevation
+   ladder's own light-mode shadows at equal specificity (which previously
+   won or lost purely on source order). */
+:root[data-theme='light'] .bg-navy:not([class*='elev-']) {
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
@@ -323,21 +335,32 @@
  * the dark gradient unchanged and substitutes a soft gold-tinted aurora
  * for light mode so the auth card still has a sense of place.
  * ------------------------------------------------------------------------- */
+/* Two radial glows over the navy ramp so the auth card sits in a pool of
+ * light instead of on a flat field — the previous 3-stop linear gradient
+ * read as a solid color on most monitors. */
 .bg-login-aurora {
-  background-image: linear-gradient(
-    135deg,
-    rgb(var(--color-midnight)) 0%,
-    rgb(var(--color-navy)) 55%,
-    rgb(var(--color-navy-secondary)) 100%
-  );
+  background-color: rgb(var(--color-midnight));
+  background-image:
+    radial-gradient(60rem 40rem at 15% -10%, rgb(var(--color-gold) / 0.10), transparent 60%),
+    radial-gradient(50rem 36rem at 95% 110%, rgb(var(--color-steel) / 0.16), transparent 62%),
+    linear-gradient(
+      135deg,
+      rgb(var(--color-midnight)) 0%,
+      rgb(var(--color-navy)) 55%,
+      rgb(var(--color-navy-secondary)) 100%
+    );
 }
 :root[data-theme='light'] .bg-login-aurora {
-  background-image: linear-gradient(
-    135deg,
-    #F8F4E8 0%,    /* warm cream */
-    #FFFFFF 50%,
-    #F2EBD6 100%   /* faded gold tint */
-  );
+  background-color: #ffffff;
+  background-image:
+    radial-gradient(60rem 40rem at 15% -10%, rgb(184 134 11 / 0.10), transparent 60%),
+    radial-gradient(50rem 36rem at 95% 110%, rgb(37 99 235 / 0.08), transparent 62%),
+    linear-gradient(
+      135deg,
+      #F8F4E8 0%,    /* warm cream */
+      #FFFFFF 50%,
+      #F2EBD6 100%   /* faded gold tint */
+    );
 }
 
 /* ---------------------------------------------------------------------------
@@ -507,6 +530,28 @@ input[type='radio'] {
 }
 .route-fade {
   animation: route-fade-in 0.18s ease-out;
+}
+
+/* Celebrate.tsx particle trajectory — each particle sets --cx/--cy/--cr. */
+@keyframes celebrate-pop {
+  0% {
+    transform: translate(0, 0) rotate(0deg);
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--cx), calc(var(--cy) + 70px)) rotate(var(--cr));
+    opacity: 0;
+  }
+}
+
+/* Kiosk idle CTA: one slow expanding ring that dissolves, replacing the
+ * infinite opacity blink. Flattened by the reduced-motion block. */
+@keyframes kiosk-breathe {
+  0%, 100% { opacity: 0.85; box-shadow: 0 0 0 0 rgb(var(--color-gold) / 0.25); }
+  50% { opacity: 1; box-shadow: 0 0 0 12px rgb(var(--color-gold) / 0); }
 }
 
 /* ---------------------------------------------------------------------------

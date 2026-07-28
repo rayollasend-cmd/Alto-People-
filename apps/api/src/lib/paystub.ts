@@ -1,5 +1,6 @@
 import PDFDocument from 'pdfkit';
 import { createHash } from 'node:crypto';
+import { getBrandingSync } from './branding.js';
 
 /**
  * Paystub PDF renderer.
@@ -91,6 +92,16 @@ const HERO_BG = '#f0f4f9';
 const PAGE_L = 48;
 const PAGE_R = 564; // 612 - 48
 const CONTENT_W = PAGE_R - PAGE_L;
+const PAGE_TOP = 48;
+// Flowing sections must stop here — the employer note + audit footer render
+// at fixed y 712/760 and many-line stubs used to draw straight through them.
+const FLOW_BOTTOM = 690;
+
+function ensureRoom(doc: PDFKit.PDFDocument, y: number, needed: number): number {
+  if (y + needed <= FLOW_BOTTOM) return y;
+  doc.addPage();
+  return PAGE_TOP;
+}
 
 const money = (n: number) =>
   (n < 0 ? '-' : '') +
@@ -132,11 +143,24 @@ function renderHeader(doc: PDFKit.PDFDocument, data: PaystubData): number {
   doc.rect(0, 0, 612, 74).fill(ACCENT);
   doc.rect(0, 74, 612, 3).fill(GOLD);
 
+  // Org logo (from /admin/branding) leads the band when present. pdfkit
+  // only decodes PNG/JPEG — anything else falls back to the text lockup.
+  const logo = getBrandingSync().logoDataUri;
+  let textX = PAGE_L;
+  if (logo && /^data:image\/(png|jpe?g);/i.test(logo)) {
+    try {
+      doc.image(logo, PAGE_L, 17, { fit: [40, 40] });
+      textX = PAGE_L + 52;
+    } catch {
+      textX = PAGE_L;
+    }
+  }
+
   doc
     .fillColor('#ffffff')
     .font('Helvetica-Bold')
     .fontSize(17)
-    .text(data.company.name, PAGE_L, 22, { width: 330 });
+    .text(data.company.name, textX, 22, { width: 330 - (textX - PAGE_L) });
   const companyLoc = [data.company.city, data.company.state, data.company.zip]
     .filter(Boolean)
     .join(', ');
@@ -150,9 +174,9 @@ function renderHeader(doc: PDFKit.PDFDocument, data: PaystubData): number {
         [companyLine, data.company.ein ? `EIN ${data.company.ein}` : null]
           .filter(Boolean)
           .join('   ·   '),
-        PAGE_L,
+        textX,
         46,
-        { width: 330 },
+        { width: 330 - (textX - PAGE_L) },
       );
   }
 
@@ -320,8 +344,9 @@ function totalRule(doc: PDFKit.PDFDocument, y: number): number {
 }
 
 function renderEarnings(doc: PDFKit.PDFDocument, data: PaystubData, top: number): number {
-  let y = tableHeader(doc, top, 'EARNINGS', { hours: true, rate: true });
+  let y = tableHeader(doc, ensureRoom(doc, top, 70), 'EARNINGS', { hours: true, rate: true });
   data.earnings.forEach((e, i) => {
+    y = ensureRoom(doc, y, 20);
     y = moneyRow(doc, y, e.label, {
       hours: e.hours,
       rate: e.rate,
@@ -339,8 +364,9 @@ function renderEarnings(doc: PDFKit.PDFDocument, data: PaystubData, top: number)
 }
 
 function renderTaxes(doc: PDFKit.PDFDocument, data: PaystubData, top: number): number {
-  let y = tableHeader(doc, top, 'TAXES WITHHELD');
+  let y = tableHeader(doc, ensureRoom(doc, top, 70), 'TAXES WITHHELD');
   data.taxes.forEach((t, i) => {
+    y = ensureRoom(doc, y, 20);
     y = moneyRow(doc, y, t.label, { current: t.current, ytd: t.ytd, zebra: i % 2 === 1, sign: '-' });
   });
   y = totalRule(doc, y + 1);
@@ -356,9 +382,10 @@ function renderTaxes(doc: PDFKit.PDFDocument, data: PaystubData, top: number): n
 function renderDeductions(doc: PDFKit.PDFDocument, data: PaystubData, top: number): number {
   const all = [...data.preTaxDeductions, ...data.postTaxDeductions];
   if (all.length === 0) return top;
-  let y = tableHeader(doc, top, 'DEDUCTIONS');
+  let y = tableHeader(doc, ensureRoom(doc, top, 70), 'DEDUCTIONS');
   let i = 0;
   for (const d of data.preTaxDeductions) {
+    y = ensureRoom(doc, y, 20);
     y = moneyRow(doc, y, `${d.label} (pre-tax)`, {
       current: d.current,
       ytd: d.ytd,
@@ -367,6 +394,7 @@ function renderDeductions(doc: PDFKit.PDFDocument, data: PaystubData, top: numbe
     });
   }
   for (const d of data.postTaxDeductions) {
+    y = ensureRoom(doc, y, 20);
     y = moneyRow(doc, y, d.label, { current: d.current, ytd: d.ytd, zebra: i++ % 2 === 1, sign: '-' });
   }
   return y + 12;
@@ -374,7 +402,7 @@ function renderDeductions(doc: PDFKit.PDFDocument, data: PaystubData, top: numbe
 
 function renderReimbursements(doc: PDFKit.PDFDocument, data: PaystubData, top: number): number {
   if (!data.reimbursements || data.reimbursements.current <= 0) return top;
-  let y = tableHeader(doc, top, 'REIMBURSEMENTS (NON-TAXABLE)');
+  let y = tableHeader(doc, ensureRoom(doc, top, 70), 'REIMBURSEMENTS (NON-TAXABLE)');
   y = moneyRow(doc, y, 'Expense reimbursements', {
     current: data.reimbursements.current,
     ytd: data.reimbursements.ytd,
@@ -394,7 +422,7 @@ function renderReimbursements(doc: PDFKit.PDFDocument, data: PaystubData, top: n
 }
 
 function renderSummary(doc: PDFKit.PDFDocument, data: PaystubData, top: number): number {
-  const y = top + 2;
+  const y = ensureRoom(doc, top, 70) + 2;
   const H = 52;
   doc.roundedRect(PAGE_L, y, CONTENT_W, H, 4).fill(ACCENT);
 
@@ -442,7 +470,7 @@ function renderSummary(doc: PDFKit.PDFDocument, data: PaystubData, top: number):
 
 function renderDistribution(doc: PDFKit.PDFDocument, data: PaystubData, top: number): number {
   if (!data.payDistribution) return top;
-  let y = tableHeader(doc, top, 'PAY DISTRIBUTION');
+  let y = tableHeader(doc, ensureRoom(doc, top, 60), 'PAY DISTRIBUTION');
   doc.font('Helvetica').fontSize(8.5).fillColor(MUTED).text(data.payDistribution.label, COL.label, y, {
     width: 300,
   });

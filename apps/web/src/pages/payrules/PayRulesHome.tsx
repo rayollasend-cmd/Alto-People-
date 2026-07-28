@@ -44,6 +44,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
@@ -100,7 +101,7 @@ export function PayRulesHome() {
         <CardContent className="p-4 flex items-center gap-3 flex-wrap">
           <label
             htmlFor="payrules-client"
-            className="text-[11px] uppercase tracking-wider text-silver"
+            className="text-xs2 uppercase tracking-wider text-silver"
           >
             Client
           </label>
@@ -216,11 +217,16 @@ function ProjectsTab({ clientId }: { clientId: string }) {
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <div className="p-6 space-y-3">
-              <p role="alert" className="text-sm text-alert">{loadError}</p>
-              <Button size="sm" variant="secondary" onClick={refresh}>
-                Retry
-              </Button>
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {loadError}
+              </ErrorBanner>
             </div>
           ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
@@ -435,11 +441,16 @@ function PremiumTab({ clientId }: { clientId: string }) {
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <div className="p-6 space-y-3">
-              <p role="alert" className="text-sm text-alert">{loadError}</p>
-              <Button size="sm" variant="secondary" onClick={refresh}>
-                Retry
-              </Button>
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {loadError}
+              </ErrorBanner>
             </div>
           ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
@@ -454,9 +465,9 @@ function PremiumTab({ clientId }: { clientId: string }) {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Kind</TableHead>
-                  <TableHead>Multiplier</TableHead>
-                  <TableHead>Add $/hr</TableHead>
-                  <TableHead>Threshold</TableHead>
+                  <TableHead className="text-right">Multiplier</TableHead>
+                  <TableHead className="text-right">Add $/hr</TableHead>
+                  <TableHead className="text-right">Threshold</TableHead>
                   <TableHead>Active</TableHead>
                   <TableHead className="w-32 text-right">Action</TableHead>
                 </TableRow>
@@ -466,9 +477,15 @@ function PremiumTab({ clientId }: { clientId: string }) {
                   <TableRow key={r.id}>
                     <TableCell className="font-medium text-white">{r.name}</TableCell>
                     <TableCell>{KIND_LABEL[r.kind] ?? r.kind}</TableCell>
-                    <TableCell>{r.multiplier ? `×${r.multiplier}` : '—'}</TableCell>
-                    <TableCell>{r.addPerHour ? fmtMoney(r.addPerHour) : '—'}</TableCell>
-                    <TableCell>{r.thresholdHours ? `${r.thresholdHours} hr` : '—'}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {r.multiplier ? `×${r.multiplier}` : '—'}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {r.addPerHour ? fmtMoney(r.addPerHour) : '—'}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {r.thresholdHours ? `${r.thresholdHours} hr` : '—'}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={r.isActive ? 'success' : 'default'}>
                         {r.isActive ? 'Yes' : 'No'}
@@ -639,6 +656,12 @@ function PremiumDrawer({
 
 // ============ Tip pools ============
 
+const POOL_STATUS_LABELS: Record<TipPool['status'], string> = {
+  OPEN: 'Open',
+  CLOSED: 'Closed',
+  PAID_OUT: 'Paid out',
+};
+
 function TipsTab({ clientId }: { clientId: string }) {
   const [rows, setRows] = useState<TipPool[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -666,11 +689,16 @@ function TipsTab({ clientId }: { clientId: string }) {
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <div className="p-6 space-y-3">
-              <p role="alert" className="text-sm text-alert">{loadError}</p>
-              <Button size="sm" variant="secondary" onClick={refresh}>
-                Retry
-              </Button>
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {loadError}
+              </ErrorBanner>
             </div>
           ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
@@ -685,8 +713,8 @@ function TipsTab({ clientId }: { clientId: string }) {
                 <TableRow>
                   <TableHead>Date</TableHead>
                   <TableHead>Name</TableHead>
-                  <TableHead>Total</TableHead>
-                  <TableHead>Allocations</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                  <TableHead className="text-right">Allocations</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -699,8 +727,12 @@ function TipsTab({ clientId }: { clientId: string }) {
                   >
                     <TableCell>{fmtDate(parseYmd(p.shiftDate))}</TableCell>
                     <TableCell className="text-white">{p.name}</TableCell>
-                    <TableCell>{fmtMoney(p.totalAmount, { currency: p.currency })}</TableCell>
-                    <TableCell>{p.allocationCount}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {fmtMoney(p.totalAmount, { currency: p.currency })}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {p.allocationCount}
+                    </TableCell>
                     <TableCell>
                       <Badge
                         variant={
@@ -711,7 +743,7 @@ function TipsTab({ clientId }: { clientId: string }) {
                               : 'default'
                         }
                       >
-                        {p.status}
+                        {POOL_STATUS_LABELS[p.status] ?? p.status}
                       </Badge>
                     </TableCell>
                   </TableRow>
@@ -819,11 +851,7 @@ function NewTipPoolDrawer({
             onChange={(e) => setTotal(e.target.value)}
           />
         </div>
-        {error && (
-          <p role="alert" className="text-sm text-alert">
-            {error}
-          </p>
-        )}
+        {error && <ErrorBanner>{error}</ErrorBanner>}
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
@@ -997,7 +1025,8 @@ function TipPoolDrawer({
           <span className="text-white">
             {fmtMoney(pool.totalAmount, { currency: pool.currency })}
           </span>{' '}
-          • status: <span className="text-white">{pool.status}</span>
+          • status:{' '}
+          <span className="text-white">{POOL_STATUS_LABELS[pool.status]}</span>
         </div>
         {pool.status === 'OPEN' && (
           <Card>
@@ -1066,12 +1095,15 @@ function TipPoolDrawer({
           </Card>
         )}
         {allocError ? (
-          <div className="space-y-3">
-            <p role="alert" className="text-sm text-alert">{allocError}</p>
-            <Button size="sm" variant="secondary" onClick={refresh}>
-              Retry
-            </Button>
-          </div>
+          <ErrorBanner
+            action={
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            }
+          >
+            {allocError}
+          </ErrorBanner>
         ) : allocations === null ? (
           <SkeletonRows count={3} />
         ) : allocations.length === 0 ? (
@@ -1094,18 +1126,22 @@ function TipPoolDrawer({
               <TableHeader>
                 <TableRow>
                   <TableHead>Associate</TableHead>
-                  <TableHead>Hours</TableHead>
-                  <TableHead>Share %</TableHead>
-                  <TableHead>Amount</TableHead>
+                  <TableHead className="text-right">Hours</TableHead>
+                  <TableHead className="text-right">Share %</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {allocations.map((a) => (
                   <TableRow key={a.id}>
                     <TableCell className="text-white">{a.associateName}</TableCell>
-                    <TableCell>{a.hoursWorked}</TableCell>
-                    <TableCell>{a.sharePct ? `${a.sharePct}%` : '—'}</TableCell>
-                    <TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {a.hoursWorked}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {a.sharePct ? `${a.sharePct}%` : '—'}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
                       {fmtMoney(a.amount, { currency: pool.currency })}
                     </TableCell>
                   </TableRow>
@@ -1116,7 +1152,7 @@ function TipPoolDrawer({
                   </TableCell>
                   <TableCell />
                   <TableCell />
-                  <TableCell className="font-medium text-white">
+                  <TableCell className="text-right tabular-nums font-medium text-white">
                     {fmtMoney(allocatedTotal, { currency: pool.currency })}
                   </TableCell>
                 </TableRow>
@@ -1129,9 +1165,9 @@ function TipPoolDrawer({
                   <TableCell />
                   <TableCell />
                   <TableCell
-                    className={
+                    className={`text-right tabular-nums ${
                       remainderNonZero ? 'text-alert font-medium' : 'text-silver'
-                    }
+                    }`}
                   >
                     {fmtMoney(remainder, { currency: pool.currency })}
                   </TableCell>

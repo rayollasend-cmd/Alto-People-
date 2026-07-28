@@ -11,8 +11,10 @@ import {
   updateShiftTeam,
 } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
+import { useConfirm } from '@/lib/confirm';
 import { AssociatePicker } from '@/components/ui/AssociatePicker';
 import { Button } from '@/components/ui/Button';
+import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import {
   Dialog,
   DialogContent,
@@ -57,6 +59,7 @@ export function ShiftTeamsDialog({
   locationName: string | null;
   onChanged: () => void;
 }) {
+  const confirm = useConfirm();
   const [teams, setTeams] = useState<ShiftTeam[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ShiftTeamDetailResponse | null>(null);
@@ -152,12 +155,14 @@ export function ShiftTeamsDialog({
 
   const onDelete = async () => {
     if (!selectedId || busy) return;
-    if (
-      !window.confirm(
-        'Delete this shift team? Its members are not affected — only the grouping goes away.',
-      )
-    )
-      return;
+    const ok = await confirm({
+      title: 'Delete this shift team?',
+      description:
+        'Its members are not affected — only the grouping goes away.',
+      confirmLabel: 'Delete team',
+      destructive: true,
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await deleteShiftTeam(selectedId);
@@ -213,7 +218,7 @@ export function ShiftTeamsDialog({
           {/* Team list + create */}
           <div className="space-y-2">
             {teams === null ? (
-              <div className="text-sm text-silver">Loading…</div>
+              <SkeletonRows count={3} rowHeight="h-14" />
             ) : teams.length === 0 ? (
               <div className="text-sm text-silver">No teams yet — create one below.</div>
             ) : (
@@ -238,7 +243,7 @@ export function ShiftTeamsDialog({
                         </span>
                       </div>
                       {t.startMinute != null && t.endMinute != null && (
-                        <div className="text-[11px] text-silver/60 tabular-nums">
+                        <div className="text-xs2 text-silver/60 tabular-nums">
                           {minuteToTime(t.startMinute)} – {minuteToTime(t.endMinute)}
                         </div>
                       )}
@@ -289,12 +294,15 @@ export function ShiftTeamsDialog({
                 Select a team to manage its members.
               </div>
             ) : detail === null ? (
-              <div className="text-sm text-silver p-4">Loading…</div>
+              <div className="space-y-4">
+                <Skeleton className="h-9 w-full" />
+                <SkeletonRows count={3} rowHeight="h-10" />
+              </div>
             ) : (
               <div className="space-y-4">
                 <div className="flex flex-wrap items-end gap-2">
                   <div className="grow min-w-[10rem]">
-                    <div className="mb-1 text-[10px] uppercase tracking-widest text-silver">
+                    <div className="mb-1 text-2xs uppercase tracking-widest text-silver">
                       Name
                     </div>
                     <Input
@@ -304,7 +312,7 @@ export function ShiftTeamsDialog({
                     />
                   </div>
                   <div>
-                    <div className="mb-1 text-[10px] uppercase tracking-widest text-silver">
+                    <div className="mb-1 text-2xs uppercase tracking-widest text-silver">
                       Default times
                     </div>
                     <div className="flex items-center gap-1">
@@ -339,7 +347,7 @@ export function ShiftTeamsDialog({
                 </div>
 
                 <div>
-                  <div className="mb-1 text-[10px] uppercase tracking-widest text-silver">
+                  <div className="mb-1 text-2xs uppercase tracking-widest text-silver">
                     Add member
                   </div>
                   <AssociatePicker
@@ -352,7 +360,7 @@ export function ShiftTeamsDialog({
                 </div>
 
                 <div>
-                  <div className="mb-1 text-[10px] uppercase tracking-widest text-silver">
+                  <div className="mb-1 text-2xs uppercase tracking-widest text-silver">
                     Members{' '}
                     <span className="tabular-nums text-silver/70">
                       {detail.members.length}

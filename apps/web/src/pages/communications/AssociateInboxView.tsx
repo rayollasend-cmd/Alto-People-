@@ -8,11 +8,12 @@ import { dayHeading, fmtTimeOnly, groupByDay } from '@/lib/dayGroup';
 import { fmtDateTime } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { SearchInput } from '@/components/ui/FilterBar';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { ArrowUpRight, CheckCheck, ChevronRight, Inbox, Megaphone, Search } from 'lucide-react';
+import { ArrowUpRight, CheckCheck, ChevronRight, Inbox, Megaphone } from 'lucide-react';
 
 /**
  * One row in the merged inbox: either a direct IN_APP notification or a
@@ -99,7 +100,7 @@ export function AssociateInboxView() {
       }
       await refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Mark-read failed.');
+      setError(err instanceof ApiError ? err.message : 'Could not mark the message as read.');
     }
   };
 
@@ -164,24 +165,22 @@ export function AssociateInboxView() {
       />
 
       {error && (
-        <p role="alert" className="text-sm text-alert mb-3">
-          {error}{' '}
-          <button
-            type="button"
-            className="underline hover:text-white"
-            onClick={() => refresh()}
-          >
-            Retry
-          </button>
-        </p>
+        <ErrorBanner
+          className="mb-3"
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          }
+        >
+          {error}
+        </ErrorBanner>
       )}
 
       {items && items.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 mb-4">
-          <div className="relative flex-1 min-w-48">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver" />
-            <Input
-              className="pl-9"
+          <div className="flex-1 min-w-48">
+            <SearchInput
               aria-label="Search messages"
               placeholder="Search subject, body, or sender…"
               value={q}
@@ -292,7 +291,7 @@ export function AssociateInboxView() {
                             {n.body}
                           </div>
                           {n.senderEmail && (
-                            <div className="text-[10px] uppercase tracking-widest text-silver/70 mt-2">
+                            <div className="text-2xs uppercase tracking-widest text-silver/70 mt-2">
                               From {n.senderEmail}
                             </div>
                           )}

@@ -44,6 +44,15 @@ const STATUS_VARIANT: Record<
   CANCELLED: 'destructive',
 };
 
+// Human-readable labels — raw enum values never reach the user's eyes.
+const STATUS_LABELS: Record<ShiftStatus, string> = {
+  OPEN: 'Open',
+  ASSIGNED: 'Assigned',
+  DRAFT: 'Draft',
+  COMPLETED: 'Completed',
+  CANCELLED: 'Cancelled',
+};
+
 interface Props {
   shifts: Shift[];
   associates: AssociateLite[];
@@ -100,8 +109,11 @@ export function MobileScheduleList({
 
   const openCount = todayShifts.filter((s) => s.status === 'OPEN').length;
 
+  // Visibility is the PARENT's job (lg:hidden fine:md:hidden in
+  // AdminSchedulingView) — a second gate here blanked coarse-pointer
+  // iPads at md width, where the parent showed us but we hid ourselves.
   return (
-    <div className="md:hidden">
+    <div>
       {/* Day stepper / context bar — sticky so it doesn't scroll out of
           reach when the list is long. */}
       <div className="sticky top-0 z-10 -mx-4 px-4 py-2 bg-navy/95 backdrop-blur border-b border-navy-secondary flex items-center gap-2">
@@ -117,12 +129,12 @@ export function MobileScheduleList({
           <div className="text-sm font-medium text-white truncate">
             {fmtDateHeader(dayAnchor)}
           </div>
-          <div className="text-[11px] text-silver tabular-nums">
+          <div className="text-xs2 text-silver tabular-nums">
             {todayShifts.length} shift{todayShifts.length === 1 ? '' : 's'}
             {openCount > 0 && (
               <>
                 {' · '}
-                <span className="text-warning">{openCount} OPEN</span>
+                <span className="text-warning">{openCount} open</span>
               </>
             )}
           </div>
@@ -188,7 +200,7 @@ export function MobileScheduleList({
                           {fmtTime(start, s.timezone)} – {fmtTime(end, s.timezone)}
                         </div>
                         <Badge variant={STATUS_VARIANT[s.status]}>
-                          {s.status}
+                          {STATUS_LABELS[s.status] ?? s.status}
                         </Badge>
                       </div>
                       <div className="text-sm text-white mt-0.5 truncate">

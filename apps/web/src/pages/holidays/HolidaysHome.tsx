@@ -16,7 +16,7 @@ import type { ClientListItem } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
-import { parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import {
   Badge,
   Button,
@@ -28,6 +28,8 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  FilterChip,
   Input,
   PageHeader,
   Select,
@@ -38,12 +40,19 @@ import { Label } from '@/components/ui/Label';
 
 const TYPE_VARIANT: Record<
   HolidayType,
-  'success' | 'pending' | 'outline' | 'accent'
+  'success' | 'info' | 'outline' | 'accent'
 > = {
-  FEDERAL: 'pending',
+  FEDERAL: 'info',
   STATE: 'accent',
   COMPANY: 'success',
   CLIENT_SPECIFIC: 'outline',
+};
+
+const TYPE_LABELS: Record<HolidayType, string> = {
+  FEDERAL: 'Federal',
+  STATE: 'State',
+  COMPANY: 'Company',
+  CLIENT_SPECIFIC: 'Client-specific',
 };
 
 const TYPE_FILTERS: { key: HolidayType | 'ALL'; label: string }[] = [
@@ -298,34 +307,31 @@ export function HolidaysHome() {
       <div className="space-y-1.5">
         <div className="flex flex-wrap gap-1.5">
           {TYPE_FILTERS.map((f) => (
-            <Button
+            <FilterChip
               key={f.key}
-              size="xs"
-              variant={typeFilter === f.key ? 'secondary' : 'ghost'}
+              active={typeFilter === f.key}
               onClick={() => setTypeFilter(f.key)}
             >
               {f.label}
-            </Button>
+            </FilterChip>
           ))}
         </div>
         {clients.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
-            <Button
-              size="xs"
-              variant={clientFilter === 'ALL' ? 'secondary' : 'ghost'}
+            <FilterChip
+              active={clientFilter === 'ALL'}
               onClick={() => setClientFilter('ALL')}
             >
               All clients
-            </Button>
+            </FilterChip>
             {clients.map((c) => (
-              <Button
+              <FilterChip
                 key={c.id}
-                size="xs"
-                variant={clientFilter === c.id ? 'secondary' : 'ghost'}
+                active={clientFilter === c.id}
                 onClick={() => setClientFilter(c.id)}
               >
                 {c.name}
-              </Button>
+              </FilterChip>
             ))}
           </div>
         )}
@@ -333,13 +339,16 @@ export function HolidaysHome() {
 
       {error ? (
         <Card>
-          <CardContent className="p-6 space-y-3">
-            <p role="alert" className="text-sm text-alert">
+          <CardContent className="p-6">
+            <ErrorBanner
+              action={
+                <Button size="sm" variant="secondary" onClick={refresh}>
+                  Retry
+                </Button>
+              }
+            >
               {error}
-            </p>
-            <Button size="sm" variant="secondary" onClick={refresh}>
-              Retry
-            </Button>
+            </ErrorBanner>
           </CardContent>
         </Card>
       ) : grouped === null ? (
@@ -403,8 +412,8 @@ export function HolidaysHome() {
                           <div className="text-xs text-silver flex items-center gap-2 mt-0.5">
                             <Badge variant={TYPE_VARIANT[h.type]}>
                               {h.type === 'STATE' && h.state
-                                ? `STATE — ${h.state}`
-                                : h.type}
+                                ? `State — ${h.state}`
+                                : TYPE_LABELS[h.type]}
                             </Badge>
                             {h.scope === 'client' && h.clientName && (
                               <span>· {h.clientName}</span>
@@ -433,7 +442,7 @@ export function HolidaysHome() {
                                 toast.error(
                                   err instanceof ApiError
                                     ? err.message
-                                    : 'Failed.',
+                                    : 'Could not delete the holiday.',
                                 );
                               }
                             }}
@@ -533,7 +542,7 @@ function NewHolidayDrawer({
       toast.success('Holiday created.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the holiday.');
     } finally {
       setSaving(false);
     }
@@ -679,7 +688,7 @@ function EditHolidayDrawer({
       toast.success('Holiday updated.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not update the holiday.');
     } finally {
       setSaving(false);
     }
@@ -701,8 +710,10 @@ function EditHolidayDrawer({
         </div>
         {/* Date and type are immutable — delete and recreate to change them. */}
         <div className="text-xs text-silver">
-          {holiday.date.slice(0, 10)} ·{' '}
-          <Badge variant={TYPE_VARIANT[holiday.type]}>{holiday.type}</Badge>
+          {fmtDate(parseYmd(holiday.date))} ·{' '}
+          <Badge variant={TYPE_VARIANT[holiday.type]}>
+            {TYPE_LABELS[holiday.type]}
+          </Badge>
           {holiday.scope === 'client' && holiday.clientName && (
             <span> · {holiday.clientName}</span>
           )}

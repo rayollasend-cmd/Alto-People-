@@ -4,6 +4,7 @@ import type { J1Profile } from '@alto-people/shared';
 import { listJ1Profiles, upsertJ1 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { fmtDate, parseYmd } from '@/lib/format';
 import {
   Avatar,
   Badge,
@@ -21,6 +22,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   SkeletonRows,
   Table,
@@ -103,9 +105,16 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-alert mb-3">
+        <ErrorBanner
+          className="mb-3"
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          }
+        >
           {error}
-        </p>
+        </ErrorBanner>
       )}
       {!profiles && <SkeletonRows count={4} rowHeight="h-12" />}
       {profiles && profiles.length === 0 && (
@@ -158,11 +167,12 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
                       <div className="truncate">{p.associateName}</div>
                       {/* Phone-only secondary line so the country / program
                           dates aren't lost when their columns are hidden. */}
-                      <div className="sm:hidden text-[11px] text-silver/70 truncate">
+                      <div className="sm:hidden text-xs2 text-silver/70 truncate">
                         {p.country}
                       </div>
-                      <div className="md:hidden text-[10px] text-silver/70 tabular-nums">
-                        {p.programStartDate} → {p.programEndDate}
+                      <div className="md:hidden text-2xs text-silver/70 tabular-nums">
+                        {fmtDate(parseYmd(p.programStartDate))} →{' '}
+                        {fmtDate(parseYmd(p.programEndDate))}
                       </div>
                     </div>
                   </div>
@@ -171,7 +181,8 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
                 <TableCell className="hidden lg:table-cell text-silver">{p.ds2019Number}</TableCell>
                 <TableCell className="hidden lg:table-cell text-silver">{p.sponsorAgency}</TableCell>
                 <TableCell className="hidden md:table-cell text-silver tabular-nums">
-                  {p.programStartDate} → {p.programEndDate}
+                  {fmtDate(parseYmd(p.programStartDate))} →{' '}
+                  {fmtDate(parseYmd(p.programEndDate))}
                 </TableCell>
                 <TableCell>
                   <Badge variant={expiryVariant(p.daysUntilEnd)}>
@@ -245,8 +256,12 @@ function J1DetailPanel({
           <span className="text-xs text-silver">{profile.country}</span>
         </div>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
-          <DetailRow label="Program start">{profile.programStartDate}</DetailRow>
-          <DetailRow label="Program end">{profile.programEndDate}</DetailRow>
+          <DetailRow label="Program start">
+            {fmtDate(parseYmd(profile.programStartDate))}
+          </DetailRow>
+          <DetailRow label="Program end">
+            {fmtDate(parseYmd(profile.programEndDate))}
+          </DetailRow>
           <DetailRow label="DS-2019 number">{profile.ds2019Number}</DetailRow>
           <DetailRow label="Sponsor agency">{profile.sponsorAgency}</DetailRow>
           <DetailRow label="Visa #">{profile.visaNumber ?? '—'}</DetailRow>
@@ -267,7 +282,7 @@ function J1DetailPanel({
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-[10px] uppercase tracking-widest text-silver/80">{label}</dt>
+      <dt className="text-2xs uppercase tracking-widest text-silver/80">{label}</dt>
       <dd className="text-white text-sm mt-0.5 break-all">{children}</dd>
     </div>
   );
@@ -420,7 +435,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="block text-[11px] uppercase tracking-wider text-silver mb-1">
+      <span className="block text-xs2 uppercase tracking-wider text-silver mb-1">
         {label}
         {required && <span className="text-alert"> *</span>}
       </span>

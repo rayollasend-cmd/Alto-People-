@@ -67,6 +67,15 @@ function initialsOf(name: string | null): string {
   return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase();
 }
 
+// Human-readable labels — raw enum values never reach the user's eyes.
+const STATUS_LABELS: Record<ShiftStatus, string> = {
+  OPEN: 'Open',
+  ASSIGNED: 'Assigned',
+  DRAFT: 'Draft',
+  COMPLETED: 'Completed',
+  CANCELLED: 'Cancelled',
+};
+
 interface Props {
   shifts: Shift[];
   monthAnchor: Date; // first of month at 00:00 local
@@ -181,7 +190,7 @@ export function MonthCalendarView({
             <div
               key={d}
               className={cn(
-                'px-2 py-2 text-[10px] uppercase tracking-wider text-silver border-r border-navy-secondary last:border-r-0',
+                'px-2 py-2 text-2xs uppercase tracking-wider text-silver border-r border-navy-secondary last:border-r-0',
                 (i === 5 || i === 6) && 'text-silver/70'
               )}
             >
@@ -248,7 +257,7 @@ function MonthSummary({
 }) {
   if (summary.totalShifts === 0) return null;
   return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-3 py-2 border-b border-navy-secondary bg-navy-secondary/20 text-[11px]">
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-1 px-3 py-2 border-b border-navy-secondary bg-navy-secondary/20 text-xs2">
       <SummaryStat label="shifts" value={String(summary.totalShifts)} />
       <SummaryStat label="hours" value={(summary.totalMinutes / 60).toFixed(0)} />
       <SummaryStat
@@ -286,7 +295,7 @@ function SummaryStat({
   return (
     <div className="inline-flex items-baseline gap-1">
       <span className={cn('font-semibold tabular-nums', valueCx)}>{value}</span>
-      <span className="text-[10px] uppercase tracking-wider text-silver/70">
+      <span className="text-2xs uppercase tracking-wider text-silver/70">
         {label}
       </span>
     </div>
@@ -311,7 +320,7 @@ function LegendDot({
   return (
     <span className="inline-flex items-center gap-1">
       <span className={cn('h-1.5 w-1.5 rounded-full', dotCx)} />
-      <span className="text-[10px]">{label}</span>
+      <span className="text-2xs">{label}</span>
     </span>
   );
 }
@@ -375,7 +384,7 @@ function DayCell({
         </button>
         <div className="flex items-center gap-1.5">
           {hours > 0 && (
-            <span className="text-[10px] text-silver/70 tabular-nums">
+            <span className="text-2xs text-silver/70 tabular-nums">
               {hours.toFixed(hours < 10 ? 1 : 0)}h
             </span>
           )}
@@ -403,7 +412,7 @@ function DayCell({
         <button
           type="button"
           onClick={onOverflowOpen}
-          className="mt-0.5 text-[10px] text-silver hover:text-gold underline underline-offset-2 ml-1"
+          className="mt-0.5 text-2xs text-silver hover:text-gold underline underline-offset-2 ml-1"
         >
           +{overflow} more
         </button>
@@ -413,7 +422,7 @@ function DayCell({
         <button
           type="button"
           onClick={() => onCellCreate(date)}
-          className="absolute inset-x-1.5 bottom-1.5 top-7 text-silver/30 hover:text-gold flex items-center justify-center text-[10px] opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity no-print"
+          className="absolute inset-x-1.5 bottom-1.5 top-7 text-silver/30 hover:text-gold flex items-center justify-center text-2xs opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity no-print"
           aria-label="Add shift"
         >
           <Plus className="h-3 w-3 mr-1" />
@@ -450,13 +459,13 @@ function MonthShiftChip({
             tone.hover
           )}
         >
-          <span className={cn('text-[10px] tabular-nums shrink-0', tone.time)}>
+          <span className={cn('text-2xs tabular-nums shrink-0', tone.time)}>
             {compactTime(start, shift.timezone)}
           </span>
-          <span className={cn('text-[10px] truncate flex-1', tone.text)}>
+          <span className={cn('text-2xs truncate flex-1', tone.text)}>
             {shift.position}
           </span>
-          <span className={cn('text-[9px] font-semibold tabular-nums shrink-0', tone.initials)}>
+          <span className={cn('text-3xs font-semibold tabular-nums shrink-0', tone.initials)}>
             {initials}
           </span>
         </button>
@@ -483,8 +492,8 @@ function MonthShiftChip({
                 statusDotCx(shift.status)
               )}
             />
-            <span className="text-[10px] uppercase tracking-wider text-silver/70">
-              {shift.status}
+            <span className="text-2xs uppercase tracking-wider text-silver/70">
+              {STATUS_LABELS[shift.status] ?? shift.status}
             </span>
             {shift.assignedAssociateName && (
               <span className="text-silver/80">
@@ -493,7 +502,7 @@ function MonthShiftChip({
             )}
           </div>
           {shift.notes && (
-            <div className="pt-1 italic text-silver/70 text-[10px] border-t border-silver/10 mt-1">
+            <div className="pt-1 italic text-silver/70 text-2xs border-t border-silver/10 mt-1">
               {shift.notes}
             </div>
           )}
@@ -552,7 +561,7 @@ function DayDetailDialog({
                     </div>
                     <span
                       className={cn(
-                        'inline-flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded',
+                        'inline-flex items-center gap-1 text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded',
                         statusBadgeCx(s.status)
                       )}
                     >
@@ -562,7 +571,7 @@ function DayDetailDialog({
                           statusDotCx(s.status)
                         )}
                       />
-                      {s.status}
+                      {STATUS_LABELS[s.status] ?? s.status}
                     </span>
                   </div>
                   <div className="text-xs text-silver mt-0.5 tabular-nums">

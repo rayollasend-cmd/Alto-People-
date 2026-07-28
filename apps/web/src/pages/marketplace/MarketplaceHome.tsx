@@ -28,6 +28,8 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  FilterChip,
   Input,
   PageHeader,
   SkeletonRows,
@@ -64,7 +66,7 @@ export function MarketplaceHome() {
     <div className="space-y-5">
       <PageHeader
         title="Open shifts"
-        subtitle="Marketplace of OPEN shifts you're qualified to pick up. Managers approve claims."
+        subtitle="Marketplace of open shifts you're qualified to pick up. Managers approve claims."
         breadcrumbs={[{ label: 'Time & Pay' }, { label: 'Open shifts' }]}
       />
 
@@ -153,14 +155,14 @@ function AvailableTab() {
 
   if (loadError) {
     return (
-      <Card>
-        <CardContent className="p-6 space-y-3">
-          <p role="alert" className="text-sm text-alert">{loadError}</p>
-          <Button size="sm" variant="secondary" onClick={refresh}>
+      <ErrorBanner>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span>{loadError}</span>
+          <Button size="sm" variant="outline" onClick={refresh}>
             Retry
           </Button>
-        </CardContent>
-      </Card>
+        </div>
+      </ErrorBanner>
     );
   }
 
@@ -230,15 +232,13 @@ function AvailableTab() {
           {clients.length > 1 && (
             <div className="flex flex-wrap gap-2">
               {clients.map((c) => (
-                <Button
+                <FilterChip
                   key={c}
-                  size="sm"
-                  variant={clientFilter.has(c) ? 'secondary' : 'ghost'}
-                  aria-pressed={clientFilter.has(c)}
+                  active={clientFilter.has(c)}
                   onClick={() => toggleClient(c)}
                 >
                   {c}
-                </Button>
+                </FilterChip>
               ))}
             </div>
           )}
@@ -377,11 +377,15 @@ function ClaimsTab() {
     <Card>
       <CardContent className="p-0">
         {loadError ? (
-          <div className="p-6 space-y-3">
-            <p role="alert" className="text-sm text-alert">{loadError}</p>
-            <Button size="sm" variant="secondary" onClick={refresh}>
-              Retry
-            </Button>
+          <div className="p-6">
+            <ErrorBanner>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>{loadError}</span>
+                <Button size="sm" variant="outline" onClick={refresh}>
+                  Retry
+                </Button>
+              </div>
+            </ErrorBanner>
           </div>
         ) : sorted === null ? (
           <div className="p-6"><SkeletonRows count={3} /></div>
@@ -439,7 +443,7 @@ function ClaimsTab() {
                     </TableCell>
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{c.associateName}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {c.position}
                         {' · '}
                         {c.clientName}
@@ -598,11 +602,15 @@ function CatalogTab() {
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <div className="p-6 space-y-3">
-              <p role="alert" className="text-sm text-alert">{loadError}</p>
-              <Button size="sm" variant="secondary" onClick={refresh}>
-                Retry
-              </Button>
+            <div className="p-6">
+              <ErrorBanner>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{loadError}</span>
+                  <Button size="sm" variant="outline" onClick={refresh}>
+                    Retry
+                  </Button>
+                </div>
+              </ErrorBanner>
             </div>
           ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
@@ -631,7 +639,7 @@ function CatalogTab() {
                   <TableRow key={q.id}>
                     <TableCell className="font-mono text-xs">
                       <div className="truncate">{q.code}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate font-sans">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate font-sans">
                         {q.clientId ? 'Client-scoped' : 'Global'}
                         {q.isCert ? ' · Cert' : ''}
                       </div>

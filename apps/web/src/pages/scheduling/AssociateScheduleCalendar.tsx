@@ -185,7 +185,7 @@ export function ScheduleWeekView({
             <section key={d.key}>
               <h3
                 className={[
-                  'text-[11px] uppercase tracking-wider mb-1.5',
+                  'text-xs2 uppercase tracking-wider mb-1.5',
                   isToday ? 'text-gold' : 'text-silver/80',
                 ].join(' ')}
               >
@@ -298,7 +298,7 @@ export function ScheduleMonthView({
 
       <div className="grid grid-cols-7 gap-1 text-center">
         {WEEKDAYS.map((w) => (
-          <div key={w} className="text-[10px] uppercase tracking-wider text-silver/60 py-1">
+          <div key={w} className="text-2xs uppercase tracking-wider text-silver/60 py-1">
             {w}
           </div>
         ))}

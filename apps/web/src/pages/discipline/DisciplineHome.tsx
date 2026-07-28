@@ -30,8 +30,11 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  FilterChip,
   Input,
   PageHeader,
+  SearchInput,
   Select,
   SkeletonRows,
   Table,
@@ -163,20 +166,19 @@ export function DisciplineHome() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-1">
           {(['ACTIVE', 'ACKNOWLEDGED', 'RESCINDED', 'ALL'] as const).map((s) => (
-            <Button
+            <FilterChip
               key={s}
-              size="sm"
-              variant={filter === s ? 'primary' : 'ghost'}
+              active={filter === s}
               onClick={() => setFilter(s)}
             >
               {s === 'ALL' ? 'All' : STATUS_LABELS[s]}
-            </Button>
+            </FilterChip>
           ))}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Input
+          <SearchInput
             aria-label="Search associate"
-            className="h-8 w-44 text-xs"
+            className="h-8 w-52 text-xs"
             placeholder="Search associate"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -215,13 +217,16 @@ export function DisciplineHome() {
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <div className="p-6 space-y-3">
-              <p role="alert" className="text-sm text-alert">
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
                 {loadError}
-              </p>
-              <Button size="sm" variant="secondary" onClick={refresh}>
-                Retry
-              </Button>
+              </ErrorBanner>
             </div>
           ) : rows === null ? (
             <div className="p-6">
@@ -263,7 +268,7 @@ export function DisciplineHome() {
                         {a.associateName}
                       </div>
                       <div className="text-xs text-silver">{a.associateEmail}</div>
-                      <div className="text-[11px] text-silver/70 md:hidden">
+                      <div className="text-xs2 text-silver/70 md:hidden">
                         {fmtDate(parseYmd(a.incidentDate))}
                       </div>
                     </TableCell>
@@ -428,7 +433,7 @@ function NewActionDrawer({
       toast.success('Action issued.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not issue the action.');
     } finally {
       setSaving(false);
     }
@@ -679,7 +684,9 @@ function DetailDrawer({
                   toast.success('Acknowledged.');
                   onChanged();
                 } catch (err) {
-                  toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                  toast.error(
+                    err instanceof ApiError ? err.message : 'Could not record the acknowledgment.',
+                  );
                 } finally {
                   setBusy(false);
                 }
@@ -711,7 +718,9 @@ function DetailDrawer({
                   toast.success('Rescinded.');
                   onChanged();
                 } catch (err) {
-                  toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                  toast.error(
+                    err instanceof ApiError ? err.message : 'Could not rescind the action.',
+                  );
                 } finally {
                   setBusy(false);
                 }

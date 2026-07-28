@@ -29,6 +29,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
@@ -143,11 +144,16 @@ export function RampHome() {
       <Card>
         <CardContent className="p-0">
           {loadError ? (
-            <div className="p-6 space-y-3">
-              <p role="alert" className="text-sm text-alert">{loadError}</p>
-              <Button size="sm" variant="secondary" onClick={refresh}>
-                Retry
-              </Button>
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {loadError}
+              </ErrorBanner>
             </div>
           ) : filtered === null ? (
             <div className="p-6">
@@ -268,7 +274,9 @@ function NewPlanDrawer({
       toast.success('Ramp plan created with 30/60/90 milestones.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not create the plan.',
+      );
     } finally {
       setSaving(false);
     }
@@ -357,12 +365,15 @@ function PlanDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         {loadError ? (
-          <div className="space-y-3">
-            <p role="alert" className="text-sm text-alert">{loadError}</p>
-            <Button size="sm" variant="secondary" onClick={refresh}>
-              Retry
-            </Button>
-          </div>
+          <ErrorBanner
+            action={
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            }
+          >
+            {loadError}
+          </ErrorBanner>
         ) : plan === undefined ? (
           <SkeletonRows count={3} />
         ) : plan === null ? (
@@ -423,7 +434,7 @@ function PlanDetailDrawer({
                               toast.error(
                                 err instanceof ApiError
                                   ? err.message
-                                  : 'Failed.',
+                                  : 'Could not update the milestone.',
                               );
                             }
                           }}
@@ -453,7 +464,7 @@ function PlanDetailDrawer({
                               toast.error(
                                 err instanceof ApiError
                                   ? err.message
-                                  : 'Failed.',
+                                  : 'Could not delete the milestone.',
                               );
                             }
                           }}
@@ -491,11 +502,13 @@ function PlanDetailDrawer({
                     if (!(await confirm({ title: 'Archive this plan?', destructive: true }))) return;
                     try {
                       await archiveRampPlan(plan.id);
-                      toast.success('Archived.');
+                      toast.success('Plan archived.');
                       onClose();
                     } catch (err) {
                       toast.error(
-                        err instanceof ApiError ? err.message : 'Failed.',
+                        err instanceof ApiError
+                          ? err.message
+                          : 'Could not archive the plan.',
                       );
                     }
                   }}
@@ -540,7 +553,7 @@ function AddMilestoneDrawer({
 
   const submit = async () => {
     if (!title.trim()) {
-      toast.error('Title required.');
+      toast.error('Title is required.');
       return;
     }
     setSaving(true);
@@ -553,7 +566,9 @@ function AddMilestoneDrawer({
       toast.success('Milestone added.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not add the milestone.',
+      );
     } finally {
       setSaving(false);
     }

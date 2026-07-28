@@ -21,6 +21,7 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton } from '@/components/ui/Skeleton';
 import {
@@ -68,7 +69,9 @@ export function PayrollReadiness() {
 
       {error && (
         <Card>
-          <CardContent className="py-4 text-sm text-alert">{error}</CardContent>
+          <CardContent className="py-4">
+            <ErrorBanner>{error}</ErrorBanner>
+          </CardContent>
         </Card>
       )}
 
@@ -160,7 +163,7 @@ function ReadinessTableRow({ row }: { row: PayrollReadinessRow }) {
         {row.firstName} {row.lastName}
         <div className="text-xs text-silver">{row.email}</div>
         {!row.ready && (
-          <div className="md:hidden text-[11px] text-silver/70 truncate">
+          <div className="md:hidden text-xs2 text-silver/70 truncate">
             Missing:{' '}
             {[
               !row.flags.w4OnFile &&
@@ -337,7 +340,7 @@ function CensusExportDialog() {
             disabled={!reasonOk || busy}
             loading={busy}
           >
-            Download CSV
+            Export CSV
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -115,7 +115,7 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
             )}
           >
             <Icon className="h-5 w-5" aria-hidden="true" strokeWidth={active ? 2.4 : 2} />
-            <span className={cn('text-[10px] leading-none', active && 'font-semibold')}>
+            <span className={cn('text-2xs leading-none', active && 'font-semibold')}>
               {tab.labelKey ? t(tab.labelKey) : tab.label}
             </span>
           </Link>
@@ -132,7 +132,7 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
         aria-label={t('tabs.moreAria')}
       >
         <Menu className="h-5 w-5" aria-hidden="true" />
-        <span className="text-[10px] leading-none">{t('tabs.more')}</span>
+        <span className="text-2xs leading-none">{t('tabs.more')}</span>
       </button>
     </nav>
   );

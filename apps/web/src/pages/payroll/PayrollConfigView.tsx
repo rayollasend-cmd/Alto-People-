@@ -22,11 +22,9 @@ import {
   TableRow,
 } from '@/components/ui/Table';
 
-const fmtMoney = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+import { fmtDateTime, fmtMoney, fmtPercent } from '@/lib/format';
 
-const fmtPct = (rate: number) =>
-  rate.toLocaleString('en-US', { style: 'percent', maximumFractionDigits: 2 });
+const fmtPct = (rate: number) => fmtPercent(rate, { fromFraction: true, decimals: 2 });
 
 /**
  * Read-only view of the payroll_config row driving the federal withholding
@@ -120,7 +118,7 @@ export function PayrollConfigView() {
           <p className="text-xs text-silver/70 mt-6 flex items-start gap-2">
             <ShieldAlert className="h-3 w-3 mt-0.5 flex-shrink-0" />
             <span>
-              Last updated {new Date(config.updatedAt).toLocaleString()}. Edits go through a database
+              Last updated {fmtDateTime(config.updatedAt)}. Edits go through a database
               migration — see <code className="text-silver">prisma/migrations/*_add_payroll_config</code>.
             </span>
           </p>

@@ -6,7 +6,6 @@ import {
   Download,
   KeyRound,
   RefreshCw,
-  Search,
   ShieldCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -29,7 +28,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
-import { Input } from '@/components/ui/Input';
+import { SearchInput } from '@/components/ui/FilterBar';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -43,6 +42,13 @@ import {
 } from '@/components/ui/Table';
 
 const STATUS_OPTIONS: UserStatus[] = ['ACTIVE', 'INVITED', 'DISABLED'];
+
+/** Human labels for the status enum — never show ACTIVE/DISABLED raw. */
+const STATUS_LABELS: Record<UserStatus, string> = {
+  ACTIVE: 'Active',
+  INVITED: 'Invited',
+  DISABLED: 'Disabled',
+};
 // LIVE_ASN is excluded — it's the system-integration role; the backend
 // rejects assigning it via PATCH and humans don't log in as it.
 const ROLE_OPTIONS: Role[] = (Object.keys(ROLES) as Role[]).filter(
@@ -284,7 +290,7 @@ export function UsersAdmin() {
     const isDisable = newStatus === 'DISABLED';
     if (
       !(await confirm({
-        title: `Set ${n} user${n === 1 ? '' : 's'} to ${newStatus}?`,
+        title: `Set ${n} user${n === 1 ? '' : 's'} to ${STATUS_LABELS[newStatus].toLowerCase()}?`,
         description: isDisable
           ? 'They will be signed out immediately and locked out until re-enabled.'
           : undefined,
@@ -320,7 +326,7 @@ export function UsersAdmin() {
         u.email,
         u.associateName ?? '',
         ROLE_LABELS[u.role],
-        u.status,
+        STATUS_LABELS[u.status],
         u.clientName ?? '',
         u.createdAt.slice(0, 10),
       ]),
@@ -404,7 +410,7 @@ export function UsersAdmin() {
       !(await confirm({
         title: isDisable
           ? `Disable ${u.email}?`
-          : `Set ${u.email} to ${newStatus}?`,
+          : `Set ${u.email} to ${STATUS_LABELS[newStatus].toLowerCase()}?`,
         description: isDisable
           ? 'They will be signed out immediately and locked out until re-enabled.'
           : undefined,
@@ -459,22 +465,15 @@ export function UsersAdmin() {
         <CardContent className="p-4 flex flex-wrap items-end gap-3">
           <Field label="Search" className="flex-1 w-full sm:min-w-[200px]">
             {(p) => (
-              <div className="relative">
-                <Search
-                  className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver"
-                  aria-hidden="true"
-                />
-                <Input
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  placeholder="Email or name…"
-                  className="pl-9"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') load();
-                  }}
-                  {...p}
-                />
-              </div>
+              <SearchInput
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Email or name…"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') load();
+                }}
+                {...p}
+              />
             )}
           </Field>
           <Field label="Role">
@@ -503,7 +502,7 @@ export function UsersAdmin() {
                 <option value="">All statuses</option>
                 {STATUS_OPTIONS.map((s) => (
                   <option key={s} value={s}>
-                    {s}
+                    {STATUS_LABELS[s]}
                   </option>
                 ))}
               </Select>
@@ -571,7 +570,7 @@ export function UsersAdmin() {
             <option value="">Set status…</option>
             {STATUS_OPTIONS.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {STATUS_LABELS[s]}
               </option>
             ))}
           </Select>
@@ -595,7 +594,14 @@ export function UsersAdmin() {
         </div>
       )}
 
-      {error && <ErrorBanner>{error}</ErrorBanner>}
+      {error && (
+        <div className="space-y-3">
+          <ErrorBanner>{error}</ErrorBanner>
+          <Button size="sm" variant="secondary" onClick={load} disabled={loading}>
+            Retry
+          </Button>
+        </div>
+      )}
 
       <Card>
         <CardContent className="p-0">
@@ -702,10 +708,10 @@ export function UsersAdmin() {
                         {u.associateName && (
                           <div className="text-xs text-silver">{u.email}</div>
                         )}
-                        <div className="text-[11px] text-silver/70 md:hidden">
+                        <div className="text-xs2 text-silver/70 md:hidden">
                           {u.clientName ?? '—'}
                         </div>
-                        <div className="text-[11px] text-silver/70 lg:hidden">
+                        <div className="text-xs2 text-silver/70 lg:hidden">
                           {fmtDate(u.createdAt)}
                         </div>
                       </TableCell>
@@ -725,7 +731,9 @@ export function UsersAdmin() {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <Badge variant={statusVariant(u.status)}>{u.status}</Badge>
+                          <Badge variant={statusVariant(u.status)}>
+                            {STATUS_LABELS[u.status]}
+                          </Badge>
                           <Select
                             size="sm"
                             value={u.status}
@@ -737,7 +745,7 @@ export function UsersAdmin() {
                           >
                             {STATUS_OPTIONS.map((s) => (
                               <option key={s} value={s}>
-                                {s}
+                                {STATUS_LABELS[s]}
                               </option>
                             ))}
                           </Select>

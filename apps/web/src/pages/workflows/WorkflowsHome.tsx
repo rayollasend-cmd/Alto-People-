@@ -63,6 +63,19 @@ const TRIGGERS: WorkflowTrigger[] = [
   'COMPLIANCE_EXPIRING',
 ];
 
+const TRIGGER_LABELS: Record<WorkflowTrigger, string> = {
+  ASSOCIATE_HIRED: 'Associate hired',
+  ASSOCIATE_TERMINATED: 'Associate terminated',
+  TIME_OFF_REQUESTED: 'Time off requested',
+  TIME_OFF_APPROVED: 'Time off approved',
+  TIME_OFF_DENIED: 'Time off denied',
+  POSITION_OPENED: 'Position opened',
+  POSITION_FILLED: 'Position filled',
+  PAYROLL_FINALIZED: 'Payroll finalized',
+  ONBOARDING_COMPLETED: 'Onboarding completed',
+  COMPLIANCE_EXPIRING: 'Compliance expiring',
+};
+
 const ACTION_KINDS: WorkflowActionKind[] = [
   'SEND_NOTIFICATION',
   'SET_FIELD',
@@ -71,6 +84,14 @@ const ACTION_KINDS: WorkflowActionKind[] = [
   'WEBHOOK',
 ];
 
+const ACTION_KIND_LABELS: Record<WorkflowActionKind, string> = {
+  SEND_NOTIFICATION: 'Send notification',
+  SET_FIELD: 'Set field',
+  ASSIGN_TASK: 'Assign task',
+  CREATE_AUDIT_LOG: 'Create audit log',
+  WEBHOOK: 'Webhook',
+};
+
 const RUN_STATUSES: WorkflowRunSummary['status'][] = [
   'PENDING',
   'RUNNING',
@@ -78,6 +99,33 @@ const RUN_STATUSES: WorkflowRunSummary['status'][] = [
   'FAILED',
   'CANCELLED',
 ];
+
+const RUN_STATUS_LABELS: Record<string, string> = {
+  PENDING: 'Pending',
+  RUNNING: 'Running',
+  COMPLETED: 'Completed',
+  FAILED: 'Failed',
+  CANCELLED: 'Cancelled',
+};
+
+/** Badge variant per run/step status — RUNNING is in-flight gold per the
+ *  status contract; CANCELLED is neutral. */
+function runStatusVariant(
+  status: string,
+): 'success' | 'destructive' | 'accent' | 'default' | 'pending' {
+  switch (status) {
+    case 'COMPLETED':
+      return 'success';
+    case 'FAILED':
+      return 'destructive';
+    case 'RUNNING':
+      return 'accent';
+    case 'CANCELLED':
+      return 'default';
+    default:
+      return 'pending';
+  }
+}
 
 export function WorkflowsHome() {
   const { user } = useAuth();
@@ -140,12 +188,15 @@ export function WorkflowsHome() {
       />
 
       {error && (
-        <div className="space-y-2">
-          <ErrorBanner>{error}</ErrorBanner>
-          <Button size="sm" variant="outline" onClick={refresh}>
-            Retry
-          </Button>
-        </div>
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              Retry
+            </Button>
+          }
+        >
+          {error}
+        </ErrorBanner>
       )}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
@@ -166,7 +217,7 @@ export function WorkflowsHome() {
             <EmptyState
               icon={Workflow}
               title="No workflows yet"
-              description="Workflows fire on triggers like ASSOCIATE_HIRED → send a welcome notification, create an onboarding task, post to an audit log."
+              description='Workflows fire on triggers like "Associate hired" → send a welcome notification, create an onboarding task, post to an audit log.'
               action={
                 canManage ? (
                   <Button onClick={() => setDrawerTarget('new')} size="sm">
@@ -196,7 +247,7 @@ export function WorkflowsHome() {
                   >
                     <option value="">All triggers</option>
                     {TRIGGERS.map((t) => (
-                      <option key={t} value={t}>{t}</option>
+                      <option key={t} value={t}>{TRIGGER_LABELS[t]}</option>
                     ))}
                   </Select>
                 </div>
@@ -229,12 +280,12 @@ export function WorkflowsHome() {
                       >
                         <TableCell className="font-medium">
                           {d.name}
-                          <div className="md:hidden text-[11px] text-silver/70 truncate">
+                          <div className="md:hidden text-xs2 text-silver/70 truncate">
                             {d.actions.length} action{d.actions.length === 1 ? '' : 's'} · {d.runCount} run{d.runCount === 1 ? '' : 's'}
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant="outline">{d.trigger}</Badge>
+                          <Badge variant="outline">{TRIGGER_LABELS[d.trigger]}</Badge>
                         </TableCell>
                         <TableCell className="text-silver hidden md:table-cell">{d.actions.length}</TableCell>
                         <TableCell>
@@ -352,7 +403,7 @@ function RunsTab() {
           >
             <option value="">All statuses</option>
             {RUN_STATUSES.map((s) => (
-              <option key={s} value={s}>{s}</option>
+              <option key={s} value={s}>{RUN_STATUS_LABELS[s]}</option>
             ))}
           </Select>
         </div>
@@ -363,12 +414,19 @@ function RunsTab() {
       </div>
 
       {error ? (
-        <div className="space-y-2">
-          <ErrorBanner>{error}</ErrorBanner>
-          <Button size="sm" variant="outline" onClick={() => load(statusFilter)}>
-            Retry
-          </Button>
-        </div>
+        <ErrorBanner
+          action={
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => load(statusFilter)}
+            >
+              Retry
+            </Button>
+          }
+        >
+          {error}
+        </ErrorBanner>
       ) : !runs ? (
         <SkeletonRows count={4} rowHeight="h-12" />
       ) : runs.length === 0 ? (
@@ -405,12 +463,12 @@ function RunsTab() {
                       )}
                       {r.definitionName}
                     </span>
-                    <div className="md:hidden text-[11px] text-silver/70 truncate">
-                      {r.trigger} · <span className="tabular-nums">{r.stepsCompleted}/{r.stepCount}</span> steps
+                    <div className="md:hidden text-xs2 text-silver/70 truncate">
+                      {TRIGGER_LABELS[r.trigger]} · <span className="tabular-nums">{r.stepsCompleted}/{r.stepCount}</span> steps
                     </div>
                   </TableCell>
                   <TableCell className="hidden md:table-cell">
-                    <Badge variant="outline">{r.trigger}</Badge>
+                    <Badge variant="outline">{TRIGGER_LABELS[r.trigger]}</Badge>
                   </TableCell>
                   <TableCell className="text-silver tabular-nums">
                     {fmtDateTime(r.startedAt)}
@@ -422,16 +480,8 @@ function RunsTab() {
                     )}
                   </TableCell>
                   <TableCell>
-                    <Badge
-                      variant={
-                        r.status === 'COMPLETED'
-                          ? 'success'
-                          : r.status === 'FAILED'
-                            ? 'destructive'
-                            : 'pending'
-                      }
-                    >
-                      {r.status}
+                    <Badge variant={runStatusVariant(r.status)}>
+                      {RUN_STATUS_LABELS[r.status] ?? r.status}
                     </Badge>
                   </TableCell>
                 </TableRow>
@@ -462,15 +512,24 @@ function RunDetailPanel({
   onRetry: () => void;
 }) {
   if (detail === undefined || detail === 'loading') {
-    return <p className="text-xs text-silver py-2">Loading run detail…</p>;
+    return (
+      <div className="py-2">
+        <SkeletonRows count={2} rowHeight="h-8" />
+      </div>
+    );
   }
   if (detail === 'error') {
     return (
-      <div className="py-2 space-y-2">
-        <ErrorBanner>Failed to load run detail.</ErrorBanner>
-        <Button size="sm" variant="outline" onClick={onRetry}>
-          Retry
-        </Button>
+      <div className="py-2">
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={onRetry}>
+              Retry
+            </Button>
+          }
+        >
+          Failed to load run detail.
+        </ErrorBanner>
       </div>
     );
   }
@@ -493,17 +552,11 @@ function RunDetailPanel({
             <li key={s.id} className="rounded border border-navy-secondary p-2 space-y-1.5">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="tabular-nums text-silver">#{s.ordinal + 1}</span>
-                <Badge variant="outline">{s.kind}</Badge>
-                <Badge
-                  variant={
-                    s.status === 'COMPLETED'
-                      ? 'success'
-                      : s.status === 'FAILED'
-                        ? 'destructive'
-                        : 'pending'
-                  }
-                >
-                  {s.status}
+                <Badge variant="outline">
+                  {ACTION_KIND_LABELS[s.kind as WorkflowActionKind] ?? s.kind}
+                </Badge>
+                <Badge variant={runStatusVariant(s.status)}>
+                  {RUN_STATUS_LABELS[s.status] ?? s.status}
                 </Badge>
                 <span className="ml-auto text-silver tabular-nums">
                   {fmtDateTime(s.completedAt)}
@@ -511,7 +564,7 @@ function RunDetailPanel({
               </div>
               {s.failureReason && <div className="text-alert">{s.failureReason}</div>}
               {s.result !== null && s.result !== undefined && (
-                <pre className="font-mono text-[11px] text-silver whitespace-pre-wrap break-all bg-navy-secondary/30 rounded p-2 overflow-x-auto">
+                <pre className="font-mono text-xs2 text-silver whitespace-pre-wrap break-all bg-navy-secondary/30 rounded p-2 overflow-x-auto">
                   {JSON.stringify(s.result, null, 2)}
                 </pre>
               )}
@@ -730,10 +783,10 @@ function DefinitionDrawer({
       };
       if (isNew) {
         await createWorkflow(payload);
-        toast.success('Workflow created');
+        toast.success('Workflow created.');
       } else {
         await updateWorkflow(initial!.id, payload);
-        toast.success('Workflow updated');
+        toast.success('Workflow updated.');
       }
       onSaved();
     } catch (err) {
@@ -749,7 +802,7 @@ function DefinitionDrawer({
     setSubmitting(true);
     try {
       await deleteWorkflow(initial!.id);
-      toast.success('Workflow deleted');
+      toast.success('Workflow deleted.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Delete failed.');
@@ -759,16 +812,18 @@ function DefinitionDrawer({
 
   const test = async () => {
     if (isNew) {
-      toast.error('Save first, then test');
+      toast.error('Save first, then test.');
       return;
     }
     setSubmitting(true);
     try {
       const res = await testWorkflow(initial!.id, { test: true });
-      toast.success(`Fired ${res.runs.length} run(s)`);
+      toast.success(
+        `Fired ${res.runs.length} run${res.runs.length === 1 ? '' : 's'}.`,
+      );
       onTested();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Test failed');
+      toast.error(err instanceof Error ? err.message : 'Test failed.');
       setSubmitting(false);
     }
   };
@@ -840,7 +895,7 @@ function DefinitionDrawer({
                 {...p}
               >
                 {TRIGGERS.map((t) => (
-                  <option key={t} value={t}>{t}</option>
+                  <option key={t} value={t}>{TRIGGER_LABELS[t]}</option>
                 ))}
               </Select>
             )}
@@ -857,7 +912,7 @@ function DefinitionDrawer({
 
           <div className="pt-3 border-t border-navy-secondary">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-[10px] uppercase tracking-widest text-silver/80">
+              <div className="text-2xs uppercase tracking-widest text-silver/80">
                 Conditions
               </div>
               <Button
@@ -877,7 +932,7 @@ function DefinitionDrawer({
                   </p>
                 ) : (
                   <>
-                    <p className="text-[11px] text-silver/80">
+                    <p className="text-xs2 text-silver/80">
                       All conditions must match (AND).
                     </p>
                     {condRows.map((r, i) => (
@@ -953,7 +1008,7 @@ function DefinitionDrawer({
 
           <div className="pt-3 border-t border-navy-secondary">
             <div className="flex items-center justify-between mb-2">
-              <div className="text-[10px] uppercase tracking-widest text-silver/80">
+              <div className="text-2xs uppercase tracking-widest text-silver/80">
                 Actions ({actionRows.length})
               </div>
               {canManage && (
@@ -973,7 +1028,7 @@ function DefinitionDrawer({
                     className="rounded border border-navy-secondary p-2 space-y-2"
                   >
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] tabular-nums text-silver">
+                      <span className="text-2xs tabular-nums text-silver">
                         #{idx + 1}
                       </span>
                       <Select
@@ -985,7 +1040,7 @@ function DefinitionDrawer({
                         disabled={!canManage}
                       >
                         {ACTION_KINDS.map((k) => (
-                          <option key={k} value={k}>{k}</option>
+                          <option key={k} value={k}>{ACTION_KIND_LABELS[k]}</option>
                         ))}
                       </Select>
                       {canManage && (

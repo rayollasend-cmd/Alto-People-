@@ -207,7 +207,7 @@ export function DayCalendarView({
               {hourLabels.map((h, i) => (
                 <div
                   key={h}
-                  className="absolute left-0 right-0 px-2 text-[10px] text-silver/70 tabular-nums"
+                  className="absolute left-0 right-0 px-2 text-2xs text-silver/70 tabular-nums"
                   style={{ top: i * PX_PER_HOUR - 6 }}
                 >
                   {h % 12 === 0 ? 12 : h % 12}
@@ -345,7 +345,7 @@ const DayColumn = memo(function DayColumn({
     <div className="flex-1 min-w-[160px] border-r border-navy-secondary">
       {associate ? (
         <div className="px-2 py-2 border-b border-navy-secondary h-12 flex items-center gap-2 bg-navy/95">
-          <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-[10px] font-semibold flex items-center justify-center shrink-0">
+          <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-2xs font-semibold flex items-center justify-center shrink-0">
             {associate.firstName[0]}
             {associate.lastName[0]}
           </div>
@@ -356,7 +356,7 @@ const DayColumn = memo(function DayColumn({
       ) : (
         <div className="px-2 py-2 text-xs font-medium text-warning border-b border-navy-secondary bg-warning/10 h-12 flex flex-col justify-center">
           Unassigned
-          <div className="text-[10px] uppercase tracking-wider text-silver/70 font-normal">
+          <div className="text-2xs uppercase tracking-wider text-silver/70 font-normal">
             OPEN shifts
           </div>
         </div>
@@ -389,7 +389,7 @@ const DayColumn = memo(function DayColumn({
           />
         ))}
         {shifts.length === 0 && canManage && (
-          <div className="pointer-events-none absolute inset-0 flex items-start justify-center pt-4 text-silver/30 text-[11px]">
+          <div className="pointer-events-none absolute inset-0 flex items-start justify-center pt-4 text-silver/30 text-xs2">
             <Plus className="h-3 w-3 mr-1 mt-0.5" /> click to add
           </div>
         )}
@@ -533,7 +533,7 @@ function DayShiftChip({
           className="absolute bottom-0 left-0 right-0 h-4 bg-gradient-to-t from-navy/80 to-transparent flex items-end justify-center pointer-events-none"
           title="Continues overnight"
         >
-          <span className="text-[9px] leading-none text-white mb-0.5">⌄ overnight</span>
+          <span className="text-3xs leading-none text-white mb-0.5">⌄ overnight</span>
         </div>
       )}
       <div
@@ -550,12 +550,12 @@ function DayShiftChip({
         className="w-full h-full text-left px-1.5 pl-5 pt-1 pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
       >
         <div className="flex items-center justify-between gap-1">
-          <div className="text-[10px] text-silver tabular-nums truncate">
+          <div className="text-2xs text-silver tabular-nums truncate">
             {fmtTime(startsAt, shift.timezone)}–{fmtTime(previewEnds, shift.timezone)}
           </div>
           <Badge
             variant={STATUS_VARIANT[shift.status] ?? 'default'}
-            className="text-[9px] px-1 py-0 shrink-0"
+            className="text-3xs px-1 py-0 shrink-0"
             data-status={shift.status}
           >
             {shift.status === 'ASSIGNED'
@@ -565,11 +565,11 @@ function DayShiftChip({
                 : shift.status[0]}
           </Badge>
         </div>
-        <div className="text-[11px] text-white font-medium truncate">
+        <div className="text-xs2 text-white font-medium truncate">
           {shift.position}
         </div>
         {shift.clientName && (
-          <div className="text-[10px] text-silver/70 truncate">
+          <div className="text-2xs text-silver/70 truncate">
             {shift.clientName}
           </div>
         )}

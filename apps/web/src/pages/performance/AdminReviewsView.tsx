@@ -11,7 +11,6 @@ import {
   submitReview,
 } from '@/lib/performanceApi';
 import { ApiError } from '@/lib/api';
-import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
 import {
@@ -36,8 +35,11 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  FilterChip,
   Input,
   PageHeader,
+  SearchInput,
   SkeletonRows,
   Textarea,
 } from '@/components/ui';
@@ -78,6 +80,12 @@ function statusVariant(
   }
 }
 
+const STATUS_LABELS: Record<PerformanceReviewStatus, string> = {
+  DRAFT: 'Draft',
+  SUBMITTED: 'Submitted',
+  ACKNOWLEDGED: 'Acknowledged',
+};
+
 export function AdminReviewsView({ canManage }: { canManage: boolean }) {
   const [filter, setFilter] = useState<PerformanceReviewStatus | 'ALL'>('DRAFT');
   const [reviews, setReviews] = useState<PerformanceReview[] | null>(null);
@@ -105,7 +113,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
         return next;
       });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      setError(err instanceof ApiError ? err.message : 'Could not load reviews.');
     }
   }, [filter]);
 
@@ -137,7 +145,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
       setSubmitTarget(null);
       await refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Submit failed.');
+      setError(err instanceof ApiError ? err.message : 'Could not submit the review.');
     } finally {
       setPendingId(null);
     }
@@ -178,7 +186,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
         r.associateName,
         `${r.periodStart} – ${r.periodEnd}`,
         r.overallRating,
-        r.status,
+        STATUS_LABELS[r.status],
       ]),
     ]);
   };
@@ -204,26 +212,20 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
 
       <div className="flex flex-wrap gap-2 mb-3">
         {STATUS_FILTERS.map((f) => (
-          <Button
+          <FilterChip
             key={f.value}
-            type="button"
-            size="xs"
-            variant="outline"
+            active={filter === f.value}
             onClick={() => setFilter(f.value)}
-            className={cn(
-              'uppercase tracking-wider',
-              filter === f.value &&
-                'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
-            )}
+            className="uppercase tracking-wider"
           >
             {f.label}
-          </Button>
+          </FilterChip>
         ))}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 mb-5">
         <div className="w-64 max-w-full">
-          <Input
+          <SearchInput
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search associate…"
@@ -248,11 +250,18 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-alert mb-3">
+        <ErrorBanner
+          className="mb-3"
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          }
+        >
           {error}
-        </p>
+        </ErrorBanner>
       )}
-      {!reviews && <SkeletonRows count={4} rowHeight="h-20" />}
+      {!reviews && !error && <SkeletonRows count={4} rowHeight="h-20" />}
       {filtered && filtered.length === 0 && reviews && reviews.length > 0 && (
         <p className="text-sm text-silver">No reviews match “{search.trim()}”.</p>
       )}
@@ -318,7 +327,9 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
                         <Star className="h-4 w-4" />
                         {r.overallRating}/5
                       </span>
-                      <Badge variant={statusVariant(r.status)}>{r.status}</Badge>
+                      <Badge variant={statusVariant(r.status)}>
+                        {STATUS_LABELS[r.status]}
+                      </Badge>
                       {canManage && r.status === 'DRAFT' && (
                         <div className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                           <Button
@@ -422,7 +433,7 @@ function ReviewDetailPanel({
             <Star className="h-5 w-5" />
             {r.overallRating}/5
           </span>
-          <Badge variant={statusVariant(r.status)}>{r.status}</Badge>
+          <Badge variant={statusVariant(r.status)}>{STATUS_LABELS[r.status]}</Badge>
           {r.reviewerEmail && (
             <span className="text-xs text-silver">by {r.reviewerEmail}</span>
           )}
@@ -452,7 +463,7 @@ function ReviewSection({ label, body }: { label: string; body: string | null }) 
   if (!body) return null;
   return (
     <div className="mb-4">
-      <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-1">
+      <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1">
         {label}
       </div>
       <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-sm text-white whitespace-pre-wrap">
@@ -465,7 +476,7 @@ function ReviewSection({ label, body }: { label: string; body: string | null }) 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-[10px] uppercase tracking-widest text-silver/80">{label}</dt>
+      <dt className="text-2xs uppercase tracking-widest text-silver/80">{label}</dt>
       <dd className="text-white text-sm mt-0.5 tabular-nums">{children}</dd>
     </div>
   );
@@ -530,7 +541,7 @@ function CreateReviewDialog({
       });
       onCreated();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Create failed.');
+      setError(err instanceof ApiError ? err.message : 'Could not create the review.');
     } finally {
       setSubmitting(false);
     }
@@ -542,7 +553,7 @@ function CreateReviewDialog({
         <DialogHeader>
           <DialogTitle>New performance review</DialogTitle>
           <DialogDescription>
-            The review starts as a DRAFT — you can revise before submitting.
+            The review starts as a draft — you can revise before submitting.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="grid gap-4">
@@ -609,11 +620,7 @@ function CreateReviewDialog({
               />
             </Field>
           </div>
-          {error && (
-            <p role="alert" className="text-sm text-alert">
-              {error}
-            </p>
-          )}
+          {error && <ErrorBanner>{error}</ErrorBanner>}
           <DialogFooter>
             <Button
               type="button"
@@ -624,7 +631,7 @@ function CreateReviewDialog({
               Cancel
             </Button>
             <Button type="submit" loading={submitting} disabled={submitting}>
-              Save as DRAFT
+              Save draft
             </Button>
           </DialogFooter>
         </form>
@@ -644,7 +651,7 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="block text-[11px] uppercase tracking-wider text-silver mb-1">
+      <span className="block text-xs2 uppercase tracking-wider text-silver mb-1">
         {label}
         {required && <span className="text-alert"> *</span>}
       </span>

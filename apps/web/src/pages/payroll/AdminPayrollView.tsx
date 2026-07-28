@@ -97,9 +97,12 @@ import {
 } from '@/components/ui/Table';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
+import { fmtDate, fmtDateTime, fmtMoney, parseYmd } from '@/lib/format';
+import { FilterChip } from '@/components/ui/FilterBar';
 
-const fmtMoney = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+/** "May 13, 2026 → May 26, 2026" — the run period, parsed as local days. */
+const fmtPeriod = (startYmd: string, endYmd: string) =>
+  `${fmtDate(parseYmd(startYmd))} → ${fmtDate(parseYmd(endYmd))}`;
 
 const STATUS_FILTERS: Array<{ value: PayrollRunStatus | 'ALL'; label: string }> = [
   { value: 'DRAFT', label: 'Draft' },
@@ -117,6 +120,13 @@ const RUN_STATUS_VARIANT: Record<
   FINALIZED: 'pending',
   DISBURSED: 'success',
   CANCELLED: 'destructive',
+};
+
+const RUN_STATUS_LABELS: Record<PayrollRunStatus, string> = {
+  DRAFT: 'Draft',
+  FINALIZED: 'Finalized',
+  DISBURSED: 'Disbursed',
+  CANCELLED: 'Cancelled',
 };
 
 interface AdminPayrollViewProps {
@@ -432,7 +442,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     const reason = await prompt({
       title: `Delete this ${selected.status.toLowerCase()} run?`,
       description:
-        `${selected.periodStart} → ${selected.periodEnd} — its ${selected.itemCount} ` +
+        `${fmtPeriod(selected.periodStart, selected.periodEnd)} — its ${selected.itemCount} ` +
         `paystub${selected.itemCount === 1 ? '' : 's'} will be removed. This can't be undone — but nothing ` +
         `has been paid out, so you can re-run payroll for the correct period.`,
       confirmLabel: 'Delete run',
@@ -712,20 +722,14 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
           edge — feels like a deliberate rail instead of a free scroller. */}
       <div className="-mx-2 mb-5 flex gap-2 overflow-x-auto snap-x snap-mandatory px-2 pb-1 sm:mx-0 sm:flex-wrap sm:px-0 sm:pb-0 sm:snap-none">
         {STATUS_FILTERS.map((f) => (
-          <Button
+          <FilterChip
             key={f.value}
-            type="button"
-            size="xs"
-            variant="outline"
+            active={filter === f.value}
             onClick={() => setFilter(f.value)}
-            className={cn(
-              'shrink-0 snap-start sm:px-3 sm:text-sm',
-              filter === f.value &&
-                'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
-            )}
+            className="shrink-0 snap-start sm:px-3 sm:text-sm"
           >
             {f.label}
-          </Button>
+          </FilterChip>
         ))}
       </div>
 
@@ -913,7 +917,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                           >
                             <input
                               type="checkbox"
-                              aria-label={`Select run ${r.periodStart} → ${r.periodEnd}`}
+                              aria-label={`Select run ${fmtPeriod(r.periodStart, r.periodEnd)}`}
                               className="h-4 w-4 cursor-pointer accent-gold"
                               checked={bulkSelected.has(r.id)}
                               onChange={() => toggleBulk(r.id)}
@@ -922,17 +926,19 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                         )}
                         <TableCell>
                           <div className="text-white tabular-nums">
-                            {r.periodStart} → {r.periodEnd}
+                            {fmtPeriod(r.periodStart, r.periodEnd)}
                           </div>
                           {r.clientName && (
-                            <div className="text-[11px] text-silver/70 mt-0.5">
+                            <div className="text-xs2 text-silver/70 mt-0.5">
                               {r.clientName}
                             </div>
                           )}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <Badge variant={RUN_STATUS_VARIANT[r.status]}>{r.status}</Badge>
+                            <Badge variant={RUN_STATUS_VARIANT[r.status]}>
+                              {RUN_STATUS_LABELS[r.status]}
+                            </Badge>
                             {r.kind !== 'REGULAR' && <RunKindBadge kind={r.kind} />}
                           </div>
                         </TableCell>
@@ -971,10 +977,10 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
                           <div className="text-sm text-white tabular-nums">
-                            {r.periodStart} → {r.periodEnd}
+                            {fmtPeriod(r.periodStart, r.periodEnd)}
                           </div>
                           {r.clientName && (
-                            <div className="text-[11px] text-silver/70 mt-0.5 truncate">
+                            <div className="text-xs2 text-silver/70 mt-0.5 truncate">
                               {r.clientName}
                             </div>
                           )}
@@ -982,19 +988,19 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                         <div className="flex items-center gap-1 shrink-0">
                           {r.kind !== 'REGULAR' && <RunKindBadge kind={r.kind} />}
                           <Badge variant={RUN_STATUS_VARIANT[r.status]}>
-                            {r.status}
+                            {RUN_STATUS_LABELS[r.status]}
                           </Badge>
                         </div>
                       </div>
                       <div className="mt-2 flex items-end justify-between gap-3">
-                        <div className="text-[11px] text-silver/70">
+                        <div className="text-xs2 text-silver/70">
                           {r.itemCount} paystub{r.itemCount === 1 ? '' : 's'} · gross{' '}
                           <span className="tabular-nums text-silver">
                             {fmtMoney(r.totalGross)}
                           </span>
                         </div>
                         <div className="text-right">
-                          <div className="text-[10px] uppercase tracking-widest text-silver/70">
+                          <div className="text-2xs uppercase tracking-widest text-silver/70">
                             Net
                           </div>
                           <div className="tabular-nums text-gold text-base">
@@ -1022,11 +1028,11 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
           <>
             <DrawerHeader>
               <DrawerTitle>
-                {selected.periodStart} → {selected.periodEnd}
+                {fmtPeriod(selected.periodStart, selected.periodEnd)}
               </DrawerTitle>
               <DrawerDescription>
                 <Badge variant={RUN_STATUS_VARIANT[selected.status]}>
-                  {selected.status}
+                  {RUN_STATUS_LABELS[selected.status]}
                 </Badge>
                 <span className="ml-2 text-xs">
                   {selected.items.length} paystub{selected.items.length === 1 ? '' : 's'}
@@ -1044,7 +1050,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     Run voided
                     {selected.cancelledAt && (
                       <span className="text-silver/70 font-normal">
-                        — {new Date(selected.cancelledAt).toLocaleString()}
+                        — {fmtDateTime(selected.cancelledAt)}
                       </span>
                     )}
                   </div>
@@ -1102,7 +1108,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               {selected.approvedAt && (
                 <div className="mb-4 flex items-center gap-2 rounded border border-success/30 bg-success/5 p-2.5 text-xs text-success">
                   <ShieldCheck className="h-4 w-4" />
-                  Approved {new Date(selected.approvedAt).toLocaleString()}
+                  Approved {fmtDateTime(selected.approvedAt)}
                   {selected.approverEmail ? ` by ${selected.approverEmail}` : ''}
                 </div>
               )}
@@ -1190,11 +1196,11 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               {selected.items.length > 0 && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <div className="text-[10px] uppercase tracking-widest text-silver/70">
+                    <div className="text-2xs uppercase tracking-widest text-silver/70">
                       Paystubs ({selected.items.length})
                     </div>
                     {paystubView.heldCount > 0 && (
-                      <Badge variant="destructive" className="text-[10px]">
+                      <Badge variant="destructive" className="text-2xs">
                         {paystubView.heldCount} held
                       </Badge>
                     )}
@@ -1225,7 +1231,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
 
               {(selected.qboJournalEntryId || selected.qboSyncError) && (
                 <div className="mt-5 rounded border border-silver/15 bg-black/30 p-3 text-xs">
-                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-silver/70 mb-1.5">
+                  <div className="flex items-center gap-2 text-2xs uppercase tracking-widest text-silver/70 mb-1.5">
                     <LinkIcon className="h-3 w-3" />
                     QuickBooks sync
                   </div>
@@ -1236,7 +1242,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                         {selected.qboJournalEntryId}
                       </span>
                       {selected.qboSyncedAt && (
-                        <> — synced {new Date(selected.qboSyncedAt).toLocaleString()}</>
+                        <> — synced {fmtDateTime(selected.qboSyncedAt)}</>
                       )}
                     </div>
                   )}
@@ -1382,17 +1388,17 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   numbers anchor the ceremony. */}
               <div className="bg-navy-secondary/30 border-r border-navy-secondary border-l-2 border-l-gold/60 p-6 md:p-8 flex flex-col gap-6">
                 <div>
-                  <div className="text-[10px] uppercase tracking-widest text-gold inline-flex items-center gap-1.5">
+                  <div className="text-2xs uppercase tracking-widest text-gold inline-flex items-center gap-1.5">
                     <Send className="h-3 w-3" aria-hidden="true" />
                     {busy ? 'Processing payouts' : 'Ready to disburse'}
                   </div>
-                  <div className="text-[11px] text-silver tabular-nums mt-2">
-                    {selected.periodStart} → {selected.periodEnd}
+                  <div className="text-xs2 text-silver tabular-nums mt-2">
+                    {fmtPeriod(selected.periodStart, selected.periodEnd)}
                   </div>
                 </div>
 
                 <div>
-                  <div className="text-[10px] uppercase tracking-widest text-silver">
+                  <div className="text-2xs uppercase tracking-widest text-silver">
                     Net to associates
                   </div>
                   <div className="font-display text-4xl md:text-5xl text-gold-bright leading-none tabular-nums mt-2">
@@ -1409,7 +1415,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
 
                 <div className="grid grid-cols-2 gap-3 text-sm pt-2 mt-auto border-t border-navy-secondary">
                   <div className="pt-3">
-                    <div className="text-[10px] uppercase tracking-widest text-silver">
+                    <div className="text-2xs uppercase tracking-widest text-silver">
                       Gross
                     </div>
                     <div className="font-display text-xl text-white tabular-nums mt-1">
@@ -1417,7 +1423,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     </div>
                   </div>
                   <div className="pt-3">
-                    <div className="text-[10px] uppercase tracking-widest text-silver">
+                    <div className="text-2xs uppercase tracking-widest text-silver">
                       Tax withheld
                     </div>
                     <div className="font-display text-xl text-white tabular-nums mt-1">
@@ -1483,7 +1489,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               <p>
                 Finalizing locks the projection for{' '}
                 <span className="text-white">
-                  {selected.periodStart} → {selected.periodEnd}
+                  {fmtPeriod(selected.periodStart, selected.periodEnd)}
                 </span>{' '}
                 — {selected.itemCount} paystub{selected.itemCount === 1 ? '' : 's'},{' '}
                 {fmtMoney(selected.totalNet)} net. You can still disburse, approve, or
@@ -1675,16 +1681,16 @@ function PayrollHero({
         {nr ? (
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-gold mb-1.5">
+              <div className="flex items-center gap-2 text-xs2 uppercase tracking-widest text-gold mb-1.5">
                 <CalendarDays className="h-3.5 w-3.5" />
                 {isResume ? 'Resume in-progress run' : 'Next pay date'}
               </div>
               <div className="text-2xl text-white font-medium tabular-nums">
-                {fmtPayDate(nr.payDate)}
+                {fmtDate(parseYmd(nr.payDate))}
               </div>
               <div className="text-xs text-silver/70 mt-1">
                 {nr.scheduleName} · {nr.frequency.toLowerCase()} ·{' '}
-                {nr.periodStart} → {nr.periodEnd}
+                {fmtPeriod(nr.periodStart, nr.periodEnd)}
                 {nr.clientName ? ` · ${nr.clientName}` : ''}
               </div>
               <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3 text-xs">
@@ -1706,7 +1712,7 @@ function PayrollHero({
               {nr.totalExceptions > 0 && (
                 <div
                   className={cn(
-                    'mt-3 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]',
+                    'mt-3 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs2',
                     nr.blockingExceptions > 0
                       ? 'border-alert/40 bg-alert/5 text-alert'
                       : 'border-warning/30 bg-warning/5 text-warning'
@@ -1739,7 +1745,7 @@ function PayrollHero({
 
       {/* Last run snapshot. */}
       <div className="rounded-lg border border-silver/15 bg-black/30 p-5">
-        <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-silver/70 mb-1.5">
+        <div className="flex items-center gap-2 text-xs2 uppercase tracking-widest text-silver/70 mb-1.5">
           <FileText className="h-3.5 w-3.5" />
           Last run
         </div>
@@ -1750,16 +1756,18 @@ function PayrollHero({
             className="block text-left w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
           >
             <div className="text-base text-white tabular-nums">
-              {lr.periodStart} → {lr.periodEnd}
+              {fmtPeriod(lr.periodStart, lr.periodEnd)}
             </div>
             <div className="mt-1.5 flex items-center gap-2">
-              <Badge variant={RUN_STATUS_VARIANT[lr.status]}>{lr.status}</Badge>
+              <Badge variant={RUN_STATUS_VARIANT[lr.status]}>
+                {RUN_STATUS_LABELS[lr.status]}
+              </Badge>
               <span className="text-xs text-silver/70">
                 {lr.itemCount} paystub{lr.itemCount === 1 ? '' : 's'}
               </span>
             </div>
             <div className="mt-3">
-              <div className="text-[11px] uppercase tracking-widest text-silver/70">Net paid</div>
+              <div className="text-xs2 uppercase tracking-widest text-silver/70">Net paid</div>
               <div className="tabular-nums text-gold mt-0.5">{fmtMoney(lr.totalNet)}</div>
             </div>
           </button>
@@ -1829,7 +1837,7 @@ function SortableTh({
         type="button"
         onClick={() => onClick(sortKey)}
         className={cn(
-          'inline-flex items-center gap-1 text-[10px] uppercase tracking-widest transition-colors',
+          'inline-flex items-center gap-1 text-2xs uppercase tracking-widest transition-colors',
           'focus:outline-none focus-visible:text-gold',
           isActive ? 'text-gold' : 'text-silver/70 hover:text-silver'
         )}
@@ -1898,7 +1906,7 @@ function RunStatusStepper({
             <div className="flex flex-col items-center min-w-0">
               <span
                 className={cn(
-                  'inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-medium transition-colors',
+                  'inline-flex h-6 w-6 items-center justify-center rounded-full text-2xs font-medium transition-colors',
                   reached ? 'bg-gold text-navy' : 'bg-silver/10 text-silver/70',
                   current && 'ring-2 ring-gold/30 ring-offset-2 ring-offset-navy'
                 )}
@@ -1907,7 +1915,7 @@ function RunStatusStepper({
               </span>
               <span
                 className={cn(
-                  'mt-1 text-[10px] uppercase tracking-widest text-center truncate max-w-[80px]',
+                  'mt-1 text-2xs uppercase tracking-widest text-center truncate max-w-[80px]',
                   reached ? 'text-silver' : 'text-silver/70'
                 )}
               >
@@ -1972,7 +1980,7 @@ function DrawerStat({
     <div className={cn('rounded border px-3 py-2', highlight ? 'border-gold/40 bg-gold/5' : 'border-silver/15 bg-black/30')}>
       <div
         className={cn(
-          'text-[10px] uppercase tracking-widest',
+          'text-2xs uppercase tracking-widest',
           highlight ? 'text-gold' : 'text-silver/70'
         )}
         title={hint}
@@ -2307,11 +2315,11 @@ function FailedPaymentsSummary({
         {[...groups.entries()].map(([reason, group]) => (
           <div key={reason}>
             <div className="flex items-center justify-between gap-2 mb-1">
-              <div className="min-w-0 flex items-center gap-1.5 text-[11px] text-silver">
+              <div className="min-w-0 flex items-center gap-1.5 text-xs2 text-silver">
                 <span className="truncate" title={reason}>
                   {reason}
                 </span>
-                <Badge variant="destructive" className="text-[10px] shrink-0">
+                <Badge variant="destructive" className="text-2xs shrink-0">
                   {group.length}
                 </Badge>
               </div>
@@ -2329,7 +2337,7 @@ function FailedPaymentsSummary({
               )}
             </div>
             {reason.startsWith('no_payout_rail') && (
-              <p className="mb-1 text-[11px] text-warning">
+              <p className="mb-1 text-xs2 text-warning">
                 Retrying will fail again until a payout method exists — fix
                 enrollment/bank first.
               </p>
@@ -2354,8 +2362,8 @@ function FailedPaymentsSummary({
                         '—'
                       )}
                     </div>
-                    <div className="text-[10px] uppercase tracking-widest text-alert/80">
-                      {it.status}
+                    <div className="text-2xs uppercase tracking-widest text-alert/80">
+                      {PAYSTUB_STATUS_LABELS[it.status] ?? it.status}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -2408,6 +2416,14 @@ const PAYSTUB_STATUS_VARIANT: Record<
   HELD: 'pending',
 };
 
+const PAYSTUB_STATUS_LABELS: Record<string, string> = {
+  PENDING: 'Pending',
+  DISBURSED: 'Disbursed',
+  FAILED: 'Failed',
+  HELD: 'Held',
+  VOIDED: 'Voided',
+};
+
 const PaystubAdminCard = memo(function PaystubAdminCard({
   item,
   canProcess,
@@ -2447,25 +2463,25 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
             <div className="text-sm text-white truncate">
               {item.associateName ?? '—'}
             </div>
-            <div className="text-[11px] text-silver/70 truncate">
+            <div className="text-xs2 text-silver/70 truncate">
               {item.hoursWorked.toFixed(2)} hrs · {fmtMoney(item.hourlyRate)}/hr
               {item.taxState ? ` · ${item.taxState}` : ''}
             </div>
           </div>
           <Badge
             variant={PAYSTUB_STATUS_VARIANT[item.status] ?? 'default'}
-            className="text-[10px] shrink-0"
+            className="text-2xs shrink-0"
           >
-            {item.status}
+            {PAYSTUB_STATUS_LABELS[item.status] ?? item.status}
           </Badge>
         </div>
         <div className="text-right shrink-0">
-          <div className="text-[10px] uppercase tracking-widest text-silver/70">Net</div>
+          <div className="text-2xs uppercase tracking-widest text-silver/70">Net</div>
           <div className="tabular-nums text-gold">{fmtMoney(item.netPay)}</div>
         </div>
       </button>
       {expanded && (
-        <div className="border-t border-silver/10 px-3 py-3 text-[11px] space-y-3">
+        <div className="border-t border-silver/10 px-3 py-3 text-xs2 space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
               <DrillRow label="Gross pay" value={fmtMoney(item.grossPay)} />
@@ -2497,7 +2513,7 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
               <DrillRow label="Net pay" value={fmtMoney(item.netPay)} bold accent />
             </div>
             <div className="space-y-1">
-              <div className="text-[10px] uppercase tracking-widest text-silver/70 mb-1">
+              <div className="text-2xs uppercase tracking-widest text-silver/70 mb-1">
                 Employer cost
               </div>
               <DrillRow
@@ -2530,7 +2546,7 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
                 )}
                 bold
               />
-              <div className="text-[10px] uppercase tracking-widest text-silver/70 mt-3 mb-1">
+              <div className="text-2xs uppercase tracking-widest text-silver/70 mt-3 mb-1">
                 YTD (before this run)
               </div>
               <DrillRow
@@ -2621,7 +2637,7 @@ function HeroStat({
 }) {
   return (
     <div>
-      <div className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-silver/70">
+      <div className="flex items-center gap-1 text-2xs uppercase tracking-widest text-silver/70">
         {icon}
         {label}
       </div>
@@ -2632,15 +2648,4 @@ function HeroStat({
   );
 }
 
-/** "2026-04-30" → "Thu, Apr 30". UTC parsing avoids tz drift. */
-function fmtPayDate(ymd: string): string {
-  const [y, m, d] = ymd.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  return dt.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-  });
-}
 

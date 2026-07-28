@@ -34,6 +34,9 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  FilterBar,
+  FilterChip,
   Input,
   PageHeader,
   Select,
@@ -100,43 +103,43 @@ export function CareerHome() {
         title="Career ladders"
         subtitle="Progression paths through your job family. See what level you're at, what skills the next rung needs."
         breadcrumbs={[{ label: 'Performance' }, { label: 'Career' }]}
+        primaryAction={
+          canManage ? (
+            <Button onClick={() => setShowNew(true)}>
+              <Plus className="mr-2 h-4 w-4" /> New ladder
+            </Button>
+          ) : undefined
+        }
       />
 
-      <div className="flex flex-wrap items-center gap-2 justify-end">
+      <FilterBar>
         {families.map((f) => (
-          <Button
+          <FilterChip
             key={f}
-            size="sm"
-            variant={familyFilter === f ? 'secondary' : 'ghost'}
-            aria-pressed={familyFilter === f}
+            active={familyFilter === f}
             onClick={() => setFamilyFilter((cur) => (cur === f ? null : f))}
           >
             {f}
-          </Button>
+          </FilterChip>
         ))}
         <Input
           placeholder="Search ladders…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="max-w-xs"
+          className="ml-auto max-w-xs"
           aria-label="Search ladders by name"
         />
-        {canManage && (
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New ladder
-          </Button>
-        )}
-      </div>
+      </FilterBar>
 
       {loadError ? (
-        <Card>
-          <CardContent className="p-6 space-y-3">
-            <p role="alert" className="text-sm text-alert">{loadError}</p>
-            <Button size="sm" variant="secondary" onClick={refresh}>
+        <ErrorBanner>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>{loadError}</span>
+            <Button size="sm" variant="outline" onClick={refresh}>
               Retry
             </Button>
-          </CardContent>
-        </Card>
+          </div>
+        </ErrorBanner>
       ) : filtered === null ? (
         <Card>
           <CardContent className="p-6">
@@ -347,12 +350,14 @@ function LadderDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         {loadError ? (
-          <div className="space-y-3">
-            <p role="alert" className="text-sm text-alert">{loadError}</p>
-            <Button size="sm" variant="secondary" onClick={refresh}>
-              Retry
-            </Button>
-          </div>
+          <ErrorBanner>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>{loadError}</span>
+              <Button size="sm" variant="outline" onClick={refresh}>
+                Retry
+              </Button>
+            </div>
+          </ErrorBanner>
         ) : !data ? (
           <SkeletonRows count={3} />
         ) : (
@@ -637,14 +642,14 @@ function AddLevelDrawer({
         <div>
           <Label>Job profile (optional)</Label>
           {jobProfilesError ? (
-            <div className="mt-1 flex items-center gap-2">
-              <p role="alert" className="text-sm text-alert">
-                Failed to load job profiles.
-              </p>
-              <Button size="sm" variant="secondary" onClick={loadJobProfiles}>
-                Retry
-              </Button>
-            </div>
+            <ErrorBanner className="mt-1">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>Failed to load job profiles.</span>
+                <Button size="sm" variant="outline" onClick={loadJobProfiles}>
+                  Retry
+                </Button>
+              </div>
+            </ErrorBanner>
           ) : (
             <Select
               className="mt-1"
@@ -780,7 +785,7 @@ function AddSkillDrawer({
                 onFocus={() => options.length > 0 && setDropOpen(true)}
               />
               {dropOpen && options.length > 0 && (
-                <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-navy-secondary bg-navy shadow-lg">
+                <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-navy-secondary bg-navy elev-2">
                   {options.map((s) => (
                     <button
                       key={s.id}

@@ -8,7 +8,6 @@ import {
   Mail,
   Pencil,
   Plus,
-  Search,
   Users,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -26,11 +25,14 @@ import {
   sendBroadcast,
   updateBroadcast,
   type Broadcast,
+  type BroadcastChannel,
+  type BroadcastStatus,
   type Person,
   type Survey,
   type SurveyAggregate,
   type SurveyQuestion,
   type SurveyQuestionKind,
+  type SurveyStatus,
 } from '@/lib/dirCommsApi';
 import { useClients } from '@/lib/useClients';
 import { listCostCenters, listDepartments } from '@/lib/orgApi';
@@ -58,6 +60,7 @@ import {
   ErrorBanner,
   Input,
   PageHeader,
+  SearchInput,
   Select,
   SkeletonRows,
   Table,
@@ -76,6 +79,36 @@ import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
 type Tab = 'directory' | 'broadcasts' | 'surveys';
+
+const BROADCAST_STATUS_LABELS: Record<BroadcastStatus, string> = {
+  DRAFT: 'Draft',
+  SCHEDULED: 'Scheduled',
+  SENT: 'Sent',
+  CANCELLED: 'Cancelled',
+};
+
+const BROADCAST_STATUS_VARIANT: Record<
+  BroadcastStatus,
+  'default' | 'info' | 'success' | 'destructive'
+> = {
+  DRAFT: 'default',
+  SCHEDULED: 'info',
+  SENT: 'success',
+  CANCELLED: 'destructive',
+};
+
+const CHANNEL_LABELS: Record<BroadcastChannel, string> = {
+  IN_APP: 'In-app',
+  EMAIL: 'Email',
+  SMS: 'SMS',
+  PUSH: 'Push',
+};
+
+const SURVEY_STATUS_LABELS: Record<SurveyStatus, string> = {
+  DRAFT: 'Draft',
+  OPEN: 'Open',
+  CLOSED: 'Closed',
+};
 
 const QUESTION_KIND_LABELS: Record<SurveyQuestionKind, string> = {
   SHORT_TEXT: 'Short text',
@@ -123,13 +156,14 @@ function RetryBanner({
   onRetry: () => void;
 }) {
   return (
-    <ErrorBanner>
-      <div className="flex items-center justify-between gap-3">
-        <span>{message}</span>
-        <Button size="sm" variant="outline" onClick={onRetry}>
+    <ErrorBanner
+      action={
+        <Button size="sm" variant="secondary" onClick={onRetry}>
           Retry
         </Button>
-      </div>
+      }
+    >
+      {message}
     </ErrorBanner>
   );
 }
@@ -204,13 +238,15 @@ function DirectoryTab() {
     <div className="space-y-4">
       <Card>
         <CardContent className="p-4 flex items-center gap-3">
-          <Search className="h-4 w-4 text-silver" />
-          <Input
-            placeholder="Name or email"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && refresh(q)}
-          />
+          <div className="flex-1">
+            <SearchInput
+              aria-label="Search the directory"
+              placeholder="Name or email"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && refresh(q)}
+            />
+          </div>
           <Button onClick={() => refresh(q)}>Search</Button>
         </CardContent>
       </Card>
@@ -252,7 +288,7 @@ function DirectoryTab() {
                   <TableRow key={p.id}>
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{p.name}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         <span className="sm:hidden">
                           <a href={`mailto:${p.email}`} className="hover:underline">
                             {p.email}
@@ -336,7 +372,7 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
       toast.success(`Sent to ${r.recipientCount} associates.`);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not send the broadcast.');
     }
   };
 
@@ -367,7 +403,7 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
                   <TableHead>Title</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="hidden lg:table-cell">Channels</TableHead>
-                  <TableHead className="hidden md:table-cell">Recipients</TableHead>
+                  <TableHead className="hidden md:table-cell text-right">Recipients</TableHead>
                   <TableHead className="hidden sm:table-cell">Sent</TableHead>
                   <TableHead className="w-40 text-right">Action</TableHead>
                 </TableRow>
@@ -377,7 +413,7 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
                   <TableRow key={b.id}>
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{b.title}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         <span className="sm:hidden">
                           {b.sentAt ? fmtDateTime(b.sentAt) : 'Not sent'}
                           {' · '}
@@ -386,25 +422,21 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        variant={
-                          b.status === 'SENT'
-                            ? 'success'
-                            : b.status === 'CANCELLED'
-                              ? 'destructive'
-                              : 'pending'
-                        }
-                      >
-                        {b.status}
+                      <Badge variant={BROADCAST_STATUS_VARIANT[b.status]}>
+                        {BROADCAST_STATUS_LABELS[b.status]}
                       </Badge>
                       {b.status === 'SCHEDULED' && b.scheduledFor && (
-                        <div className="text-[10px] text-silver/70 mt-0.5">
+                        <div className="text-2xs text-silver/70 mt-0.5">
                           {fmtDateTime(b.scheduledFor)}
                         </div>
                       )}
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell">{b.channels.join(', ')}</TableCell>
-                    <TableCell className="hidden md:table-cell">{b.receiptCount}</TableCell>
+                    <TableCell className="hidden lg:table-cell">
+                      {b.channels.map((c) => CHANNEL_LABELS[c]).join(', ')}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums">
+                      {b.receiptCount}
+                    </TableCell>
                     <TableCell className="hidden sm:table-cell">
                       {b.sentAt ? fmtDateTime(b.sentAt) : '—'}
                     </TableCell>
@@ -543,12 +575,12 @@ function BroadcastDrawer({
         toast.success(
           scheduledFor
             ? `Broadcast scheduled for ${fmtDateTime(payload.scheduledFor)}.`
-            : 'Broadcast created (DRAFT).',
+            : 'Broadcast draft created.',
         );
       }
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not save the broadcast.');
     } finally {
       setSaving(false);
     }
@@ -596,7 +628,7 @@ function BroadcastDrawer({
                 }}
               >
                 <option value="">
-                  {clientsLoading ? 'Loading…' : 'All clients'}
+                  {clientsLoading ? 'Loading clients…' : 'All clients'}
                 </option>
                 {clients.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -615,7 +647,7 @@ function BroadcastDrawer({
                   onChange={(e) => setDepartmentId(e.target.value)}
                 >
                   <option value="">
-                    {departments === null ? 'Loading…' : 'All departments'}
+                    {departments === null ? 'Loading departments…' : 'All departments'}
                   </option>
                   {visibleDepartments.map((d) => (
                     <option key={d.id} value={d.id}>
@@ -633,7 +665,7 @@ function BroadcastDrawer({
                   onChange={(e) => setCostCenterId(e.target.value)}
                 >
                   <option value="">
-                    {costCenters === null ? 'Loading…' : 'All cost centers'}
+                    {costCenters === null ? 'Loading cost centers…' : 'All cost centers'}
                   </option>
                   {visibleCostCenters.map((c) => (
                     <option key={c.id} value={c.id}>
@@ -707,7 +739,7 @@ function SurveysTab({ canManage }: { canManage: boolean }) {
       toast.success('Survey is now open for responses.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not open the survey.');
     } finally {
       setBusyId(null);
     }
@@ -727,7 +759,7 @@ function SurveysTab({ canManage }: { canManage: boolean }) {
       toast.success('Survey closed.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not close the survey.');
     } finally {
       setBusyId(null);
     }
@@ -759,8 +791,8 @@ function SurveysTab({ canManage }: { canManage: boolean }) {
                   <TableHead>Title</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="hidden md:table-cell">Anonymous</TableHead>
-                  <TableHead className="hidden sm:table-cell">Questions</TableHead>
-                  <TableHead>Responses</TableHead>
+                  <TableHead className="hidden sm:table-cell text-right">Questions</TableHead>
+                  <TableHead className="text-right">Responses</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -769,7 +801,7 @@ function SurveysTab({ canManage }: { canManage: boolean }) {
                   <TableRow key={s.id}>
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{s.title}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         <span className="sm:hidden tabular-nums">
                           {s.questionCount} questions
                           {' · '}
@@ -784,15 +816,17 @@ function SurveysTab({ canManage }: { canManage: boolean }) {
                             ? 'default'
                             : s.status === 'OPEN'
                               ? 'success'
-                              : 'pending'
+                              : 'default'
                         }
                       >
-                        {s.status}
+                        {SURVEY_STATUS_LABELS[s.status]}
                       </Badge>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{s.isAnonymous ? 'Yes' : 'No'}</TableCell>
-                    <TableCell className="hidden sm:table-cell">{s.questionCount}</TableCell>
-                    <TableCell>{s.responseCount}</TableCell>
+                    <TableCell className="hidden sm:table-cell text-right tabular-nums">
+                      {s.questionCount}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">{s.responseCount}</TableCell>
                     <TableCell className="text-right space-x-1 whitespace-nowrap">
                       {canManage && s.status === 'DRAFT' && (
                         <>
@@ -882,10 +916,10 @@ function NewSurveyDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: (
         description: description.trim() || null,
         isAnonymous,
       });
-      toast.success('Survey created (DRAFT). Add questions and OPEN it.');
+      toast.success('Survey draft created. Add questions, then open it.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the survey.');
     } finally {
       setSaving(false);
     }
@@ -993,7 +1027,7 @@ function QuestionsDrawer({
       load();
       onChanged();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not add the question.');
     } finally {
       setAdding(false);
     }
@@ -1024,7 +1058,7 @@ function QuestionsDrawer({
                   {i + 1}. {qq.prompt}
                 </div>
                 <div className="text-xs text-silver mt-1 flex items-center gap-2 flex-wrap">
-                  <Badge variant="outline" className="text-[10px]">
+                  <Badge variant="outline" className="text-2xs">
                     {QUESTION_KIND_LABELS[qq.kind]}
                   </Badge>
                   {qq.isRequired && <span>Required</span>}

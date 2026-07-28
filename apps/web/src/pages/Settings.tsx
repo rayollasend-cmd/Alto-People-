@@ -442,7 +442,7 @@ function MfaCard() {
                     <ShieldCheck className="h-6 w-6 text-success" />
                   </div>
                   <div>
-                    <div className="text-[10px] uppercase tracking-widest text-success">
+                    <div className="text-2xs uppercase tracking-widest text-success">
                       Protected
                     </div>
                     <div className="font-display text-2xl md:text-3xl text-white leading-tight">
@@ -612,15 +612,15 @@ function EmailCard() {
   const submit = async () => {
     const target = newEmail.trim().toLowerCase();
     if (!target) {
-      toast.error('Enter a new email address');
+      toast.error('Enter a new email address.');
       return;
     }
     if (target === user?.email.toLowerCase()) {
-      toast.error('That is already your email');
+      toast.error('That is already your email.');
       return;
     }
     if (currentPassword.length < 12) {
-      toast.error('Enter your current password to confirm');
+      toast.error('Enter your current password to confirm.');
       return;
     }
     setSubmitting(true);
@@ -633,13 +633,13 @@ function EmailCard() {
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'invalid_credentials') {
-        toast.error('Current password is incorrect');
+        toast.error('Current password is incorrect.');
       } else if (code === 'email_in_use') {
-        toast.error('That email already belongs to another account');
+        toast.error('That email already belongs to another account.');
       } else if (code === 'same_email') {
-        toast.error('That is already your email');
+        toast.error('That is already your email.');
       } else {
-        toast.error('Could not request email change', {
+        toast.error('Could not request email change.', {
           description: err instanceof Error ? err.message : String(err),
         });
       }
@@ -1054,7 +1054,7 @@ function ProfileCard() {
     const f = firstName.trim();
     const l = lastName.trim();
     if (!dirty) {
-      toast.error('Make a change first');
+      toast.error('Make a change first.');
       return;
     }
     setSubmitting(true);
@@ -1063,13 +1063,13 @@ function ProfileCard() {
         firstName: f,
         lastName: l,
       });
-      toast.success('Profile updated', {
+      toast.success('Profile updated.', {
         description: `Display name is now ${updated.firstName} ${updated.lastName}.`,
       });
       // Re-fetch /auth/me so the chrome avatar/name update without reload.
       await refreshUser();
     } catch (err) {
-      toast.error('Could not update profile', {
+      toast.error('Could not update profile.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -1228,21 +1228,21 @@ function PasswordCard() {
 
   const submit = async () => {
     if (newPassword !== confirmPassword) {
-      toast.error('New password and confirmation must match');
+      toast.error('New password and confirmation must match.');
       return;
     }
     if (newPassword.length < 12) {
-      toast.error('New password must be at least 12 characters');
+      toast.error('New password must be at least 12 characters.');
       return;
     }
     if (newPassword === currentPassword) {
-      toast.error('New password must differ from your current password');
+      toast.error('New password must differ from your current password.');
       return;
     }
     setSubmitting(true);
     try {
       await changePassword({ currentPassword, newPassword });
-      toast.success('Password updated', {
+      toast.success('Password updated.', {
         description: 'Other devices have been signed out.',
       });
       setCurrent('');
@@ -1251,11 +1251,11 @@ function PasswordCard() {
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'invalid_credentials') {
-        toast.error('Current password is incorrect');
+        toast.error('Current password is incorrect.');
       } else if (code === 'invalid_body') {
-        toast.error('Password does not meet requirements');
+        toast.error('Password does not meet requirements.');
       } else {
-        toast.error('Could not change password', {
+        toast.error('Could not change password.', {
           description: err instanceof Error ? err.message : String(err),
         });
       }

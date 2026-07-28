@@ -22,8 +22,10 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
+  SegmentedControl,
   SkeletonRows,
   Table,
   TableBody,
@@ -32,6 +34,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui';
+import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
 import { fmtDate, ymdLocal } from '@/lib/format';
 
@@ -114,42 +117,29 @@ export function ExpirationsHome() {
       />
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <span className="text-silver">Within:</span>
-        {[30, 60, 90].map((d) => (
-          <Button
-            key={d}
-            type="button"
-            size="xs"
-            variant={days === d ? 'primary' : 'secondary'}
-            className="rounded-full"
-            aria-pressed={days === d}
-            onClick={() => setDays(d as 30 | 60 | 90)}
-          >
-            {d}d
-          </Button>
-        ))}
+        <SegmentedControl
+          ariaLabel="Expiry window"
+          value={days}
+          onChange={(v) => setDays(v)}
+          options={[
+            { value: 30 as const, label: '30d' },
+            { value: 60 as const, label: '60d' },
+            { value: 90 as const, label: '90d' },
+          ]}
+        />
         <span className="ml-4 text-silver">Type:</span>
-        <Button
-          type="button"
-          size="xs"
-          variant={filter === 'all' ? 'primary' : 'secondary'}
-          className="rounded-full"
-          aria-pressed={filter === 'all'}
-          onClick={() => setFilter('all')}
-        >
-          All
-        </Button>
-        <Button
-          type="button"
-          size="xs"
-          variant={filter === 'cert' ? 'primary' : 'secondary'}
-          className="rounded-full"
-          aria-pressed={filter === 'cert'}
-          onClick={() => setFilter('cert')}
-        >
-          Certs only
-        </Button>
-        <Input
-          className="ml-auto w-64"
+        <SegmentedControl
+          ariaLabel="Qualification type"
+          value={filter}
+          onChange={(v) => setFilter(v)}
+          options={[
+            { value: 'all' as const, label: 'All' },
+            { value: 'cert' as const, label: 'Certs only' },
+          ]}
+        />
+        <SearchInput
+          className="w-64"
+          wrapperClassName="ml-auto"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search associate or qualification…"
@@ -166,16 +156,15 @@ export function ExpirationsHome() {
       </div>
 
       {loadError ? (
-        <Card>
-          <CardContent className="p-6 space-y-3">
-            <p role="alert" className="text-sm text-alert">
-              {loadError}
-            </p>
+        <ErrorBanner
+          action={
             <Button size="sm" variant="secondary" onClick={refresh}>
               Retry
             </Button>
-          </CardContent>
-        </Card>
+          }
+        >
+          {loadError}
+        </ErrorBanner>
       ) : data === null ? (
         <Card><CardContent><SkeletonRows count={5} /></CardContent></Card>
       ) : (
@@ -283,7 +272,7 @@ function Bucket({
                 >
                   <TableCell className="font-medium text-white">
                     {i.associateName}
-                    <div className="text-[11px] text-silver/70 md:hidden">{i.associateEmail}</div>
+                    <div className="text-xs2 text-silver/70 md:hidden">{i.associateEmail}</div>
                   </TableCell>
                   <TableCell className="text-silver text-xs hidden md:table-cell">{i.associateEmail}</TableCell>
                   <TableCell>

@@ -1,13 +1,17 @@
 import * as React from 'react';
 import { cn } from '@/lib/cn';
 
-export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+export interface InputProps
+  extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'size'> {
   /** Render a small alert state (red border + ring on focus). */
   invalid?: boolean;
+  /** sm — inline filter rows; parity with Select's size prop so mixed
+   *  filter rows stop pairing an h-8 Select with an h-10 Input. */
+  size?: 'sm' | 'md';
 }
 
 export const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, invalid, type = 'text', required, ...props }, ref) => {
+  ({ className, invalid, type = 'text', required, size = 'md', ...props }, ref) => {
     return (
       <input
         ref={ref}
@@ -20,7 +24,10 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
           // zoom the whole viewport on focus. Keyed on pointer type so
           // iPads (md-width, touch input) get it too; precise pointers
           // keep the denser 14px.
-          'flex h-10 coarse:h-11 w-full rounded-md border bg-navy-secondary/40 px-3 py-2 text-sm coarse:text-base text-white placeholder:text-silver/90 transition-colors',
+          'flex w-full rounded-md border bg-navy-secondary/40 px-3 py-2 text-white placeholder:text-silver/90 transition-colors',
+          size === 'sm'
+            ? 'h-8 text-xs coarse:h-10 coarse:text-base'
+            : 'h-10 coarse:h-11 text-sm coarse:text-base',
           'border-navy-secondary hover:border-silver/40 focus:border-gold focus:outline-none focus:ring-2 focus:ring-gold/40',
           'disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-navy-secondary',
           'file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-silver',
