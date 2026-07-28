@@ -1158,6 +1158,12 @@ export const TimeExportInputSchema = z.object({
   /** Facility scope — filter to a single worksite Location. */
   locationId: UuidSchema.optional(),
   associateId: UuidSchema.optional(),
+  /**
+   * Free-text associate-name filter, same semantics as the admin queue's
+   * `search`. Without it the queue could be narrowed on screen while the
+   * download still returned every associate in the range.
+   */
+  search: z.string().trim().min(1).max(100).optional(),
 });
 export type TimeExportInput = z.infer<typeof TimeExportInputSchema>;
 

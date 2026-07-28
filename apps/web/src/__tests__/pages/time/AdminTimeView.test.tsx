@@ -43,6 +43,7 @@ vi.mock('@/lib/schedulingApi', () => ({
 import {
   addTimeEntryBreak,
   adminCreateTimeEntry,
+  exportTimeEntries,
   listAdminTimeEntries,
   listPayPeriods,
 } from '@/lib/timeApi';
@@ -106,6 +107,8 @@ beforeEach(() => {
   __resetPayPeriodsCacheForTests();
   vi.mocked(listPayPeriods).mockResolvedValue({ periods: PERIODS });
   vi.mocked(listAdminTimeEntries).mockClear();
+  vi.mocked(exportTimeEntries).mockClear();
+  vi.mocked(listDirectory).mockResolvedValue({ associates: [] } as never);
 });
 
 describe('<AdminTimeView> pay-period picker', () => {
@@ -312,5 +315,67 @@ describe('<AdminTimeView> add-entry drawer', () => {
       screen.getByLabelText<HTMLInputElement>('Clock-out time').value,
     ).toBe('16:30');
     expect(screen.getByText(/total 8h 30m/i)).toBeInTheDocument();
+  });
+});
+
+describe('<AdminTimeView> export scope', () => {
+  // The download used to send only {from, to, status}. Narrowing the queue to
+  // one person and hitting CSV handed back every associate in the range — a
+  // file that looked like the filtered list but wasn't.
+  async function pickMaria(user: ReturnType<typeof renderQueueTab>) {
+    vi.mocked(listDirectory).mockResolvedValue({
+      associates: [{ id: 'a-maria', firstName: 'Maria', lastName: 'Lopez' }],
+    } as never);
+    await user.type(
+      await screen.findByPlaceholderText(/all associates/i),
+      'mar',
+    );
+    await user.click(await screen.findByRole('button', { name: 'Maria Lopez' }));
+  }
+
+  it('scopes the CSV to the picked associate', async () => {
+    const user = renderQueueTab();
+    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
+    await pickMaria(user);
+
+    await user.click(screen.getByRole('button', { name: /^csv$/i }));
+
+    await waitFor(() => expect(exportTimeEntries).toHaveBeenCalled());
+    const [format, body] = vi.mocked(exportTimeEntries).mock.calls.at(-1)!;
+    expect(format).toBe('csv');
+    expect(body.associateId).toBe('a-maria');
+  });
+
+  it('carries the free-text search into the download', async () => {
+    const user = renderQueueTab();
+    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
+
+    await user.type(screen.getByPlaceholderText(/associate name/i), 'lopez');
+    // The queue debounces the term at 300ms; the export must send the same
+    // applied value, not the raw keystrokes.
+    await waitFor(() =>
+      expect(
+        vi.mocked(listAdminTimeEntries).mock.calls.at(-1)?.[0],
+      ).toMatchObject({ search: 'lopez' }),
+    );
+
+    await user.click(screen.getByRole('button', { name: /^csv$/i }));
+
+    await waitFor(() => expect(exportTimeEntries).toHaveBeenCalled());
+    expect(vi.mocked(exportTimeEntries).mock.calls.at(-1)![1].search).toBe('lopez');
+  });
+
+  it('sends no person filter when nothing is narrowed', async () => {
+    const user = renderQueueTab();
+    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
+
+    await user.click(screen.getByRole('button', { name: /^csv$/i }));
+
+    await waitFor(() => expect(exportTimeEntries).toHaveBeenCalled());
+    const body = vi.mocked(exportTimeEntries).mock.calls.at(-1)![1];
+    expect(body.associateId).toBeUndefined();
+    expect(body.search).toBeUndefined();
+    expect(body.from).toBeTruthy();
+    expect(body.to).toBeTruthy();
   });
 });

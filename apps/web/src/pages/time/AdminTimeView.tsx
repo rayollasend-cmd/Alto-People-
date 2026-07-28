@@ -54,6 +54,7 @@ import { usePersistentState } from '@/lib/usePersistentState';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
 import { fmtDateTime, fmtDateTz, fmtPayRate, fmtTime, ymdLocal } from '@/lib/format';
 import {
+  AssociatePicker,
   Avatar,
   Badge,
   Button,
@@ -656,10 +657,15 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     if (exportBusy) return;
     setExportBusy(format);
     try {
+      // Mirror the queue's filters exactly — a download that quietly ignored
+      // the associate/search narrowing handed back every associate in the
+      // range and read as if it were the filtered list.
       await exportTimeEntries(format, {
         from: ymdToIsoStart(fromYmd),
         to: ymdToIsoEndExclusive(toYmd),
         ...(filter !== 'ALL' ? { status: filter } : {}),
+        ...(focusAssociate ? { associateId: focusAssociate.id } : {}),
+        ...(appliedSearch ? { search: appliedSearch } : {}),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Export failed.');
@@ -1075,6 +1081,20 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 </div>
               </div>
 
+              {/* Pick a person directly instead of having to find one of their
+                  rows and click it. Scopes the queue AND the download. */}
+              <div className="w-full sm:w-56">
+                <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
+                  Associate
+                </label>
+                <AssociatePicker
+                  value={focusAssociate}
+                  onChange={setFocusAssociate}
+                  placeholder="All associates…"
+                  className="h-9 text-sm"
+                />
+              </div>
+
               <div className="relative flex-1 w-full sm:min-w-[200px]">
                 <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
                   Search
@@ -1146,6 +1166,16 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     Payroll sheet
                   </Button>
                 </div>
+              )}
+
+              {/* Range, status, associate and search all reach the export;
+                  anomalies is a client-side view over the fetched page, so it
+                  can't. Say so rather than hand back a wider file silently. */}
+              {canManage && anomaliesOnly && (
+                <p className="w-full text-2xs text-silver/80">
+                  Downloads cover every entry in the range — the anomalies-only
+                  view is not applied to CSV or PDF.
+                </p>
               )}
             </div>
           </CardHeader>

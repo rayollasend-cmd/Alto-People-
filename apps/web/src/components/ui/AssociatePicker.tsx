@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { listDirectory } from '@/lib/directoryApi';
+import { cn } from '@/lib/cn';
 import { Input } from './Input';
 
 export interface PickedAssociate {
@@ -17,10 +18,16 @@ export function AssociatePicker({
   value,
   onChange,
   placeholder = 'Search associate…',
+  className,
 }: {
   value: PickedAssociate | null;
   onChange: (v: PickedAssociate | null) => void;
   placeholder?: string;
+  /**
+   * Forwarded to both the search input and the selected-value chip, so a
+   * caller can match a toolbar's control height (the default Input is h-10).
+   */
+  className?: string;
 }) {
   const [term, setTerm] = useState('');
   const [results, setResults] = useState<PickedAssociate[]>([]);
@@ -56,7 +63,12 @@ export function AssociatePicker({
 
   if (value) {
     return (
-      <div className="flex items-center justify-between rounded-md border border-navy-secondary bg-navy px-3 py-2 text-sm">
+      <div
+        className={cn(
+          'flex items-center justify-between rounded-md border border-navy-secondary bg-navy px-3 py-2 text-sm',
+          className,
+        )}
+      >
         <span className="text-white">{value.name}</span>
         <button
           type="button"
@@ -80,6 +92,7 @@ export function AssociatePicker({
         value={term}
         onChange={(e) => setTerm(e.target.value)}
         onFocus={() => results.length > 0 && setOpen(true)}
+        className={className}
       />
       {open && results.length > 0 && (
         <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-navy-secondary bg-navy elev-2">

@@ -755,6 +755,29 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
 
 /* ===== HR/Ops (/admin) =================================================== */
 
+/**
+ * Free-text associate-name filter, shared by the admin queue and the exports
+ * so a narrowed screen and its download can't disagree.
+ *
+ * Per-term AND across (first OR last) so a full-name search works: "Maria
+ * Lopez" → Maria must hit first/last AND Lopez must hit first/last. A single
+ * OR over the whole string matched neither field and returned nothing.
+ */
+function associateNameSearchWhere(search: string | undefined): Prisma.TimeEntryWhereInput {
+  const trimmed = search?.trim();
+  if (!trimmed) return {};
+  return {
+    AND: trimmed.split(/\s+/).map((term) => ({
+      associate: {
+        OR: [
+          { firstName: { contains: term, mode: 'insensitive' as const } },
+          { lastName: { contains: term, mode: 'insensitive' as const } },
+        ],
+      },
+    })),
+  };
+}
+
 // Selectable pay-period windows for the review picker — derived from the
 // active payroll schedule's cadence plus actual run history.
 timeRouter.get('/admin/pay-periods', MANAGE, async (_req, res, next) => {
@@ -807,22 +830,7 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
             },
           }
         : {}),
-      ...(search
-        ? {
-            // Per-term AND across (first OR last) so a full-name search
-            // works: "Maria Lopez" → Maria must hit first/last AND Lopez
-            // must hit first/last. A single OR over the whole string
-            // matched neither field and returned nothing.
-            AND: search.split(/\s+/).map((term) => ({
-              associate: {
-                OR: [
-                  { firstName: { contains: term, mode: 'insensitive' as const } },
-                  { lastName: { contains: term, mode: 'insensitive' as const } },
-                ],
-              },
-            })),
-          }
-        : {}),
+      ...associateNameSearchWhere(search),
     };
 
     // Fetch cap+1 so the response can SAY it was cut — a partial list that
@@ -1816,6 +1824,7 @@ async function loadExportRows(
     ...(input.clientId ? { clientId: input.clientId } : {}),
     ...(input.locationId ? { locationId: input.locationId } : {}),
     ...(input.associateId ? { associateId: input.associateId } : {}),
+    ...associateNameSearchWhere(input.search),
   };
   const rows = await prisma.timeEntry.findMany({
     where,
