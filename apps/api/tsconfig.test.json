@@ -1,0 +1,23 @@
+{
+  // The main api tsconfig excludes `src/**/*.test.ts` — correct for the build
+  // (tests must not land in dist/) but it meant `tsc --noEmit` reported clean
+  // while test files were never looked at. Two fixture bugs reached CI that
+  // way: a CompensationRecord created without its required `effectiveFrom`,
+  // and a DocumentRecord created with a `status` value that isn't in the
+  // DocumentStatus enum. Both are plain type errors that Prisma's generated
+  // client would have caught instantly.
+  //
+  // This config typechecks the tests and nothing else emits from it. Run via
+  // `npm -w apps/api run typecheck:test`, which CI also runs — it needs no
+  // database, so it catches this class of mistake on any machine.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // rootDir is unset here: the base config pins it to src/ for the build,
+    // but the shared fixtures live in test/ alongside it.
+    "rootDir": ".",
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src", "test"],
+  "exclude": []
+}

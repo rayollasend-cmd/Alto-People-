@@ -60,7 +60,9 @@ async function docWithFile(
       mimeType: 'image/jpeg',
       size: 8,
       s3Key,
-      status: 'PENDING',
+      // DocumentStatus is UPLOADED | VERIFIED | REJECTED | EXPIRED — there is
+      // no PENDING. A freshly uploaded document is UPLOADED.
+      status: 'UPLOADED',
     },
   });
   if (opts.onDisk !== false) {
