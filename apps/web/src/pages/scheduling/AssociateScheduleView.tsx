@@ -224,12 +224,21 @@ export function AssociateScheduleView() {
     nextWeekMinutes,
   } = useMemo(() => {
     const all = shifts ?? [];
+    // Week boundaries have to advance by CALENDAR days, not by a fixed
+    // 7 × 86.4e6 ms — a week containing a DST change is 167 or 169 hours, so
+    // millisecond arithmetic puts the boundary at 23:00 Saturday or 01:00
+    // Sunday and shifts near midnight land in the wrong week's hour total.
     const weekStart = new Date(now);
     weekStart.setHours(0, 0, 0, 0);
     weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    const addLocalDays = (from: Date, days: number) => {
+      const d = new Date(from);
+      d.setDate(d.getDate() + days);
+      return d.getTime();
+    };
     const w0 = weekStart.getTime();
-    const w1 = w0 + 7 * 86_400_000;
-    const w2 = w1 + 7 * 86_400_000;
+    const w1 = addLocalDays(weekStart, 7);
+    const w2 = addLocalDays(weekStart, 14);
     let thisWeekMin = 0;
     let nextWeekMin = 0;
     for (const s of all) {

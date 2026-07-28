@@ -119,6 +119,11 @@ import { TemplatesRail } from './TemplatesRail';
 import { MonthCalendarView } from './MonthCalendarView';
 import { MobileScheduleList } from './MobileScheduleList';
 import {
+  StatusMarkLegend,
+  TileDensityProvider,
+  type TileDensity,
+} from './shiftTile';
+import {
   AdminPickupPanel,
   AdminSwapsPanel,
   AdminUnconfirmedPanel,
@@ -525,6 +530,21 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem('alto:scheduling.weekLayout.v2', weekLayout);
   }, [weekLayout]);
+
+  // Tile density — how much room each shift rectangle gets across the
+  // week/day/month grids. 'comfortable' is the default: the week grid is
+  // associate-rows × day-columns, so its height is driven by roster size,
+  // not tile height, and most cells hold a single shift. Managers running a
+  // very deep roster can trade legibility back for rows.
+  const [tileDensity, setTileDensity] = useState<TileDensity>(() => {
+    if (typeof window === 'undefined') return 'comfortable';
+    const stored = window.localStorage.getItem('alto:scheduling.tileDensity.v1');
+    return stored === 'compact' ? 'compact' : 'comfortable';
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('alto:scheduling.tileDensity.v1', tileDensity);
+  }, [tileDensity]);
 
   const [filter, setFilter] = useState<ShiftStatus | 'ALL'>(() => {
     const s = readStoredFilters()?.status;
@@ -977,6 +997,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // nobody". Surface it so the manager knows to retry instead of
   // concluding the schedule is empty.
   const [associatesError, setAssociatesError] = useState(false);
+  // The roster is the grid's row axis, and the server pages it. Without
+  // surfacing the cut, an org-wide view past the page cap renders an
+  // incomplete grid that looks complete — the manager scans for unstaffed
+  // people and never sees the ones that fell off the end.
+  const [associatesTruncated, setAssociatesTruncated] = useState(false);
   const loadAssociates = useCallback(() => {
     if (!canManage) return;
     listSchedulingAssociates({
@@ -986,10 +1011,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     })
       .then((res) => {
         setAssociates(res.associates);
+        setAssociatesTruncated(res.truncated === true);
         setAssociatesError(false);
       })
       .catch(() => {
         setAssociates([]);
+        setAssociatesTruncated(false);
         setAssociatesError(true);
       });
   }, [canManage, clientFilter, locationFilter, teamFilter]);
@@ -2009,6 +2036,50 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           </div>
         )}
 
+        {/* Status key + tile density. Shown on every calendar layout so the
+            shape vocabulary is learnable and the manager can trade
+            legibility against rows without hunting through settings. */}
+        {(view === 'week' || view === 'day' || view === 'month') && (
+          <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 no-print">
+            <StatusMarkLegend />
+            <div className="ml-auto inline-flex items-center gap-2">
+              <span className="text-2xs uppercase tracking-wider text-silver/70">
+                Density
+              </span>
+              <div className="inline-flex rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => setTileDensity('comfortable')}
+                  className={cn(
+                    'uppercase tracking-wider',
+                    tileDensity === 'comfortable' &&
+                      'bg-gold/15 text-gold hover:bg-gold/15 hover:text-gold',
+                  )}
+                  title="Comfortable — larger, more legible shift tiles"
+                >
+                  Comfortable
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => setTileDensity('compact')}
+                  className={cn(
+                    'uppercase tracking-wider',
+                    tileDensity === 'compact' &&
+                      'bg-gold/15 text-gold hover:bg-gold/15 hover:text-gold',
+                  )}
+                  title="Compact — smaller tiles, more rows on screen"
+                >
+                  Compact
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {view === 'day' && (
           <div className="inline-flex items-center gap-1.5">
             <Button
@@ -2270,13 +2341,24 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       {/* Calendar shift-click router — shared by day/week views */}
       {/* eslint-disable react-hooks/rules-of-hooks */}
 
+      {/* One density value for every shift tile below, so week / day / month
+          all render at the same weight instead of each grid picking its own. */}
+      <TileDensityProvider value={tileDensity}>
+
       {/* Mobile-only schedule list. The desktop grids (week/day pivots)
           are min-w-[700px]–[1200px] and force horizontal scroll on a
           phone — a scheduler can only see one column at a time. On
           <md AND on coarse-pointer tablets below lg we show a vertical,
           time-sorted list anchored to dayAnchor — an iPad manager in
           portrait gets tappable rows, not a two-finger-pan grid. The
-          assign / create drawers are shared with the desktop path. */}
+          assign / create drawers are shared with the desktop path.
+
+          Day nav uses addDaysLocal, not ±24h: dayAnchor is a local midnight
+          and a DST day is 23 or 25 hours. A fixed 86.4e6 ms lands on 23:00 of
+          the SAME day when clocks fall back (so "next day" does nothing), and
+          leaves the anchor at 01:00 on spring-forward — which then skews every
+          from/to fetch window built from it. The desktop nav already does
+          this correctly; only this path had drifted. */}
       {filteredShifts && (
         <div className="lg:hidden fine:md:hidden">
           <MobileScheduleList
@@ -2286,12 +2368,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             displayTimeZone={gridTimeZone}
             canManage={canManage}
             onShiftClick={(s) => setMobileAction(s)}
-            onPrevDay={() =>
-              setDayAnchor(new Date(dayAnchor.getTime() - 24 * 60 * 60 * 1000))
-            }
-            onNextDay={() =>
-              setDayAnchor(new Date(dayAnchor.getTime() + 24 * 60 * 60 * 1000))
-            }
+            onPrevDay={() => setDayAnchor(addDaysLocal(dayAnchor, -1))}
+            onNextDay={() => setDayAnchor(addDaysLocal(dayAnchor, 1))}
             onCreate={(dayStart) => {
               setCreateInitialDate(dayStart);
               setCreateInitialAssociateId(null);
@@ -2429,6 +2507,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         />
         </div>
       )}
+      </TileDensityProvider>
 
       {/* List view: empty state */}
       {filteredShifts && view === 'list' && filteredShifts.length === 0 && (
@@ -2471,6 +2550,22 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         >
           Couldn’t load the roster — the calendar rows may be missing people.
         </ErrorBanner>
+      )}
+
+      {associatesTruncated && !associatesError && (
+        <div className="mb-3 flex items-start gap-2 p-3 rounded-md border border-warning/40 bg-warning/[0.07] text-sm no-print">
+          <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="font-medium text-white">
+              Showing the first {associates.length} people — this roster is
+              larger than one page
+            </div>
+            <div className="text-silver text-xs mt-0.5">
+              Rows past that aren’t on the grid. Narrow by client, location, or
+              team to see everyone in scope.
+            </div>
+          </div>
+        </div>
       )}
 
       {filteredShifts && view === 'list' && filteredShifts.length > 0 && (

@@ -16,6 +16,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtTimeTz, zonedDayKey } from '@/lib/format';
+import { StatusMark, statusLabelClass, statusTileClass } from './shiftTile';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -452,22 +453,33 @@ function MonthShiftChip({
           onClick={onClick}
           data-status={shift.status}
           className={cn(
-            'w-full text-left rounded px-1.5 py-0.5 flex items-center gap-1 truncate',
+            // py-0.5 put this chip at ~18px — under the 24px WCAG 2.2 target
+            // minimum and the smallest tile in the product. min-h-[24px]
+            // floors it without changing how many fit in a day cell.
+            'w-full text-left rounded px-1.5 py-1 min-h-[24px] flex items-center gap-1.5 truncate',
             'border-l-2 transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-gold-bright',
             tone.bg,
             tone.border,
-            tone.hover
+            tone.hover,
+            statusTileClass(shift.status)
           )}
         >
-          <span className={cn('text-2xs tabular-nums shrink-0', tone.time)}>
+          <span className={cn('text-xs2 tabular-nums shrink-0', tone.time)}>
             {compactTime(start, shift.timezone)}
           </span>
-          <span className={cn('text-2xs truncate flex-1', tone.text)}>
+          <span
+            className={cn(
+              'text-xs2 truncate flex-1',
+              tone.text,
+              statusLabelClass(shift.status)
+            )}
+          >
             {shift.position}
           </span>
-          <span className={cn('text-3xs font-semibold tabular-nums shrink-0', tone.initials)}>
+          <span className={cn('text-2xs font-semibold tabular-nums shrink-0', tone.initials)}>
             {initials}
           </span>
+          <StatusMark status={shift.status} />
         </button>
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-xs">

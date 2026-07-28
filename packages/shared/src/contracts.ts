@@ -1822,6 +1822,11 @@ export type AssociateLite = z.infer<typeof AssociateLiteSchema>;
 
 export const AssociateListResponseSchema = z.object({
   associates: z.array(AssociateLiteSchema),
+  // True when the roster hit the server's page cap and rows were dropped.
+  // The scheduling grid uses this list as its ROW AXIS, so a silent cut
+  // means a manager scanning for unstaffed people reads an incomplete grid
+  // as complete. Optional so older clients keep parsing.
+  truncated: z.boolean().optional(),
 });
 export type AssociateListResponse = z.infer<typeof AssociateListResponseSchema>;
 

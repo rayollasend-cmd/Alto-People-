@@ -156,4 +156,56 @@ describe('fmtRelativeDayTz', () => {
     expect(fmtRelativeDayTz(instant, 'America/Los_Angeles', now)).toBe('Today');
     expect(fmtRelativeDayTz(instant, 'America/New_York', now)).toBe('Tomorrow');
   });
+
+  // "Tomorrow" used to be computed as now + 86_400_000. US clocks fall back
+  // on Nov 1 2026, so that local day runs 25 hours (00:00 EDT = 04:00Z
+  // through 00:00 EST = 05:00Z next day). Within the first hour of it,
+  // now + 24h is STILL today, so the label silently degraded to "Mon, Nov 2"
+  // on the associate's schedule. Deriving it from today's calendar key
+  // instead makes the length of the day irrelevant.
+  //
+  // The window matters: pick a `now` later in the day and the old code
+  // happens to be right, which is why this bug survived. 00:30 local is
+  // inside it.
+  it('says Tomorrow in the first hour of a 25-hour fall-back day', () => {
+    const fallBackNow = new Date('2026-11-01T04:30:00.000Z').getTime();
+    expect(zonedDayKey(new Date(fallBackNow), 'America/New_York')).toBe(
+      '2026-11-01',
+    );
+    // The old instant-based math landed back on Nov 1 from here:
+    expect(
+      zonedDayKey(new Date(fallBackNow + 86_400_000), 'America/New_York'),
+    ).toBe('2026-11-01');
+    // ...but noon Eastern on Nov 2 is still tomorrow.
+    expect(
+      fmtRelativeDayTz('2026-11-02T17:00:00.000Z', 'America/New_York', fallBackNow),
+    ).toBe('Tomorrow');
+    expect(
+      fmtRelativeDayTz('2026-11-01T20:00:00.000Z', 'America/New_York', fallBackNow),
+    ).toBe('Today');
+  });
+
+  // Spring-forward doesn't break the old arithmetic (a 23-hour day makes
+  // now + 24h overshoot INTO tomorrow, which is the right answer by
+  // accident). Pinned so the calendar-key rewrite doesn't regress it.
+  it('still says Tomorrow across a 23-hour spring-forward day', () => {
+    const springNow = new Date('2026-03-08T05:30:00.000Z').getTime();
+    expect(
+      fmtRelativeDayTz('2026-03-09T16:00:00.000Z', 'America/New_York', springNow),
+    ).toBe('Tomorrow');
+    expect(
+      fmtRelativeDayTz('2026-03-08T22:00:00.000Z', 'America/New_York', springNow),
+    ).toBe('Today');
+  });
+
+  it('rolls Tomorrow across a month and a year boundary', () => {
+    const endOfMonth = new Date('2026-01-31T17:00:00.000Z').getTime();
+    expect(
+      fmtRelativeDayTz('2026-02-01T17:00:00.000Z', 'America/New_York', endOfMonth),
+    ).toBe('Tomorrow');
+    const endOfYear = new Date('2026-12-31T17:00:00.000Z').getTime();
+    expect(
+      fmtRelativeDayTz('2027-01-01T17:00:00.000Z', 'America/New_York', endOfYear),
+    ).toBe('Tomorrow');
+  });
 });

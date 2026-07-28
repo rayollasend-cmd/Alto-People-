@@ -31,6 +31,15 @@ import {
   useShiftContextMenu,
 } from './ShiftContextMenu';
 import { TEMPLATE_MIME } from './TemplatesRail';
+import {
+  GRIP_HIT,
+  GRIP_ICON,
+  RESIZE_RAIL_Y,
+  SHIFT_STATUS_LABEL,
+  StatusMark,
+  statusLabelClass,
+  statusTileClass,
+} from './shiftTile';
 
 /**
  * Phase 53.8 — time-grid week view (Sling/Outlook style).
@@ -981,6 +990,7 @@ function TimeChip({
       }}
       className={cn(
         'rounded border transition-colors hover:brightness-125 overflow-hidden',
+        statusTileClass(shift.status),
         isDragging && 'elev-3 ring-2 ring-gold/60 opacity-90',
         isResizing && 'ring-2 ring-gold/70',
         isSelected && 'ring-2 ring-gold ring-offset-1 ring-offset-navy',
@@ -1016,10 +1026,10 @@ function TimeChip({
         <div
           {...listeners}
           {...attributes}
-          className="absolute right-0.5 top-0.5 text-silver/30 hover:text-gold cursor-grab active:cursor-grabbing no-print"
+          className={cn('absolute right-0 top-0', GRIP_HIT)}
           aria-label={`Move ${shift.position}`}
         >
-          <GripVertical className="h-3 w-3" />
+          <GripVertical className={GRIP_ICON} />
         </div>
       )}
       {compact ? (
@@ -1028,25 +1038,41 @@ function TimeChip({
           type="button"
           onClick={onClick}
           {...(compact ? { ...listeners, ...attributes } : {})}
-          className="w-full h-full text-left pl-2 pr-1 flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          className="w-full h-full text-left pl-2 pr-1 flex items-center gap-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          title={`${fmtTime(startsAt, shift.timezone)}–${fmtTime(previewEndsAt, shift.timezone)} · ${shift.position} · ${SHIFT_STATUS_LABEL[shift.status]}`}
         >
           <span className="text-2xs text-silver tabular-nums truncate">
             {fmtTime(startsAt, shift.timezone)}
           </span>
-          <span className="text-2xs text-white truncate">
+          <span
+            className={cn(
+              'text-xs2 text-white truncate flex-1 min-w-0',
+              statusLabelClass(shift.status),
+            )}
+          >
             {shift.position}
           </span>
+          <StatusMark status={shift.status} />
         </button>
       ) : (
         <button
           type="button"
           onClick={onClick}
-          className="w-full h-full text-left pl-2 pr-4 pt-1 pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          className="w-full h-full text-left pl-2 pr-6 pt-1 pb-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          title={`${fmtTime(startsAt, shift.timezone)}–${fmtTime(previewEndsAt, shift.timezone)} · ${shift.position} · ${SHIFT_STATUS_LABEL[shift.status]}`}
         >
-          <div className="text-2xs text-silver tabular-nums">
-            {fmtTime(startsAt, shift.timezone)}–{fmtTime(previewEndsAt, shift.timezone)}
+          <div className="flex items-center gap-1.5">
+            <div className="text-xs2 text-silver tabular-nums truncate">
+              {fmtTime(startsAt, shift.timezone)}–{fmtTime(previewEndsAt, shift.timezone)}
+            </div>
+            <StatusMark status={shift.status} className="ml-auto" />
           </div>
-          <div className="text-xs2 text-white font-medium truncate leading-tight">
+          <div
+            className={cn(
+              'text-xs text-white font-medium truncate leading-tight',
+              statusLabelClass(shift.status),
+            )}
+          >
             {shift.position}
           </div>
           {shift.assignedAssociateName && baseHeight > 50 && (
@@ -1059,12 +1085,12 @@ function TimeChip({
       {canManage && !compact && (
         <div
           onMouseDown={onResizeMouseDown}
-          className="absolute left-0 right-0 bottom-0 h-1.5 cursor-ns-resize hover:bg-gold/40 group no-print"
+          className={RESIZE_RAIL_Y}
           aria-label="Drag to resize duration"
           role="slider"
           tabIndex={-1}
         >
-          <div className="mx-auto w-6 h-0.5 mt-0.5 rounded-full bg-silver/30 group-hover:bg-gold" />
+          <div className="w-6 h-0.5 rounded-full bg-silver/30 group-hover:bg-gold" />
         </div>
       )}
     </div>

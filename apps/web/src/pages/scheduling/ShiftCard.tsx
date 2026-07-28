@@ -193,20 +193,24 @@ export function ShiftCard({
             )}
             {teammates && teammates.length > 0 && (
               <ul className="space-y-1.5">
-                {teammates.map((t) => (
+                {/* `mate`, not `t` — `t` is the translator from useI18n in
+                    the enclosing scope, and shadowing it here means the next
+                    translated string added inside this block fails at
+                    runtime rather than at compile time. */}
+                {teammates.map((mate) => (
                   // Stacked on phones — the one-line layout crushed the
                   // NAME ("Pat Ng…") to make room for position·time·zone
                   // (caught by the visual walk). Single line returns at sm+
                   // where there's room for both.
                   <li
-                    key={t.associateId}
+                    key={mate.associateId}
                     className="text-sm sm:flex sm:items-baseline sm:justify-between sm:gap-3"
                   >
-                    <span className="block text-white sm:truncate">{t.name}</span>
+                    <span className="block text-white sm:truncate">{mate.name}</span>
                     <span className="block text-xs text-silver tabular-nums sm:text-right sm:shrink-0">
-                      {t.position} ·{' '}
-                      {fmtShiftRangeTz(t.startsAt, t.endsAt, shift.timezone)}
-                      {t.location ? ` · ${t.location}` : ''}
+                      {mate.position} ·{' '}
+                      {fmtShiftRangeTz(mate.startsAt, mate.endsAt, shift.timezone)}
+                      {mate.location ? ` · ${mate.location}` : ''}
                     </span>
                   </li>
                 ))}

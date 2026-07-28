@@ -385,10 +385,28 @@ export function fmtRelativeDayTz(
   const es =
     typeof document !== 'undefined' && document.documentElement.lang === 'es';
   const key = zonedDayKey(value, timeZone);
-  if (key === zonedDayKey(new Date(now), timeZone)) return es ? 'Hoy' : 'Today';
-  if (key === zonedDayKey(new Date(now + 86_400_000), timeZone))
-    return es ? 'Mañana' : 'Tomorrow';
+  const todayKey = zonedDayKey(new Date(now), timeZone);
+  if (key === todayKey) return es ? 'Hoy' : 'Today';
+  // Tomorrow is derived from today's CALENDAR key, not from now + 86.4e6 ms.
+  // The instant-based version broke in any DST-observing zone: on the
+  // fall-back day (25 hours long) now + 24h is still today, so "Tomorrow"
+  // silently degraded to "Sun, Nov 1" — on the associate schedule, which is
+  // the surface that leans hardest on the relative wording.
+  if (key === nextCalendarDayKey(todayKey)) return es ? 'Mañana' : 'Tomorrow';
   return `${fmtWeekdayTz(value, timeZone)}, ${fmtDateTz(value, timeZone)}`;
+}
+
+/**
+ * "YYYY-MM-DD" → the next calendar day, same format. Uses UTC arithmetic on
+ * a date-only value, which has no offset to shift, so the result is exact in
+ * every timezone regardless of DST.
+ */
+function nextCalendarDayKey(key: string): string {
+  const [y, m, d] = key.split('-').map(Number);
+  const at = new Date(Date.UTC(y, m - 1, d));
+  at.setUTCDate(at.getUTCDate() + 1);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}`;
 }
 
 /**

@@ -20,10 +20,21 @@ import { Skeleton } from '@/components/ui/Skeleton';
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 interface DraftWindow {
+  /**
+   * Stable React key. Rows were keyed by array index, so removing a window
+   * made React reuse the deleted row's DOM for its successor — focus stayed
+   * on a field that now belonged to a different day, and any future
+   * uncontrolled input in this row would keep the wrong value outright.
+   * The id is client-only and never sent to the API.
+   */
+  uid: string;
   dayOfWeek: number;
   start: string;     // "HH:MM"
   end: string;
 }
+
+let draftUidSeq = 0;
+const nextDraftUid = () => `w${(draftUidSeq += 1)}`;
 
 const minutesToHHMM = (m: number) => {
   const h = Math.floor(m / 60);
@@ -38,6 +49,7 @@ const hhmmToMinutes = (s: string) => {
 
 function fromAPI(windows: AvailabilityWindow[]): DraftWindow[] {
   return windows.map((w) => ({
+    uid: nextDraftUid(),
     dayOfWeek: w.dayOfWeek,
     start: minutesToHHMM(w.startMinute),
     end: minutesToHHMM(w.endMinute),
@@ -79,7 +91,10 @@ export function AvailabilityEditor() {
   }, [info]);
 
   const addWindow = () => {
-    setDrafts([...drafts, { dayOfWeek: 1, start: '09:00', end: '17:00' }]);
+    setDrafts([
+      ...drafts,
+      { uid: nextDraftUid(), dayOfWeek: 1, start: '09:00', end: '17:00' },
+    ]);
   };
 
   const removeWindow = (idx: number) => {
@@ -151,7 +166,7 @@ export function AvailabilityEditor() {
             <ul className="space-y-2 mb-3">
               {drafts.map((w, idx) => (
                 <li
-                  key={idx}
+                  key={w.uid}
                   // Phones: day+Remove on one row, the time range on the
                   // next — the desktop single-line 12-col layout crammed
                   // four controls into ~328px. sm+ restores one line.
