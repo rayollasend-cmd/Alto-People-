@@ -1158,6 +1158,18 @@ export const TimeExportInputSchema = z.object({
   /** Facility scope — filter to a single worksite Location. */
   locationId: UuidSchema.optional(),
   associateId: UuidSchema.optional(),
+  /**
+   * Free-text associate-name filter, same semantics as the admin queue's
+   * `search`. Without it the queue could be narrowed on screen while the
+   * download still returned every associate in the range.
+   */
+  search: z.string().trim().min(1).max(100).optional(),
+  /**
+   * Restrict to entries carrying at least one anomaly flag, matching the
+   * queue's "Anomalies only" toggle. Applied server-side across the whole
+   * range, so the file isn't limited to the page the screen had loaded.
+   */
+  anomaliesOnly: z.boolean().optional(),
 });
 export type TimeExportInput = z.infer<typeof TimeExportInputSchema>;
 
