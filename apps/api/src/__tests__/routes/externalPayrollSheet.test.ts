@@ -94,7 +94,16 @@ async function seedComplete(clientId: string) {
     },
   });
   await prisma.compensationRecord.create({
-    data: { associateId: associate.id, amount: 25, payType: 'HOURLY' },
+    data: {
+      associateId: associate.id,
+      amount: 25,
+      payType: 'HOURLY',
+      // effectiveFrom and reason are both required on CompensationRecord.
+      // effectiveTo stays null so the sheet's "current wage" lookup
+      // (effectiveTo: null) picks this row up.
+      effectiveFrom: new Date('2026-06-01T00:00:00.000Z'),
+      reason: 'HIRE',
+    },
   });
   const clockInAt = new Date('2026-06-15T09:00:00.000Z');
   await prisma.timeEntry.create({
@@ -240,7 +249,13 @@ describe('external payroll sheet — content', () => {
       },
     });
     await prisma.compensationRecord.create({
-      data: { associateId: associate.id, amount: 20, payType: 'HOURLY' },
+      data: {
+        associateId: associate.id,
+        amount: 20,
+        payType: 'HOURLY',
+        effectiveFrom: new Date('2026-06-01T00:00:00.000Z'),
+        reason: 'HIRE',
+      },
     });
     const clockInAt = new Date('2026-06-17T09:00:00.000Z');
     await prisma.timeEntry.create({
