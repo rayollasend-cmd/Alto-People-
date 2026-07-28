@@ -8,6 +8,8 @@ import {
   type I9DocumentListItem,
 } from '@/lib/i9Api';
 import { ApiError } from '@/lib/api';
+import { DocumentViewer } from '@/components/DocumentViewer';
+import { previewDocumentUrl } from '@/lib/documentsApi';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import {
@@ -429,6 +431,8 @@ function Section2Verifier({
   const [documentList, setDocumentList] = useState<I9DocumentList>('LIST_A');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  /** Index into `docs` currently open in the full-screen viewer. */
+  const [viewerAt, setViewerAt] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -550,7 +554,7 @@ function Section2Verifier({
                         </span>
                       ) : isImage ? (
                         <img
-                          src={`/api/documents/${doc.id}/download`}
+                          src={previewDocumentUrl(doc.id)}
                           alt={`${doc.kind}${doc.side ? ` ${doc.side}` : ''}`}
                           className="w-full h-full object-cover"
                         />
@@ -567,16 +571,21 @@ function Section2Verifier({
                         <>
                           {' '}
                           ·{' '}
-                          <a
-                            href={`/api/documents/${doc.id}/download`}
-                            target="_blank"
-                            rel="noreferrer"
+                          {/* Opens the in-site viewer rather than downloading.
+                              This used to hand the reviewer a copy of the
+                              associate's ID on every Section 2 check. */}
+                          <button
+                            type="button"
                             className="text-gold hover:underline"
-                            onClick={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setViewerAt(docs.findIndex((x) => x.id === doc.id));
+                            }}
                             data-no-row-click
                           >
-                            Open
-                          </a>
+                            View
+                          </button>
                         </>
                       )}
                     </div>
@@ -586,6 +595,14 @@ function Section2Verifier({
             })}
           </ul>
         </div>
+      )}
+
+      {viewerAt !== null && docs && docs.length > 0 && (
+        <DocumentViewer
+          documents={docs}
+          startIndex={viewerAt}
+          onClose={() => setViewerAt(null)}
+        />
       )}
 
       {submitError && <ErrorBanner>{submitError}</ErrorBanner>}
