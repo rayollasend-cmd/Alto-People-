@@ -223,7 +223,7 @@ export function CommandPalette({
           } satisfies PaletteItem,
         ]
       : []),
-    ...(can('manage:onboarding')
+    ...(can('invite:onboarding')
       ? [
           {
             id: 'action-invite-associate',

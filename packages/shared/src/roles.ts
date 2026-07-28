@@ -43,12 +43,20 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   WORKFORCE_MANAGER: 'Full org-wide access (mirrors HR Administrator)',
   MARKETING_MANAGER: 'Full org-wide access (mirrors HR Administrator)',
   SHIFT_SUPERVISOR:
-    'Scheduling + time & attendance for one client only — assign the client in Users & access',
+    'Scheduling, time & attendance, and onboarding invites for one client only — assign the client in Users & access',
 };
 
 export type Capability =
   | 'view:dashboard'
   | 'view:onboarding' | 'manage:onboarding'
+  // Split out of manage:onboarding so the floor supervisor who actually
+  // meets the new hire can send/resend the invite and nudge a stalled
+  // applicant, without inheriting the HR review powers that ride on
+  // manage:onboarding (approve/reject, I-9 Section 2, templates) or any
+  // access to the applicant's personal record. Every manage:onboarding
+  // holder also holds this — see ALL_MANAGE — so it is a strict superset
+  // and UI can gate invite-shaped affordances on it alone.
+  | 'invite:onboarding'
   | 'view:time' | 'manage:time'
   | 'view:scheduling' | 'manage:scheduling'
   // Gap 3 — `void:payroll` is intentionally NOT part of FULL_ADMIN.
@@ -118,6 +126,7 @@ const ALL_VIEWS: Capability[] = [
 
 const ALL_MANAGE: Capability[] = [
   'manage:onboarding',
+  'invite:onboarding',
   'manage:time',
   'manage:team-time',
   'manage:team-time-off',
@@ -205,14 +214,19 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   WORKFORCE_MANAGER: new Set<Capability>(FULL_ADMIN),
   MARKETING_MANAGER: new Set<Capability>(FULL_ADMIN),
   // Client-scoped floor supervisor: full manage of Scheduling + Time for
-  // their one client (the scope* helpers enforce the client boundary). No
-  // payroll/HR/onboarding/clients surface.
+  // their one client (the scope* helpers enforce the client boundary), plus
+  // onboarding invites and progress monitoring for that same client. No
+  // payroll/HR/clients surface, and deliberately no manage:onboarding —
+  // approving applications, verifying I-9s, and reading applicant PII stay
+  // with HR (assertCanModifyApplication enforces the PII half).
   SHIFT_SUPERVISOR: new Set<Capability>([
     'view:dashboard',
     'view:time',
     'manage:time',
     'view:scheduling',
     'manage:scheduling',
+    'view:onboarding',
+    'invite:onboarding',
     // The in-app inbox/bell. Without it, notifications routed to
     // supervisors (shift claims, swaps, no-shows at their site) land in a
     // mailbox they can't open — associates hold this for the same reason.
