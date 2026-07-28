@@ -624,6 +624,11 @@ export type NudgeResponse = z.infer<typeof NudgeResponseSchema>;
 export const ProfileSubmissionSchema = z.object({
   firstName: z.string().min(1).max(80),
   lastName: z.string().min(1).max(80),
+  // Both optional on Form I-9 but asked for by E-Verify. Collected here so
+  // new hires arrive complete; people onboarded before these existed get
+  // filled in from the E-Verify screen instead.
+  middleInitial: z.string().trim().max(1).nullable().optional(),
+  otherLastNames: z.array(z.string().trim().min(1).max(80)).max(10).optional(),
   dob: z.string().datetime().nullable().optional(),
   phone: z.string().max(40).nullable().optional(),
   addressLine1: z.string().max(200).nullable().optional(),
@@ -3885,6 +3890,155 @@ export const EVerifyStatusSchema = z.enum([
   'CLOSE_CASE_AND_RESUBMIT',
 ]);
 export type EVerifyStatus = z.infer<typeof EVerifyStatusSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  E-Verify directorate
+ *
+ *  Staging surface for the federal E-Verify portal: everything the government
+ *  form asks for, in one payload, plus a record of the case outcome. HR was
+ *  spending ~20 minutes per case gathering these fields off five screens.
+ *
+ *  Defined after EVerifyStatusSchema because it references it — module-level
+ *  consts are in the temporal dead zone until their declaration runs.
+ * -------------------------------------------------------------------------- */
+
+export const I9CitizenshipStatusSchema = z.enum([
+  'US_CITIZEN',
+  'NON_CITIZEN_NATIONAL',
+  'LAWFUL_PERMANENT_RESIDENT',
+  'ALIEN_AUTHORIZED_TO_WORK',
+]);
+export type I9CitizenshipStatus = z.infer<typeof I9CitizenshipStatusSchema>;
+
+export const EVerifyBlockerSchema = z.enum([
+  'NO_I9',
+  'SECTION1_INCOMPLETE',
+  'SECTION2_INCOMPLETE',
+  'NO_CITIZENSHIP',
+  'NO_SSN',
+  'NO_DOB',
+  'NO_HIRE_DATE',
+]);
+export type EVerifyBlocker = z.infer<typeof EVerifyBlockerSchema>;
+
+/** One row of the directory. SSN is last-4 only here — the full number is
+ *  returned solely by the per-associate detail endpoint, which is audited. */
+export const EVerifyRosterRowSchema = z.object({
+  associateId: UuidSchema,
+  associateName: z.string(),
+  associateEmail: z.string(),
+  hireDate: z.string().nullable(),
+  ssnLast4: z.string().nullable(),
+  caseNumber: z.string().nullable(),
+  status: EVerifyStatusSchema.nullable(),
+  caseOpenedAt: z.string().datetime().nullable(),
+  closedAt: z.string().datetime().nullable(),
+  /** 3 business days after the hire date — the federal filing deadline. */
+  dueBy: z.string().nullable(),
+  /** Past the deadline with no case opened. */
+  overdue: z.boolean(),
+  blockers: z.array(EVerifyBlockerSchema),
+  ready: z.boolean(),
+});
+export type EVerifyRosterRow = z.infer<typeof EVerifyRosterRowSchema>;
+
+export const EVerifyRosterResponseSchema = z.object({
+  rows: z.array(EVerifyRosterRowSchema),
+  counts: z.object({
+    total: z.number().int().nonnegative(),
+    authorized: z.number().int().nonnegative(),
+    pending: z.number().int().nonnegative(),
+    nonconfirmation: z.number().int().nonnegative(),
+    notRun: z.number().int().nonnegative(),
+    overdue: z.number().int().nonnegative(),
+    blocked: z.number().int().nonnegative(),
+  }),
+  truncated: z.boolean(),
+});
+export type EVerifyRosterResponse = z.infer<typeof EVerifyRosterResponseSchema>;
+
+/** An identity document attached to the I-9, for the Section 2 panel. */
+export const EVerifyDocumentSchema = z.object({
+  id: UuidSchema,
+  kind: z.string(),
+  filename: z.string(),
+  mimeType: z.string(),
+  side: z.enum(['FRONT', 'BACK']).nullable(),
+  fileAvailable: z.boolean(),
+});
+export type EVerifyDocument = z.infer<typeof EVerifyDocumentSchema>;
+
+/**
+ * The aggregation payload — the whole point of the feature. Field order
+ * mirrors the federal "Enter Form I-9 Information" screens so a verifier
+ * reads straight down one column instead of hunting across the product.
+ *
+ * Carries a FULL SSN. Returned only to manage:compliance holders and audited
+ * on every read.
+ */
+export const EVerifyCaseDetailSchema = z.object({
+  associateId: UuidSchema,
+  // --- Section 1: employee information and attestation ---
+  lastName: z.string(),
+  firstName: z.string(),
+  middleInitial: z.string().nullable(),
+  otherLastNames: z.array(z.string()),
+  dob: z.string().nullable(),
+  ssn: z.string().nullable(),
+  email: z.string().nullable(),
+  citizenshipStatus: I9CitizenshipStatusSchema.nullable(),
+  alienRegistrationNumber: z.string().nullable(),
+  workAuthExpiresAt: z.string().nullable(),
+  // --- Section 2: employer review and verification ---
+  documentList: I9DocumentListSchema.nullable(),
+  documents: z.array(EVerifyDocumentSchema),
+  section1CompletedAt: z.string().datetime().nullable(),
+  section2CompletedAt: z.string().datetime().nullable(),
+  section2VerifierEmail: z.string().nullable(),
+  // --- Case state ---
+  hireDate: z.string().nullable(),
+  dueBy: z.string().nullable(),
+  overdue: z.boolean(),
+  caseNumber: z.string().nullable(),
+  status: EVerifyStatusSchema.nullable(),
+  caseOpenedAt: z.string().datetime().nullable(),
+  closedAt: z.string().datetime().nullable(),
+  blockers: z.array(EVerifyBlockerSchema),
+  ready: z.boolean(),
+});
+export type EVerifyCaseDetail = z.infer<typeof EVerifyCaseDetailSchema>;
+
+export const EVerifyCaseInputSchema = z
+  .object({
+    caseNumber: z.string().trim().min(1).max(60).nullable().optional(),
+    status: EVerifyStatusSchema.nullable().optional(),
+    caseOpenedAt: z.string().datetime().nullable().optional(),
+    closedAt: z.string().datetime().nullable().optional(),
+  })
+  .refine(
+    (v) =>
+      // A closed case with no number is unusable: the case number is the only
+      // handle back into the federal portal if the outcome is ever queried.
+      !v.closedAt || (v.caseNumber !== undefined && v.caseNumber !== null),
+    { message: 'caseNumber is required when closing a case', path: ['caseNumber'] },
+  )
+  .refine(
+    (v) =>
+      // Same reasoning for a terminal outcome recorded without a number.
+      !v.status ||
+      v.status === 'PENDING' ||
+      (v.caseNumber !== undefined && v.caseNumber !== null),
+    { message: 'caseNumber is required to record an outcome', path: ['caseNumber'] },
+  );
+export type EVerifyCaseInput = z.infer<typeof EVerifyCaseInputSchema>;
+
+/** Narrow on purpose: this screen labels an identity, it doesn't rewrite one.
+ *  Name, DOB and SSN stay owned by onboarding. */
+export const EVerifyIdentityInputSchema = z.object({
+  middleInitial: z.string().trim().max(1).nullable().optional(),
+  otherLastNames: z.array(z.string().trim().min(1).max(80)).max(10).optional(),
+});
+export type EVerifyIdentityInput = z.infer<typeof EVerifyIdentityInputSchema>;
 
 export const ScorecardSeveritySchema = z.enum(['ok', 'warn', 'critical']);
 export type ScorecardSeverity = z.infer<typeof ScorecardSeveritySchema>;

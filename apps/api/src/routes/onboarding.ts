@@ -1581,6 +1581,8 @@ onboardingRouter.get('/applications/:id/profile', async (req, res, next) => {
       select: {
         firstName: true,
         lastName: true,
+        middleInitial: true,
+        otherLastNames: true,
         dob: true,
         phone: true,
         addressLine1: true,
@@ -1593,6 +1595,8 @@ onboardingRouter.get('/applications/:id/profile', async (req, res, next) => {
     res.json({
       firstName: a.firstName,
       lastName: a.lastName,
+      middleInitial: a.middleInitial,
+      otherLastNames: a.otherLastNames ?? [],
       dob: a.dob ? a.dob.toISOString().slice(0, 10) : null,
       phone: a.phone,
       addressLine1: a.addressLine1,
@@ -1621,6 +1625,12 @@ onboardingRouter.post('/applications/:id/profile', async (req, res, next) => {
         data: {
           firstName: input.firstName,
           lastName: input.lastName,
+          ...(input.middleInitial !== undefined
+            ? { middleInitial: input.middleInitial || null }
+            : {}),
+          ...(input.otherLastNames !== undefined
+            ? { otherLastNames: input.otherLastNames }
+            : {}),
           dob: input.dob ? new Date(input.dob) : null,
           phone: input.phone ?? null,
           addressLine1: input.addressLine1 ?? null,
