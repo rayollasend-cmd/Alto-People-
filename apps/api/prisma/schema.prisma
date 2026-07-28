@@ -701,6 +701,13 @@ model Associate {
   id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   firstName         String
   lastName          String
+  // E-Verify / Form I-9 Section 1 identity fields. Both are optional on the
+  // federal form but asked for, and without them the verifier hand-types
+  // them into the portal every time. otherLastNames is a Postgres text
+  // array — E-Verify collects prior surnames as a repeatable list, and an
+  // array matches that without a join table for what is usually 0-2 values.
+  middleInitial     String?        @db.VarChar(1)
+  otherLastNames    String[]       @default([])
   dob               DateTime?      @db.Date
   email             String         @unique
   phone             String?
@@ -1216,6 +1223,11 @@ model I9Verification {
   // as fully E-Verified only when status = EMPLOYMENT_AUTHORIZED.
   eVerifyCaseNumber          String?
   eVerifyStatus              EVerifyStatus?
+  // When the case was created in the federal portal. E-Verify must be run
+  // within 3 business days of the employee's first day worked, so without
+  // an opened-at stamp the queue can't say what's overdue — which is most
+  // of the point of having a queue.
+  eVerifyCaseOpenedAt        DateTime?            @db.Timestamptz(6)
   eVerifyClosedAt            DateTime?            @db.Timestamptz(6)
   associate                  Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
   section2Verifier           User?                @relation("I9Verifier", fields: [section2VerifierUserId], references: [id], onDelete: SetNull)

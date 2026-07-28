@@ -17,10 +17,16 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeBackgroundChecks } from '../lib/scope.js';
 import { recordComplianceEvent } from '../lib/audit.js';
+import { everifyRouter } from './everify.js';
 
 export const complianceRouter = Router();
 
 const MANAGE = requireCapability('manage:compliance');
+
+// E-Verify directorate lives in its own module — it's roughly the size of
+// this file on its own. Mounted here rather than in app.ts so it inherits the
+// same view:compliance guard and sits under the same /compliance prefix.
+complianceRouter.use('/everify', everifyRouter);
 
 function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
