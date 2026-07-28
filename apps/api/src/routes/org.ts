@@ -28,6 +28,7 @@ import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { decryptString } from '../lib/crypto.js';
+import { maskRoutingNumber, readRoutingNumber } from '../lib/payoutMethod.js';
 import { z } from 'zod';
 import { hasCapability } from '@alto-people/shared';
 
@@ -857,12 +858,10 @@ orgRouter.get(
     let routingMasked: string | null = null;
     let accountLast4: string | null = null;
     try {
-      if (payout.routingNumberEnc) {
-        // Routing is stored as plain UTF-8 (per the comment in the
-        // onboarding POST handler) — decode, mask all but last 4.
-        const r = payout.routingNumberEnc.toString('utf8');
-        routingMasked = `•••••${r.slice(-4)}`;
-      }
+      // maskRoutingNumber, not toString('utf8'): the column holds plaintext
+      // from the onboarding path and ciphertext from self-service, and the
+      // raw decode turned the latter into mojibake.
+      routingMasked = maskRoutingNumber(payout.routingNumberEnc);
       if (payout.accountNumberEnc) {
         const a = decryptString(payout.accountNumberEnc);
         accountLast4 = a.slice(-4);
@@ -910,9 +909,7 @@ orgRouter.post(
     let routingNumber: string | null = null;
     let accountNumber: string | null = null;
     try {
-      if (payout.routingNumberEnc) {
-        routingNumber = payout.routingNumberEnc.toString('utf8');
-      }
+      routingNumber = readRoutingNumber(payout.routingNumberEnc) || null;
       if (payout.accountNumberEnc) {
         accountNumber = decryptString(payout.accountNumberEnc);
       }
@@ -954,12 +951,74 @@ orgRouter.post(
     res.json({
       type: payout.type,
       accountType: payout.accountType,
+      bankName: payout.bankName,
       routingNumber,
       accountNumber,
       branchCardId: payout.branchCardId,
       verifiedAt: payout.verifiedAt?.toISOString() ?? null,
       updatedAt: payout.updatedAt?.toISOString() ?? null,
     });
+  },
+);
+
+/**
+ * PATCH /associates/:id/payout-method — bank name only.
+ *
+ * Exists for backfill: bankName was added after most associates onboarded,
+ * so their records carry a blank institution name that an external payroll
+ * provider's intake file expects. Without this, the only way to fill it in
+ * is asking each associate to re-save their direct deposit.
+ *
+ * Deliberately scoped to the LABEL. Routing and account numbers stay
+ * writable only by the associate themselves (self-service, which emails a
+ * change confirmation as a fraud tripwire) or via onboarding. An admin
+ * endpoint that could rewrite where money lands is a payment-redirection
+ * vector, and nothing about backfilling a bank name needs it.
+ *
+ * Not a "reveal", so no written reason and a normal (non-critical) audit
+ * row: this discloses nothing, it only labels what's already there.
+ */
+const PayoutBankNameSchema = z.object({
+  bankName: z.string().trim().min(1).max(120),
+});
+
+orgRouter.patch(
+  '/associates/:id/payout-method',
+  PAYROLL_OR_HR,
+  async (req: Request, res: Response) => {
+    const { bankName } = PayoutBankNameSchema.parse(req.body ?? {});
+    const { payout } = await loadPrimaryPayoutMethod(req.params.id);
+
+    if (!payout) {
+      throw new HttpError(
+        404,
+        'no_payout_method',
+        'This associate has no direct-deposit method on file.',
+      );
+    }
+    if (payout.type !== 'BANK_ACCOUNT') {
+      throw new HttpError(
+        409,
+        'not_a_bank_account',
+        'Only a bank-account payout method can carry a bank name.',
+      );
+    }
+
+    const previous = payout.bankName;
+    await prisma.payoutMethod.update({
+      where: { id: payout.id },
+      data: { bankName },
+    });
+
+    // Old value included: a bank name silently changing on a payroll file is
+    // the kind of thing a reviewer needs to be able to trace back.
+    audit(req, 'associate.payout_bank_name_updated', 'PayoutMethod', payout.id, {
+      associateId: req.params.id,
+      previousBankName: previous,
+      bankName,
+    });
+
+    res.json({ bankName });
   },
 );
 

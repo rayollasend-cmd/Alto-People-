@@ -67,6 +67,7 @@ import {
   patchAssociateProfile,
   revealAssociatePayoutMethod,
   revealAssociateSsn,
+  setAssociateBankName,
   transferAssociate,
   updateAssociateW4,
   type AssociateW4,
@@ -1806,6 +1807,11 @@ function PayoutMethodSection({ associateId }: { associateId: string }) {
                 data.accountType ? ` (${data.accountType.toLowerCase()})` : ''
               }`}
             />
+            <BankNameRow
+              associateId={associateId}
+              bankName={data.bankName ?? null}
+              onSaved={() => void refetch()}
+            />
             <InfoRow
               label="Routing"
               value={
@@ -1854,6 +1860,128 @@ function PayoutMethodSection({ associateId }: { associateId: string }) {
         />
       )}
     </>
+  );
+}
+
+/**
+ * Bank name, inline-editable.
+ *
+ * The field was added after most associates onboarded, so existing records
+ * carry a blank that an external payroll provider's intake file expects.
+ * Without an admin path the only fix is asking each associate to re-save
+ * their direct deposit, so this edits the label in place.
+ *
+ * Only the label — routing and account numbers stay read-only here and
+ * writable only by the associate, whose self-service change fires a
+ * confirmation email as a fraud tripwire. An admin control that could
+ * rewrite where money lands is a payment-redirection vector, and nothing
+ * about naming a bank needs one.
+ */
+function BankNameRow({
+  associateId,
+  bankName,
+  onSaved,
+}: {
+  associateId: string;
+  bankName: string | null;
+  onSaved: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(bankName ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Re-sync when the query refetches under us (e.g. after a save elsewhere).
+  useEffect(() => {
+    if (!editing) setValue(bankName ?? '');
+  }, [bankName, editing]);
+
+  const save = async () => {
+    const next = value.trim();
+    if (!next) {
+      setError('Enter a bank name.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await setAssociateBankName(associateId, next);
+      setEditing(false);
+      onSaved();
+      toast.success('Bank name updated.');
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not save.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <InfoRow
+        label="Bank"
+        value={
+          <span className="inline-flex items-center gap-2">
+            {bankName ? (
+              <span>{bankName}</span>
+            ) : (
+              // Called out rather than shown as a neutral dash: a blank here
+              // is a cell the payroll provider expects filled.
+              <span className="text-warning">Not set</span>
+            )}
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="text-2xs uppercase tracking-wider text-silver/70 underline underline-offset-2 hover:text-gold"
+            >
+              {bankName ? 'Edit' : 'Add'}
+            </button>
+          </span>
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="py-1">
+      <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1">
+        Bank
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          autoFocus
+          value={value}
+          maxLength={120}
+          placeholder="Chase"
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void save();
+            if (e.key === 'Escape') {
+              setEditing(false);
+              setValue(bankName ?? '');
+              setError(null);
+            }
+          }}
+          className="h-8 text-sm"
+        />
+        <Button size="sm" onClick={() => void save()} loading={saving} disabled={saving}>
+          Save
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={saving}
+          onClick={() => {
+            setEditing(false);
+            setValue(bankName ?? '');
+            setError(null);
+          }}
+        >
+          Cancel
+        </Button>
+      </div>
+      {error && <div className="mt-1 text-xs text-alert">{error}</div>}
+    </div>
   );
 }
 

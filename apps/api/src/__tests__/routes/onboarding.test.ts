@@ -263,6 +263,84 @@ describe('DIRECT_DEPOSIT encrypts the account number', () => {
     expect((payout.routingNumberEnc as Buffer).toString('utf8')).toBe('121000248');
   });
 
+  it('persists bankName and returns it unredacted from the status endpoint', async () => {
+    const w = await seedWorld();
+    const a = await loginAs(w.associateUser.email);
+
+    await a
+      .post(`/onboarding/applications/${w.application.id}/direct-deposit`)
+      .send({
+        type: 'BANK_ACCOUNT',
+        routingNumber: '121000248',
+        accountNumber: '987654321',
+        accountType: 'CHECKING',
+        bankName: 'Wells Fargo',
+      })
+      .expect(204);
+
+    const payout = await prisma.payoutMethod.findFirstOrThrow({
+      where: { associateId: w.associate.id, isPrimary: true },
+    });
+    expect(payout.bankName).toBe('Wells Fargo');
+
+    // Unredacted on read, unlike the account number — a bank's name is not a
+    // secret and the form prefills it so it doesn't drift on every edit.
+    const status = await a.get(
+      `/onboarding/applications/${w.application.id}/direct-deposit`,
+    );
+    expect(status.status).toBe(200);
+    expect(status.body.bankName).toBe('Wells Fargo');
+    expect(status.body.accountLast4).toBe('4321');
+  });
+
+  it('bankName is optional — an omitted value stores null, not a crash', async () => {
+    const w = await seedWorld();
+    const a = await loginAs(w.associateUser.email);
+
+    await a
+      .post(`/onboarding/applications/${w.application.id}/direct-deposit`)
+      .send({
+        type: 'BANK_ACCOUNT',
+        routingNumber: '121000248',
+        accountNumber: '987654321',
+        accountType: 'CHECKING',
+      })
+      .expect(204);
+
+    const payout = await prisma.payoutMethod.findFirstOrThrow({
+      where: { associateId: w.associate.id, isPrimary: true },
+    });
+    expect(payout.bankName).toBeNull();
+  });
+
+  it('switching to a Branch card clears a previously stored bankName', async () => {
+    const w = await seedWorld();
+    const a = await loginAs(w.associateUser.email);
+
+    await a
+      .post(`/onboarding/applications/${w.application.id}/direct-deposit`)
+      .send({
+        type: 'BANK_ACCOUNT',
+        routingNumber: '121000248',
+        accountNumber: '987654321',
+        accountType: 'CHECKING',
+        bankName: 'Wells Fargo',
+      })
+      .expect(204);
+
+    await a
+      .post(`/onboarding/applications/${w.application.id}/direct-deposit`)
+      .send({ type: 'BRANCH_CARD', branchCardId: 'BC-999' })
+      .expect(204);
+
+    const payout = await prisma.payoutMethod.findFirstOrThrow({
+      where: { associateId: w.associate.id, isPrimary: true },
+    });
+    // A stale bank name on a card method would misdescribe it on the
+    // external payroll file.
+    expect(payout.bankName).toBeNull();
+  });
+
   it('BRANCH_CARD: stores branchCardId, no encrypted blobs', async () => {
     const w = await seedWorld();
     const a = await loginAs(w.associateUser.email);

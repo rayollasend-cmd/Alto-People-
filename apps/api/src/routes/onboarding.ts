@@ -60,6 +60,7 @@ import {
 } from '../lib/checklist.js';
 import multer from 'multer';
 import { decryptString, encryptString, tryDecryptString } from '../lib/crypto.js';
+import { maskRoutingNumber } from '../lib/payoutMethod.js';
 import { recordOnboardingEvent } from '../lib/audit.js';
 import {
   notifyAllAdmins,
@@ -1433,10 +1434,14 @@ onboardingRouter.get(
               let routingMasked: string | null = null;
               let accountLast4: string | null = null;
               try {
-                if (payout.routingNumberEnc) {
-                  const r = decryptString(payout.routingNumberEnc);
-                  routingMasked = `•••••${r.slice(-4)}`;
-                }
+                // This used to call decryptString on the routing number,
+                // which THROWS for the plaintext rows the direct-deposit
+                // route writes — and the catch below then dropped the
+                // account last-4 as well, so the auditor's packet silently
+                // showed neither. maskRoutingNumber handles both formats and
+                // the account number is decrypted separately so one failing
+                // can't take the other down.
+                routingMasked = maskRoutingNumber(payout.routingNumberEnc);
                 if (payout.accountNumberEnc) {
                   const a = decryptString(payout.accountNumberEnc);
                   accountLast4 = a.slice(-4);
@@ -1835,12 +1840,8 @@ onboardingRouter.get(
       let routingMasked: string | null = null;
       let accountLast4: string | null = null;
       try {
-        if (payout.routingNumberEnc) {
-          // Routing is stored as plain UTF-8 bytes — see the comment in the
-          // POST handler. Just decode as a string.
-          const r = payout.routingNumberEnc.toString('utf8');
-          routingMasked = `•••••${r.slice(-4)}`;
-        }
+        // Handles both storage formats — see lib/payoutMethod.ts.
+        routingMasked = maskRoutingNumber(payout.routingNumberEnc);
         if (payout.accountNumberEnc) {
           const a = decryptString(payout.accountNumberEnc);
           accountLast4 = a.slice(-4);
@@ -1853,6 +1854,9 @@ onboardingRouter.get(
         hasPayoutMethod: true,
         type: payout.type,
         accountType: payout.accountType,
+        // Not sensitive on its own — surfaced so the form can prefill it
+        // rather than making the associate retype it on every edit.
+        bankName: payout.bankName,
         routingMasked,
         accountLast4,
         branchCardId: payout.branchCardId,
@@ -1895,6 +1899,7 @@ onboardingRouter.post(
             routingNumberEnc: Buffer.from(input.routingNumber, 'utf8'),
             accountNumberEnc: encryptString(input.accountNumber),
             accountType: input.accountType,
+            bankName: input.bankName ?? null,
             branchCardId: null,
             isPrimary: true,
             verifiedAt: null,
@@ -1912,6 +1917,9 @@ onboardingRouter.post(
             routingNumberEnc: null,
             accountNumberEnc: null,
             accountType: null,
+            // Switching to a card clears the bank name with the rest of the
+            // account details — leaving it would misdescribe the method.
+            bankName: null,
             branchCardId: input.branchCardId,
             isPrimary: true,
             verifiedAt: null,

@@ -8,6 +8,7 @@ import {
   Coffee,
   Download,
   FileSpreadsheet,
+  ShieldAlert,
   FileText,
   ListChecks,
   MapPinOff,
@@ -35,6 +36,7 @@ import {
   bulkApproveTimeEntries,
   bulkRejectTimeEntries,
   countAdminTimeEntries,
+  exportExternalPayrollSheet,
   exportPayrollSheet,
   exportTimeEntries,
   exportTimeSummary,
@@ -393,6 +395,12 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const [exportBusy, setExportBusy] = useState<null | 'csv' | 'pdf'>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [payrollOpen, setPayrollOpen] = useState(false);
+  const [externalOpen, setExternalOpen] = useState(false);
+  // Distinct from canManage (manage:time). The external sheet carries full
+  // SSNs and bank accounts, so it sits behind its own capability held by
+  // HR_ADMINISTRATOR alone — manage:time reaches down to SHIFT_SUPERVISOR.
+  const { can: canCap } = useAuth();
+  const canExportPayrollPii = canCap('export:payroll-pii');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState<null | { mode: 'one'; id: string } | { mode: 'bulk' }>(null);
@@ -1166,6 +1174,23 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     <FileSpreadsheet className="h-4 w-4" />
                     Payroll sheet
                   </Button>
+                  {/* HR Administrator only — export:payroll-pii. Hidden rather
+                      than disabled for everyone else: a greyed-out "External
+                      payroll" button just advertises that the SSN + bank
+                      export exists to roles who can't and shouldn't use it. */}
+                  {canExportPayrollPii && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setExternalOpen(true)}
+                      disabled={exportBusy !== null}
+                      className="border-warning/50 text-warning hover:text-warning"
+                    >
+                      <ShieldAlert className="h-4 w-4" />
+                      External payroll
+                    </Button>
+                  )}
                 </div>
               )}
 
@@ -1490,6 +1515,15 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         defaultFromYmd={fromYmd}
         defaultToYmd={toYmd}
       />
+
+      {canExportPayrollPii && (
+        <ExternalPayrollSheetDialog
+          open={externalOpen}
+          onOpenChange={setExternalOpen}
+          defaultFromYmd={fromYmd}
+          defaultToYmd={toYmd}
+        />
+      )}
 
       {createOpen && (
         <TimeEntryFormDrawer
@@ -2621,6 +2655,223 @@ function SummaryExportDialog({
           <Button onClick={download} loading={busy} disabled={busy}>
             <Download className="mr-2 h-4 w-4" />
             Export CSV
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * External payroll sheet — the handoff file for an outside payroll bureau.
+ *
+ * Separate dialog from PayrollSheetDialog rather than a checkbox on it,
+ * deliberately. The two files look similar but are not interchangeable: this
+ * one puts a full SSN next to a full bank account and routing number for
+ * every worker in the range. Making it a distinct, differently-styled action
+ * behind its own confirmation means nobody produces it by reflex while
+ * reaching for the ordinary payroll sheet.
+ */
+function ExternalPayrollSheetDialog({
+  open,
+  onOpenChange,
+  defaultFromYmd,
+  defaultToYmd,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  defaultFromYmd: string;
+  defaultToYmd: string;
+}) {
+  const { user } = useAuth();
+  const boundedClient = user?.clientId
+    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+    : null;
+  const { clients } = useClients({ enabled: open && !boundedClient });
+  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
+  const [fromYmd, setFromYmd] = useState(defaultFromYmd);
+  const [toYmd, setToYmd] = useState(defaultToYmd);
+  const [busy, setBusy] = useState<'pdf' | 'xlsx' | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setFromYmd(defaultFromYmd);
+    setToYmd(defaultToYmd);
+    setErr(null);
+    // Re-arm every time. A sticky acknowledgement would defeat the point.
+    setAcknowledged(false);
+  }, [open, defaultFromYmd, defaultToYmd]);
+
+  const download = async (format: 'pdf' | 'xlsx') => {
+    if (!fromYmd || !toYmd || toYmd < fromYmd) {
+      setErr('Pick a valid pay period (end on or after start).');
+      return;
+    }
+    setBusy(format);
+    setErr(null);
+    try {
+      const { employeeCount, gaps, truncated } = await exportExternalPayrollSheet(
+        format,
+        {
+          from: ymdToIsoStart(fromYmd),
+          to: ymdToIsoEndExclusive(toYmd),
+          ...(clientId ? { clientId } : {}),
+        },
+      );
+      // Blank cells in a bureau file are rejected submissions or unpaid
+      // workers, and they're invisible in a 300-row spreadsheet. Say it out
+      // loud rather than letting the download read as a clean success.
+      const problems: string[] = [];
+      if (gaps.missingW4 > 0) problems.push(`${gaps.missingW4} with no W-4`);
+      if (gaps.unreadableSsn > 0)
+        problems.push(`${gaps.unreadableSsn} with no readable SSN`);
+      if (gaps.missingBankDetails > 0)
+        problems.push(`${gaps.missingBankDetails} missing bank details`);
+      if (gaps.missingPayRate > 0)
+        problems.push(`${gaps.missingPayRate} with no pay rate`);
+
+      if (truncated) {
+        toast.error(
+          'The sheet is incomplete — the time-entry scan hit its cap. Narrow the range or filter by client and regenerate before sending.',
+          { duration: 15000 },
+        );
+      } else if (problems.length > 0) {
+        toast.warning(
+          `${employeeCount} employee${employeeCount === 1 ? '' : 's'} exported, but ${problems.join(', ')}. Those rows will be rejected or unpaid — fix them before sending.`,
+          { duration: 15000 },
+        );
+      } else {
+        toast.success(
+          `${employeeCount} employee${employeeCount === 1 ? '' : 's'} exported with complete details.`,
+        );
+      }
+      onOpenChange(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Export failed.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>External payroll sheet</DialogTitle>
+          <DialogDescription>
+            The handoff file for an outside payroll provider. APPROVED time
+            only.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {err && <ErrorBanner>{err}</ErrorBanner>}
+
+          <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/[0.07] p-3">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <div className="min-w-0 text-xs">
+              <div className="font-medium text-white">
+                This file contains full Social Security numbers and bank
+                account details
+              </div>
+              <div className="mt-0.5 text-silver">
+                One row per employee, each with SSN, routing and account
+                number, date of birth and home address. Send it only to your
+                designated payroll provider over an encrypted channel. Every
+                download is recorded against your account.
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <FieldLabel>Client</FieldLabel>
+            {boundedClient ? (
+              <div className="mt-1 flex h-10 items-center rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 text-sm text-white">
+                {boundedClient.name}
+              </div>
+            ) : (
+              <Select
+                className="mt-1"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+              >
+                <option value="">All clients</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <FieldLabel>Pay period start</FieldLabel>
+              <Input
+                type="date"
+                value={fromYmd}
+                max={toYmd}
+                onChange={(e) => setFromYmd(e.target.value)}
+                className="mt-1 h-10 text-sm"
+              />
+            </div>
+            <div>
+              <FieldLabel>Pay period end</FieldLabel>
+              <Input
+                type="date"
+                value={toYmd}
+                min={fromYmd}
+                onChange={(e) => setToYmd(e.target.value)}
+                className="mt-1 h-10 text-sm"
+              />
+            </div>
+          </div>
+
+          <label className="flex items-start gap-2 text-xs text-silver cursor-pointer">
+            <input
+              type="checkbox"
+              checked={acknowledged}
+              onChange={(e) => setAcknowledged(e.target.checked)}
+              className="mt-0.5 h-3.5 w-3.5 rounded border-navy-secondary bg-navy text-gold focus:ring-gold focus:ring-offset-0"
+            />
+            <span>
+              I&apos;m authorised to share this data with our payroll provider
+              and will transmit it securely.
+            </span>
+          </label>
+
+          <p className="text-xs text-silver">
+            Overtime = hours over 40 per week (federal), matching payroll. Bank
+            name comes from each associate&apos;s direct-deposit setup and is
+            blank on records saved before that field existed.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+            disabled={busy !== null}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => download('pdf')}
+            loading={busy === 'pdf'}
+            disabled={busy !== null || !acknowledged}
+          >
+            <FileText className="mr-2 h-4 w-4" />
+            PDF
+          </Button>
+          <Button
+            onClick={() => download('xlsx')}
+            loading={busy === 'xlsx'}
+            disabled={busy !== null || !acknowledged}
+          >
+            <FileSpreadsheet className="mr-2 h-4 w-4" />
+            Excel
           </Button>
         </DialogFooter>
       </DialogContent>
