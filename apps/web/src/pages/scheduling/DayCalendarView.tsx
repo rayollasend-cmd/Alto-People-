@@ -9,8 +9,7 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core';
 import { GripVertical, Plus } from 'lucide-react';
-import type { AssociateLite, Shift, ShiftStatus } from '@alto-people/shared';
-import { Badge } from '@/components/ui/Badge';
+import type { AssociateLite, Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
 import { fmtTimeTz, zonedDayKey, zonedMinutesOfDay } from '@/lib/format';
@@ -23,17 +22,17 @@ import {
   ShiftContextMenu,
   useShiftContextMenu,
 } from './ShiftContextMenu';
+import {
+  GRIP_HIT,
+  GRIP_ICON,
+  RESIZE_RAIL_Y,
+  SHIFT_STATUS_LABEL,
+  StatusMark,
+  statusLabelClass,
+  statusTileClass,
+} from './shiftTile';
 
-const STATUS_VARIANT: Record<
-  ShiftStatus,
-  'success' | 'pending' | 'destructive' | 'default' | 'accent'
-> = {
-  OPEN: 'pending',
-  ASSIGNED: 'success',
-  DRAFT: 'default',
-  COMPLETED: 'success',
-  CANCELLED: 'destructive',
-};
+// Status is rendered by <StatusMark> — see shiftTile.tsx.
 
 const UNASSIGNED_ROW_ID = '__unassigned__';
 
@@ -515,6 +514,7 @@ function DayShiftChip({
       }}
       className={cn(
         'rounded border transition-colors hover:brightness-125 overflow-hidden',
+        statusTileClass(shift.status),
         isDragging && 'elev-3 ring-2 ring-gold/60 opacity-90',
         resizeDeltaPx !== null && 'ring-2 ring-gold/70'
       )}
@@ -539,33 +539,29 @@ function DayShiftChip({
       <div
         {...listeners}
         {...attributes}
-        className="absolute left-1.5 top-1 text-silver/70 hover:text-gold cursor-grab active:cursor-grabbing no-print"
+        className={cn('absolute left-1 top-0.5', GRIP_HIT)}
         aria-label={`Move ${shift.position}`}
       >
-        <GripVertical className="h-3 w-3" />
+        <GripVertical className={GRIP_ICON} />
       </div>
       <button
         type="button"
         onClick={onClick}
-        className="w-full h-full text-left px-1.5 pl-5 pt-1 pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+        className="w-full h-full text-left pl-6 pr-2 pt-1.5 pb-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+        title={`${fmtTime(startsAt, shift.timezone)}–${fmtTime(previewEnds, shift.timezone)} · ${shift.position} · ${SHIFT_STATUS_LABEL[shift.status]}`}
       >
-        <div className="flex items-center justify-between gap-1">
-          <div className="text-2xs text-silver tabular-nums truncate">
+        <div className="flex items-center justify-between gap-1.5">
+          <div className="text-xs2 text-silver tabular-nums truncate">
             {fmtTime(startsAt, shift.timezone)}–{fmtTime(previewEnds, shift.timezone)}
           </div>
-          <Badge
-            variant={STATUS_VARIANT[shift.status] ?? 'default'}
-            className="text-3xs px-1 py-0 shrink-0"
-            data-status={shift.status}
-          >
-            {shift.status === 'ASSIGNED'
-              ? '✓'
-              : shift.status === 'OPEN'
-                ? '○'
-                : shift.status[0]}
-          </Badge>
+          <StatusMark status={shift.status} />
         </div>
-        <div className="text-xs2 text-white font-medium truncate">
+        <div
+          className={cn(
+            'text-xs text-white font-medium truncate',
+            statusLabelClass(shift.status),
+          )}
+        >
           {shift.position}
         </div>
         {shift.clientName && (
@@ -577,12 +573,12 @@ function DayShiftChip({
       {canManage && (
         <div
           onMouseDown={onResizeMouseDown}
-          className="absolute left-0 right-0 bottom-0 h-1.5 cursor-ns-resize hover:bg-gold/40 group no-print"
+          className={RESIZE_RAIL_Y}
           aria-label="Drag to resize duration"
           role="slider"
           tabIndex={-1}
         >
-          <div className="mx-auto w-8 h-0.5 mt-0.5 rounded-full bg-silver/30 group-hover:bg-gold" />
+          <div className="w-8 h-0.5 rounded-full bg-silver/30 group-hover:bg-gold" />
         </div>
       )}
     </div>

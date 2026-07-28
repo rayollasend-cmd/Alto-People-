@@ -569,13 +569,23 @@ schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
       where = ACTIVE_ASSOCIATE_FILTER;
     }
 
+    // Over-fetch by one so a full page can be reported as truncated rather
+    // than silently cut. This list is the grid's row axis — dropping people
+    // without saying so makes an incomplete schedule look complete.
+    const ROSTER_PAGE = 500;
     const rows = await prisma.associate.findMany({
       where,
       orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
       select: { id: true, firstName: true, lastName: true, email: true },
-      take: 500,
+      take: ROSTER_PAGE + 1,
     });
-    res.json(AssociateListResponseSchema.parse({ associates: rows }));
+    const truncated = rows.length > ROSTER_PAGE;
+    res.json(
+      AssociateListResponseSchema.parse({
+        associates: truncated ? rows.slice(0, ROSTER_PAGE) : rows,
+        truncated,
+      }),
+    );
   } catch (err) {
     next(err);
   }

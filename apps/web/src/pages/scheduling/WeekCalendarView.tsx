@@ -9,9 +9,9 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { Plus, GripVertical } from 'lucide-react';
-import type { AssociateLite, Shift, ShiftStatus } from '@alto-people/shared';
-import { Badge } from '@/components/ui/Badge';
+import type { AssociateLite, Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
 import {
@@ -32,6 +32,16 @@ import {
   useShiftContextMenu,
 } from './ShiftContextMenu';
 import { TEMPLATE_MIME } from './TemplatesRail';
+import {
+  GRIP_HIT,
+  GRIP_ICON,
+  RESIZE_RAIL_X,
+  SHIFT_STATUS_LABEL,
+  StatusMark,
+  statusLabelClass,
+  statusTileClass,
+  useTileDensity,
+} from './shiftTile';
 
 // Week-view chips have no time axis to drag against, so resize maps
 // pointer-x-pixels to minutes at a comfortable 1.5px per minute (so a
@@ -41,16 +51,8 @@ const RESIZE_PX_PER_MIN = 1.5;
 const RESIZE_SNAP_MIN = 15;
 const RESIZE_MIN_DURATION_MIN = 15;
 
-const STATUS_VARIANT: Record<
-  ShiftStatus,
-  'success' | 'pending' | 'destructive' | 'default' | 'accent'
-> = {
-  OPEN: 'pending',
-  ASSIGNED: 'success',
-  DRAFT: 'default',
-  COMPLETED: 'success',
-  CANCELLED: 'destructive',
-};
+// Status is rendered by <StatusMark> (shape + screen-reader label) rather
+// than a coloured letter badge — see shiftTile.tsx for why.
 
 const UNASSIGNED_ROW_ID = '__unassigned__';
 
@@ -362,10 +364,16 @@ export function WeekCalendarView({
   // horizontal scrolling; minWidth only forces a scroller once columns would
   // drop below a ~100px readable floor (very wide ranges or a small viewport),
   // so a normal 7-day week always fits.
-  const gridStyle = {
+  //
+  // The grid used to be ONE element with every rail cell and day cell as a
+  // direct child. That made a row unmeasurable — a row was N sibling
+  // elements, not one box — which is exactly what a virtualizer needs. Rows
+  // are now their own grids sharing this column template, so header, body
+  // and footer still line up while each row is a single measurable element.
+  const colsStyle = {
     gridTemplateColumns: `200px repeat(${dayCount}, minmax(0, 1fr))`,
-    minWidth: `${200 + dayCount * 100}px`,
   };
+  const minWidthStyle = { minWidth: `${200 + dayCount * 100}px` };
 
   // Compute the set of (associateId|unassigned)_dayMs cells that would be
   // conflicts for the currently-dragged shift. Using a Set keeps per-cell
@@ -418,8 +426,9 @@ export function WeekCalendarView({
       onDragCancel={() => setActiveDragShift(null)}
     >
       <div className="rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto">
-        <div className="grid" style={gridStyle}>
+        <div style={minWidthStyle}>
           {/* ===== Header row ===== */}
+          <div className="grid" style={colsStyle}>
           <div className="sticky left-0 z-20 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 text-2xs uppercase tracking-wider text-silver">
             Schedule
           </div>
@@ -454,8 +463,10 @@ export function WeekCalendarView({
               </div>
             );
           })}
+          </div>
 
           {/* ===== Unassigned row ===== */}
+          <div className="grid" style={colsStyle}>
           <RailCell
             label="Unassigned"
             sublabel="OPEN shifts"
@@ -482,17 +493,18 @@ export function WeekCalendarView({
               onTemplateDrop={onTemplateDrop}
             />
           ))}
+          </div>
 
           {/* ===== Associate rows ===== */}
           {visibleAssociates.length === 0 && (
-            <div
-              className="px-4 py-6 text-center text-sm text-silver/70"
-              style={{ gridColumn: '1 / -1' }}
-            >
+            <div className="px-4 py-6 text-center text-sm text-silver/70">
               No associates have shifts in this range.
             </div>
           )}
-          {visibleAssociates.map((a) => {
+          <VirtualizedRows
+            count={visibleAssociates.length}
+            renderRow={(index) => {
+            const a = visibleAssociates[index];
             const mins = weeklyMinutes.get(a.id) ?? 0;
             const overTime = mins > 40 * 60;
             const nearOT = !overTime && mins >= 36 * 60;
@@ -504,6 +516,7 @@ export function WeekCalendarView({
                 minutes={mins}
                 overTime={overTime}
                 nearOT={nearOT}
+                colsStyle={colsStyle}
               >
                 {days.map((d, i) => {
                   const dayKey = dayKeys[i];
@@ -542,9 +555,11 @@ export function WeekCalendarView({
                 })}
               </Row>
             );
-          })}
+          }}
+          />
 
           {/* ===== Day totals footer ===== */}
+          <div className="grid" style={colsStyle}>
           <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-t border-r border-navy-secondary px-3 py-2 text-2xs uppercase tracking-wider text-silver/70">
             Daily total
           </div>
@@ -580,6 +595,7 @@ export function WeekCalendarView({
               </div>
             );
           })}
+          </div>
         </div>
       </div>
       {hover.active && (
@@ -633,6 +649,7 @@ const Row = memo(function Row({
   minutes,
   overTime,
   nearOT,
+  colsStyle,
   children,
 }: {
   associate: AssociateLite;
@@ -640,11 +657,13 @@ const Row = memo(function Row({
   overTime: boolean;
   /** 36h ≤ weekly hours ≤ 40h — approaching overtime. */
   nearOT: boolean;
+  /** Shared column template — every row grid matches the header's. */
+  colsStyle: React.CSSProperties;
   children: React.ReactNode;
 }) {
   const initials = `${associate.firstName[0] ?? ''}${associate.lastName[0] ?? ''}`.toUpperCase();
   return (
-    <>
+    <div className="grid" style={colsStyle}>
       <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-3 flex items-center gap-2.5">
         <div className="h-8 w-8 rounded-full bg-gold/15 text-gold text-xs font-semibold flex items-center justify-center shrink-0">
           {initials || '?'}
@@ -667,9 +686,82 @@ const Row = memo(function Row({
         </div>
       </div>
       {children}
-    </>
+    </div>
   );
 });
+
+/**
+ * Roster rows, windowed once the roster gets big.
+ *
+ * The grid renders one droppable per associate × day, so an org-wide view
+ * at the server's 500-row page cap was mounting ~3,500 `useDroppable`
+ * registrations — and dnd-kit runs collision detection against every
+ * registered droppable on each drag move, so drag latency scaled with
+ * roster size rather than with what's on screen.
+ *
+ * Below the threshold nothing changes: the plain path keeps the page as the
+ * scroller, which is the familiar behaviour for a normal-sized team. Past it
+ * the body becomes its own scroll container and only the visible window is
+ * mounted. Rows are genuinely variable height (a day with three shifts is
+ * ~3× a day with one), so each row is measured via `measureElement` rather
+ * than assumed — a fixed estimate would drift the scrollbar on dense weeks.
+ */
+const VIRTUALIZE_ROWS_THRESHOLD = 60;
+const ROW_ESTIMATE_PX = 56;
+const ROW_OVERSCAN = 6;
+const ROWS_CONTAINER_MAX_VH = 'max-h-[calc(100vh-320px)]';
+
+function VirtualizedRows({
+  count,
+  renderRow,
+}: {
+  count: number;
+  renderRow: (index: number) => React.ReactNode;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_ESTIMATE_PX,
+    overscan: ROW_OVERSCAN,
+  });
+
+  if (count <= VIRTUALIZE_ROWS_THRESHOLD) {
+    return <>{Array.from({ length: count }, (_, i) => renderRow(i))}</>;
+  }
+
+  const items = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
+  const padTop = items.length > 0 ? items[0].start : 0;
+  const padBottom =
+    items.length > 0 ? totalSize - items[items.length - 1].end : 0;
+
+  return (
+    // overflow-x-clip is load-bearing, same reason as Layout.tsx:147 —
+    // overflow-y:auto silently computes overflow-x to auto, which would make
+    // this a horizontal scroll container too. The rail column is
+    // `sticky left-0` and resolves against the nearest horizontal scroller,
+    // so that would pin the rail to THIS box instead of the outer
+    // overflow-x-auto and the names would stop tracking the day columns.
+    // `clip` doesn't create a scroll container, so sticky still resolves out.
+    <div
+      ref={scrollRef}
+      className={cn('overflow-y-auto overflow-x-clip', ROWS_CONTAINER_MAX_VH)}
+    >
+      {padTop > 0 && <div aria-hidden style={{ height: padTop }} />}
+      {items.map((v) => (
+        <div
+          key={v.key}
+          data-index={v.index}
+          ref={virtualizer.measureElement}
+        >
+          {renderRow(v.index)}
+        </div>
+      ))}
+      {padBottom > 0 && <div aria-hidden style={{ height: padBottom }} />}
+    </div>
+  );
+}
 
 function RailCell({
   label,
@@ -766,6 +858,7 @@ const Cell = memo(function Cell({
     onTemplateDrop(tplId, dayStart, associateId);
   };
   const onCreate = () => onCellCreate(dayStart, associateId);
+  const cellDensity = useTileDensity();
 
   return (
     <div
@@ -782,7 +875,8 @@ const Cell = memo(function Cell({
       }
       className={cn(
         'group relative border-b border-r border-navy-secondary p-1 min-h-[44px]',
-        'flex flex-col gap-1',
+        'flex flex-col',
+        cellDensity.gap,
         isToday && 'bg-gold/[0.03]',
         // Availability/PTO tint — a passive background layer. Wins over the
         // faint "today" tint but is suppressed whenever a hover/drop/conflict
@@ -829,15 +923,20 @@ const Cell = memo(function Cell({
               hoverHandlers={hoverBind(s)}
             />
           ))}
+          {/* "Add another" used to be a flow child, so every occupied cell
+              paid ~18px for an affordance that's only relevant on hover —
+              more vertical space than a third of the shift tile it sat under.
+              As an overlay it costs nothing until wanted, and the reclaimed
+              room is what pays for the taller tiles. */}
           {canManage && (
             <button
               type="button"
               onClick={onCreate}
-              className="text-2xs text-silver/70 hover:text-gold inline-flex items-center justify-center gap-1 mt-auto opacity-60 group-hover:opacity-100 transition-opacity"
+              className="absolute bottom-0.5 right-0.5 h-6 w-6 rounded-full flex items-center justify-center bg-navy-secondary/80 backdrop-blur text-silver/70 hover:text-gold hover:bg-navy-secondary opacity-0 group-hover:opacity-100 focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright transition-opacity no-print"
               aria-label="Add another shift"
+              title="Add another shift"
             >
-              <Plus className="h-3 w-3" />
-              add
+              <Plus className="h-3.5 w-3.5" />
             </button>
           )}
         </>
@@ -940,6 +1039,7 @@ function ShiftChip({
     : {};
   const isResizing = resizeDeltaPx !== null;
   const color = colorForPosition(shift.position);
+  const density = useTileDensity();
   return (
     <div
       ref={setNodeRef}
@@ -950,6 +1050,8 @@ function ShiftChip({
       }}
       className={cn(
         'relative rounded border transition-colors hover:brightness-125',
+        density.minH,
+        statusTileClass(shift.status),
         isDragging && 'elev-3 ring-2 ring-gold/60 opacity-90',
         isResizing && 'ring-2 ring-gold/70',
         isSelected && 'ring-2 ring-gold ring-offset-1 ring-offset-navy',
@@ -973,59 +1075,62 @@ function ShiftChip({
         className="absolute left-0 top-0 bottom-0 w-1 rounded-l"
         style={{ backgroundColor: color.accent }}
       />
-      {/* Drag grip — visually subtle, mouse-down here starts the drag */}
+      {/* Drag grip — small icon inside a 24px hit box (WCAG 2.2 SC 2.5.8). */}
       <div
         {...listeners}
         {...attributes}
-        className="absolute left-0.5 top-1/2 -translate-y-1/2 text-silver/60 hover:text-gold cursor-grab active:cursor-grabbing no-print"
+        className={cn('absolute left-0.5 top-1/2 -translate-y-1/2', GRIP_HIT)}
         aria-label={`Move ${shift.position}`}
       >
-        <GripVertical className="h-3 w-3" />
+        <GripVertical className={GRIP_ICON} />
       </div>
-      {/* Sling-style compact bar: time + position on a single line, a small
-          status dot pushed right. The client/sub-zone live in the hover
-          card so the row stays dense and rectangular. */}
+      {/* Single-line bar: time + position, status shape pushed right. The
+          client/sub-zone live in the hover card so the row stays rectangular. */}
       <button
         type="button"
         onClick={onClick}
-        className="w-full text-left py-1 pl-5 pr-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
-        title={`${fmtTime(shift.startsAt, shift.timezone)}–${fmtTime(previewEndsAt.toISOString(), shift.timezone)} · ${shift.position}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
+        className={cn(
+          'w-full h-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded',
+          density.padY,
+          density.padX,
+        )}
+        title={`${fmtTime(shift.startsAt, shift.timezone)}–${fmtTime(previewEndsAt.toISOString(), shift.timezone)} · ${shift.position} · ${SHIFT_STATUS_LABEL[shift.status]}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
       >
         <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-2xs text-silver/90 tabular-nums shrink-0">
+          <span
+            className={cn(
+              'text-silver/90 tabular-nums shrink-0',
+              density.time,
+            )}
+          >
             {compactRange(
               shift.startsAt,
               previewEndsAt.toISOString(),
               shift.timezone,
             )}
           </span>
-          <span className="flex-1 min-w-0 text-xs2 text-white font-medium truncate">
+          <span
+            className={cn(
+              'flex-1 min-w-0 text-white font-medium truncate',
+              density.label,
+              statusLabelClass(shift.status),
+            )}
+          >
             {shift.position}
           </span>
-          <Badge
-            variant={STATUS_VARIANT[shift.status] ?? 'default'}
-            className="text-3xs px-1 py-0 shrink-0"
-            data-status={shift.status}
-          >
-            {shift.status === 'ASSIGNED'
-              ? '✓'
-              : shift.status === 'OPEN'
-                ? '○'
-                : shift.status[0]}
-          </Badge>
+          <StatusMark status={shift.status} />
         </div>
       </button>
       {canManage && (
         <div
           onMouseDown={onResizeMouseDown}
-          className="absolute right-0 top-0 bottom-0 w-1.5 flex items-center justify-center cursor-ew-resize hover:bg-gold/40 group no-print"
+          className={RESIZE_RAIL_X}
           aria-label="Drag to resize duration"
           role="slider"
           tabIndex={-1}
         >
-          {/* Grip line scales to the bar height (h-1/2) so it never
-              overflows the now-thin compact chip. */}
-          <div className="w-0.5 h-1/2 max-h-3 rounded-full bg-silver/30 group-hover:bg-gold" />
+          {/* Grip line scales to the bar height so it never overflows. */}
+          <div className="w-0.5 h-1/2 max-h-4 rounded-full bg-silver/30 group-hover:bg-gold" />
         </div>
       )}
     </div>
