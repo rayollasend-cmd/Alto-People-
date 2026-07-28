@@ -14,6 +14,7 @@ import {
   TimeApproveInputSchema,
   TimeEntryListResponseSchema,
   TimeExportInputSchema,
+  ExternalPayrollSheetInputSchema,
   TimesheetWeekInputSchema,
   TimesheetAssociateDetailInputSchema,
   TimeRejectInputSchema,
@@ -31,7 +32,10 @@ import { requireCapability } from '../middleware/auth.js';
 import { scopeTimeEntries, scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
 import { runWithConcurrency } from '../lib/concurrency.js';
 import { z } from 'zod';
-import { recordTimeEvent } from '../lib/audit.js';
+import { recordTimeEvent, recordCriticalAudit } from '../lib/audit.js';
+import { buildExternalPayrollSheet } from '../lib/externalPayrollSheet.js';
+import { renderExternalPayrollSheetXlsx } from '../lib/externalPayrollSheetXlsx.js';
+import { renderExternalPayrollSheetPdf } from '../lib/externalPayrollSheetPdf.js';
 import { recomputeEntryAnomalies } from '../lib/recomputeEntryAnomalies.js';
 import { checkGeofence } from '../lib/geo.js';
 import { resolveAssociateGeofence } from '../lib/geofenceForAssociate.js';
@@ -2311,6 +2315,130 @@ async function loadPayrollSheet(
     truncated: rows.length === TIME_SUMMARY_MAX_ROWS,
   };
 }
+
+/* ===== External payroll sheet ============================================= *
+ *
+ * The handoff file for an outside payroll bureau: one row per worker with
+ * full SSN, full bank account + routing number, DOB and home address.
+ *
+ * Gated on `export:payroll-pii`, NOT the `MANAGE` (manage:time) guard the
+ * rest of this router uses — SHIFT_SUPERVISOR holds manage:time, and reusing
+ * it here would have handed every floor supervisor their client's identity
+ * documents. The capability sits with HR_ADMINISTRATOR alone.
+ *
+ * Generation is audited critically (record-then-send, aborting the download
+ * if the audit insert fails), on the same reasoning as payroll disbursement:
+ * a file this sensitive must never leave without a durable record of who
+ * took it, over what range, and how many people were in it.
+ * ========================================================================== */
+
+const EXPORT_PII = requireCapability('export:payroll-pii');
+
+async function loadExternalSheet(
+  req: import('express').Request,
+  format: 'xlsx' | 'pdf',
+) {
+  const parsed = ExternalPayrollSheetInputSchema.safeParse(req.body);
+  if (!parsed.success) {
+    throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+  }
+  const from = new Date(parsed.data.from);
+  const to = new Date(parsed.data.to);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from) {
+    throw new HttpError(400, 'invalid_range', 'from / to must be valid, to after from');
+  }
+
+  const user = req.user!;
+  const data = await buildExternalPayrollSheet(
+    prisma,
+    scopeTimeEntries(user),
+    parsed.data,
+  );
+
+  // Record BEFORE the bytes go out. A throw here aborts the download, which
+  // is the intended trade: no silent export of SSNs and bank accounts.
+  await recordCriticalAudit(
+    {
+      actorUserId: user.id,
+      clientId: parsed.data.clientId ?? null,
+      action: 'payroll.external_sheet_exported',
+      // Free-form entityId (not a uuid column), so an org-wide export gets a
+      // stable key instead of dropping out of the entity timeline.
+      entityType: 'ExternalPayrollSheet',
+      entityId: parsed.data.clientId ?? 'ALL_CLIENTS',
+      metadata: {
+        format,
+        from: parsed.data.from,
+        to: parsed.data.to,
+        locationId: parsed.data.locationId ?? null,
+        associateId: parsed.data.associateId ?? null,
+        employeeCount: data.rows.length,
+        includedFullSsn: data.rows.filter((r) => r.ssn !== '').length,
+        includedBankAccounts: data.rows.filter((r) => r.accountNumber !== '').length,
+        gaps: data.gaps,
+        truncated: data.truncated,
+        ip: req.ip ?? null,
+        userAgent: req.get('user-agent') ?? null,
+      },
+    },
+    'externalPayrollSheet',
+  );
+
+  return data;
+}
+
+/** Gap counts ride back as headers so the UI can warn without a second call. */
+function setExternalSheetHeaders(
+  res: import('express').Response,
+  data: Awaited<ReturnType<typeof buildExternalPayrollSheet>>,
+): void {
+  res.setHeader('X-Employee-Count', String(data.rows.length));
+  res.setHeader('X-Sheet-Gaps', JSON.stringify(data.gaps));
+  if (data.truncated) res.setHeader('X-Truncated', 'true');
+  // This file should never sit in a shared cache or a browser's disk cache.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+}
+
+function externalSheetFilename(from: Date, to: Date, ext: string): string {
+  const dayStr = (d: Date) => d.toISOString().slice(0, 10);
+  return `external-payroll-${dayStr(from)}-to-${dayStr(new Date(to.getTime() - 1))}.${ext}`;
+}
+
+timeRouter.post('/admin/external-payroll-sheet.xlsx', EXPORT_PII, async (req, res, next) => {
+  try {
+    const data = await loadExternalSheet(req, 'xlsx');
+    const xlsx = await renderExternalPayrollSheetXlsx(data, new Date());
+    setExternalSheetHeaders(res, data);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${externalSheetFilename(data.from, data.to, 'xlsx')}"`,
+    );
+    res.send(xlsx);
+  } catch (err) {
+    next(err);
+  }
+});
+
+timeRouter.post('/admin/external-payroll-sheet.pdf', EXPORT_PII, async (req, res, next) => {
+  try {
+    const data = await loadExternalSheet(req, 'pdf');
+    const pdf = await renderExternalPayrollSheetPdf(data, new Date());
+    setExternalSheetHeaders(res, data);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${externalSheetFilename(data.from, data.to, 'pdf')}"`,
+    );
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
 
 function payrollSheetFilename(from: Date, to: Date, ext: string): string {
   const dayStr = (d: Date) => d.toISOString().slice(0, 10);

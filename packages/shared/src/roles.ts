@@ -65,6 +65,16 @@ export type Capability =
   // FINANCE_ACCOUNTANT and OPERATIONS_MANAGER both have process:payroll
   // but cannot void or amend disbursed runs.
   | 'view:payroll' | 'process:payroll' | 'void:payroll'
+  // The external payroll sheet — the handoff file for an outside payroll
+  // bureau. One row carries full SSN, full bank account + routing number,
+  // DOB and home address: everything needed to open credit or drain an
+  // account, for every worker in the range, in a single downloadable file.
+  //
+  // Deliberately NOT in FULL_ADMIN, same reasoning as void:payroll. Note
+  // especially that the Time routes' usual guard is manage:time, which
+  // SHIFT_SUPERVISOR holds — reusing it here would have handed floor
+  // supervisors their whole client's identity documents.
+  | 'export:payroll-pii'
   // Gap 10 — Reimbursement workflow caps (three-step split mirrors the
   // time-entry pattern). submit:reimbursement is the associate-side cap
   // for creating + submitting drafts. approve:reimbursement is the manager
@@ -157,6 +167,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   HR_ADMINISTRATOR: new Set<Capability>([
     ...FULL_ADMIN,
     'void:payroll',
+    'export:payroll-pii',
     'submit:reimbursement',
     'approve:reimbursement',
     'settle:reimbursement',

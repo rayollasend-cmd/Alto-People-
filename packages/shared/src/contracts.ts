@@ -1174,6 +1174,47 @@ export const TimeExportInputSchema = z.object({
 export type TimeExportInput = z.infer<typeof TimeExportInputSchema>;
 
 /* -------------------------------------------------------------------------- *
+ *  External payroll sheet — the handoff file for an outside payroll bureau.
+ *
+ *  Deliberately a narrower input than TimeExportInput: no `search`, no
+ *  `anomaliesOnly`, no status filter. This sheet is always "approved time in
+ *  a date range", because a bureau file that quietly omitted people or
+ *  included unapproved hours would be paid out wrong. Scope is client /
+ *  location / associate only.
+ * -------------------------------------------------------------------------- */
+
+export const ExternalPayrollSheetInputSchema = z.object({
+  from: z.string().datetime(),
+  to: z.string().datetime(),
+  clientId: UuidSchema.optional(),
+  locationId: UuidSchema.optional(),
+  associateId: UuidSchema.optional(),
+});
+export type ExternalPayrollSheetInput = z.infer<
+  typeof ExternalPayrollSheetInputSchema
+>;
+
+/**
+ * Counts of what couldn't be filled in, returned as response headers so the
+ * UI can warn BEFORE the file is sent to a bureau. A blank SSN or routing
+ * number in a payroll file is a rejected submission or an unpaid worker, and
+ * the failure is invisible in a spreadsheet with hundreds of rows.
+ */
+export const ExternalPayrollSheetGapsSchema = z.object({
+  /** Rows with no W-4 on file at all. */
+  missingW4: z.number().int().nonnegative(),
+  /** W-4 exists but the SSN ciphertext won't decrypt under the current key. */
+  unreadableSsn: z.number().int().nonnegative(),
+  /** No payout method, or a card rather than a bank account. */
+  missingBankDetails: z.number().int().nonnegative(),
+  /** No current compensation record — pay rate is blank. */
+  missingPayRate: z.number().int().nonnegative(),
+});
+export type ExternalPayrollSheetGaps = z.infer<
+  typeof ExternalPayrollSheetGapsSchema
+>;
+
+/* -------------------------------------------------------------------------- *
  *  Timesheets — Fieldglass-shaped weekly export (Saturday → Friday)
  *
  *  Mirrors the SAP Fieldglass group timesheet list a buyer sees: one row per

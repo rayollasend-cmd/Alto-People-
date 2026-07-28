@@ -10,6 +10,8 @@ import type {
   BulkTimeResponse,
   ClockInInputV2,
   ClockOutInputV2,
+  ExternalPayrollSheetGaps,
+  ExternalPayrollSheetInput,
   PayPeriodListResponse,
   TimeApproveInput,
   TimeEntry,
@@ -312,6 +314,49 @@ export async function exportPayrollSheet(
   return {
     noClientCount: Number(headers.get('X-No-Client') ?? 0),
     pendingCount: Number(headers.get('X-Pending') ?? 0),
+  };
+}
+
+/**
+ * External payroll sheet — the handoff file for an outside payroll bureau.
+ * Full SSN, full bank account + routing number, DOB and home address, one row
+ * per worker. Requires `export:payroll-pii` (HR Administrator only) and every
+ * generation is written to the audit log before the file is sent.
+ *
+ * Returns the gap counts the server measured so the caller can warn about
+ * rows a provider will reject — a blank routing number is an unpaid worker,
+ * and it's invisible in a spreadsheet with hundreds of rows.
+ */
+export async function exportExternalPayrollSheet(
+  format: 'pdf' | 'xlsx',
+  body: ExternalPayrollSheetInput,
+): Promise<{
+  employeeCount: number;
+  gaps: ExternalPayrollSheetGaps;
+  truncated: boolean;
+}> {
+  const headers = await downloadExportPost(
+    `/api/time/admin/external-payroll-sheet.${format}`,
+    body,
+    `external-payroll.${format}`,
+  );
+  let gaps: ExternalPayrollSheetGaps = {
+    missingW4: 0,
+    unreadableSsn: 0,
+    missingBankDetails: 0,
+    missingPayRate: 0,
+  };
+  try {
+    const raw = headers.get('X-Sheet-Gaps');
+    if (raw) gaps = JSON.parse(raw) as ExternalPayrollSheetGaps;
+  } catch {
+    // A malformed header shouldn't fail a download that already succeeded;
+    // the zeroed default just means "no warning shown".
+  }
+  return {
+    employeeCount: Number(headers.get('X-Employee-Count') ?? 0),
+    gaps,
+    truncated: headers.get('X-Truncated') === 'true',
   };
 }
 
