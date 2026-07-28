@@ -16,7 +16,10 @@ test('associate visual walk', async ({ page }) => {
   await page.getByLabel(/email/i).fill('maria.lopez@example.com');
   await page.getByLabel(/^password/i).fill('maria-dev-2026!');
   await page.getByRole('button', { name: /sign in/i }).click();
-  await expect(page.getByText(/hey maria/i)).toBeVisible({ timeout: 20_000 });
+  // .first() because PageHeader publishes the same title to the topbar from an
+  // effect — the greeting lands in both the topbar <h2> and the hero <h1>, and
+  // which of them exists when the assertion polls is a race.
+  await expect(page.getByText(/hey maria/i).first()).toBeVisible({ timeout: 20_000 });
   await page.waitForTimeout(1_500); // let cards land
   await page.screenshot({ path: shot('01-dashboard'), fullPage: true });
 
