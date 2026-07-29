@@ -26,6 +26,7 @@ import {
   type ModuleGroup,
   type ModuleNav,
 } from '@/lib/modules';
+import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useAuth } from '@/lib/auth';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import { usePinnedModules, useRecentModules } from '@/lib/navPersonalization';
@@ -180,7 +181,7 @@ export function Sidebar() {
           to={DASHBOARD_NAV.path}
           active={activePath === DASHBOARD_NAV.path}
           label={DASHBOARD_NAV.label}
-          icon={DASHBOARD_NAV.icon}
+          icon={DASHBOARD_ICON}
           railCollapsed={railCollapsed}
         />
 
@@ -386,7 +387,7 @@ function PinnableRow({
         to={m.path}
         active={active}
         label={m.label}
-        icon={m.icon}
+        icon={MODULE_ICONS[m.key]}
         railCollapsed
         badge={badge}
       />
@@ -398,7 +399,7 @@ function PinnableRow({
         to={m.path}
         active={active}
         label={m.label}
-        icon={m.icon}
+        icon={MODULE_ICONS[m.key]}
         railCollapsed={false}
         badge={badge}
       />

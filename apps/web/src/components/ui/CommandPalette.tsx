@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { DASHBOARD_NAV, MODULES } from '@/lib/modules';
+import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useClients } from '@/lib/useClients';
 import { usePeopleSearch } from '@/lib/usePaletteSearch';
 import { cn } from '@/lib/cn';
@@ -138,7 +139,7 @@ export function CommandPalette({
     {
       id: 'nav-dashboard',
       label: DASHBOARD_NAV.label,
-      icon: DASHBOARD_NAV.icon,
+      icon: DASHBOARD_ICON,
       group: 'Navigation',
       perform: ({ navigate, close }) => {
         navigate(DASHBOARD_NAV.path);
@@ -149,7 +150,7 @@ export function CommandPalette({
       id: `nav-${m.key}`,
       label: m.label,
       hint: m.description,
-      icon: m.icon,
+      icon: MODULE_ICONS[m.key],
       keywords: m.description,
       group: 'Navigation',
       perform: ({ navigate, close }) => {
