@@ -76,6 +76,10 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
   const isReason = props.requireReason === true || props.requireReason === 'optional';
   const reasonOptional = props.requireReason === 'optional';
   const isNumeric = props.numericInput === true;
+  // useId so multiple dialogs on one page can't collide on the same htmlFor.
+  const fieldId = React.useId().replace(/:/g, '');
+  const reasonFieldId = `confirm-reason-${fieldId}`;
+  const numericFieldId = `confirm-numeric-${fieldId}`;
   const [reason, setReason] = React.useState('');
   const [numeric, setNumeric] = React.useState('');
 
@@ -128,11 +132,21 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
         <form onSubmit={submit} className="grid gap-3">
           {isReason && (
             <div className="grid gap-1">
-              <label className="text-xs2 uppercase tracking-wider text-silver">
+              {/* htmlFor/id, not aria-label: the visible text is already the
+                  right label. These were siblings inside a div with no
+                  association, so the field announced as an unnamed textbox
+                  despite looking labelled — and this dialog is shared across
+                  the whole product, so it was the same bug on every screen
+                  that asks for a reason. */}
+              <label
+                htmlFor={reasonFieldId}
+                className="text-xs2 uppercase tracking-wider text-silver"
+              >
                 {reasonProps?.reasonLabel ??
                   (reasonOptional ? 'Notes (optional)' : 'Reason')}
               </label>
               <Textarea
+                id={reasonFieldId}
                 autoFocus
                 required={!reasonOptional}
                 value={reason}
@@ -145,10 +159,14 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
           )}
           {isNumeric && (
             <div className="grid gap-1">
-              <label className="text-xs2 uppercase tracking-wider text-silver">
+              <label
+                htmlFor={numericFieldId}
+                className="text-xs2 uppercase tracking-wider text-silver"
+              >
                 {numericProps?.numericLabel ?? 'Value'}
               </label>
               <input
+                id={numericFieldId}
                 autoFocus
                 type="number"
                 required={numericProps?.numericRequired === true}

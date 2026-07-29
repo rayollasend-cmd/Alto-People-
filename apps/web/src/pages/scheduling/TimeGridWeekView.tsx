@@ -801,10 +801,36 @@ const TimeCell = memo(function TimeCell({
     onCreate(start, associateId);
   };
 
+  // Keyboard equivalent of click-to-create. The pointer path derives the time
+  // from Y position, which a keyboard user doesn't have, so Enter/Space opens
+  // creation at the start of the visible day and the dialog sets the real
+  // time. Without this the whole grid was mouse-only.
+  const onCreateKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!canManage) return;
+    if (e.target !== e.currentTarget) return;
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    const start = new Date(dayStart);
+    start.setHours(0, 0, 0, 0);
+    start.setMinutes(start.getMinutes() + DAY_START_HOUR * 60);
+    onCreate(start, associateId);
+  };
+
   return (
     <div
       ref={setNodeRef}
       onClick={onClick}
+      {...(canManage
+        ? {
+            role: 'button' as const,
+            tabIndex: 0,
+            // fmtWeekdayTz/fmtDateTz rather than toLocaleDateString so the
+            // date reads identically to every other surface (and satisfies
+            // the design-system lint rule).
+            'aria-label': `Add a shift on ${fmtWeekdayTz(dayStart)}, ${fmtDateTz(dayStart)}`,
+            onKeyDown: onCreateKeyDown,
+          }
+        : {})}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -820,6 +846,9 @@ const TimeCell = memo(function TimeCell({
       }
       className={cn(
         'relative border-b border-r border-navy-secondary cursor-pointer',
+        // Focusable now that it's keyboard-operable — it needs a visible ring.
+        canManage &&
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-inset',
         isToday && 'bg-gold/[0.03]',
         // Availability fit — lowest-priority tint. Listed before (and gated
         // against) the drag/conflict/template backgrounds so those always win.

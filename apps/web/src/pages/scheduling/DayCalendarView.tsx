@@ -363,8 +363,30 @@ const DayColumn = memo(function DayColumn({
       <div
         ref={setNodeRef}
         onClick={onColumnClick}
+        // Click-to-create derives the time from the pointer's Y position,
+        // which a keyboard user doesn't have. Enter/Space opens creation at
+        // the start of the visible day instead and lets the dialog set the
+        // real time — same destination, reachable without a mouse. Same
+        // role/tabIndex/onKeyDown shape CandidateBoard already uses.
+        {...(canManage
+          ? {
+              role: 'button' as const,
+              tabIndex: 0,
+              'aria-label': associate
+                ? `Add a shift for ${associate.firstName} ${associate.lastName}`
+                : 'Add an unassigned shift',
+              onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => {
+                if (e.target !== e.currentTarget) return;
+                if (e.key !== 'Enter' && e.key !== ' ') return;
+                e.preventDefault();
+                onCreate(DAY_START_HOUR * 60, associateId);
+              },
+            }
+          : {})}
         className={cn(
           'relative cursor-pointer',
+          canManage &&
+            'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-inset',
           isOver && 'bg-gold/15 outline outline-1 outline-gold/40 -outline-offset-1',
           tone === 'warning' && !isOver && 'bg-warning/[0.04]'
         )}

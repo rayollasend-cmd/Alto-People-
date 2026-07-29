@@ -1284,6 +1284,10 @@ function PinPad({
         <button
           onClick={back}
           disabled={submitting}
+          // The only child is an aria-hidden icon, so without this the key
+          // announces as an unnamed button — on the kiosk, which is the
+          // surface most likely to be used with assistive tech.
+          aria-label="Delete last digit"
           className="aspect-square bg-navy-secondary/40 hover:bg-navy-secondary/70 rounded-2xl text-2xl text-silver transition-transform active:scale-95"
         >
           <Delete className="mx-auto h-8 w-8" aria-hidden="true" />
