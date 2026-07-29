@@ -18,6 +18,51 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * naturally bumps the SHELL hash, which causes the SW's `activate` step
  * to evict the prior cache and re-precache the new set.
  */
+/**
+ * Preload the Latin font subsets.
+ *
+ * Fonts are self-hosted via @fontsource-variable/*, so the browser only
+ * discovers them after it has fetched and parsed the CSS — an extra round
+ * trip before any text renders in the real face. It shows up most on /login,
+ * where the logo uses the display font.
+ *
+ * Only the `latin` subsets are preloaded. Each @font-face carries a
+ * unicode-range, so latin-ext / cyrillic / vietnamese are fetched only if a
+ * character in those ranges is actually rendered — preloading them would
+ * download ~130 KB that almost no session uses.
+ *
+ * Filenames are content-hashed per build, so the hrefs are read out of the
+ * bundle at emit time rather than hardcoded in index.html.
+ */
+function preloadLatinFonts(): Plugin {
+  const LATIN_SUBSET = /(geist|cormorant-garamond)-latin-wght-normal-[^/]*\.woff2$/;
+  return {
+    name: 'alto-preload-latin-fonts',
+    apply: 'build',
+    enforce: 'post',
+    transformIndexHtml(html, ctx) {
+      if (!ctx.bundle) return html;
+      const fonts = Object.keys(ctx.bundle).filter((f) => LATIN_SUBSET.test(f));
+      return {
+        html,
+        tags: fonts.map((fileName) => ({
+          tag: 'link',
+          attrs: {
+            rel: 'preload',
+            as: 'font',
+            type: 'font/woff2',
+            href: `/${fileName}`,
+            // Required even same-origin: fonts are always fetched in CORS
+            // mode, and without it the preload is discarded and refetched.
+            crossorigin: '',
+          },
+          injectTo: 'head-prepend' as const,
+        })),
+      };
+    },
+  };
+}
+
 function emitAssetManifest(): Plugin {
   return {
     name: 'alto-asset-manifest',
@@ -68,7 +113,7 @@ function emitAssetManifest(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), emitAssetManifest()],
+  plugins: [react(), emitAssetManifest(), preloadLatinFonts()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),

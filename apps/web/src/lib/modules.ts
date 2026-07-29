@@ -1,23 +1,5 @@
 import { useLocation } from 'react-router-dom';
-import type { LucideIcon } from 'lucide-react';
-import {
-  Award,
-  Briefcase,
-  Building2,
-  Calendar,
-  CalendarOff,
-  ClipboardList,
-  DollarSign,
-  FileText,
-  HeartPulse,
-  LineChart,
-  MessageSquare,
-  ScrollText,
-  ShieldCheck,
-  Smartphone,
-  Timer,
-  UserPlus,
-} from 'lucide-react';
+
 import type { Capability } from './roles';
 
 export type ModuleKey =
@@ -107,32 +89,12 @@ export interface ModuleNav {
   label: string;
   description: string;
   requires: Capability;
-  /** Phase 27 — icon shown in the sidebar / module launcher. */
-  icon: LucideIcon;
   /** Phase 67 — sidebar grouping. */
   group: ModuleGroup;
 }
 
-// Re-exported so other components don't need their own lucide imports.
-export {
-  Award,
-  Briefcase,
-  Building2,
-  Calendar,
-  CalendarOff,
-  ClipboardList,
-  DollarSign,
-  FileText,
-  HeartPulse,
-  LineChart,
-  MessageSquare,
-  ScrollText,
-  ShieldCheck,
-  Timer,
-  UserPlus,
-};
 
-import { Inbox as ApprovalsIcon, Receipt as ReimbursementsIcon, GraduationCap as LearningIcon, Network as OrgChartIcon, Users as UsersIcon, Workflow as WorkflowIcon, UserCircle as UserCircleIcon, Wallet as WalletIcon, Store as StoreIcon, BadgeDollarSign as PayRulesIcon, Megaphone as MegaphoneIcon, PartyPopper as CelebrationsIcon, Laptop as AssetsIcon, Activity as PulseIcon, BarChart3 as HeadcountIcon, Sparkles as SkillsIcon, GraduationCap as MentorshipIcon, ShieldAlert as ExpirationsIcon, Route as LearningPathsIcon, Crown as SuccessionIcon, ShieldQuestion as ProbationIcon, CalendarDays as HolidayIcon, Gavel as DisciplineIcon, LogOut as SeparationIcon, Briefcase as InternalJobsIcon, Syringe as VaccinationsIcon, FileSignature as AgreementsIcon, MessageCircle as HrCasesIcon, BookOpen as KbIcon, Target as RampIcon, TrendingUp as CareerIcon, GraduationCap as TuitionIcon, Siren as HotlineIcon, Coins as EquityIcon, Heart as VolunteerIcon, Plug as IntegrationsIcon, Palette as BrandingIcon, CreditCard as BillingIcon, FileBarChart as ReportsIcon } from 'lucide-react';
+
 
 export const MODULES: ModuleNav[] = [
   {
@@ -142,7 +104,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Personal info, emergency contacts, dependents, beneficiaries, life events, and tax documents — all the personal records you can manage yourself.',
     requires: 'view:dashboard',
-    icon: UserCircleIcon,
     group: 'core',
   },
   {
@@ -152,7 +113,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Digital application, document vault, e-signatures, background checks, and J-1 visa tracking.',
     requires: 'view:onboarding',
-    icon: ClipboardList,
     group: 'workforce',
   },
   {
@@ -162,7 +122,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Candidate pipeline, interviews, offers, and hire-to-onboarding handoff.',
     requires: 'view:recruiting',
-    icon: UserPlus,
     group: 'workforce',
   },
   {
@@ -172,7 +131,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Directory of every associate — active, pending onboarding, and inactive — with workplace, pay rate, employment type, manager, and contact info in one row.',
     requires: 'view:org',
-    icon: UsersIcon,
     group: 'workforce',
   },
   {
@@ -182,7 +140,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Departments, cost centers, job profiles, and the manager chain that holds approvals + dimensional reporting together.',
     requires: 'view:org',
-    icon: OrgChartIcon,
     group: 'workforce',
   },
   {
@@ -192,7 +149,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Visual reporting tree across the company. Search by name, title, or department to focus a chain.',
     requires: 'view:org',
-    icon: OrgChartIcon,
     group: 'workforce',
   },
   {
@@ -202,7 +158,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Upcoming birthdays and work anniversaries. Send a quick high-five from any row.',
     requires: 'view:org',
-    icon: CelebrationsIcon,
     group: 'workforce',
   },
   {
@@ -212,7 +167,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Physical items assigned to associates: laptops, phones, badges, keys, vehicles. Track who has what and when it came back.',
     requires: 'view:org',
-    icon: AssetsIcon,
     group: 'workforce',
   },
   {
@@ -222,7 +176,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Anonymous one-question check-ins for engagement signal. Score distributions and verbatim comments — never the responder.',
     requires: 'view:dashboard',
-    icon: PulseIcon,
     group: 'workforce',
   },
   {
@@ -232,7 +185,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Active associates across the company, hires & separations over the last 30 / 90 / 365 days, annualized turnover.',
     requires: 'view:org',
-    icon: HeadcountIcon,
     group: 'workforce',
   },
   {
@@ -242,7 +194,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Catalog of competencies and per-associate skill claims with proficiency level. Search the company by skill — useful for staffing and internal mobility.',
     requires: 'view:org',
-    icon: SkillsIcon,
     group: 'workforce',
   },
   {
@@ -252,7 +203,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Pair experienced associates with juniors. Suggestions use skills data to recommend ADVANCED+ mentors for a target growth skill.',
     requires: 'view:org',
-    icon: MentorshipIcon,
     group: 'workforce',
   },
   {
@@ -262,7 +212,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Qualifications and certifications expiring soon — chase renewals before they lapse. Bucketed expired / due soon / due later.',
     requires: 'view:org',
-    icon: ExpirationsIcon,
     group: 'compliance',
   },
   {
@@ -272,7 +221,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Sequence multiple courses into ordered tracks. Associates work through them in order; status reflects the next incomplete step.',
     requires: 'view:compliance',
-    icon: LearningPathsIcon,
     group: 'compliance',
   },
   {
@@ -282,7 +230,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Designate successors for each position with a readiness band — ready now, 1–2 years, 3+ years, or emergency cover.',
     requires: 'view:hr-admin',
-    icon: SuccessionIcon,
     group: 'workforce',
   },
   {
@@ -292,7 +239,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'New-hire probation periods. See who is active, ending soon, or overdue. Pass, extend, or fail before the end date.',
     requires: 'view:hr-admin',
-    icon: ProbationIcon,
     group: 'workforce',
   },
   {
@@ -302,7 +248,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Federal, state, company, and client-specific holidays. Drives premium pay multipliers and shift planning.',
     requires: 'view:scheduling',
-    icon: HolidayIcon,
     group: 'time-and-pay',
   },
   {
@@ -312,7 +257,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Formal warning ladder — verbal, written, final, suspension, termination. Associates can acknowledge; HR can rescind.',
     requires: 'view:hr-admin',
-    icon: DisciplineIcon,
     group: 'compliance',
   },
   {
@@ -322,7 +266,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Plan, process, and complete associate departures. Capture exit-interview feedback — rating, what worked, what to change.',
     requires: 'view:hr-admin',
-    icon: SeparationIcon,
     group: 'workforce',
   },
   {
@@ -332,7 +275,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Open positions across the company that current associates can apply to directly. Hiring managers review and decide.',
     requires: 'view:dashboard',
-    icon: InternalJobsIcon,
     group: 'workforce',
   },
   {
@@ -342,7 +284,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Vaccination + TB-test records. Required by many client SLAs. Coverage % per kind, expiring-soon feed.',
     requires: 'view:compliance',
-    icon: VaccinationsIcon,
     group: 'compliance',
   },
   {
@@ -355,7 +296,6 @@ export const MODULES: ModuleNav[] = [
     // agreements to e-sign; the page hides the org-wide "All" tab from
     // anyone without the admin capability.
     requires: 'view:dashboard',
-    icon: AgreementsIcon,
     group: 'compliance',
   },
   {
@@ -365,7 +305,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Ticketing for HR. File a question or concern, HR triages and replies. Internal notes stay hidden from the requester.',
     requires: 'view:dashboard',
-    icon: HrCasesIcon,
     group: 'compliance',
   },
   {
@@ -375,7 +314,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Self-service knowledge base. Search articles by category and tag; vote helpful / not helpful. Deflects HR cases.',
     requires: 'view:dashboard',
-    icon: KbIcon,
     group: 'workforce',
   },
   {
@@ -385,7 +323,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'New-hire 30/60/90 day milestones. Manager updates status as they progress; achieve / miss is captured for the timeline.',
     requires: 'view:hr-admin',
-    icon: RampIcon,
     group: 'workforce',
   },
   {
@@ -395,7 +332,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Progression paths through your job family. Each rung links a job profile and lists required skills with a minimum proficiency.',
     requires: 'view:dashboard',
-    icon: CareerIcon,
     group: 'workforce',
   },
   {
@@ -405,7 +341,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Courses assigned to you — work through required training and see what’s complete, due, or overdue.',
     requires: 'view:dashboard',
-    icon: LearningIcon,
     group: 'workforce',
   },
   {
@@ -415,7 +350,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Tuition reimbursement requests. Submit course-by-course with receipt and grade; HR approves and payroll pays out.',
     requires: 'view:dashboard',
-    icon: TuitionIcon,
     group: 'time-and-pay',
   },
   {
@@ -425,7 +359,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Anonymous reports filed via the public hotline. Triage, assign, and respond. Public reporters never see internal notes.',
     requires: 'manage:performance',
-    icon: HotlineIcon,
     group: 'compliance',
   },
   {
@@ -435,7 +368,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Stock and option grants with vesting schedules. Associates see their own grants; HR proposes, grants, cancels, exercises.',
     requires: 'view:dashboard',
-    icon: EquityIcon,
     group: 'time-and-pay',
   },
   {
@@ -445,7 +377,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Log volunteer hours and request employer match payouts. Approved hours roll into the annual cap; HR triages, approves, and disburses match.',
     requires: 'view:dashboard',
-    icon: VolunteerIcon,
     group: 'workforce',
   },
   {
@@ -455,7 +386,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Direct reports, timesheet reviews, and time-off decisions. Visible to anyone with at least one direct report.',
     requires: 'view:my-team',
-    icon: UsersIcon,
     group: 'workforce',
   },
   {
@@ -465,7 +395,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Trigger-condition-action automation that fires on hires, time-off decisions, position changes, and other events.',
     requires: 'view:org',
-    icon: WorkflowIcon,
     group: 'insights',
   },
   {
@@ -475,7 +404,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'CRM, contracts, SOW renewals, and client portal access.',
     requires: 'view:clients',
-    icon: Building2,
     group: 'workforce',
   },
   {
@@ -485,7 +413,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Reviews, KPIs, PIPs, commendations, disciplinary log, and 360 feedback.',
     requires: 'view:performance',
-    icon: Award,
     group: 'workforce',
   },
   {
@@ -495,7 +422,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Geofenced clock-in, timesheet approvals, and attendance auditing.',
     requires: 'view:time',
-    icon: Timer,
     group: 'time-and-pay',
   },
   {
@@ -505,7 +431,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Manage kiosk devices, assign 4-digit clock-in PINs, and review punches.',
     requires: 'manage:time',
-    icon: Smartphone,
     group: 'time-and-pay',
   },
   {
@@ -515,7 +440,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'PTO requests, sick-leave balances, and HR approval queue.',
     requires: 'view:time',
-    icon: CalendarOff,
     group: 'time-and-pay',
   },
   {
@@ -525,7 +449,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Shift planning, fill rate tracking, and assignment management.',
     requires: 'view:scheduling',
-    icon: Calendar,
     group: 'time-and-pay',
   },
   {
@@ -535,7 +458,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'One inbox for every decision waiting on you — swap requests, open-shift pickups, unconfirmed shifts, time-off requests, and timesheets to review.',
     requires: 'manage:scheduling',
-    icon: ApprovalsIcon,
     group: 'time-and-pay',
   },
   {
@@ -545,7 +467,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Multi-state payroll, anomaly detection, Branch cards, and Wise transfers.',
     requires: 'view:payroll',
-    icon: DollarSign,
     group: 'time-and-pay',
   },
   {
@@ -555,7 +476,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Garnishment orders, quarterly 941/940 builders, W-2 / 1099 generation and e-file exports, and the employer submitter profile.',
     requires: 'view:payroll',
-    icon: DollarSign,
     group: 'time-and-pay',
   },
   {
@@ -565,7 +485,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Federal tax deposit deadlines, garnishment remittances owed to agencies, and state new-hire reporting.',
     requires: 'process:payroll',
-    icon: DollarSign,
     group: 'time-and-pay',
   },
   {
@@ -575,7 +494,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Marketplace of open shifts qualified associates can pick up. Managers approve claims.',
     requires: 'view:scheduling',
-    icon: StoreIcon,
     group: 'time-and-pay',
   },
   {
@@ -588,7 +506,6 @@ export const MODULES: ModuleNav[] = [
     // gated on view:payroll so client-scoped schedulers (SHIFT_SUPERVISOR
     // holds manage:scheduling) don't get a nav item that dead-ends.
     requires: 'view:payroll',
-    icon: PayRulesIcon,
     group: 'time-and-pay',
   },
   {
@@ -600,7 +517,6 @@ export const MODULES: ModuleNav[] = [
     // Every associate can submit their own — the page scopes what each
     // role sees; approval/settlement actions stay capability-gated inside.
     requires: 'view:dashboard',
-    icon: ReimbursementsIcon,
     group: 'time-and-pay',
   },
   {
@@ -610,7 +526,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Pay bands, effective-dated comp history, and merit cycles — plan and apply pay changes for an entire population at once.',
     requires: 'view:comp',
-    icon: WalletIcon,
     group: 'time-and-pay',
   },
   {
@@ -620,7 +535,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Health, dental, vision, 401(k), HSA/FSA — pre-tax elections that come out of every paycheck.',
     requires: 'view:payroll',
-    icon: HeartPulse,
     group: 'time-and-pay',
   },
   {
@@ -630,7 +544,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Centralized storage, e-signatures, expiration alerts, and audit trails.',
     requires: 'view:documents',
-    icon: FileText,
     group: 'compliance',
   },
   {
@@ -640,7 +553,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'OSHA, I-9, J-1, multi-state labor law, and certification tracking.',
     requires: 'view:compliance',
-    icon: ShieldCheck,
     group: 'compliance',
   },
   {
@@ -650,7 +562,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Searchable, exportable feed of every auth, onboarding, payroll, and document event.',
     requires: 'view:audit',
-    icon: ScrollText,
     group: 'compliance',
   },
   {
@@ -660,7 +571,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'List every account, change a role or status, and force a password reset (revokes active sessions).',
     requires: 'view:hr-admin',
-    icon: UsersIcon,
     group: 'compliance',
   },
   {
@@ -670,7 +580,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Org name, sender display, support email, primary colour, and logo applied to every outbound email.',
     requires: 'view:hr-admin',
-    icon: BrandingIcon,
     group: 'compliance',
   },
   {
@@ -680,7 +589,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Plan, seat count, payment method, and invoice history. Manual contract today; self-serve billing on the roadmap.',
     requires: 'view:hr-admin',
-    icon: BillingIcon,
     group: 'compliance',
   },
   {
@@ -693,7 +601,6 @@ export const MODULES: ModuleNav[] = [
     // phone, so it's gated like the People directory (view:org) — NOT
     // view:dashboard, which every associate has.
     requires: 'view:org',
-    icon: MegaphoneIcon,
     group: 'insights',
   },
   {
@@ -703,7 +610,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'SMS, push notifications, broadcast messaging, and templates.',
     requires: 'view:communications',
-    icon: MessageSquare,
     group: 'insights',
   },
   {
@@ -713,7 +619,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Executive dashboard, custom reports, and predictive analytics.',
     requires: 'view:analytics',
-    icon: LineChart,
     group: 'insights',
   },
   {
@@ -723,7 +628,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Custom tabular reports — pick an entity (associates, time entries, payroll runs, applications…), choose columns and filters, save, run, and export.',
     requires: 'view:analytics',
-    icon: ReportsIcon,
     group: 'insights',
   },
   {
@@ -733,7 +637,6 @@ export const MODULES: ModuleNav[] = [
     description:
       'Public API keys + outbound webhooks. Mint ASN bridge keys for AltoHR / ShiftReport Nexus and any other programmatic consumer.',
     requires: 'view:integrations',
-    icon: IntegrationsIcon,
     group: 'insights',
   },
 ];
@@ -742,7 +645,6 @@ export const MODULES: ModuleNav[] = [
 export const DASHBOARD_NAV = {
   path: '/',
   label: 'Dashboard',
-  icon: Briefcase,
 } as const;
 
 /**

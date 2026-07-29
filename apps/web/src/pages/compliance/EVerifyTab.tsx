@@ -201,6 +201,9 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
           onChange={(e) => setFilter(e.target.value as StatusFilter)}
           size="sm"
           className="w-auto"
+          // No visible label — the options carry the meaning ("All statuses").
+          // Without this a screen reader announces an unnamed combobox.
+          aria-label="Filter by E-Verify status"
         >
           <option value="all">All statuses</option>
           <option value="not_run">Not yet run</option>
@@ -657,6 +660,7 @@ function PacketSection({
             accept=".pdf,.png,.jpg,.jpeg,.webp,.zip"
             onChange={(e) => void upload(e.target.files)}
             disabled={busy}
+            aria-label="Upload E-Verify packet files"
             className="block w-full text-xs text-silver file:mr-3 file:rounded file:border file:border-navy-secondary file:bg-navy-secondary/40 file:px-3 file:py-1.5 file:text-xs file:text-white hover:file:border-gold/60 disabled:opacity-50"
           />
           <p className="mt-1 text-2xs text-silver/60">

@@ -1,6 +1,12 @@
 import { lazy, Suspense, type ComponentType } from 'react';
 import { createBrowserRouter } from 'react-router-dom';
-import { Layout } from '@/components/Layout';
+// PERF: the Layout is authenticated-only chrome — Sidebar, Topbar, MobileNav,
+// BottomTabBar, CommandPalette (and cmdk with it), WhatsNew, InstallPrompt,
+// the SSE live-events client. Importing it eagerly put all of that in the
+// blocking `main` chunk, so someone sitting on /login downloaded the entire
+// signed-in shell before they could type a password. It sits behind
+// RequireAuth, which already renders a splash while /auth/me resolves, so
+// there is a natural loading window to stream it in.
 import { Login } from '@/pages/Login';
 import { NotFound } from '@/pages/NotFound';
 import { ForgotPassword } from '@/pages/ForgotPassword';
@@ -43,6 +49,8 @@ function lazyNamed<T extends ComponentType<any>>(
     loader().then((mod) => ({ default: mod[exportName] as T }))
   );
 }
+
+const Layout = lazyNamed(() => import('@/components/Layout'), 'Layout');
 
 // Onboarding cluster
 const OnboardingHome = lazyNamed(() => import('@/pages/onboarding/OnboardingHome'), 'OnboardingHome');
@@ -470,7 +478,12 @@ export const router = createBrowserRouter([
     path: '/',
     element: (
       <RequireAuth>
-        <Layout />
+        {/* Layout is lazy now, so it needs a boundary. Same full-screen
+            spinner the auth splash uses, so the /auth/me wait and the chunk
+            fetch read as one continuous load, not two loading states. */}
+        <Suspense fallback={<PublicRouteFallback />}>
+          <Layout />
+        </Suspense>
       </RequireAuth>
     ),
     errorElement: <RouterErrorPage />,
@@ -500,7 +513,12 @@ export const router = createBrowserRouter([
     path: '*',
     element: (
       <RequireAuth>
-        <Layout />
+        {/* Layout is lazy now, so it needs a boundary. Same full-screen
+            spinner the auth splash uses, so the /auth/me wait and the chunk
+            fetch read as one continuous load, not two loading states. */}
+        <Suspense fallback={<PublicRouteFallback />}>
+          <Layout />
+        </Suspense>
       </RequireAuth>
     ),
     errorElement: <RouterErrorPage />,

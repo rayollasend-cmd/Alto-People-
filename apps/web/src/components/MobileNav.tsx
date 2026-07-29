@@ -9,6 +9,7 @@ import {
   type ModuleGroup,
   type ModuleNav,
 } from '@/lib/modules';
+import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useAuth } from '@/lib/auth';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import { usePinnedModules } from '@/lib/navPersonalization';
@@ -152,7 +153,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
             to={DASHBOARD_NAV.path}
             active={activePath === DASHBOARD_NAV.path}
             label={DASHBOARD_NAV.label}
-            icon={DASHBOARD_NAV.icon}
+            icon={DASHBOARD_ICON}
           />
           {pinnedModules.length > 0 && (
             <div className="mt-3">
@@ -165,7 +166,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
                   to={m.path}
                   active={activePath === m.path}
                   label={m.label}
-                  icon={m.icon}
+                  icon={MODULE_ICONS[m.key]}
                   badge={m.key === 'approvals' ? approvalsCount : null}
                 />
               ))}
@@ -185,7 +186,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
                     to={m.path}
                     active={activePath === m.path}
                     label={m.label}
-                    icon={m.icon}
+                    icon={MODULE_ICONS[m.key]}
                     badge={m.key === 'approvals' ? approvalsCount : null}
                   />
                 ))}
