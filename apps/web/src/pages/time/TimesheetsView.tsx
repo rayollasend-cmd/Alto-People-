@@ -8,6 +8,7 @@ import {
   FileSpreadsheet,
   Lock,
   RefreshCw,
+  Search,
   CheckCircle2,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -42,6 +43,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  Input,
   PageHeader,
   Select,
   Skeleton,
@@ -130,6 +132,7 @@ export function TimesheetsView() {
   const detailAssociateRef = useRef<string | null>(null);
 
   const [showSchedule, setShowSchedule] = useState(false);
+  const [search, setSearch] = useState('');
 
   // Per-client filter — file one Fieldglass SOW at a time. '' = all clients.
   // Bounded viewers start (and stay) pinned to their client.
@@ -329,7 +332,19 @@ export function TimesheetsView() {
     }
   };
 
-  const rows = data?.rows ?? [];
+  const allRows = data?.rows ?? [];
+  // Client-side name/site filter — the week's rows are already all loaded.
+  // Token match ("aaliyah nelson" finds "Nelson, Aaliyah") since Fieldglass
+  // names are Last, First. Copy/Export/filing stay on the FULL week: those
+  // produce the Fieldglass artifact, not the current view.
+  const rows = useMemo(() => {
+    const tokens = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return allRows;
+    return allRows.filter((r) => {
+      const hay = `${r.worker} ${r.site}`.toLowerCase();
+      return tokens.every((t) => hay.includes(t));
+    });
+  }, [allRows, search]);
 
   return (
     <div className="space-y-6">
@@ -403,6 +418,16 @@ export function TimesheetsView() {
             ))}
           </Select>
         )}
+        <div className="relative w-56">
+          <Search className="absolute left-2.5 top-2 h-4 w-4 text-silver/70 pointer-events-none" />
+          <Input
+            placeholder="Search associate or site…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8 h-8 text-sm"
+            aria-label="Search associates"
+          />
+        </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button
@@ -428,7 +453,7 @@ export function TimesheetsView() {
             variant="ghost"
             size="sm"
             onClick={onCopy}
-            disabled={rows.length === 0}
+            disabled={allRows.length === 0}
             title="Copy the grid (tab-separated) for pasting into Fieldglass"
           >
             <ClipboardCopy className="h-3.5 w-3.5" />
@@ -439,7 +464,7 @@ export function TimesheetsView() {
             size="sm"
             onClick={onDownload}
             loading={downloading}
-            disabled={rows.length === 0}
+            disabled={allRows.length === 0}
           >
             <FileSpreadsheet className="h-3.5 w-3.5" />
             Export .xlsx
@@ -449,7 +474,7 @@ export function TimesheetsView() {
             size="sm"
             onClick={onMarkFiled}
             loading={filingBusy}
-            disabled={!data || rows.length === 0}
+            disabled={!data || allRows.length === 0}
             title="Record a snapshot of this week's hours as filed into Fieldglass"
           >
             {data?.filing ? <RefreshCw className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
@@ -519,7 +544,7 @@ export function TimesheetsView() {
             ))}
           </ul>
         </div>
-      ) : data && rows.length > 0 ? (
+      ) : data && allRows.length > 0 ? (
         <div className="flex items-center gap-2 rounded-md border border-navy-secondary bg-navy/40 p-2.5 text-sm text-silver">
           <CheckCircle2 className="h-4 w-4 text-gold" />
           No issues — this week looks ready to file.
@@ -555,10 +580,17 @@ export function TimesheetsView() {
               ) : rows.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={12}>
-                    <EmptyState
-                      title="No approved hours this week"
-                      description="Nothing to report to Fieldglass for the selected week. Approve time in the queue, then refresh."
-                    />
+                    {allRows.length > 0 ? (
+                      <EmptyState
+                        title="No associate matches"
+                        description={`Nobody in this week's timesheet matches "${search.trim()}". Clear the search to see all ${allRows.length} associates.`}
+                      />
+                    ) : (
+                      <EmptyState
+                        title="No approved hours this week"
+                        description="Nothing to report to Fieldglass for the selected week. Approve time in the queue, then refresh."
+                      />
+                    )}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -660,11 +692,13 @@ export function TimesheetsView() {
         </Card>
       )}
 
-      {data && rows.length > 0 && (
+      {data && allRows.length > 0 && (
         <p className="text-xs text-silver/70">
-          {rows.length} associate{rows.length === 1 ? '' : 's'} · {data.totalHours.toFixed(2)} total
-          hours · week ending {data.weekEnding}. Hours are net of unpaid breaks, billed flat under
-          &ldquo;Others&rdquo; per the SOW.
+          {rows.length !== allRows.length
+            ? `${rows.length} of ${allRows.length} associates shown`
+            : `${allRows.length} associate${allRows.length === 1 ? '' : 's'}`}{' '}
+          · {data.totalHours.toFixed(2)} total hours · week ending {data.weekEnding}. Hours are net
+          of unpaid breaks, billed flat under &ldquo;Others&rdquo; per the SOW.
         </p>
       )}
 
