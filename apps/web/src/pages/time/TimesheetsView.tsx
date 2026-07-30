@@ -84,6 +84,16 @@ function mondayOfIsoWeek(fridayIso: string): string {
 
 const hoursCell = (n: number) => (n === 0 ? '0.00' : n.toFixed(2));
 
+/**
+ * "7h 30m" alongside decimal hours. The approval queue speaks h:mm while
+ * Fieldglass speaks decimals — users read "7.50" vs "7h 30m" as different
+ * numbers, so the drawer shows both.
+ */
+const hoursHM = (n: number) => {
+  const mins = Math.round(n * 60);
+  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`;
+};
+
 const ISSUE_LABEL: Record<TimesheetIssueKind, string> = {
   MISSING_CLOCKOUT: 'Missing clock-out',
   PENDING_APPROVAL: 'Pending approval',
@@ -629,6 +639,9 @@ export function TimesheetsView() {
                   <span className="text-silver/60">Total worked: </span>
                   <span className="font-semibold text-white tabular-nums">
                     {detail.totalHours.toFixed(2)}h
+                  </span>{' '}
+                  <span className="text-xs2 tabular-nums text-silver/60">
+                    ({hoursHM(detail.totalHours)})
                   </span>
                 </span>
               </div>
@@ -704,6 +717,11 @@ export function TimesheetsView() {
                   </tbody>
                 </table>
               </div>
+              {/* Punches are formatted server-side on each SITE's wall clock —
+                  the same clock the associate punched on — not the viewer's. */}
+              <p className="text-xs2 text-silver/60">
+                Times shown in each work site's local time.
+              </p>
 
               <div className="space-y-2">
                 <h3 className="text-sm font-semibold text-white">Accounting (USD)</h3>

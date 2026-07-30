@@ -83,6 +83,7 @@ type RawEntry = Prisma.TimeEntryGetPayload<{
     job: { select: { name: true } };
     breaks: true;
     shift: { select: { startsAt: true; endsAt: true; position: true } };
+    location: { select: { timezone: true } };
   };
 }>;
 
@@ -92,6 +93,9 @@ const ENTRY_INCLUDE = {
   job: { select: { name: true } },
   breaks: true,
   shift: { select: { startsAt: true, endsAt: true, position: true } },
+  // The worksite's clock, threaded to the client so punch times render in
+  // the SITE zone rather than the reviewer's browser zone.
+  location: { select: { timezone: true } },
 } as const;
 
 /**
@@ -235,6 +239,7 @@ function buildEntry(row: RawEntry, clientName: string | null): TimeEntry {
     approverEmail: row.approvedBy?.email ?? null,
     approvedAt: row.approvedAt ? row.approvedAt.toISOString() : null,
     minutesElapsed: minutesElapsed(row),
+    locationTimezone: row.location?.timezone ?? null,
     jobId: row.jobId,
     jobName: row.job?.name ?? null,
     payRate: row.payRate ? Number(row.payRate) : null,
@@ -708,7 +713,7 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
       prisma.location.findMany({
         take: 1000,
         where: { id: { in: locationIds } },
-        select: { id: true, latitude: true, longitude: true, geofenceRadiusMeters: true },
+        select: { id: true, latitude: true, longitude: true, geofenceRadiusMeters: true, timezone: true },
       }),
     ]);
     const clientById = new Map(clients.map((c) => [c.id, c]));
@@ -749,6 +754,7 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
         geofenceOk,
         clockInLat: r.clockInLat ? Number(r.clockInLat) : null,
         clockInLng: r.clockInLng ? Number(r.clockInLng) : null,
+        locationTimezone: l?.timezone ?? null,
       };
     });
     res.json(ActiveDashboardResponseSchema.parse({ entries }));

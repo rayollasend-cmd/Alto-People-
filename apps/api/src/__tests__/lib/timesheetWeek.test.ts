@@ -43,6 +43,7 @@ function entry(
     clockOutAt: null,
     status: 'APPROVED',
     breaks: [],
+    timeZone: TZ,
     ...over,
   };
 }
@@ -90,7 +91,6 @@ describe('aggregateTimesheetRows', () => {
         }),
       ],
       KEYS,
-      TZ,
     ).rows;
 
     expect(rows).toHaveLength(1);
@@ -116,7 +116,7 @@ describe('aggregateTimesheetRows', () => {
         }),
       );
     }
-    const { rows, totalHours } = aggregateTimesheetRows(entries, KEYS, TZ);
+    const { rows, totalHours } = aggregateTimesheetRows(entries, KEYS);
     expect(rows).toHaveLength(1);
     expect(rows[0].others).toBe(45);
     expect(rows[0].ot).toBe(0);
@@ -133,9 +133,32 @@ describe('aggregateTimesheetRows', () => {
         }),
       ],
       KEYS,
-      TZ,
     );
     expect(rows).toHaveLength(0);
+  });
+
+  it('buckets by the ENTRY site zone — a Chicago Friday 11:30pm shift stays in Friday', () => {
+    // Fri 2026-07-17 11:30pm in Chicago is Sat 2026-07-18 12:30am in New York.
+    // Under the old org-wide-ET bucketing this shift migrated into the NEXT
+    // week — the "hours they approve aren't the hours on the timesheet" bug.
+    const chicagoLateFriday = entry({
+      timeZone: 'America/Chicago',
+      site: 'IL - Chicago',
+      clockInAt: new Date('2026-07-18T04:30:00Z'), // Fri 11:30pm CDT
+      clockOutAt: new Date('2026-07-18T08:30:00Z'), // Sat 3:30am CDT
+    });
+    const { rows, totalHours } = aggregateTimesheetRows([chicagoLateFriday], KEYS);
+    expect(rows).toHaveLength(1); // in THIS week, not dropped into the next
+    expect(totalHours).toBe(4);
+
+    // And the day layout shows it under Friday, on Chicago's wall clock.
+    const { days } = buildAssociateDays([chicagoLateFriday], WEEK.dateKeys);
+    const fri = days[6];
+    expect(fri.weekday).toBe('Fri');
+    expect(fri.monthDay).toBe('7/17');
+    expect(fri.timeIn).toBe('11:30 PM');
+    expect(fri.timeOut).toBe('3:30 AM');
+    expect(fri.netHours).toBe(4);
   });
 
   it('flags a worker with pending (COMPLETED) time and omits it from hours', () => {
@@ -153,7 +176,6 @@ describe('aggregateTimesheetRows', () => {
         }),
       ],
       KEYS,
-      TZ,
     );
     expect(pendingCount).toBe(1);
     expect(rows).toHaveLength(1);
@@ -179,7 +201,6 @@ describe('aggregateTimesheetRows', () => {
         }),
       ],
       WEEK.dateKeys,
-      TZ,
     );
 
     const sat = days[0];
@@ -217,7 +238,7 @@ describe('aggregateTimesheetRows', () => {
       clockOutAt: new Date('2026-07-15T21:00:00Z'),
       status: 'COMPLETED',
     });
-    const { rows } = aggregateTimesheetRows([approved], KEYS, TZ);
+    const { rows } = aggregateTimesheetRows([approved], KEYS);
     // A synthetic over-hours row (net > 60) alongside the real one.
     const over = { ...rows[0], worker: 'Doe, Big', total: 65 };
 
@@ -225,7 +246,6 @@ describe('aggregateTimesheetRows', () => {
       [approved, stillIn, pending],
       [...rows, over],
       KEYS,
-      TZ,
     );
     const kinds = issues.map((i) => i.kind);
     expect(kinds).toContain('MISSING_CLOCKOUT');
@@ -313,7 +333,6 @@ describe('aggregateTimesheetRows', () => {
         }),
       ],
       KEYS,
-      TZ,
     );
     expect(rows).toHaveLength(2);
     expect(rows.map((r) => r.site).sort()).toEqual(['Destin', 'Miramar']);
