@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CalendarClock,
@@ -24,6 +24,7 @@ import {
   getAssociateTimesheetDetail,
   fileTimesheetWeek,
 } from '@/lib/timeApi';
+import { onTimeEntriesChanged } from '@/lib/timeEntriesChannel';
 import { upsertAttestation } from '@/lib/complianceScorecardApi';
 import { useAuth } from '@/lib/auth';
 import { toast } from 'sonner';
@@ -125,6 +126,8 @@ export function TimesheetsView() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [detail, setDetail] = useState<TimesheetAssociateDetailResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  // Whose drawer is open — so a live refresh can re-pull it in place.
+  const detailAssociateRef = useRef<string | null>(null);
 
   const [showSchedule, setShowSchedule] = useState(false);
 
@@ -154,6 +157,7 @@ export function TimesheetsView() {
 
   const openDetail = useCallback(
     async (associateId: string) => {
+      detailAssociateRef.current = associateId;
       setDetailOpen(true);
       setDetail(null);
       setDetailLoading(true);
@@ -167,6 +171,7 @@ export function TimesheetsView() {
       } catch (err) {
         toast.error(err instanceof ApiError ? err.message : 'Could not load the timesheet.');
         setDetailOpen(false);
+        detailAssociateRef.current = null;
       } finally {
         setDetailLoading(false);
       }
@@ -174,22 +179,77 @@ export function TimesheetsView() {
     [weekStart, clientArg],
   );
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /** Re-pull the open drawer in place — no loading flash, keep it on failure. */
+  const refreshDetail = useCallback(async () => {
+    const associateId = detailAssociateRef.current;
+    if (!associateId) return;
     try {
-      const res = await getTimesheetWeek({ weekStart: weekStart.toISOString(), clientId: clientArg });
-      setData(res);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not load timesheets.');
-      setData(null);
-    } finally {
-      setLoading(false);
+      const res = await getAssociateTimesheetDetail({
+        associateId,
+        weekStart: weekStart.toISOString(),
+        clientId: clientArg,
+      });
+      setDetail(res);
+    } catch {
+      // Silent refresh — leave the drawer showing what it had.
     }
   }, [weekStart, clientArg]);
+
+  const load = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!opts?.silent) setLoading(true);
+      try {
+        const res = await getTimesheetWeek({ weekStart: weekStart.toISOString(), clientId: clientArg });
+        setData(res);
+      } catch (err) {
+        // A failed background refresh keeps the last good data — the next
+        // announcement or focus retries; only a foreground load may toast.
+        if (opts?.silent) return;
+        toast.error(err instanceof ApiError ? err.message : 'Could not load timesheets.');
+        setData(null);
+      } finally {
+        if (!opts?.silent) setLoading(false);
+      }
+    },
+    [weekStart, clientArg],
+  );
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Live refresh. The approval queue announces every successful mutation on
+  // a BroadcastChannel (reaches every tab of this browser) — debounced so a
+  // burst of row-by-row approvals coalesces into one reload. Refetch on
+  // focus/visibility covers edits made from OTHER machines, throttled so
+  // alt-tabbing doesn't hammer the week recompute.
+  useEffect(() => {
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+    let lastFocus = 0;
+    const refresh = () => {
+      void load({ silent: true });
+      void refreshDetail();
+    };
+    const offChanged = onTimeEntriesChanged(() => {
+      clearTimeout(debounce);
+      debounce = setTimeout(refresh, 400);
+    });
+    const onFocus = () => {
+      if (document.hidden) return;
+      const now = Date.now();
+      if (now - lastFocus < 5_000) return;
+      lastFocus = now;
+      refresh();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      clearTimeout(debounce);
+      offChanged();
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [load, refreshDetail]);
 
   const onDownload = async () => {
     if (downloading) return;
@@ -611,7 +671,12 @@ export function TimesheetsView() {
       {/* Fieldglass individual-timesheet drill-down */}
       <Drawer
         open={detailOpen}
-        onOpenChange={(o) => !o && setDetailOpen(false)}
+        onOpenChange={(o) => {
+          if (!o) {
+            setDetailOpen(false);
+            detailAssociateRef.current = null;
+          }
+        }}
         width="max-w-3xl"
       >
         <DrawerHeader>
