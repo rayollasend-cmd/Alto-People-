@@ -25,6 +25,15 @@ import type {
   TimesheetAssociateDetailResponse,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
+import { announceTimeEntriesChanged } from './timeEntriesChannel';
+
+/** Announce on success so open timesheet views reload — see timeEntriesChannel. */
+function announced<T>(p: Promise<T>): Promise<T> {
+  return p.then((v) => {
+    announceTimeEntriesChanged();
+    return v;
+  });
+}
 
 export function getActiveTimeEntry(): Promise<ActiveTimeEntryResponse> {
   return apiFetch<ActiveTimeEntryResponse>('/time/me/active');
@@ -140,20 +149,20 @@ export function approveTimeEntry(
   id: string,
   body: TimeApproveInput = {}
 ): Promise<TimeEntry> {
-  return apiFetch<TimeEntry>(`/time/admin/entries/${id}/approve`, {
+  return announced(apiFetch<TimeEntry>(`/time/admin/entries/${id}/approve`, {
     method: 'POST',
     body,
-  });
+  }));
 }
 
 export function rejectTimeEntry(
   id: string,
   body: TimeRejectInput
 ): Promise<TimeEntry> {
-  return apiFetch<TimeEntry>(`/time/admin/entries/${id}/reject`, {
+  return announced(apiFetch<TimeEntry>(`/time/admin/entries/${id}/reject`, {
     method: 'POST',
     body,
-  });
+  }));
 }
 
 /** Admin: create a time entry on behalf of an associate. Omit clockOutAt to
@@ -161,7 +170,7 @@ export function rejectTimeEntry(
 export function adminCreateTimeEntry(
   body: AdminCreateTimeEntryInput
 ): Promise<TimeEntry> {
-  return apiFetch<TimeEntry>('/time/admin/entries', { method: 'POST', body });
+  return announced(apiFetch<TimeEntry>('/time/admin/entries', { method: 'POST', body }));
 }
 
 /** Admin: edit a pre-approval entry (times/job/notes), or clock an associate
@@ -170,28 +179,28 @@ export function adminEditTimeEntry(
   id: string,
   body: AdminEditTimeEntryInput
 ): Promise<TimeEntry> {
-  return apiFetch<TimeEntry>(`/time/admin/entries/${id}`, {
+  return announced(apiFetch<TimeEntry>(`/time/admin/entries/${id}`, {
     method: 'PATCH',
     body,
-  });
+  }));
 }
 
 export function bulkApproveTimeEntries(
   body: BulkTimeApproveInput
 ): Promise<BulkTimeResponse> {
-  return apiFetch<BulkTimeResponse>('/time/admin/bulk-approve', {
+  return announced(apiFetch<BulkTimeResponse>('/time/admin/bulk-approve', {
     method: 'POST',
     body,
-  });
+  }));
 }
 
 export function bulkRejectTimeEntries(
   body: BulkTimeRejectInput
 ): Promise<BulkTimeResponse> {
-  return apiFetch<BulkTimeResponse>('/time/admin/bulk-reject', {
+  return announced(apiFetch<BulkTimeResponse>('/time/admin/bulk-reject', {
     method: 'POST',
     body,
-  });
+  }));
 }
 
 /** Admin break editing — each call returns the full updated entry so the
@@ -200,26 +209,26 @@ export function addTimeEntryBreak(
   entryId: string,
   body: { startedAt: string; endedAt: string; type?: 'MEAL' | 'REST' }
 ): Promise<TimeEntry> {
-  return apiFetch<TimeEntry>(`/time/admin/entries/${entryId}/breaks`, {
+  return announced(apiFetch<TimeEntry>(`/time/admin/entries/${entryId}/breaks`, {
     method: 'POST',
     body,
-  });
+  }));
 }
 
 export function updateTimeEntryBreak(
   breakId: string,
   body: { startedAt?: string; endedAt?: string }
 ): Promise<TimeEntry> {
-  return apiFetch<TimeEntry>(`/time/admin/breaks/${breakId}`, {
+  return announced(apiFetch<TimeEntry>(`/time/admin/breaks/${breakId}`, {
     method: 'PATCH',
     body,
-  });
+  }));
 }
 
 export function deleteTimeEntryBreak(breakId: string): Promise<TimeEntry> {
-  return apiFetch<TimeEntry>(`/time/admin/breaks/${breakId}`, {
+  return announced(apiFetch<TimeEntry>(`/time/admin/breaks/${breakId}`, {
     method: 'DELETE',
-  });
+  }));
 }
 
 /** Book the standard unpaid 1-hour meal break, centered mid-shift, on each
@@ -228,10 +237,10 @@ export function deleteTimeEntryBreak(breakId: string): Promise<TimeEntry> {
 export function bulkApplyBreakTimeEntries(
   entryIds: string[]
 ): Promise<BulkTimeResponse> {
-  return apiFetch<BulkTimeResponse>('/time/admin/bulk-apply-break', {
+  return announced(apiFetch<BulkTimeResponse>('/time/admin/bulk-apply-break', {
     method: 'POST',
     body: { entryIds },
-  });
+  }));
 }
 
 /**
