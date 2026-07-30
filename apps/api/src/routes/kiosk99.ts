@@ -1847,27 +1847,16 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     }
   }
 
-  // Validate clientPunchedAt: not future, not absurdly old.
-  let clientPunchedAt: Date | null = null;
-  if (input.clientPunchedAt) {
-    const d = new Date(input.clientPunchedAt);
-    const now = Date.now();
-    if (d.getTime() > now + 60_000) {
-      throw new HttpError(
-        400,
-        'clock_skew',
-        'Kiosk clock is set to the future. Sync the device clock.',
-      );
-    }
-    if (now - d.getTime() > MAX_PUNCH_BACKDATE_MS) {
-      throw new HttpError(
-        400,
-        'punch_too_old',
-        'This punch is older than the offline-queue limit. HR must enter it manually.',
-      );
-    }
-    clientPunchedAt = d;
-  }
+  // clientPunchedAt is validated AFTER device resolution (step 1b2 below)
+  // so a rejection can be recorded against the device. It used to be
+  // checked here — before we knew which device was calling — which meant a
+  // too-old queued punch was refused with NO KioskPunch row on either side:
+  // the offline queue dropped it as a permanent 4xx and the server had no
+  // trace. Hours someone actually worked vanished without a record for HR
+  // to act on.
+  let clientPunchedAt: Date | null = input.clientPunchedAt
+    ? new Date(input.clientPunchedAt)
+    : null;
 
   // 1. Resolve device token. Two-stage lookup via the tokenPrefix
   // index — see findDeviceByPlaintextToken above for the rationale.
@@ -1895,11 +1884,52 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     );
   }
 
-  // 1b. Rate limit + brute-force lockout. Throws 429 if the device has
-  // punched in the last second, or is in a 5-minute lockout from 3 failed
-  // PIN attempts. Runs AFTER device verification (so an attacker can't
-  // burn cycles with garbage tokens) but before any DB writes.
+  // 1b. Rate limit. Throws 429 if the device has punched in the last
+  // second. Runs AFTER device verification (so an attacker can't burn
+  // cycles with garbage tokens) but before any DB writes. NOTE: there is
+  // deliberately NO brute-force PIN lockout — an earlier 3-strikes/5-min
+  // version locked whole sites out over fat-fingered PINs; see the
+  // rationale in lib/kioskRateLimit.ts.
   enforcePunchRateLimit(device.id);
+
+  // 1b2. Validate clientPunchedAt now that we know the device. A punch
+  // outside the accepted window is REFUSED, but it leaves a REJECTED row
+  // first — this is an offline-queue replay of a moment someone stood at
+  // this kiosk, and HR can only re-enter the time manually if a record of
+  // the rejection exists. (The queue drops 4xx as permanent, so this row
+  // is the only trace that survives.)
+  if (clientPunchedAt) {
+    const now = Date.now();
+    const skewedFuture = clientPunchedAt.getTime() > now + 60_000;
+    const tooOld = now - clientPunchedAt.getTime() > MAX_PUNCH_BACKDATE_MS;
+    if (skewedFuture || tooOld) {
+      await prisma.kioskPunch.create({
+        data: {
+          kioskDeviceId: device.id,
+          action: 'REJECTED',
+          rejectReason: skewedFuture ? 'clock_skew' : 'punch_too_old',
+          idempotencyKey: input.idempotencyKey ?? null,
+          clientPunchedAt,
+        },
+      });
+      await prisma.kioskDevice.update({
+        where: { id: device.id },
+        data: { lastSeenAt: new Date() },
+      });
+      if (skewedFuture) {
+        throw new HttpError(
+          400,
+          'clock_skew',
+          'Kiosk clock is set to the future. Sync the device clock.',
+        );
+      }
+      throw new HttpError(
+        400,
+        'punch_too_old',
+        'This punch is older than the offline-queue limit. HR must enter it manually.',
+      );
+    }
+  }
 
   // 2. Geofence — ADVISORY. Record whatever coordinates the tablet sent
   // and, when the device's Location has a fence configured, the distance
@@ -1992,11 +2022,16 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     throw new HttpError(401, 'invalid_pin', 'Wrong PIN.');
   }
 
-  // DECLINED associates punch PIN-only — no photo stored either. (The
-  // rejected-PIN path above still keeps its selfie: identity unknown
-  // there, and the image is the fraud evidence.)
+  // Photos are stored ONLY with recorded consent. This used to be
+  // `DECLINED ? null : selfie`, which quietly stored photos for the
+  // never-asked (null) state too — reachable via the offline path, where
+  // the tablet can't run the consent screen and queues a selfie for an
+  // associate who was never shown the question. The consent copy promises
+  // photos are part of what's consented to, so null must behave like
+  // DECLINED here. (The rejected-PIN path above still keeps its selfie:
+  // identity unknown there, and the image is the fraud evidence.)
   const storedSelfie =
-    pinRow.associate.faceConsentStatus === 'DECLINED' ? null : selfie;
+    pinRow.associate.faceConsentStatus === 'GRANTED' ? selfie : null;
 
   // 5 + 5b — the Phase 101 face-reference lookup and the Phase 104
   // impossible-travel lookback both key off this associateId and are
