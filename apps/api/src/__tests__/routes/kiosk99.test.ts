@@ -454,8 +454,16 @@ describe('POST /kiosk/punch — out-of-window replays leave a trace', () => {
 });
 
 describe('POST /kiosk/punch — selfie storage requires recorded consent', () => {
+  // decodeSelfie rejects anything under 500 decoded bytes as junk
+  // (selfie_too_small), so the fixture must be a plausible size — a JPEG
+  // SOI header padded past the floor. (The first version of this test used
+  // a ~50-byte snippet and got 400 before the consent logic ever ran.)
   const JPEG =
-    'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJ';
+    'data:image/jpeg;base64,' +
+    Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+      Buffer.alloc(600, 1),
+    ]).toString('base64');
 
   // The gate used to be `DECLINED ? null : selfie`, which stored photos
   // for the never-asked (null) state — reachable offline, where the tablet
