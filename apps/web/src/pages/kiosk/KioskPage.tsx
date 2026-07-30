@@ -22,11 +22,14 @@ import { AlertTriangle, Check, Delete, Timer } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Textarea } from '@/components/ui/Input';
 import {
+  clearDroppedCount,
   drainQueue,
+  droppedCount,
   enqueuePunch,
   newIdempotencyKey,
   queueSize,
 } from '@/lib/kioskQueue';
+import { cachedConsent, rememberConsent } from '@/lib/kioskConsentCache';
 import { useKioskAppManifest } from '@/lib/kioskInstall';
 import { KioskInstallButton } from './KioskInstallButton';
 
@@ -127,6 +130,9 @@ interface KioskStrings {
   tapToDismiss: string;
   queuedOne: string;
   queuedMany: string;
+  droppedOne: string;
+  droppedMany: string;
+  cameraNoStart: string;
   langToggleLabel: string;
 }
 
@@ -187,6 +193,9 @@ const STRINGS: Record<Lang, KioskStrings> = {
     tapToDismiss: 'Tap anywhere to dismiss',
     queuedOne: 'punch waiting to sync',
     queuedMany: 'punches waiting to sync',
+    droppedOne: 'punch could not be recorded — tell HR',
+    droppedMany: 'punches could not be recorded — tell HR',
+    cameraNoStart: 'The camera did not start. You can clock in without a photo.',
     langToggleLabel: 'Español',
   },
   es: {
@@ -245,6 +254,9 @@ const STRINGS: Record<Lang, KioskStrings> = {
     tapToDismiss: 'Toca en cualquier lugar para cerrar',
     queuedOne: 'marcación por sincronizar',
     queuedMany: 'marcaciones por sincronizar',
+    droppedOne: 'marcación no pudo registrarse — avisa a RR. HH.',
+    droppedMany: 'marcaciones no pudieron registrarse — avisa a RR. HH.',
+    cameraNoStart: 'La cámara no inició. Puedes marcar sin foto.',
     langToggleLabel: 'English',
   },
 };
@@ -287,6 +299,10 @@ export function KioskPage() {
   } | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [queued, setQueued] = useState<number>(() => queueSize());
+  // Punches the server permanently refused during a drain. Anything >0
+  // means someone's worked time did NOT record and only HR can fix it —
+  // surfaced on the idle screen instead of vanishing with the queue badge.
+  const [dropped, setDropped] = useState<number>(() => droppedCount());
   // Associate-facing language. Persisted per device — a site whose crew
   // prefers Spanish sets it once and the tablet stays Spanish.
   const [lang, setLang] = useState<Lang>(() => readStoredLang());
@@ -464,17 +480,28 @@ export function KioskPage() {
     };
   }, []);
 
+  // Current token, readable from the long-lived drain callback below
+  // without re-arming its interval on every token change.
+  const tokenRef = useRef<string | null>(token);
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
+
   // Phase 102 — drain the queue: on first idle, on browser online event,
   // and on a 30s timer (handles flaky networks where 'online' doesn't
   // fire because the radio thinks it's connected to a captive portal).
+  // The drain replays with the CURRENT token, not the token frozen into
+  // each queued item — items queued before a token rotation/expiry would
+  // otherwise 401 forever (see drainQueue for the full story).
   useEffect(() => {
     let cancelled = false;
     const tick = () => {
       if (cancelled) return;
-      void drainQueue()
+      void drainQueue(tokenRef.current)
         .then((r) => {
           if (cancelled) return;
           setQueued(r.remaining);
+          if (r.errors > 0) setDropped(droppedCount());
         })
         .catch(() => {
           /* swallow — next tick retries */
@@ -596,10 +623,31 @@ export function KioskPage() {
     }
   };
 
+  // One punch submission at a time. Without this, a double-tap on
+  // "Continue without selfie" fired TWO submits: the first clocked the
+  // associate in, the second hit the server's 1/sec device throttle,
+  // got a 429, and — because 429s are deliberately queueable (drain
+  // collisions) — was saved offline under a FRESH idempotency key. The
+  // drain replayed it ≤30s later against the now-open entry and silently
+  // clocked the associate straight back OUT. They walked to the floor
+  // believing they were clocked in; their entry showed a sub-second
+  // shift.
+  const submitInFlightRef = useRef(false);
+
   // `intentOverride` exists for same-tick callers (the confirmOut screen
   // routes straight into a PIN-only submit before React has re-rendered
   // with the new `intent` state); everyone else relies on state.
   const submit = async (selfieData: string | null, intentOverride?: Intent) => {
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
+    try {
+      await submitInner(selfieData, intentOverride);
+    } finally {
+      submitInFlightRef.current = false;
+    }
+  };
+
+  const submitInner = async (selfieData: string | null, intentOverride?: Intent) => {
     if (!token) {
       setStage('setup');
       return;
@@ -827,6 +875,11 @@ export function KioskPage() {
                 predictedAction: v.predictedAction,
                 faceConsent: v.faceConsent,
               });
+              // Remember this PIN's consent so a later OFFLINE punch can
+              // decide camera-or-not without the server. null clears the
+              // cache entry — an admin RESET must not leave a stale
+              // GRANTED opening the camera.
+              void rememberConsent(pin, v.faceConsent);
               // A punch that would clock them OUT gets one question
               // first: leaving, or just on break? Most mid-shift
               // clock-outs are a forgotten break toggle, and answering
@@ -873,11 +926,21 @@ export function KioskPage() {
                 scheduleReset(errorDwellMs(err.message));
                 return;
               }
-              // Network failure / kiosk timeout → assume offline; let
-              // the user proceed to selfie and the punch will land in
-              // the offline queue. No preflight info in this path, so
-              // the camera screen shows its generic prompt.
-              setStage('selfie');
+              // Network failure / kiosk timeout → assume offline; the
+              // punch will land in the offline queue. Consent can't be
+              // asked of the server here, so fall back to the last
+              // consent this PIN answered while online — and if we've
+              // never seen one, DON'T open the camera. Capturing a photo
+              // is the consent-relevant act; the old "everyone gets the
+              // camera offline" default photographed associates who had
+              // never been shown the consent screen at all.
+              const known = await cachedConsent(pin);
+              if (known === 'GRANTED') {
+                setStage('selfie');
+              } else {
+                setStage('submitting');
+                void submit(null);
+              }
             }
             } finally {
               setVerifying(false);
@@ -901,6 +964,10 @@ export function KioskPage() {
                 consent: agree,
               }).catch(() => {});
             }
+            // Mirror the answer into the offline consent cache so a
+            // network drop right after this choice still routes the
+            // camera correctly.
+            void rememberConsent(pin, agree ? 'GRANTED' : 'DECLINED');
             if (agree) {
               setStage('selfie');
             } else {
@@ -951,7 +1018,14 @@ export function KioskPage() {
           t={t}
           preflight={preflight}
           onCaptured={(data) => void submit(data)}
-          onSkip={() => void submit(null)}
+          // Move to the submitting screen IMMEDIATELY: unmounting
+          // SelfieCapture stops the camera stream and removes the skip
+          // button so it can't be tapped twice (the in-flight guard in
+          // submit is the second line of defence).
+          onSkip={() => {
+            setStage('submitting');
+            void submit(null);
+          }}
           onCancel={reset}
         />
       )}
@@ -992,6 +1066,23 @@ export function KioskPage() {
         <div className="fixed top-4 left-4 px-3 py-1.5 bg-warning/20 border border-warning/40 rounded-full text-warning text-xs">
           {queued} {queued === 1 ? t.queuedOne : t.queuedMany}
         </div>
+      )}
+      {/* Punches the server permanently refused (too old, wrong PIN after a
+          rotation, wrong site). Each one is worked time that did NOT record.
+          Previously these vanished silently — the queue badge just counted
+          down. Tap dismisses once HR has been told (long-press semantics
+          would be nicer but a shared tablet needs the simplest gesture). */}
+      {dropped > 0 && stage === 'idle' && (
+        <button
+          type="button"
+          onClick={() => {
+            clearDroppedCount();
+            setDropped(0);
+          }}
+          className="fixed top-4 right-4 max-w-xs px-3 py-1.5 bg-alert/20 border border-alert/50 rounded-full text-alert text-xs text-left"
+        >
+          {dropped} {dropped === 1 ? t.droppedOne : t.droppedMany}
+        </button>
       )}
       {/* Reset hidden affordance: triple-tap top-right corner unlocks setup. */}
       <ResetCorner
@@ -1374,15 +1465,50 @@ function SelfieCapture({
   useEffect(() => {
     onCapturedRef.current = onCaptured;
   }, [onCaptured]);
+  // Same latching for onSkip — the capture-retry path below calls it from
+  // an effect that must not re-arm on the parent's every-second re-render.
+  const onSkipRef = useRef(onSkip);
+  useEffect(() => {
+    onSkipRef.current = onSkip;
+  }, [onSkip]);
+
+  // getUserMedia doesn't only reject — it can HANG indefinitely: a
+  // permission prompt nobody taps, another app holding the camera on a
+  // shared tablet, a stalled driver. While it hung, streamErr stayed null,
+  // so the error screen (the only place "Continue without selfie" lived)
+  // never rendered, and the associate's only exit was Cancel — which
+  // looped them back through PIN entry to the same hanging camera. For a
+  // consent-GRANTED associate that was a permanent inability to clock in:
+  // the live complaint. Race the acquisition against a deadline and treat
+  // timeout exactly like rejection so the skip path appears.
+  const CAMERA_ACQUIRE_TIMEOUT_MS = 6_000;
 
   useEffect(() => {
+    let cancelled = false;
     let stream: MediaStream | null = null;
+    // Kept outside the try so the catch can stop a LATE-arriving stream:
+    // when the timeout wins the race, the real getUserMedia promise is
+    // still pending and may resolve minutes later with a live camera that
+    // nothing references — a leaked recording indicator on the tablet.
+    let acquire: Promise<MediaStream> | null = null;
     (async () => {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
+        acquire = navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: 640, height: 480 },
           audio: false,
         });
+        const timeout = new Promise<never>((_, reject) => {
+          window.setTimeout(
+            () => reject(new Error('camera_acquire_timeout')),
+            CAMERA_ACQUIRE_TIMEOUT_MS,
+          );
+        });
+        const s = await Promise.race([acquire, timeout]);
+        if (cancelled) {
+          s.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        stream = s;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
@@ -1391,15 +1517,37 @@ function SelfieCapture({
         // clock-in feel slow. (Was 2s; the extra second was dead time.)
         setCountdown(1);
       } catch (err) {
+        // Stop the late stream if the timeout beat a still-pending acquire.
+        void acquire
+          ?.then((late) => {
+            if (late !== stream) late.getTracks().forEach((track) => track.stop());
+          })
+          .catch(() => {});
+        if (cancelled) return;
+        const timedOut =
+          err instanceof Error && err.message === 'camera_acquire_timeout';
         setStreamErr(
-          err instanceof Error ? err.message : 'Camera access denied.',
+          timedOut
+            ? t.cameraNoStart
+            : err instanceof Error
+              ? err.message
+              : 'Camera access denied.',
         );
       }
     })();
     return () => {
-      stream?.getTracks().forEach((t) => t.stop());
+      cancelled = true;
+      stream?.getTracks().forEach((track) => track.stop());
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- t is stable
+    // per language; acquisition must run exactly once per mount.
   }, []);
+
+  // Retry counter for frames that aren't ready yet — a distinct state (not
+  // setCountdown(0) again) because setting state to its current value
+  // doesn't re-fire the effect.
+  const [captureAttempt, setCaptureAttempt] = useState(0);
+  const MAX_CAPTURE_ATTEMPTS = 10;
 
   useEffect(() => {
     if (countdown === null) return;
@@ -1408,6 +1556,23 @@ function SelfieCapture({
       const v = videoRef.current;
       const c = canvasRef.current;
       if (!v || !c) return;
+      // play() resolving doesn't guarantee a decoded frame — on slow
+      // tablets videoWidth can still be 0 here, and a 0×0 canvas makes
+      // toDataURL return the literal string "data:," — a junk "photo"
+      // that silently defeated the verification the associate consented
+      // to. Give the pipeline a beat to produce a real frame; if it never
+      // does, punch without a photo rather than punch with garbage.
+      if (v.videoWidth === 0 || v.videoHeight === 0) {
+        if (captureAttempt < MAX_CAPTURE_ATTEMPTS) {
+          const retry = window.setTimeout(
+            () => setCaptureAttempt((a) => a + 1),
+            150,
+          );
+          return () => clearTimeout(retry);
+        }
+        onSkipRef.current();
+        return;
+      }
       c.width = v.videoWidth;
       c.height = v.videoHeight;
       const ctx = c.getContext('2d');
@@ -1424,7 +1589,7 @@ function SelfieCapture({
     }
     const t = window.setTimeout(() => setCountdown(countdown - 1), 1000);
     return () => clearTimeout(t);
-  }, [countdown]);
+  }, [countdown, captureAttempt]);
 
   if (streamErr) {
     return (
@@ -1508,12 +1673,27 @@ function SelfieCapture({
       <div className="mt-4 text-sm text-silver/80 max-w-sm text-center">
         {t.privacy}
       </div>
-      <button
-        onClick={onCancel}
-        className="mt-4 min-h-[44px] px-6 text-silver text-base hover:text-white transition"
-      >
-        {t.cancel}
-      </button>
+      {/* Always-visible escape hatch. The photo never gates the punch, so
+          there is no reason the ability to skip it should only exist on
+          the error screen — a camera that shows a black rectangle without
+          ever rejecting (the hang case) used to leave Cancel as the only
+          way out, looping the associate back to the same dead camera. */}
+      <div className="mt-4 flex items-center gap-4">
+        <button
+          onClick={onSkip}
+          disabled={analyzing}
+          className="min-h-[44px] px-6 text-silver text-base hover:text-white transition disabled:opacity-40"
+        >
+          {t.continueWithoutSelfie}
+        </button>
+        <button
+          onClick={onCancel}
+          disabled={analyzing}
+          className="min-h-[44px] px-6 text-silver text-base hover:text-white transition disabled:opacity-40"
+        >
+          {t.cancel}
+        </button>
+      </div>
     </div>
   );
 }
