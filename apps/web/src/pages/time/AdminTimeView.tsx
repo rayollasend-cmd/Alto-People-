@@ -55,10 +55,13 @@ import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
 import {
+  browserTimeZone,
   fmtDateTime,
   fmtDateTz,
   fmtPayRate,
   fmtTime,
+  fmtTimeTz,
+  tzAbbrev,
   ymdLocal,
   ymdToIsoEndExclusive,
   ymdToIsoStart,
@@ -113,6 +116,28 @@ const STATUS_FILTERS: Array<{ value: TimeEntryStatus | 'ALL'; label: string }> =
   { value: 'ACTIVE', label: 'Active' },
   { value: 'ALL', label: 'All' },
 ];
+
+/**
+ * Punch time on the SITE's wall clock, not the reviewer's browser clock.
+ *
+ * The queue used to render fmtTime/fmtDateTime (browser-local, unlabelled)
+ * while the Fieldglass timesheet rendered a hardcoded America/New_York —
+ * the same punch showed two different times on the two screens, which users
+ * reported as "the clock-in times don't match". Entries now carry their
+ * Location.timezone; when it differs from the viewer's zone the time gets
+ * an abbreviation (9:00 AM CDT) so the number explains itself. Entries with
+ * no location (legacy rows) fall back to browser-local, exactly as before.
+ */
+function fmtPunchTime(iso: string, tz: string | null | undefined): string {
+  if (!tz) return fmtTime(iso);
+  const base = fmtTimeTz(iso, tz);
+  return tz !== browserTimeZone() ? `${base} ${tzAbbrev(tz, iso)}` : base;
+}
+
+function fmtPunchDateTime(iso: string, tz: string | null | undefined): string {
+  if (!tz) return fmtDateTime(iso);
+  return `${fmtDateTz(iso, tz)}, ${fmtPunchTime(iso, tz)}`;
+}
 
 function formatHM(mins: number): string {
   const h = Math.floor(mins / 60);
@@ -892,7 +917,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                           <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
                           <TableCell className="text-silver">{e.jobName ?? '—'}</TableCell>
                           <TableCell className="tabular-nums text-silver">
-                            {fmtTime(e.clockInAt)}
+                            {fmtPunchTime(e.clockInAt, e.locationTimezone)}
                           </TableCell>
                           <TableCell className="tabular-nums">
                             {formatHM(e.minutesElapsed)}
@@ -969,7 +994,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                       </div>
                       <div className="mt-2 flex items-end justify-between gap-3 text-xs2 text-silver">
                         <span className="tabular-nums">
-                          Since {fmtTime(e.clockInAt)}
+                          Since {fmtPunchTime(e.clockInAt, e.locationTimezone)}
                         </span>
                         <span className="tabular-nums text-white">
                           {formatHM(e.minutesElapsed)}
@@ -1387,9 +1412,9 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                                 </div>
                                 <div className="mt-1.5 flex items-end justify-between gap-3 text-xs2 text-silver">
                                   <span className="tabular-nums">
-                                    {fmtDateTime(e.clockInAt)}
+                                    {fmtPunchDateTime(e.clockInAt, e.locationTimezone)}
                                     {e.clockOutAt
-                                      ? ` → ${fmtTime(e.clockOutAt)}`
+                                      ? ` → ${fmtPunchTime(e.clockOutAt, e.locationTimezone)}`
                                       : ' → —'}
                                   </span>
                                   <span className="tabular-nums text-white">
@@ -1619,10 +1644,10 @@ const QueueEntryRow = memo(function QueueEntryRow({
       </TableCell>
       <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
       <TableCell className="tabular-nums">
-        {fmtDateTime(e.clockInAt)}
+        {fmtPunchDateTime(e.clockInAt, e.locationTimezone)}
       </TableCell>
       <TableCell className="tabular-nums">
-        {e.clockOutAt ? fmtTime(e.clockOutAt) : '—'}
+        {e.clockOutAt ? fmtPunchTime(e.clockOutAt, e.locationTimezone) : '—'}
       </TableCell>
       <TableCell>
         <DurationCell entry={e} />
@@ -1723,11 +1748,11 @@ function TimeEntryDetailPanel({
 
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm mb-5">
           <DetailRow label="Clock in">
-            {fmtDateTime(entry.clockInAt)}
+            {fmtPunchDateTime(entry.clockInAt, entry.locationTimezone)}
           </DetailRow>
           <DetailRow label="Clock out">
             {entry.clockOutAt
-              ? fmtDateTime(entry.clockOutAt)
+              ? fmtPunchDateTime(entry.clockOutAt, entry.locationTimezone)
               : 'Still on the clock'}
           </DetailRow>
           <DetailRow label="Worked (net of breaks)">
@@ -1784,8 +1809,8 @@ function TimeEntryDetailPanel({
                   <span>
                     {b.type === 'MEAL' ? 'Meal' : 'Rest'}{' '}
                     <span className="tabular-nums">
-                      {fmtTime(b.startedAt)} –{' '}
-                      {b.endedAt ? fmtTime(b.endedAt) : 'still open'}
+                      {fmtPunchTime(b.startedAt, entry.locationTimezone)} –{' '}
+                      {b.endedAt ? fmtPunchTime(b.endedAt, entry.locationTimezone) : 'still open'}
                     </span>
                   </span>
                   <span className="tabular-nums text-white">{formatHM(b.minutes)}</span>

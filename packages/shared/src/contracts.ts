@@ -1014,6 +1014,12 @@ export const TimeEntrySchema = z.object({
   clockOutLat: z.number().nullable().optional(),
   clockOutLng: z.number().nullable().optional(),
   anomalies: z.array(z.string()).optional(),
+  /** IANA timezone of the entry's worksite (Location.timezone). Lets the
+   *  review queue render punch times on the SITE's wall clock instead of
+   *  the reviewer's browser clock — the two disagreeing (and the timesheet
+   *  using a third, hardcoded zone) is exactly what users reported as
+   *  'the clock-in times don't match'. Null for entries with no location. */
+  locationTimezone: z.string().nullable().optional(),
   /** True while the entry is ACTIVE and a break row is open. Server-derived;
    *  lets the clock widget survive a page refresh mid-break instead of
    *  guessing from client-local state. */
@@ -3081,6 +3087,8 @@ export const ActiveDashboardEntrySchema = z.object({
   geofenceOk: z.boolean().nullable(),
   clockInLat: z.number().nullable(),
   clockInLng: z.number().nullable(),
+  /** IANA zone of the entry's site, so punch times render on the site's wall clock. */
+  locationTimezone: z.string().nullable().optional(),
 });
 export type ActiveDashboardEntry = z.infer<typeof ActiveDashboardEntrySchema>;
 

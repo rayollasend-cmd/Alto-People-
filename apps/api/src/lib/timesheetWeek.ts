@@ -49,6 +49,16 @@ export interface TimesheetSourceEntry {
   /** APPROVED | COMPLETED | … — only APPROVED contributes hours. */
   status: string;
   breaks: BreakFacts[];
+  /**
+   * The IANA timezone of the SITE where this entry was punched
+   * (Location.timezone, falling back to DEFAULT_TIMEZONE). Bucketing and
+   * time display use this per entry — the sheet used to run everything
+   * through a hardcoded America/New_York, so a Chicago site's Friday
+   * 11:30pm clock-in read as Saturday 12:30am ET and migrated into the
+   * NEXT Sat–Fri week. Reviewers approved a shift in one week; the
+   * timesheet totalled it in another.
+   */
+  timeZone: string;
 }
 
 export interface SaturdayWeek {
@@ -104,13 +114,13 @@ interface RowAccumulator {
 export function aggregateTimesheetRows(
   entries: TimesheetSourceEntry[],
   weekDateKeys: Set<string>,
-  timeZone: string,
 ): { rows: TimesheetRow[]; totalHours: number; pendingCount: number } {
   const groups = new Map<string, RowAccumulator>();
   let pendingCount = 0;
 
   for (const e of entries) {
-    const dayKey = localDateKey(e.clockInAt, timeZone);
+    // Per-entry site clock — see TimesheetSourceEntry.timeZone.
+    const dayKey = localDateKey(e.clockInAt, e.timeZone);
     if (!weekDateKeys.has(dayKey)) continue;
 
     const gkey = `${e.associateId}|${e.clientId ?? ''}`;
@@ -212,7 +222,7 @@ export async function buildTimesheetWeek(
       clockOutAt: true,
       status: true,
       associate: { select: { firstName: true, lastName: true } },
-      location: { select: { name: true } },
+      location: { select: { name: true, timezone: true } },
       breaks: { select: { type: true, startedAt: true, endedAt: true } },
     },
   });
@@ -251,16 +261,18 @@ export async function buildTimesheetWeek(
         startedAt: b.startedAt,
         endedAt: b.endedAt,
       })),
+      // The site's own clock, not the sheet-wide default — see
+      // TimesheetSourceEntry.timeZone.
+      timeZone: e.location?.timezone ?? timeZone,
     };
   });
 
   const { rows, totalHours, pendingCount } = aggregateTimesheetRows(
     entries,
     dateKeySet,
-    timeZone,
   );
 
-  const issues = computeTimesheetIssues(entries, rows, dateKeySet, timeZone);
+  const issues = computeTimesheetIssues(entries, rows, dateKeySet);
 
   // Scheduled-vs-actual — published assigned shifts (ASSIGNED/COMPLETED, not
   // DRAFT scratch) starting in the week, by local day, summed per associate.
@@ -277,12 +289,15 @@ export async function buildTimesheetWeek(
       startsAt: true,
       endsAt: true,
       assignedAssociate: { select: { firstName: true, lastName: true } },
+      // locationRel, not location — Shift.location is the LEGACY free-text
+      // sub-zone string; the site relation (and its timezone) is locationRel.
+      locationRel: { select: { timezone: true } },
     },
   });
   const scheduled = new Map<string, { hours: number; worker: string }>();
   for (const s of shifts) {
     if (!s.assignedAssociateId) continue;
-    if (!dateKeySet.has(localDateKey(s.startsAt, timeZone))) continue;
+    if (!dateKeySet.has(localDateKey(s.startsAt, s.locationRel?.timezone ?? timeZone))) continue;
     const mins = Math.max(0, (s.endsAt.getTime() - s.startsAt.getTime()) / 60000);
     const worker = s.assignedAssociate
       ? `${s.assignedAssociate.lastName}, ${s.assignedAssociate.firstName}`.trim()
@@ -509,14 +524,13 @@ export function computeTimesheetIssues(
   entries: TimesheetSourceEntry[],
   rows: TimesheetRow[],
   weekDateKeys: Set<string>,
-  timeZone: string,
 ): TimesheetIssue[] {
   const nameById = new Map<string, string>();
   const missingClockout = new Set<string>();
   const pendingByAssoc = new Map<string, number>();
 
   for (const e of entries) {
-    if (!weekDateKeys.has(localDateKey(e.clockInAt, timeZone))) continue;
+    if (!weekDateKeys.has(localDateKey(e.clockInAt, e.timeZone))) continue;
     const id = e.associateId;
     nameById.set(id, `${e.lastName}, ${e.firstName}`.trim());
     if (!e.clockOutAt) missingClockout.add(id);
@@ -577,12 +591,11 @@ function formatDuration(totalMinutes: number): string {
 export function buildAssociateDays(
   entries: TimesheetSourceEntry[],
   dateKeys: string[],
-  timeZone: string,
 ): { days: TimesheetDay[]; totalHours: number } {
   const byDay = new Map<string, TimesheetSourceEntry[]>();
   for (const e of entries) {
     if (e.status !== 'APPROVED' || !e.clockOutAt) continue;
-    const key = localDateKey(e.clockInAt, timeZone);
+    const key = localDateKey(e.clockInAt, e.timeZone);
     const arr = byDay.get(key) ?? [];
     arr.push(e);
     byDay.set(key, arr);
@@ -598,21 +611,29 @@ export function buildAssociateDays(
     let netMin = 0;
     let timeInAt: Date | null = null;
     let timeOutAt: Date | null = null;
+    // Times render in the zone of the entry that produced them — the site's
+    // wall clock, which is what the associate and their supervisor saw.
+    let timeInZone = DEFAULT_TIMEZONE;
+    let timeOutZone = DEFAULT_TIMEZONE;
     const breaks: string[] = [];
     for (const e of dayEntries) {
       netMin += netWorkedMinutes(
         { clockInAt: e.clockInAt, clockOutAt: e.clockOutAt },
         e.breaks,
       );
-      if (!timeInAt || e.clockInAt < timeInAt) timeInAt = e.clockInAt;
+      if (!timeInAt || e.clockInAt < timeInAt) {
+        timeInAt = e.clockInAt;
+        timeInZone = e.timeZone;
+      }
       if (e.clockOutAt && (!timeOutAt || e.clockOutAt > timeOutAt)) {
         timeOutAt = e.clockOutAt;
+        timeOutZone = e.timeZone;
       }
       for (const b of e.breaks) {
-        const start = formatTimeInZone(b.startedAt, timeZone);
+        const start = formatTimeInZone(b.startedAt, e.timeZone);
         if (b.endedAt) {
           const mins = Math.round((b.endedAt.getTime() - b.startedAt.getTime()) / 60000);
-          breaks.push(`${start} – ${formatTimeInZone(b.endedAt, timeZone)} (${formatDuration(mins)})`);
+          breaks.push(`${start} – ${formatTimeInZone(b.endedAt, e.timeZone)} (${formatDuration(mins)})`);
         } else {
           breaks.push(`${start} – open`);
         }
@@ -625,8 +646,8 @@ export function buildAssociateDays(
       date: key,
       weekday,
       monthDay,
-      timeIn: timeInAt ? formatTimeInZone(timeInAt, timeZone) : null,
-      timeOut: timeOutAt ? formatTimeInZone(timeOutAt, timeZone) : null,
+      timeIn: timeInAt ? formatTimeInZone(timeInAt, timeInZone) : null,
+      timeOut: timeOutAt ? formatTimeInZone(timeOutAt, timeOutZone) : null,
       breaks,
       netHours,
     };
@@ -689,7 +710,7 @@ export async function buildAssociateTimesheetDetail(
       clockOutAt: true,
       status: true,
       associate: { select: { firstName: true, lastName: true } },
-      location: { select: { name: true } },
+      location: { select: { name: true, timezone: true } },
       breaks: { select: { type: true, startedAt: true, endedAt: true } },
     },
   });
@@ -721,7 +742,7 @@ export async function buildAssociateTimesheetDetail(
   }
 
   const entries: TimesheetSourceEntry[] = raw
-    .filter((e) => dateKeySet.has(localDateKey(e.clockInAt, timeZone)))
+    .filter((e) => dateKeySet.has(localDateKey(e.clockInAt, e.location?.timezone ?? timeZone)))
     .map((e) => {
       const client = e.clientId ? clientById.get(e.clientId) : undefined;
       return {
@@ -738,6 +759,7 @@ export async function buildAssociateTimesheetDetail(
           startedAt: b.startedAt,
           endedAt: b.endedAt,
         })),
+        timeZone: e.location?.timezone ?? timeZone,
       };
     });
 
@@ -757,7 +779,7 @@ export async function buildAssociateTimesheetDetail(
     if (a) worker = `${a.lastName}, ${a.firstName}`.trim();
   }
 
-  const { days, totalHours } = buildAssociateDays(entries, week.dateKeys, timeZone);
+  const { days, totalHours } = buildAssociateDays(entries, week.dateKeys);
   const pendingCount = entries.filter((e) => e.status === 'COMPLETED').length;
 
   // Accounting block — the associate's pay rate (their open HOURLY comp
