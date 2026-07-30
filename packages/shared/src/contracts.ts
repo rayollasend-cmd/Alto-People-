@@ -1307,8 +1307,10 @@ export const TimesheetAssociateDetailResponseSchema = z.object({
   /* Accounting block (Fieldglass "Accounting (USD)"). */
   /** Rate label, e.g. "Standard Hourly Rate /Hr". */
   rateLabel: z.string(),
-  /** Associate's hourly pay rate (comp record; $15 default). */
-  payRate: z.number().nonnegative(),
+  /** Associate's hourly pay rate from their open comp record. Null when
+   *  none exists — rendered as a dash. (Used to silently default to $15,
+   *  a fabricated figure on a billing-adjacent document.) */
+  payRate: z.number().nonnegative().nullable(),
   /** Client bill rate ($/hr); null when the client has none set. */
   billRate: z.number().nonnegative().nullable(),
   /** billRate × totalHours; null when no bill rate is set. */

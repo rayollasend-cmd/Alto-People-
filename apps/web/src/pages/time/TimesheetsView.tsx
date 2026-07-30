@@ -281,7 +281,16 @@ export function TimesheetsView() {
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <span className="px-3 text-sm text-white tabular-nums whitespace-nowrap">
-            {fmtDate(weekStart)} – {fmtDate(weekEnd)}
+            {/* Prefer the SERVER's week bounds once loaded. The rows are
+                bucketed in the store timezone (America/New_York) server-side,
+                while weekStart/weekEnd here are browser-local — for a viewer
+                east of US Eastern, the browser's Saturday can fall in the
+                PREVIOUS store-local week, and this header used to claim a
+                different week than the data below it. The browser dates
+                remain only as a pre-load placeholder and for navigation. */}
+            {data
+              ? `${fmtDate(`${data.weekStart}T12:00:00Z`)} – ${fmtDate(`${data.weekEndIso}T12:00:00Z`)}`
+              : `${fmtDate(weekStart)} – ${fmtDate(weekEnd)}`}
           </span>
           <Button
             variant="ghost"
@@ -714,7 +723,10 @@ export function TimesheetsView() {
                       <tr className="border-t border-navy-secondary">
                         <td className="p-2 text-silver whitespace-nowrap">{detail.rateLabel}</td>
                         <td className="p-2 text-right tabular-nums text-silver">
-                          {detail.payRate.toFixed(2)}
+                          {/* Null = no comp record on file. A dash, not a
+                              default — the old $15 fallback put a fabricated
+                              rate on a billing-adjacent sheet. */}
+                          {detail.payRate != null ? detail.payRate.toFixed(2) : '—'}
                         </td>
                         <td className="p-2 text-right tabular-nums text-silver">
                           {detail.billRate != null ? detail.billRate.toFixed(2) : '—'}

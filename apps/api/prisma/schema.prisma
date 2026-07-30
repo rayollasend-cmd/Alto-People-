@@ -5905,6 +5905,12 @@ model TimesheetFiling {
   createdAt  DateTime @default(now()) @db.Timestamptz(6)
   updatedAt  DateTime @updatedAt @db.Timestamptz(6)
 
+  // NOTE: this compound unique does NOT constrain clientId=NULL rows —
+  // Postgres treats NULLs as distinct. The org-wide filing's uniqueness is
+  // enforced by a hand-managed partial index (migration 20260730180000):
+  //   CREATE UNIQUE INDEX ... ON "TimesheetFiling"("weekStart")
+  //     WHERE "clientId" IS NULL;
+  // Same pattern as TimeEntry's one-ACTIVE-per-associate partial unique.
   @@unique([weekStart, clientId])
   @@index([weekStart])
 }
