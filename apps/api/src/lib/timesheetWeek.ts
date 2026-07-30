@@ -15,7 +15,7 @@
  *     unit-testable with fixed dates and no database.
  * `buildTimesheetWeek` glues them to Prisma.
  */
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import type {
   TimesheetAssociateDetailResponse,
   TimesheetDay,
@@ -298,8 +298,16 @@ export async function buildTimesheetWeek(
   // Lock/drift — if this week (and client scope) was filed, surface the
   // filing plus any drift between the snapshot and the current hours.
   const weekStartDate = new Date(`${week.weekStart}T00:00:00Z`);
+  // orderBy filedAt desc: the schema's @@unique([weekStart, clientId])
+  // does NOT constrain clientId=null rows (Postgres treats NULLs as
+  // distinct), so historical duplicates of the org-wide filing are
+  // possible. An unordered findFirst returned whichever the planner felt
+  // like, and drift was computed against an arbitrary snapshot. The
+  // partial unique index added in 20260730* stops NEW duplicates; the
+  // ordering makes reads deterministic regardless.
   const filingRow = await db.timesheetFiling.findFirst({
     where: { weekStart: weekStartDate, clientId: input.clientId ?? null },
+    orderBy: { filedAt: 'desc' },
   });
   let filing: TimesheetFilingInfo | null = null;
   if (filingRow) {
@@ -392,28 +400,52 @@ export async function fileTimesheetWeek(
 
   const weekStartDate = new Date(`${response.weekStart}T00:00:00Z`);
   const clientId = input.clientId ?? null;
+  const filingData = {
+    filedById,
+    filedAt: new Date(),
+    totalHours: response.totalHours,
+    snapshot,
+  };
+  // findFirst→create is racy: two admins filing the same week concurrently
+  // both saw "no existing" and both created. For client-scoped filings the
+  // compound unique made the loser 500; for the org-wide (clientId=null)
+  // filing Postgres's NULLs-are-distinct semantics let BOTH rows land. Now
+  // the partial unique index rejects the loser, and we catch the unique
+  // violation and convert it into the update it was always meant to be.
   const existing = await db.timesheetFiling.findFirst({
     where: { weekStart: weekStartDate, clientId },
+    orderBy: { filedAt: 'desc' },
   });
-  const row = existing
-    ? await db.timesheetFiling.update({
-        where: { id: existing.id },
-        data: {
-          filedById,
-          filedAt: new Date(),
-          totalHours: response.totalHours,
-          snapshot,
-        },
-      })
-    : await db.timesheetFiling.create({
-        data: {
-          weekStart: weekStartDate,
-          clientId,
-          filedById,
-          totalHours: response.totalHours,
-          snapshot,
-        },
+  let row;
+  if (existing) {
+    row = await db.timesheetFiling.update({
+      where: { id: existing.id },
+      data: filingData,
+    });
+  } else {
+    try {
+      row = await db.timesheetFiling.create({
+        data: { weekStart: weekStartDate, clientId, ...filingData },
       });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        const winner = await db.timesheetFiling.findFirst({
+          where: { weekStart: weekStartDate, clientId },
+          orderBy: { filedAt: 'desc' },
+        });
+        if (!winner) throw err; // constraint fired but row vanished — surface it
+        row = await db.timesheetFiling.update({
+          where: { id: winner.id },
+          data: filingData,
+        });
+      } else {
+        throw err;
+      }
+    }
+  }
 
   const u = await db.user.findUnique({
     where: { id: filedById },
@@ -608,8 +640,11 @@ export function buildAssociateDays(
  * a worker row on the Timesheets grid. Mirrors the Fieldglass individual sheet
  * header (Worker / Period / Site) plus the day-by-day punch grid.
  */
-/** Default hourly pay rate when an associate has no open HOURLY comp record. */
-const DEFAULT_HOURLY_RATE = 15;
+// There is deliberately NO default pay rate. An earlier version substituted
+// a flat $15/hr when the associate had no open HOURLY comp record — a
+// fabricated number rendered on a billing-adjacent document with nothing
+// marking it as fake. A missing rate now surfaces as null and the sheet
+// shows a dash: "we don't know" beats "here's a plausible lie".
 
 export async function buildAssociateTimesheetDetail(
   db: Pick<
@@ -640,6 +675,13 @@ export async function buildAssociateTimesheetDetail(
       clockInAt: { gte: windowStart, lt: windowEnd },
       ...(input.clientId ? { clientId: input.clientId } : {}),
     },
+    // Deterministic order is load-bearing: entries[0] below supplies the
+    // Site label AND the billRate that prices the whole week's Amount.
+    // Unordered, an associate who worked two clients in one week got an
+    // Amount computed against whichever client the planner returned first
+    // — two runs of the same sheet could disagree. Earliest in-week entry
+    // is the rule now.
+    orderBy: { clockInAt: 'asc' },
     select: {
       associateId: true,
       clientId: true,
@@ -725,7 +767,7 @@ export async function buildAssociateTimesheetDetail(
     orderBy: { effectiveFrom: 'desc' },
     select: { amount: true },
   });
-  const payRate = comp ? Number(comp.amount) : DEFAULT_HOURLY_RATE;
+  const payRate = comp ? Number(comp.amount) : null;
   const billRate = first?.clientId
     ? clientById.get(first.clientId)?.billRate ?? null
     : null;
@@ -744,7 +786,7 @@ export async function buildAssociateTimesheetDetail(
     status: pendingCount > 0 ? 'PENDING' : 'READY',
     pendingCount,
     rateLabel: 'Standard Hourly Rate /Hr',
-    payRate: round2(payRate),
+    payRate: payRate != null ? round2(payRate) : null,
     billRate: billRate != null ? round2(billRate) : null,
     amount,
     timeZone,

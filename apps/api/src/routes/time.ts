@@ -2518,6 +2518,36 @@ timeRouter.post('/admin/payroll-sheet.xlsx', MANAGE, async (req, res, next) => {
  * per week, net approved hours in the "Others" bucket, keyed by the week-
  * ending Friday. Powers the Timesheets page HR reads/copies into Fieldglass.
  */
+/**
+ * Clamp the timesheet clientId to the caller's tenant.
+ *
+ * The filing artifact (TimesheetFiling) is keyed on the REQUEST's clientId
+ * while the row data is scoped per-user — and `manage:time`, this router's
+ * guard, reaches down to SHIFT_SUPERVISOR. Without the clamp, a supervisor
+ * omitting clientId hit the org-wide (clientId=null) filing in both
+ * directions: filing overwrote HR's org-wide snapshot with one site's
+ * workers, and reading computed drift of HR's all-client snapshot against
+ * their scoped rows — leaking every other client's worker names and hours
+ * as "filed X, current 0" drift rows. The web UI pins bounded users to
+ * their client, but the API is the boundary, not the UI.
+ */
+function timesheetClientId(
+  user: NonNullable<import('express').Request['user']>,
+  requested: string | undefined,
+): string | undefined {
+  const clamped = effectiveClientIdFilter(user, requested);
+  if (clamped === null) {
+    // Tenant-bounded caller with no client on file — fail closed rather
+    // than fall through to the org-wide filing.
+    throw new HttpError(
+      403,
+      'client_required',
+      'Your account has no client assigned — ask an administrator to set one.',
+    );
+  }
+  return clamped;
+}
+
 timeRouter.post('/admin/timesheets', MANAGE, async (req, res, next) => {
   try {
     const parsed = TimesheetWeekInputSchema.safeParse(req.body);
@@ -2526,7 +2556,7 @@ timeRouter.post('/admin/timesheets', MANAGE, async (req, res, next) => {
     }
     const result = await buildTimesheetWeek(prisma, {
       weekStart: new Date(parsed.data.weekStart),
-      clientId: parsed.data.clientId,
+      clientId: timesheetClientId(req.user!, parsed.data.clientId),
       scopeWhere: scopeTimeEntries(req.user!),
       shiftScopeWhere: scopeShifts(req.user!),
     });
@@ -2548,7 +2578,7 @@ timeRouter.post('/admin/timesheets.xlsx', MANAGE, async (req, res, next) => {
     }
     const result = await buildTimesheetWeek(prisma, {
       weekStart: new Date(parsed.data.weekStart),
-      clientId: parsed.data.clientId,
+      clientId: timesheetClientId(req.user!, parsed.data.clientId),
       scopeWhere: scopeTimeEntries(req.user!),
       shiftScopeWhere: scopeShifts(req.user!),
     });
@@ -2586,7 +2616,7 @@ timeRouter.post('/admin/timesheets/file', MANAGE, async (req, res, next) => {
       prisma,
       {
         weekStart: new Date(parsed.data.weekStart),
-        clientId: parsed.data.clientId,
+        clientId: timesheetClientId(req.user!, parsed.data.clientId),
         scopeWhere: scopeTimeEntries(req.user!),
         shiftScopeWhere: scopeShifts(req.user!),
       },
@@ -2614,7 +2644,7 @@ timeRouter.post('/admin/timesheets/associate', MANAGE, async (req, res, next) =>
     const result = await buildAssociateTimesheetDetail(prisma, {
       associateId: parsed.data.associateId,
       weekStart: new Date(parsed.data.weekStart),
-      clientId: parsed.data.clientId,
+      clientId: timesheetClientId(req.user!, parsed.data.clientId),
       scopeWhere: scopeTimeEntries(req.user!),
     });
     res.json(result);
