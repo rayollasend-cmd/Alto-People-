@@ -320,11 +320,15 @@ describe('onboarding tenant boundary', () => {
   it('supervisor invites into their own client and is clamped to it', async () => {
     const { mine, other, sup } = await seedTwoClients();
     const template = await createStandardTemplate();
-    // seedTwoClients gave mine a site, and clients with sites now require a
-    // work site on every invite (location-less invites leave the associate's
-    // site unrecorded forever) — so the batch names one.
+    // mine has TWO sites here (the createClient fixture's default plus
+    // placeAtSite's). Pick one and deactivate the rest so the auto-assign
+    // case below sees a single-site client.
     const mySite = await prisma.location.findFirstOrThrow({
       where: { clientId: mine.id },
+    });
+    await prisma.location.updateMany({
+      where: { clientId: mine.id, id: { not: mySite.id } },
+      data: { isActive: false },
     });
 
     const ok = await sup.post('/onboarding/applications/bulk').send({
@@ -376,11 +380,12 @@ describe('onboarding tenant boundary', () => {
     });
     expect(autoApp.locationId).toBe(mySite.id);
 
-    // With a SECOND site the choice is ambiguous — refused per-row, since
-    // a location-less invite leaves the associate's site unrecorded
+    // With a SECOND active site the choice is ambiguous — refused per-row,
+    // since a location-less invite leaves the associate's site unrecorded
     // forever (approval only opens an assignment when it's set).
-    await prisma.location.create({
-      data: { clientId: mine.id, name: 'Second Site' },
+    await prisma.location.updateMany({
+      where: { clientId: mine.id },
+      data: { isActive: true },
     });
     const missing = await sup.post('/onboarding/applications/bulk').send({
       clientId: mine.id,
