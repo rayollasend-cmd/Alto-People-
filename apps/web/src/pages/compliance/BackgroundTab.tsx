@@ -645,12 +645,17 @@ function BulkOrderDialog({
   const [error, setError] = useState<string | null>(null);
   const [downloaded, setDownloaded] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Which employment groups go in the order. Active + onboarding by default;
+  // inactive (ended, declined, or never applied) is opt-in — screening
+  // people who don't work here is usually wasted spend.
+  const [groups, setGroups] = useState({ ACTIVE: true, PENDING: true, INACTIVE: false });
 
   useEffect(() => {
     if (!open) return;
     setPending(null);
     setError(null);
     setDownloaded(false);
+    setGroups({ ACTIVE: true, PENDING: true, INACTIVE: false });
     listPendingBackgroundChecks()
       .then(setPending)
       .catch((err) =>
@@ -658,7 +663,16 @@ function BulkOrderDialog({
       );
   }, [open]);
 
-  const rows = pending?.rows ?? [];
+  const all = pending?.rows ?? [];
+  const countOf = (s: keyof typeof groups) => all.filter((r) => r.status === s).length;
+  const rows = all.filter((r) => groups[r.status]);
+
+  const toggleGroup = (s: keyof typeof groups) => {
+    setGroups((g) => ({ ...g, [s]: !g[s] }));
+    // The CSV on disk no longer matches the selection — force a re-download
+    // before "mark initiated" can fire.
+    setDownloaded(false);
+  };
 
   const download = () => {
     if (rows.length === 0) return;
@@ -707,18 +721,47 @@ function BulkOrderDialog({
 
         {!pending && !error && <Skeleton className="h-16 w-full" />}
 
-        {pending && rows.length === 0 && (
+        {pending && all.length === 0 && (
           <p className="text-sm text-silver">
-            Nobody is waiting — every onboarded or onboarding associate already
-            has a check on record.
+            Nobody is waiting — every associate already has a check on record.
           </p>
         )}
 
-        {pending && rows.length > 0 && (
+        {pending && all.length > 0 && (
           <div className="space-y-3">
+            <fieldset className="space-y-2">
+              <legend className="sr-only">Employment groups to include</legend>
+              {(
+                [
+                  { key: 'ACTIVE', label: 'Active', hint: 'currently working' },
+                  { key: 'PENDING', label: 'Onboarding', hint: 'application in flight' },
+                  { key: 'INACTIVE', label: 'Inactive', hint: 'ended, declined, or never applied' },
+                ] as const
+              ).map(({ key, label, hint }) => (
+                <label
+                  key={key}
+                  className={cn(
+                    'flex items-center gap-2.5 text-sm',
+                    countOf(key) === 0 ? 'opacity-50' : 'cursor-pointer',
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={groups[key]}
+                    onChange={() => toggleGroup(key)}
+                    disabled={countOf(key) === 0}
+                    className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
+                  />
+                  <span className="text-white">{label}</span>
+                  <span className="text-xs text-silver/70">{hint}</span>
+                  <span className="ml-auto tabular-nums text-silver">{countOf(key)}</span>
+                </label>
+              ))}
+            </fieldset>
+
             <p className="text-sm text-silver">
               <span className="font-semibold text-white tabular-nums">{rows.length}</span>{' '}
-              associate{rows.length === 1 ? ' has' : 's have'} never been screened
+              never-screened associate{rows.length === 1 ? '' : 's'} selected
               {pending.truncated && (
                 <span className="text-warning">
                   {' '}
@@ -727,13 +770,15 @@ function BulkOrderDialog({
               )}
               .
             </p>
-            <p className="text-xs text-silver/70 truncate">
-              {rows
-                .slice(0, 6)
-                .map((r) => `${r.lastName}, ${r.firstName}`)
-                .join(' · ')}
-              {rows.length > 6 ? ` · +${rows.length - 6} more` : ''}
-            </p>
+            {rows.length > 0 && (
+              <p className="text-xs text-silver/70 truncate">
+                {rows
+                  .slice(0, 6)
+                  .map((r) => `${r.lastName}, ${r.firstName}`)
+                  .join(' · ')}
+                {rows.length > 6 ? ` · +${rows.length - 6} more` : ''}
+              </p>
+            )}
             {downloaded && (
               <p className="text-xs text-gold">
                 CSV downloaded. Once it&rsquo;s been uploaded to the provider,

@@ -239,12 +239,12 @@ describe('Background check endpoints', () => {
     expect(audit).toBeTruthy();
   });
 
-  it('pending lists only never-screened associates with a live application', async () => {
+  it('pending lists never-screened associates tagged with directory status', async () => {
     const client = await createClient();
     const mkApplicant = async (
       firstName: string,
       lastName: string,
-      status: 'DRAFT' | 'REJECTED' = 'DRAFT',
+      status: 'DRAFT' | 'APPROVED' | 'REJECTED' = 'DRAFT',
     ) => {
       const a = await createAssociate({ firstName, lastName });
       await prisma.application.create({
@@ -258,23 +258,33 @@ describe('Background check endpoints', () => {
       return a;
     };
 
-    const never = await mkApplicant('Never', 'Screened');
+    const working = await mkApplicant('Now', 'Working', 'APPROVED');
+    const onboarding = await mkApplicant('Still', 'Onboarding');
     const checked = await mkApplicant('Already', 'Checked');
     await prisma.backgroundCheck.create({
       data: { associateId: checked.id, provider: 'alto-stub', status: 'FAILED' },
     });
-    await mkApplicant('Was', 'Rejected', 'REJECTED');
-    await createAssociate({ firstName: 'No', lastName: 'Application' });
+    const declined = await mkApplicant('Was', 'Rejected', 'REJECTED');
+    const noApp = await createAssociate({ firstName: 'No', lastName: 'Application' });
 
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
     const res = await a.get('/compliance/background/pending');
     expect(res.status).toBe(200);
-    // Only the never-screened applicant: a FAILED check still counts as
-    // screened, a rejected application is out, and so is no application.
-    expect(res.body.rows).toHaveLength(1);
-    expect(res.body.rows[0].associateId).toBe(never.id);
-    expect(res.body.rows[0].email).toBe(never.email);
+    // A FAILED check still counts as screened — everyone else appears,
+    // tagged with the same status rule the People directory uses.
+    const byId = new Map(
+      (res.body.rows as { associateId: string; status: string }[]).map((r) => [
+        r.associateId,
+        r.status,
+      ]),
+    );
+    expect(byId.size).toBe(4);
+    expect(byId.has(checked.id)).toBe(false);
+    expect(byId.get(working.id)).toBe('ACTIVE');
+    expect(byId.get(onboarding.id)).toBe('PENDING');
+    expect(byId.get(declined.id)).toBe('INACTIVE');
+    expect(byId.get(noApp.id)).toBe('INACTIVE');
     expect(res.body.truncated).toBe(false);
 
     // The export read is audited.
