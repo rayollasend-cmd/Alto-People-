@@ -320,9 +320,16 @@ describe('onboarding tenant boundary', () => {
   it('supervisor invites into their own client and is clamped to it', async () => {
     const { mine, other, sup } = await seedTwoClients();
     const template = await createStandardTemplate();
+    // seedTwoClients gave mine a site, and clients with sites now require a
+    // work site on every invite (location-less invites leave the associate's
+    // site unrecorded forever) — so the batch names one.
+    const mySite = await prisma.location.findFirstOrThrow({
+      where: { clientId: mine.id },
+    });
 
     const ok = await sup.post('/onboarding/applications/bulk').send({
       clientId: mine.id,
+      locationId: mySite.id,
       templateId: template.id,
       applicants: [
         { email: 'floor.hire@example.com', firstName: 'Floor', lastName: 'Hire' },
@@ -333,9 +340,12 @@ describe('onboarding tenant boundary', () => {
     expect(ok.body.failed).toBe(0);
 
     // Asking for the other tenant lands on their own client anyway — the
-    // dialog preselecting the client is convenience, not a control.
+    // dialog preselecting the client is convenience, not a control. The
+    // location is validated against the CLAMPED client, so their own site
+    // passes while the other tenant's would be a mismatch.
     const clamped = await sup.post('/onboarding/applications/bulk').send({
       clientId: other.id,
+      locationId: mySite.id,
       templateId: template.id,
       applicants: [
         { email: 'poached@example.com', firstName: 'Poach', lastName: 'Ed' },
@@ -347,7 +357,65 @@ describe('onboarding tenant boundary', () => {
       where: { associate: { email: 'poached@example.com' } },
     });
     expect(poached.clientId).toBe(mine.id);
-    expect(poached.clientId).not.toBe(other.id);
+    expect(poached.locationId).toBe(mySite.id);
+
+    // A single-site client picks itself: omitting the site auto-assigns
+    // the only location instead of erroring — the client effectively IS
+    // the work site until a second store appears.
+    const auto = await sup.post('/onboarding/applications/bulk').send({
+      clientId: mine.id,
+      templateId: template.id,
+      applicants: [
+        { email: 'auto.site@example.com', firstName: 'Auto', lastName: 'Site' },
+      ],
+    });
+    expect(auto.status).toBe(200);
+    expect(auto.body.succeeded).toBe(1);
+    const autoApp = await prisma.application.findFirstOrThrow({
+      where: { associate: { email: 'auto.site@example.com' } },
+    });
+    expect(autoApp.locationId).toBe(mySite.id);
+
+    // With a SECOND site the choice is ambiguous — refused per-row, since
+    // a location-less invite leaves the associate's site unrecorded
+    // forever (approval only opens an assignment when it's set).
+    await prisma.location.create({
+      data: { clientId: mine.id, name: 'Second Site' },
+    });
+    const missing = await sup.post('/onboarding/applications/bulk').send({
+      clientId: mine.id,
+      templateId: template.id,
+      applicants: [
+        { email: 'no.site@example.com', firstName: 'No', lastName: 'Site' },
+      ],
+    });
+    expect(missing.status).toBe(200);
+    expect(missing.body.succeeded).toBe(0);
+    expect(missing.body.results[0].errorCode).toBe('location_required');
+  });
+
+  it('invite-locations serves the picker to supervisors, clamped to their client', async () => {
+    const { mine, other, sup } = await seedTwoClients();
+    const mySite = await prisma.location.findFirstOrThrow({
+      where: { clientId: mine.id },
+    });
+
+    // Their own client's sites load (they have no view:clients, so the
+    // /clients locations route is closed to them — this one isn't).
+    const res = await sup.get(`/onboarding/invite-locations?clientId=${mine.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.locations.map((l: { id: string }) => l.id)).toContain(mySite.id);
+
+    // Asking for the other tenant is clamped to their own — no site names
+    // leak across the boundary.
+    const clamped = await sup.get(`/onboarding/invite-locations?clientId=${other.id}`);
+    expect(clamped.status).toBe(200);
+    const ids = clamped.body.locations.map((l: { id: string }) => l.id);
+    expect(ids).toContain(mySite.id);
+    const otherSite = await prisma.location.findFirstOrThrow({
+      where: { clientId: other.id },
+    });
+    expect(ids).not.toContain(otherSite.id);
   });
 
   it('supervisor lists only their own client applications', async () => {

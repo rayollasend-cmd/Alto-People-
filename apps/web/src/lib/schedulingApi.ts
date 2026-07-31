@@ -431,6 +431,18 @@ export function removeShiftTeamMember(
   });
 }
 
+/** One-click cure for "not at this site": opens an AssociateAssignment at
+ *  the team's location (close-then-open, same as the org transfer). */
+export function assignTeamMemberHere(
+  teamId: string,
+  associateId: string,
+): Promise<{ assignmentId: string }> {
+  return apiFetch<{ assignmentId: string }>(
+    `/scheduling/teams/${teamId}/members/${associateId}/assign-here`,
+    { method: 'POST' },
+  );
+}
+
 export function publishWeek(body: PublishWeekInput): Promise<PublishWeekResponse> {
   return apiFetch<PublishWeekResponse>('/scheduling/publish-week', {
     method: 'POST',

@@ -25,6 +25,23 @@ async function hrAgent() {
 }
 
 describe('POST /clients auto-seed', () => {
+  it('creates a default work site named after the client', async () => {
+    const a = await hrAgent();
+    const created = await a.post('/clients').send({ name: 'Fresh Grocer', state: 'fl' });
+    expect(created.status).toBe(201);
+
+    // Every client is born with one site so invites auto-assign it and the
+    // associate's location is recorded from day one. Multi-store clients
+    // add more sites, which flips the invite dialogs to an explicit picker.
+    const site = await prisma.location.findFirst({
+      where: { clientId: created.body.id },
+    });
+    expect(site).toBeTruthy();
+    expect(site!.name).toBe('Fresh Grocer');
+    expect(site!.state).toBe('FL');
+    expect(site!.isActive).toBe(true);
+  });
+
   it('seeds the default shift-position catalog for a new client', async () => {
     const a = await hrAgent();
     const created = await a.post('/clients').send({ name: 'Fresh Grocer' });

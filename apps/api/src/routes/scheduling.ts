@@ -29,6 +29,7 @@ import {
   ShiftListResponseSchema,
   ShiftSwapListResponseSchema,
   ShiftTeamCreateInputSchema,
+  ShiftTeamAssignHereResponseSchema,
   ShiftTeamDetailResponseSchema,
   ShiftTeamListResponseSchema,
   ShiftTeamMemberInputSchema,
@@ -104,9 +105,27 @@ const MANAGE = requireCapability('manage:scheduling');
 // The latter catches any future case where placement diverges from
 // the original application (e.g. cross-client transfer that opens an
 // Assignment without re-onboarding).
+//
+// Schedulability comes from EMPLOYMENT, not portal-login state. This used
+// to require user.status === ACTIVE, which silently hid working associates
+// from every roster, grid row, and shift picker whenever their account was
+// INVITED — including fully-approved people who never set a password, whom
+// the resend-invite flow demotes from ACTIVE back to INVITED (reported
+// 2026-07-31: a team member vanished from the week grid). Whether someone
+// can LOG IN says nothing about whether they work Tuesday's shift. Only a
+// deliberately DISABLED account (offboarding) hides someone; associates
+// linked to management-role accounts stay out of associate rosters as
+// before, and an associate with no portal account at all is schedulable.
+const SCHEDULABLE_USER_FILTER: Prisma.AssociateWhereInput = {
+  OR: [
+    { user: null },
+    { user: { is: { role: 'ASSOCIATE', status: { not: 'DISABLED' } } } },
+  ],
+};
+
 const ACTIVE_ASSOCIATE_FILTER: Prisma.AssociateWhereInput = {
   deletedAt: null,
-  user: { is: { status: 'ACTIVE', role: 'ASSOCIATE' } },
+  AND: [SCHEDULABLE_USER_FILTER],
   OR: [
     { applications: { some: { status: 'APPROVED' } } },
     { assignments: { some: { endedAt: null } } },
@@ -523,8 +542,8 @@ schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
     // create-dialog picker show only people who actually work there. An
     // associate "belongs" to a client/location via an APPROVED application
     // or an open assignment there. Falls back to the org-wide schedulable
-    // set when nothing is selected.
-    const userActive = { is: { status: 'ACTIVE', role: 'ASSOCIATE' } } as const;
+    // set when nothing is selected. Login status deliberately does NOT
+    // gate any branch — see SCHEDULABLE_USER_FILTER.
     let where: Prisma.AssociateWhereInput;
     if (teamId) {
       // Tightest scope: a standing shift crew. Membership already implies
@@ -544,13 +563,13 @@ schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
       }
       where = {
         deletedAt: null,
-        user: userActive,
+        AND: [SCHEDULABLE_USER_FILTER],
         teamMemberships: { some: { teamId } },
       };
     } else if (locationId) {
       where = {
         deletedAt: null,
-        user: userActive,
+        AND: [SCHEDULABLE_USER_FILTER],
         OR: [
           { applications: { some: { status: 'APPROVED', locationId } } },
           { assignments: { some: { endedAt: null, locationId } } },
@@ -559,7 +578,7 @@ schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
     } else if (clientId) {
       where = {
         deletedAt: null,
-        user: userActive,
+        AND: [SCHEDULABLE_USER_FILTER],
         OR: [
           { applications: { some: { status: 'APPROVED', clientId } } },
           { assignments: { some: { endedAt: null, location: { clientId } } } },
@@ -3647,6 +3666,7 @@ schedulingRouter.get('/teams/:id', MANAGE, async (req, res, next) => {
             firstName: true,
             lastName: true,
             email: true,
+            user: { select: { status: true } },
             applications: {
               where: { status: 'APPROVED', locationId: team.locationId, deletedAt: null },
               take: 1,
@@ -3673,6 +3693,8 @@ schedulingRouter.get('/teams/:id', MANAGE, async (req, res, next) => {
           atLocation:
             m.associate.applications.length > 0 ||
             m.associate.assignments.length > 0,
+          // Informational: login state never gates scheduling.
+          portalActive: m.associate.user?.status === 'ACTIVE',
         })),
       }),
     );
@@ -3680,6 +3702,101 @@ schedulingRouter.get('/teams/:id', MANAGE, async (req, res, next) => {
     next(err);
   }
 });
+
+/**
+ * POST /scheduling/teams/:id/members/:associateId/assign-here
+ *
+ * The one-click cure for "not at this site". A whole class of legitimately
+ * onboarded associates has locationId=NULL on their approved application
+ * (the invite's location field is optional, and approval only opens an
+ * AssociateAssignment when it's set) — nothing in the product recorded
+ * their site, so the badge fired and location-filtered rosters dropped
+ * them. This opens an assignment at the TEAM's location, the same
+ * close-then-open pattern as onboarding approval and the org transfer.
+ */
+schedulingRouter.post(
+  '/teams/:id/members/:associateId/assign-here',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const team = await teamInScope(req.user!, req.params.id);
+      const membership = await prisma.shiftTeamMember.findFirst({
+        where: { teamId: team.id, associateId: req.params.associateId },
+        select: {
+          associate: { select: { id: true, deletedAt: true } },
+        },
+      });
+      if (!membership || membership.associate.deletedAt) {
+        throw new HttpError(404, 'member_not_found', 'Not a member of this team');
+      }
+      const associateId = membership.associate.id;
+
+      // Same cross-client fence as the org transfer: if their employment
+      // record points at a different client, this quick action must not
+      // quietly move them — that's a real transfer with its own flow.
+      const openAssignment = await prisma.associateAssignment.findFirst({
+        where: { associateId, endedAt: null },
+        select: { id: true, location: { select: { clientId: true } } },
+      });
+      let expectedClientId = openAssignment?.location.clientId ?? null;
+      if (expectedClientId === null) {
+        const latestApproved = await prisma.application.findFirst({
+          where: { associateId, status: 'APPROVED', deletedAt: null },
+          orderBy: { invitedAt: 'desc' },
+          select: { clientId: true },
+        });
+        expectedClientId = latestApproved?.clientId ?? null;
+      }
+      if (expectedClientId !== null && expectedClientId !== team.clientId) {
+        throw new HttpError(
+          400,
+          'cross_client_transfer',
+          'They currently work for a different client — use the org transfer flow instead.',
+        );
+      }
+
+      const startedAt = new Date();
+      const created = await prisma.$transaction(async (tx) => {
+        if (openAssignment) {
+          await tx.associateAssignment.update({
+            where: { id: openAssignment.id },
+            data: { endedAt: startedAt },
+          });
+        }
+        return tx.associateAssignment.create({
+          data: {
+            associateId,
+            locationId: team.locationId,
+            startedAt,
+            reason: `Assigned from shift team "${team.name}"`,
+            notedById: req.user!.id,
+          },
+          select: { id: true },
+        });
+      });
+
+      enqueueAudit(
+        {
+          actorUserId: req.user!.id,
+          action: 'scheduling.team_member_assigned',
+          entityType: 'Associate',
+          entityId: associateId,
+          metadata: {
+            teamId: team.id,
+            locationId: team.locationId,
+            closedAssignmentId: openAssignment?.id ?? null,
+            assignmentId: created.id,
+          },
+        },
+        'scheduling.team_member_assigned',
+      );
+
+      res.json(ShiftTeamAssignHereResponseSchema.parse({ assignmentId: created.id }));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 schedulingRouter.post('/teams/:id/members', MANAGE, async (req, res, next) => {
   try {

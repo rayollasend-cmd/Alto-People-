@@ -560,6 +560,10 @@ export const BulkInviteInputSchema = z.object({
   clientId: UuidSchema,
   templateId: UuidSchema,
   employmentType: EmploymentTypeSchema.optional(),
+  /** Starting work site for the whole batch. Required (server-enforced)
+   *  when the client has locations configured — a location-less invite
+   *  leaves the associate's site unrecorded forever. */
+  locationId: UuidSchema.optional(),
   applicants: z.array(BulkInviteApplicantSchema).min(1).max(200),
 });
 export type BulkInviteInput = z.infer<typeof BulkInviteInputSchema>;
@@ -1854,10 +1858,19 @@ export const ShiftTeamDetailResponseSchema = z.object({
       /** False when the associate has no open assignment/approved
        *  application at the team's location — membership likely stale. */
       atLocation: z.boolean(),
+      /** False when their portal account is INVITED/DISABLED or absent.
+       *  Informational only — login state never gates scheduling. */
+      portalActive: z.boolean().optional(),
     }),
   ),
 });
 export type ShiftTeamDetailResponse = z.infer<typeof ShiftTeamDetailResponseSchema>;
+
+/** Response of the "assign to this site" quick action on a team member. */
+export const ShiftTeamAssignHereResponseSchema = z.object({
+  assignmentId: UuidSchema,
+});
+export type ShiftTeamAssignHereResponse = z.infer<typeof ShiftTeamAssignHereResponseSchema>;
 
 export const ShiftTeamMemberInputSchema = z.object({
   associateId: UuidSchema,

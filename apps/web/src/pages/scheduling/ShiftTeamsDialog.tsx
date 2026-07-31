@@ -3,6 +3,7 @@ import { AlertTriangle, Plus, Trash2, Users, X } from 'lucide-react';
 import type { ShiftTeam, ShiftTeamDetailResponse } from '@alto-people/shared';
 import {
   addShiftTeamMember,
+  assignTeamMemberHere,
   createShiftTeam,
   deleteShiftTeam,
   getShiftTeam,
@@ -202,6 +203,21 @@ export function ShiftTeamsDialog({
     }
   };
 
+  const onAssignHere = async (associateId: string) => {
+    if (!selectedId || busy) return;
+    setBusy(true);
+    try {
+      await assignTeamMemberHere(selectedId, associateId);
+      await loadDetail(selectedId);
+      onChanged(); // location-scoped rosters now include them
+      toast.success('Assigned to this site.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not assign to this site.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
@@ -384,12 +400,31 @@ export function ShiftTeamsDialog({
                             {m.email}
                           </span>
                           {!m.atLocation && (
+                            <span className="inline-flex items-center gap-1.5">
+                              <span
+                                className="inline-flex items-center gap-1 text-xs text-warning"
+                                title="Nothing on their record points at this location — often an invite where no work site was picked, so approval never opened an assignment."
+                              >
+                                <AlertTriangle className="h-3.5 w-3.5" />
+                                not at this site
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => void onAssignHere(m.associateId)}
+                                disabled={busy}
+                                className="text-xs text-gold hover:underline focus:underline focus:outline-none disabled:opacity-50"
+                                title="Record this site as their work location (opens an assignment here)"
+                              >
+                                Assign to this site
+                              </button>
+                            </span>
+                          )}
+                          {m.portalActive === false && (
                             <span
-                              className="inline-flex items-center gap-1 text-xs text-warning"
-                              title="No open assignment or approved application at this location — membership may be stale."
+                              className="text-xs2 text-silver/60"
+                              title="Their portal login isn't active (invite not accepted, or access was re-sent). They can still be scheduled — this only affects signing in."
                             >
-                              <AlertTriangle className="h-3.5 w-3.5" />
-                              not at this site
+                              no portal access
                             </span>
                           )}
                           <button

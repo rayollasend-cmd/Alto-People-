@@ -6,6 +6,7 @@ import {
   ApproveApplicationInputSchema,
   BackgroundCheckAuthorizeInputSchema,
   BulkInviteInputSchema,
+  LocationListResponseSchema,
   BulkResendInputSchema,
   DirectDepositInputSchema,
   J1UpsertInputSchema,
@@ -254,6 +255,8 @@ async function inviteOneApplicant(
 
     // Phase 131 — validate the optional starting Location lives under
     // the chosen client. Defensive check; the picker UI prefilters.
+    // The RESOLVED site for this hire — what the application actually stores.
+    let resolvedLocationId: string | null = input.locationId ?? null;
     if (input.locationId) {
       const location = await tx.location.findFirst({
         where: { id: input.locationId, clientId: client.id, deletedAt: null },
@@ -264,6 +267,32 @@ async function inviteOneApplicant(
           400,
           'location_mismatch',
           'Location does not belong to the chosen client.',
+        );
+      }
+    } else {
+      // A location-less invite leaves the associate's site unrecorded
+      // FOREVER: approval only opens an AssociateAssignment when the
+      // application has a locationId, so nothing ever backfills it — they
+      // get flagged "not at this site" and drop out of location-filtered
+      // rosters despite genuinely working there (reported 2026-07-31).
+      //
+      // Single-site clients pick themselves: most clients ARE one store
+      // ("Walmart Front Beach"), and asking HR to choose the only possible
+      // answer is exactly the friction that used to get skipped. Only a
+      // genuinely ambiguous choice (2+ sites) is bounced back to the
+      // caller; clients with no sites keep the old behavior.
+      const sites = await tx.location.findMany({
+        take: 2,
+        where: { clientId: client.id, deletedAt: null, isActive: true },
+        select: { id: true },
+      });
+      if (sites.length === 1) {
+        resolvedLocationId = sites[0].id;
+      } else if (sites.length > 1) {
+        throw new HttpError(
+          400,
+          'location_required',
+          'Pick a work site for this hire — this client has more than one location.',
         );
       }
     }
@@ -321,7 +350,7 @@ async function inviteOneApplicant(
       data: {
         associateId: associate.id,
         clientId: client.id,
-        locationId: input.locationId ?? null,
+        locationId: resolvedLocationId,
         onboardingTrack: template.track,
         status: 'DRAFT',
         position: input.position ?? null,
@@ -3323,6 +3352,60 @@ onboardingRouter.post(
   }
 );
 
+/**
+ * GET /onboarding/invite-locations?clientId=UUID
+ *
+ * Active sites for the invite dialogs' work-site picker. Lives here (behind
+ * invite:onboarding) rather than on /clients because SHIFT_SUPERVISOR can
+ * invite but has no view:clients — without this route the bulk dialog
+ * couldn't load a picker for the very people who invite the most. Bounded
+ * callers are clamped to their own client, same as the invite itself.
+ */
+onboardingRouter.get('/invite-locations', INVITE, async (req, res, next) => {
+  try {
+    const requested = req.query.clientId?.toString();
+    // undefined = admin passthrough (use what they asked for); null =
+    // bounded caller with no client — fail closed to an empty list.
+    const bounded = effectiveClientIdFilter(req.user!, requested);
+    const clientId = bounded === undefined ? requested : bounded;
+    if (!clientId) {
+      res.json(LocationListResponseSchema.parse({ locations: [] }));
+      return;
+    }
+    const rows = await prisma.location.findMany({
+      take: 500,
+      where: { clientId, deletedAt: null, isActive: true },
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        clientId: true,
+        name: true,
+        addressLine1: true,
+        addressLine2: true,
+        city: true,
+        state: true,
+        zip: true,
+        latitude: true,
+        longitude: true,
+        geofenceRadiusMeters: true,
+        isActive: true,
+        timezone: true,
+      },
+    });
+    res.json(
+      LocationListResponseSchema.parse({
+        locations: rows.map((r) => ({
+          ...r,
+          latitude: r.latitude ? Number(r.latitude) : null,
+          longitude: r.longitude ? Number(r.longitude) : null,
+        })),
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
 /* BULK INVITE (HR/Ops only, Phase 58) ---------------------------------- */
 // Run inviteOneApplicant per row, isolated. One bad row (duplicate ACTIVE,
 // missing template, etc.) doesn't block the rest — failures are reported
@@ -3361,6 +3444,10 @@ onboardingRouter.post(
             associateLastName: a.lastName,
             associateEmail: a.email,
             clientId,
+            // One site for the whole batch — the helper validates it belongs
+            // to the (possibly clamped) client and enforces location_required
+            // when the client has sites configured.
+            locationId: parsed.data.locationId,
             templateId,
             employmentType,
             position: a.position,

@@ -156,7 +156,13 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
     let cancelled = false;
     setLocations(null);
     listClientLocations(clientId)
-      .then((r) => !cancelled && setLocations(r.locations))
+      .then((r) => {
+        if (cancelled) return;
+        setLocations(r.locations);
+        // One possible answer — pick it (the server auto-defaults a sole
+        // site anyway; this keeps the form's required check in agreement).
+        if (r.locations.length === 1) setLocationId(r.locations[0].id);
+      })
       .catch(() => !cancelled && setLocations([]));
     return () => {
       cancelled = true;
@@ -209,6 +215,14 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
     }
     if (!templateId) {
       toast.error('Pick an onboarding template.');
+      return;
+    }
+    // Mirror the server rule: a location-less invite leaves the associate's
+    // site unrecorded forever (approval only opens an assignment when the
+    // application has one), so a site is required whenever the client has
+    // locations to pick from.
+    if (!locationId && locations && locations.length > 0) {
+      toast.error('Pick a work site — this client has locations configured.');
       return;
     }
     setSubmitting(true);
@@ -382,8 +396,8 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
             </Field>
 
             <Field
-              label="Location"
-              hint="Optional. Sets the associate's starting work site. Can be changed later via the Transfer button on the profile."
+              label={locations && locations.length > 0 ? 'Location (required)' : 'Location'}
+              hint="Sets the associate's starting work site — scheduling and site rosters key off it. Can be changed later via the Transfer button on the profile."
             >
               {(p) => (
                 <Select
@@ -399,7 +413,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
                         ? 'Loading…'
                         : locations.length === 0
                           ? 'No locations under this client'
-                          : 'No specific location'}
+                          : 'Pick a work site…'}
                   </option>
                   {locations?.map((l) => (
                     <option key={l.id} value={l.id}>
