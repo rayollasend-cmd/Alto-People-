@@ -183,6 +183,82 @@ describe('Background check endpoints', () => {
     expect(update.body.status).toBe('IN_PROGRESS');
     expect(update.body.completedAt).toBeNull();
   });
+
+  it('list carries reportCount; detail returns the report docs and audits the view', async () => {
+    const associate = await createAssociate();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const initiate = await a.post('/compliance/background').send({
+      associateId: associate.id,
+      provider: 'alto-stub',
+    });
+    expect(initiate.status).toBe(201);
+    const checkId = initiate.body.id as string;
+
+    // Two report docs on the associate; a deleted one must not count.
+    const mkDoc = (filename: string, deletedAt: Date | null = null) =>
+      prisma.documentRecord.create({
+        data: {
+          associateId: associate.id,
+          kind: 'BACKGROUND_CHECK_RESULT',
+          s3Key: null, // no file on disk → fileAvailable must come back false
+          filename,
+          mimeType: 'application/pdf',
+          size: 1234,
+          deletedAt,
+        },
+      });
+    await mkDoc('checkr-report.pdf');
+    await mkDoc('checkr-supplement.pdf');
+    await mkDoc('old-deleted.pdf', new Date());
+
+    const list = await a.get('/compliance/background');
+    expect(list.status).toBe(200);
+    const row = list.body.checks.find((c: { id: string }) => c.id === checkId);
+    expect(row.reportCount).toBe(2);
+
+    const detail = await a.get(`/compliance/background/${checkId}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.check.id).toBe(checkId);
+    expect(detail.body.check.reportCount).toBe(2);
+    expect(detail.body.reports).toHaveLength(2);
+    expect(detail.body.reports.map((r: { filename: string }) => r.filename)).toEqual([
+      'checkr-report.pdf',
+      'checkr-supplement.pdf',
+    ]);
+    // s3Key null → the record exists but the file doesn't; UI disables preview.
+    expect(detail.body.reports.every((r: { fileAvailable: boolean }) => !r.fileAvailable)).toBe(
+      true,
+    );
+
+    // FCRA: reading the report list is a recorded disclosure.
+    await flushPendingAudits();
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: 'compliance.background_report_viewed', entityId: checkId },
+    });
+    expect(audit).toBeTruthy();
+  });
+
+  it('detail: unknown id → 404; CLIENT_PORTAL blocked at the router guard', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const missing = await a.get(
+      '/compliance/background/00000000-0000-4000-8000-000000000000',
+    );
+    expect(missing.status).toBe(404);
+
+    // CLIENT_PORTAL lacks view:compliance, so the /compliance mount 403s
+    // before scopeBackgroundChecks even runs — the scope clamp is a second
+    // fence behind this one.
+    const client = await createClient();
+    const { user: portal } = await createUser({
+      role: 'CLIENT_PORTAL',
+      clientId: client.id,
+    });
+    const p = await loginAs(portal.email);
+    const res = await p.get('/compliance/background/00000000-0000-4000-8000-000000000000');
+    expect(res.status).toBe(403);
+  });
 });
 
 describe('J-1 endpoints', () => {

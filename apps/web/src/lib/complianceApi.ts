@@ -1,5 +1,6 @@
 import type {
   BackgroundCheck,
+  BackgroundCheckDetail,
   BackgroundCheckListResponse,
   BackgroundInitiateInput,
   BackgroundUpdateInput,
@@ -73,6 +74,12 @@ export function updateEVerifyIdentity(
 
 export function listBackgroundChecks(): Promise<BackgroundCheckListResponse> {
   return apiFetch<BackgroundCheckListResponse>('/compliance/background');
+}
+
+/** Check + report documents for the drawer. Every read is an audited
+ *  disclosure (FCRA consumer report), so fetch on drawer open, not per row. */
+export function getBackgroundCheckDetail(id: string): Promise<BackgroundCheckDetail> {
+  return apiFetch<BackgroundCheckDetail>(`/compliance/background/${id}`);
 }
 
 export function initiateBackgroundCheck(

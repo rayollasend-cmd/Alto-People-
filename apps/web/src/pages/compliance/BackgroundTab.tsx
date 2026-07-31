@@ -1,11 +1,19 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Plus, ShieldCheck } from 'lucide-react';
-import type { BackgroundCheck, BgCheckStatus } from '@alto-people/shared';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { FileCheck2, Plus, ShieldCheck } from 'lucide-react';
+import { toast } from 'sonner';
+import type {
+  BackgroundCheck,
+  BackgroundCheckDetail,
+  BgCheckStatus,
+} from '@alto-people/shared';
 import {
+  getBackgroundCheckDetail,
   initiateBackgroundCheck,
   listBackgroundChecks,
   updateBackgroundCheck,
 } from '@/lib/complianceApi';
+import { uploadAdminDocument } from '@/lib/documentsApi';
+import { DocumentThumbnails } from '@/components/DocumentViewer';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime } from '@/lib/format';
@@ -28,6 +36,7 @@ import {
   EmptyState,
   ErrorBanner,
   Input,
+  Skeleton,
   SkeletonRows,
   Table,
   TableBody,
@@ -36,6 +45,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 
 const TRANSITION_OPTIONS: BgCheckStatus[] = [
   'IN_PROGRESS',
@@ -100,6 +110,9 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [showInitiate, setShowInitiate] = useState(false);
   const [drawerTarget, setDrawerTarget] = useState<BackgroundCheck | null>(null);
+  // Reports for the open drawer — fetched on open (each read is an audited
+  // FCRA disclosure server-side), null while loading.
+  const [detail, setDetail] = useState<BackgroundCheckDetail | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -116,6 +129,20 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
     refresh();
   }, [refresh]);
 
+  const loadDetail = useCallback(async (id: string) => {
+    try {
+      setDetail(await getBackgroundCheckDetail(id));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load the report list.');
+    }
+  }, []);
+
+  const openDrawer = (c: BackgroundCheck) => {
+    setDrawerTarget(c);
+    setDetail(null);
+    void loadDetail(c.id);
+  };
+
   const updateStatus = async (id: string, status: BgCheckStatus) => {
     setPendingId(id);
     try {
@@ -130,6 +157,20 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
     } finally {
       setPendingId(null);
     }
+  };
+
+  // Snapshot strip — same at-a-glance idiom as the E-Verify directory.
+  const open = (checks ?? []).filter((c) => !isTerminal(c.status));
+  const kpi = {
+    inFlight: open.length,
+    needsReview: (checks ?? []).filter((c) => c.status === 'NEEDS_REVIEW').length,
+    stuck: open.filter((c) => ageInDays(c.initiatedAt) >= 7).length,
+    passed: (checks ?? []).filter((c) => c.status === 'PASSED').length,
+    failed: (checks ?? []).filter((c) => c.status === 'FAILED').length,
+    // A finalized decision with no report on file has no evidence behind it.
+    missingReport: (checks ?? []).filter(
+      (c) => isTerminal(c.status) && (c.reportCount ?? 0) === 0,
+    ).length,
   };
 
   return (
@@ -156,6 +197,34 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
           {error}
         </ErrorBanner>
       )}
+
+      {checks && checks.length > 0 && (
+        <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3 rounded-lg border border-navy-secondary bg-navy/40 p-4">
+          <Kpi label="In flight" value={kpi.inFlight} />
+          <Kpi
+            label="Needs review"
+            value={kpi.needsReview}
+            tone={kpi.needsReview > 0 ? 'text-warning' : undefined}
+          />
+          <Kpi
+            label="Stuck 7d+"
+            value={kpi.stuck}
+            tone={kpi.stuck > 0 ? 'text-alert' : undefined}
+          />
+          <Kpi label="Passed" value={kpi.passed} tone="text-success" />
+          <Kpi
+            label="Failed"
+            value={kpi.failed}
+            tone={kpi.failed > 0 ? 'text-alert' : undefined}
+          />
+          <Kpi
+            label="Finalized, no report"
+            value={kpi.missingReport}
+            tone={kpi.missingReport > 0 ? 'text-warning' : undefined}
+          />
+        </div>
+      )}
+
       {!checks && <SkeletonRows count={4} rowHeight="h-12" />}
       {checks && checks.length === 0 && (
         <EmptyState
@@ -183,6 +252,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
               <TableHead>Associate</TableHead>
               <TableHead className="hidden sm:table-cell">Provider</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead className="hidden sm:table-cell">Report</TableHead>
               <TableHead className="hidden md:table-cell">Initiated</TableHead>
               <TableHead className="hidden lg:table-cell">Completed</TableHead>
             </TableRow>
@@ -196,7 +266,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
                   const target = ev.target as HTMLElement;
                   if (target.closest('button, a, input, [data-no-row-click]')) return;
                   if (window.getSelection()?.toString()) return;
-                  setDrawerTarget(c);
+                  openDrawer(c);
                 }}
               >
                 <TableCell className="font-medium">
@@ -231,6 +301,20 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
                     {STATUS_LABELS[c.status]}
                   </Badge>
                 </TableCell>
+                <TableCell className="hidden sm:table-cell">
+                  {(c.reportCount ?? 0) > 0 ? (
+                    <span className="inline-flex items-center gap-1 text-xs text-success">
+                      <FileCheck2 className="h-3.5 w-3.5" />
+                      {c.reportCount === 1 ? 'On file' : `${c.reportCount} on file`}
+                    </span>
+                  ) : isTerminal(c.status) ? (
+                    // Decision recorded, evidence missing — the gap this
+                    // column exists to surface.
+                    <span className="text-xs text-warning">None</span>
+                  ) : (
+                    <span className="text-xs text-silver/40">—</span>
+                  )}
+                </TableCell>
                 <TableCell className="hidden md:table-cell text-silver tabular-nums">
                   {fmtDate(c.initiatedAt)}
                   {!isTerminal(c.status) && (
@@ -261,14 +345,19 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
       <Drawer
         open={!!drawerTarget}
         onOpenChange={(o) => !o && setDrawerTarget(null)}
-        width="max-w-lg"
+        width="max-w-xl"
       >
         {drawerTarget && (
           <BackgroundCheckDetailPanel
             check={drawerTarget}
+            reports={detail ? detail.reports : null}
             canManage={canManage}
             pending={pendingId === drawerTarget.id}
             onTransition={(status) => updateStatus(drawerTarget.id, status)}
+            onReportsChanged={() => {
+              void loadDetail(drawerTarget.id);
+              void refresh(); // report counts in the table + KPI strip
+            }}
           />
         )}
       </Drawer>
@@ -278,14 +367,19 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
 
 function BackgroundCheckDetailPanel({
   check,
+  reports,
   canManage,
   pending,
   onTransition,
+  onReportsChanged,
 }: {
   check: BackgroundCheck;
+  /** null while the audited detail fetch is in flight. */
+  reports: BackgroundCheckDetail['reports'] | null;
   canManage: boolean;
   pending: boolean;
   onTransition: (status: BgCheckStatus) => void;
+  onReportsChanged: () => void;
 }) {
   const ageDays = ageInDays(check.initiatedAt);
   const finalized = isTerminal(check.status);
@@ -323,6 +417,23 @@ function BackgroundCheckDetailPanel({
           <DetailRow label="External ref">{check.externalId ?? '—'}</DetailRow>
         </dl>
 
+        <div className="mt-6">
+          <h3 className="mb-2 text-2xs uppercase tracking-widest text-silver/80">
+            Provider report
+          </h3>
+          {reports === null ? (
+            <Skeleton className="h-20 w-full" />
+          ) : (
+            <ReportSection
+              associateId={check.associateId}
+              reports={reports}
+              finalized={finalized}
+              canManage={canManage}
+              onUploaded={onReportsChanged}
+            />
+          )}
+        </div>
+
         {finalized && (
           <p className="mt-5 text-xs text-silver">
             This check is finalized. Use a transition below if the result needs
@@ -350,6 +461,103 @@ function BackgroundCheckDetailPanel({
   );
 }
 
+/**
+ * The report the provider hands back when the screen completes.
+ *
+ * HR downloads it from the Checkr/Sterling portal and files it here, against
+ * the associate, so the evidence lives next to the recorded decision instead
+ * of in someone's Downloads folder — the same treatment E-Verify closure
+ * packets get. Stored as BACKGROUND_CHECK_RESULT documents (the kind that
+ * was always meant for this), which also feeds the compliance scorecard's
+ * background signal and the profile's Documents tab.
+ */
+function ReportSection({
+  associateId,
+  reports,
+  finalized,
+  canManage,
+  onUploaded,
+}: {
+  associateId: string;
+  reports: BackgroundCheckDetail['reports'];
+  finalized: boolean;
+  canManage: boolean;
+  onUploaded: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const upload = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setBusy(true);
+    setErr(null);
+    const failures: string[] = [];
+    let ok = 0;
+    // Sequential, not Promise.all: each file is its own audited write, and a
+    // partial failure should say which file rather than rejecting the batch.
+    for (const file of Array.from(files)) {
+      try {
+        await uploadAdminDocument(file, 'BACKGROUND_CHECK_RESULT', associateId);
+        ok += 1;
+      } catch (e) {
+        failures.push(`${file.name}: ${e instanceof Error ? e.message : 'failed'}`);
+      }
+    }
+    setBusy(false);
+    if (inputRef.current) inputRef.current.value = '';
+    if (ok > 0) onUploaded();
+    if (failures.length === 0) {
+      toast.success(`Uploaded ${ok} file${ok === 1 ? '' : 's'}.`);
+    } else {
+      setErr(failures.join(' · '));
+      if (ok > 0) toast.warning(`Uploaded ${ok}, ${failures.length} failed.`);
+    }
+  };
+
+  return (
+    <div>
+      {err && <ErrorBanner className="mb-2">{err}</ErrorBanner>}
+
+      {reports.length === 0 ? (
+        <p className={cn('mb-2 text-xs', finalized ? 'text-warning' : 'text-silver')}>
+          {finalized
+            ? 'This check is finalized but no report is on file — upload the provider report so the decision has its evidence.'
+            : 'No report yet. When the provider completes the screen, download the report and file it here.'}
+        </p>
+      ) : (
+        <div className="mb-3">
+          <DocumentThumbnails
+            documents={reports}
+            bulkDownloadAssociateId={associateId}
+            bulkDownloadKinds={['BACKGROUND_CHECK_RESULT']}
+          />
+        </div>
+      )}
+
+      {canManage && (
+        <div>
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            accept=".pdf,.png,.jpg,.jpeg,.webp,.zip"
+            onChange={(e) => void upload(e.target.files)}
+            disabled={busy}
+            aria-label="Upload background report files"
+            className="block w-full text-xs text-silver file:mr-3 file:rounded file:border file:border-navy-secondary file:bg-navy-secondary/40 file:px-3 file:py-1.5 file:text-xs file:text-white hover:file:border-gold/60 disabled:opacity-50"
+          />
+          <p className="mt-1 text-2xs text-silver/60">
+            PDF, image, or a .zip of the whole report folder. Up to 10 MB per
+            file — select several at once if it arrived as multiple documents.
+          </p>
+          {busy && <p className="mt-1 text-2xs text-gold">Uploading…</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function labelFor(s: BgCheckStatus): string {
   switch (s) {
     case 'IN_PROGRESS':
@@ -363,6 +571,26 @@ function labelFor(s: BgCheckStatus): string {
     case 'INITIATED':
       return 'Reopen';
   }
+}
+
+// Same snapshot-stat idiom as the E-Verify directory strip.
+function Kpi({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone?: string;
+}) {
+  return (
+    <div>
+      <div className="text-2xs uppercase tracking-wider text-silver/70">{label}</div>
+      <div className={cn('font-display text-xl tabular-nums', tone ?? 'text-white')}>
+        {value}
+      </div>
+    </div>
+  );
 }
 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -387,26 +615,25 @@ function InitiateCheckDialog({
   onCreated,
   onError,
 }: InitiateCheckDialogProps) {
-  const [associateId, setAssociateId] = useState('');
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [externalId, setExternalId] = useState('');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setAssociateId('');
+      setAssociate(null);
       setExternalId('');
     }
   }, [open]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const trimmed = associateId.trim();
-    if (!trimmed || busy) return;
+    if (!associate || busy) return;
     setBusy(true);
     try {
       const ref = externalId.trim();
       await initiateBackgroundCheck({
-        associateId: trimmed,
+        associateId: associate.id,
         provider: 'alto-stub',
         ...(ref ? { externalId: ref } : {}),
       });
@@ -431,14 +658,12 @@ function InitiateCheckDialog({
         <form onSubmit={submit} className="grid gap-3">
           <label className="grid gap-1">
             <span className="text-xs2 uppercase tracking-wider text-silver">
-              Associate ID
+              Associate
             </span>
-            <Input
-              autoFocus
-              required
-              placeholder="00000000-0000-4000-8000-000000000000"
-              value={associateId}
-              onChange={(e) => setAssociateId(e.target.value)}
+            <AssociatePicker
+              value={associate}
+              onChange={setAssociate}
+              placeholder="Search by name…"
             />
           </label>
           <label className="grid gap-1">
@@ -464,7 +689,7 @@ function InitiateCheckDialog({
             <Button
               type="submit"
               loading={busy}
-              disabled={busy || !associateId.trim()}
+              disabled={busy || !associate}
             >
               Initiate check
             </Button>
