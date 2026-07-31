@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FileCheck2, Plus, ShieldCheck } from 'lucide-react';
+import { Download, FileCheck2, Plus, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   BackgroundCheck,
   BackgroundCheckDetail,
+  BackgroundPendingResponse,
   BgCheckStatus,
 } from '@alto-people/shared';
 import {
+  bulkInitiateBackgroundChecks,
   getBackgroundCheckDetail,
   initiateBackgroundCheck,
   listBackgroundChecks,
+  listPendingBackgroundChecks,
   updateBackgroundCheck,
 } from '@/lib/complianceApi';
+import { downloadCsv } from '@/lib/csv';
 import { uploadAdminDocument } from '@/lib/documentsApi';
 import { DocumentThumbnails } from '@/components/DocumentViewer';
 import { ApiError } from '@/lib/api';
@@ -109,6 +113,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
   const [checks, setChecks] = useState<BackgroundCheck[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showInitiate, setShowInitiate] = useState(false);
+  const [showBulkOrder, setShowBulkOrder] = useState(false);
   const [drawerTarget, setDrawerTarget] = useState<BackgroundCheck | null>(null);
   // Reports for the open drawer — fetched on open (each read is an audited
   // FCRA disclosure server-side), null while loading.
@@ -178,10 +183,16 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
       <div className="flex items-center justify-between gap-3 mb-4">
         <h2 className="text-base font-medium text-white">Background checks</h2>
         {canManage && (
-          <Button onClick={() => setShowInitiate(true)} size="sm">
-            <Plus className="h-4 w-4" />
-            Initiate check
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setShowBulkOrder(true)}>
+              <Download className="h-4 w-4" />
+              Bulk order CSV
+            </Button>
+            <Button onClick={() => setShowInitiate(true)} size="sm">
+              <Plus className="h-4 w-4" />
+              Initiate check
+            </Button>
+          </div>
         )}
       </div>
 
@@ -340,6 +351,15 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
           refresh();
         }}
         onError={setError}
+      />
+
+      <BulkOrderDialog
+        open={showBulkOrder}
+        onOpenChange={setShowBulkOrder}
+        onInitiated={() => {
+          setShowBulkOrder(false);
+          refresh();
+        }}
       />
 
       <Drawer
@@ -599,6 +619,165 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
       <dt className="text-2xs uppercase tracking-widest text-silver/80">{label}</dt>
       <dd className="text-white text-sm mt-0.5 tabular-nums break-all">{children}</dd>
     </div>
+  );
+}
+
+/**
+ * Bulk Checkr ordering. Downloads the never-screened roster as the
+ * provider's bulk-invitation CSV (email / first name / phone number — the
+ * provider collects DOB/SSN from the candidate, so no heavy PII leaves).
+ *
+ * Downloading marks NOTHING — a file on disk isn't an order, and the
+ * provider might reject it. The "Mark as initiated" step is separate,
+ * enabled only after a download, and worded to be clicked after the
+ * upload to the provider actually succeeded.
+ */
+function BulkOrderDialog({
+  open,
+  onOpenChange,
+  onInitiated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onInitiated: () => void;
+}) {
+  const [pending, setPending] = useState<BackgroundPendingResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [downloaded, setDownloaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setPending(null);
+    setError(null);
+    setDownloaded(false);
+    listPendingBackgroundChecks()
+      .then(setPending)
+      .catch((err) =>
+        setError(err instanceof ApiError ? err.message : 'Could not load the pending list.'),
+      );
+  }, [open]);
+
+  const rows = pending?.rows ?? [];
+
+  const download = () => {
+    if (rows.length === 0) return;
+    const today = new Date().toISOString().slice(0, 10);
+    // Header names exactly as the provider's template expects them.
+    downloadCsv(`background-bulk-order-${today}.csv`, [
+      ['email', 'first name', 'phone number'],
+      ...rows.map((r) => [r.email, r.firstName, r.phone ?? '']),
+    ]);
+    setDownloaded(true);
+  };
+
+  const markInitiated = async () => {
+    if (rows.length === 0 || busy) return;
+    setBusy(true);
+    try {
+      const res = await bulkInitiateBackgroundChecks({
+        associateIds: rows.map((r) => r.associateId),
+        provider: 'checkr',
+      });
+      toast.success(
+        res.skipped > 0
+          ? `Marked ${res.created} initiated (${res.skipped} already had a check).`
+          : `Marked ${res.created} check${res.created === 1 ? '' : 's'} initiated.`,
+      );
+      onInitiated();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not mark checks initiated.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Bulk order background checks</DialogTitle>
+          <DialogDescription>
+            Downloads everyone who has never been screened as a CSV ready for
+            the provider&rsquo;s bulk-order upload.
+          </DialogDescription>
+        </DialogHeader>
+
+        {error && <ErrorBanner className="mb-1">{error}</ErrorBanner>}
+
+        {!pending && !error && <Skeleton className="h-16 w-full" />}
+
+        {pending && rows.length === 0 && (
+          <p className="text-sm text-silver">
+            Nobody is waiting — every onboarded or onboarding associate already
+            has a check on record.
+          </p>
+        )}
+
+        {pending && rows.length > 0 && (
+          <div className="space-y-3">
+            <p className="text-sm text-silver">
+              <span className="font-semibold text-white tabular-nums">{rows.length}</span>{' '}
+              associate{rows.length === 1 ? ' has' : 's have'} never been screened
+              {pending.truncated && (
+                <span className="text-warning">
+                  {' '}
+                  — list capped at 500; run again after this batch to catch the rest
+                </span>
+              )}
+              .
+            </p>
+            <p className="text-xs text-silver/70 truncate">
+              {rows
+                .slice(0, 6)
+                .map((r) => `${r.lastName}, ${r.firstName}`)
+                .join(' · ')}
+              {rows.length > 6 ? ` · +${rows.length - 6} more` : ''}
+            </p>
+            {downloaded && (
+              <p className="text-xs text-gold">
+                CSV downloaded. Once it&rsquo;s been uploaded to the provider,
+                mark these associates as initiated so this queue reflects the
+                order.
+              </p>
+            )}
+          </div>
+        )}
+
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+            disabled={busy}
+          >
+            {downloaded ? 'Close' : 'Cancel'}
+          </Button>
+          <Button
+            type="button"
+            variant={downloaded ? 'secondary' : 'primary'}
+            onClick={download}
+            disabled={rows.length === 0}
+          >
+            <Download className="h-4 w-4" />
+            {downloaded ? 'Download again' : 'Download CSV'}
+          </Button>
+          <Button
+            type="button"
+            onClick={() => void markInitiated()}
+            loading={busy}
+            disabled={!downloaded || rows.length === 0 || busy}
+            title={
+              downloaded
+                ? 'Click after the CSV has been uploaded to the provider'
+                : 'Download the CSV first'
+            }
+          >
+            Mark {rows.length > 0 ? rows.length : ''} initiated
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

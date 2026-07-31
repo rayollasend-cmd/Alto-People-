@@ -2665,6 +2665,43 @@ export const BackgroundUpdateInputSchema = z.object({
 });
 export type BackgroundUpdateInput = z.infer<typeof BackgroundUpdateInputSchema>;
 
+/**
+ * Bulk Checkr ordering — associates who have never been screened, shaped for
+ * the provider's bulk-invitation CSV (email required; first name and phone
+ * optional — Checkr collects DOB/SSN from the candidate directly, so no
+ * heavy PII leaves this system).
+ */
+export const BackgroundPendingRowSchema = z.object({
+  associateId: UuidSchema,
+  firstName: z.string(),
+  lastName: z.string(),
+  email: z.string(),
+  phone: z.string().nullable(),
+});
+export type BackgroundPendingRow = z.infer<typeof BackgroundPendingRowSchema>;
+
+export const BackgroundPendingResponseSchema = z.object({
+  rows: z.array(BackgroundPendingRowSchema),
+  /** True when more than the 500-row cap matched — the CSV is partial. */
+  truncated: z.boolean(),
+});
+export type BackgroundPendingResponse = z.infer<typeof BackgroundPendingResponseSchema>;
+
+/** Recorded AFTER the CSV upload to the provider succeeds — downloading a
+ *  file is not ordering, so the download itself marks nothing. */
+export const BackgroundBulkInitiateInputSchema = z.object({
+  associateIds: z.array(UuidSchema).min(1).max(500),
+  provider: z.string().min(1).max(80).default('checkr'),
+});
+export type BackgroundBulkInitiateInput = z.infer<typeof BackgroundBulkInitiateInputSchema>;
+
+export const BackgroundBulkInitiateResponseSchema = z.object({
+  created: z.number().int().nonnegative(),
+  /** Already had a check by the time this ran (raced with another admin). */
+  skipped: z.number().int().nonnegative(),
+});
+export type BackgroundBulkInitiateResponse = z.infer<typeof BackgroundBulkInitiateResponseSchema>;
+
 /** An HR-uploaded provider report on file for the check's associate. */
 export const BackgroundReportDocSchema = z.object({
   id: UuidSchema,

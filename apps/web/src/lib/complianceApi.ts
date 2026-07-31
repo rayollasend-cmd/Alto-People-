@@ -1,8 +1,11 @@
 import type {
+  BackgroundBulkInitiateInput,
+  BackgroundBulkInitiateResponse,
   BackgroundCheck,
   BackgroundCheckDetail,
   BackgroundCheckListResponse,
   BackgroundInitiateInput,
+  BackgroundPendingResponse,
   BackgroundUpdateInput,
   EVerifyCaseDetail,
   EVerifyCaseInput,
@@ -80,6 +83,21 @@ export function listBackgroundChecks(): Promise<BackgroundCheckListResponse> {
  *  disclosure (FCRA consumer report), so fetch on drawer open, not per row. */
 export function getBackgroundCheckDetail(id: string): Promise<BackgroundCheckDetail> {
   return apiFetch<BackgroundCheckDetail>(`/compliance/background/${id}`);
+}
+
+/** Never-screened associates, shaped for the provider's bulk-order CSV. */
+export function listPendingBackgroundChecks(): Promise<BackgroundPendingResponse> {
+  return apiFetch<BackgroundPendingResponse>('/compliance/background/pending');
+}
+
+/** Call AFTER the CSV upload to the provider succeeds — never on download. */
+export function bulkInitiateBackgroundChecks(
+  body: BackgroundBulkInitiateInput,
+): Promise<BackgroundBulkInitiateResponse> {
+  return apiFetch<BackgroundBulkInitiateResponse>('/compliance/background/bulk-initiate', {
+    method: 'POST',
+    body,
+  });
 }
 
 export function initiateBackgroundCheck(
