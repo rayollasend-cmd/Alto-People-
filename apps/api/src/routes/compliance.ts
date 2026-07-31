@@ -247,21 +247,42 @@ complianceRouter.get('/background', async (req, res, next) => {
  */
 complianceRouter.get('/background/pending', MANAGE, async (req, res, next) => {
   try {
+    // Every never-screened associate, whatever their employment state — the
+    // dialog groups by status and defaults to active + onboarding, but HR can
+    // opt inactive people (ended, declined, or never applied) into an order.
+    // Any existing check — in flight, passed, or failed — means screened.
     const rows = await prisma.associate.findMany({
       take: 501, // one past the cap so truncation is detectable
       where: {
         deletedAt: null,
-        // Same population as the E-Verify roster: any application that
-        // wasn't declined. Any existing check — in flight, passed, or
-        // failed — takes them off the never-screened list.
-        applications: { some: { deletedAt: null, status: { not: 'REJECTED' } } },
         backgroundChecks: { none: {} },
       },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
-      select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        phone: true,
+        applications: { where: { deletedAt: null }, select: { status: true } },
+      },
     });
     const truncated = rows.length > 500;
     const capped = rows.slice(0, 500);
+
+    // Same status rule as the People directory (directory.ts): APPROVED ⇒
+    // ACTIVE; any in-flight ⇒ PENDING; otherwise INACTIVE.
+    const statusOf = (apps: { status: string }[]) =>
+      apps.some((x) => x.status === 'APPROVED')
+        ? ('ACTIVE' as const)
+        : apps.some(
+              (x) =>
+                x.status === 'DRAFT' ||
+                x.status === 'SUBMITTED' ||
+                x.status === 'IN_REVIEW',
+            )
+          ? ('PENDING' as const)
+          : ('INACTIVE' as const);
 
     await recordComplianceEvent({
       actorUserId: req.user!.id,
@@ -281,6 +302,7 @@ complianceRouter.get('/background/pending', MANAGE, async (req, res, next) => {
           lastName: a.lastName,
           email: a.email,
           phone: a.phone,
+          status: statusOf(a.applications),
         })),
         truncated,
       })

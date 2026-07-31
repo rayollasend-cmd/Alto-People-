@@ -2677,6 +2677,10 @@ export const BackgroundPendingRowSchema = z.object({
   lastName: z.string(),
   email: z.string(),
   phone: z.string().nullable(),
+  /** Same derivation as DirectoryStatus (defined inline — that schema is
+   *  declared later in this module): APPROVED application ⇒ ACTIVE,
+   *  in-flight ⇒ PENDING (onboarding), otherwise INACTIVE. */
+  status: z.enum(['ACTIVE', 'PENDING', 'INACTIVE']),
 });
 export type BackgroundPendingRow = z.infer<typeof BackgroundPendingRowSchema>;
 
