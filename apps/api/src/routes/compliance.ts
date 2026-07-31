@@ -2,9 +2,12 @@ import { Router } from 'express';
 import { existsSync } from 'node:fs';
 import { Prisma } from '@prisma/client';
 import {
+  BackgroundBulkInitiateInputSchema,
+  BackgroundBulkInitiateResponseSchema,
   BackgroundCheckDetailSchema,
   BackgroundCheckListResponseSchema,
   BackgroundInitiateInputSchema,
+  BackgroundPendingResponseSchema,
   BackgroundUpdateInputSchema,
   I9ListResponseSchema,
   I9UpsertInputSchema,
@@ -229,6 +232,122 @@ complianceRouter.get('/background', async (req, res, next) => {
     res.json(
       BackgroundCheckListResponseSchema.parse({
         checks: rows.map((r) => toBg(r, reportsByAssociate.get(r.associateId) ?? 0)),
+      })
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Everyone onboarded or onboarding who has NEVER been screened, shaped for
+ * the provider's bulk-invitation CSV. Registered before /background/:id so
+ * "pending" isn't swallowed as an id. MANAGE because its only purpose is
+ * feeding an ordering workflow, and the read is audited as an export.
+ */
+complianceRouter.get('/background/pending', MANAGE, async (req, res, next) => {
+  try {
+    const rows = await prisma.associate.findMany({
+      take: 501, // one past the cap so truncation is detectable
+      where: {
+        deletedAt: null,
+        // Same population as the E-Verify roster: any application that
+        // wasn't declined. Any existing check — in flight, passed, or
+        // failed — takes them off the never-screened list.
+        applications: { some: { deletedAt: null, status: { not: 'REJECTED' } } },
+        backgroundChecks: { none: {} },
+      },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+    });
+    const truncated = rows.length > 500;
+    const capped = rows.slice(0, 500);
+
+    await recordComplianceEvent({
+      actorUserId: req.user!.id,
+      action: 'compliance.background_pending_exported',
+      entityType: 'BackgroundCheck',
+      entityId: 'bulk',
+      associateId: 'bulk', // fleet-wide export — lands in metadata, no FK
+      metadata: { count: capped.length, truncated },
+      req,
+    });
+
+    res.json(
+      BackgroundPendingResponseSchema.parse({
+        rows: capped.map((a) => ({
+          associateId: a.id,
+          firstName: a.firstName,
+          lastName: a.lastName,
+          email: a.email,
+          phone: a.phone,
+        })),
+        truncated,
+      })
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Record that a bulk order was actually placed — called AFTER the CSV upload
+ * to the provider succeeds, never on download. Creates INITIATED rows so the
+ * queue reflects the order; associates who gained a check in the meantime
+ * (another admin racing) are skipped, not duplicated.
+ */
+complianceRouter.post('/background/bulk-initiate', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = BackgroundBulkInitiateInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const associates = await prisma.associate.findMany({
+      take: 500,
+      where: { id: { in: parsed.data.associateIds }, deletedAt: null },
+      select: {
+        id: true,
+        // Same clientId derivation as single initiate.
+        applications: { select: { clientId: true }, take: 1 },
+      },
+    });
+    const existing = await prisma.backgroundCheck.findMany({
+      where: { associateId: { in: associates.map((a) => a.id) } },
+      select: { associateId: true },
+    });
+    const alreadyChecked = new Set(existing.map((e) => e.associateId));
+    const toCreate = associates.filter((a) => !alreadyChecked.has(a.id));
+
+    if (toCreate.length > 0) {
+      await prisma.backgroundCheck.createMany({
+        data: toCreate.map((a) => ({
+          associateId: a.id,
+          clientId: a.applications[0]?.clientId ?? null,
+          provider: parsed.data.provider,
+          status: 'INITIATED' as const,
+        })),
+      });
+    }
+
+    await recordComplianceEvent({
+      actorUserId: req.user!.id,
+      action: 'compliance.background_bulk_initiated',
+      entityType: 'BackgroundCheck',
+      entityId: 'bulk',
+      associateId: 'bulk', // fleet-wide order — lands in metadata, no FK
+      metadata: {
+        provider: parsed.data.provider,
+        requested: parsed.data.associateIds.length,
+        created: toCreate.length,
+        skipped: parsed.data.associateIds.length - toCreate.length,
+      },
+      req,
+    });
+
+    res.json(
+      BackgroundBulkInitiateResponseSchema.parse({
+        created: toCreate.length,
+        skipped: parsed.data.associateIds.length - toCreate.length,
       })
     );
   } catch (err) {

@@ -239,6 +239,92 @@ describe('Background check endpoints', () => {
     expect(audit).toBeTruthy();
   });
 
+  it('pending lists only never-screened associates with a live application', async () => {
+    const client = await createClient();
+    const mkApplicant = async (
+      firstName: string,
+      lastName: string,
+      status: 'DRAFT' | 'REJECTED' = 'DRAFT',
+    ) => {
+      const a = await createAssociate({ firstName, lastName });
+      await prisma.application.create({
+        data: {
+          associateId: a.id,
+          clientId: client.id,
+          onboardingTrack: 'STANDARD',
+          status,
+        },
+      });
+      return a;
+    };
+
+    const never = await mkApplicant('Never', 'Screened');
+    const checked = await mkApplicant('Already', 'Checked');
+    await prisma.backgroundCheck.create({
+      data: { associateId: checked.id, provider: 'alto-stub', status: 'FAILED' },
+    });
+    await mkApplicant('Was', 'Rejected', 'REJECTED');
+    await createAssociate({ firstName: 'No', lastName: 'Application' });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const res = await a.get('/compliance/background/pending');
+    expect(res.status).toBe(200);
+    // Only the never-screened applicant: a FAILED check still counts as
+    // screened, a rejected application is out, and so is no application.
+    expect(res.body.rows).toHaveLength(1);
+    expect(res.body.rows[0].associateId).toBe(never.id);
+    expect(res.body.rows[0].email).toBe(never.email);
+    expect(res.body.truncated).toBe(false);
+
+    // The export read is audited.
+    await flushPendingAudits();
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: 'compliance.background_pending_exported' },
+    });
+    expect(audit).toBeTruthy();
+  });
+
+  it('bulk-initiate creates INITIATED rows and skips associates who raced into a check', async () => {
+    const client = await createClient();
+    const fresh = await createAssociate({ firstName: 'Fresh', lastName: 'Hire' });
+    await prisma.application.create({
+      data: {
+        associateId: fresh.id,
+        clientId: client.id,
+        onboardingTrack: 'STANDARD',
+        status: 'DRAFT',
+      },
+    });
+    const raced = await createAssociate({ firstName: 'Raced', lastName: 'Ahead' });
+    await prisma.backgroundCheck.create({
+      data: { associateId: raced.id, provider: 'alto-stub', status: 'IN_PROGRESS' },
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const res = await a.post('/compliance/background/bulk-initiate').send({
+      associateIds: [fresh.id, raced.id],
+      provider: 'checkr',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.created).toBe(1);
+    expect(res.body.skipped).toBe(1);
+
+    const created = await prisma.backgroundCheck.findFirst({
+      where: { associateId: fresh.id },
+    });
+    expect(created).toBeTruthy();
+    expect(created!.status).toBe('INITIATED');
+    expect(created!.provider).toBe('checkr');
+    expect(created!.clientId).toBe(client.id);
+    // The raced associate still has exactly one check — no duplicate.
+    const racedCount = await prisma.backgroundCheck.count({
+      where: { associateId: raced.id },
+    });
+    expect(racedCount).toBe(1);
+  });
+
   it('detail: unknown id → 404; CLIENT_PORTAL blocked at the router guard', async () => {
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
