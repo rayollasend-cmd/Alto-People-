@@ -1086,6 +1086,106 @@ describe('Shift teams', () => {
     expect(after.body.associates).toHaveLength(0);
   });
 
+  it('assign-here opens an assignment at the team site and clears "not at this site"', async () => {
+    const { client, location } = await seedSite();
+    const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    await createUser({ role: 'ASSOCIATE', associateId: maria.id });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const created = await a.post('/scheduling/teams').send({
+      clientId: client.id,
+      locationId: location.id,
+      name: 'Morning',
+    });
+    const teamId = created.body.id as string;
+    await a.post(`/scheduling/teams/${teamId}/members`).send({ associateId: maria.id });
+
+    // Flagged before: nothing on her record points at this location.
+    const before = await a.get(`/scheduling/teams/${teamId}`);
+    expect(before.body.members[0].atLocation).toBe(false);
+
+    const assign = await a.post(
+      `/scheduling/teams/${teamId}/members/${maria.id}/assign-here`,
+    );
+    expect(assign.status).toBe(200);
+    expect(assign.body.assignmentId).toBeTruthy();
+
+    // The badge clears, and she now appears in the LOCATION-scoped roster
+    // (the other place the missing site record was hiding her).
+    const after = await a.get(`/scheduling/teams/${teamId}`);
+    expect(after.body.members[0].atLocation).toBe(true);
+    const roster = await a.get(`/scheduling/associates?locationId=${location.id}`);
+    expect(roster.body.associates.map((x: { id: string }) => x.id)).toContain(maria.id);
+  });
+
+  it('assign-here refuses to poach someone employed by a different client', async () => {
+    const { client, location } = await seedSite();
+    const otherClient = await createClient('Other Corp');
+    const theirs = await createAssociate({ firstName: 'Their', lastName: 'Person' });
+    await createUser({ role: 'ASSOCIATE', associateId: theirs.id });
+    await prisma.application.create({
+      data: {
+        associateId: theirs.id,
+        clientId: otherClient.id,
+        onboardingTrack: 'STANDARD',
+        status: 'APPROVED',
+      },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const created = await a.post('/scheduling/teams').send({
+      clientId: client.id,
+      locationId: location.id,
+      name: 'Morning',
+    });
+    const teamId = created.body.id as string;
+    await a.post(`/scheduling/teams/${teamId}/members`).send({ associateId: theirs.id });
+
+    const res = await a.post(
+      `/scheduling/teams/${teamId}/members/${theirs.id}/assign-here`,
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error?.code).toBe('cross_client_transfer');
+    // No assignment row snuck in.
+    const count = await prisma.associateAssignment.count({
+      where: { associateId: theirs.id },
+    });
+    expect(count).toBe(0);
+  });
+
+  it('a team member with an INVITED portal account still shows in the team roster', async () => {
+    const { client, location } = await seedSite();
+    const evaristus = await createAssociate({ firstName: 'Evaristus', lastName: 'Okon' });
+    await prisma.user.create({
+      data: {
+        email: evaristus.email,
+        role: 'ASSOCIATE',
+        status: 'INVITED',
+        associateId: evaristus.id,
+      },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const created = await a.post('/scheduling/teams').send({
+      clientId: client.id,
+      locationId: location.id,
+      name: 'F&D Morning',
+    });
+    const teamId = created.body.id as string;
+    await a.post(`/scheduling/teams/${teamId}/members`).send({ associateId: evaristus.id });
+
+    // The reported bug: added to the crew but missing from the grid rows.
+    const roster = await a.get(`/scheduling/associates?teamId=${teamId}`);
+    expect(roster.body.associates.map((x: { id: string }) => x.id)).toEqual([evaristus.id]);
+
+    // The dialog says WHY their login doesn't work, instead of hiding them.
+    const detail = await a.get(`/scheduling/teams/${teamId}`);
+    expect(detail.body.members[0].portalActive).toBe(false);
+  });
+
   it('soft-deleting a team removes it from lists and empties the team roster filter', async () => {
     const { client, location } = await seedSite();
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });

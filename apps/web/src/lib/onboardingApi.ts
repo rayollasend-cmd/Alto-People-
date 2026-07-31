@@ -8,6 +8,7 @@ import type {
   BackgroundCheck,
   BackgroundCheckAuthorizeInput,
   BulkInviteInput,
+  LocationListResponse,
   BulkInviteResponse,
   BulkResendInput,
   BulkResendResponse,
@@ -131,6 +132,13 @@ export function bulkInvite(body: BulkInviteInput): Promise<BulkInviteResponse> {
     method: 'POST',
     body,
   });
+}
+
+/** Active sites for the invite dialogs' work-site picker. Behind
+ *  invite:onboarding, so client-bounded supervisors can load it too
+ *  (they have no view:clients for the /clients locations route). */
+export function listInviteLocations(clientId: string): Promise<LocationListResponse> {
+  return apiFetch<LocationListResponse>(`/onboarding/invite-locations?clientId=${clientId}`);
 }
 
 export function bulkResendInvite(body: BulkResendInput): Promise<BulkResendResponse> {

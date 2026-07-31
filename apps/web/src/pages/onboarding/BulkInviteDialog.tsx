@@ -5,11 +5,12 @@ import type {
   BulkInviteApplicant,
   BulkInviteResultRow,
   ClientSummary,
+  LocationSummary,
   EmploymentType,
   OnboardingTemplate,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { bulkInvite, listClients, listTemplates } from '@/lib/onboardingApi';
+import { bulkInvite, listClients, listInviteLocations, listTemplates } from '@/lib/onboardingApi';
 import { Button } from '@/components/ui/Button';
 import {
   Dialog,
@@ -170,6 +171,8 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
   const [clients, setClients] = useState<ClientSummary[] | null>(null);
   const [templates, setTemplates] = useState<OnboardingTemplate[] | null>(null);
   const [clientId, setClientId] = useState('');
+  const [locationId, setLocationId] = useState('');
+  const [locations, setLocations] = useState<LocationSummary[] | null>(null);
   const [templateId, setTemplateId] = useState('');
   const [employmentType, setEmploymentType] = useState<EmploymentType>('W2_EMPLOYEE');
   const [paste, setPaste] = useState('');
@@ -182,6 +185,7 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
 
   const reset = () => {
     setClientId('');
+    setLocationId('');
     setTemplateId('');
     setEmploymentType('W2_EMPLOYEE');
     setPaste('');
@@ -214,6 +218,30 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
       cancelled = true;
     };
   }, [open, clients, templates]);
+
+  // Work-site picker for the batch. Loads via the invite-scoped endpoint
+  // (supervisors have no view:clients). Required when the client has sites —
+  // a location-less invite leaves the associate's site unrecorded forever.
+  useEffect(() => {
+    setLocationId('');
+    if (!clientId || !open) {
+      setLocations(null);
+      return;
+    }
+    let cancelled = false;
+    setLocations(null);
+    listInviteLocations(clientId)
+      .then((r) => {
+        if (cancelled) return;
+        setLocations(r.locations);
+        // One possible answer — don't make them pick it.
+        if (r.locations.length === 1) setLocationId(r.locations[0].id);
+      })
+      .catch(() => !cancelled && setLocations([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId, open]);
 
   const visibleTemplates = useMemo(() => {
     if (!templates) return [];
@@ -254,6 +282,10 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
       toast.error('Pick a template.');
       return;
     }
+    if (!locationId && locations && locations.length > 0) {
+      toast.error('Pick a work site — this client has locations configured.');
+      return;
+    }
     if (validRows.length === 0) {
       toast.error('Paste at least one valid email.');
       return;
@@ -280,6 +312,7 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
         clientId,
         templateId,
         employmentType,
+        ...(locationId ? { locationId } : {}),
         applicants,
       });
       setResults(res.results);
@@ -366,6 +399,34 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
                       <option key={t.id} value={t.id}>
                         {t.name} · {TRACK_LABEL[t.track] ?? t.track}
                         {t.clientId === null ? ' (global)' : ''}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
+              <Field
+                label={locations && locations.length > 0 ? 'Work site (required)' : 'Work site'}
+              >
+                {(p) => (
+                  <Select
+                    value={locationId}
+                    onChange={(e) => setLocationId(e.target.value)}
+                    disabled={!clientId || locations === null || locations.length === 0}
+                    {...p}
+                  >
+                    <option value="">
+                      {!clientId
+                        ? 'Pick client first'
+                        : locations === null
+                          ? 'Loading…'
+                          : locations.length === 0
+                            ? 'No sites under this client'
+                            : 'Pick a work site…'}
+                    </option>
+                    {locations?.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                        {l.state ? ` · ${l.state}` : ''}
                       </option>
                     ))}
                   </Select>
