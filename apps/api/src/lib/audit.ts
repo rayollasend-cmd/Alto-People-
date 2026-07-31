@@ -211,7 +211,7 @@ interface ComplianceEventContext {
   // 'Associate' covers E-Verify events that aren't anchored to an I-9 row:
   // the case-detail view works for someone with no I-9 started yet, and the
   // identity backfill edits the associate itself.
-  entityType: 'I9Verification' | 'BackgroundCheck' | 'J1Profile' | 'Associate';
+  entityType: 'I9Verification' | 'BackgroundCheck' | 'DrugTest' | 'J1Profile' | 'Associate';
   entityId: string;
   associateId: string;
   clientId?: string | null;

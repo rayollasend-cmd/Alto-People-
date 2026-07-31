@@ -2728,6 +2728,95 @@ export const BackgroundCheckDetailSchema = z.object({
 });
 export type BackgroundCheckDetail = z.infer<typeof BackgroundCheckDetailSchema>;
 
+/* ----- Drug tests --------------------------------------------------------- *
+ * Mirrors the background-check surface. The difference is recurrence: the
+ * Walmart SOW requires a result within 60 DAYS, so "needs a test" means the
+ * last DRUG_TEST_RESULT document is stale (or absent), not "never had a row".
+ * -------------------------------------------------------------------------- */
+
+export const DrugTestStatusSchema = z.enum([
+  'INITIATED',
+  'IN_PROGRESS',
+  'PASSED',
+  'FAILED',
+  'NEEDS_REVIEW',
+]);
+export type DrugTestStatus = z.infer<typeof DrugTestStatusSchema>;
+
+export const DrugTestSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string(),
+  clientId: UuidSchema.nullable(),
+  provider: z.string(),
+  externalId: z.string().nullable(),
+  status: DrugTestStatusSchema,
+  initiatedAt: z.string().datetime(),
+  completedAt: z.string().datetime().nullable(),
+  /** DRUG_TEST_RESULT documents on file for this associate. */
+  reportCount: z.number().int().nonnegative().optional(),
+});
+export type DrugTest = z.infer<typeof DrugTestSchema>;
+
+export const DrugTestListResponseSchema = z.object({
+  tests: z.array(DrugTestSchema),
+});
+export type DrugTestListResponse = z.infer<typeof DrugTestListResponseSchema>;
+
+export const DrugTestInitiateInputSchema = z.object({
+  associateId: UuidSchema,
+  provider: z.string().min(1).max(80).default('checkr'),
+  externalId: z.string().max(120).optional(),
+});
+export type DrugTestInitiateInput = z.infer<typeof DrugTestInitiateInputSchema>;
+
+export const DrugTestUpdateInputSchema = z.object({
+  status: DrugTestStatusSchema,
+  externalId: z.string().max(120).optional(),
+});
+export type DrugTestUpdateInput = z.infer<typeof DrugTestUpdateInputSchema>;
+
+export const DrugTestPendingRowSchema = z.object({
+  associateId: UuidSchema,
+  firstName: z.string(),
+  lastName: z.string(),
+  email: z.string(),
+  phone: z.string().nullable(),
+  /** Same derivation as DirectoryStatus: APPROVED application ⇒ ACTIVE,
+   *  in-flight ⇒ PENDING (onboarding), otherwise INACTIVE. */
+  status: z.enum(['ACTIVE', 'PENDING', 'INACTIVE']),
+  /** When their newest result document was filed — null means never tested;
+   *  a date here means the result aged past the 60-day window. */
+  lastResultAt: z.string().datetime().nullable(),
+});
+export type DrugTestPendingRow = z.infer<typeof DrugTestPendingRowSchema>;
+
+export const DrugTestPendingResponseSchema = z.object({
+  rows: z.array(DrugTestPendingRowSchema),
+  truncated: z.boolean(),
+});
+export type DrugTestPendingResponse = z.infer<typeof DrugTestPendingResponseSchema>;
+
+export const DrugTestBulkInitiateInputSchema = z.object({
+  associateIds: z.array(UuidSchema).min(1).max(500),
+  provider: z.string().min(1).max(80).default('checkr'),
+});
+export type DrugTestBulkInitiateInput = z.infer<typeof DrugTestBulkInitiateInputSchema>;
+
+export const DrugTestBulkInitiateResponseSchema = z.object({
+  created: z.number().int().nonnegative(),
+  /** Gained an open order by the time this ran (raced with another admin). */
+  skipped: z.number().int().nonnegative(),
+});
+export type DrugTestBulkInitiateResponse = z.infer<typeof DrugTestBulkInitiateResponseSchema>;
+
+export const DrugTestDetailSchema = z.object({
+  test: DrugTestSchema,
+  /** Same doc shape as background reports — both render in the doc viewer. */
+  reports: z.array(BackgroundReportDocSchema),
+});
+export type DrugTestDetail = z.infer<typeof DrugTestDetailSchema>;
+
 export const J1ProfileSchema = z.object({
   id: UuidSchema,
   associateId: UuidSchema,

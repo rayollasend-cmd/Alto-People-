@@ -24,6 +24,7 @@ import { scopeBackgroundChecks } from '../lib/scope.js';
 import { resolveStoragePath } from '../lib/storage.js';
 import { recordComplianceEvent } from '../lib/audit.js';
 import { everifyRouter } from './everify.js';
+import { drugTestsRouter } from './drugTests.js';
 
 export const complianceRouter = Router();
 
@@ -33,6 +34,10 @@ const MANAGE = requireCapability('manage:compliance');
 // this file on its own. Mounted here rather than in app.ts so it inherits the
 // same view:compliance guard and sits under the same /compliance prefix.
 complianceRouter.use('/everify', everifyRouter);
+
+// Drug tests — same reasoning: a full directorate module mounted under the
+// same guard and prefix.
+complianceRouter.use('/drug-tests', drugTestsRouter);
 
 function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);

@@ -3,12 +3,13 @@ import { useAuth } from '@/lib/auth';
 import { I9Tab } from './I9Tab';
 import { EVerifyTab } from './EVerifyTab';
 import { BackgroundTab } from './BackgroundTab';
+import { DrugTestTab } from './DrugTestTab';
 import { J1Tab } from './J1Tab';
 import { ComplianceScorecard } from './ComplianceScorecard';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 
-type Tab = 'scorecard' | 'i9' | 'everify' | 'background' | 'j1';
+type Tab = 'scorecard' | 'i9' | 'everify' | 'background' | 'drugtests' | 'j1';
 
 export function ComplianceHome() {
   const { can } = useAuth();
@@ -21,7 +22,7 @@ export function ComplianceHome() {
     <div className="mx-auto">
       <PageHeader
         title="Compliance"
-        subtitle="Track I-9, background-check, and J-1 obligations across every active associate."
+        subtitle="Track I-9, background-check, drug-test, and J-1 obligations across every active associate."
       />
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
@@ -31,6 +32,7 @@ export function ComplianceHome() {
               verifier finishes Section 2 and moves straight here. */}
           <TabsTrigger value="everify">E-Verify</TabsTrigger>
           <TabsTrigger value="background">Background checks</TabsTrigger>
+          <TabsTrigger value="drugtests">Drug tests</TabsTrigger>
           <TabsTrigger value="j1">J-1 program</TabsTrigger>
         </TabsList>
         <TabsContent value="scorecard">
@@ -44,6 +46,9 @@ export function ComplianceHome() {
         </TabsContent>
         <TabsContent value="background">
           <BackgroundTab canManage={canManage} />
+        </TabsContent>
+        <TabsContent value="drugtests">
+          <DrugTestTab canManage={canManage} />
         </TabsContent>
         <TabsContent value="j1">
           <J1Tab canManage={canManage} />

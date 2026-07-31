@@ -7,6 +7,14 @@ import type {
   BackgroundInitiateInput,
   BackgroundPendingResponse,
   BackgroundUpdateInput,
+  DrugTest,
+  DrugTestBulkInitiateInput,
+  DrugTestBulkInitiateResponse,
+  DrugTestDetail,
+  DrugTestInitiateInput,
+  DrugTestListResponse,
+  DrugTestPendingResponse,
+  DrugTestUpdateInput,
   EVerifyCaseDetail,
   EVerifyCaseInput,
   EVerifyIdentityInput,
@@ -111,6 +119,45 @@ export function updateBackgroundCheck(
   body: BackgroundUpdateInput
 ): Promise<BackgroundCheck> {
   return apiFetch<BackgroundCheck>(`/compliance/background/${id}/update`, {
+    method: 'POST',
+    body,
+  });
+}
+
+/* ----- Drug tests -------------------------------------------------------- */
+
+export function listDrugTests(): Promise<DrugTestListResponse> {
+  return apiFetch<DrugTestListResponse>('/compliance/drug-tests');
+}
+
+/** Test + result documents for the drawer. Every read is an audited
+ *  disclosure, so fetch on drawer open, not per row. */
+export function getDrugTestDetail(id: string): Promise<DrugTestDetail> {
+  return apiFetch<DrugTestDetail>(`/compliance/drug-tests/${id}`);
+}
+
+export function initiateDrugTest(body: DrugTestInitiateInput): Promise<DrugTest> {
+  return apiFetch<DrugTest>('/compliance/drug-tests', { method: 'POST', body });
+}
+
+export function updateDrugTest(id: string, body: DrugTestUpdateInput): Promise<DrugTest> {
+  return apiFetch<DrugTest>(`/compliance/drug-tests/${id}/update`, {
+    method: 'POST',
+    body,
+  });
+}
+
+/** Everyone needing a test: no result inside the 60-day window, no order
+ *  already in flight. Shaped for the provider's bulk-order CSV. */
+export function listPendingDrugTests(): Promise<DrugTestPendingResponse> {
+  return apiFetch<DrugTestPendingResponse>('/compliance/drug-tests/pending');
+}
+
+/** Call AFTER the CSV upload to the provider succeeds — never on download. */
+export function bulkInitiateDrugTests(
+  body: DrugTestBulkInitiateInput,
+): Promise<DrugTestBulkInitiateResponse> {
+  return apiFetch<DrugTestBulkInitiateResponse>('/compliance/drug-tests/bulk-initiate', {
     method: 'POST',
     body,
   });
