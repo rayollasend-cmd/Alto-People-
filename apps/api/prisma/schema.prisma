@@ -131,6 +131,16 @@ enum BgCheckStatus {
   NEEDS_REVIEW
 }
 
+// Same lifecycle as BgCheckStatus, separate type: the two ledgers evolve
+// independently (e.g. MRO-review states are drug-specific).
+enum DrugTestStatus {
+  INITIATED
+  IN_PROGRESS
+  PASSED
+  FAILED
+  NEEDS_REVIEW
+}
+
 // Phase add-on — Walmart Contract Compliance Scorecard. Tags Course rows
 // so the scorecard's training-completeness tile can count completions per
 // regulatory category (EEO/harassment, OSHA safety, Walmart CADE, food
@@ -794,6 +804,7 @@ model Associate {
   documents                DocumentRecord[]
   signatures               Signature[]               @relation("AssociateSignatures")
   backgroundChecks         BackgroundCheck[]
+  drugTests                DrugTest[]
   policyAcks               PolicyAcknowledgment[]
   i9Verification           I9Verification?
   w4Submission             W4Submission?
@@ -1184,6 +1195,27 @@ model BackgroundCheck {
   initiatedAt DateTime      @default(now()) @db.Timestamptz(6)
   completedAt DateTime?     @db.Timestamptz(6)
   associate   Associate     @relation(fields: [associateId], references: [id], onDelete: Restrict)
+
+  @@index([associateId])
+  @@index([status])
+  @@index([clientId])
+}
+
+// Drug-screen ledger — mirrors BackgroundCheck. The key difference lives
+// OUTSIDE this table: the Walmart SOW requires a result within 60 DAYS, so
+// drug testing recurs — the "needs a test" roster is driven by the recency
+// of DRUG_TEST_RESULT documents (which the scorecard signal also reads),
+// not by whether a row ever existed here. Rows record orders and outcomes.
+model DrugTest {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String         @db.Uuid
+  clientId    String?        @db.Uuid
+  provider    String
+  externalId  String?
+  status      DrugTestStatus @default(INITIATED)
+  initiatedAt DateTime       @default(now()) @db.Timestamptz(6)
+  completedAt DateTime?      @db.Timestamptz(6)
+  associate   Associate      @relation(fields: [associateId], references: [id], onDelete: Restrict)
 
   @@index([associateId])
   @@index([status])

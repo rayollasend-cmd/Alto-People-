@@ -357,6 +357,159 @@ describe('Background check endpoints', () => {
   });
 });
 
+describe('Drug test endpoints', () => {
+  const resultDoc = (associateId: string, createdAt: Date) =>
+    prisma.documentRecord.create({
+      data: {
+        associateId,
+        kind: 'DRUG_TEST_RESULT',
+        s3Key: null,
+        filename: 'lab-result.pdf',
+        mimeType: 'application/pdf',
+        size: 1234,
+        createdAt,
+      },
+    });
+
+  it('order + update lifecycle mirrors background checks', async () => {
+    const client = await createClient();
+    const associate = await createAssociate();
+    await prisma.application.create({
+      data: {
+        associateId: associate.id,
+        clientId: client.id,
+        onboardingTrack: 'STANDARD',
+        status: 'APPROVED',
+      },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const order = await a.post('/compliance/drug-tests').send({
+      associateId: associate.id,
+      provider: 'checkr',
+    });
+    expect(order.status).toBe(201);
+    expect(order.body.status).toBe('INITIATED');
+    expect(order.body.clientId).toBe(client.id);
+
+    const update = await a
+      .post(`/compliance/drug-tests/${order.body.id}/update`)
+      .send({ status: 'PASSED', externalId: 'scr-777' });
+    expect(update.status).toBe(200);
+    expect(update.body.status).toBe('PASSED');
+    expect(update.body.completedAt).not.toBeNull();
+  });
+
+  it('pending is driven by the 60-day result window, not by row existence', async () => {
+    const dayMs = 86_400_000;
+    const fresh = await createAssociate({ firstName: 'Fresh', lastName: 'Result' });
+    await resultDoc(fresh.id, new Date(Date.now() - 10 * dayMs)); // inside window
+
+    const stale = await createAssociate({ firstName: 'Stale', lastName: 'Result' });
+    const staleDate = new Date(Date.now() - 61 * dayMs); // aged out
+    await resultDoc(stale.id, staleDate);
+    // A long-closed PASSED row must NOT exempt them — recurrence is the point.
+    await prisma.drugTest.create({
+      data: {
+        associateId: stale.id,
+        provider: 'checkr',
+        status: 'PASSED',
+        completedAt: staleDate,
+      },
+    });
+
+    const never = await createAssociate({ firstName: 'Never', lastName: 'Tested' });
+
+    const ordered = await createAssociate({ firstName: 'Order', lastName: 'InFlight' });
+    await prisma.drugTest.create({
+      data: { associateId: ordered.id, provider: 'checkr', status: 'INITIATED' },
+    });
+
+    const recentPass = await createAssociate({ firstName: 'Recent', lastName: 'Pass' });
+    await prisma.drugTest.create({
+      data: {
+        associateId: recentPass.id,
+        provider: 'checkr',
+        status: 'PASSED',
+        completedAt: new Date(Date.now() - 5 * dayMs), // paperwork pending
+      },
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const res = await a.get('/compliance/drug-tests/pending');
+    expect(res.status).toBe(200);
+    const rows = res.body.rows as { associateId: string; lastResultAt: string | null }[];
+    const ids = rows.map((r) => r.associateId);
+    // Due: stale result and never tested. Not due: fresh result, order in
+    // flight, recent pass awaiting paperwork.
+    expect(ids).toContain(stale.id);
+    expect(ids).toContain(never.id);
+    expect(ids).not.toContain(fresh.id);
+    expect(ids).not.toContain(ordered.id);
+    expect(ids).not.toContain(recentPass.id);
+    // lastResultAt distinguishes expired from never-tested.
+    expect(rows.find((r) => r.associateId === stale.id)!.lastResultAt).toBe(
+      staleDate.toISOString(),
+    );
+    expect(rows.find((r) => r.associateId === never.id)!.lastResultAt).toBeNull();
+  });
+
+  it('bulk-initiate creates orders and skips open ones — closed history does not block', async () => {
+    const retest = await createAssociate({ firstName: 'Re', lastName: 'Test' });
+    await prisma.drugTest.create({
+      data: {
+        associateId: retest.id,
+        provider: 'checkr',
+        status: 'PASSED',
+        completedAt: new Date('2026-01-01T00:00:00Z'), // old, closed
+      },
+    });
+    const open = await createAssociate({ firstName: 'Open', lastName: 'Order' });
+    await prisma.drugTest.create({
+      data: { associateId: open.id, provider: 'checkr', status: 'IN_PROGRESS' },
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const res = await a.post('/compliance/drug-tests/bulk-initiate').send({
+      associateIds: [retest.id, open.id],
+      provider: 'checkr',
+    });
+    expect(res.status).toBe(200);
+    // Re-test allowed despite closed history; open order not duplicated.
+    expect(res.body.created).toBe(1);
+    expect(res.body.skipped).toBe(1);
+    const retestCount = await prisma.drugTest.count({ where: { associateId: retest.id } });
+    expect(retestCount).toBe(2);
+    const openCount = await prisma.drugTest.count({ where: { associateId: open.id } });
+    expect(openCount).toBe(1);
+  });
+
+  it('detail returns result docs and audits the view', async () => {
+    const associate = await createAssociate();
+    const test = await prisma.drugTest.create({
+      data: { associateId: associate.id, provider: 'checkr', status: 'PASSED' },
+    });
+    await resultDoc(associate.id, new Date());
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const res = await a.get(`/compliance/drug-tests/${test.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.test.id).toBe(test.id);
+    expect(res.body.reports).toHaveLength(1);
+    expect(res.body.reports[0].fileAvailable).toBe(false); // s3Key null
+
+    await flushPendingAudits();
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: 'compliance.drug_test_report_viewed', entityId: test.id },
+    });
+    expect(audit).toBeTruthy();
+  });
+});
+
 describe('J-1 endpoints', () => {
   it('upserts a J-1 profile and flips Associate.j1Status to true', async () => {
     const associate = await createAssociate();
