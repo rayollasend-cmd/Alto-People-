@@ -1,6 +1,8 @@
 import { Router } from 'express';
+import { existsSync } from 'node:fs';
 import { Prisma } from '@prisma/client';
 import {
+  BackgroundCheckDetailSchema,
   BackgroundCheckListResponseSchema,
   BackgroundInitiateInputSchema,
   BackgroundUpdateInputSchema,
@@ -16,6 +18,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeBackgroundChecks } from '../lib/scope.js';
+import { resolveStoragePath } from '../lib/storage.js';
 import { recordComplianceEvent } from '../lib/audit.js';
 import { everifyRouter } from './everify.js';
 
@@ -175,7 +178,7 @@ type RawBg = Prisma.BackgroundCheckGetPayload<{
   include: { associate: { select: { firstName: true; lastName: true } } };
 }>;
 
-function toBg(row: RawBg): BackgroundCheck {
+function toBg(row: RawBg, reportCount?: number): BackgroundCheck {
   return {
     id: row.id,
     associateId: row.associateId,
@@ -186,8 +189,13 @@ function toBg(row: RawBg): BackgroundCheck {
     status: row.status,
     initiatedAt: row.initiatedAt.toISOString(),
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+    ...(reportCount !== undefined ? { reportCount } : {}),
   };
 }
+
+/** Provider report PDFs are stored as documents of this kind, keyed by
+ *  associate — the same pattern as E-Verify closure packets. */
+const BG_REPORT_KIND = 'BACKGROUND_CHECK_RESULT' as const;
 
 const BG_INCLUDE = {
   associate: { select: { firstName: true, lastName: true } },
@@ -206,8 +214,72 @@ complianceRouter.get('/background', async (req, res, next) => {
       take: 200,
       include: BG_INCLUDE,
     });
+    // Report-on-file counts in one grouped query — the table flags finalized
+    // checks that have no evidence behind them without an N+1.
+    const counts = await prisma.documentRecord.groupBy({
+      by: ['associateId'],
+      where: {
+        associateId: { in: rows.map((r) => r.associateId) },
+        kind: BG_REPORT_KIND,
+        deletedAt: null,
+      },
+      _count: { _all: true },
+    });
+    const reportsByAssociate = new Map(counts.map((c) => [c.associateId, c._count._all]));
     res.json(
-      BackgroundCheckListResponseSchema.parse({ checks: rows.map(toBg) })
+      BackgroundCheckListResponseSchema.parse({
+        checks: rows.map((r) => toBg(r, reportsByAssociate.get(r.associateId) ?? 0)),
+      })
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Check + its associate's report documents, for the drawer. Background
+ * reports are FCRA-sensitive consumer reports, so every view of the report
+ * list is a recorded disclosure — same treatment as the E-Verify case view.
+ */
+complianceRouter.get('/background/:id', async (req, res, next) => {
+  try {
+    const row = await prisma.backgroundCheck.findFirst({
+      where: { id: req.params.id, ...scopeBackgroundChecks(req.user!) },
+      include: BG_INCLUDE,
+    });
+    if (!row) {
+      throw new HttpError(404, 'background_check_not_found', 'Background check not found');
+    }
+    const docs = await prisma.documentRecord.findMany({
+      take: 100,
+      where: { associateId: row.associateId, kind: BG_REPORT_KIND, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, kind: true, filename: true, mimeType: true, s3Key: true },
+    });
+    const reports = docs.map((d) => ({
+      id: d.id,
+      kind: d.kind,
+      filename: d.filename,
+      mimeType: d.mimeType,
+      fileAvailable: d.s3Key !== null && existsSync(resolveStoragePath(d.s3Key)),
+    }));
+
+    await recordComplianceEvent({
+      actorUserId: req.user!.id,
+      action: 'compliance.background_report_viewed',
+      entityType: 'BackgroundCheck',
+      entityId: row.id,
+      associateId: row.associateId,
+      clientId: row.clientId,
+      metadata: { reportCount: reports.length },
+      req,
+    });
+
+    res.json(
+      BackgroundCheckDetailSchema.parse({
+        check: toBg(row, reports.length),
+        reports,
+      })
     );
   } catch (err) {
     next(err);

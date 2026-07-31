@@ -2639,6 +2639,9 @@ export const BackgroundCheckSchema = z.object({
   status: BgCheckStatusSchema,
   initiatedAt: z.string().datetime(),
   completedAt: z.string().datetime().nullable(),
+  /** BACKGROUND_CHECK_RESULT documents on file for this associate — a
+   *  finalized status with zero reports is a decision with no evidence. */
+  reportCount: z.number().int().nonnegative().optional(),
 });
 export type BackgroundCheck = z.infer<typeof BackgroundCheckSchema>;
 
@@ -2661,6 +2664,28 @@ export const BackgroundUpdateInputSchema = z.object({
   externalId: z.string().max(120).optional(),
 });
 export type BackgroundUpdateInput = z.infer<typeof BackgroundUpdateInputSchema>;
+
+/** An HR-uploaded provider report on file for the check's associate. */
+export const BackgroundReportDocSchema = z.object({
+  id: UuidSchema,
+  kind: z.string(),
+  filename: z.string(),
+  mimeType: z.string(),
+  fileAvailable: z.boolean(),
+});
+export type BackgroundReportDoc = z.infer<typeof BackgroundReportDocSchema>;
+
+/**
+ * Drawer payload: the check plus its associate's report documents — the same
+ * evidence-next-to-decision aggregation the E-Verify case detail does with
+ * closure packets. Reports attach to the ASSOCIATE (by document kind), so an
+ * associate re-screened twice shares one report pool across both checks.
+ */
+export const BackgroundCheckDetailSchema = z.object({
+  check: BackgroundCheckSchema,
+  reports: z.array(BackgroundReportDocSchema),
+});
+export type BackgroundCheckDetail = z.infer<typeof BackgroundCheckDetailSchema>;
 
 export const J1ProfileSchema = z.object({
   id: UuidSchema,
