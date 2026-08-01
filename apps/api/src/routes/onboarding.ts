@@ -3433,27 +3433,64 @@ onboardingRouter.post(
         );
       }
 
-      const results: BulkInviteResultRow[] = [];
+      // The work site applies to the WHOLE batch, so resolve it once up
+      // front instead of once per row: a bad/ambiguous site fails the
+      // request with one clear 400 rather than N identical row errors,
+      // and the single-site auto-default runs one query instead of N.
+      // (The helper still re-validates per row — one indexed lookup — so
+      // the single-invite path keeps identical behavior.)
+      let batchLocationId = parsed.data.locationId;
+      if (batchLocationId) {
+        const location = await prisma.location.findFirst({
+          where: { id: batchLocationId, clientId, deletedAt: null },
+          select: { id: true },
+        });
+        if (!location) {
+          throw new HttpError(
+            400,
+            'location_mismatch',
+            'Location does not belong to the chosen client.',
+          );
+        }
+      } else {
+        const sites = await prisma.location.findMany({
+          take: 2,
+          where: { clientId, deletedAt: null, isActive: true },
+          select: { id: true },
+        });
+        if (sites.length === 1) {
+          batchLocationId = sites[0].id;
+        } else if (sites.length > 1) {
+          throw new HttpError(
+            400,
+            'location_required',
+            'Pick a work site for this batch — this client has more than one location.',
+          );
+        }
+      }
+
+      const results: BulkInviteResultRow[] = new Array(applicants.length);
       let succeeded = 0;
       let failed = 0;
 
-      for (const a of applicants) {
+      // Bounded parallelism (4 wide, matching the email sender's throttle
+      // and the bulk-resend endpoint) — serially, a 200-row batch of live
+      // sends held the request for minutes and risked a gateway timeout
+      // that read as "the batch failed" when half of it had landed.
+      await runWithConcurrency(applicants, 4, async (a, idx) => {
         try {
           const r = await inviteOneApplicant(req.user!.id, req, {
             associateFirstName: a.firstName,
             associateLastName: a.lastName,
             associateEmail: a.email,
             clientId,
-            // One site for the whole batch — the helper validates it belongs
-            // to the (possibly clamped) client and enforces location_required
-            // when the client has sites configured.
-            locationId: parsed.data.locationId,
+            locationId: batchLocationId,
             templateId,
             employmentType,
             position: a.position,
             startDate: a.startDate,
           });
-          results.push({
+          results[idx] = {
             email: a.email,
             ok: true,
             applicationId: r.applicationId,
@@ -3461,12 +3498,12 @@ onboardingRouter.post(
             inviteUrl: r.inviteUrl,
             errorCode: null,
             errorMessage: null,
-          });
+          };
           succeeded++;
         } catch (err) {
           const code = err instanceof HttpError ? err.code : 'invite_failed';
           const message = err instanceof Error ? err.message : String(err);
-          results.push({
+          results[idx] = {
             email: a.email,
             ok: false,
             applicationId: null,
@@ -3474,10 +3511,10 @@ onboardingRouter.post(
             inviteUrl: null,
             errorCode: code,
             errorMessage: message,
-          });
+          };
           failed++;
         }
-      }
+      });
 
       const body: BulkInviteResponse = { succeeded, failed, results };
       // 207 Multi-Status would be more correct when both succeeded + failed

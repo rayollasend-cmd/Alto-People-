@@ -380,9 +380,10 @@ describe('onboarding tenant boundary', () => {
     });
     expect(autoApp.locationId).toBe(mySite.id);
 
-    // With a SECOND active site the choice is ambiguous — refused per-row,
-    // since a location-less invite leaves the associate's site unrecorded
-    // forever (approval only opens an assignment when it's set).
+    // With a SECOND active site the choice is ambiguous — the site applies
+    // to the whole batch, so it's one clear 400 up front (not N identical
+    // row errors). A location-less invite would leave the associate's site
+    // unrecorded forever (approval only opens an assignment when it's set).
     await prisma.location.updateMany({
       where: { clientId: mine.id },
       data: { isActive: true },
@@ -394,9 +395,8 @@ describe('onboarding tenant boundary', () => {
         { email: 'no.site@example.com', firstName: 'No', lastName: 'Site' },
       ],
     });
-    expect(missing.status).toBe(200);
-    expect(missing.body.succeeded).toBe(0);
-    expect(missing.body.results[0].errorCode).toBe('location_required');
+    expect(missing.status).toBe(400);
+    expect(missing.body.error?.code).toBe('location_required');
   });
 
   it('invite-locations serves the picker to supervisors, clamped to their client', async () => {
