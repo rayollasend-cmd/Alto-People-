@@ -4519,8 +4519,12 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
         },
         take: 1000,
       }),
+      // SAFETY list, not a display list: any approved PTO past the cap was
+      // silently ignored, and the scheduler could assign someone on leave.
+      // These are 3-column selects over a one-week window — cap generously
+      // at the same scale as the roster itself.
       prisma.timeOffRequest.findMany({
-        take: 100,
+        take: 2000,
         where: {
           status: 'APPROVED',
           startDate: { lte: end },
@@ -4531,7 +4535,7 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       // One-off "can't work this day" exceptions — same veto as PTO, so
       // they merge into the pto ranges below as single-day blocks.
       prisma.availabilityException.findMany({
-        take: 500,
+        take: 2000,
         where: { date: { gte: start, lte: end } },
         select: { associateId: true, date: true },
       }),

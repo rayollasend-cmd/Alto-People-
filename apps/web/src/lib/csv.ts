@@ -22,7 +22,10 @@ export function downloadCsv(
   rows: Array<Array<string | number | null | undefined>>,
 ): void {
   const text = rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
-  const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+  // UTF-8 BOM: without it Excel guesses the encoding and mojibakes names
+  // like "José" (the scheduling export carried this fix privately; every
+  // CSV in the app deserves it).
+  const blob = new Blob(['﻿' + text], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
