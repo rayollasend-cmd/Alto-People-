@@ -11,6 +11,7 @@ import {
   FileDown,
   MailCheck,
   MailWarning,
+  ExternalLink,
   MinusCircle,
   PartyPopper,
   Send,
@@ -301,7 +302,17 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0">
               <h1 className="font-display text-3xl md:text-4xl text-white mb-2 leading-tight">
-                {detail.associateName}
+                {canManage ? (
+                  <Link
+                    to={`/people?associateId=${detail.associateId}`}
+                    className="hover:text-gold transition-colors"
+                    title="Open this associate's profile"
+                  >
+                    {detail.associateName}
+                  </Link>
+                ) : (
+                  detail.associateName
+                )}
               </h1>
               <DetailMeta detail={detail} />
             </div>
@@ -404,6 +415,9 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
             task={t}
             canSkip={canManage && STUB_KINDS.has(t.kind)}
             onSkip={() => handleSkip(t)}
+            // Destinations are admin surfaces (People directory, Compliance)
+            // that invite-scoped roles can't open — no dead links for them.
+            destination={canManage ? taskDestination(t.kind, detail.associateId) : null}
           />
         ))}
       </section>
@@ -415,7 +429,11 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
           would only 403. */}
       {canManage && detail.tasks.some((t) => t.kind === 'I9_VERIFICATION') && (
         <section className="mb-6">
-          <I9Card applicationId={detail.id} startDate={detail.startDate} />
+          <I9Card
+            applicationId={detail.id}
+            startDate={detail.startDate}
+            associateId={detail.associateId}
+          />
         </section>
       )}
 
@@ -427,6 +445,7 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
             applicationId={detail.id}
             canManage={canManage}
             esignTasks={detail.tasks.filter((t) => t.kind === 'E_SIGN')}
+            associateId={detail.associateId}
           />
         </section>
       )}
@@ -898,6 +917,8 @@ interface TaskTileProps {
   task: ChecklistTask;
   canSkip: boolean;
   onSkip: () => void;
+  /** Deep link to where this task's full record lives (null = no link). */
+  destination: { to: string; label: string } | null;
 }
 
 const STATUS_TONE: Record<
@@ -959,7 +980,42 @@ const STATUS_TONE: Record<
   },
 };
 
-function TaskTile({ task, canSkip, onSkip }: TaskTileProps) {
+/**
+ * Where each checklist task's FULL record lives. The tiles used to be dead
+ * ends — seeing the I-9 meant menu → Compliance → I-9 → find the person
+ * again. Every destination is a deep link that lands with the person open.
+ */
+function taskDestination(
+  kind: string,
+  associateId: string,
+): { to: string; label: string } | null {
+  switch (kind) {
+    case 'PROFILE_INFO':
+    case 'DIRECT_DEPOSIT':
+      return { to: `/people?associateId=${associateId}`, label: 'Open profile' };
+    case 'DOCUMENT_UPLOAD':
+    case 'W4':
+    case 'POLICY_ACK':
+    case 'E_SIGN':
+      return {
+        to: `/people?associateId=${associateId}&tab=documents`,
+        label: 'Open document vault',
+      };
+    case 'I9_VERIFICATION':
+      return {
+        to: `/compliance?tab=i9&associateId=${associateId}`,
+        label: 'Open I-9 in Compliance',
+      };
+    case 'BACKGROUND_CHECK':
+      return { to: '/compliance?tab=background', label: 'Open background checks' };
+    case 'J1_DOCS':
+      return { to: '/compliance?tab=j1', label: 'Open J-1 program' };
+    default:
+      return null;
+  }
+}
+
+function TaskTile({ task, canSkip, onSkip, destination }: TaskTileProps) {
   const tone = STATUS_TONE[task.status] ?? STATUS_TONE.PENDING;
   const Icon = tone.icon;
   const isComplete = task.status === 'DONE' || task.status === 'SKIPPED';
@@ -994,6 +1050,15 @@ function TaskTile({ task, canSkip, onSkip }: TaskTileProps) {
             <div className="text-xs text-silver mt-1 line-clamp-2">
               {task.description}
             </div>
+          )}
+          {destination && (
+            <Link
+              to={destination.to}
+              className="mt-2 inline-flex items-center gap-1 text-xs text-gold hover:underline"
+            >
+              {destination.label}
+              <ExternalLink className="h-3 w-3" aria-hidden />
+            </Link>
           )}
         </div>
         {canSkip && !isComplete && (
@@ -1072,9 +1137,12 @@ function I9StepIcon({ done }: { done: boolean }) {
 function I9Card({
   applicationId,
   startDate,
+  associateId,
 }: {
   applicationId: string;
   startDate: string | null;
+  /** Powers the "Open in Compliance" deep link to this person's I-9. */
+  associateId: string;
 }) {
   // Keyed under ['application', id, …] so the parent's prefix-match
   // invalidation (after skip/approve) refreshes these too.
@@ -1114,10 +1182,19 @@ function I9Card({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <ShieldCheck className="h-4 w-4 text-gold" aria-hidden />
-          I-9 employment verification
-        </CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 text-gold" aria-hidden />
+            I-9 employment verification
+          </CardTitle>
+          <Link
+            to={`/compliance?tab=i9&associateId=${associateId}`}
+            className="inline-flex items-center gap-1 text-xs text-gold hover:underline"
+          >
+            Open in Compliance
+            <ExternalLink className="h-3 w-3" aria-hidden />
+          </Link>
+        </div>
       </CardHeader>
       <CardContent>
         {failed ? (
