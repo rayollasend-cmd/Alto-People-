@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { ClipboardList, Download, Plus, Star } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -313,7 +314,9 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
                       <Avatar name={r.associateName} size="md" />
                       <div className="min-w-0 flex-1">
                         <div className="text-white font-medium">
-                          {r.associateName}
+                          <AssociateLink associateId={r.associateId}>
+                            {r.associateName}
+                          </AssociateLink>
                           <span className="text-silver text-xs ml-2 font-normal">
                             {fmtPeriod(r.periodStart, r.periodEnd)}
                           </span>
@@ -421,7 +424,9 @@ function ReviewDetailPanel({
         <div className="flex items-center gap-3">
           <Avatar name={r.associateName} size="md" />
           <div className="min-w-0">
-            <DrawerTitle className="truncate">{r.associateName}</DrawerTitle>
+            <DrawerTitle className="truncate">
+              <AssociateLink associateId={r.associateId}>{r.associateName}</AssociateLink>
+            </DrawerTitle>
             <DrawerDescription>
               {fmtPeriod(r.periodStart, r.periodEnd)}
             </DrawerDescription>

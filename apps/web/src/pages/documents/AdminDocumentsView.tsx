@@ -1,3 +1,4 @@
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
   Fragment,
   useCallback,
@@ -958,7 +959,9 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       <div className="flex items-center gap-2">
                         <Avatar name={g.associateName} size="xs" />
                         <span className="text-xs font-medium text-white truncate">
-                          {g.associateName}
+                          <AssociateLink associateId={g.associateId} tab="documents">
+                            {g.associateName}
+                          </AssociateLink>
                         </span>
                         <span className="text-2xs tabular-nums text-silver/70">
                           {g.docs.length} document{g.docs.length === 1 ? '' : 's'}
@@ -1161,7 +1164,9 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       <div className="flex items-center gap-2.5">
                         <Avatar name={g.associateName} size="sm" />
                         <span className="text-white font-medium truncate">
-                          {g.associateName}
+                          <AssociateLink associateId={g.associateId} tab="documents">
+                            {g.associateName}
+                          </AssociateLink>
                         </span>
                       </div>
                     </TableCell>
@@ -1223,7 +1228,9 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                 <Avatar name={folder.associateName} size="md" />
                 <div className="min-w-0">
                   <DrawerTitle className="truncate">
-                    {folder.associateName}
+                    <AssociateLink associateId={folder.associateId} tab="documents">
+                      {folder.associateName}
+                    </AssociateLink>
                   </DrawerTitle>
                   <DrawerDescription>
                     {folder.loading

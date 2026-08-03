@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { CalendarCheck, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -391,7 +392,11 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                           <div className="flex items-center gap-2.5">
                             <Avatar name={r.associateName ?? '—'} size="sm" />
                             <div className="min-w-0">
-                              <div className="truncate">{r.associateName ?? '—'}</div>
+                              <div className="truncate">
+                                <AssociateLink associateId={r.associateId}>
+                                  {r.associateName ?? '—'}
+                                </AssociateLink>
+                              </div>
                               {/* Phone-only inline category + hours since their
                                   dedicated columns are hidden. */}
                               <div className="md:hidden text-xs2 text-silver/70 truncate">
@@ -521,7 +526,11 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
         {detail && (
           <>
             <DrawerHeader>
-              <DrawerTitle>{detail.associateName ?? 'Request'}</DrawerTitle>
+              <DrawerTitle>
+                <AssociateLink associateId={detail.associateId}>
+                  {detail.associateName ?? 'Request'}
+                </AssociateLink>
+              </DrawerTitle>
               <DrawerDescription>
                 {CATEGORY_LABELS[detail.category] ?? detail.category} ·{' '}
                 {fmtYmd(detail.startDate)}

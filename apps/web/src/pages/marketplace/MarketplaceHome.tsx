@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Award, Briefcase, RefreshCw } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
@@ -442,7 +443,9 @@ function ClaimsTab() {
                       />
                     </TableCell>
                     <TableCell className="font-medium text-white">
-                      <div className="truncate">{c.associateName}</div>
+                      <div className="truncate">
+                        <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>
+                      </div>
                       <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {c.position}
                         {' · '}

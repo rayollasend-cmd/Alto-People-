@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, Gavel, Plus, ShieldOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -659,7 +660,7 @@ function DetailDrawer({
             <Label>Acknowledge with signature</Label>
             <p className="text-xs text-silver">
               Type your full name exactly as it appears:{' '}
-              <span className="text-white">{row.associateName}</span>
+              <span className="text-white"><AssociateLink associateId={row.associateId}>{row.associateName}</AssociateLink></span>
             </p>
             <Input
               value={signature}

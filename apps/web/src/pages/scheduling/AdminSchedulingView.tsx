@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -3548,7 +3549,9 @@ function AutoFillDialog({
                 className="flex items-center justify-between gap-3 p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md"
               >
                 <div className="min-w-0 flex-1">
-                  <div className="text-white text-sm font-medium">{c.associateName}</div>
+                  <div className="text-white text-sm font-medium">
+                    <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>
+                  </div>
                   <div className="text-xs text-silver flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
                     <span
                       className={cn(
