@@ -37,6 +37,7 @@ import type {
 } from '@alto-people/shared';
 import { ShiftTeamsDialog } from './ShiftTeamsDialog';
 import { listClientLocations } from '@/lib/clientsApi';
+import { downloadCsv } from '@/lib/csv';
 import { listShiftPositions } from '@/lib/orgApi';
 import {
   applyShiftTemplate,
@@ -395,14 +396,8 @@ function readStoredAnchors(): {
 }
 
 /* ----- CSV / file-download helpers (Phase 54.3) -------------------------- */
-
-function csvCell(v: string | number | null | undefined): string {
-  if (v === null || v === undefined) return '';
-  const s = String(v);
-  // RFC 4180: quote anything containing a delimiter, quote, or newline; double inner quotes.
-  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
+// csvCell comes from lib/csv — this file used to keep a private RFC-4180
+// copy (and a private BOM); both now live in the shared helper.
 
 function csvRow(s: Shift): Array<string | number | null> {
   const start = new Date(s.startsAt);
@@ -421,18 +416,6 @@ function csvRow(s: Shift): Array<string | number | null> {
     s.hourlyRate ?? '',
     s.notes ?? '',
   ];
-}
-
-function downloadBlob(filename: string, mime: string, content: string): void {
-  const blob = new Blob([content], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 
 /** Human-readable single-line date range — "April 2026", "Apr 1 – Apr 7, 2026", or "Apr 12, 2026". */
@@ -1264,15 +1247,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       'Hourly rate',
       'Notes',
     ];
-    const csv = [header, ...rows.map((s) => csvRow(s))]
-      .map((r) => r.map(csvCell).join(','))
-      .join('\r\n');
-    downloadBlob(
-      `shifts-${exportRange.from}-to-${exportRange.to}.csv`,
-      'text/csv;charset=utf-8',
-      // BOM keeps Excel from mojibake-ing UTF-8 names like "José".
-      '﻿' + csv
-    );
+    // Shared helper carries RFC-4180 quoting AND the Excel BOM now.
+    downloadCsv(`shifts-${exportRange.from}-to-${exportRange.to}.csv`, [
+      header,
+      ...rows.map((s) => csvRow(s)),
+    ]);
   };
 
   const onExportPdf = async () => {
