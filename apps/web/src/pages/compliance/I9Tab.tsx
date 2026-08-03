@@ -525,7 +525,20 @@ function Section2Verifier({
     let cancelled = false;
     listI9Documents(applicationId)
       .then((res) => {
-        if (!cancelled) setDocs(res.documents);
+        if (cancelled) return;
+        setDocs(res.documents);
+        // Pre-select the list the associate's classified uploads support —
+        // a passport pre-picks List A, license + SSN card pre-pick B+C.
+        // Unclassified (pre-catalog) docs suggest nothing; HR still decides.
+        const usable = res.documents.filter((d) => d.status !== 'REJECTED');
+        if (usable.some((d) => d.i9List === 'A')) {
+          setDocumentList('LIST_A');
+        } else if (
+          usable.some((d) => d.i9List === 'B') &&
+          usable.some((d) => d.i9List === 'C')
+        ) {
+          setDocumentList('LIST_B_AND_C');
+        }
       })
       .catch((err) => {
         if (!cancelled) {
@@ -643,7 +656,7 @@ function Section2Verifier({
                       checked={checked && !missing}
                       onChange={() => !missing && togglePick(doc.id)}
                       disabled={missing}
-                      aria-label={`${doc.kind} ${doc.side ?? ''}`.trim()}
+                      aria-label={`${doc.i9DocTitle ?? doc.kind} ${doc.side ?? ''}`.trim()}
                     />
                     <div className="aspect-[3/2] bg-navy-secondary rounded mb-2 overflow-hidden flex items-center justify-center">
                       {missing ? (
@@ -653,14 +666,23 @@ function Section2Verifier({
                       ) : isImage ? (
                         <img
                           src={previewDocumentUrl(doc.id)}
-                          alt={`${doc.kind}${doc.side ? ` ${doc.side}` : ''}`}
+                          alt={`${doc.i9DocTitle ?? doc.kind}${doc.side ? ` ${doc.side}` : ''}`}
                           className="w-full h-full object-cover"
                         />
                       ) : (
                         <span className="text-xs text-silver">PDF</span>
                       )}
                     </div>
-                    <div className="text-xs text-white truncate">{doc.kind}</div>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <div className="text-xs text-white truncate">
+                        {doc.i9DocTitle ?? doc.kind}
+                      </div>
+                      {doc.i9List && (
+                        <Badge size="sm" variant="outline">
+                          {doc.i9List}
+                        </Badge>
+                      )}
+                    </div>
                     <div className="text-2xs text-silver">
                       {doc.side ?? 'document'}
                       {missing ? (

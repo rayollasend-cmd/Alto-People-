@@ -183,6 +183,8 @@ describe('<I9Task> document upload', () => {
             size: 1234,
             status: 'UPLOADED',
             side: null,
+            i9DocTitle: 'U.S. Passport or Passport Card',
+            i9List: 'A',
             createdAt: '2026-04-26T18:30:00.000Z',
           },
         ],
@@ -202,9 +204,16 @@ describe('<I9Task> document upload', () => {
     await user.upload(input, fakeFile);
 
     await waitFor(() => expect(uploadI9Document).toHaveBeenCalledTimes(1));
-    // The component's default docKind is 'ID' (driver's license / passport);
-    // 4th arg is docSide (undefined when "Not applicable" is selected).
-    expect(uploadI9Document).toHaveBeenCalledWith(APP_ID, fakeFile, 'ID', undefined);
+    // Default pick is the first federal catalog entry (List A passport,
+    // stored under kind 'ID'); docSide is undefined until a side is chosen,
+    // and the catalog title rides along so the server can derive the list.
+    expect(uploadI9Document).toHaveBeenCalledWith(
+      APP_ID,
+      fakeFile,
+      'ID',
+      undefined,
+      'U.S. Passport or Passport Card',
+    );
     expect(await screen.findByText('license.png')).toBeInTheDocument();
   });
 

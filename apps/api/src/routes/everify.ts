@@ -248,20 +248,34 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
         kind: { in: [...IDENTITY_DOC_KINDS, EVERIFY_PACKET_KIND] },
       },
       orderBy: { createdAt: 'asc' },
-      select: { id: true, kind: true, filename: true, mimeType: true, s3Key: true },
+      select: {
+        id: true,
+        kind: true,
+        filename: true,
+        mimeType: true,
+        s3Key: true,
+        side: true,
+        i9DocTitle: true,
+        i9List: true,
+      },
     });
     const toDoc = (d: (typeof docRows)[number]) => {
+      // Stored side column wins; filename tags are the pre-catalog fallback.
       const lower = d.filename.toLowerCase();
       return {
         id: d.id,
         kind: d.kind,
         filename: d.filename,
         mimeType: d.mimeType,
-        side: lower.includes('-front')
-          ? ('FRONT' as const)
-          : lower.includes('-back')
-            ? ('BACK' as const)
-            : null,
+        i9DocTitle: d.i9DocTitle,
+        i9List: d.i9List,
+        side:
+          d.side ??
+          (lower.includes('-front')
+            ? ('FRONT' as const)
+            : lower.includes('-back')
+              ? ('BACK' as const)
+              : null),
         fileAvailable: d.s3Key !== null && existsSync(resolveStoragePath(d.s3Key)),
       };
     };

@@ -53,6 +53,11 @@ export interface I9DocumentListItem {
   size: number;
   status: 'PENDING' | 'UPLOADED' | 'VERIFIED' | 'REJECTED' | 'EXPIRED';
   side: 'FRONT' | 'BACK' | null;
+  /** Federal catalog identity ("U.S. Passport or Passport Card") and its
+   * A/B/C list. Null on documents uploaded before the catalog existed —
+   * those are never reclassified. */
+  i9DocTitle: string | null;
+  i9List: 'A' | 'B' | 'C' | null;
   createdAt: string;
   /** False when the underlying blob is missing on the server (e.g. the
    * upload was lost during a Railway redeploy that wasn't volume-backed).
@@ -86,12 +91,15 @@ export async function uploadI9Document(
   applicationId: string,
   file: File,
   documentKind: 'I9_SUPPORTING' | 'ID' | 'SSN_CARD' | 'J1_VISA' | 'J1_DS2019',
-  documentSide?: 'FRONT' | 'BACK'
+  documentSide?: 'FRONT' | 'BACK',
+  /** Federal catalog title — the server derives the A/B/C list from it. */
+  i9DocTitle?: string
 ): Promise<I9DocumentMeta> {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('documentKind', documentKind);
   if (documentSide) fd.append('documentSide', documentSide);
+  if (i9DocTitle) fd.append('i9DocTitle', i9DocTitle);
   // Note: don't set Content-Type — the browser sets it with the multipart
   // boundary automatically.
   return jsonFetch(`/api/onboarding/applications/${applicationId}/i9/documents`, {

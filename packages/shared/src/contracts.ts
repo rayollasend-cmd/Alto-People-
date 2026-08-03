@@ -2557,12 +2557,75 @@ export const DocumentStatusSchema = z.enum([
 ]);
 export type DocumentStatus = z.infer<typeof DocumentStatusSchema>;
 
+/* ----- I-9 document catalog ---------------------------------------------- *
+ * The federal acceptable-documents lists. Uploads used to land as generic
+ * "Photo ID" blobs, so Section 2 verification meant HR guessing which list
+ * an image.jpg belonged to. The associate now declares the specific
+ * document; the SERVER derives the list from this catalog (the client's
+ * claimed list is never trusted).
+ *
+ * Legacy uploads (before the catalog) carry NULLs everywhere and are never
+ * reclassified or invalidated — the submit gate has an explicit legacy
+ * pass-through for them.
+ * -------------------------------------------------------------------------- */
+
+export const I9DocListSchema = z.enum(['A', 'B', 'C']);
+export type I9DocList = z.infer<typeof I9DocListSchema>;
+
+export const DocSideSchema = z.enum(['FRONT', 'BACK']);
+export type DocSide = z.infer<typeof DocSideSchema>;
+
+export interface I9CatalogEntry {
+  title: string;
+  list: I9DocList;
+  /** The DocumentKind bucket the file stores under (keeps every existing
+   *  consumer — vault, E-Verify packet views, exports — working unchanged). */
+  kind: 'ID' | 'SSN_CARD' | 'I9_SUPPORTING';
+  /** Card-shaped documents get an optional front/back side tag at upload. */
+  card?: boolean;
+}
+
+export const I9_DOC_CATALOG: readonly I9CatalogEntry[] = [
+  // List A — identity AND employment authorization (sufficient alone).
+  { title: 'U.S. Passport or Passport Card', list: 'A', kind: 'ID', card: true },
+  { title: 'Permanent Resident Card (Green Card, Form I-551)', list: 'A', kind: 'ID', card: true },
+  { title: 'Foreign passport with I-551 stamp or work authorization', list: 'A', kind: 'ID' },
+  { title: 'Employment Authorization Document (Form I-766)', list: 'A', kind: 'ID', card: true },
+  // List B — identity only (must pair with a List C document).
+  { title: "Driver's license", list: 'B', kind: 'ID', card: true },
+  { title: 'State ID card', list: 'B', kind: 'ID', card: true },
+  { title: 'School ID card with photo', list: 'B', kind: 'ID', card: true },
+  { title: 'U.S. Military card or draft record', list: 'B', kind: 'ID', card: true },
+  // List C — employment authorization only.
+  { title: 'Social Security card (unrestricted)', list: 'C', kind: 'SSN_CARD', card: true },
+  { title: 'Birth certificate (original or certified copy)', list: 'C', kind: 'I9_SUPPORTING' },
+  { title: 'Native American tribal document', list: 'C', kind: 'I9_SUPPORTING' },
+];
+
+export function i9CatalogEntry(title: string): I9CatalogEntry | undefined {
+  return I9_DOC_CATALOG.find((e) => e.title === title);
+}
+
+/**
+ * Does a classified document set satisfy Form I-9? One List A document, OR
+ * at least one List B AND one List C. Unclassified (legacy) docs don't
+ * count here — callers apply the legacy pass-through separately.
+ */
+export function i9SetSatisfied(lists: Array<I9DocList | null | undefined>): boolean {
+  const has = (l: I9DocList) => lists.includes(l);
+  return has('A') || (has('B') && has('C'));
+}
+
 export const DocumentRecordSchema = z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string().nullable(),
   clientId: UuidSchema.nullable(),
   kind: DocumentKindSchema,
+  /** Federal catalog identity — null on legacy uploads + non-I-9 docs. */
+  i9DocTitle: z.string().nullable().optional(),
+  i9List: I9DocListSchema.nullable().optional(),
+  side: DocSideSchema.nullable().optional(),
   filename: z.string(),
   mimeType: z.string(),
   size: z.number().int().nonnegative(),
@@ -4214,6 +4277,10 @@ export const EVerifyDocumentSchema = z.object({
   filename: z.string(),
   mimeType: z.string(),
   side: z.enum(['FRONT', 'BACK']).nullable(),
+  /** Federal catalog identity — null on records uploaded before the
+   *  catalog existed (never backfilled). */
+  i9DocTitle: z.string().nullable().optional(),
+  i9List: I9DocListSchema.nullable().optional(),
   fileAvailable: z.boolean(),
 });
 export type EVerifyDocument = z.infer<typeof EVerifyDocumentSchema>;
