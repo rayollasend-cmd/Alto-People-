@@ -15,7 +15,14 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
+  FileSearch,
+  FileSignature,
+  Fingerprint,
+  FlaskConical,
+  FolderOpen,
   Landmark,
+  Plane,
+  ShieldCheck,
   Mail,
   MapPin,
   Pencil,
@@ -26,6 +33,7 @@ import {
   Upload,
   Users,
   X,
+  type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -2801,6 +2809,9 @@ type BadgeTone = 'default' | 'pending' | 'success' | 'destructive' | 'accent';
 const VAULT_CATEGORIES: ReadonlyArray<{
   key: string;
   title: string;
+  /** One-line purpose under the title, so a section identifies itself. */
+  blurb: string;
+  icon: LucideIcon;
   kinds: readonly string[];
   /** ?tab= value on /compliance — the owning directorate. */
   complianceTab?: string;
@@ -2809,6 +2820,8 @@ const VAULT_CATEGORIES: ReadonlyArray<{
   {
     key: 'identity',
     title: 'Identity & I-9',
+    blurb: 'IDs, SSN card, and Section 2 supporting documents',
+    icon: Fingerprint,
     kinds: ['ID', 'SSN_CARD', 'I9_SUPPORTING'],
     complianceTab: 'i9',
     alwaysVisible: true,
@@ -2816,6 +2829,8 @@ const VAULT_CATEGORIES: ReadonlyArray<{
   {
     key: 'everify',
     title: 'E-Verify',
+    blurb: 'Federal work-authorization case and closure packet',
+    icon: ShieldCheck,
     kinds: ['I9_VERIFICATION_RESULT'],
     complianceTab: 'everify',
     alwaysVisible: true,
@@ -2823,6 +2838,8 @@ const VAULT_CATEGORIES: ReadonlyArray<{
   {
     key: 'background',
     title: 'Background check',
+    blurb: 'Provider screening reports',
+    icon: FileSearch,
     kinds: ['BACKGROUND_CHECK_RESULT'],
     complianceTab: 'background',
     alwaysVisible: true,
@@ -2830,6 +2847,8 @@ const VAULT_CATEGORIES: ReadonlyArray<{
   {
     key: 'drug',
     title: 'Drug test',
+    blurb: 'Lab results — a result is valid for 60 days',
+    icon: FlaskConical,
     kinds: ['DRUG_TEST_RESULT'],
     complianceTab: 'drugtests',
     alwaysVisible: true,
@@ -2837,16 +2856,32 @@ const VAULT_CATEGORIES: ReadonlyArray<{
   {
     key: 'j1',
     title: 'J-1 program',
+    blurb: 'DS-2019 and visa documents',
+    icon: Plane,
     kinds: ['J1_DS2019', 'J1_VISA'],
     complianceTab: 'j1',
   },
-  { key: 'tax', title: 'Tax & payroll', kinds: ['W4_PDF'] },
+  {
+    key: 'tax',
+    title: 'Tax & payroll',
+    blurb: 'W-4 and payroll paperwork',
+    icon: Landmark,
+    kinds: ['W4_PDF'],
+  },
   {
     key: 'agreements',
     title: 'Agreements & policies',
+    blurb: 'Offer letters, signed agreements, and policy acknowledgments',
+    icon: FileSignature,
     kinds: ['OFFER_LETTER', 'POLICY', 'HOUSING_AGREEMENT', 'TRANSPORT_AGREEMENT', 'SIGNED_AGREEMENT'],
   },
-  { key: 'other', title: 'Other', kinds: ['OTHER'] },
+  {
+    key: 'other',
+    title: 'Other',
+    blurb: 'Everything that fits no other drawer',
+    icon: FolderOpen,
+    kinds: ['OTHER'],
+  },
 ];
 
 const EVERIFY_CHIP: Record<string, { label: string; tone: BadgeTone }> = {
@@ -3160,10 +3195,16 @@ function DocumentsTab({ associateId }: { associateId: string }) {
 
   return (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-        <div className="text-2xs uppercase tracking-widest text-silver/80">
-          {vault.total} document{vault.total === 1 ? '' : 's'} on file
-          {vault.total > docs.length ? ` · showing latest ${docs.length}` : ''}
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="font-display text-base font-semibold text-white">Document vault</h2>
+          <p className="mt-0.5 text-xs text-silver/70">
+            {vault.total === 0
+              ? 'Nothing on file yet — every document uploaded anywhere on the site lands here.'
+              : `${vault.total} document${vault.total === 1 ? '' : 's'} on file${
+                  vault.total > docs.length ? ` · showing latest ${docs.length}` : ''
+                } — the associate's complete file, grouped by compliance domain.`}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Input
@@ -3188,30 +3229,49 @@ function DocumentsTab({ associateId }: { associateId: string }) {
         </div>
       </div>
 
-      <div className="space-y-6">
+      <div className="space-y-4">
         {visibleSections.map((cat) => {
           const chips = vaultChips(cat.key, summary, cat.docs.length);
+          const Icon = cat.icon;
           return (
-            <section key={cat.key}>
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <h3 className="text-sm font-semibold text-white">{cat.title}</h3>
-                {chips.map((c, i) => (
-                  <Badge key={i} variant={c.tone}>
-                    {c.label}
-                  </Badge>
-                ))}
+            <section
+              key={cat.key}
+              className="overflow-hidden rounded-lg border border-navy-secondary bg-navy/40"
+            >
+              <header className="flex flex-wrap items-center gap-3 border-b border-navy-secondary bg-navy-secondary/25 px-4 py-3">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-gold/10 text-gold">
+                  <Icon className="h-4 w-4" aria-hidden />
+                </span>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold leading-tight text-white">
+                    {cat.title}
+                    <span className="ml-2 font-normal tabular-nums text-silver/60">
+                      {cat.docs.length}
+                    </span>
+                  </h3>
+                  <p className="text-2xs text-silver/60">{cat.blurb}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 sm:ml-2">
+                  {chips.map((c, i) => (
+                    <Badge key={i} variant={c.tone}>
+                      {c.label}
+                    </Badge>
+                  ))}
+                </div>
                 {cat.complianceTab && (
                   <Link
                     to={`/compliance?tab=${cat.complianceTab}`}
-                    className="ml-auto inline-flex items-center gap-1 text-xs text-gold hover:underline"
+                    className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"
                   >
                     Open in Compliance
                     <ExternalLink className="h-3 w-3" />
                   </Link>
                 )}
-              </div>
+              </header>
               {cat.docs.length === 0 ? (
-                <p className="text-xs text-silver/60">No documents filed.</p>
+                <p className="px-4 py-3 text-xs text-silver/60">
+                  No documents filed in this section.
+                </p>
               ) : (
                 <Table caption={cat.title}>
                   <TableHeader>
