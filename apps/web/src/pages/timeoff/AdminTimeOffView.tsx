@@ -437,7 +437,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                           onClick={(e) => e.stopPropagation()}
                         >
                           {r.status === 'PENDING' && canManage ? (
-                            <div className="inline-flex gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                            <div className="inline-flex gap-1 can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                               <Button
                                 size="sm"
                                 variant="ghost"

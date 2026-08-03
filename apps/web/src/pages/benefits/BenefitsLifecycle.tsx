@@ -1157,7 +1157,7 @@ function AcaTab() {
                     <div className="font-medium text-white text-sm mb-3 truncate">
                       {e.associateName}
                     </div>
-                    <div className="grid grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
                       {e.months.map((m, i) => (
                         <div
                           key={i}

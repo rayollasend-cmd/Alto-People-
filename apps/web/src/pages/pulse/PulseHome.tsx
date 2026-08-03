@@ -430,7 +430,7 @@ function AdminPulseTab() {
                         size="sm"
                         variant="ghost"
                         onClick={() => setDeleteTarget(s)}
-                        className="opacity-60 group-hover:opacity-100 hover:text-alert"
+                        className="can-hover:opacity-60 group-hover:opacity-100 hover:text-alert"
                       >
                         Delete
                       </Button>

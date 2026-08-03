@@ -359,11 +359,11 @@ function DayCell({
             <button
               type="button"
               onClick={() => onCellCreate(date)}
-              className="text-silver/30 hover:text-gold transition-colors opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 no-print"
+              className="p-0.5 coarse:p-2 text-silver/30 hover:text-gold transition-colors can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 no-print"
               aria-label={`Add shift on ${fmtDate(date)}`}
               title="Add shift"
             >
-              <Plus className="h-3 w-3" />
+              <Plus className="h-3 w-3 coarse:h-4 coarse:w-4" />
             </button>
           )}
         </div>
@@ -389,7 +389,7 @@ function DayCell({
         <button
           type="button"
           onClick={() => onCellCreate(date)}
-          className="absolute inset-x-1.5 bottom-1.5 top-7 text-silver/30 hover:text-gold flex items-center justify-center text-2xs opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity no-print"
+          className="absolute inset-x-1.5 bottom-1.5 top-7 text-silver/30 hover:text-gold flex items-center justify-center text-2xs can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity no-print"
           aria-label="Add shift"
         >
           <Plus className="h-3 w-3 mr-1" />

@@ -2021,7 +2021,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                   setWeekStart(nextStart);
                   setWeekDayCount(span);
                 }}
-                className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                className="h-7 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs coarse:text-base text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
               />
             </label>
             <label className="inline-flex items-center gap-1 text-xs2 text-silver/70">
@@ -2037,7 +2037,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                   const span = Math.min(31, Math.max(1, daysBetweenLocal(weekStart, end) + 1));
                   setWeekDayCount(span);
                 }}
-                className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                className="h-7 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs coarse:text-base text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
               />
             </label>
             <span className="text-xs2 text-silver/60 tabular-nums">
@@ -2183,7 +2183,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               onChange={(e) => {
                 if (e.target.value) setDayAnchor(fromYmd(e.target.value));
               }}
-              className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+              className="h-7 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs coarse:text-base text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
             />
           </div>
         )}
@@ -2241,7 +2241,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 const [y, m] = e.target.value.split('-').map(Number);
                 if (y && m) setMonthAnchor(new Date(y, m - 1, 1));
               }}
-              className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+              className="h-7 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs coarse:text-base text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
             />
           </div>
         )}
@@ -2296,7 +2296,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             type="date"
             value={listFrom}
             onChange={(e) => setListFrom(e.target.value)}
-            className="h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+            className="h-8 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs coarse:text-base text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
             aria-label="From date"
           />
           <span className="text-silver/70 text-xs">→</span>
@@ -2304,7 +2304,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             type="date"
             value={listTo}
             onChange={(e) => setListTo(e.target.value)}
-            className="h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+            className="h-8 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs coarse:text-base text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
             aria-label="To date"
           />
           <button

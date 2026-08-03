@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useDraggable,
   useDroppable,
   useSensor,
@@ -38,6 +39,7 @@ import {
   GRIP_ICON,
   RESIZE_RAIL_X,
   SHIFT_STATUS_LABEL,
+  ShiftTouchMenuButton,
   StatusMark,
   statusLabelClass,
   statusTileClass,
@@ -291,7 +293,11 @@ export function WeekCalendarView({
 
   const sensors = useSensors(
     // 6px activation distance — chip clicks shouldn't accidentally start a drag.
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+    // Mouse: 6px activation distance so chip clicks don't start drags.
+    // Touch: a hold delay so a finger SCROLLING the grid never picks a
+    // shift up — 6px of drift while panning used to move shifts.
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } })
   );
 
   const [movingShiftId, setMovingShiftId] = useState<string | null>(null);
@@ -803,7 +809,7 @@ const Cell = memo(function Cell({
           <button
             type="button"
             onClick={onCreate}
-            className="absolute inset-0 flex items-center justify-center text-silver/30 hover:text-gold hover:bg-gold/5 transition-colors opacity-60 group-hover:opacity-100"
+            className="absolute inset-0 flex items-center justify-center text-silver/30 hover:text-gold hover:bg-gold/5 transition-colors can-hover:opacity-60 group-hover:opacity-100"
             aria-label="Add shift"
           >
             <Plus className="h-4 w-4" />
@@ -833,7 +839,7 @@ const Cell = memo(function Cell({
             <button
               type="button"
               onClick={onCreate}
-              className="absolute bottom-0.5 right-0.5 h-6 w-6 rounded-full flex items-center justify-center bg-navy-secondary/80 backdrop-blur text-silver/70 hover:text-gold hover:bg-navy-secondary opacity-0 group-hover:opacity-100 focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright transition-opacity no-print"
+              className="absolute bottom-0.5 right-0.5 h-6 w-6 coarse:h-9 coarse:w-9 rounded-full flex items-center justify-center bg-navy-secondary/80 backdrop-blur text-silver/70 hover:text-gold hover:bg-navy-secondary can-hover:opacity-0 group-hover:opacity-100 focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright transition-opacity no-print"
               aria-label="Add another shift"
               title="Add another shift"
             >
@@ -994,6 +1000,8 @@ function ShiftChip({
           'w-full h-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded',
           density.padY,
           density.padX,
+          // Clear the ⋯ touch-menu trigger, which only renders sans hover.
+          '[@media(hover:none)]:pr-8',
         )}
         title={`${fmtTime(shift.startsAt, shift.timezone)}–${fmtTime(previewEndsAt.toISOString(), shift.timezone)} · ${shift.position} · ${SHIFT_STATUS_LABEL[shift.status]}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
       >
@@ -1022,6 +1030,10 @@ function ShiftChip({
           <StatusMark status={shift.status} />
         </div>
       </button>
+      <ShiftTouchMenuButton
+        onOpen={onContextMenu}
+        label={`${shift.position} shift actions`}
+      />
       {canManage && (
         <div
           onMouseDown={onResizeMouseDown}

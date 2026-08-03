@@ -220,7 +220,7 @@ export function AssetsHome() {
                 <TableRow>
                   <TableHead>Kind</TableHead>
                   <TableHead>Label</TableHead>
-                  <TableHead>Serial</TableHead>
+                  <TableHead className="hidden md:table-cell">Serial</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Assigned to</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -238,7 +238,7 @@ export function AssetsHome() {
                         </div>
                       </TableCell>
                       <TableCell className="font-medium text-white">{a.label}</TableCell>
-                      <TableCell className="font-mono text-xs">{a.serial ?? '—'}</TableCell>
+                      <TableCell className="hidden md:table-cell font-mono text-xs">{a.serial ?? '—'}</TableCell>
                       <TableCell>
                         <Badge
                           variant={
@@ -280,7 +280,7 @@ export function AssetsHome() {
                           <button
                             onClick={() => setEditTarget(a)}
                             aria-label={`Edit ${a.label}`}
-                            className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-white transition inline-flex items-center gap-1 text-xs"
+                            className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-white transition inline-flex items-center gap-1 text-xs coarse:py-2 coarse:px-1.5"
                           >
                             <Pencil className="h-3 w-3" />
                             Edit
@@ -299,7 +299,7 @@ export function AssetsHome() {
                                 toast.error(err instanceof ApiError ? err.message : 'Failed.');
                               }
                             }}
-                            className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
+                            className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs coarse:py-2 coarse:px-1.5"
                           >
                             Delete
                           </button>

@@ -135,8 +135,10 @@ export function AssociateDocumentsView() {
     fileRef.current?.focus();
   };
 
+  // Touch parity with ui/Input — 44px target + 16px text on coarse
+  // pointers so iOS never zooms on focus (mirrors the onboarding inputCls).
   const inputCls =
-    'w-full px-3 py-2 rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white';
+    'w-full h-10 coarse:h-11 px-3 py-2 text-sm coarse:text-base rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white';
 
   return (
     <div className="mx-auto">

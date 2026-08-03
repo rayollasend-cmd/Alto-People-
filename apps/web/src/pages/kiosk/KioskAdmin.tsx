@@ -516,7 +516,7 @@ function DevicesTab({
                               toast.error(err instanceof ApiError ? err.message : 'Failed.');
                             }
                           }}
-                          className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
+                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
                         >
                           Delete
                         </button>
@@ -764,7 +764,7 @@ function EmployeeNumberCell({ value }: { value: string | null }) {
       <button
         type="button"
         onClick={() => setRevealed((r) => !r)}
-        className="text-silver hover:text-white transition opacity-60 group-hover:opacity-100"
+        className="text-silver hover:text-white transition can-hover:opacity-60 group-hover:opacity-100"
         aria-label={revealed ? 'Hide employee number' : 'Show employee number'}
         title={revealed ? 'Hide' : 'Show'}
       >
@@ -777,7 +777,7 @@ function EmployeeNumberCell({ value }: { value: string | null }) {
           setCopied(true);
           window.setTimeout(() => setCopied(false), 1200);
         }}
-        className="text-silver hover:text-white transition opacity-60 group-hover:opacity-100"
+        className="text-silver hover:text-white transition can-hover:opacity-60 group-hover:opacity-100"
         aria-label="Copy employee number"
         title="Copy"
       >
@@ -2485,7 +2485,7 @@ function FacesTab({ canManage }: { canManage: boolean }) {
                             toast.error(err instanceof ApiError ? err.message : 'Failed.');
                           }
                         }}
-                        className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
+                        className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
                       >
                         Reset
                       </button>

@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useDraggable,
   useDroppable,
   useSensor,
@@ -28,6 +29,7 @@ import {
   GRIP_ICON,
   RESIZE_RAIL_Y,
   SHIFT_STATUS_LABEL,
+  ShiftTouchMenuButton,
   StatusMark,
   statusLabelClass,
   statusTileClass,
@@ -160,7 +162,11 @@ export function DayCalendarView({
   }, [associates, todayShifts, showAllAssociates]);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+    // Mouse: 6px activation distance so chip clicks don't start drags.
+    // Touch: a hold delay so a finger SCROLLING the grid never picks a
+    // shift up — 6px of drift while panning used to move shifts.
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } })
   );
 
   const handleDragEnd = async (e: DragEndEvent) => {
@@ -578,6 +584,10 @@ function DayShiftChip({
           </div>
         )}
       </button>
+      <ShiftTouchMenuButton
+        onOpen={onContextMenu}
+        label={`${shift.position} shift actions`}
+      />
       {canManage && (
         <div
           onMouseDown={onResizeMouseDown}

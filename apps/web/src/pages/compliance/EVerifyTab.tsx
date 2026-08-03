@@ -358,7 +358,7 @@ function CopyField({
             type="button"
             onClick={() => void copy()}
             aria-label={`Copy ${label}`}
-            className="shrink-0 rounded p-1 text-silver/70 transition-colors hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="shrink-0 rounded p-1 coarse:p-2.5 text-silver/70 transition-colors hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
           >
             {copied ? (
               <Check className="h-3.5 w-3.5 text-success" />

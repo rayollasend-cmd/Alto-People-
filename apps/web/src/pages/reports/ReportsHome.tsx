@@ -295,7 +295,7 @@ export function ReportsHome() {
                       </Button>
                       <button
                         onClick={() => onDelete(r.id)}
-                        className="opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition text-xs"
+                        className="can-hover:opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition text-xs"
                         title="Delete"
                         aria-label={`Delete "${r.name}"`}
                       >
@@ -723,7 +723,7 @@ function ReportBuilder({
                   <button
                     type="button"
                     onClick={() => removeFilter(i)}
-                    className="text-silver hover:text-alert p-1"
+                    className="text-silver hover:text-alert p-1 coarse:p-2.5"
                     title="Remove filter"
                   >
                     <X className="h-4 w-4" />
@@ -791,7 +791,7 @@ function ReportBuilder({
                   <button
                     type="button"
                     onClick={() => removeSort(i)}
-                    className="text-silver hover:text-alert p-1"
+                    className="text-silver hover:text-alert p-1 coarse:p-2.5"
                     title="Remove sort"
                   >
                     <X className="h-4 w-4" />
@@ -966,7 +966,7 @@ function SchedulesDrawer({
                 </div>
                 <button
                   onClick={() => onDeleteSchedule(s.id)}
-                  className="text-silver hover:text-alert transition p-1"
+                  className="text-silver hover:text-alert transition p-1 coarse:p-2.5"
                   title="Delete schedule"
                   aria-label="Delete schedule"
                 >

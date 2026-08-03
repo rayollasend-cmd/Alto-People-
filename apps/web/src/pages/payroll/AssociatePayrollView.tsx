@@ -30,7 +30,7 @@ import { dayHeading, groupByDayBy } from '@/lib/dayGroup';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
-import { Textarea } from '@/components/ui/Input';
+import { Input, Textarea } from '@/components/ui/Input';
 import {
   Dialog,
   DialogContent,
@@ -484,8 +484,10 @@ function PayoutMethodCard() {
       )}
       {editing && (
         <div className="space-y-2">
-          <input
-            className="w-full rounded-md border border-navy-secondary bg-navy px-2 py-2 text-sm text-white"
+          {/* ui/Input, not raw <input>: this is the single most-filled
+              associate form on a phone, and the raw 14px fields made iOS
+              zoom the viewport on every focus. */}
+          <Input
             placeholder="Routing number (9 digits)"
             type="tel"
             inputMode="numeric"
@@ -493,8 +495,7 @@ function PayoutMethodCard() {
             value={routing}
             onChange={(e) => setRouting(e.target.value.replace(/\D/g, '').slice(0, 9))}
           />
-          <input
-            className="w-full rounded-md border border-navy-secondary bg-navy px-2 py-2 text-sm text-white"
+          <Input
             placeholder="Account number"
             type="tel"
             inputMode="numeric"
@@ -502,16 +503,12 @@ function PayoutMethodCard() {
             value={account}
             onChange={(e) => setAccount(e.target.value.replace(/\D/g, '').slice(0, 17))}
           />
-          <input
-            className={cn(
-              'w-full rounded-md border bg-navy px-2 py-2 text-sm text-white',
-              mismatch ? 'border-alert' : 'border-navy-secondary'
-            )}
+          <Input
             placeholder="Confirm account number"
             type="tel"
             inputMode="numeric"
             autoComplete="off"
-            aria-invalid={mismatch || undefined}
+            invalid={mismatch}
             value={confirmAccount}
             onChange={(e) => setConfirmAccount(e.target.value.replace(/\D/g, '').slice(0, 17))}
           />
@@ -563,12 +560,12 @@ function NumField({
   return (
     <label className="block text-xs text-silver">
       {label}
-      <input
+      <Input
         type="number"
         min="0"
         step="0.01"
         inputMode="decimal"
-        className="mt-1 w-full rounded-md border border-navy-secondary bg-navy px-2 py-1.5 text-sm text-white"
+        className="mt-1"
         value={value}
         onChange={(e) => onChange(Number(e.target.value) || 0)}
       />

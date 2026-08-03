@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { Check, X } from 'lucide-react';
+import { Check, MoreVertical, X } from 'lucide-react';
 import type { ShiftStatus } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 
@@ -104,6 +104,40 @@ export function useTileDensityKey(): TileDensity {
 export const GRIP_HIT =
   'p-1 text-silver/60 hover:text-gold cursor-grab active:cursor-grabbing no-print';
 export const GRIP_ICON = 'h-3.5 w-3.5';
+
+/**
+ * Touch entry point to the shift menu. The context menu carries actions
+ * that exist NOWHERE else (publish/un-publish, duplicate-to-employee,
+ * delete), and right-click doesn't exist on an iPad — so on devices
+ * without hover this renders a visible ⋯ that opens the same menu at the
+ * tap point. Hidden on hover-capable devices, where right-click owns it.
+ */
+export function ShiftTouchMenuButton({
+  onOpen,
+  label,
+  className,
+}: {
+  /** Receives the tap's mouse event — feed it straight to ctxMenu.openFor. */
+  onOpen: (e: React.MouseEvent) => void;
+  label: string;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={label}
+      className={cn(
+        'can-hover:hidden absolute right-0.5 top-1/2 -translate-y-1/2 z-10',
+        'grid h-7 w-7 place-items-center rounded text-silver/80 active:bg-navy-secondary/60',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright no-print',
+        className,
+      )}
+    >
+      <MoreVertical className="h-4 w-4" />
+    </button>
+  );
+}
 
 /** Horizontal resize rail (week matrix) — 10px of grab, 2px of paint. */
 export const RESIZE_RAIL_X =
