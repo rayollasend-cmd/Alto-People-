@@ -85,7 +85,7 @@ export function TemplatesRail({ clientId, onManage }: Props) {
       <button
         type="button"
         onClick={() => setCollapsed(false)}
-        className="fixed right-0 top-1/3 z-30 px-1.5 py-3 rounded-l-md border-y border-l border-navy-secondary bg-navy hover:bg-navy-secondary/80 text-silver hover:text-gold no-print"
+        className="hidden fine:lg:block fixed right-0 top-1/3 z-30 px-1.5 py-3 rounded-l-md border-y border-l border-navy-secondary bg-navy hover:bg-navy-secondary/80 text-silver hover:text-gold no-print"
         title="Show templates"
         aria-label="Show templates rail"
       >
@@ -98,8 +98,12 @@ export function TemplatesRail({ clientId, onManage }: Props) {
   }
 
   return (
+    /* hidden fine:lg — the rail's only interaction is HTML5 drag-and-drop
+       onto the desktop grid: on phones it overlaid 2/3 of the mobile
+       schedule list, and on touch-driven iPads the drag can't happen
+       anyway. Only mouse-class devices at lg+ get it. */
     <aside
-      className="fixed right-0 top-20 bottom-4 w-64 z-30 rounded-l-md border border-r-0 border-navy-secondary bg-navy/95 backdrop-blur elev-3 flex flex-col no-print"
+      className="hidden fine:lg:flex fixed right-0 top-20 bottom-4 w-64 z-30 rounded-l-md border border-r-0 border-navy-secondary bg-navy/95 backdrop-blur elev-3 flex-col no-print"
       aria-label="Templates"
     >
       <div className="flex items-center gap-2 px-3 py-2 border-b border-navy-secondary">
@@ -108,20 +112,20 @@ export function TemplatesRail({ clientId, onManage }: Props) {
         <button
           type="button"
           onClick={onManage}
-          className="text-silver/70 hover:text-gold p-1"
+          className="text-silver/70 hover:text-gold p-1.5"
           title="Manage templates"
           aria-label="Manage templates"
         >
-          <Settings2 className="h-3.5 w-3.5" />
+          <Settings2 className="h-4 w-4" />
         </button>
         <button
           type="button"
           onClick={() => setCollapsed(true)}
-          className="text-silver/70 hover:text-gold p-1"
+          className="text-silver/70 hover:text-gold p-1.5"
           title="Collapse"
           aria-label="Collapse templates rail"
         >
-          <ChevronRight className="h-3.5 w-3.5" />
+          <ChevronRight className="h-4 w-4" />
         </button>
       </div>
 

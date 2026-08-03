@@ -1693,7 +1693,7 @@ function PayrollHero({
                 {fmtPeriod(nr.periodStart, nr.periodEnd)}
                 {nr.clientName ? ` · ${nr.clientName}` : ''}
               </div>
-              <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3 text-xs">
+              <div className="mt-4 grid grid-cols-1 min-[420px]:grid-cols-3 gap-2 sm:gap-3 text-xs">
                 <HeroStat
                   icon={<Users className="h-3.5 w-3.5" />}
                   label="Paystubs"

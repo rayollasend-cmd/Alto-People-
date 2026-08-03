@@ -165,7 +165,7 @@ export function CelebrationsHome() {
                               Sent ✓
                             </span>
                           ) : (
-                            <Send className="h-4 w-4 text-silver opacity-60 group-hover:opacity-100 transition-opacity" />
+                            <Send className="h-4 w-4 text-silver can-hover:opacity-60 group-hover:opacity-100 transition-opacity" />
                           )}
                         </button>
                       );

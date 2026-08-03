@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -33,10 +33,7 @@ import {
   DrawerTitle,
   ErrorBanner,
   Skeleton,
-  Tooltip,
-  TooltipContent,
   TooltipProvider,
-  TooltipTrigger,
 } from '@/components/ui';
 import { FilterChip } from '@/components/ui/FilterBar';
 import { downloadCsv } from '@/lib/csv';
@@ -1049,18 +1046,13 @@ function ActionsTile({ refreshEpoch }: { refreshEpoch: number }) {
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <Sparkles className="h-4 w-4 text-gold" />
             Open actions
+            {/* The meaning lives in the visible text, not a tooltip —
+                hover doesn't exist on the tablets these dashboards run on. */}
             {stale && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex items-center gap-1 text-2xs text-warning ml-1">
-                    <WifiOff className="h-3 w-3" />
-                    Stale
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  Last refresh failed.
-                </TooltipContent>
-              </Tooltip>
+              <span className="inline-flex items-center gap-1 text-2xs text-warning ml-1">
+                <WifiOff className="h-3 w-3" />
+                Stale — refresh failed
+              </span>
             )}
           </div>
           {data && data.actions.length > 0 && (
@@ -1185,17 +1177,10 @@ function TileShell({
           </div>
           <div className="flex items-center gap-2">
             {stale && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex items-center gap-1 text-2xs text-warning">
-                    <WifiOff className="h-3 w-3" />
-                    Stale
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="left" className="max-w-xs">
-                  Last refresh failed. Numbers may be out of date — click Refresh to retry.
-                </TooltipContent>
-              </Tooltip>
+              <span className="inline-flex items-center gap-1 text-2xs text-warning">
+                <WifiOff className="h-3 w-3" />
+                Stale — refresh failed
+              </span>
             )}
             <Badge variant={SEVERITY_BADGE[severity].variant}>
               {SEVERITY_BADGE[severity].label}
@@ -1240,16 +1225,48 @@ function BucketTile({ label, count, severity }: { label: string; count: number; 
   );
 }
 
+/**
+ * Dotted-underlined legal term that reveals its clause text on TAP or
+ * click. This was a hover Tooltip, which made the clause unreachable on
+ * touch devices — and the clause is the whole point of the underline.
+ */
 function ClauseTooltip({ clause, children }: { clause: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="cursor-help underline decoration-dotted decoration-silver/40 underline-offset-4">
-          {children}
+    <span ref={ref} className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="cursor-help underline decoration-dotted decoration-silver/40 underline-offset-4 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-sm"
+      >
+        {children}
+      </button>
+      {open && (
+        <span
+          role="note"
+          className="absolute left-0 top-full z-50 mt-1.5 block w-72 max-w-[80vw] rounded-md border border-navy-secondary bg-navy p-2.5 text-xs leading-relaxed text-silver elev-3"
+        >
+          {clause}
         </span>
-      </TooltipTrigger>
-      <TooltipContent side="top">{clause}</TooltipContent>
-    </Tooltip>
+      )}
+    </span>
   );
 }
 

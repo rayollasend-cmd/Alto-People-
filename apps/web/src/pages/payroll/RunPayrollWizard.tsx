@@ -15,7 +15,7 @@
 // The wizard runs `createPayrollRun` only at step 4 — the prior steps are
 // pure UI projections so the user can back out without polluting the DB.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertCircle,
@@ -50,11 +50,6 @@ import {
 import { ApiError } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/Tooltip';
 import {
   Dialog,
   DialogContent,
@@ -833,27 +828,52 @@ function CardStat({
 }
 
 /**
- * QBO-style "?" icon next to a label. Hover/focus reveals a one-sentence
- * explanation of the rate, cap, or source used by the math engine. The
- * tooltips deliberately cite the 2024 numbers — bumping the year means
- * editing the constants in payrollTax.ts and these strings together.
+ * QBO-style "?" icon next to a label — TAP or click opens a one-sentence
+ * explanation of the rate, cap, or source used by the math engine. This
+ * was a hover Tooltip, which made all eleven tax-line explanations
+ * unreachable on touch devices (Radix suppresses focus-open after a tap);
+ * a click-toggled popover works for every pointer. The texts deliberately
+ * cite the 2024 numbers — bumping the year means editing the constants in
+ * payrollTax.ts and these strings together.
  */
 function InfoTip({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex items-center justify-center text-silver/70 hover:text-silver focus:outline-none focus-visible:text-gold align-middle ml-1"
-          aria-label={`What is this?`}
+    <span ref={ref} className="relative inline-block align-middle ml-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="What is this?"
+        className="inline-flex items-center justify-center p-1 coarse:p-2 -m-1 coarse:-m-2 text-silver/70 hover:text-silver focus:outline-none focus-visible:text-gold"
+      >
+        <HelpCircle className="h-3 w-3" />
+      </button>
+      {open && (
+        <span
+          role="note"
+          className="absolute left-1/2 top-full z-50 mt-1.5 block w-64 max-w-[80vw] -translate-x-1/2 rounded-md border border-navy-secondary bg-navy p-2.5 text-left text-xs2 font-normal leading-relaxed text-silver normal-case tracking-normal elev-3"
         >
-          <HelpCircle className="h-3 w-3" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent className="max-w-xs text-xs2 leading-relaxed">
-        {text}
-      </TooltipContent>
-    </Tooltip>
+          {text}
+        </span>
+      )}
+    </span>
   );
 }
 

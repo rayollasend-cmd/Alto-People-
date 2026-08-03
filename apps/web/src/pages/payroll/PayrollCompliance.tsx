@@ -257,7 +257,7 @@ function TaxDepositsTab() {
                     <span className="sr-only">Select</span>
                   </TableHead>
                   <TableHead>Kind</TableHead>
-                  <TableHead>Liability</TableHead>
+                  <TableHead className="hidden md:table-cell">Liability</TableHead>
                   <TableHead>Due</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
                   <TableHead>Status</TableHead>
@@ -285,7 +285,7 @@ function TaxDepositsTab() {
                       </div>
                       <div className="text-xs text-silver">{d.periodLabel}</div>
                     </TableCell>
-                    <TableCell className="text-silver">
+                    <TableCell className="hidden md:table-cell text-silver">
                       {fmtDate(parseYmd(d.liabilityDate))}
                     </TableCell>
                     <TableCell>

@@ -466,8 +466,8 @@ function PremiumTab({ clientId }: { clientId: string }) {
                   <TableHead>Name</TableHead>
                   <TableHead>Kind</TableHead>
                   <TableHead className="text-right">Multiplier</TableHead>
-                  <TableHead className="text-right">Add $/hr</TableHead>
-                  <TableHead className="text-right">Threshold</TableHead>
+                  <TableHead className="hidden md:table-cell text-right">Add $/hr</TableHead>
+                  <TableHead className="hidden md:table-cell text-right">Threshold</TableHead>
                   <TableHead>Active</TableHead>
                   <TableHead className="w-32 text-right">Action</TableHead>
                 </TableRow>
@@ -480,10 +480,10 @@ function PremiumTab({ clientId }: { clientId: string }) {
                     <TableCell className="text-right tabular-nums">
                       {r.multiplier ? `×${r.multiplier}` : '—'}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    <TableCell className="hidden md:table-cell text-right tabular-nums">
                       {r.addPerHour ? fmtMoney(r.addPerHour) : '—'}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">
+                    <TableCell className="hidden md:table-cell text-right tabular-nums">
                       {r.thresholdHours ? `${r.thresholdHours} hr` : '—'}
                     </TableCell>
                     <TableCell>

@@ -236,7 +236,7 @@ export function ProfileInfoTask() {
           />
         </Field>
 
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="sm:col-span-2">
             <Field label="City">
               <input
@@ -290,8 +290,12 @@ export function ProfileInfoTask() {
 
 /* Shared bits exported so the other task forms reuse them ---------------- */
 
+// Touch parity with ui/Input: explicit height (comfortable finger target,
+// 44px on coarse pointers) and 16px text on touch so iOS Safari never
+// zooms the viewport mid-onboarding — this string styles ~35 fields across
+// the whole wizard (W-4, I-9, direct deposit, background check, e-sign).
 export const inputCls =
-  'w-full px-3 py-2 rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white';
+  'w-full h-10 coarse:h-11 px-3 py-2 text-sm coarse:text-base rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white';
 
 // The shared, a11y-wired Field replaced the wrapping-label copy that lived
 // here: explicit htmlFor/id and hints linked via aria-describedby, injected

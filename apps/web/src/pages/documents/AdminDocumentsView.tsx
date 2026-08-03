@@ -947,7 +947,11 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                 <SortableTableHead sortKey="status" state={docSort} onSort={toggleDocSort} className="w-32">
                   Status
                 </SortableTableHead>
-                {canManage && <TableHead className="hidden md:table-cell w-44 text-right" aria-label="Actions" />}
+                {/* Actions stay visible at EVERY width — hiding this column
+                    below md left phone admins able to see documents but
+                    unable to verify or reject a single one. The table's
+                    overflow-auto wrapper handles the narrow-screen width. */}
+                {canManage && <TableHead className="w-44 text-right" aria-label="Actions" />}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1062,8 +1066,8 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     )}
                   </TableCell>
                   {canManage && (
-                    <TableCell className="hidden md:table-cell text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                    <TableCell className="text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-1 can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                         {(d.status === 'UPLOADED' || d.status === 'REJECTED') && (
                           <Button
                             size="sm"

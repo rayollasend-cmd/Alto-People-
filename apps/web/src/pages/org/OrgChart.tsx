@@ -277,7 +277,7 @@ function TreeNode({
           </div>
         </Link>
         {hasChildren && (
-          <div className="text-xs text-silver opacity-60 group-hover:opacity-100 transition-opacity flex items-center gap-1">
+          <div className="text-xs text-silver can-hover:opacity-60 group-hover:opacity-100 transition-opacity flex items-center gap-1">
             <Users className="h-3 w-3" />
             {countTeam(node)}
           </div>

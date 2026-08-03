@@ -361,7 +361,7 @@ export function AgreementsHome() {
                                   setPendingKey(null);
                                 }
                               }}
-                              className="text-silver hover:text-warning opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
+                              className="text-silver hover:text-warning can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
                             >
                               Expire
                             </Button>
@@ -396,7 +396,7 @@ export function AgreementsHome() {
                                 setPendingKey(null);
                               }
                             }}
-                            className="text-silver hover:text-alert opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
+                            className="text-silver hover:text-alert can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>

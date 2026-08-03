@@ -435,7 +435,7 @@ export function KbHome() {
                             size="sm"
                             variant="ghost"
                             aria-label={`Delete ${a.title}`}
-                            className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 hover:text-alert"
+                            className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 hover:text-alert"
                             onClick={async () => {
                               if (!(await confirm({ title: `Delete "${a.title}"?`, destructive: true }))) return;
                               try {

@@ -175,7 +175,7 @@ export function TemplatesHome() {
                           e.stopPropagation();
                           onDelete(t.id);
                         }}
-                        className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
+                        className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
                       >
                         Delete
                       </button>

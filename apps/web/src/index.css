@@ -389,6 +389,19 @@ input[type='radio'] {
   accent-color: rgb(var(--color-gold));
 }
 
+/* Touch-size every native checkbox / radio in one rule. 64 of them across
+   the pages carry no size class at all (browser default ≈ 13px) and the
+   rest are h-4 w-4 — both hopeless finger targets on the bulk-select
+   flows. min-* wins over the h-4/w-4 utilities (they set width/height,
+   not min-*), so no per-site edits are needed. */
+@media (pointer: coarse) {
+  input[type='checkbox'],
+  input[type='radio'] {
+    min-width: 1.25rem;
+    min-height: 1.25rem;
+  }
+}
+
 /* Tell the browser the chrome is dark/light so native date pickers, file
    buttons, scrollbars, etc. paint in the matching scheme. Without this,
    the date input's calendar icon is black on dark navy = invisible. */

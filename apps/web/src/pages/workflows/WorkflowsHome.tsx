@@ -972,7 +972,7 @@ function DefinitionDrawer({
                           <button
                             type="button"
                             onClick={() => removeCondRow(i)}
-                            className="text-silver hover:text-alert p-1"
+                            className="text-silver hover:text-alert p-1 coarse:p-2.5"
                             title="Remove condition"
                           >
                             <X className="h-4 w-4" />

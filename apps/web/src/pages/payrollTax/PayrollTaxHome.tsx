@@ -971,7 +971,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
     <div className="space-y-4">
       <TaxFormsWorkflowSteps rows={rows} />
       {canManage && (
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <Button variant="ghost" onClick={() => setShowSubmitter(true)}>
             Submitter profile
           </Button>
@@ -2557,8 +2557,8 @@ function SubmitterProfileDrawer({ onClose }: { onClose: () => void }) {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-4 gap-3">
-              <div className="col-span-2">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <div className="sm:col-span-2">
                 <Label>City</Label>
                 <Input className="mt-1" value={form.city} onChange={update('city')} />
               </div>
@@ -2581,7 +2581,7 @@ function SubmitterProfileDrawer({ onClose }: { onClose: () => void }) {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <Label>Contact name</Label>
                 <Input

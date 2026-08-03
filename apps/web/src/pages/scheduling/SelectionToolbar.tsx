@@ -256,7 +256,7 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
   };
 
   return (
-    <div className="fixed left-1/2 -translate-x-1/2 z-40 no-print bottom-[max(1.5rem,calc(env(safe-area-inset-bottom)+0.5rem))]">
+    <div className="fixed left-1/2 -translate-x-1/2 z-40 no-print bottom-[max(1.5rem,calc(env(safe-area-inset-bottom)+0.5rem))] max-w-[calc(100vw-1rem)]">
       {panel === 'reassign' && (
         <div className="mb-2 rounded-lg bg-navy border border-navy-secondary elev-3 p-3 w-80">
           <div className="mb-1 text-2xs uppercase tracking-widest text-silver">
@@ -305,7 +305,10 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
           </div>
         </div>
       )}
-      <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-navy border border-gold/40 elev-3">
+      {/* flex-wrap + viewport ceiling: seven actions previously formed a
+          fixed ~900px row that clipped off both edges of anything narrower
+          than a desktop monitor. */}
+      <div className="flex flex-wrap items-center justify-center gap-2 px-4 py-2 rounded-lg bg-navy border border-gold/40 elev-3 max-h-[40vh] overflow-y-auto">
         <CheckCircle2 className="h-4 w-4 text-gold" />
         <span className="text-sm text-white tabular-nums">
           {selected.length} selected
@@ -384,7 +387,7 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
         <button
           type="button"
           onClick={onClear}
-          className="text-silver/70 hover:text-silver p-1"
+          className="text-silver/70 hover:text-silver p-1 coarse:p-2.5"
           aria-label="Clear selection"
         >
           <X className="h-4 w-4" />

@@ -178,11 +178,11 @@ export function W4SsnRecollection() {
                     />
                   </TableHead>
                   <TableHead>Associate</TableHead>
-                  <TableHead>Email</TableHead>
+                  <TableHead className="hidden md:table-cell">Email</TableHead>
                   <TableHead>Still needed</TableHead>
-                  <TableHead>W-4 submitted</TableHead>
+                  <TableHead className="hidden lg:table-cell">W-4 submitted</TableHead>
                   <TableHead>Shortcut</TableHead>
-                  <TableHead>Last emailed</TableHead>
+                  <TableHead className="hidden md:table-cell">Last emailed</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -262,7 +262,7 @@ function RosterRow({
           <span className="ml-2 font-mono text-xs text-silver">•••-••-{row.ssnLast4}</span>
         )}
       </TableCell>
-      <TableCell>
+      <TableCell className="hidden md:table-cell">
         {row.hasAccount ? (
           <span className="text-silver">{row.email ?? '—'}</span>
         ) : (
@@ -278,7 +278,7 @@ function RosterRow({
           {row.needsCard && <Badge variant="pending">Card photo</Badge>}
         </div>
       </TableCell>
-      <TableCell className="text-silver">{fmtDate(row.w4SubmittedAt)}</TableCell>
+      <TableCell className="hidden lg:table-cell text-silver">{fmtDate(row.w4SubmittedAt)}</TableCell>
       <TableCell>
         {row.hasSsnDocument ? (
           <Badge
@@ -292,7 +292,7 @@ function RosterRow({
           <span className="text-silver text-xs">—</span>
         )}
       </TableCell>
-      <TableCell className="text-silver text-xs">
+      <TableCell className="hidden md:table-cell text-silver text-xs">
         {row.lastEmailedAt ? (
           <>
             {fmtDate(row.lastEmailedAt)}

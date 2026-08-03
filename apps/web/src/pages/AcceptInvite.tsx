@@ -40,7 +40,7 @@ function ShowPasswordToggle({
       type="button"
       onClick={onToggle}
       aria-label={shown ? 'Hide password' : 'Show password'}
-      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded text-silver/70 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+      className="absolute right-2.5 coarse:right-1 top-1/2 -translate-y-1/2 p-1 coarse:p-2.5 rounded text-silver/70 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
     >
       {shown ? (
         <EyeOff className="h-4 w-4" aria-hidden="true" />

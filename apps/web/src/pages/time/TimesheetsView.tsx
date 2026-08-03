@@ -556,18 +556,22 @@ export function TimesheetsView() {
         <CardContent className="p-0">
           <Table>
             <TableHeader>
+              {/* Responsive column budget: a phone keeps Status / Associate /
+                  Site / Total (the "is this ready and how much" read); the
+                  ST/OT/DT breakdown returns at md and the Fieldglass
+                  bookkeeping columns (ID / Revision / week-End) at lg. */}
               <TableRow>
                 <TableHead>Status</TableHead>
-                <TableHead>ID</TableHead>
-                <TableHead className="text-right">Revision</TableHead>
+                <TableHead className="hidden lg:table-cell">ID</TableHead>
+                <TableHead className="hidden lg:table-cell text-right">Revision</TableHead>
                 <TableHead>Associate</TableHead>
-                <TableHead>Site</TableHead>
-                <TableHead>End</TableHead>
-                <TableHead className="text-right">ST</TableHead>
-                <TableHead className="text-right">OT</TableHead>
-                <TableHead className="text-right">DT</TableHead>
-                <TableHead className="text-right">Others</TableHead>
-                <TableHead className="text-right">NB</TableHead>
+                <TableHead className="hidden sm:table-cell">Site</TableHead>
+                <TableHead className="hidden lg:table-cell">End</TableHead>
+                <TableHead className="hidden md:table-cell text-right">ST</TableHead>
+                <TableHead className="hidden md:table-cell text-right">OT</TableHead>
+                <TableHead className="hidden md:table-cell text-right">DT</TableHead>
+                <TableHead className="hidden md:table-cell text-right">Others</TableHead>
+                <TableHead className="hidden md:table-cell text-right">NB</TableHead>
                 <TableHead className="text-right">Total</TableHead>
               </TableRow>
             </TableHeader>
@@ -604,8 +608,8 @@ export function TimesheetsView() {
                     </TableCell>
                     {/* ID + Revision are Fieldglass-assigned on entry — shown to keep
                         the columns aligned with the Fieldglass list for eyeballing. */}
-                    <TableCell className="text-silver/50">—</TableCell>
-                    <TableCell className="text-right tabular-nums text-silver/60">0</TableCell>
+                    <TableCell className="hidden lg:table-cell text-silver/50">—</TableCell>
+                    <TableCell className="hidden lg:table-cell text-right tabular-nums text-silver/60">0</TableCell>
                     <TableCell className="font-medium">
                       <button
                         type="button"
@@ -616,13 +620,13 @@ export function TimesheetsView() {
                         {r.worker}
                       </button>
                     </TableCell>
-                    <TableCell className="text-silver">{r.site}</TableCell>
-                    <TableCell className="tabular-nums text-silver">{data?.weekEnding}</TableCell>
-                    <TableCell className="text-right tabular-nums text-silver">{hoursCell(r.st)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-silver">{hoursCell(r.ot)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-silver">{hoursCell(r.dt)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-white">{hoursCell(r.others)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-silver">{hoursCell(r.nb)}</TableCell>
+                    <TableCell className="hidden sm:table-cell text-silver">{r.site}</TableCell>
+                    <TableCell className="hidden lg:table-cell tabular-nums text-silver">{data?.weekEnding}</TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.st)}</TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.ot)}</TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.dt)}</TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums text-white">{hoursCell(r.others)}</TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.nb)}</TableCell>
                     <TableCell className="text-right tabular-nums font-semibold text-white">{hoursCell(r.total)}</TableCell>
                   </TableRow>
                 ))

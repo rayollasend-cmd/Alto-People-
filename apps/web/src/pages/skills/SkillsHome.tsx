@@ -453,7 +453,7 @@ function CatalogTab({ canManage }: { canManage: boolean }) {
                               toast.error(err instanceof ApiError ? err.message : 'Failed.');
                             }
                           }}
-                          className="opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition text-xs"
+                          className="can-hover:opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition text-xs"
                         >
                           Delete
                         </button>

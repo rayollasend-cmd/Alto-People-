@@ -246,7 +246,7 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
             onClick={it.onClick}
             disabled={it.disabled}
             className={cn(
-              'w-full flex items-center gap-2 px-3 py-1.5 text-sm text-left transition-colors',
+              'w-full flex items-center gap-2 px-3 py-1.5 coarse:py-2.5 text-sm text-left transition-colors',
               it.danger
                 ? 'text-alert hover:bg-alert/10'
                 : 'text-silver hover:bg-navy-secondary/60 hover:text-white',

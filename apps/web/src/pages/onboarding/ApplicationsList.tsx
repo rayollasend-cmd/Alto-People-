@@ -1230,7 +1230,7 @@ export function ApplicationsList() {
                     {canInvite && (
                       <TableCell className="text-right whitespace-nowrap no-print">
                         <div
-                          className="flex items-center justify-end gap-0.5 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
+                          className="flex items-center justify-end gap-0.5 can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
                           data-no-row-click
                         >
                           {canManage && a.status !== 'APPROVED' && a.status !== 'REJECTED' && (
@@ -1499,7 +1499,7 @@ function ApplicationCard({
 
       {canInvite && (
         <div
-          className="flex items-center gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
+          className="flex items-center gap-1 can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
           data-no-row-click
         >
           {canManage && a.status !== 'APPROVED' && a.status !== 'REJECTED' && (

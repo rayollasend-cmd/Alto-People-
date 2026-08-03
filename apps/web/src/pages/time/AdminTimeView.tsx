@@ -1968,7 +1968,7 @@ function FocusEntryRow({
           {STATUS_LABELS[e.status]}
         </Badge>
         {canManage && (
-          <span className="inline-flex items-center gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+          <span className="inline-flex items-center gap-1 can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
             {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
               <Button
                 size="sm"
@@ -2098,7 +2098,7 @@ const QueueEntryRow = memo(function QueueEntryRow({
       </TableCell>
       {canManage && (
         <TableCell className="text-right whitespace-nowrap">
-          <div className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex items-center gap-1">
+          <div className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex items-center gap-1">
             {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
               <Button
                 size="sm"

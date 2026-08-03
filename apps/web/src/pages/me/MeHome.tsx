@@ -816,7 +816,7 @@ function EmergencyPanel({
                           e.stopPropagation();
                           onDelete(row.id);
                         }}
-                        className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition"
+                        className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition p-1 coarse:p-2.5"
                       >
                         <Trash2 className="h-4 w-4 inline" />
                       </button>
@@ -1066,7 +1066,7 @@ function DependentsPanel({
                           e.stopPropagation();
                           onDelete(row.id);
                         }}
-                        className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition"
+                        className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition p-1 coarse:p-2.5"
                       >
                         <Trash2 className="h-4 w-4 inline" />
                       </button>
@@ -1374,7 +1374,7 @@ function BeneficiariesPanel({
                           e.stopPropagation();
                           onDelete(row.id);
                         }}
-                        className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition"
+                        className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition p-1 coarse:p-2.5"
                       >
                         <Trash2 className="h-4 w-4 inline" />
                       </button>
