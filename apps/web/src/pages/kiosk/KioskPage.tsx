@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
+import { hapticConfirm, hapticSuccess } from '@/lib/haptics';
 import {
   kioskAttachFace,
   kioskConfig,
@@ -678,6 +679,7 @@ export function KioskPage() {
         associateName: r.associateName,
         at: r.at,
       });
+      hapticSuccess();
       setStage('result');
       scheduleReset(4000);
       // Fire-and-forget: upload the selfie + attach the descriptor now that
@@ -747,6 +749,7 @@ export function KioskPage() {
         at: capturedAt,
         queued: true,
       });
+      hapticSuccess();
       setStage('result');
       scheduleReset(4000);
     }
@@ -1271,11 +1274,17 @@ function PinPad({
     if (error) setShakeKey((k) => k + 1);
   }, [error]);
 
+  // Every key ticks — the PIN pad is the most physical interaction in
+  // the product and it was silent.
   const press = (d: string) => {
-    if (!submitting && pin.length < 4) onChange(pin + d);
+    if (submitting || pin.length >= 4) return;
+    hapticConfirm();
+    onChange(pin + d);
   };
   const back = () => {
-    if (!submitting) onChange(pin.slice(0, -1));
+    if (submitting) return;
+    hapticConfirm();
+    onChange(pin.slice(0, -1));
   };
 
   return (

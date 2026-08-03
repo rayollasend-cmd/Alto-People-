@@ -121,6 +121,9 @@ export const TableRow = React.forwardRef<
         'hover:bg-navy-secondary/40',
         // Stronger hover when the row is interactive (callers add `cursor-pointer`).
         '[&.cursor-pointer]:hover:bg-navy-secondary/60',
+        // Press feedback — hover never fires under a finger, so without
+        // this every row tap on a phone/iPad felt dead.
+        '[&.cursor-pointer]:active:bg-navy-secondary/70',
         // Keyboard focus ring for the interactive rows promoted above.
         '[&.cursor-pointer]:focus-visible:outline-none [&.cursor-pointer]:focus-visible:ring-2 [&.cursor-pointer]:focus-visible:ring-gold-bright [&.cursor-pointer]:focus-visible:ring-inset',
         // Selected: brighter background plus a thin gold rail on the first cell.

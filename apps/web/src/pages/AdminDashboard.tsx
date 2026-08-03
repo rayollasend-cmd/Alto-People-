@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
   AlertTriangle,
@@ -127,6 +128,8 @@ const humanizeAction = (action: string): string => {
 };
 
 export function AdminDashboard() {
+  const pullQueryClient = useQueryClient();
+  const pullState = usePullToRefresh(() => pullQueryClient.invalidateQueries());
   const { user, role, can } = useAuth();
   const [now, setNow] = useState(() => new Date());
 
@@ -183,6 +186,7 @@ export function AdminDashboard() {
 
   return (
     <div className="mx-auto space-y-8">
+      <PullToRefreshIndicator state={pullState} />
       {/* Greeting strip — calm, generous typography, time + role context. */}
       <header>
         <div className="flex items-center gap-2 flex-wrap">

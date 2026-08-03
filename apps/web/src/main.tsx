@@ -15,7 +15,7 @@ import { ThemeProvider } from '@/lib/theme';
 import { DensityProvider } from '@/lib/density';
 import { PageTitleProvider } from '@/lib/pageTitle';
 import { ConfirmProvider } from '@/lib/confirm';
-import { Toaster } from '@/components/ui/Toaster';
+import { Toaster, toast } from '@/components/ui/Toaster';
 import { GlobalErrorBoundary } from '@/components/GlobalErrorBoundary';
 
 // TanStack Query — caches API reads so back-nav and revisits within
@@ -80,10 +80,53 @@ try {
 
 // Phase 98 — register the service worker for PWA install + offline shell.
 // Skipped in dev so we don't pollute the dev experience with stale caches.
+//
+// Updates are user-controlled: when a new worker finishes installing while
+// an old one is running, we toast "New version available" and only skip
+// waiting (then reload) when the user opts in — deploys used to swap the
+// bundle silently mid-session.
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {
-      // Silent fail — SW is best-effort enhancement.
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then((reg) => {
+        const promptUpdate = (worker: ServiceWorker) => {
+          toast('A new version of Alto is ready.', {
+            duration: Infinity,
+            action: {
+              label: 'Reload',
+              onClick: () => worker.postMessage('SKIP_WAITING'),
+            },
+          });
+        };
+        // A worker may already be parked in waiting from a previous visit.
+        if (reg.waiting && navigator.serviceWorker.controller) {
+          promptUpdate(reg.waiting);
+        }
+        reg.addEventListener('updatefound', () => {
+          const installing = reg.installing;
+          if (!installing) return;
+          installing.addEventListener('statechange', () => {
+            if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+              promptUpdate(installing);
+            }
+          });
+        });
+      })
+      .catch(() => {
+        // Silent fail — SW is best-effort enhancement.
+      });
+    // The moment the new worker takes over, load the new bundle. The
+    // hadController guard matters: sw.js calls clients.claim() on
+    // activate, so the very FIRST installation also fires
+    // controllerchange on a page that's already current — reloading
+    // there would flash-restart every brand-new visitor.
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloading) return;
+      reloading = true;
+      window.location.reload();
     });
   });
 }

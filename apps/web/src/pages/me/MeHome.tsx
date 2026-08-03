@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { Plus, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
@@ -260,8 +261,11 @@ export function MeHome() {
     refresh();
   }, []);
 
+  const pullState = usePullToRefresh(refresh);
+
   return (
     <div className="space-y-5">
+      <PullToRefreshIndicator state={pullState} />
       <PageHeader
         title="My profile"
         subtitle="Personal info, emergency contacts, dependents, beneficiaries, and life events you can manage yourself."

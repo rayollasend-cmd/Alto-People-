@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import {
   Activity,
   AlertCircle,
@@ -60,6 +61,8 @@ const firstNameFromEmail = (email: string): string => {
  * requests, and a roster of direct reports with current status.
  */
 export function ManagerDashboard() {
+  const pullQueryClient = useQueryClient();
+  const pullState = usePullToRefresh(() => pullQueryClient.invalidateQueries());
   const { user } = useAuth();
   const [now, setNow] = useState(() => new Date());
 
@@ -142,6 +145,7 @@ export function ManagerDashboard() {
 
   return (
     <div className="mx-auto space-y-8">
+      <PullToRefreshIndicator state={pullState} />
       {/* Greeting */}
       <header>
         <div className="flex items-center gap-2 flex-wrap">

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
+import { hapticConfirm } from '@/lib/haptics';
 import { CalendarCheck, Check, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { TimeOffRequest } from '@alto-people/shared';
@@ -64,6 +66,10 @@ const SWAPS_KEY = ['approvals', 'swaps'] as const;
 const PICKUPS_KEY = ['approvals', 'pickups'] as const;
 
 export function ApprovalsHome() {
+  const queryClient = useQueryClient();
+  // Pull down from the top = refetch everything on the page — the gesture
+  // approvers reach for by habit on a phone.
+  const pullState = usePullToRefresh(() => queryClient.invalidateQueries());
   // KPI is best-effort — the panels below are the real content. A failure
   // renders an inline retry affordance on the tile instead of a dash.
   const timesheetQuery = useQuery({
@@ -96,6 +102,7 @@ export function ApprovalsHome() {
 
   return (
     <div>
+      <PullToRefreshIndicator state={pullState} />
       <PageHeader
         title="Approvals"
         subtitle="Everything waiting on your decision — swaps, pickups, time off, and timesheets."
@@ -253,6 +260,7 @@ function PendingTimeOffPanel({
       });
     },
     onSuccess: (_res, r) => {
+      hapticConfirm();
       toast.success(`Approved ${r.associateName ?? 'request'}.`);
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: TIME_OFF_KEY }),
@@ -269,6 +277,7 @@ function PendingTimeOffPanel({
       });
     },
     onSuccess: () => {
+      hapticConfirm();
       toast.success('Request denied.');
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: TIME_OFF_KEY }),

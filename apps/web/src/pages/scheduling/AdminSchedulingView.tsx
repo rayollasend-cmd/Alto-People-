@@ -109,6 +109,7 @@ import {
 } from '@/components/ui/Table';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import {
   WeekCalendarView,
   shiftWeek,
@@ -1827,8 +1828,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     onDelete: onDeleteShift,
   };
 
+  const pullState = usePullToRefresh(refresh);
+
   return (
     <div className="mx-auto print-area">
+      <PullToRefreshIndicator state={pullState} />
       {/* Print-only header — appears on paper above the schedule, hidden on screen. */}
       <div className="print-only mb-3">
         <div className="text-xl font-semibold">Schedule</div>

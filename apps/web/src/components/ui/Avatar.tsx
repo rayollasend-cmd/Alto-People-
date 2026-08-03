@@ -83,6 +83,11 @@ export function Avatar({
         <img
           src={src}
           alt=""
+          // Avatars render in every directory/queue row — lazy + async so a
+          // 500-row list doesn't fire 500 eager photo fetches on mount. The
+          // wrapper's fixed size classes already prevent layout shift.
+          loading="lazy"
+          decoding="async"
           className="h-full w-full object-cover"
           onError={() => setBroken(true)}
           draggable={false}
