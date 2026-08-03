@@ -1928,8 +1928,16 @@ export type AvailabilityOverviewResponse = z.infer<
 >;
 
 export const PublishWeekInputSchema = z.object({
-  /** ISO; server snaps to local Monday 00:00 of that week. */
+  /**
+   * Exact start instant of the window (inclusive). The CLIENT computes the
+   * displayed week's boundary — the server must not re-snap it: snapping to
+   * "local Monday midnight" on a UTC server published the UTC week, not the
+   * one on the admin's screen (late-Sunday-evening drafts silently skipped).
+   */
   weekStart: z.string().datetime(),
+  /** Exclusive end instant. Omitted = weekStart + 7×24h (pre-DST-aware
+   *  callers); the UI sends the real zone-aware boundary. */
+  weekEnd: z.string().datetime().optional(),
   /** When set, only DRAFT shifts for this client are published. */
   clientId: UuidSchema.optional(),
 });
@@ -1953,14 +1961,21 @@ export type PublishWeekSkip = z.infer<typeof PublishWeekSkipSchema>;
 export const PublishWeekResponseSchema = z.object({
   published: z.number().int().nonnegative(),
   skipped: z.array(PublishWeekSkipSchema),
+  /** True when more than the per-request cap of drafts matched — the rest
+   *  are still DRAFT; run publish again. Silent before, which quietly left
+   *  drafts unpublished on very large weeks. */
+  truncated: z.boolean().optional(),
 });
 export type PublishWeekResponse = z.infer<typeof PublishWeekResponseSchema>;
 
 /* Auto-schedule the week ================================================== */
 
 export const AutoScheduleWeekInputSchema = z.object({
-  /** ISO; server snaps to local Monday 00:00 of that week. */
+  /** Exact window start (inclusive) — same no-server-resnap contract as
+   *  PublishWeekInput; snapping on a UTC server acted on the wrong week. */
   weekStart: z.string().datetime(),
+  /** Exclusive end. Omitted = weekStart + 7×24h. */
+  weekEnd: z.string().datetime().optional(),
   /** When set, only fills OPEN shifts for this client. */
   clientId: UuidSchema.optional(),
 });

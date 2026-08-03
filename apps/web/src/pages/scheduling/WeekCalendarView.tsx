@@ -22,6 +22,7 @@ import {
   zonedMinutesOfDay,
   zonedWallTimeToUtc,
 } from '@/lib/format';
+import { addDays, sameDay, shiftMinutes, startOfDay, ymd } from './calendarDates';
 import {
   ShiftHoverCard,
   useShiftHoverCard,
@@ -96,45 +97,10 @@ function compactRange(
   return `${compactClock(startIso, timeZone)}–${compactClock(endIso, timeZone)}`;
 }
 
-function startOfDay(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-/** Local calendar-date key ("YYYY-MM-DD") of a column day — its stable label. */
-function ymd(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function addDays(d: Date, n: number): Date {
-  const x = new Date(d);
-  x.setDate(x.getDate() + n);
-  return x;
-}
-
-function sameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
-
 function formatCost(n: number): string {
   if (n >= 10_000) return `$${Math.round(n / 1000)}k`;
   if (n >= 1_000) return `$${(n / 1000).toFixed(1)}k`;
   return `$${Math.round(n)}`;
-}
-
-function shiftMinutes(s: Shift): number {
-  return Math.max(
-    0,
-    Math.round(
-      (new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime()) / 60_000
-    )
-  );
 }
 
 interface Props {
