@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, History, KeyRound, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Upload, User as UserIcon } from 'lucide-react';
+import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, Fingerprint, History, KeyRound, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { MFA_RECOVERY_CODE_COUNT, type MfaEnrollStartResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -25,7 +25,14 @@ import {
 } from '@/lib/settingsApi';
 import { deleteProfilePhoto, uploadProfilePhoto } from '@/lib/selfApi';
 import { getPushStatus, subscribeToPush, unsubscribeFromPush } from '@/lib/push';
-import { fmtDateTime } from '@/lib/format';
+import { fmtDate, fmtDateTime } from '@/lib/format';
+import {
+  listPasskeys,
+  passkeysSupported,
+  registerPasskey,
+  removePasskey,
+  type PasskeySummary,
+} from '@/lib/webauthn';
 import {
   ROLE_LABELS,
   SUPPORTED_TIMEZONES,
@@ -97,6 +104,7 @@ export function Settings() {
         </div>
         <div className="space-y-6">
           <PasswordCard />
+          <PasskeysCard />
           <MfaCard />
         </div>
       </div>
@@ -143,6 +151,118 @@ function DataExportCard() {
             Download my data
           </Button>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Passkeys — Face ID / Touch ID / Windows Hello sign-in. Registration and
+ * removal only; the sign-in leg lives on the login page. Hidden entirely
+ * on browsers without WebAuthn (old in-app webviews) rather than showing
+ * a card that can only apologize.
+ */
+function PasskeysCard() {
+  const [passkeys, setPasskeys] = useState<PasskeySummary[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const supported = passkeysSupported();
+
+  useEffect(() => {
+    if (!supported) return;
+    let cancelled = false;
+    listPasskeys()
+      .then((rows) => {
+        if (!cancelled) setPasskeys(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setPasskeys([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [supported]);
+
+  if (!supported) return null;
+
+  const onAdd = async () => {
+    setBusy(true);
+    try {
+      const created = await registerPasskey();
+      setPasskeys((cur) => [...(cur ?? []), created]);
+      toast.success('Passkey added — you can now sign in with Face ID / Touch ID / your device PIN.');
+    } catch (err) {
+      // NotAllowedError = the user closed the system sheet; not an error
+      // worth a red toast.
+      if (err instanceof Error && err.name === 'NotAllowedError') return;
+      toast.error(err instanceof Error ? err.message : 'Could not add a passkey.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRemove = async (p: PasskeySummary) => {
+    setBusy(true);
+    try {
+      await removePasskey(p.id);
+      setPasskeys((cur) => (cur ?? []).filter((x) => x.id !== p.id));
+      toast.success('Passkey removed.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not remove the passkey.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Fingerprint className="h-4 w-4 text-gold" />
+          Passkeys
+        </CardTitle>
+        <CardDescription>
+          Sign in with Face ID, Touch ID, or your device PIN — no password to
+          type, nothing to phish. A passkey also counts as your second step.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {passkeys === null ? (
+          <Skeleton className="h-10" />
+        ) : passkeys.length === 0 ? (
+          <p className="text-sm text-silver">No passkeys on this account yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {passkeys.map((p) => (
+              <li
+                key={p.id}
+                className="flex items-center justify-between gap-3 rounded-md border border-navy-secondary px-3 py-2 text-sm"
+              >
+                <div className="min-w-0">
+                  <div className="text-white truncate">
+                    {p.deviceName ?? 'Passkey'}
+                  </div>
+                  <div className="text-xs text-silver/70">
+                    Added {fmtDate(p.createdAt)}
+                    {p.lastUsedAt ? ` · last used ${fmtDate(p.lastUsedAt)}` : ''}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-alert hover:text-alert"
+                  onClick={() => void onRemove(p)}
+                  disabled={busy}
+                >
+                  Remove
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <Button onClick={() => void onAdd()} loading={busy} disabled={busy}>
+          <Fingerprint className="h-4 w-4" />
+          Add a passkey
+        </Button>
       </CardContent>
     </Card>
   );

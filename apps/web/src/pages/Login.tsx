@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Eye, EyeOff, Lock, Mail, ShieldCheck } from 'lucide-react';
+import { Eye, EyeOff, Fingerprint, Lock, Mail, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { passkeysSupported, signInWithPasskey } from '@/lib/webauthn';
 import { useI18n } from '@/lib/i18n';
 import { ApiError, NetworkError } from '@/lib/api';
 import { useFocusFirstError } from '@/lib/useFocusFirstError';
@@ -22,7 +23,7 @@ type Step = 'password' | 'mfa';
 
 export function Login() {
   const { t } = useI18n();
-  const { signIn, submitMfaChallenge } = useAuth();
+  const { signIn, submitMfaChallenge, refreshUser } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [email, setEmail] = useState(DEFAULT_DEV_EMAIL);
@@ -101,6 +102,35 @@ export function Login() {
         }
       } else {
         setError('Could not verify code.');
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Passkey sign-in: possession + on-device biometric in one gesture —
+  // no password, no TOTP leg. Needs the email so the server can scope
+  // the challenge to that account's registered credentials.
+  const handlePasskey = async () => {
+    if (submitting) return;
+    const trimmed = email.trim();
+    if (!trimmed) {
+      setError('Enter your email first, then use your passkey.');
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try {
+      await signInWithPasskey(trimmed);
+      await refreshUser();
+      navigate(from, { replace: true });
+    } catch (err) {
+      // The user closing the system sheet isn't an error.
+      if (err instanceof Error && err.name === 'NotAllowedError') return;
+      if (err instanceof NetworkError) {
+        setError(t('login.errNetwork'));
+      } else {
+        setError('Passkey sign-in failed — use your password instead.');
       }
     } finally {
       setSubmitting(false);
@@ -215,6 +245,30 @@ export function Login() {
             >
               {submitting ? t('login.signingIn') : t('login.signIn')}
             </Button>
+
+            {passkeysSupported() && (
+              <>
+                <div className="my-4 flex items-center gap-3 text-2xs uppercase tracking-widest text-silver/50">
+                  <span className="h-px flex-1 bg-navy-secondary" />
+                  or
+                  <span className="h-px flex-1 bg-navy-secondary" />
+                </div>
+                {/* "Use a passkey", not "Sign in with…": the e2e suite (and
+                    anyone else) targets the primary button by /sign in/i,
+                    and two matches is a strict-mode violation. */}
+                <Button
+                  type="button"
+                  size="lg"
+                  variant="outline"
+                  onClick={() => void handlePasskey()}
+                  disabled={submitting}
+                  className="w-full"
+                >
+                  <Fingerprint className="h-4 w-4" />
+                  Use a passkey
+                </Button>
+              </>
+            )}
 
             <div className="mt-6 flex items-center justify-center gap-1.5 text-2xs uppercase tracking-widest text-silver/70">
               <ShieldCheck className="h-3 w-3" aria-hidden="true" />

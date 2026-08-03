@@ -187,6 +187,43 @@ self.addEventListener('notificationclick', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
+
+  // Web Share Target — the OS share sheet POSTs the shared files here
+  // (installed app only; manifest.share_target). Stash them in a
+  // dedicated cache and bounce to My Documents, which picks them up,
+  // pre-attaches them to the upload form, and clears the stash.
+  if (req.method === 'POST' && new URL(req.url).pathname === '/share-target') {
+    event.respondWith(
+      (async () => {
+        try {
+          const form = await req.formData();
+          const files = form.getAll('files').filter((f) => f instanceof File);
+          const cache = await caches.open('alto-shared-intake');
+          // One share replaces the last — a stale stash must never
+          // resurface days later as a mystery attachment.
+          for (const key of await cache.keys()) await cache.delete(key);
+          await Promise.all(
+            files.slice(0, 5).map((file, i) =>
+              cache.put(
+                `/shared-intake/${i}`,
+                new Response(file, {
+                  headers: {
+                    'content-type': file.type || 'application/octet-stream',
+                    'x-shared-filename': encodeURIComponent(file.name || `shared-${i}`),
+                  },
+                }),
+              ),
+            ),
+          );
+        } catch {
+          /* fall through — land on the page either way */
+        }
+        return Response.redirect('/documents?shared=1', 303);
+      })(),
+    );
+    return;
+  }
+
   if (req.method !== 'GET') return;
 
   const url = new URL(req.url);

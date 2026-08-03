@@ -386,6 +386,7 @@ model User {
   inviteTokens                      InviteToken[]
   passwordResetTokens               PasswordResetToken[]
   mfaRecoveryCodes                  MfaRecoveryCode[]
+  webauthnCredentials               WebAuthnCredential[]
   pushSubscriptions                 PushSubscription[]
   notificationPreferences           NotificationPreference[]
   emailChangeRequests               EmailChangeRequest[]
@@ -2193,6 +2194,44 @@ model MfaRecoveryCode {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, usedAt])
+}
+
+// A registered passkey (WebAuthn credential). Face ID / Touch ID /
+// Windows Hello sign-in without a password. Passkeys count as
+// possession + biometric, so a passkey login bypasses the TOTP step.
+model WebAuthnCredential {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @db.Uuid
+  // base64url credential ID from the authenticator — the lookup key
+  // during authentication.
+  credentialId String    @unique @db.VarChar(512)
+  publicKey    Bytes     @db.ByteA
+  // Signature counter — SimpleWebAuthn flags clones when it regresses.
+  counter      BigInt    @default(0)
+  transports   String[]  @default([])
+  // User-facing label ("iPhone", "MacBook") so the settings list is
+  // tellable-apart when someone registers several.
+  deviceName   String?   @db.VarChar(80)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  lastUsedAt   DateTime? @db.Timestamptz(6)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Short-lived WebAuthn ceremony challenges. A row is minted when options
+// are generated, consumed (deleted) on verify, and swept by expiry — the
+// server never trusts a challenge echoed back by the client.
+model WebAuthnChallenge {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  challenge String   @db.VarChar(512)
+  // Null for authentication ceremonies started by email (no session).
+  userId    String?  @db.Uuid
+  type      String   @db.VarChar(16) // 'registration' | 'authentication'
+  expiresAt DateTime @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([expiresAt])
 }
 
 // Per-user opt-out for transactional EMAIL by category bucket. Default
