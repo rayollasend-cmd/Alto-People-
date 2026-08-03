@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Download, ExternalLink, FileCheck2, Plus, FlaskConical } from 'lucide-react';
+import { DirectorateHeader, Kpi, KpiStrip, TableShell } from './DirectorateShell';
 import { toast } from 'sonner';
 import type {
   DrugTest,
@@ -189,21 +190,25 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
 
   return (
     <section>
-      <div className="flex items-center justify-between gap-3 mb-4">
-        <h2 className="text-base font-medium text-white">Drug tests</h2>
-        {canManage && (
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setShowBulkOrder(true)}>
-              <Download className="h-4 w-4" />
-              Bulk order CSV
-            </Button>
-            <Button onClick={() => setShowInitiate(true)} size="sm">
-              <Plus className="h-4 w-4" />
-              Order test
-            </Button>
-          </div>
-        )}
-      </div>
+      <DirectorateHeader
+        icon={FlaskConical}
+        title="Drug tests"
+        blurb="Recurring screening under the 60-day rule — a result older than 60 days is due again"
+        actions={
+          canManage && (
+            <>
+              <Button variant="secondary" size="sm" onClick={() => setShowBulkOrder(true)}>
+                <Download className="h-4 w-4" />
+                Bulk order CSV
+              </Button>
+              <Button onClick={() => setShowInitiate(true)} size="sm">
+                <Plus className="h-4 w-4" />
+                Order test
+              </Button>
+            </>
+          )
+        }
+      />
 
       {error && (
         <ErrorBanner
@@ -219,7 +224,7 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
       )}
 
       {tests && tests.length > 0 && (
-        <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3 rounded-lg border border-navy-secondary bg-navy/40 p-4">
+        <KpiStrip>
           <Kpi label="In flight" value={kpi.inFlight} />
           <Kpi
             label="Needs review"
@@ -242,7 +247,7 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
             value={kpi.missingResult}
             tone={kpi.missingResult > 0 ? 'text-warning' : undefined}
           />
-        </div>
+        </KpiStrip>
       )}
 
       {!tests && <SkeletonRows count={4} rowHeight="h-12" />}
@@ -266,6 +271,7 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
         />
       )}
       {tests && tests.length > 0 && (
+        <TableShell>
         <Table>
           <TableHeader>
             <TableRow>
@@ -350,6 +356,7 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
             ))}
           </TableBody>
         </Table>
+        </TableShell>
       )}
 
       <OrderTestDialog
@@ -810,26 +817,6 @@ function labelFor(s: DrugTestStatus): string {
     case 'INITIATED':
       return 'Reopen';
   }
-}
-
-// Same snapshot-stat idiom as the E-Verify directory strip.
-function Kpi({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone?: string;
-}) {
-  return (
-    <div>
-      <div className="text-2xs uppercase tracking-wider text-silver/70">{label}</div>
-      <div className={cn('font-display text-xl tabular-nums', tone ?? 'text-white')}>
-        {value}
-      </div>
-    </div>
-  );
 }
 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {

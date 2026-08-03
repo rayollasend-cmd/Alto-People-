@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ExternalLink, Globe, Plus } from 'lucide-react';
+import { ExternalLink, Globe, Plane, Plus } from 'lucide-react';
+import { DirectorateHeader, Kpi, KpiStrip, TableShell } from './DirectorateShell';
 import type { J1Profile } from '@alto-people/shared';
 import { listJ1Profiles, upsertJ1 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
@@ -96,15 +97,44 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
 
   return (
     <section>
-      <div className="flex items-center justify-between gap-3 mb-4">
-        <h2 className="text-base font-medium text-white">J-1 program profiles</h2>
-        {canManage && (
-          <Button onClick={() => setUpsertSeed(EMPTY_SEED)} size="sm">
-            <Plus className="h-4 w-4" />
-            Add / update profile
-          </Button>
-        )}
-      </div>
+      <DirectorateHeader
+        icon={Plane}
+        title="J-1 program"
+        blurb="Exchange-visitor participants — DS-2019, sponsor, and program window tracking"
+        actions={
+          canManage && (
+            <Button onClick={() => setUpsertSeed(EMPTY_SEED)} size="sm">
+              <Plus className="h-4 w-4" />
+              Add / update profile
+            </Button>
+          )
+        }
+      />
+
+      {profiles && profiles.length > 0 && (
+        <KpiStrip>
+          <Kpi label="Participants" value={profiles.length} />
+          <Kpi
+            label="Active"
+            value={profiles.filter((p) => p.daysUntilEnd >= 0).length}
+            tone="text-success"
+          />
+          <Kpi
+            label="Ending ≤ 30d"
+            value={profiles.filter((p) => p.daysUntilEnd >= 0 && p.daysUntilEnd <= 30).length}
+            tone={
+              profiles.some((p) => p.daysUntilEnd >= 0 && p.daysUntilEnd <= 30)
+                ? 'text-warning'
+                : undefined
+            }
+          />
+          <Kpi
+            label="Program ended"
+            value={profiles.filter((p) => p.daysUntilEnd < 0).length}
+            tone={profiles.some((p) => p.daysUntilEnd < 0) ? 'text-alert' : undefined}
+          />
+        </KpiStrip>
+      )}
 
       {error && (
         <ErrorBanner
@@ -139,6 +169,7 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
         />
       )}
       {profiles && profiles.length > 0 && (
+        <TableShell>
         <Table>
           <TableHeader>
             <TableRow>
@@ -195,6 +226,7 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
             ))}
           </TableBody>
         </Table>
+        </TableShell>
       )}
 
       <Drawer
