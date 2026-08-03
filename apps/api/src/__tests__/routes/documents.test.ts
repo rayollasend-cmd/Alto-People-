@@ -471,3 +471,95 @@ describe('CLIENT_PORTAL access', () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe('GET /documents/admin/vault/:associateId', () => {
+  it('returns grouped-ready documents plus each domain ledger summary', async () => {
+    const associate = await createAssociate();
+    const dayMs = 86_400_000;
+
+    const mkDoc = (kind: string, filename: string, createdAt?: Date) =>
+      prisma.documentRecord.create({
+        data: {
+          associateId: associate.id,
+          kind: kind as never,
+          s3Key: null,
+          filename,
+          mimeType: 'application/pdf',
+          size: 1000,
+          ...(createdAt ? { createdAt } : {}),
+        },
+      });
+    await mkDoc('BACKGROUND_CHECK_RESULT', 'bg-report.pdf');
+    // Stale result: outside the 60-day window → fresh must be false.
+    await mkDoc('DRUG_TEST_RESULT', 'old-lab.pdf', new Date(Date.now() - 90 * dayMs));
+
+    await prisma.i9Verification.create({
+      data: {
+        associateId: associate.id,
+        section1CompletedAt: new Date('2026-07-01T12:00:00Z'),
+        eVerifyStatus: 'EMPLOYMENT_AUTHORIZED',
+        eVerifyCaseNumber: 'CASE-77',
+      },
+    });
+    await prisma.backgroundCheck.create({
+      data: {
+        associateId: associate.id,
+        provider: 'checkr',
+        status: 'PASSED',
+        completedAt: new Date('2026-07-10T12:00:00Z'),
+      },
+    });
+    await prisma.j1Profile.create({
+      data: {
+        associateId: associate.id,
+        programStartDate: new Date('2026-06-01'),
+        programEndDate: new Date('2026-09-30'),
+        ds2019Number: 'DS-1',
+        sponsorAgency: 'CIEE',
+        country: 'JM',
+      },
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const res = await a.get(`/documents/admin/vault/${associate.id}`);
+    expect(res.status).toBe(200);
+
+    expect(res.body.total).toBe(2);
+    expect(res.body.documents).toHaveLength(2);
+
+    const s = res.body.summary;
+    expect(s.i9.section1CompletedAt).not.toBeNull();
+    expect(s.i9.section2CompletedAt).toBeNull();
+    expect(s.everify.status).toBe('EMPLOYMENT_AUTHORIZED');
+    expect(s.everify.caseNumber).toBe('CASE-77');
+    expect(s.background.status).toBe('PASSED');
+    // A result exists but it's 90 days old — expired under the 60-day rule.
+    expect(s.drugTest.lastResultAt).not.toBeNull();
+    expect(s.drugTest.fresh).toBe(false);
+    expect(s.j1.sponsorAgency).toBe('CIEE');
+    expect(s.j1.programEndDate).toBe('2026-09-30');
+  });
+
+  it('empty ledgers come back null; unknown associate 404s', async () => {
+    const associate = await createAssociate();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const res = await a.get(`/documents/admin/vault/${associate.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(0);
+    expect(res.body.summary).toEqual({
+      i9: null,
+      everify: null,
+      background: null,
+      drugTest: null,
+      j1: null,
+    });
+
+    const missing = await a.get(
+      '/documents/admin/vault/00000000-0000-4000-8000-000000000000',
+    );
+    expect(missing.status).toBe(404);
+  });
+});

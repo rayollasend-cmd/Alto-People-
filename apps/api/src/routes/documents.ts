@@ -10,6 +10,7 @@ import {
   DocumentKindSchema,
   DocumentListResponseSchema,
   DocumentRejectInputSchema,
+  DocumentVaultResponseSchema,
   type DocumentRecord,
 } from '@alto-people/shared';
 import type { DocumentKind, TaskKind } from '@prisma/client';
@@ -448,6 +449,124 @@ documentsRouter.get('/admin', MANAGE, async (req, res, next) => {
       DocumentListResponseSchema.parse({
         documents: rows.map(toRecord),
         total,
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /documents/admin/vault/:associateId — the associate document vault.
+ *
+ * Every DocumentRecord on file plus a compliance summary from each domain's
+ * ledger (I-9, E-Verify, background, drug test, J-1), so the profile's
+ * Documents tab can pair evidence with the decision it supports instead of
+ * rendering a flat pile. Read-only aggregation — all writes stay with the
+ * owning directorates.
+ */
+documentsRouter.get('/admin/vault/:associateId', MANAGE, async (req, res, next) => {
+  try {
+    const associateId = req.params.associateId;
+    const associate = await prisma.associate.findFirst({
+      where: { id: associateId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!associate) {
+      throw new HttpError(404, 'associate_not_found', 'Associate not found');
+    }
+
+    const docWhere: Prisma.DocumentRecordWhereInput = {
+      ...scopeDocuments(req.user!),
+      associateId,
+    };
+    const [rows, total, i9, latestBg, latestDrug, lastDrugResult, j1] = await Promise.all([
+      prisma.documentRecord.findMany({
+        where: docWhere,
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+        include: DOC_INCLUDE,
+      }),
+      prisma.documentRecord.count({ where: docWhere }),
+      prisma.i9Verification.findUnique({
+        where: { associateId },
+        select: {
+          section1CompletedAt: true,
+          section2CompletedAt: true,
+          eVerifyStatus: true,
+          eVerifyCaseNumber: true,
+          eVerifyClosedAt: true,
+        },
+      }),
+      prisma.backgroundCheck.findFirst({
+        where: { associateId },
+        orderBy: { initiatedAt: 'desc' },
+        select: { status: true, completedAt: true },
+      }),
+      prisma.drugTest.findFirst({
+        where: { associateId },
+        orderBy: { initiatedAt: 'desc' },
+        select: { status: true, completedAt: true },
+      }),
+      prisma.documentRecord.findFirst({
+        where: { associateId, kind: 'DRUG_TEST_RESULT', deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      }),
+      prisma.j1Profile.findUnique({
+        where: { associateId },
+        select: { programStartDate: true, programEndDate: true, sponsorAgency: true },
+      }),
+    ]);
+
+    // Same 60-day recency rule as the drug-test directorate's pending roster.
+    const DRUG_WINDOW_MS = 60 * 86_400_000;
+    const lastResultAt = lastDrugResult?.createdAt ?? null;
+
+    res.json(
+      DocumentVaultResponseSchema.parse({
+        documents: rows.map(toRecord),
+        total,
+        summary: {
+          i9: i9
+            ? {
+                section1CompletedAt: i9.section1CompletedAt?.toISOString() ?? null,
+                section2CompletedAt: i9.section2CompletedAt?.toISOString() ?? null,
+              }
+            : null,
+          everify:
+            i9 && (i9.eVerifyStatus || i9.eVerifyCaseNumber)
+              ? {
+                  status: i9.eVerifyStatus ?? null,
+                  caseNumber: i9.eVerifyCaseNumber ?? null,
+                  closedAt: i9.eVerifyClosedAt?.toISOString() ?? null,
+                }
+              : null,
+          background: latestBg
+            ? {
+                status: latestBg.status,
+                completedAt: latestBg.completedAt?.toISOString() ?? null,
+              }
+            : null,
+          drugTest:
+            latestDrug || lastResultAt
+              ? {
+                  status: latestDrug?.status ?? null,
+                  completedAt: latestDrug?.completedAt?.toISOString() ?? null,
+                  lastResultAt: lastResultAt?.toISOString() ?? null,
+                  fresh:
+                    lastResultAt !== null &&
+                    Date.now() - lastResultAt.getTime() < DRUG_WINDOW_MS,
+                }
+              : null,
+          j1: j1
+            ? {
+                programStartDate: j1.programStartDate.toISOString().slice(0, 10),
+                programEndDate: j1.programEndDate.toISOString().slice(0, 10),
+                sponsorAgency: j1.sponsorAgency,
+              }
+            : null,
+        },
       }),
     );
   } catch (err) {

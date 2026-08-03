@@ -2580,6 +2580,63 @@ export const DocumentRejectInputSchema = z.object({
 });
 export type DocumentRejectInput = z.infer<typeof DocumentRejectInputSchema>;
 
+/**
+ * The associate document vault — every DocumentRecord on file plus a
+ * compliance summary from each domain's ledger, so the profile's Documents
+ * tab can pair evidence with the decision it supports ("background PASSED,
+ * report on file") instead of showing a flat undated pile.
+ *
+ * Statuses are plain strings (not the domain enums) — the vault renders
+ * them; it is not the write path for any of these ledgers.
+ */
+export const DocumentVaultSummarySchema = z.object({
+  i9: z
+    .object({
+      section1CompletedAt: z.string().datetime().nullable(),
+      section2CompletedAt: z.string().datetime().nullable(),
+    })
+    .nullable(),
+  everify: z
+    .object({
+      status: z.string().nullable(),
+      caseNumber: z.string().nullable(),
+      closedAt: z.string().datetime().nullable(),
+    })
+    .nullable(),
+  /** Latest background check, or null if never screened. */
+  background: z
+    .object({
+      status: z.string(),
+      completedAt: z.string().datetime().nullable(),
+    })
+    .nullable(),
+  /** Latest drug test order + newest result recency (Walmart 60-day rule). */
+  drugTest: z
+    .object({
+      status: z.string().nullable(),
+      completedAt: z.string().datetime().nullable(),
+      lastResultAt: z.string().datetime().nullable(),
+      /** True when the newest DRUG_TEST_RESULT doc is inside the 60-day window. */
+      fresh: z.boolean(),
+    })
+    .nullable(),
+  j1: z
+    .object({
+      programStartDate: z.string(),
+      programEndDate: z.string(),
+      sponsorAgency: z.string(),
+    })
+    .nullable(),
+});
+export type DocumentVaultSummary = z.infer<typeof DocumentVaultSummarySchema>;
+
+export const DocumentVaultResponseSchema = z.object({
+  documents: z.array(DocumentRecordSchema),
+  total: z.number().int().nonnegative(),
+  summary: DocumentVaultSummarySchema,
+});
+export type DocumentVaultResponse = z.infer<typeof DocumentVaultResponseSchema>;
+
 /* -------------------------------------------------------------------------- *
  *  Compliance — Phase 10 (I-9, Background, J-1)
  * -------------------------------------------------------------------------- */
