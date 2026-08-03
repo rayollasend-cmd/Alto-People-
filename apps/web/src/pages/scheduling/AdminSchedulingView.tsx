@@ -368,6 +368,8 @@ function readStoredFilters(): {
 // Date()`, so any navigation away reset day/month/list views to "now". Persist
 // them so each view resumes where it was left. The Today/This-month buttons
 // still reset on demand.
+const LIST_PAGE_SIZE = 200;
+
 const ANCHORS_KEY = 'alto:scheduling.anchors.v1';
 function readStoredAnchors(): {
   day?: string;
@@ -692,6 +694,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // Phase 54.2 — list-view date range (defaults to the current month, or the
   // last range used). When either bound is empty the field is treated as
   // unbounded on that side.
+  // List view renders in pages of 200 — the server cap is 500 and mounting
+  // 500 action-heavy table rows at once made the tab visibly chug. Most
+  // ranges fit one page (so printing is unaffected); bigger ones get an
+  // explicit "Show more" instead of a wall.
+  const [listVisibleCount, setListVisibleCount] = useState(LIST_PAGE_SIZE);
   const [listFrom, setListFrom] = useState<string>(() => {
     const stored = readStoredAnchors();
     if (stored && stored.listFrom !== undefined) return stored.listFrom;
@@ -981,6 +988,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     refresh();
   }, [refresh]);
 
+  // New query window or position filter → back to the first page. NOT reset
+  // on every refresh: a mutation's refetch would collapse an expanded list.
+  useEffect(() => {
+    setListVisibleCount(LIST_PAGE_SIZE);
+  }, [requestArgs, posFilter]);
+
   // True when the admin client fetch failed — the New-shift dialog shows an
   // error + retry instead of the old silent free-text UUID fallback.
   const [clientsError, setClientsError] = useState(false);
@@ -1196,15 +1209,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // build → auto-fill → publish flow.
   const openInWeek = useMemo(() => {
     if (!shifts || view === 'list') return 0;
-    const startMs = weekStart.getTime();
-    const endMs = weekEnd.getTime();
+    // Same zone-aware window auto-schedule acts on server-side — the
+    // confirm dialog's count must match what actually gets filled
+    // (draftsInWeek got this in the first sweep; this is its twin).
+    const startMs = publishWindow.from.getTime();
+    const endMs = publishWindow.to.getTime();
     return shifts.filter((s) => {
       if (s.assignedAssociateId) return false;
       if (s.status !== 'OPEN' && s.status !== 'DRAFT') return false;
       const t = new Date(s.startsAt).getTime();
       return t >= startMs && t < endMs;
     }).length;
-  }, [shifts, view, weekStart, weekEnd]);
+  }, [shifts, view, publishWindow]);
 
   // Phase 54 — print / CSV / PDF exports.
 
@@ -2640,7 +2656,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredShifts.map((s) => (
+              {filteredShifts.slice(0, listVisibleCount).map((s) => (
                 <TableRow key={s.id}>
                   <TableCell className="font-medium">
                     <div className="min-w-0">
@@ -2723,6 +2739,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               ))}
             </TableBody>
           </Table>
+          {filteredShifts.length > listVisibleCount && (
+            <div className="flex justify-center border-t border-navy-secondary p-3 no-print">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setListVisibleCount((n) => n + LIST_PAGE_SIZE)}
+              >
+                Show {Math.min(LIST_PAGE_SIZE, filteredShifts.length - listVisibleCount)} more
+                of {filteredShifts.length - listVisibleCount} remaining
+              </Button>
+            </div>
+          )}
         </Card>
       )}
 
@@ -4137,6 +4165,11 @@ function CreateShiftDialog({
   // picker only offers people who work for that client. Seeded from the
   // page-level roster prop, then refined per client below.
   const [scopedAssociates, setScopedAssociates] = useState<AssociateLite[]>(associates);
+  // A failed roster fetch used to silently render "no employees" — which
+  // reads as "nobody works here", not "the request failed". Track the
+  // failure so the picker can say so and offer a retry.
+  const [rosterError, setRosterError] = useState(false);
+  const [rosterRetry, setRosterRetry] = useState(0);
   const [position, setPosition] = useState('');
   const positionOptions = useShiftPositionNames(clientId);
   // One Date field + time-only start/end. Opened from a calendar cell the
@@ -4212,6 +4245,7 @@ function CreateShiftDialog({
     let cancelled = false;
     // When a shift team is selected (and the dialog is still on that
     // team's client), the multi-assign picker narrows to the crew.
+    setRosterError(false);
     listSchedulingAssociates({
       clientId,
       ...(team && team.clientId === clientId ? { teamId: team.id } : {}),
@@ -4220,12 +4254,15 @@ function CreateShiftDialog({
         if (!cancelled) setScopedAssociates(r.associates);
       })
       .catch(() => {
-        if (!cancelled) setScopedAssociates([]);
+        if (!cancelled) {
+          setScopedAssociates([]);
+          setRosterError(true);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [open, clientId, associates, team]);
+  }, [open, clientId, associates, team, rosterRetry]);
 
   useEffect(() => {
     if (open) {
@@ -4538,7 +4575,18 @@ function CreateShiftDialog({
                 </div>
               )}
             </div>
-            {scopedAssociates.length === 0 ? (
+            {rosterError ? (
+              <div className="flex items-center gap-2 text-xs2 text-alert">
+                Couldn&apos;t load this client&apos;s employees.
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() => setRosterRetry((n) => n + 1)}
+                >
+                  Retry
+                </Button>
+              </div>
+            ) : scopedAssociates.length === 0 ? (
               <div className="text-xs2 text-silver/70">
                 No schedulable employees for this client. The shift will be created unassigned.
               </div>
