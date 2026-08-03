@@ -1,22 +1,39 @@
 import { useEffect, useState } from 'react';
-import { Download, X } from 'lucide-react';
+import { Download, Share, X } from 'lucide-react';
 import { Button } from '@/components/ui';
+import {
+  isStandaloneDisplay,
+  subscribeInstallPrompt,
+  triggerInstall,
+} from '@/lib/installPrompt';
 
 /**
- * Phase 98 — captures the `beforeinstallprompt` event so we can offer a
- * branded install button in our own UI instead of relying on the browser's
- * tiny address-bar icon. Only shows in supported browsers and only until
- * the user installs (or dismisses).
+ * Phase 98 — branded install banner.
+ *
+ * Built on lib/installPrompt's module-level capture (NOT its own
+ * `beforeinstallprompt` listener — two listeners sharing one event meant
+ * this banner could call prompt() on an event the header button had
+ * already spent, which throws).
+ *
+ * iOS branch: Safari never fires `beforeinstallprompt`, so iPhone/iPad —
+ * the platform where install matters MOST, because iOS only delivers web
+ * push to home-screen apps — used to never see an install path at all.
+ * There we show the manual Share → "Add to Home Screen" instructions.
  */
-interface BeforeInstallPromptEvent extends Event {
-  prompt(): Promise<void>;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
-}
 
 const DISMISS_KEY = 'alto.pwa.installDismissed';
 
+function isIOS(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  // iPadOS 13+ reports as "MacIntel" with touch points.
+  return (
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  );
+}
+
 export function InstallPrompt() {
-  const [evt, setEvt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [promptAvailable, setPromptAvailable] = useState(false);
   const [dismissed, setDismissed] = useState<boolean>(() => {
     try {
       return window.localStorage.getItem(DISMISS_KEY) === '1';
@@ -25,33 +42,17 @@ export function InstallPrompt() {
     }
   });
 
-  useEffect(() => {
-    const onBefore = (e: Event) => {
-      e.preventDefault();
-      setEvt(e as BeforeInstallPromptEvent);
-    };
-    const onInstalled = () => {
-      setEvt(null);
-    };
-    window.addEventListener('beforeinstallprompt', onBefore);
-    window.addEventListener('appinstalled', onInstalled);
-    return () => {
-      window.removeEventListener('beforeinstallprompt', onBefore);
-      window.removeEventListener('appinstalled', onInstalled);
-    };
-  }, []);
+  useEffect(() => subscribeInstallPrompt(setPromptAvailable), []);
 
-  if (!evt || dismissed) return null;
+  if (dismissed || isStandaloneDisplay()) return null;
+  const ios = isIOS();
+  if (!promptAvailable && !ios) return null;
 
   const onInstall = async () => {
-    await evt.prompt();
-    const choice = await evt.userChoice;
-    if (choice.outcome === 'accepted') {
-      setEvt(null);
-    } else {
-      // User dismissed in the browser dialog — also hide our banner.
-      setEvt(null);
-    }
+    // triggerInstall burns the shared event and never throws — safe even
+    // if another surface (the header install button) raced us to it.
+    await triggerInstall();
+    setPromptAvailable(false);
   };
 
   const onDismiss = () => {
@@ -70,13 +71,24 @@ export function InstallPrompt() {
         <div className="text-sm font-medium text-white">
           Install Alto on this device
         </div>
-        <div className="text-xs text-silver mt-1">
-          Quicker launches and an offline shell. Works on desktop and mobile.
-        </div>
+        {ios && !promptAvailable ? (
+          <div className="text-xs text-silver mt-1">
+            Tap{' '}
+            <Share className="inline h-3.5 w-3.5 align-text-bottom text-gold" aria-label="Share" />{' '}
+            then <span className="text-white">Add to Home Screen</span>. Installing
+            is also what lets Alto send you notifications on iPhone and iPad.
+          </div>
+        ) : (
+          <div className="text-xs text-silver mt-1">
+            Quicker launches and an offline shell. Works on desktop and mobile.
+          </div>
+        )}
         <div className="mt-3 flex gap-2">
-          <Button size="sm" onClick={onInstall}>
-            Install
-          </Button>
+          {promptAvailable && (
+            <Button size="sm" onClick={onInstall}>
+              Install
+            </Button>
+          )}
           <Button size="sm" variant="ghost" onClick={onDismiss}>
             Not now
           </Button>
@@ -84,7 +96,7 @@ export function InstallPrompt() {
       </div>
       <button
         onClick={onDismiss}
-        className="text-silver hover:text-white transition-colors"
+        className="text-silver hover:text-white transition-colors p-1 coarse:p-2 -m-1 coarse:-m-2"
         aria-label="Dismiss"
       >
         <X className="h-4 w-4" />

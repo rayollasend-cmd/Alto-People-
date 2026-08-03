@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { hapticConfirm } from '@/lib/haptics';
 import {
   Dialog,
   DialogContent,
@@ -94,6 +95,9 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (busy) return;
+    // Confirming a consequential action gets a physical tick on devices
+    // that can give one (no-op elsewhere).
+    hapticConfirm();
     if (isReason) {
       const trimmed = reason.trim();
       if (!reasonOptional && !trimmed) return;

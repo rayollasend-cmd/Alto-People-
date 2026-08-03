@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Eye, FileText, RotateCw } from 'lucide-react';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
 import {
   deleteMyDocument,
@@ -140,8 +141,11 @@ export function AssociateDocumentsView() {
   const inputCls =
     'w-full h-10 coarse:h-11 px-3 py-2 text-sm coarse:text-base rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white';
 
+  const pullState = usePullToRefresh(refresh);
+
   return (
     <div className="mx-auto">
+      <PullToRefreshIndicator state={pullState} />
       <PageHeader
         title="My documents"
         subtitle="Upload identity, tax, and onboarding documents. HR will verify."

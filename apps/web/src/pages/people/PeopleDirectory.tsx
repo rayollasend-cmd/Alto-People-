@@ -204,15 +204,20 @@ const isEmploymentTypeFilter = (v: unknown): v is EmploymentTypeFilter | '' =>
 // PERF: the desktop table and the phone card stack used to BOTH mount, with
 // CSS (`hidden md:block` / `md:hidden`) hiding the inactive one — React still
 // committed ~9,000 dead DOM nodes for the hidden list on large directories.
-// This matchMedia hook (same 768px breakpoint as Tailwind `md:`) lets us
-// mount only the list the viewport can actually show, and re-render on
-// breakpoint crossings (window resize / device rotation).
+// This matchMedia hook lets us mount only the list the viewport can
+// actually show, and re-render on breakpoint crossings (resize / rotation).
+//
+// Same cutover rule as scheduling and Time & Attendance: mouse-class
+// devices get the table at md; touch devices (iPad portrait) keep the
+// card list until lg instead of a desktop table in ~half a screen.
+const DESKTOP_TABLE_QUERY =
+  '(min-width: 1024px), ((pointer: fine) and (min-width: 768px))';
 function useIsDesktop(): boolean {
   const [isDesktop, setIsDesktop] = useState(
-    () => window.matchMedia('(min-width: 768px)').matches,
+    () => window.matchMedia(DESKTOP_TABLE_QUERY).matches,
   );
   useEffect(() => {
-    const mql = window.matchMedia('(min-width: 768px)');
+    const mql = window.matchMedia(DESKTOP_TABLE_QUERY);
     const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
     mql.addEventListener('change', onChange);
     return () => mql.removeEventListener('change', onChange);

@@ -90,6 +90,21 @@
           "type": "image/png"
         }
       ]
+    },
+    {
+      "name": "Approvals",
+      "url": "/approvals",
+      "description": "Requests waiting on your decision",
+      "icons": [
+        {
+          "src": "/icon-96.png",
+          "sizes": "96x96",
+          "type": "image/png"
+        }
+      ]
     }
-  ]
+  ],
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  }
 }

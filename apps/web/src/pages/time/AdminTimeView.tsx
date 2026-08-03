@@ -56,6 +56,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { ShiftTimeline } from './ShiftTimeline';
 import { TimesheetWeeks } from './TimesheetWeeks';
 import { fmtPunchDateTime, fmtPunchTime, formatHM, punchDayOffset } from './punchFormat';
@@ -129,15 +130,22 @@ const STATUS_FILTERS: Array<{ value: TimeEntryStatus | 'ALL'; label: string }> =
 
 // PERF: the desktop table and the phone card stack used to BOTH mount — CSS
 // (`hidden md:block` / `md:hidden`) hid one, but React still committed up to
-// 500 dead heavy rows for the hidden list. This matchMedia hook (Tailwind's
-// `md:` breakpoint) lets us mount only the list the viewport can show, and
-// re-render on breakpoint crossings (resize / rotation).
+// 500 dead heavy rows for the hidden list. This matchMedia hook lets us
+// mount only the list the viewport can show, and re-render on breakpoint
+// crossings (resize / rotation).
+//
+// Cutover matches the scheduling module's rule: mouse-class devices get
+// the table from md (768px); TOUCH devices keep the card stack until lg —
+// an iPad portrait is 768px total, and after the sidebar it was cramming
+// the desktop table into ~half a screen.
+const DESKTOP_TABLE_QUERY =
+  '(min-width: 1024px), ((pointer: fine) and (min-width: 768px))';
 function useIsDesktop(): boolean {
   const [isDesktop, setIsDesktop] = useState(
-    () => window.matchMedia('(min-width: 768px)').matches,
+    () => window.matchMedia(DESKTOP_TABLE_QUERY).matches,
   );
   useEffect(() => {
-    const mql = window.matchMedia('(min-width: 768px)');
+    const mql = window.matchMedia(DESKTOP_TABLE_QUERY);
     const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
     mql.addEventListener('change', onChange);
     return () => mql.removeEventListener('change', onChange);
@@ -598,6 +606,9 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     }
   }, [clientFilter, locationFilter]);
 
+  // Pull down at the top = re-fetch both the live board and the queue.
+  const pullState = usePullToRefresh(() => Promise.all([refresh(), refreshActive()]));
+
   const refreshPendingCount = useCallback(async () => {
     try {
       // Follows the client/site filter so the badge and the queue agree;
@@ -926,6 +937,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
 
   return (
     <div className="mx-auto">
+      <PullToRefreshIndicator state={pullState} />
       <PageHeader
         title="Time & Attendance"
         subtitle={
@@ -1590,7 +1602,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                           <button
                             type="button"
                             onClick={() => setDrawerTarget(e)}
-                            className="w-full text-left p-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-md"
+                            className="w-full text-left p-3 active:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-md"
                           >
                             <div className="flex items-start gap-2.5">
                               {showCheckbox && (
@@ -1923,7 +1935,7 @@ function FocusEntryRow({
         }
       }}
       className={cn(
-        'group flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 cursor-pointer transition-colors hover:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+        'group flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 cursor-pointer transition-colors hover:bg-navy-secondary/30 active:bg-navy-secondary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
         isSelected && 'bg-gold/5',
       )}
     >

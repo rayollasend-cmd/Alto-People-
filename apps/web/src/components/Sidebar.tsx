@@ -86,7 +86,18 @@ function writeCollapsedGroups(groups: Set<string>): void {
 function readRailCollapsed(): boolean {
   if (typeof window === 'undefined') return false;
   try {
-    return window.localStorage.getItem(RAIL_COLLAPSED_KEY) === '1';
+    const stored = window.localStorage.getItem(RAIL_COLLAPSED_KEY);
+    // Explicit user choice always wins (the toggle writes '1'/'0').
+    if (stored === '1') return true;
+    if (stored === '0') return false;
+  } catch {
+    /* fall through to the viewport default */
+  }
+  // No stored preference: on md–lg (iPad portrait) the expanded rail eats
+  // 256px of a 768px screen — a third of the width — so default to the
+  // icon rail there and to expanded on true desktops.
+  try {
+    return !window.matchMedia('(min-width: 1024px)').matches;
   } catch {
     return false;
   }

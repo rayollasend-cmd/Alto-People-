@@ -442,7 +442,7 @@ export function AssociateTimeView() {
                     type="button"
                     aria-expanded={expanded}
                     onClick={() => setExpandedId(expanded ? null : e.id)}
-                    className="flex w-full items-start justify-between gap-4 px-3 py-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                    className="flex w-full items-start justify-between gap-4 px-3 py-2.5 text-left active:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="text-white tabular-nums">

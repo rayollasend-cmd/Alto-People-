@@ -90,8 +90,14 @@ self.addEventListener('install', (event) => {
         );
         await precacheChunksFromManifest(cache);
       })
-      .then(() => self.skipWaiting()),
+      // No unconditional skipWaiting: the page shows a 'new version'
+      // toast and posts SKIP_WAITING when the user chooses to reload —
+      // updates stop landing silently mid-session.
   );
+});
+
+self.addEventListener('message', (event) => {
+  if (event.data === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {

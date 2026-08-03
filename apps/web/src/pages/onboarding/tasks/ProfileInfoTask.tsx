@@ -314,7 +314,12 @@ export function SubmitRow({
   label?: string;
 }) {
   return (
-    <div className="flex items-center gap-3 pt-2">
+    // Sticky on phones: "Submit W-4" used to sit below ~3 screens of form,
+    // so the user finished typing and then scrolled hunting for the button.
+    // The negative margins let the bar span the TaskShell card edge-to-edge
+    // so its backdrop reads as a footer, not a floating strip. md+ (roomy
+    // screens) keeps the plain inline row.
+    <div className="sticky bottom-0 z-10 -mx-5 -mb-5 mt-2 flex items-center gap-3 border-t border-navy-secondary bg-navy/95 px-5 py-3 backdrop-blur pb-[max(0.75rem,env(safe-area-inset-bottom))] md:static md:z-auto md:mx-0 md:mb-0 md:border-t-0 md:bg-transparent md:p-0 md:pt-2 md:backdrop-blur-none">
       <Button type="submit" loading={submitting} disabled={submitting}>
         {submitting ? 'Saving…' : label}
       </Button>
