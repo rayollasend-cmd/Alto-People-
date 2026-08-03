@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { I9Tab } from './I9Tab';
 import { EVerifyTab } from './EVerifyTab';
@@ -16,7 +17,16 @@ export function ComplianceHome() {
   const canManage = can('manage:compliance');
   // Scorecard is the new default landing — preventative dashboard. The
   // existing forensic tabs (I-9 / background / J-1) stay as drill-downs.
-  const [tab, setTab] = useState<Tab>('scorecard');
+  // ?tab= lets other pages deep-link a specific directorate (the profile
+  // document vault links each category to its owning tab).
+  const [searchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const [tab, setTab] = useState<Tab>(
+    requestedTab &&
+      ['scorecard', 'i9', 'everify', 'background', 'drugtests', 'j1'].includes(requestedTab)
+      ? (requestedTab as Tab)
+      : 'scorecard',
+  );
 
   return (
     <div className="mx-auto">

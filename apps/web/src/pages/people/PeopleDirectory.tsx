@@ -15,7 +15,6 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
-  FileText,
   Landmark,
   Mail,
   MapPin,
@@ -34,6 +33,8 @@ import type {
   DirectoryStatus,
   DocumentKind,
   DocumentRecord,
+  DocumentVaultResponse,
+  DocumentVaultSummary,
 } from '@alto-people/shared';
 import { listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
 import { useClients } from '@/lib/useClients';
@@ -49,8 +50,9 @@ import {
   listRecords,
 } from '@/lib/compApi';
 import {
+  downloadAllDocumentsUrl,
   downloadDocumentUrl,
-  listAdminDocuments,
+  getDocumentVault,
   rejectDocument,
   uploadAdminDocument,
   verifyDocument,
@@ -2785,6 +2787,161 @@ const DOC_STATUS_LABEL: Record<DocumentRecord['status'], string> = {
   EXPIRED: 'Expired',
 };
 
+/* ----- Document vault ----------------------------------------------------
+ * The Documents tab is the associate's whole file: every DocumentRecord in
+ * the system is keyed here whichever screen uploaded it, grouped by the
+ * compliance domain it belongs to, with each domain's ledger status beside
+ * its evidence. The four core screening domains always render (their
+ * status is the point, even with zero files); the rest appear when they
+ * have documents.
+ * ---------------------------------------------------------------------- */
+
+type BadgeTone = 'default' | 'pending' | 'success' | 'destructive' | 'accent';
+
+const VAULT_CATEGORIES: ReadonlyArray<{
+  key: string;
+  title: string;
+  kinds: readonly string[];
+  /** ?tab= value on /compliance — the owning directorate. */
+  complianceTab?: string;
+  alwaysVisible?: boolean;
+}> = [
+  {
+    key: 'identity',
+    title: 'Identity & I-9',
+    kinds: ['ID', 'SSN_CARD', 'I9_SUPPORTING'],
+    complianceTab: 'i9',
+    alwaysVisible: true,
+  },
+  {
+    key: 'everify',
+    title: 'E-Verify',
+    kinds: ['I9_VERIFICATION_RESULT'],
+    complianceTab: 'everify',
+    alwaysVisible: true,
+  },
+  {
+    key: 'background',
+    title: 'Background check',
+    kinds: ['BACKGROUND_CHECK_RESULT'],
+    complianceTab: 'background',
+    alwaysVisible: true,
+  },
+  {
+    key: 'drug',
+    title: 'Drug test',
+    kinds: ['DRUG_TEST_RESULT'],
+    complianceTab: 'drugtests',
+    alwaysVisible: true,
+  },
+  {
+    key: 'j1',
+    title: 'J-1 program',
+    kinds: ['J1_DS2019', 'J1_VISA'],
+    complianceTab: 'j1',
+  },
+  { key: 'tax', title: 'Tax & payroll', kinds: ['W4_PDF'] },
+  {
+    key: 'agreements',
+    title: 'Agreements & policies',
+    kinds: ['OFFER_LETTER', 'POLICY', 'HOUSING_AGREEMENT', 'TRANSPORT_AGREEMENT', 'SIGNED_AGREEMENT'],
+  },
+  { key: 'other', title: 'Other', kinds: ['OTHER'] },
+];
+
+const EVERIFY_CHIP: Record<string, { label: string; tone: BadgeTone }> = {
+  PENDING: { label: 'Case pending', tone: 'pending' },
+  EMPLOYMENT_AUTHORIZED: { label: 'Authorized', tone: 'success' },
+  TENTATIVE_NONCONFIRMATION: { label: 'Tentative nonconfirmation', tone: 'destructive' },
+  FINAL_NONCONFIRMATION: { label: 'Final nonconfirmation', tone: 'destructive' },
+  CLOSE_CASE_AND_RESUBMIT: { label: 'Close & resubmit', tone: 'pending' },
+};
+
+const SCREEN_CHIP: Record<string, { label: string; tone: BadgeTone }> = {
+  INITIATED: { label: 'Ordered', tone: 'accent' },
+  IN_PROGRESS: { label: 'In progress', tone: 'accent' },
+  NEEDS_REVIEW: { label: 'Needs review', tone: 'pending' },
+  PASSED: { label: 'Passed', tone: 'success' },
+  FAILED: { label: 'Failed', tone: 'destructive' },
+};
+
+/** Ledger → header chips: the decision each category's documents evidence. */
+function vaultChips(
+  key: string,
+  s: DocumentVaultSummary,
+  docCount: number,
+): Array<{ label: string; tone: BadgeTone }> {
+  switch (key) {
+    case 'identity': {
+      if (!s.i9) return [{ label: 'I-9 not started', tone: 'default' }];
+      return [
+        s.i9.section1CompletedAt
+          ? { label: 'Section 1 complete', tone: 'success' }
+          : { label: 'Section 1 pending', tone: 'pending' },
+        s.i9.section2CompletedAt
+          ? { label: 'Section 2 complete', tone: 'success' }
+          : { label: 'Section 2 pending', tone: 'pending' },
+      ];
+    }
+    case 'everify': {
+      if (!s.everify) return [{ label: 'No case recorded', tone: 'default' }];
+      const chip = (s.everify.status && EVERIFY_CHIP[s.everify.status]) || {
+        label: 'Case open',
+        tone: 'pending' as BadgeTone,
+      };
+      return s.everify.caseNumber
+        ? [chip, { label: `Case ${s.everify.caseNumber}`, tone: 'default' }]
+        : [chip];
+    }
+    case 'background': {
+      if (!s.background) return [{ label: 'Never screened', tone: 'default' }];
+      const chip = SCREEN_CHIP[s.background.status] ?? {
+        label: s.background.status,
+        tone: 'default' as BadgeTone,
+      };
+      const chips = [
+        s.background.completedAt
+          ? { ...chip, label: `${chip.label} ${fmtDate(s.background.completedAt)}` }
+          : chip,
+      ];
+      const finalized = s.background.status === 'PASSED' || s.background.status === 'FAILED';
+      if (finalized && docCount === 0) {
+        chips.push({ label: 'No report on file', tone: 'pending' });
+      }
+      return chips;
+    }
+    case 'drug': {
+      if (!s.drugTest) return [{ label: 'Never tested', tone: 'default' }];
+      const chips: Array<{ label: string; tone: BadgeTone }> = [];
+      if (s.drugTest.lastResultAt) {
+        chips.push(
+          s.drugTest.fresh
+            ? { label: `Result current (${fmtDate(s.drugTest.lastResultAt)})`, tone: 'success' }
+            : { label: `Result expired (${fmtDate(s.drugTest.lastResultAt)})`, tone: 'destructive' },
+        );
+      } else {
+        chips.push({ label: 'No result on file', tone: 'pending' });
+      }
+      if (s.drugTest.status === 'INITIATED' || s.drugTest.status === 'IN_PROGRESS') {
+        chips.push({ label: 'Order in flight', tone: 'accent' });
+      }
+      return chips;
+    }
+    case 'j1': {
+      if (!s.j1) return [];
+      return [
+        {
+          label: `Program ${fmtDate(`${s.j1.programStartDate}T12:00:00Z`)} – ${fmtDate(`${s.j1.programEndDate}T12:00:00Z`)}`,
+          tone: 'default',
+        },
+        { label: s.j1.sponsorAgency, tone: 'default' },
+      ];
+    }
+    default:
+      return [];
+  }
+}
+
 function DocumentsTab({ associateId }: { associateId: string }) {
   const queryClient = useQueryClient();
   const [actingId, setActingId] = useState<string | null>(null);
@@ -2792,10 +2949,13 @@ function DocumentsTab({ associateId }: { associateId: string }) {
   const [previewDoc, setPreviewDoc] = useState<DocumentRecord | null>(null);
   const [showUpload, setShowUpload] = useState(false);
 
-  const { data: docs, error: docsError } = useQuery({
-    queryKey: ['associate-docs', associateId],
-    queryFn: async () => (await listAdminDocuments({ associateId })).documents,
+  const [search, setSearch] = useState('');
+
+  const { data: vault, error: docsError } = useQuery({
+    queryKey: ['associate-vault', associateId],
+    queryFn: () => getDocumentVault(associateId),
   });
+  const docs = vault?.documents;
   const error = docsError
     ? docsError instanceof ApiError
       ? docsError.message
@@ -2803,19 +2963,55 @@ function DocumentsTab({ associateId }: { associateId: string }) {
     : null;
 
   function replaceDoc(updated: DocumentRecord) {
-    queryClient.setQueryData<DocumentRecord[]>(
-      ['associate-docs', associateId],
+    queryClient.setQueryData<DocumentVaultResponse>(
+      ['associate-vault', associateId],
       (old) =>
-        old ? old.map((d) => (d.id === updated.id ? updated : d)) : old,
+        old
+          ? {
+              ...old,
+              documents: old.documents.map((d) => (d.id === updated.id ? updated : d)),
+            }
+          : old,
     );
   }
 
   function prependDoc(created: DocumentRecord) {
-    queryClient.setQueryData<DocumentRecord[]>(
-      ['associate-docs', associateId],
-      (old) => (old ? [created, ...old] : [created]),
+    queryClient.setQueryData<DocumentVaultResponse>(
+      ['associate-vault', associateId],
+      (old) =>
+        old
+          ? { ...old, documents: [created, ...old.documents], total: old.total + 1 }
+          : old,
     );
   }
+
+  // Group by compliance domain; unknown future kinds fall into Other so
+  // nothing silently vanishes from the vault.
+  const searching = search.trim().length > 0;
+  const sections = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const matches = (d: DocumentRecord) =>
+      !q ||
+      d.filename.toLowerCase().includes(q) ||
+      (DOCUMENT_KIND_LABEL[d.kind] ?? d.kind).toLowerCase().includes(q);
+    const byKind = new Map<string, DocumentRecord[]>();
+    for (const d of docs ?? []) {
+      if (!matches(d)) continue;
+      const arr = byKind.get(d.kind);
+      if (arr) arr.push(d);
+      else byKind.set(d.kind, [d]);
+    }
+    const covered = new Set(VAULT_CATEGORIES.flatMap((c) => c.kinds));
+    return VAULT_CATEGORIES.map((cat) => ({
+      ...cat,
+      docs: [
+        ...cat.kinds.flatMap((k) => byKind.get(k) ?? []),
+        ...(cat.key === 'other'
+          ? [...byKind.entries()].filter(([k]) => !covered.has(k)).flatMap(([, v]) => v)
+          : []),
+      ],
+    }));
+  }, [docs, search]);
 
   async function handleVerify(d: DocumentRecord) {
     if (actingId) return;
@@ -2850,9 +3046,19 @@ function DocumentsTab({ associateId }: { associateId: string }) {
   if (error) {
     return <ErrorBanner>{error}</ErrorBanner>;
   }
-  if (!docs) {
+  if (!vault || !docs) {
     return <SkeletonRows count={3} rowHeight="h-9" />;
   }
+
+  const summary = vault.summary;
+  // The four screening domains always render — their ledger status is the
+  // point even with zero files. J-1 appears for J-1 people; the rest only
+  // when they hold documents. A live search hides empty sections entirely.
+  const visibleSections = sections.filter((s) =>
+    searching
+      ? s.docs.length > 0
+      : s.docs.length > 0 || s.alwaysVisible || (s.key === 'j1' && summary.j1 !== null),
+  );
 
   const uploadButton = (
     <Button size="sm" variant="outline" onClick={() => setShowUpload(true)}>
@@ -2861,44 +3067,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
     </Button>
   );
 
-  if (docs.length === 0) {
-    return (
-      <>
-        <div className="flex items-center justify-end mb-3">{uploadButton}</div>
-        <EmptyState
-          icon={FileText}
-          title="No documents on file"
-          description="Upload background-check, drug-test, or E-Verify result PDFs here. Associate-submitted documents will also appear in this list."
-        />
-        <UploadResultDialog
-          open={showUpload}
-          onOpenChange={setShowUpload}
-          associateId={associateId}
-          onUploaded={prependDoc}
-        />
-      </>
-    );
-  }
-
-  return (
-    <>
-      <div className="flex items-center justify-between mb-3">
-        <div className="text-2xs uppercase tracking-widest text-silver/80">
-          {docs.length} document{docs.length === 1 ? '' : 's'}
-        </div>
-        {uploadButton}
-      </div>
-      <Table caption="Documents">
-        <TableHeader>
-          <TableRow className="hover:bg-transparent">
-            <TableHead>Document</TableHead>
-            <TableHead className="w-28">Status</TableHead>
-            <TableHead className="hidden sm:table-cell">Uploaded</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {docs.map((d) => (
+  const docRow = (d: DocumentRecord) => (
             <TableRow key={d.id}>
               <TableCell>
                 <div className="font-medium text-white text-sm">
@@ -2987,9 +3156,84 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                 </div>
               </TableCell>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+  );
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+        <div className="text-2xs uppercase tracking-widest text-silver/80">
+          {vault.total} document{vault.total === 1 ? '' : 's'} on file
+          {vault.total > docs.length ? ` · showing latest ${docs.length}` : ''}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search documents…"
+            className="h-8 w-48 text-sm"
+            aria-label="Search documents"
+          />
+          {vault.total > 0 && (
+            <a
+              href={downloadAllDocumentsUrl(associateId)}
+              download
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-navy-secondary px-2.5 text-xs text-silver hover:border-gold/60 hover:text-white"
+              title="One zip of this associate's entire file (audited)"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Download all
+            </a>
+          )}
+          {uploadButton}
+        </div>
+      </div>
+
+      <div className="space-y-6">
+        {visibleSections.map((cat) => {
+          const chips = vaultChips(cat.key, summary, cat.docs.length);
+          return (
+            <section key={cat.key}>
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <h3 className="text-sm font-semibold text-white">{cat.title}</h3>
+                {chips.map((c, i) => (
+                  <Badge key={i} variant={c.tone}>
+                    {c.label}
+                  </Badge>
+                ))}
+                {cat.complianceTab && (
+                  <Link
+                    to={`/compliance?tab=${cat.complianceTab}`}
+                    className="ml-auto inline-flex items-center gap-1 text-xs text-gold hover:underline"
+                  >
+                    Open in Compliance
+                    <ExternalLink className="h-3 w-3" />
+                  </Link>
+                )}
+              </div>
+              {cat.docs.length === 0 ? (
+                <p className="text-xs text-silver/60">No documents filed.</p>
+              ) : (
+                <Table caption={cat.title}>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>Document</TableHead>
+                      <TableHead className="w-28">Status</TableHead>
+                      <TableHead className="hidden sm:table-cell">Uploaded</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>{cat.docs.map(docRow)}</TableBody>
+                </Table>
+              )}
+            </section>
+          );
+        })}
+        {searching && visibleSections.length === 0 && (
+          <p className="text-sm text-silver">
+            No documents match &ldquo;{search.trim()}&rdquo;.
+          </p>
+        )}
+      </div>
 
       <ConfirmDialog
         open={rejectTarget !== null}

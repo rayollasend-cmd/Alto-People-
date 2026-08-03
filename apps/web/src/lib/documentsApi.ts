@@ -4,6 +4,7 @@ import type {
   DocumentRecord,
   DocumentRejectInput,
   DocumentStatus,
+  DocumentVaultResponse,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
@@ -22,6 +23,11 @@ export function listAdminDocuments(filters: {
   if (filters.associateId) p.set('associateId', filters.associateId);
   const qs = p.toString();
   return apiFetch<DocumentListResponse>(`/documents/admin${qs ? `?${qs}` : ''}`);
+}
+
+/** Vault: every document + a compliance summary from each domain's ledger. */
+export function getDocumentVault(associateId: string): Promise<DocumentVaultResponse> {
+  return apiFetch<DocumentVaultResponse>(`/documents/admin/vault/${associateId}`);
 }
 
 export async function uploadMyDocument(
