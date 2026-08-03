@@ -157,7 +157,7 @@ describe('role assignment cannot escalate privilege', () => {
     const res = await a
       .patch(`/admin/users/${target.id}`)
       .send({ role: 'HR_ADMINISTRATOR' });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(204);
   });
 
   it('demotions are unaffected', async () => {
@@ -166,7 +166,7 @@ describe('role assignment cannot escalate privilege', () => {
     const a = await loginAs(ops.email);
 
     const res = await a.patch(`/admin/users/${target.id}`).send({ role: 'ASSOCIATE' });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(204);
   });
 });
 
