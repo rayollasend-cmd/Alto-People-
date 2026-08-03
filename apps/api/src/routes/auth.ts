@@ -24,6 +24,17 @@ import {
 } from '../lib/jwt.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import {
+  generateAuthenticationOptions,
+  generateRegistrationOptions,
+  verifyAuthenticationResponse,
+  verifyRegistrationResponse,
+} from '@simplewebauthn/server';
+import type {
+  AuthenticationResponseJSON,
+  AuthenticatorTransportFuture,
+  RegistrationResponseJSON,
+} from '@simplewebauthn/server';
+import {
   hashPassword,
   verifyPassword,
   DUMMY_HASH,
@@ -1875,6 +1886,320 @@ authRouter.post('/email-change/confirm', async (req, res, next) => {
     );
 
     res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Passkeys (WebAuthn) ==============================================
+ *
+ * Face ID / Touch ID / Windows Hello sign-in. Registration is an authed
+ * ceremony from Settings; authentication replaces password + TOTP (a
+ * passkey is possession + biometric, so it bypasses the MFA leg).
+ *
+ * Challenges are server-minted rows consumed exactly once on verify —
+ * the server never trusts a challenge echoed back by the client. The
+ * expected origin must be one of CORS_ORIGIN; the RP ID is that
+ * origin's hostname, so dev (localhost) and prod both work with no new
+ * environment variables.
+ * ======================================================================= */
+
+const WEBAUTHN_CHALLENGE_TTL_MS = 5 * 60 * 1000;
+
+function webauthnOrigin(req: { headers: Record<string, unknown> }): string | null {
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin : null;
+  if (!origin) return null;
+  return env.CORS_ORIGIN.includes(origin) ? origin : null;
+}
+
+async function mintWebauthnChallenge(
+  challenge: string,
+  type: 'registration' | 'authentication',
+  userId: string | null,
+): Promise<string> {
+  // Opportunistic sweep — expired ceremonies never accumulate.
+  await prisma.webAuthnChallenge.deleteMany({ where: { expiresAt: { lt: new Date() } } });
+  const row = await prisma.webAuthnChallenge.create({
+    data: {
+      challenge,
+      type,
+      userId,
+      expiresAt: new Date(Date.now() + WEBAUTHN_CHALLENGE_TTL_MS),
+    },
+  });
+  return row.id;
+}
+
+/** Consume (delete) a pending challenge; null when missing/expired/wrong type. */
+async function consumeWebauthnChallenge(
+  id: string,
+  type: 'registration' | 'authentication',
+): Promise<{ challenge: string; userId: string | null } | null> {
+  const row = await prisma.webAuthnChallenge.findUnique({ where: { id } });
+  if (!row) return null;
+  await prisma.webAuthnChallenge.delete({ where: { id } }).catch(() => null);
+  if (row.type !== type || row.expiresAt.getTime() < Date.now()) return null;
+  return { challenge: row.challenge, userId: row.userId };
+}
+
+authRouter.post('/webauthn/register/options', requireAuth, async (req, res, next) => {
+  try {
+    const origin = webauthnOrigin(req);
+    if (!origin) throw new HttpError(400, 'bad_origin', 'Unrecognized origin');
+    const user = req.user!;
+    const existing = await prisma.webAuthnCredential.findMany({
+      where: { userId: user.id },
+      select: { credentialId: true, transports: true },
+    });
+    const options = await generateRegistrationOptions({
+      rpName: 'Alto People',
+      rpID: new URL(origin).hostname,
+      userName: user.email,
+      userID: new TextEncoder().encode(user.id),
+      attestationType: 'none',
+      excludeCredentials: existing.map((c) => ({
+        id: c.credentialId,
+        transports: c.transports as AuthenticatorTransportFuture[],
+      })),
+      authenticatorSelection: {
+        residentKey: 'preferred',
+        userVerification: 'preferred',
+      },
+    });
+    const challengeId = await mintWebauthnChallenge(options.challenge, 'registration', user.id);
+    res.json({ challengeId, options });
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.post('/webauthn/register/verify', requireAuth, async (req, res, next) => {
+  try {
+    const origin = webauthnOrigin(req);
+    if (!origin) throw new HttpError(400, 'bad_origin', 'Unrecognized origin');
+    const body = z
+      .object({
+        challengeId: z.string().uuid(),
+        deviceName: z.string().trim().max(80).optional(),
+        response: z.unknown(),
+      })
+      .parse(req.body);
+    const pending = await consumeWebauthnChallenge(body.challengeId, 'registration');
+    if (!pending || pending.userId !== req.user!.id) {
+      throw new HttpError(400, 'challenge_expired', 'Start the registration again.');
+    }
+    const verification = await verifyRegistrationResponse({
+      response: body.response as RegistrationResponseJSON,
+      expectedChallenge: pending.challenge,
+      expectedOrigin: origin,
+      expectedRPID: new URL(origin).hostname,
+      requireUserVerification: false,
+    });
+    if (!verification.verified || !verification.registrationInfo) {
+      throw new HttpError(400, 'verification_failed', 'Passkey could not be verified.');
+    }
+    const { credential } = verification.registrationInfo;
+    const row = await prisma.webAuthnCredential.create({
+      data: {
+        userId: req.user!.id,
+        credentialId: credential.id,
+        publicKey: Buffer.from(credential.publicKey),
+        counter: BigInt(credential.counter),
+        transports: credential.transports ?? [],
+        deviceName: body.deviceName || null,
+      },
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: req.user!.clientId ?? null,
+        action: 'auth.passkey_registered',
+        entityType: 'User',
+        entityId: req.user!.id,
+        metadata: {
+          credentialId: row.id,
+          deviceName: row.deviceName,
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+        },
+      },
+      'auth.passkey_registered',
+    );
+    res.status(201).json({
+      id: row.id,
+      deviceName: row.deviceName,
+      createdAt: row.createdAt.toISOString(),
+      lastUsedAt: null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.get('/webauthn/credentials', requireAuth, async (req, res, next) => {
+  try {
+    const rows = await prisma.webAuthnCredential.findMany({
+      where: { userId: req.user!.id },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, deviceName: true, createdAt: true, lastUsedAt: true },
+    });
+    res.json({
+      credentials: rows.map((r) => ({
+        id: r.id,
+        deviceName: r.deviceName,
+        createdAt: r.createdAt.toISOString(),
+        lastUsedAt: r.lastUsedAt?.toISOString() ?? null,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.delete('/webauthn/credentials/:id', requireAuth, async (req, res, next) => {
+  try {
+    // deleteMany scoped to the caller: someone else's credential id is a
+    // no-op 404, not an existence oracle.
+    const del = await prisma.webAuthnCredential.deleteMany({
+      where: { id: req.params.id, userId: req.user!.id },
+    });
+    if (del.count === 0) throw new HttpError(404, 'not_found', 'No such passkey');
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: req.user!.clientId ?? null,
+        action: 'auth.passkey_removed',
+        entityType: 'User',
+        entityId: req.user!.id,
+        metadata: {
+          credentialId: req.params.id,
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+        },
+      },
+      'auth.passkey_removed',
+    );
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.post('/webauthn/login/options', loginIpLimiter, async (req, res, next) => {
+  try {
+    const origin = webauthnOrigin(req);
+    if (!origin) throw new HttpError(400, 'bad_origin', 'Unrecognized origin');
+    const body = z.object({ email: z.string().email() }).parse(req.body);
+    const email = body.email.trim().toLowerCase();
+    const user = await prisma.user.findFirst({
+      where: { email, deletedAt: null },
+      select: { id: true, status: true, role: true },
+    });
+    const eligible =
+      user !== null && user.status === 'ACTIVE' && HUMAN_ROLES.includes(user.role);
+    const creds = eligible
+      ? await prisma.webAuthnCredential.findMany({
+          where: { userId: user.id },
+          select: { credentialId: true, transports: true },
+        })
+      : [];
+    // Anti-enumeration: unknown emails and passkey-less accounts get a
+    // REAL challenge with an empty allow-list — the browser reports "no
+    // matching passkey", identical to the legitimate empty case.
+    const options = await generateAuthenticationOptions({
+      rpID: new URL(origin).hostname,
+      userVerification: 'preferred',
+      allowCredentials: creds.map((c) => ({
+        id: c.credentialId,
+        transports: c.transports as AuthenticatorTransportFuture[],
+      })),
+    });
+    const challengeId = await mintWebauthnChallenge(
+      options.challenge,
+      'authentication',
+      eligible ? user.id : null,
+    );
+    res.json({ challengeId, options });
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.post('/webauthn/login/verify', loginIpLimiter, async (req, res, next) => {
+  try {
+    const origin = webauthnOrigin(req);
+    if (!origin) throw new HttpError(400, 'bad_origin', 'Unrecognized origin');
+    const body = z
+      .object({ challengeId: z.string().uuid(), response: z.unknown() })
+      .parse(req.body);
+    const pending = await consumeWebauthnChallenge(body.challengeId, 'authentication');
+    if (!pending) {
+      res.status(401).json(GENERIC_LOGIN_ERROR);
+      return;
+    }
+    const assertion = body.response as AuthenticationResponseJSON;
+    const cred = await prisma.webAuthnCredential.findUnique({
+      where: { credentialId: assertion.id ?? '' },
+      include: { user: true },
+    });
+    // The credential must belong to the user the ceremony was minted for.
+    if (!cred || cred.userId !== pending.userId) {
+      await recordLoginFailure({
+        email: cred?.user.email ?? 'unknown',
+        req,
+        reason: 'passkey_mismatch',
+      });
+      res.status(401).json(GENERIC_LOGIN_ERROR);
+      return;
+    }
+    const user = cred.user;
+    if (
+      user.deletedAt !== null ||
+      user.status !== 'ACTIVE' ||
+      !HUMAN_ROLES.includes(user.role)
+    ) {
+      await recordLoginFailure({ email: user.email, req, reason: 'passkey_ineligible' });
+      res.status(401).json(GENERIC_LOGIN_ERROR);
+      return;
+    }
+    const verification = await verifyAuthenticationResponse({
+      response: assertion,
+      expectedChallenge: pending.challenge,
+      expectedOrigin: origin,
+      expectedRPID: new URL(origin).hostname,
+      credential: {
+        id: cred.credentialId,
+        publicKey: new Uint8Array(cred.publicKey),
+        counter: Number(cred.counter),
+        transports: cred.transports as AuthenticatorTransportFuture[],
+      },
+      requireUserVerification: false,
+    });
+    if (!verification.verified) {
+      await recordLoginFailure({ email: user.email, req, reason: 'passkey_invalid' });
+      res.status(401).json(GENERIC_LOGIN_ERROR);
+      return;
+    }
+    await prisma.webAuthnCredential.update({
+      where: { id: cred.id },
+      data: {
+        counter: BigInt(verification.authenticationInfo.newCounter),
+        lastUsedAt: new Date(),
+      },
+    });
+
+    // Passkey = possession + on-device biometric/PIN, so it satisfies the
+    // MFA policy on its own — no TOTP leg.
+    const token = signSession({ sub: user.id, role: user.role, ver: user.tokenVersion });
+    res.cookie(SESSION_COOKIE, token, cookieOptions());
+    await recordLoginSuccess({ email: user.email, req, userId: user.id, clientId: user.clientId });
+    const profile = await loadProfileFor(user.associateId);
+    res.json({
+      user: {
+        ...toAuthUser({ ...user, ...profile }),
+        clientName: await clientNameFor(user.clientId),
+      },
+    });
   } catch (err) {
     next(err);
   }

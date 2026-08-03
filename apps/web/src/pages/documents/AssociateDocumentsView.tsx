@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Eye, FileText, RotateCw } from 'lucide-react';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
+import { toast } from 'sonner';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
 import {
   deleteMyDocument,
@@ -82,6 +83,50 @@ export function AssociateDocumentsView() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Web Share Target intake: the service worker stashes files shared from
+  // the OS share sheet in the 'alto-shared-intake' cache and lands here
+  // with ?shared=1. Pre-attach the file to the upload form so sharing a
+  // photo of a document into Alto is: share → pick kind → Upload.
+  useEffect(() => {
+    if (!window.location.search.includes('shared=1')) return;
+    if (!('caches' in window)) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const cache = await caches.open('alto-shared-intake');
+        const keys = await cache.keys();
+        if (keys.length === 0) return;
+        const res = await cache.match(keys[0]);
+        if (!res || cancelled) return;
+        const blob = await res.blob();
+        const name = decodeURIComponent(
+          res.headers.get('x-shared-filename') ?? 'shared-document',
+        );
+        const file = new File([blob], name, { type: blob.type });
+        const input = fileRef.current;
+        if (input) {
+          const dt = new DataTransfer();
+          dt.items.add(file);
+          input.files = dt.files;
+        }
+        // Consume the stash — a share is one intake, never a resurface.
+        for (const key of keys) await cache.delete(key);
+        formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        toast.success(`"${name}" attached — pick the document kind and upload.`);
+        if (keys.length > 1) {
+          toast(`Only the first of ${keys.length} shared files was attached — share the others one at a time.`);
+        }
+        // Strip the flag so a refresh doesn't re-run the intake.
+        window.history.replaceState(null, '', window.location.pathname);
+      } catch {
+        /* best-effort — the manual picker still works */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();

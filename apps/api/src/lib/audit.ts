@@ -105,7 +105,14 @@ interface LoginFailureContext extends LoginContext {
     // window nor an unused recovery code. Distinct so the audit feed can
     // tell "they didn't know the password" from "they had the password
     // but couldn't pass MFA" — different incident response.
-    | 'mfa_invalid_code';
+    | 'mfa_invalid_code'
+    // Passkey (WebAuthn) failures — same triage value: a mismatch means
+    // an assertion arrived for a ceremony minted for someone else, an
+    // invalid one failed signature verification, ineligible means the
+    // account is disabled/deleted/non-human.
+    | 'passkey_mismatch'
+    | 'passkey_invalid'
+    | 'passkey_ineligible';
 }
 
 interface LogoutContext {
