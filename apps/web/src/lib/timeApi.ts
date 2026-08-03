@@ -121,9 +121,14 @@ export function tryGetGeolocation(timeoutMs = 5_000): Promise<{ lat: number; lng
  *  rows, so counting its length both over-fetched and under-counted. */
 export function countAdminTimeEntries(
   status?: TimeEntryStatus,
+  scope?: { clientId?: string; locationId?: string },
 ): Promise<{ count: number }> {
-  const qs = status ? `?status=${status}` : '';
-  return apiFetch<{ count: number }>(`/time/admin/entries/count${qs}`);
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (scope?.clientId) params.set('clientId', scope.clientId);
+  if (scope?.locationId) params.set('locationId', scope.locationId);
+  const qs = params.toString();
+  return apiFetch<{ count: number }>(`/time/admin/entries/count${qs ? `?${qs}` : ''}`);
 }
 
 /** Selectable pay-period windows (schedule cadence + actual run history). */

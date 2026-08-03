@@ -41,7 +41,7 @@ import { checkGeofence } from '../lib/geo.js';
 import { resolveAssociateGeofence } from '../lib/geofenceForAssociate.js';
 import { matchShiftForPunch } from '../lib/matchShiftForPunch.js';
 import { notifyAssociate } from '../lib/notify.js';
-import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone } from '../lib/timezone.js';
+import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone, localDateKey } from '../lib/timezone.js';
 import {
   detectAnomalies,
   endOfWeekUTC,
@@ -829,10 +829,18 @@ timeRouter.get('/admin/pay-periods', MANAGE, async (_req, res, next) => {
 timeRouter.get('/admin/entries/count', MANAGE, async (req, res, next) => {
   try {
     const status = req.query.status?.toString();
+    // Optional client/site scoping so the pending-review badge can follow
+    // the page's filters — an org-wide "47 pending" over a client-filtered
+    // queue showing 3 read as a bug. Deliberately still all-time: the KPI
+    // is the total backlog, not the visible date window.
+    const clientId = req.query.clientId?.toString();
+    const locationId = req.query.locationId?.toString();
     const count = await prisma.timeEntry.count({
       where: {
         ...scopeTimeEntries(req.user!),
         ...(status ? { status: status as Prisma.TimeEntryWhereInput['status'] } : {}),
+        ...(clientId ? { clientId } : {}),
+        ...(locationId ? { locationId } : {}),
       },
     });
     res.json({ count });
@@ -2061,8 +2069,13 @@ timeRouter.post('/admin/export.csv', MANAGE, async (req, res, next) => {
     // (breaks subtracted). Both, explicitly named — the old single
     // "minutes" column was gross and never reconciled with the summary
     // export, which is net.
+    //
+    // Punches come in TWO forms: site-local wall time + a timezone column
+    // (what every screen shows — the old UTC-only export contradicted the
+    // queue by the full zone offset) AND the raw UTC instants for machine
+    // consumers.
     res.write(
-      'clockInAt,clockOutAt,grossMinutes,netMinutes,breakMinutes,associate,client,job,status,rejectionReason\n'
+      'clockInLocal,clockOutLocal,timezone,clockInUtc,clockOutUtc,grossMinutes,netMinutes,breakMinutes,associate,client,job,status,rejectionReason\n'
     );
     // Pre-fetch client names so we don't issue one SELECT per row.
     const clientIds = Array.from(
@@ -2083,7 +2096,13 @@ timeRouter.post('/admin/export.csv', MANAGE, async (req, res, next) => {
         { clockInAt: r.clockInAt, clockOutAt: r.clockOutAt },
         r.breaks,
       );
+      const tz = r.location?.timezone ?? DEFAULT_TIMEZONE;
+      const local = (d: Date) =>
+        `${localDateKey(d, tz)} ${formatTimeInZone(d, tz)}`;
       const cols = [
+        local(r.clockInAt),
+        r.clockOutAt ? local(r.clockOutAt) : '',
+        tz,
         r.clockInAt.toISOString(),
         r.clockOutAt ? r.clockOutAt.toISOString() : '',
         String(gross),
@@ -2157,6 +2176,9 @@ timeRouter.post('/admin/export.pdf', MANAGE, async (req, res, next) => {
       entries: rows.map((r) => ({
         clockInAt: r.clockInAt,
         clockOutAt: r.clockOutAt,
+        // Renderer formats punches on the SITE's wall clock, matching the
+        // queue — it used to toLocale* on the UTC server.
+        timezone: r.location?.timezone ?? DEFAULT_TIMEZONE,
         associateName: `${r.associate.firstName} ${r.associate.lastName}`,
         clientName: r.clientId ? clientMap.get(r.clientId) ?? null : null,
         jobName: r.job?.name ?? null,

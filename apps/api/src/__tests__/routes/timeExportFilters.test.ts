@@ -91,6 +91,14 @@ describe('POST /time/admin/export.csv filters', () => {
   it('exports every entry in the range when unfiltered', async () => {
     const csv = await exportCsv({});
     expect(rows(csv)).toHaveLength(4);
+    // Punches ship as site-local wall time + an explicit timezone column
+    // ALONGSIDE the raw UTC instants — the UTC-only export contradicted
+    // every screen by the full zone offset.
+    expect(csv.split('\n')[0]).toBe(
+      'clockInLocal,clockOutLocal,timezone,clockInUtc,clockOutUtc,grossMinutes,netMinutes,breakMinutes,associate,client,job,status,rejectionReason',
+    );
+    // No location on these fixtures → org default zone labels the rows.
+    expect(csv).toContain('America/New_York');
   });
 
   it('anomaliesOnly keeps flagged entries and drops empty and null ones', async () => {
