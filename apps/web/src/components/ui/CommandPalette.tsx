@@ -358,7 +358,10 @@ export function CommandPalette({
                       key={p.id}
                       value={`person-${p.id}`}
                       onSelect={() => {
-                        navigate(`/people?q=${encodeURIComponent(fullName)}`);
+                        // Straight to their profile drawer — landing on a
+                        // name-filtered list was one click short, and wrong
+                        // for duplicate names.
+                        navigate(`/people?associateId=${p.id}`);
                         close();
                       }}
                       className={ITEM_CLASS}

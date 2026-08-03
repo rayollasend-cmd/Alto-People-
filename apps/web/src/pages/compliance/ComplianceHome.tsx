@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { I9Tab } from './I9Tab';
@@ -17,16 +16,20 @@ export function ComplianceHome() {
   const canManage = can('manage:compliance');
   // Scorecard is the new default landing — preventative dashboard. The
   // existing forensic tabs (I-9 / background / J-1) stay as drill-downs.
-  // ?tab= lets other pages deep-link a specific directorate (the profile
-  // document vault links each category to its owning tab).
-  const [searchParams] = useSearchParams();
+  // The active tab LIVES in ?tab= (URL is the single source of truth):
+  // other pages deep-link a directorate (the profile document vault links
+  // each category to its owning tab), the URL stays shareable, and Back
+  // retraces tab switches instead of dumping out of the page.
+  const TABS: readonly Tab[] = ['scorecard', 'i9', 'everify', 'background', 'drugtests', 'j1'];
+  const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get('tab');
-  const [tab, setTab] = useState<Tab>(
-    requestedTab &&
-      ['scorecard', 'i9', 'everify', 'background', 'drugtests', 'j1'].includes(requestedTab)
-      ? (requestedTab as Tab)
-      : 'scorecard',
-  );
+  const tab: Tab = TABS.includes(requestedTab as Tab) ? (requestedTab as Tab) : 'scorecard';
+  const setTab = (next: Tab) => {
+    const params = new URLSearchParams(searchParams);
+    if (next === 'scorecard') params.delete('tab');
+    else params.set('tab', next);
+    setSearchParams(params);
+  };
 
   return (
     <div className="mx-auto">

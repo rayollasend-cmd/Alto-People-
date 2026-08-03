@@ -1033,8 +1033,14 @@ function DirectoryDrawer({
   onClose: () => void;
   onAssociateChange: (patch: Partial<DirectoryEntry>) => void;
 }) {
+  // ?tab= picks the landing tab, so /people?associateId=X&tab=documents
+  // deep-links straight into someone's document vault.
+  const [drawerParams] = useSearchParams();
+  const requestedDrawerTab = drawerParams.get('tab');
   const [tab, setTab] = useState<'profile' | 'compensation' | 'documents'>(
-    'profile',
+    requestedDrawerTab === 'compensation' || requestedDrawerTab === 'documents'
+      ? requestedDrawerTab
+      : 'profile',
   );
   return (
     <>

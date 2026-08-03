@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Download, FileCheck, XCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { CheckCircle2, Download, ExternalLink, FileCheck, XCircle } from 'lucide-react';
 import type { I9DocumentList, I9Verification } from '@alto-people/shared';
 import { listI9s, upsertI9 } from '@/lib/complianceApi';
 import {
@@ -349,6 +350,13 @@ function I9DetailPanel({
               {current.associateEmail}
             </DrawerDescription>
           </div>
+          <Link
+            to={`/people?associateId=${current.associateId}`}
+            className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"
+          >
+            View profile
+            <ExternalLink className="h-3 w-3" />
+          </Link>
         </div>
       </DrawerHeader>
       <DrawerBody>

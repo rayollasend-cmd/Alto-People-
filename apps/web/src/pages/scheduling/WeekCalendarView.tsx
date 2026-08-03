@@ -1125,11 +1125,13 @@ function ShiftChip({
         <div
           onMouseDown={onResizeMouseDown}
           className={RESIZE_RAIL_X}
-          aria-label="Drag to resize duration"
-          role="slider"
-          tabIndex={-1}
+          title="Drag to resize duration"
+          aria-hidden="true"
         >
-          {/* Grip line scales to the bar height so it never overflows. */}
+          {/* Mouse-only drag affordance — keyboard/AT users adjust times in
+              the edit dialog, so this is decoration to AT (role="slider"
+              here was a lie: no value, no keyboard operation). Grip line
+              scales to the bar height so it never overflows. */}
           <div className="w-0.5 h-1/2 max-h-4 rounded-full bg-silver/30 group-hover:bg-gold" />
         </div>
       )}

@@ -596,10 +596,12 @@ function DayShiftChip({
         <div
           onMouseDown={onResizeMouseDown}
           className={RESIZE_RAIL_Y}
-          aria-label="Drag to resize duration"
-          role="slider"
-          tabIndex={-1}
+          title="Drag to resize duration"
+          aria-hidden="true"
         >
+          {/* Mouse-only drag affordance — keyboard/AT users adjust times in
+              the edit dialog, so this is decoration to AT (role="slider"
+              here was a lie: no value, no keyboard operation). */}
           <div className="w-8 h-0.5 rounded-full bg-silver/30 group-hover:bg-gold" />
         </div>
       )}

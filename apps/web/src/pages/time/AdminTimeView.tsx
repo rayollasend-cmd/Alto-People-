@@ -1,5 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Activity,
   AlertTriangle,
@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Coffee,
   Download,
+  ExternalLink,
   FileSpreadsheet,
   ShieldAlert,
   FileText,
@@ -447,7 +448,17 @@ function ClientSiteSelects({
 export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const navigate = useNavigate();
   const isDesktop = useIsDesktop();
-  const [tab, setTab] = useState<Tab>('live');
+  // Active tab lives in ?tab= — shareable ("send me the queue"), and Back
+  // retraces the live↔queue switch instead of leaving the page.
+  const [tabParams, setTabParams] = useSearchParams();
+  const tabParam = tabParams.get('tab');
+  const tab: Tab = tabParam === 'queue' ? 'queue' : 'live';
+  const setTab = (next: Tab) => {
+    const params = new URLSearchParams(tabParams);
+    if (next === 'live') params.delete('tab');
+    else params.set('tab', next);
+    setTabParams(params);
+  };
   // Persisted list filter — a reviewer who works the Approved slice gets it
   // back next visit. A stored value no longer in STATUS_FILTERS falls back
   // to the default instead of silently rendering an empty queue.
@@ -1899,6 +1910,13 @@ function TimeEntryDetailPanel({
               {entry.jobName ? ` · ${entry.jobName}` : ''}
             </DrawerDescription>
           </div>
+          <RouterLink
+            to={`/people?associateId=${entry.associateId}`}
+            className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"
+          >
+            View profile
+            <ExternalLink className="h-3 w-3" />
+          </RouterLink>
         </div>
       </DrawerHeader>
       <DrawerBody>

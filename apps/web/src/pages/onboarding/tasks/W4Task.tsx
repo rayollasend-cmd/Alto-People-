@@ -232,49 +232,57 @@ export function W4Task() {
             label="Social Security card photo"
             hint="Required — a clear photo or scan, PDF, PNG, JPG, or WebP, up to 10 MB. Uploads immediately and is visible only to HR."
           >
-            <input
-              ref={cardInputRef}
-              type="file"
-              accept={CARD_ACCEPTED_MIMES}
-              onChange={onCardFileChange}
-              className="hidden"
-              aria-hidden="true"
-              tabIndex={-1}
-            />
-            {cardOnFile ? (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-success/30 bg-success/[0.05] text-success text-xs">
-                <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                <span className="min-w-0 truncate">
-                  {cardFilename
-                    ? `Uploaded ${cardFilename}`
-                    : 'A card photo is on file.'}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => cardInputRef.current?.click()}
-                  disabled={cardUploading}
-                  className="ml-auto text-gold hover:text-gold-bright whitespace-nowrap"
-                >
-                  Upload a different photo
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => cardInputRef.current?.click()}
-                disabled={cardUploading}
-                className={cn(
-                  'w-full px-4 py-5 rounded-md border-2 border-dashed transition-colors text-sm',
-                  cardUploading
-                    ? 'border-navy-secondary text-silver/70 cursor-wait'
-                    : 'border-navy-secondary text-silver hover:border-gold/60 hover:text-gold',
+            {/* Composite control: the label + hint bind to whichever upload
+                button is active, so screen readers land on a named action. */}
+            {(p) => (
+              <div>
+                <input
+                  ref={cardInputRef}
+                  type="file"
+                  accept={CARD_ACCEPTED_MIMES}
+                  onChange={onCardFileChange}
+                  className="hidden"
+                  aria-hidden="true"
+                  tabIndex={-1}
+                />
+                {cardOnFile ? (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-success/30 bg-success/[0.05] text-success text-xs">
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                    <span className="min-w-0 truncate">
+                      {cardFilename
+                        ? `Uploaded ${cardFilename}`
+                        : 'A card photo is on file.'}
+                    </span>
+                    <button
+                      type="button"
+                      {...p}
+                      onClick={() => cardInputRef.current?.click()}
+                      disabled={cardUploading}
+                      className="ml-auto text-gold hover:text-gold-bright whitespace-nowrap"
+                    >
+                      Upload a different photo
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    {...p}
+                    onClick={() => cardInputRef.current?.click()}
+                    disabled={cardUploading}
+                    className={cn(
+                      'w-full px-4 py-5 rounded-md border-2 border-dashed transition-colors text-sm',
+                      cardUploading
+                        ? 'border-navy-secondary text-silver/70 cursor-wait'
+                        : 'border-navy-secondary text-silver hover:border-gold/60 hover:text-gold',
+                    )}
+                  >
+                    <Upload className="h-4 w-4 inline-block mr-2 -mt-0.5" />
+                    {cardUploading
+                      ? 'Uploading…'
+                      : 'Click to upload your Social Security card'}
+                  </button>
                 )}
-              >
-                <Upload className="h-4 w-4 inline-block mr-2 -mt-0.5" />
-                {cardUploading
-                  ? 'Uploading…'
-                  : 'Click to upload your Social Security card'}
-              </button>
+              </div>
             )}
           </Field>
         )}
@@ -299,21 +307,23 @@ export function W4Task() {
             </button>
           </div>
         ) : (
-          <Field
-            label="Social Security number"
-            hint="9 digits — required. Encrypted at rest the moment you submit. Never logged."
-          >
-            <input
-              type="text"
-              inputMode="numeric"
-              pattern="\d{3}-?\d{2}-?\d{4}"
-              required
-              placeholder="123-45-6789"
-              value={ssn}
-              onChange={(e) => setSsn(e.target.value)}
-              className={inputCls}
-              autoComplete="off"
-            />
+          <>
+            <Field
+              label="Social Security number"
+              hint="9 digits — required. Encrypted at rest the moment you submit. Never logged."
+            >
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="\d{3}-?\d{2}-?\d{4}"
+                required
+                placeholder="123-45-6789"
+                value={ssn}
+                onChange={(e) => setSsn(e.target.value)}
+                className={inputCls}
+                autoComplete="off"
+              />
+            </Field>
             {ssnOnFile && replaceSsn && (
               <button
                 type="button"
@@ -321,12 +331,12 @@ export function W4Task() {
                   setReplaceSsn(false);
                   setSsn('');
                 }}
-                className="mt-1 text-xs text-silver hover:text-white"
+                className="-mt-2 text-xs text-silver hover:text-white"
               >
                 Cancel — keep existing SSN
               </button>
             )}
-          </Field>
+          </>
         )}
 
         {error && (
