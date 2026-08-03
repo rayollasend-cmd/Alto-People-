@@ -13,7 +13,6 @@ import { listJobs } from '@/lib/jobsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import {
-  fmtDateTime,
   fmtPayRate,
   fmtTime,
   ymdLocal,
@@ -31,7 +30,8 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Clock, CalendarRange, ChevronDown } from 'lucide-react';
 import { ShiftTimeline } from './ShiftTimeline';
-import { formatHM } from './punchFormat';
+import { TimesheetWeeks } from './TimesheetWeeks';
+import { fmtPunchTime, formatHM, punchDayOffset } from './punchFormat';
 
 const STATUS_LABELS: Record<TimeEntry['status'], string> = {
   ACTIVE: 'Active',
@@ -428,25 +428,38 @@ export function AssociateTimeView() {
           );
         })()}
         {entries && entries.length > 0 && (
-          <ul className="space-y-2">
-            {entries.map((e) => {
+          <TimesheetWeeks
+            entries={entries}
+            renderEntry={(e) => {
               const anomalies = e.anomalies ?? [];
               const expanded = expandedId === e.id;
+              const dayOff = e.clockOutAt
+                ? punchDayOffset(e.clockInAt, e.clockOutAt, e.locationTimezone)
+                : 0;
               return (
-                <li
-                  key={e.id}
-                  className="bg-navy border border-navy-secondary rounded-lg"
-                >
+                <div>
                   <button
                     type="button"
                     aria-expanded={expanded}
                     onClick={() => setExpandedId(expanded ? null : e.id)}
-                    className="flex w-full items-start justify-between gap-4 p-4 text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                    className="flex w-full items-start justify-between gap-4 px-3 py-2.5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="text-white tabular-nums">
-                        {fmtDateTime(e.clockInAt)} –{' '}
-                        {e.clockOutAt ? fmtTime(e.clockOutAt) : '…'}
+                        {fmtPunchTime(e.clockInAt, e.locationTimezone)}
+                        {' → '}
+                        {e.clockOutAt ? (
+                          <>
+                            {fmtPunchTime(e.clockOutAt, e.locationTimezone)}
+                            {dayOff > 0 && (
+                              <span className="ml-1 text-2xs text-warning align-super">
+                                +{dayOff}d
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-silver">on the clock</span>
+                        )}
                       </div>
                       <div className="text-sm text-silver">
                         {formatHM(e.netMinutes ?? e.minutesElapsed)}
@@ -490,14 +503,14 @@ export function AssociateTimeView() {
                     </span>
                   </button>
                   {expanded && (
-                    <div className="px-4 pb-4">
+                    <div className="px-3 pb-3">
                       <ShiftTimeline entry={e} />
                     </div>
                   )}
-                </li>
+                </div>
               );
-            })}
-          </ul>
+            }}
+          />
         )}
       </section>
     </div>

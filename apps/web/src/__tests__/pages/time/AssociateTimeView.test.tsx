@@ -202,3 +202,42 @@ describe("<AssociateTimeView> overtime nudge", () => {
     expect(await screen.findByText(/36.0h this workweek/)).toBeInTheDocument();
   });
 });
+
+describe('<AssociateTimeView> grouped history', () => {
+  const at = (dateStr: string, time: string) => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const [hh, mm] = time.split(':').map(Number);
+    return new Date(y, m - 1, d, hh, mm).toISOString();
+  };
+
+  it('groups a double clock-in day with the gap spelled out and week totals', async () => {
+    vi.mocked(getActiveTimeEntry).mockResolvedValueOnce({ active: null });
+    vi.mocked(listMyTimeEntries).mockResolvedValueOnce({
+      entries: [
+        entry({
+          id: 'e1',
+          status: 'COMPLETED',
+          clockInAt: at('2026-06-24', '08:00'),
+          clockOutAt: at('2026-06-24', '12:00'),
+          minutesElapsed: 240,
+          netMinutes: 240,
+        }),
+        entry({
+          id: 'e2',
+          status: 'COMPLETED',
+          clockInAt: at('2026-06-24', '12:40'),
+          clockOutAt: at('2026-06-24', '17:00'),
+          minutesElapsed: 260,
+          netMinutes: 260,
+        }),
+      ],
+    });
+    renderView();
+
+    expect(await screen.findByText('2 shifts')).toBeInTheDocument();
+    expect(screen.getByText(/back in 40m later/i)).toBeInTheDocument();
+    expect(screen.getByText(/week of/i)).toBeInTheDocument();
+    // 240 + 260 = 500m = 8h 20m — shown as both the week and the day total.
+    expect(screen.getAllByText('8h 20m').length).toBeGreaterThanOrEqual(2);
+  });
+});
