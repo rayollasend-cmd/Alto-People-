@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { CheckCircle2, Download, ExternalLink, FileCheck, XCircle } from 'lucide-react';
+import { CheckCircle2, Download, ExternalLink, FileCheck, Fingerprint, XCircle } from 'lucide-react';
+import { DirectorateHeader, Kpi, KpiStrip } from './DirectorateShell';
 import type { I9DocumentList, I9Verification } from '@alto-people/shared';
 import { listI9s, upsertI9 } from '@/lib/complianceApi';
 import {
@@ -118,9 +119,9 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   const refresh = useCallback(async () => {
     try {
       setError(null);
-      // "Work auth expiring" is a client-side view over the full list —
-      // rows needing reverification can be pending *or* complete.
-      const res = await listI9s(filter === 'work_auth' ? 'all' : filter);
+      // Always fetch the full list: the filters are client-side views and
+      // the KPI strip must count the whole population, not one slice.
+      const res = await listI9s('all');
       setRows(res.i9s);
       setDrawerTarget((prev) =>
         prev ? res.i9s.find((r) => r.id === prev.id) ?? null : null,
@@ -128,7 +129,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
-  }, [filter]);
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -146,6 +147,8 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   const displayRows = useMemo(() => {
     if (!rows) return null;
     let list = rows;
+    if (filter === 'pending') list = list.filter((r) => !r.section2CompletedAt);
+    if (filter === 'complete') list = list.filter((r) => !!r.section2CompletedAt);
     if (filter === 'work_auth') {
       list = list.filter(
         (r) =>
@@ -173,8 +176,62 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     });
   }, [rows, filter, search]);
 
+  // Whole-population stats (rows is always the full list).
+  const kpi = useMemo(() => {
+    const all = rows ?? [];
+    const pending2 = all.filter((r) => !r.section2CompletedAt);
+    return {
+      total: all.length,
+      pendingS1: all.filter((r) => !r.section1CompletedAt).length,
+      pendingS2: pending2.length,
+      overdue: pending2.filter((r) => {
+        const due = section2DueDate(r.startDate);
+        return due !== null && due.getTime() < Date.now();
+      }).length,
+      complete: all.filter((r) => !!r.section2CompletedAt).length,
+      workAuth: all.filter(
+        (r) =>
+          r.workAuthExpiresAt &&
+          daysFromToday(parseLocalDate(r.workAuthExpiresAt)) <= WORK_AUTH_WINDOW_DAYS,
+      ).length,
+    };
+  }, [rows]);
+
   return (
     <section>
+      <DirectorateHeader
+        icon={Fingerprint}
+        title="I-9 verification"
+        blurb="Federal employment-eligibility verification — Section 1 by the associate, Section 2 by HR within 3 business days of the start date"
+      />
+
+      {rows && rows.length > 0 && (
+        <KpiStrip>
+          <Kpi label="Associates" value={kpi.total} />
+          <Kpi
+            label="Section 1 pending"
+            value={kpi.pendingS1}
+            tone={kpi.pendingS1 > 0 ? 'text-warning' : undefined}
+          />
+          <Kpi
+            label="Section 2 pending"
+            value={kpi.pendingS2}
+            tone={kpi.pendingS2 > 0 ? 'text-warning' : undefined}
+          />
+          <Kpi
+            label="Overdue"
+            value={kpi.overdue}
+            tone={kpi.overdue > 0 ? 'text-alert' : undefined}
+          />
+          <Kpi label="Complete" value={kpi.complete} tone="text-success" />
+          <Kpi
+            label={`Work auth ≤ ${WORK_AUTH_WINDOW_DAYS}d`}
+            value={kpi.workAuth}
+            tone={kpi.workAuth > 0 ? 'text-alert' : undefined}
+          />
+        </KpiStrip>
+      )}
+
       <div className="flex flex-wrap items-center gap-2 mb-4">
         {I9_FILTERS.map((f) => (
           <FilterChip

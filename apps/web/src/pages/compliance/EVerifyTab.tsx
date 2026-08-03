@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, Check, Copy, ExternalLink, ShieldCheck } from 'lucide-react';
+import { DirectorateHeader, Kpi, KpiStrip } from './DirectorateShell';
 import type {
   EVerifyBlocker,
   EVerifyCaseDetail,
@@ -151,12 +152,18 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
 
   return (
     <div>
+      <DirectorateHeader
+        icon={ShieldCheck}
+        title="E-Verify"
+        blurb="Federal work-authorization cases — everything the portal asks for, staged in its own field order"
+      />
+
       {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
 
       {/* Snapshot — the "how are we doing on E-Verify" question, answered
           without scrolling a table. */}
       {counts && counts.total > 0 && (
-        <div className="mb-4 flex flex-wrap gap-x-6 gap-y-2 rounded-md border border-navy-secondary bg-navy-secondary/30 px-4 py-3">
+        <KpiStrip>
           <Kpi label="Associates" value={counts.total} />
           <Kpi label="Authorized" value={counts.authorized} tone="text-success" />
           <Kpi label="Pending" value={counts.pending} />
@@ -176,7 +183,7 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
             value={counts.blocked}
             tone={counts.blocked > 0 ? 'text-warning' : undefined}
           />
-        </div>
+        </KpiStrip>
       )}
 
       {truncated && (
@@ -247,25 +254,6 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
           onSaved={() => void refresh()}
         />
       )}
-    </div>
-  );
-}
-
-function Kpi({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone?: string;
-}) {
-  return (
-    <div>
-      <div className="text-2xs uppercase tracking-wider text-silver/70">{label}</div>
-      <div className={cn('font-display text-xl tabular-nums', tone ?? 'text-white')}>
-        {value}
-      </div>
     </div>
   );
 }

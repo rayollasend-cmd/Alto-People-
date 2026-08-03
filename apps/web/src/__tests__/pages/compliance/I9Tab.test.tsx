@@ -232,6 +232,10 @@ describe('<I9Tab> Section 2 verifier card', () => {
     const user = userEvent.setup();
     render(<I9Tab canManage={true} />);
 
+    // Filtering is client-side over the full list now — a completed row is
+    // hidden from the default Pending view, so switch chips first.
+    await user.click(await screen.findByRole('button', { name: /^complete$/i }));
+
     await openRowDrawer(user);
     // Legacy form contains "Section 1 complete" + "Section 2 complete" checkboxes.
     expect(await screen.findByLabelText(/section 1 complete/i)).toBeInTheDocument();

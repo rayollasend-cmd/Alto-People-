@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Download, ExternalLink, FileCheck2, Plus, ShieldCheck } from 'lucide-react';
+import { Download, ExternalLink, FileCheck2, FileSearch, Plus, ShieldCheck } from 'lucide-react';
+import { DirectorateHeader, Kpi, KpiStrip, TableShell } from './DirectorateShell';
 import { toast } from 'sonner';
 import type {
   BackgroundCheck,
@@ -182,21 +183,25 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
 
   return (
     <section>
-      <div className="flex items-center justify-between gap-3 mb-4">
-        <h2 className="text-base font-medium text-white">Background checks</h2>
-        {canManage && (
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setShowBulkOrder(true)}>
-              <Download className="h-4 w-4" />
-              Bulk order CSV
-            </Button>
-            <Button onClick={() => setShowInitiate(true)} size="sm">
-              <Plus className="h-4 w-4" />
-              Initiate check
-            </Button>
-          </div>
-        )}
-      </div>
+      <DirectorateHeader
+        icon={FileSearch}
+        title="Background checks"
+        blurb="FCRA screening ledger — order, track, and file each provider report next to its decision"
+        actions={
+          canManage && (
+            <>
+              <Button variant="secondary" size="sm" onClick={() => setShowBulkOrder(true)}>
+                <Download className="h-4 w-4" />
+                Bulk order CSV
+              </Button>
+              <Button onClick={() => setShowInitiate(true)} size="sm">
+                <Plus className="h-4 w-4" />
+                Initiate check
+              </Button>
+            </>
+          )
+        }
+      />
 
       {error && (
         <ErrorBanner
@@ -212,7 +217,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
       )}
 
       {checks && checks.length > 0 && (
-        <div className="mb-4 flex flex-wrap gap-x-8 gap-y-3 rounded-lg border border-navy-secondary bg-navy/40 p-4">
+        <KpiStrip>
           <Kpi label="In flight" value={kpi.inFlight} />
           <Kpi
             label="Needs review"
@@ -235,7 +240,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
             value={kpi.missingReport}
             tone={kpi.missingReport > 0 ? 'text-warning' : undefined}
           />
-        </div>
+        </KpiStrip>
       )}
 
       {!checks && <SkeletonRows count={4} rowHeight="h-12" />}
@@ -259,6 +264,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
         />
       )}
       {checks && checks.length > 0 && (
+        <TableShell>
         <Table>
           <TableHeader>
             <TableRow>
@@ -343,6 +349,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
             ))}
           </TableBody>
         </Table>
+        </TableShell>
       )}
 
       <InitiateCheckDialog
@@ -600,26 +607,6 @@ function labelFor(s: BgCheckStatus): string {
     case 'INITIATED':
       return 'Reopen';
   }
-}
-
-// Same snapshot-stat idiom as the E-Verify directory strip.
-function Kpi({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone?: string;
-}) {
-  return (
-    <div>
-      <div className="text-2xs uppercase tracking-wider text-silver/70">{label}</div>
-      <div className={cn('font-display text-xl tabular-nums', tone ?? 'text-white')}>
-        {value}
-      </div>
-    </div>
-  );
 }
 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
