@@ -681,10 +681,12 @@ timeRouter.post('/me/break/end', async (req, res, next) => {
 timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
   try {
     const clientId = req.query.clientId?.toString();
+    const locationId = req.query.locationId?.toString();
     const where: Prisma.TimeEntryWhereInput = {
       ...scopeTimeEntries(req.user!),
       status: 'ACTIVE',
       ...(clientId ? { clientId } : {}),
+      ...(locationId ? { locationId } : {}),
     };
     const rows = await prisma.timeEntry.findMany({
       take: 100,
@@ -844,6 +846,9 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
     const status = req.query.status?.toString();
     const associateId = req.query.associateId?.toString();
     const clientId = req.query.clientId?.toString();
+    // Narrow to one work-site within the client (cascading filter, same
+    // as scheduling). locationId is denormalized on TimeEntry.
+    const locationId = req.query.locationId?.toString();
     // Phase 65 — date range + free-text associate search.
     const fromStr = req.query.from?.toString();
     const toStr = req.query.to?.toString();
@@ -854,6 +859,7 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
       ...(status ? { status: status as Prisma.TimeEntryWhereInput['status'] } : {}),
       ...(associateId ? { associateId } : {}),
       ...(clientId ? { clientId } : {}),
+      ...(locationId ? { locationId } : {}),
       ...(fromStr || toStr
         ? {
             clockInAt: {

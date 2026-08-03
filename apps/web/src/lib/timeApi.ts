@@ -71,8 +71,15 @@ export function endBreak(): Promise<BreakEntry> {
   return apiFetch<BreakEntry>('/time/me/break/end', { method: 'POST' });
 }
 
-export function getActiveDashboard(): Promise<ActiveDashboardResponse> {
-  return apiFetch<ActiveDashboardResponse>('/time/admin/active');
+export function getActiveDashboard(filters: {
+  clientId?: string;
+  locationId?: string;
+} = {}): Promise<ActiveDashboardResponse> {
+  const params = new URLSearchParams();
+  if (filters.clientId) params.set('clientId', filters.clientId);
+  if (filters.locationId) params.set('locationId', filters.locationId);
+  const qs = params.toString();
+  return apiFetch<ActiveDashboardResponse>(`/time/admin/active${qs ? `?${qs}` : ''}`);
 }
 
 /**
@@ -128,6 +135,7 @@ export function listAdminTimeEntries(filters: {
   status?: TimeEntryStatus;
   associateId?: string;
   clientId?: string;
+  locationId?: string;
   from?: string;
   to?: string;
   search?: string;
@@ -136,6 +144,7 @@ export function listAdminTimeEntries(filters: {
   if (filters.status) params.set('status', filters.status);
   if (filters.associateId) params.set('associateId', filters.associateId);
   if (filters.clientId) params.set('clientId', filters.clientId);
+  if (filters.locationId) params.set('locationId', filters.locationId);
   if (filters.from) params.set('from', filters.from);
   if (filters.to) params.set('to', filters.to);
   if (filters.search) params.set('search', filters.search);
