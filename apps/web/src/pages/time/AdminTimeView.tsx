@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Activity,
@@ -379,6 +379,71 @@ function liveEntryToTimeEntry(e: ActiveDashboardEntry): TimeEntry {
   };
 }
 
+/**
+ * Client → site cascading scope, rendered on BOTH the live board and the
+ * approval queue. Bounded viewers see their pinned client as a static chip
+ * (the server clamps them anyway); admins default to all clients.
+ */
+function ClientSiteSelects({
+  boundedClient,
+  clients,
+  clientFilter,
+  onClientChange,
+  locationFilter,
+  onLocationChange,
+  locationOptions,
+}: {
+  boundedClient: { id: string; name: string } | null;
+  clients: Array<{ id: string; name: string }>;
+  clientFilter: string;
+  onClientChange: (id: string) => void;
+  locationFilter: string;
+  onLocationChange: (id: string) => void;
+  locationOptions: Array<{ id: string; name: string }>;
+}) {
+  return (
+    <>
+      {boundedClient ? (
+        <div
+          className="inline-flex h-9 items-center rounded-md border border-navy-secondary bg-navy-secondary/30 px-2.5 text-sm text-white"
+          title="Your account is scoped to this client"
+        >
+          {boundedClient.name}
+        </div>
+      ) : (
+        <Select
+          value={clientFilter}
+          onChange={(e) => onClientChange(e.target.value)}
+          className="h-9 w-auto max-w-48 text-sm"
+          aria-label="Client filter"
+        >
+          <option value="">All clients</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
+      )}
+      {clientFilter && locationOptions.length > 0 && (
+        <Select
+          value={locationFilter}
+          onChange={(e) => onLocationChange(e.target.value)}
+          className="h-9 w-auto max-w-48 text-sm"
+          aria-label="Location filter"
+        >
+          <option value="">All locations</option>
+          {locationOptions.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}
+            </option>
+          ))}
+        </Select>
+      )}
+    </>
+  );
+}
+
 export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const navigate = useNavigate();
   const isDesktop = useIsDesktop();
@@ -424,8 +489,43 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   // Distinct from canManage (manage:time). The external sheet carries full
   // SSNs and bank accounts, so it sits behind its own capability held by
   // HR_ADMINISTRATOR alone — manage:time reaches down to SHIFT_SUPERVISOR.
-  const { can: canCap } = useAuth();
+  const { can: canCap, user } = useAuth();
   const canExportPayrollPii = canCap('export:payroll-pii');
+
+  // Client/site scope — shared by BOTH tabs so switching keeps context.
+  // Every client's live board and approval queue used to pool into one
+  // list: the server accepted clientId all along but the page never sent
+  // it, so bulk select-all spanned clients while timesheets file per
+  // client. Bounded roles (SHIFT_SUPERVISOR) are clamped server-side
+  // regardless; the pin below just makes the UI say so.
+  const boundedClient = user?.clientId
+    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+    : null;
+  const { clients } = useClients({ enabled: !boundedClient });
+  const [clientFilter, setClientFilter] = useState(boundedClient?.id ?? '');
+  const [locationFilter, setLocationFilter] = useState('');
+  const [locationOptions, setLocationOptions] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    setLocationFilter('');
+    if (!clientFilter) {
+      setLocationOptions([]);
+      return;
+    }
+    let cancelled = false;
+    // Bounded roles lack view:clients — the fetch 403s, the catch leaves
+    // the site list empty, and the Location select stays disabled. Same
+    // graceful degradation as the export dialogs below.
+    listClientLocations(clientFilter)
+      .then((r) => {
+        if (!cancelled) setLocationOptions(r.locations.map((l) => ({ id: l.id, name: l.name })));
+      })
+      .catch(() => {
+        if (!cancelled) setLocationOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientFilter]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState<null | { mode: 'one'; id: string } | { mode: 'bulk' }>(null);
@@ -463,6 +563,8 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         to: ymdToIsoEndExclusive(toYmd),
         ...(appliedSearch ? { search: appliedSearch } : {}),
         ...(focusAssociate ? { associateId: focusAssociate.id } : {}),
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+        ...(locationFilter ? { locationId: locationFilter } : {}),
       });
       setEntries(res.entries);
       setTruncated(Boolean(res.truncated));
@@ -471,17 +573,20 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
-  }, [filter, fromYmd, toYmd, appliedSearch, focusAssociate]);
+  }, [filter, fromYmd, toYmd, appliedSearch, focusAssociate, clientFilter, locationFilter]);
 
   const refreshActive = useCallback(async () => {
     try {
       setError(null);
-      const res = await getActiveDashboard();
+      const res = await getActiveDashboard({
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+        ...(locationFilter ? { locationId: locationFilter } : {}),
+      });
       setActive(res.entries);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load active dashboard.');
     }
-  }, []);
+  }, [clientFilter, locationFilter]);
 
   const refreshPendingCount = useCallback(async () => {
     try {
@@ -727,6 +832,22 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     );
   }, [active, liveSearch]);
 
+  // Group the live board by client when viewing all clients — the one big
+  // pile reads as organized places, each with a headcount. A single client
+  // (filtered, or naturally) skips the subheaders.
+  const liveGroups = useMemo(() => {
+    if (!filteredActive) return null;
+    const map = new Map<string, ActiveDashboardEntry[]>();
+    for (const e of filteredActive) {
+      const key = e.clientName ?? 'No client';
+      const arr = map.get(key);
+      if (arr) arr.push(e);
+      else map.set(key, [e]);
+    }
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [filteredActive]);
+  const showLiveGroups = !clientFilter && (liveGroups?.length ?? 0) > 1;
+
   // What the queue actually renders — the anomalies-only lens applies here
   // so select-all and the empty state follow what's on screen.
   const visibleEntries = useMemo(() => {
@@ -863,16 +984,27 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
 
       {tab === 'live' && (
         <Card>
-          <CardHeader className="flex-row items-center justify-between">
+          <CardHeader className="flex-row flex-wrap items-center justify-between gap-2">
             <CardTitle className="text-base">Currently clocked in</CardTitle>
-            <div className="relative w-64">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-silver/70 pointer-events-none" />
-              <Input
-                placeholder="Search associate, client, job…"
-                value={liveSearch}
-                onChange={(e) => setLiveSearch(e.target.value)}
-                className="pl-8 h-9 text-sm"
+            <div className="flex flex-wrap items-center gap-2">
+              <ClientSiteSelects
+                boundedClient={boundedClient}
+                clients={clients}
+                clientFilter={clientFilter}
+                onClientChange={setClientFilter}
+                locationFilter={locationFilter}
+                onLocationChange={setLocationFilter}
+                locationOptions={locationOptions}
               />
+              <div className="relative w-64">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-silver/70 pointer-events-none" />
+                <Input
+                  placeholder="Search associate, client, job…"
+                  value={liveSearch}
+                  onChange={(e) => setLiveSearch(e.target.value)}
+                  className="pl-8 h-9 text-sm"
+                />
+              </div>
             </div>
           </CardHeader>
           <CardContent className="pt-0">
@@ -906,7 +1038,22 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredActive.map((e) => (
+                      {(liveGroups ?? []).map(([groupName, groupRows]) => (
+                        <Fragment key={groupName}>
+                          {showLiveGroups && (
+                            <TableRow className="bg-navy-secondary/20 hover:bg-navy-secondary/20">
+                              <TableCell
+                                colSpan={canManage ? 8 : 7}
+                                className="py-1.5 text-xs font-medium text-silver"
+                              >
+                                {groupName}
+                                <span className="ml-2 tabular-nums text-silver/60">
+                                  {groupRows.length} clocked in
+                                </span>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                          {groupRows.map((e) => (
                         <TableRow key={e.id} className="group">
                           <TableCell className="font-medium">
                             <div className="flex items-center gap-2.5">
@@ -950,6 +1097,8 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                             </TableCell>
                           )}
                         </TableRow>
+                          ))}
+                        </Fragment>
                       ))}
                     </TableBody>
                   </Table>
@@ -1058,6 +1207,22 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
 
             {/* Phase 65 — date range + free-text search + export buttons. */}
             <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
+                  Client / site
+                </label>
+                <div className="flex items-center gap-2">
+                  <ClientSiteSelects
+                    boundedClient={boundedClient}
+                    clients={clients}
+                    clientFilter={clientFilter}
+                    onClientChange={setClientFilter}
+                    locationFilter={locationFilter}
+                    onLocationChange={setLocationFilter}
+                    locationOptions={locationOptions}
+                  />
+                </div>
+              </div>
               {payPeriods !== null && payPeriods.length > 0 && (
                 <div>
                   <label

@@ -222,6 +222,48 @@ describe('GET /time/admin/entries', () => {
     expect(completed.body.entries.every((e: { status: string }) => e.status === 'COMPLETED')).toBe(true);
     expect(completed.body.entries.length).toBe(1);
   });
+
+  it('filters the queue and the live board by locationId', async () => {
+    const client = await createClient();
+    const [siteA, siteB] = await Promise.all([
+      prisma.location.create({ data: { clientId: client.id, name: 'Site A' } }),
+      prisma.location.create({ data: { clientId: client.id, name: 'Site B' } }),
+    ]);
+    const atA = await createAssociate({ firstName: 'Ada', lastName: 'AtA' });
+    const atB = await createAssociate({ firstName: 'Bea', lastName: 'AtB' });
+    const mkEntry = (associateId: string, locationId: string, status: 'ACTIVE' | 'COMPLETED') =>
+      prisma.timeEntry.create({
+        data: {
+          associateId,
+          clientId: client.id,
+          locationId,
+          clockInAt: new Date('2026-08-03T13:00:00Z'),
+          ...(status === 'COMPLETED'
+            ? { clockOutAt: new Date('2026-08-03T21:00:00Z') }
+            : {}),
+          status,
+        },
+      });
+    await mkEntry(atA.id, siteA.id, 'COMPLETED');
+    await mkEntry(atB.id, siteB.id, 'COMPLETED');
+    await mkEntry(atA.id, siteA.id, 'ACTIVE');
+    await mkEntry(atB.id, siteB.id, 'ACTIVE');
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const queue = await a.get(`/time/admin/entries?locationId=${siteA.id}`);
+    expect(queue.status).toBe(200);
+    expect(queue.body.entries).toHaveLength(2);
+    expect(
+      queue.body.entries.every((e: { associateId: string }) => e.associateId === atA.id),
+    ).toBe(true);
+
+    const live = await a.get(`/time/admin/active?locationId=${siteB.id}`);
+    expect(live.status).toBe(200);
+    expect(live.body.entries).toHaveLength(1);
+    expect(live.body.entries[0].associateId).toBe(atB.id);
+  });
 });
 
 describe('POST /time/admin/entries/:id/approve', () => {
