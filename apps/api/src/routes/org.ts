@@ -20,7 +20,9 @@ import {
   type JobProfile,
   type ShiftPosition,
 } from '@alto-people/shared';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { piiRevealLimiter, bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { asOf, recordChange } from '../lib/associateHistory.js';
@@ -886,6 +888,7 @@ orgRouter.get(
 orgRouter.post(
   '/associates/:id/payout-method/reveal',
   PAYROLL_OR_HR,
+  piiRevealLimiter,
   async (req: Request, res: Response) => {
     // Belt-and-braces: also require process:payroll explicitly here so
     // the middleware change can't accidentally widen exposure. The
@@ -1090,6 +1093,7 @@ orgRouter.get(
 orgRouter.post(
   '/associates/:id/ssn/reveal',
   PAYROLL_OR_HR,
+  piiRevealLimiter,
   async (req: Request, res: Response) => {
     // Same belt-and-braces double check as the payout reveal.
     if (!hasCapability(req.user!.role, 'process:payroll')) {
@@ -1310,11 +1314,12 @@ const CENSUS_HEADERS = [
   'Account Number',
 ] as const;
 
-// RFC-4180 quoting: wrap in double-quotes and double any embedded quote
-// whenever the value carries a comma, quote, or newline. null/undefined → "".
+// Kept as a thin wrapper so existing call sites don't change; the escaping
+// itself is the shared implementation (RFC-4180 quoting PLUS formula-
+// injection guarding — this census carries associate-controlled names and
+// addresses next to routing and account numbers, and lands in Excel).
 function csvCell(value: string | null | undefined): string {
-  const s = value == null ? '' : String(value);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return sharedCsvCell(value);
 }
 
 function isoDate(d: Date | null | undefined): string {
@@ -1324,6 +1329,7 @@ function isoDate(d: Date | null | undefined): string {
 orgRouter.post(
   '/associates/payroll-census-export',
   PAYROLL_OR_HR,
+  bulkPiiExportLimiter,
   async (req: Request, res: Response) => {
     // Same belt-and-braces double check as the single-record reveals.
     if (!hasCapability(req.user!.role, 'process:payroll')) {

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { safeHref } from '@alto-people/shared';
 import { GraduationCap, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -769,7 +770,7 @@ function MyDetailDrawer({
         </div>
         {row.receiptUrl && (
           <a
-            href={row.receiptUrl}
+            href={safeHref(row.receiptUrl)}
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-steel hover:underline"
@@ -873,7 +874,7 @@ function QueueDetailDrawer({
         </div>
         {row.receiptUrl && (
           <a
-            href={row.receiptUrl}
+            href={safeHref(row.receiptUrl)}
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-steel hover:underline"

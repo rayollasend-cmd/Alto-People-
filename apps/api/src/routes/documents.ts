@@ -17,6 +17,7 @@ import {
 } from '@alto-people/shared';
 import type { DocumentKind, TaskKind } from '@prisma/client';
 import { prisma } from '../db.js';
+import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeDocuments } from '../lib/scope.js';
@@ -604,7 +605,7 @@ documentsRouter.get('/admin/vault/:associateId', MANAGE, async (req, res, next) 
  * available document for an associate. An auditor asking for someone's
  * file used to mean opening and downloading each row individually.
  */
-documentsRouter.get('/admin/all.zip', MANAGE, async (req, res, next) => {
+documentsRouter.get('/admin/all.zip', MANAGE, bulkPiiExportLimiter, async (req, res, next) => {
   try {
     const associateId = req.query.associateId?.toString();
     if (!associateId) {

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { randomBytes, createHmac } from 'node:crypto';
 import { prisma } from '../db.js';
+import { assertSafeOutboundUrl } from '../lib/safeOutboundUrl.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { hashPassword } from '../lib/passwords.js';
@@ -146,6 +147,8 @@ apiKeysWebhooks93Router.get('/webhooks', VIEW, async (req, res) => {
 
 apiKeysWebhooks93Router.post('/webhooks', MANAGE, async (req, res) => {
   const input = WebhookInputSchema.parse(req.body);
+  // SSRF guard: https-only, publicly-routable destinations only.
+  await assertSafeOutboundUrl(input.url);
   const secret = randomBytes(32).toString('hex');
   const created = await prisma.webhook.create({
     data: {
@@ -167,6 +170,8 @@ apiKeysWebhooks93Router.post('/webhooks', MANAGE, async (req, res) => {
 
 apiKeysWebhooks93Router.put('/webhooks/:id', MANAGE, async (req, res) => {
   const input = WebhookInputSchema.parse(req.body);
+  // SSRF guard: https-only, publicly-routable destinations only.
+  await assertSafeOutboundUrl(input.url);
   await prisma.webhook.update({
     where: { id: req.params.id },
     data: {
@@ -260,6 +265,9 @@ apiKeysWebhooks93Router.post('/webhooks/:id/test', MANAGE, async (req, res) => {
       signal: AbortSignal.timeout(10_000),
     });
     responseStatus = r.status;
+    // The body is recorded for the delivery log but NOT returned to the
+    // caller (see the response below) — echoing it would turn a test-fire
+    // into a read primitive against anything the server can reach.
     responseBody = (await r.text()).slice(0, 1000);
     ok = r.ok;
   } catch (err) {
@@ -278,5 +286,7 @@ apiKeysWebhooks93Router.post('/webhooks/:id/test', MANAGE, async (req, res) => {
     },
   });
 
-  res.json({ ok, responseStatus, responseBody });
+  // Status only. The response body lives in the delivery log, which is
+  // readable through the deliveries endpoint under the same capability.
+  res.json({ ok, responseStatus });
 });

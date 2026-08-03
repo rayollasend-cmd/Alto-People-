@@ -8,7 +8,7 @@ import {
   requireApiKeyCapability,
   resolveStoreScope,
 } from '../middleware/apiKeyAuth.js';
-import { integrationsApiKeyLimiter } from '../middleware/rateLimit.js';
+import { integrationsApiKeyLimiter, integrationsAnonLimiter } from '../middleware/rateLimit.js';
 
 /**
  * Public integration API for AltoHR / ShiftReport Nexus (a.k.a. ASN) and
@@ -39,7 +39,10 @@ export const integrationsV1Router = Router();
 // per-route since each endpoint requires a different one. We mount with
 // an empty `capabilities` list at the router level and assert the
 // specific capability on each handler via `requireApiKeyCapability`.
+// IP limiter first: key auth costs a DB lookup plus an argon2id verify,
+// so unauthenticated garbage must be throttled BEFORE it gets there.
 integrationsV1Router.use(
+  integrationsAnonLimiter,
   requireApiKey({ capabilities: [] }),
   integrationsApiKeyLimiter,
 );

@@ -4,6 +4,15 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import type { SessionUser } from '../types/express.js';
+import {
+  scopeApplications,
+  scopeAssociates,
+  scopeCandidates,
+  scopePayrollItems,
+  scopePayrollRuns,
+  scopeTimeEntries,
+} from '../lib/scope.js';
 
 /**
  * Phase 96 — Reporting builder.
@@ -181,33 +190,60 @@ function buildOrderBy(
   });
 }
 
+/**
+ * Run a report AS a specific caller.
+ *
+ * The spec's filters are caller-supplied, so the tenant slice can never
+ * come from them — every entity's `where` is the AND of the sanitized
+ * spec filters and the caller's `scope*()` clause. Without this a
+ * CLIENT_PORTAL user (who holds view:analytics) could select
+ * entity=ASSOCIATE or PAYROLL_ITEM and read names, emails, and gross/net
+ * pay across EVERY tenant.
+ */
 async function runReport(
   entity: string,
   spec: z.infer<typeof SpecSchema>,
+  user: SessionUser,
 ): Promise<unknown[]> {
-  const where = buildWhere(entity, spec.filters);
+  const specWhere = buildWhere(entity, spec.filters);
   const select = buildSelect(entity, spec.columns);
   const orderBy = buildOrderBy(entity, spec.sort);
+  const scoped = <T>(scope: T) => ({ AND: [specWhere, scope] });
 
   // Map entity → Prisma model client. Only entities in the whitelist are
   // reachable, and the where/select/orderBy are sanitized above.
   switch (entity) {
     case 'ASSOCIATE':
-      return prisma.associate.findMany({ where, select, orderBy, take: spec.limit });
+      return prisma.associate.findMany({
+        where: scoped(scopeAssociates(user)),
+        select,
+        orderBy,
+        take: spec.limit,
+      });
     case 'TIME_ENTRY':
-      return prisma.timeEntry.findMany({ where, select, orderBy, take: spec.limit });
+      return prisma.timeEntry.findMany({
+        where: scoped(scopeTimeEntries(user)),
+        select,
+        orderBy,
+        take: spec.limit,
+      });
     case 'PAYROLL_ITEM':
       return prisma.payrollItem.findMany({
-        where,
+        where: scoped(scopePayrollItems(user)),
         select,
         orderBy,
         take: spec.limit,
       });
     case 'PAYROLL_RUN':
-      return prisma.payrollRun.findMany({ where, select, orderBy, take: spec.limit });
+      return prisma.payrollRun.findMany({
+        where: scoped(scopePayrollRuns(user)),
+        select,
+        orderBy,
+        take: spec.limit,
+      });
     case 'APPLICATION':
       return prisma.application.findMany({
-        where,
+        where: scoped(scopeApplications(user)),
         select,
         orderBy,
         take: spec.limit,
@@ -220,7 +256,12 @@ async function runReport(
         'EXPENSE reports require Phase 97 to ship reimbursements.',
       );
     case 'CANDIDATE':
-      return prisma.candidate.findMany({ where, select, orderBy, take: spec.limit });
+      return prisma.candidate.findMany({
+        where: scoped(scopeCandidates(user)),
+        select,
+        orderBy,
+        take: spec.limit,
+      });
     default:
       throw new HttpError(400, 'invalid_entity', 'Unknown report entity.');
   }
@@ -309,7 +350,7 @@ reports96Router.post('/reports/:id/run', VIEW, async (req, res) => {
     throw new HttpError(403, 'forbidden', 'This report is private.');
   }
   const spec = SpecSchema.parse(r.spec);
-  const rows = await runReport(r.entity, spec);
+  const rows = await runReport(r.entity, spec, req.user!);
   res.json({ entity: r.entity, columns: spec.columns, rows });
 });
 
@@ -319,7 +360,7 @@ reports96Router.post('/reports/:id/run', VIEW, async (req, res) => {
  */
 reports96Router.post('/reports/preview', VIEW, async (req, res) => {
   const input = ReportInputSchema.parse(req.body);
-  const rows = await runReport(input.entity, input.spec);
+  const rows = await runReport(input.entity, input.spec, req.user!);
   res.json({ entity: input.entity, columns: input.spec.columns, rows });
 });
 
@@ -346,11 +387,36 @@ reports96Router.post('/reports/:id/schedules', VIEW, async (req, res) => {
   const r = await prisma.report.findUnique({ where: { id: req.params.id } });
   if (!r || r.deletedAt) throw new HttpError(404, 'not_found', 'Report not found.');
   const input = ScheduleInputSchema.parse(req.body);
+
+  // Recipients must be existing, active platform users. A report schedule
+  // is a recurring data egress: left free-form, it turns the report
+  // builder into "email this roster to any address, forever."
+  const addresses = input.recipients
+    .split(/[,;]/)
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  if (addresses.length === 0) {
+    throw new HttpError(400, 'no_recipients', 'At least one recipient is required.');
+  }
+  const known = await prisma.user.findMany({
+    where: { email: { in: addresses }, status: 'ACTIVE', deletedAt: null },
+    select: { email: true },
+  });
+  const knownSet = new Set(known.map((u) => u.email.toLowerCase()));
+  const unknown = addresses.filter((e) => !knownSet.has(e));
+  if (unknown.length > 0) {
+    throw new HttpError(
+      400,
+      'unknown_recipient',
+      `Not an active Alto user: ${unknown.join(', ')}`,
+    );
+  }
+
   const created = await prisma.reportSchedule.create({
     data: {
       reportId: r.id,
       cadence: input.cadence,
-      recipients: input.recipients,
+      recipients: addresses.join(','),
       nextRunAt: nextRunFor(input.cadence),
     },
   });

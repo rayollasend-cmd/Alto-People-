@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import { hasCapability } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { recordReimbursementEvent } from '../lib/audit.js';
 import { notifyAllAdmins, notifyAssociate, notifyManager } from '../lib/notify.js';
 
@@ -490,7 +490,8 @@ const RejectBodySchema = z.object({
  * accepts either capability so a single endpoint serves both points in
  * the flow. Reason required.
  */
-reimbursements97Router.post('/reimbursements/:id/reject', async (req, res) => {
+// Explicit requireAuth — bare-mounted router, handler reads req.user!.
+reimbursements97Router.post('/reimbursements/:id/reject', requireAuth, async (req, res) => {
   const user = req.user!;
   const hasApprove = hasCapability(user.role, 'approve:reimbursement');
   const hasSettle = hasCapability(user.role, 'settle:reimbursement');

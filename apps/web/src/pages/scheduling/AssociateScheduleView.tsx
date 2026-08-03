@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useContext } from 'react';
+import { AuthContext } from '@/lib/auth';
 import type {
   CalendarFeedUrlResponse,
   OpenShiftsResponse,
@@ -54,7 +55,12 @@ type ScheduleViewMode = 'list' | 'week' | 'month';
 const VIEW_STORAGE_KEY = 'alto:mySchedule.view.v1';
 // Last successfully-loaded schedule, for offline fallback. An associate
 // opening the app in a dead-signal stockroom should still see their week.
-const CACHE_KEY = 'alto:mySchedule.cache.v1';
+// Namespaced per user: an unscoped key meant the next associate to sign
+// in on a shared store tablet read the PREVIOUS one's roster out of the
+// offline cache. Sign-out also sweeps this (see auth.tsx), so the
+// namespace is belt-and-braces for the mid-session switch.
+const cacheKeyFor = (userId: string | undefined) =>
+  `alto:mySchedule.cache.v2:${userId ?? 'anon'}`;
 
 function initialViewMode(): ScheduleViewMode {
   try {
@@ -68,6 +74,11 @@ function initialViewMode(): ScheduleViewMode {
 
 
 export function AssociateScheduleView() {
+  // Read the context directly rather than useAuth(): this view is also
+  // rendered in isolation (tests, storybook-style harnesses) where no
+  // provider is mounted, and the namespace is defense-in-depth on top of
+  // the sign-out sweep — not worth throwing over.
+  const cacheKey = cacheKeyFor(useContext(AuthContext)?.user?.id);
   const { t } = useI18n();
   const [shifts, setShifts] = useState<Shift[] | null>(null);
   const [truncated, setTruncated] = useState(false);
@@ -124,7 +135,7 @@ export function AssociateScheduleView() {
       setOfflineAt(null);
       try {
         localStorage.setItem(
-          CACHE_KEY,
+          cacheKey,
           JSON.stringify({ shifts: res.shifts, at: Date.now() }),
         );
       } catch {
@@ -136,7 +147,7 @@ export function AssociateScheduleView() {
       // read-only with an offline banner instead of an error screen.
       if (!(err instanceof ApiError)) {
         try {
-          const raw = localStorage.getItem(CACHE_KEY);
+          const raw = localStorage.getItem(cacheKey);
           if (raw) {
             const cached = JSON.parse(raw) as { shifts: Shift[]; at: number };
             if (Array.isArray(cached.shifts) && typeof cached.at === 'number') {

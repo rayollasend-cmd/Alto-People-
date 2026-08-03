@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { httpUrl } from './safeUrl.js';
 
 /* -------------------------------------------------------------------------- *
  *  Common
@@ -3229,8 +3230,8 @@ export const CandidateCreateInputSchema = z.object({
   position: z.string().max(120).optional(),
   source: z.string().max(80).optional(),
   notes: z.string().max(2000).optional(),
-  resumeUrl: z.string().url().max(2000).optional(),
-  linkedinUrl: z.string().url().max(2000).optional(),
+  resumeUrl: httpUrl(2000).optional(),
+  linkedinUrl: httpUrl(2000).optional(),
 });
 export type CandidateCreateInput = z.infer<typeof CandidateCreateInputSchema>;
 
@@ -3246,8 +3247,8 @@ export const CareersApplyInputSchema = z.object({
   email: z.string().email(),
   phone: z.string().max(40).optional().nullable(),
   notes: z.string().max(4000).optional().nullable(),
-  resumeUrl: z.string().url().max(2000).optional().nullable(),
-  linkedinUrl: z.string().url().max(2000).optional().nullable(),
+  resumeUrl: httpUrl(2000).optional().nullable(),
+  linkedinUrl: httpUrl(2000).optional().nullable(),
   source: z.string().max(80).optional().nullable(),
   // Honeypot: must be empty/missing for legitimate submissions.
   website: z.string().max(500).optional().nullable(),

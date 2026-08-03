@@ -26,7 +26,9 @@ import {
   type TimeEntry,
   type TimeEntryListResponse,
 } from '@alto-people/shared';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeTimeEntries, scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
@@ -1845,10 +1847,11 @@ timeRouter.post('/admin/bulk-apply-break', MANAGE, async (req, res, next) => {
 // hiding entries.
 const TIME_EXPORT_MAX_ROWS = 5000;
 
+// Delegates to the shared escaper: RFC-4180 quoting PLUS formula-injection
+// guarding (a cell starting with =, +, -, @ executes on open in Excel, and
+// these exports carry associate-controlled names and notes).
 function csvEscape(v: string): string {
-  if (v === '') return '';
-  if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
-  return v;
+  return sharedCsvCell(v);
 }
 
 async function loadExportRows(
@@ -2439,7 +2442,7 @@ function externalSheetFilename(from: Date, to: Date, ext: string): string {
   return `external-payroll-${dayStr(from)}-to-${dayStr(new Date(to.getTime() - 1))}.${ext}`;
 }
 
-timeRouter.post('/admin/external-payroll-sheet.xlsx', EXPORT_PII, async (req, res, next) => {
+timeRouter.post('/admin/external-payroll-sheet.xlsx', EXPORT_PII, bulkPiiExportLimiter, async (req, res, next) => {
   try {
     const data = await loadExternalSheet(req, 'xlsx');
     const xlsx = await renderExternalPayrollSheetXlsx(data, new Date());
@@ -2458,7 +2461,7 @@ timeRouter.post('/admin/external-payroll-sheet.xlsx', EXPORT_PII, async (req, re
   }
 });
 
-timeRouter.post('/admin/external-payroll-sheet.pdf', EXPORT_PII, async (req, res, next) => {
+timeRouter.post('/admin/external-payroll-sheet.pdf', EXPORT_PII, bulkPiiExportLimiter, async (req, res, next) => {
   try {
     const data = await loadExternalSheet(req, 'pdf');
     const pdf = await renderExternalPayrollSheetPdf(data, new Date());

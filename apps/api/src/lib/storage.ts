@@ -1,5 +1,5 @@
 import { mkdirSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { env } from '../config/env.js';
 
@@ -48,7 +48,10 @@ if (env.NODE_ENV === 'production' && !env.UPLOAD_DIR) {
 export function resolveStoragePath(relativeKey: string): string {
   // Defense-in-depth: never let a stored key escape UPLOAD_ROOT.
   const full = resolve(UPLOAD_ROOT, relativeKey);
-  if (!full.startsWith(UPLOAD_ROOT)) {
+  // Boundary must be the separator, not a bare prefix: a plain
+  // startsWith() also matches SIBLING directories, so an UPLOAD_ROOT of
+  // /data/uploads would happily resolve into /data/uploads-evil.
+  if (full !== UPLOAD_ROOT && !full.startsWith(UPLOAD_ROOT + sep)) {
     throw new Error('storage path escape attempt');
   }
   return full;

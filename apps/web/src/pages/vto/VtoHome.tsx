@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { safeHref } from '@alto-people/shared';
 import { Heart, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -824,7 +825,7 @@ function MyDetailDrawer({
         </div>
         {entry.evidenceUrl && (
           <a
-            href={entry.evidenceUrl}
+            href={safeHref(entry.evidenceUrl)}
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-steel hover:underline"
@@ -931,7 +932,7 @@ function QueueDetailDrawer({
         </div>
         {row.evidenceUrl && (
           <a
-            href={row.evidenceUrl}
+            href={safeHref(row.evidenceUrl)}
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-steel hover:underline"
