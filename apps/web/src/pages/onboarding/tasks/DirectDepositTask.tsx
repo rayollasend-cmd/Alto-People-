@@ -159,19 +159,20 @@ export function DirectDepositTask() {
                     className={inputCls}
                     maxLength={9}
                   />
-                  {routingNumber.length === 9 && (
-                    <span
-                      className={cn(
-                        'text-xs mt-1 inline-flex items-center gap-1',
-                        isValidAba(routingNumber) ? 'text-success' : 'text-alert'
-                      )}
-                    >
-                      {isValidAba(routingNumber)
-                        ? '✓ Valid routing number format'
-                        : '✗ ABA checksum failed — please re-check'}
-                    </span>
-                  )}
                 </Field>
+                {routingNumber.length === 9 && (
+                  <span
+                    role="status"
+                    className={cn(
+                      'text-xs -mt-2 inline-flex items-center gap-1',
+                      isValidAba(routingNumber) ? 'text-success' : 'text-alert'
+                    )}
+                  >
+                    {isValidAba(routingNumber)
+                      ? '✓ Valid routing number format'
+                      : '✗ ABA checksum failed — please re-check'}
+                  </span>
+                )}
                 <Field label="Account number">
                   <input
                     type="text"

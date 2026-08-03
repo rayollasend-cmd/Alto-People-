@@ -293,25 +293,12 @@ export function ProfileInfoTask() {
 export const inputCls =
   'w-full px-3 py-2 rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white';
 
-export function Field({
-  label,
-  children,
-  hint,
-}: {
-  label: string;
-  children: React.ReactNode;
-  hint?: string;
-}) {
-  return (
-    <label className="block">
-      <span className="block text-xs uppercase tracking-widest text-silver mb-1.5">
-        {label}
-      </span>
-      {children}
-      {hint && <span className="block text-xs text-silver/70 mt-1">{hint}</span>}
-    </label>
-  );
-}
+// The shared, a11y-wired Field replaced the wrapping-label copy that lived
+// here: explicit htmlFor/id and hints linked via aria-describedby, injected
+// into the child element so no call site changes. Re-exported because the
+// sibling task files import it from this module.
+import { Field } from '@/components/ui/Field';
+export { Field };
 
 export function SubmitRow({
   submitting,

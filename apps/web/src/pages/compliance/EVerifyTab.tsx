@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Check, Copy, ShieldCheck } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { AlertTriangle, Check, Copy, ExternalLink, ShieldCheck } from 'lucide-react';
 import type {
   EVerifyBlocker,
   EVerifyCaseDetail,
@@ -414,9 +415,20 @@ function CaseDrawer({
   return (
     <Drawer open onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>
-          {detail ? `${detail.firstName} ${detail.lastName}` : 'E-Verify case'}
-        </DrawerTitle>
+        <div className="flex items-center gap-3">
+          <DrawerTitle className="min-w-0 truncate">
+            {detail ? `${detail.firstName} ${detail.lastName}` : 'E-Verify case'}
+          </DrawerTitle>
+          {detail && (
+            <Link
+              to={`/people?associateId=${detail.associateId}`}
+              className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"
+            >
+              View profile
+              <ExternalLink className="h-3 w-3" />
+            </Link>
+          )}
+        </div>
       </DrawerHeader>
       <DrawerBody>
         {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}

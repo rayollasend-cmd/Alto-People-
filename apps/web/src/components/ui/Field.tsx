@@ -23,11 +23,13 @@ export interface FieldProps {
   /** Error message. When set, replaces the hint and flips aria-invalid. */
   error?: React.ReactNode;
   /**
-   * Render the input/select/textarea here. Receives an id +
-   * aria-describedby + aria-invalid that you must spread onto the
-   * control so screen readers can connect the label, hint, and error.
+   * The control. Either a render prop receiving an id + aria-describedby +
+   * aria-invalid to spread onto the control, or a single plain element —
+   * Field clones it and injects the same wiring, so the pages that used to
+   * hand-roll wrapping-label Field copies migrate without touching a call
+   * site.
    */
-  children: (args: FieldRenderArgs) => React.ReactElement;
+  children: ((args: FieldRenderArgs) => React.ReactElement) | React.ReactElement;
   className?: string;
 }
 
@@ -61,17 +63,31 @@ export function Field({
   const showError = error != null && error !== false && error !== '';
   const showHint = !showError && hint != null && hint !== false && hint !== '';
 
+  let control: React.ReactElement;
+  if (typeof children === 'function') {
+    control = children({
+      id,
+      required: required || undefined,
+      'aria-describedby': showError || showHint ? hintId : undefined,
+      'aria-invalid': showError ? true : undefined,
+    });
+  } else {
+    // Element child: inject only the keys we actually have — cloneElement
+    // merges with Object.assign semantics, so an explicit `undefined` would
+    // CLOBBER the child's own attribute (e.g. its `required`).
+    const injected: Record<string, unknown> = { id };
+    if (required) injected.required = true;
+    if (showError || showHint) injected['aria-describedby'] = hintId;
+    if (showError) injected['aria-invalid'] = true;
+    control = React.cloneElement(children, injected);
+  }
+
   return (
     <div className={cn('space-y-1.5', className)}>
       <Label htmlFor={id} required={required}>
         {label}
       </Label>
-      {children({
-        id,
-        required: required || undefined,
-        'aria-describedby': showError || showHint ? hintId : undefined,
-        'aria-invalid': showError ? true : undefined,
-      })}
+      {control}
       {showError && (
         <FormHint id={hintId} variant="error">
           {error}

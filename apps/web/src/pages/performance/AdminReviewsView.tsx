@@ -37,6 +37,7 @@ import {
   EmptyState,
   ErrorBanner,
   FilterChip,
+  Field,
   Input,
   PageHeader,
   SearchInput,
@@ -637,25 +638,5 @@ function CreateReviewDialog({
         </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function Field({
-  label,
-  required,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="block text-xs2 uppercase tracking-wider text-silver mb-1">
-        {label}
-        {required && <span className="text-alert"> *</span>}
-      </span>
-      {children}
-    </label>
   );
 }

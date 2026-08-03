@@ -39,6 +39,7 @@ import {
   DrawerTitle,
   EmptyState,
   ErrorBanner,
+  Field,
   Input,
   PageHeader,
   Select,
@@ -653,10 +654,10 @@ function ComposeDialog({ open, onOpenChange, onSent }: ComposeDialogProps) {
                 value={associate}
                 onChange={(v) => void onPickAssociate(v)}
               />
-              {resolveNote && (
-                <p className="text-xs2 text-warning mt-1">{resolveNote}</p>
-              )}
             </Field>
+            {resolveNote && (
+              <p className="text-xs2 text-warning mt-1">{resolveNote}</p>
+            )}
             <Field label="Recipient email (for EMAIL / external)">
               <Input
                 type="email"
@@ -805,25 +806,5 @@ function BroadcastDialog({
         </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function Field({
-  label,
-  required,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="block text-xs2 uppercase tracking-wider text-silver mb-1">
-        {label}
-        {required && <span className="text-alert"> *</span>}
-      </span>
-      {children}
-    </label>
   );
 }

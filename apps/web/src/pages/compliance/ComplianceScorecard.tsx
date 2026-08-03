@@ -381,7 +381,7 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
                       </div>
                       {m.associateId && (
                         <Link
-                          to={`/people?associate=${m.associateId}`}
+                          to={`/people?associateId=${m.associateId}`}
                           className="text-xs text-gold hover:underline flex items-center gap-1"
                         >
                           Open <ExternalLink className="h-3 w-3" />
@@ -994,7 +994,7 @@ function TrainingTile({ refreshEpoch }: { refreshEpoch: number }) {
                       </div>
                       {m.associateId && (
                         <Link
-                          to={`/people?associate=${m.associateId}`}
+                          to={`/people?associateId=${m.associateId}`}
                           className="text-xs text-gold hover:underline flex items-center gap-1"
                         >
                           Open <ExternalLink className="h-3 w-3" />

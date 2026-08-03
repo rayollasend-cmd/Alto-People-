@@ -19,6 +19,7 @@ export function AssociatePicker({
   onChange,
   placeholder = 'Search associate…',
   className,
+  id,
 }: {
   value: PickedAssociate | null;
   onChange: (v: PickedAssociate | null) => void;
@@ -28,6 +29,8 @@ export function AssociatePicker({
    * caller can match a toolbar's control height (the default Input is h-10).
    */
   className?: string;
+  /** Applied to the search input so a <Field>/<label htmlFor> can bind. */
+  id?: string;
 }) {
   const [term, setTerm] = useState('');
   const [results, setResults] = useState<PickedAssociate[]>([]);
@@ -88,6 +91,7 @@ export function AssociatePicker({
   return (
     <div className="relative">
       <Input
+        id={id}
         placeholder={placeholder}
         value={term}
         onChange={(e) => setTerm(e.target.value)}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Globe, Plus } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ExternalLink, Globe, Plus } from 'lucide-react';
 import type { J1Profile } from '@alto-people/shared';
 import { listJ1Profiles, upsertJ1 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
@@ -23,6 +24,7 @@ import {
   DrawerTitle,
   EmptyState,
   ErrorBanner,
+  Field,
   Input,
   SkeletonRows,
   Table,
@@ -246,6 +248,13 @@ function J1DetailPanel({
               {profile.associateEmail}
             </DrawerDescription>
           </div>
+          <Link
+            to={`/people?associateId=${profile.associateId}`}
+            className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"
+          >
+            View profile
+            <ExternalLink className="h-3 w-3" />
+          </Link>
         </div>
       </DrawerHeader>
       <DrawerBody>
@@ -421,25 +430,5 @@ function UpsertJ1Dialog({ open, seed, onOpenChange, onSaved }: UpsertJ1DialogPro
         </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function Field({
-  label,
-  required,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="block text-xs2 uppercase tracking-wider text-silver mb-1">
-        {label}
-        {required && <span className="text-alert"> *</span>}
-      </span>
-      {children}
-    </label>
   );
 }

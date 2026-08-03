@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, FileCheck2, Plus, FlaskConical } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Download, ExternalLink, FileCheck2, Plus, FlaskConical } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   DrugTest,
@@ -39,6 +40,7 @@ import {
   DrawerTitle,
   EmptyState,
   ErrorBanner,
+  Field,
   Input,
   Skeleton,
   SkeletonRows,
@@ -419,6 +421,13 @@ function DrugTestDetailPanel({
             <DrawerTitle className="truncate">{test.associateName}</DrawerTitle>
             <DrawerDescription>{test.provider}</DrawerDescription>
           </div>
+          <Link
+            to={`/people?associateId=${test.associateId}`}
+            className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"
+          >
+            View profile
+            <ExternalLink className="h-3 w-3" />
+          </Link>
         </div>
       </DrawerHeader>
       <DrawerBody>
@@ -884,27 +893,21 @@ function OrderTestDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid gap-3">
-          <label className="grid gap-1">
-            <span className="text-xs2 uppercase tracking-wider text-silver">
-              Associate
-            </span>
+          <Field label="Associate" required>
             <AssociatePicker
               value={associate}
               onChange={setAssociate}
               placeholder="Search by name…"
             />
-          </label>
-          <label className="grid gap-1">
-            <span className="text-xs2 uppercase tracking-wider text-silver">
-              Provider reference / external ID (optional)
-            </span>
+          </Field>
+          <Field label="Provider reference / external ID (optional)">
             <Input
               placeholder="e.g. Checkr screening id"
               maxLength={120}
               value={externalId}
               onChange={(e) => setExternalId(e.target.value)}
             />
-          </label>
+          </Field>
           <DialogFooter>
             <Button
               type="button"
