@@ -253,6 +253,9 @@ export function Login() {
                   or
                   <span className="h-px flex-1 bg-navy-secondary" />
                 </div>
+                {/* "Use a passkey", not "Sign in with…": the e2e suite (and
+                    anyone else) targets the primary button by /sign in/i,
+                    and two matches is a strict-mode violation. */}
                 <Button
                   type="button"
                   size="lg"
@@ -262,7 +265,7 @@ export function Login() {
                   className="w-full"
                 >
                   <Fingerprint className="h-4 w-4" />
-                  Sign in with a passkey
+                  Use a passkey
                 </Button>
               </>
             )}
