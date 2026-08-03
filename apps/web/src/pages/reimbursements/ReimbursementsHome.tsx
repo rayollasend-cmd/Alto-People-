@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, Plus, Receipt, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';
@@ -278,7 +279,9 @@ export function ReimbursementsHome() {
                         {r.submittedAt && ` · ${fmtDate(r.submittedAt)}`}
                       </div>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell">{r.associateName}</TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      <AssociateLink associateId={r.associateId}>{r.associateName}</AssociateLink>
+                    </TableCell>
                     <TableCell className="hidden lg:table-cell text-right tabular-nums">
                       {r.lineCount}
                     </TableCell>

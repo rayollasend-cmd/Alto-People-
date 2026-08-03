@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, Lock, MessageCircle, Plus, Tag } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -402,7 +403,7 @@ export function HrCasesHome() {
                         </div>
                       </TableCell>
                       <TableCell className="hidden md:table-cell">
-                        <div className="text-sm">{c.associateName}</div>
+                        <div className="text-sm"><AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink></div>
                         <div className="text-xs text-silver">
                           {c.associateEmail}
                         </div>

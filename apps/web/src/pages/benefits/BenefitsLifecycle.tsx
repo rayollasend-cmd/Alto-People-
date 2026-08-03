@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
   CalendarDays,
   Download,
@@ -538,7 +539,7 @@ function QleTab({ canManage }: { canManage: boolean }) {
                 {rows.map((q) => (
                   <TableRow key={q.id}>
                     <TableCell className="font-medium text-white">
-                      <div className="truncate">{q.associateName}</div>
+                      <div className="truncate"><AssociateLink associateId={q.associateId}>{q.associateName}</AssociateLink></div>
                       {/* Phone-only stack collapsing the hidden cells.
                           Kind first (the why), then a single date line
                           (event → window-close). Mirrors the OE-windows
@@ -816,7 +817,7 @@ function CobraTab({ canManage }: { canManage: boolean }) {
                 {rows.map((c) => (
                   <TableRow key={c.id}>
                     <TableCell className="font-medium text-white">
-                      <div className="truncate">{c.associateName}</div>
+                      <div className="truncate"><AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink></div>
                       {/* Phone-only stack: QE description first, then the
                           two most-load-bearing numbers (premium + when
                           they have to decide by). The QE-date itself
@@ -1136,7 +1137,7 @@ function AcaTab() {
                   <tbody className="text-white">
                     {filtered.map((e) => (
                       <tr key={e.associateId} className="border-t border-navy-secondary">
-                        <td className="px-3 py-2 font-medium">{e.associateName}</td>
+                        <td className="px-3 py-2 font-medium"><AssociateLink associateId={e.associateId}>{e.associateName}</AssociateLink></td>
                         {e.months.map((m, i) => (
                           <td key={i} className="px-2 py-2 font-mono">
                             {formatAcaCell(m)}

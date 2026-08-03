@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { AlertCircle, Calendar, Clock, Download, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -271,7 +272,7 @@ function Bucket({
                   onClick={canRenew ? () => onRenew(i) : undefined}
                 >
                   <TableCell className="font-medium text-white">
-                    {i.associateName}
+                    <AssociateLink associateId={i.associateId}>{i.associateName}</AssociateLink>
                     <div className="text-xs2 text-silver/70 md:hidden">{i.associateEmail}</div>
                   </TableCell>
                   <TableCell className="text-silver text-xs hidden md:table-cell">{i.associateEmail}</TableCell>
@@ -390,7 +391,9 @@ function RenewDrawer({
       <DrawerBody className="space-y-4">
         <div className="text-sm">
           <div className="text-silver">For</div>
-          <div className="font-medium text-white">{item.associateName}</div>
+          <div className="font-medium text-white">
+            <AssociateLink associateId={item.associateId}>{item.associateName}</AssociateLink>
+          </div>
           <div className="text-xs text-silver">{item.associateEmail}</div>
         </div>
         <div className="text-sm border-t border-navy-secondary pt-3">

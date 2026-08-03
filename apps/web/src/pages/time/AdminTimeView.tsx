@@ -1,5 +1,6 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router-dom';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
   Activity,
   AlertTriangle,
@@ -1069,7 +1070,9 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                           <TableCell className="font-medium">
                             <div className="flex items-center gap-2.5">
                               <Avatar name={e.associateName} size="sm" />
-                              <span>{e.associateName}</span>
+                              <AssociateLink associateId={e.associateId}>
+                                {e.associateName}
+                              </AssociateLink>
                             </div>
                           </TableCell>
                           <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>

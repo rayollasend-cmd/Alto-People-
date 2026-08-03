@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, Plus, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useClients } from '@/lib/useClients';
@@ -1150,7 +1151,9 @@ function CycleDetailDrawer({
                       </TableCell>
                     )}
                     <TableCell className="font-medium text-white">
-                      <div className="truncate">{p.associateName}</div>
+                      <div className="truncate">
+                        <AssociateLink associateId={p.associateId}>{p.associateName}</AssociateLink>
+                      </div>
                       <div className="md:hidden text-xs2 text-silver/70 truncate tabular-nums">
                         {fmtPayRate(p.currentAmount, p.currentPayType)}
                       </div>

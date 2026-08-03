@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarCheck, Check, X } from 'lucide-react';
@@ -708,7 +709,9 @@ function PickupsPanel() {
                   />
                   <div>
                     <div className="text-white text-sm">
-                      <span className="font-medium">{c.associateName}</span>
+                      <AssociateLink associateId={c.associateId} className="font-medium">
+                        {c.associateName}
+                      </AssociateLink>
                       {' wants '}
                       <span className="font-medium">{c.shiftPosition}</span>
                     </div>

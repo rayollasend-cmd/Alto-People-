@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
   AlertTriangle,
   CalendarClock,
@@ -714,7 +715,11 @@ export function TimesheetsView() {
         width="max-w-3xl"
       >
         <DrawerHeader>
-          <DrawerTitle>{detail?.worker ?? 'Timesheet'}</DrawerTitle>
+          <DrawerTitle>
+            <AssociateLink associateId={detailAssociateRef.current}>
+              {detail?.worker ?? 'Timesheet'}
+            </AssociateLink>
+          </DrawerTitle>
           <DrawerDescription>
             {detail ? `Period ${detail.periodLabel} · ${detail.site}` : 'Loading…'}
           </DrawerDescription>

@@ -1,4 +1,5 @@
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -1398,7 +1399,11 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                   <TableRow key={p.id} className="group">
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
-                        <div className="truncate">{p.associateName}</div>
+                        <div className="truncate">
+                          <AssociateLink associateId={p.associateId}>
+                            {p.associateName}
+                          </AssociateLink>
+                        </div>
                         <div className="lg:hidden text-xs2 text-silver/70 truncate font-normal">
                           {p.clientName}
                           {p.locationName ? ` · ${p.locationName}` : ''}
