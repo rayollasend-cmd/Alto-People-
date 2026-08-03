@@ -7,14 +7,24 @@ import { HttpError } from '../middleware/error.js';
  * Two associates simultaneously tapping their PIN at the same kiosk
  * is fine — the second one's submit retries on the next tick.
  *
- * There is intentionally **no** brute-force PIN lockout. An earlier
+ * There is intentionally **no** hard brute-force lockout. An earlier
  * version locked the entire kiosk for 5 minutes after 3 wrong PINs in
  * a row, which routinely broke clock-in for a whole site whenever
- * three associates in a row fat-fingered. The 1-second throttle plus
- * the 4-digit + per-client uniqueness already pushes worst-case
- * blind enumeration of the PIN space beyond 90 days; that's enough
- * latency to keep a real attack mostly theatre, without the
- * everyday-operations failure mode of locking out a busy kiosk.
+ * three associates in a row fat-fingered.
+ *
+ * The 1-second throttle alone was NOT enough, though: the earlier note
+ * here claimed ">90 days" to enumerate on the grounds that PINs are
+ * unique per client. They are not — `KioskPin.pinHmac` is globally
+ * unique, so the whole keyspace is 10,000 values, and 1/sec sweeps it
+ * in under three hours (faster still across buckets and devices).
+ *
+ * So failures now carry an ESCALATING backoff (see enforcePinBackoff):
+ * consecutive wrong PINs on a device double the required wait, and any
+ * correct PIN resets it to zero. A real associate mistyping once or
+ * twice barely notices; a blind sweep is pushed from hours to years.
+ * Because the reset is on success, a busy kiosk with legitimate
+ * traffic never locks up — which is the failure mode that killed the
+ * old design.
  *
  * **Multi-replica caveat:** the default store keeps state per-process.
  * On Railway / Render / Fly with a single replica that's exactly what
@@ -28,8 +38,21 @@ import { HttpError } from '../middleware/error.js';
 
 const THROTTLE_MS = 1000;
 
+// Escalating wait after consecutive PIN failures: 0s, 1s, 2s, 4s, 8s …
+// capped. The cap keeps a wrong-PIN storm from bricking a kiosk for an
+// entire shift while still making enumeration hopeless.
+const PIN_BACKOFF_BASE_MS = 1000;
+const PIN_BACKOFF_MAX_MS = 60_000;
+// Consecutive failures before any delay applies — covers the honest
+// fat-finger without giving an attacker meaningful free attempts.
+const PIN_BACKOFF_FREE_ATTEMPTS = 2;
+
 export interface DeviceRateLimitState {
   lastPunchAt: number;
+  /** Consecutive failed PIN attempts; reset on any success. */
+  pinFailures?: number;
+  /** When the most recent failure was recorded. */
+  lastFailureAt?: number;
 }
 
 export interface KioskRateLimitStore {
@@ -98,6 +121,51 @@ export function enforcePunchRateLimit(
     );
   }
   s.lastPunchAt = now;
+  store.write(key, s);
+}
+
+const FAIL_KEY = (deviceId: string) => `pinfail:${deviceId}`;
+
+function backoffMsFor(failures: number): number {
+  const over = failures - PIN_BACKOFF_FREE_ATTEMPTS;
+  if (over <= 0) return 0;
+  return Math.min(PIN_BACKOFF_MAX_MS, PIN_BACKOFF_BASE_MS * 2 ** (over - 1));
+}
+
+/**
+ * Throws 429 while a device is still serving its post-failure backoff.
+ * Call BEFORE looking up the submitted PIN, on every endpoint that takes
+ * one. Pairs with recordPinFailure / clearPinFailures below.
+ */
+export function enforcePinBackoff(deviceId: string): void {
+  const s = store.read(FAIL_KEY(deviceId));
+  const wait = backoffMsFor(s.pinFailures ?? 0);
+  if (!wait || !s.lastFailureAt) return;
+  const remaining = s.lastFailureAt + wait - Date.now();
+  if (remaining > 0) {
+    throw new HttpError(
+      429,
+      'too_many_pin_attempts',
+      `Too many incorrect PINs. Try again in ${Math.ceil(remaining / 1000)}s.`,
+    );
+  }
+}
+
+/** Record a wrong PIN — escalates this device's backoff. */
+export function recordPinFailure(deviceId: string): void {
+  const key = FAIL_KEY(deviceId);
+  const s = store.read(key);
+  s.pinFailures = (s.pinFailures ?? 0) + 1;
+  s.lastFailureAt = Date.now();
+  store.write(key, s);
+}
+
+/** A correct PIN clears the streak, so honest traffic is never punished. */
+export function clearPinFailures(deviceId: string): void {
+  const key = FAIL_KEY(deviceId);
+  const s = store.read(key);
+  s.pinFailures = 0;
+  s.lastFailureAt = undefined;
   store.write(key, s);
 }
 

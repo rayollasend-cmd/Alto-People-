@@ -10,6 +10,7 @@ import {
 } from '@dnd-kit/core';
 import { FileText, Link2 } from 'lucide-react';
 import type { Candidate, CandidateStage } from '@alto-people/shared';
+import { safeHref } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
@@ -262,7 +263,7 @@ function CandidateCard({
         <div className="flex items-center gap-1.5 shrink-0">
           {candidate.resumeUrl && (
             <a
-              href={candidate.resumeUrl}
+              href={safeHref(candidate.resumeUrl)}
               target="_blank"
               rel="noopener noreferrer"
               title="Resume"
@@ -276,7 +277,7 @@ function CandidateCard({
           )}
           {candidate.linkedinUrl && (
             <a
-              href={candidate.linkedinUrl}
+              href={safeHref(candidate.linkedinUrl)}
               target="_blank"
               rel="noopener noreferrer"
               title="LinkedIn"

@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { decryptString, encryptString } from '../lib/crypto.js';
 import {
   aggregateW2Wages,
@@ -1525,7 +1525,12 @@ async function renderF1099MiscForForm(formId: string): Promise<{
  * Scope: associates may download their own form; HR/Finance/Manager can
  * download any. Mirrors /payroll/items/:itemId/paystub.pdf scoping.
  */
-payrollTax91Router.get('/tax-forms/:id/pdf', async (req, res, next) => {
+// requireAuth is explicit here: this router is mounted bare at '/' with
+// no router-level auth, and the handler dereferences req.user! to decide
+// owner-vs-manager. Without it an unauthenticated request only failed by
+// ACCIDENT — a TypeError producing a 500 — and this endpoint serves W-2
+// PDFs containing the full SSN.
+payrollTax91Router.get('/tax-forms/:id/pdf', requireAuth, async (req, res, next) => {
   try {
     const form = await loadW2Form(req.params.id);
     if (!form) throw new HttpError(404, 'not_found', 'Form not found.');

@@ -1,6 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { ROLES, HUMAN_ROLES, type Role } from '@alto-people/shared';
+import {
+  ROLES,
+  ROLE_CAPABILITIES,
+  HUMAN_ROLES,
+  type Role,
+} from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
@@ -172,6 +177,31 @@ usersRouter.patch(
         'non_human_role',
         'LIVE_ASN is reserved for system integrations and cannot be assigned to a person.',
       );
+    }
+
+    // No privilege escalation: a caller may only grant a role whose
+    // capabilities are a SUBSET of their own.
+    //
+    // Without this, `view:hr-admin` (held by every FULL_ADMIN role) was
+    // enough to promote a second account — one the caller invited — to
+    // HR_ADMINISTRATOR, and then sign in as it to obtain the capabilities
+    // deliberately withheld from FULL_ADMIN: `export:payroll-pii` (the
+    // full-SSN + bank census) and `void:payroll`. The self-edit guard
+    // above doesn't cover the two-account path.
+    //
+    // Demotions and lateral moves are unaffected; only granting strictly
+    // more power than you hold is refused.
+    if (input.role && input.role !== target.role) {
+      const callerCaps = ROLE_CAPABILITIES[req.user!.role];
+      const grantedCaps = ROLE_CAPABILITIES[input.role];
+      const escalating = [...grantedCaps].filter((c) => !callerCaps.has(c));
+      if (escalating.length > 0) {
+        throw new HttpError(
+          403,
+          'role_escalation_forbidden',
+          `You cannot grant ${input.role}: it holds capabilities you don't have (${escalating.join(', ')}).`,
+        );
+      }
     }
 
     // Validate the client (if one was provided and not being cleared).

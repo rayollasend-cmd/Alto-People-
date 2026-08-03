@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { httpUrl } from '@alto-people/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -118,7 +119,7 @@ const IssueInputSchema = z.object({
   associateId: z.string().uuid(),
   kind: KIND,
   customLabel: z.string().max(120).optional().nullable(),
-  documentUrl: z.string().url().max(500).optional().nullable(),
+  documentUrl: httpUrl(500).optional().nullable(),
   effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   expiresOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   supersedesId: z.string().uuid().optional().nullable(),

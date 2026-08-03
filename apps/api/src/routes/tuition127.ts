@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { httpUrl } from '@alto-people/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -29,7 +30,7 @@ const SubmitInputSchema = z.object({
   termEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   amount: z.coerce.number().positive().max(1_000_000),
   currency: z.string().length(3).optional().default('USD'),
-  receiptUrl: z.string().url().max(500).optional().nullable(),
+  receiptUrl: httpUrl(500).optional().nullable(),
 });
 
 tuition127Router.post('/tuition-requests', requireAuth, async (req, res) => {

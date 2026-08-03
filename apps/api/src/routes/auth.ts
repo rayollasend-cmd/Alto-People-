@@ -1963,7 +1963,12 @@ authRouter.post('/webauthn/register/options', requireAuth, async (req, res, next
       })),
       authenticatorSelection: {
         residentKey: 'preferred',
-        userVerification: 'preferred',
+        // REQUIRED, not preferred: a passkey login skips the TOTP leg, so
+        // the credential must be one that actually verifies the human
+        // (Face ID / Touch ID / device PIN) rather than merely proving
+        // possession. Enrolling a silent authenticator here would make
+        // passkeys a weaker path than password + code.
+        userVerification: 'required',
       },
     });
     const challengeId = await mintWebauthnChallenge(options.challenge, 'registration', user.id);
@@ -1993,7 +1998,7 @@ authRouter.post('/webauthn/register/verify', requireAuth, async (req, res, next)
       expectedChallenge: pending.challenge,
       expectedOrigin: origin,
       expectedRPID: new URL(origin).hostname,
-      requireUserVerification: false,
+      requireUserVerification: true,
     });
     if (!verification.verified || !verification.registrationInfo) {
       throw new HttpError(400, 'verification_failed', 'Passkey could not be verified.');
@@ -2108,7 +2113,9 @@ authRouter.post('/webauthn/login/options', loginIpLimiter, async (req, res, next
     // matching passkey", identical to the legitimate empty case.
     const options = await generateAuthenticationOptions({
       rpID: new URL(origin).hostname,
-      userVerification: 'preferred',
+      // See the registration comment: passwordless login replaces BOTH
+      // password and TOTP, so user verification is mandatory.
+      userVerification: 'required',
       allowCredentials: creds.map((c) => ({
         id: c.credentialId,
         transports: c.transports as AuthenticatorTransportFuture[],
@@ -2173,7 +2180,7 @@ authRouter.post('/webauthn/login/verify', loginIpLimiter, async (req, res, next)
         counter: Number(cred.counter),
         transports: cred.transports as AuthenticatorTransportFuture[],
       },
-      requireUserVerification: false,
+      requireUserVerification: true,
     });
     if (!verification.verified) {
       await recordLoginFailure({ email: user.email, req, reason: 'passkey_invalid' });

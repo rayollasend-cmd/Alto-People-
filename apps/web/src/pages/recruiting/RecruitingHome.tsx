@@ -14,6 +14,7 @@ import {
   Users,
 } from 'lucide-react';
 import type { Candidate, CandidateStage } from '@alto-people/shared';
+import { safeHref } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import {
   advanceCandidate,
@@ -781,7 +782,7 @@ function CandidateNameCell({
       </button>
       {c.resumeUrl && (
         <a
-          href={c.resumeUrl}
+          href={safeHref(c.resumeUrl)}
           target="_blank"
           rel="noopener noreferrer"
           title="Resume"
@@ -793,7 +794,7 @@ function CandidateNameCell({
       )}
       {c.linkedinUrl && (
         <a
-          href={c.linkedinUrl}
+          href={safeHref(c.linkedinUrl)}
           target="_blank"
           rel="noopener noreferrer"
           title="LinkedIn"

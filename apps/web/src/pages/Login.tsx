@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Eye, EyeOff, Fingerprint, Lock, Mail, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { safeNextPath } from '@/lib/safeNextPath';
 import { passkeysSupported, signInWithPasskey } from '@/lib/webauthn';
 import { useI18n } from '@/lib/i18n';
 import { ApiError, NetworkError } from '@/lib/api';
@@ -36,12 +37,9 @@ export function Login() {
   const [submitting, setSubmitting] = useState(false);
 
   const queryNext = new URLSearchParams(location.search).get('next');
-  const safeNext =
-    queryNext && queryNext.startsWith('/') && !queryNext.startsWith('//')
-      ? queryNext
-      : null;
-  const from =
-    (location.state as LocationState | null)?.from ?? safeNext ?? '/';
+  const from = safeNextPath(
+    (location.state as LocationState | null)?.from ?? queryNext,
+  );
 
   const handlePasswordSubmit = async (e: FormEvent) => {
     e.preventDefault();

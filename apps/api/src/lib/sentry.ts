@@ -1,5 +1,6 @@
 import * as Sentry from '@sentry/node';
 import { env } from '../config/env.js';
+import { scrubDeep, stripUrlSecrets } from '@alto-people/shared';
 
 /**
  * Sentry initialization. Called once at process boot, BEFORE any other
@@ -27,6 +28,24 @@ export function initSentry(): void {
       // intentionally, no point reporting.
       'HttpError',
     ],
+    // The API sees SSNs, bank details and PINs. Strip query strings and
+    // censor sensitive-looking keys from request data and extra context
+    // before anything leaves the process.
+    beforeSend(event) {
+      if (event.request?.url) {
+        event.request.url = stripUrlSecrets(event.request.url);
+      }
+      if (event.request?.query_string) event.request.query_string = '[redacted]';
+      if (event.request?.data) {
+        event.request.data = scrubDeep(event.request.data) as typeof event.request.data;
+      }
+      if (event.request?.cookies) event.request.cookies = { redacted: 'true' };
+      if (event.request?.headers) {
+        event.request.headers = scrubDeep(event.request.headers) as typeof event.request.headers;
+      }
+      if (event.extra) event.extra = scrubDeep(event.extra) as typeof event.extra;
+      return event;
+    },
   });
 }
 
@@ -37,7 +56,11 @@ export function initSentry(): void {
  */
 export function captureException(err: unknown, context?: Record<string, unknown>) {
   if (!env.SENTRY_DSN) return;
-  Sentry.captureException(err, context ? { extra: context } : undefined);
+  Sentry.captureException(
+    err,
+    // Call sites pass arbitrary domain objects here; scrub before send.
+    context ? { extra: scrubDeep(context) as Record<string, unknown> } : undefined,
+  );
 }
 
 export { Sentry };

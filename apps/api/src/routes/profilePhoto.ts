@@ -168,6 +168,10 @@ profilePhotoRouter.get(
           ? 'image/webp'
           : 'image/jpeg';
     res.setHeader('Content-Type', mime);
+    // Same treatment as the document stream: never let a browser sniff a
+    // user-supplied image into something scriptable.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
     res.setHeader('Content-Length', String(stat.size));
     // Cache-bustable via the ?v=<updatedAt> param consumers attach.
     res.setHeader('Cache-Control', 'private, max-age=3600');

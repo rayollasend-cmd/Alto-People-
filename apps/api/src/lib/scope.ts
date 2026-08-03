@@ -149,6 +149,52 @@ export function associatesOfClient(clientId: string): Prisma.AssociateWhereInput
   };
 }
 
+/**
+ * Associates visible to this caller. CLIENT_PORTAL and SHIFT_SUPERVISOR
+ * are clamped to their own client's roster (fail closed when the client
+ * is unset); an ASSOCIATE only ever resolves to themselves.
+ */
+export function scopeAssociates(user: SessionUser): Prisma.AssociateWhereInput {
+  if (user.role === 'ASSOCIATE') {
+    return { id: user.associateId ?? NO_CLIENT };
+  }
+  if (user.role === 'CLIENT_PORTAL' || user.role === 'SHIFT_SUPERVISOR') {
+    if (!user.clientId) return { id: NO_CLIENT };
+    return associatesOfClient(user.clientId);
+  }
+  return {};
+}
+
+/**
+ * Payroll items for the caller's tenant. Items carry no clientId of their
+ * own, so we reach through the run.
+ */
+export function scopePayrollItems(user: SessionUser): Prisma.PayrollItemWhereInput {
+  if (user.role === 'ASSOCIATE') {
+    return { associateId: user.associateId ?? NO_CLIENT };
+  }
+  if (user.role === 'CLIENT_PORTAL' || user.role === 'SHIFT_SUPERVISOR') {
+    return { payrollRun: { is: { clientId: user.clientId ?? NO_CLIENT } } };
+  }
+  return {};
+}
+
+/**
+ * The recruiting pipeline is org-wide — a Candidate has no owning client
+ * until they're hired. There is no correct tenant slice, so tenant-bounded
+ * roles get nothing rather than everything.
+ */
+export function scopeCandidates(user: SessionUser): Prisma.CandidateWhereInput {
+  if (
+    user.role === 'CLIENT_PORTAL' ||
+    user.role === 'SHIFT_SUPERVISOR' ||
+    user.role === 'ASSOCIATE'
+  ) {
+    return { id: NO_CLIENT };
+  }
+  return {};
+}
+
 export function scopeTimeOffRequests(
   user: SessionUser,
 ): Prisma.TimeOffRequestWhereInput {

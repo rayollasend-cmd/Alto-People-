@@ -100,12 +100,21 @@ self.addEventListener('message', (event) => {
   if (event.data === 'SKIP_WAITING') self.skipWaiting();
 });
 
+// The share-target stash is transient user data, not a build artifact —
+// it must survive an activation that happens mid-share, and it is dropped
+// by the page as soon as the file is consumed (and on sign-out).
+const SHARE_INTAKE_CACHE = 'alto-shared-intake';
+
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
       .then((keys) =>
-        Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))),
+        Promise.all(
+          keys
+            .filter((k) => k !== CACHE_NAME && k !== SHARE_INTAKE_CACHE)
+            .map((k) => caches.delete(k)),
+        ),
       )
       .then(() => self.clients.claim()),
   );
@@ -198,7 +207,7 @@ self.addEventListener('fetch', (event) => {
         try {
           const form = await req.formData();
           const files = form.getAll('files').filter((f) => f instanceof File);
-          const cache = await caches.open('alto-shared-intake');
+          const cache = await caches.open(SHARE_INTAKE_CACHE);
           // One share replaces the last — a stale stash must never
           // resurface days later as a mystery attachment.
           for (const key of await cache.keys()) await cache.delete(key);

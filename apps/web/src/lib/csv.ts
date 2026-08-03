@@ -1,9 +1,10 @@
+import { csvCell, toCsv } from '@alto-people/shared';
+
 /**
- * Shared CSV download helper — RFC-4180 quoting (embedded quotes doubled,
- * cells containing commas/quotes/newlines wrapped). Pages were growing
- * private copies of this (OshaWcEeoHome, AnalyticsHome, ReportsHome — the
- * last with a JSON.stringify serializer that produced malformed files);
- * every "Export CSV" button should call this instead.
+ * Shared CSV download helper. Cell escaping and file assembly now live in
+ * @alto-people/shared so the browser and the API produce byte-identical
+ * files — including formula-injection guarding, which each of the four
+ * private copies was missing.
  *
  * Usage:
  *   downloadCsv('people-2026-07-26.csv', [
@@ -12,24 +13,25 @@
  *   ]);
  */
 
-export function csvCell(v: string | number | null | undefined): string {
-  const s = v === null || v === undefined ? '' : String(v);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
+export { csvCell };
 
 export function downloadCsv(
   filename: string,
   rows: Array<Array<string | number | null | undefined>>,
 ): void {
-  const text = rows.map((r) => r.map(csvCell).join(',')).join('\r\n');
-  // UTF-8 BOM: without it Excel guesses the encoding and mojibakes names
-  // like "José" (the scheduling export carried this fix privately; every
-  // CSV in the app deserves it).
-  const blob = new Blob(['﻿' + text], { type: 'text/csv;charset=utf-8' });
+  // toCsv emits the UTF-8 BOM (without it Excel mojibakes names like
+  // "José") and RFC-4180 CRLF line endings.
+  const blob = new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  // Attached before click and revoked on the next tick: a detached
+  // anchor's click() is unreliable in Firefox, and a synchronous revoke
+  // can abort the download in Safari. Matches the blob-download path
+  // already used by payrollApi / timeApi.
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }

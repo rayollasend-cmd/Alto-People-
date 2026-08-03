@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { safeHref } from '@alto-people/shared';
 import { Briefcase, MapPin, Send, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/cn';
@@ -641,7 +642,7 @@ function ReviewDrawer({
                 )}
                 {a.resumeUrl && (
                   <a
-                    href={a.resumeUrl}
+                    href={safeHref(a.resumeUrl)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-xs text-steel hover:underline"

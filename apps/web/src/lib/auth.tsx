@@ -53,6 +53,52 @@ export const AuthContext = createContext<AuthState | null>(null);
 
 const EMPTY_CAPS: ReadonlySet<Capability> = new Set();
 
+/**
+ * Keys that describe the DEVICE rather than the person: theme, density,
+ * language, install/what's-new dismissals, and the kiosk's own pairing.
+ * Everything else under the `alto` namespace belongs to whoever was
+ * signed in and must not survive them.
+ */
+const DEVICE_SCOPED_PREFIXES = [
+  'alto.theme',
+  'alto.density',
+  'alto.lang',
+  'alto.locale',
+  'alto.pwa.',
+  'alto.whatsnew',
+  'alto.kiosk.',
+];
+
+/**
+ * Wipe per-user state on sign-out.
+ *
+ * Signing out used to clear only the server cookie, leaving the previous
+ * person's onboarding draft (DOB, home address, phone), their cached
+ * shift roster, and cover-letter drafts in localStorage. On a shared
+ * store tablet the next associate to sign in saw them. Also drops the
+ * share-target intake cache so a file shared but never filed can't be
+ * picked up by the next user.
+ */
+function clearUserScopedStorage(): void {
+  try {
+    const doomed: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i);
+      if (!key) continue;
+      if (!key.startsWith('alto')) continue;
+      if (DEVICE_SCOPED_PREFIXES.some((p) => key.startsWith(p))) continue;
+      doomed.push(key);
+    }
+    for (const key of doomed) window.localStorage.removeItem(key);
+    window.sessionStorage.clear();
+  } catch {
+    /* storage unavailable — nothing to clear */
+  }
+  if ('caches' in window) {
+    void caches.delete('alto-shared-intake').catch(() => undefined);
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
@@ -126,6 +172,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       // Ignore — clear local state regardless so user lands at /login.
     }
+    clearUserScopedStorage();
     setUser(null);
   }, []);
 

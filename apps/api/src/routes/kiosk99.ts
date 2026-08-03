@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { verifyPassword } from '../lib/passwords.js';
+import { verifyFileMagic } from '../lib/uploads.js';
 import {
   distanceMeters,
   generateDeviceToken,
@@ -15,7 +16,12 @@ import {
   tokenLookupPrefix,
   verifyDeviceTokenHash,
 } from '../lib/kioskAuth.js';
-import { enforcePunchRateLimit } from '../lib/kioskRateLimit.js';
+import {
+  clearPinFailures,
+  enforcePinBackoff,
+  enforcePunchRateLimit,
+  recordPinFailure,
+} from '../lib/kioskRateLimit.js';
 import { matchShiftForPunch } from '../lib/matchShiftForPunch.js';
 import { recomputeEntryAnomalies } from '../lib/recomputeEntryAnomalies.js';
 import { encryptString, decryptString } from '../lib/crypto.js';
@@ -1341,7 +1347,11 @@ kiosk99Router.get('/kiosk-punches/:id/selfie', MANAGE, async (req, res) => {
     'kiosk.selfie_viewed',
   );
   res.setHeader('Content-Type', 'image/jpeg');
-  res.setHeader('Cache-Control', 'private, max-age=300');
+  // Never let a browser sniff this into something scriptable, and keep it
+  // out of shared caches — it's a photograph of a person.
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.setHeader('Cache-Control', 'private, no-store');
   res.send(p.selfie);
 });
 
@@ -1429,6 +1439,14 @@ function decodeSelfie(s: string | null | undefined): Buffer | null {
   // (or a transparent pixel attack) — reject.
   if (buf.length < 500) {
     throw new HttpError(400, 'selfie_too_small', 'Selfie image is invalid.');
+  }
+  // Content must actually BE a JPEG. Every other upload path verifies
+  // magic bytes; this one trusted the data: prefix, so an HTML or SVG
+  // payload could be stored and later streamed back with an
+  // image/jpeg content type.
+  const magicError = verifyFileMagic(buf, 'image/jpeg');
+  if (magicError) {
+    throw new HttpError(400, 'selfie_invalid_contents', magicError);
   }
   return buf;
 }
@@ -1662,6 +1680,9 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
   // preflight and the punch it precedes are one clock-in, ~1s apart;
   // sharing a bucket would false-429 the punch.
   enforcePunchRateLimit(device.id, 'preflight');
+  // Escalating wait after consecutive wrong PINs — the 1/sec throttle
+  // alone swept the (globally unique, 4-digit) keyspace in hours.
+  enforcePinBackoff(device.id);
 
   // No geofence gate here. Geofence is advisory: the punch itself
   // records distance and flags out-of-fence as an anomaly (kind
@@ -1707,14 +1728,16 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
       where: { id: device.id },
       data: { lastSeenAt: new Date() },
     });
-    if (wrongSite) {
-      throw new HttpError(
-        403,
-        'wrong_site',
-        'This number is registered to a different site. Ask your manager to set up your kiosk site.',
-      );
-    }
-    throw new HttpError(401, 'invalid_pin', 'Wrong PIN.');
+    recordPinFailure(device.id);
+    // ONE response for both cases. Distinguishing 'wrong site' from
+    // 'unknown PIN' confirmed to an attacker that a guessed PIN is valid
+    // SOMEWHERE — a cross-tenant enumeration oracle. The punch log above
+    // still records which it was, so diagnosis is unaffected.
+    throw new HttpError(
+      401,
+      'invalid_pin',
+      'That PIN was not recognized at this kiosk. If you are at a new site, ask your manager to set up your kiosk site.',
+    );
   }
 
   // Predict what the punch will do so the camera screen can say
@@ -1722,6 +1745,10 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
   // until the result screen. A null prediction means the punch would
   // 409 (break toggle while not clocked in) — surface that NOW, at the
   // keypad, instead of after a selfie.
+  // Correct PIN — clear the failure streak so a busy kiosk with real
+  // traffic never accumulates a backoff.
+  clearPinFailures(device.id);
+
   const predictedAction = await predictPunchAction(
     pinRow.associateId,
     input.intent ?? null,
@@ -1772,13 +1799,23 @@ kiosk99Router.post('/kiosk/face-consent', async (req, res) => {
       'This kiosk\'s device token expired. Re-pair from the admin page.',
     );
   }
+  // This endpoint takes a PIN and, on a correct guess, WRITES consent —
+  // and on consent:false purges that associate's biometrics. Unthrottled
+  // it was a full-speed oracle over the whole 4-digit keyspace whose
+  // payoff was destroying face enrollments. Same throttle + escalating
+  // backoff as every other PIN surface.
+  enforcePunchRateLimit(device.id, 'preflight');
+  enforcePinBackoff(device.id);
+
   const pinRow = await prisma.kioskPin.findUnique({
     where: { pinHmac: hmacPin(input.pin) },
     select: { id: true, clientId: true, associateId: true },
   });
   if (!pinRow || pinRow.clientId !== device.clientId) {
-    throw new HttpError(401, 'invalid_pin', 'Wrong PIN.');
+    recordPinFailure(device.id);
+    throw new HttpError(401, 'invalid_pin', 'That PIN was not recognized at this kiosk.');
   }
+  clearPinFailures(device.id);
 
   const status = input.consent ? 'GRANTED' : 'DECLINED';
   await prisma.associate.update({
@@ -1891,6 +1928,7 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   // version locked whole sites out over fat-fingered PINs; see the
   // rationale in lib/kioskRateLimit.ts.
   enforcePunchRateLimit(device.id);
+  enforcePinBackoff(device.id);
 
   // 1b2. Validate clientPunchedAt now that we know the device. A punch
   // outside the accepted window is REFUSED, but it leaves a REJECTED row
@@ -2012,15 +2050,18 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
       where: { id: device.id },
       data: { lastSeenAt: new Date() },
     });
-    if (wrongSite) {
-      throw new HttpError(
-        403,
-        'wrong_site',
-        'This number is registered to a different site. Ask your manager to set up your kiosk site.',
-      );
-    }
-    throw new HttpError(401, 'invalid_pin', 'Wrong PIN.');
+    recordPinFailure(device.id);
+    // Single response for both cases — see the preflight handler. The
+    // punch log above still distinguishes them for diagnosis.
+    throw new HttpError(
+      401,
+      'invalid_pin',
+      'That PIN was not recognized at this kiosk. If you are at a new site, ask your manager to set up your kiosk site.',
+    );
   }
+
+  // Correct PIN — clear the failure streak (see the preflight handler).
+  clearPinFailures(device.id);
 
   // Photos are stored ONLY with recorded consent. This used to be
   // `DECLINED ? null : selfie`, which quietly stored photos for the

@@ -1,4 +1,4 @@
-import { randomBytes, createHash } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Prisma, PrismaClient, QuickbooksConnection } from '@prisma/client';
 import { env } from '../config/env.js';
 import { encryptString, decryptString } from './crypto.js';
@@ -97,17 +97,24 @@ export function verifyState(state: string): string | null {
   const parts = state.split('.');
   if (parts.length !== 3) return null;
   const [clientId, nonce, sig] = parts;
-  if (signState(clientId, nonce) !== sig) return null;
+  if (clientId === undefined || nonce === undefined || sig === undefined) return null;
+  const expected = signState(clientId, nonce);
+  // Constant-time: a plain !== leaks how much of the MAC matched.
+  const a = Buffer.from(expected, 'utf8');
+  const b = Buffer.from(sig, 'utf8');
+  if (a.length !== b.length) return null; // timingSafeEqual throws on length mismatch
+  if (!timingSafeEqual(a, b)) return null;
   return clientId;
 }
 
 function signState(clientId: string, nonce: string): string {
-  // HMAC-SHA256 truncated. JWT_SECRET is the existing app secret; reuse
-  // avoids another env var.
-  return createHash('sha256')
-    .update(`${env.JWT_SECRET}:${clientId}:${nonce}`)
-    .digest('hex')
-    .slice(0, 16);
+  // Real HMAC, full length. The previous version was
+  // sha256(secret + ':' + data) truncated to 64 bits — a secret-prefix
+  // construction (length-extension-shaped, and only 2^64 of MAC to
+  // forge) rather than a keyed MAC.
+  return createHmac('sha256', env.JWT_SECRET)
+    .update(`${clientId}:${nonce}`)
+    .digest('hex');
 }
 
 interface IntuitTokenResponse {
