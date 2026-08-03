@@ -16,47 +16,13 @@ import {
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtTimeTz, zonedDayKey } from '@/lib/format';
+import { addDays, sameDay, shiftMinutes, startOfDay, ymd } from './calendarDates';
 import { StatusMark, statusLabelClass, statusTileClass } from './shiftTile';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-/** Local calendar-date key ("YYYY-MM-DD") of a grid cell — its stable label. */
-function ymd(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
 /** Up to this many chips render directly in the cell; the rest go behind "+N more". */
 const VISIBLE_CHIPS_PER_CELL = 3;
-
-function startOfDay(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-function addDays(d: Date, n: number): Date {
-  const x = new Date(d);
-  x.setDate(x.getDate() + n);
-  return x;
-}
-
-function sameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
-
-function shiftMinutes(s: Shift): number {
-  return Math.max(
-    0,
-    Math.round(
-      (new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime()) / 60_000
-    )
-  );
-}
 
 function fmtTime(d: Date, timeZone?: string | null): string {
   return fmtTimeTz(d, timeZone);

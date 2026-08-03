@@ -4212,13 +4212,20 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    // Snap to local Monday 00:00 — matches the week the UI is showing.
+    // Trust the client's window verbatim. This used to re-snap to
+    // SERVER-local Monday midnight — UTC in production — so an ET admin's
+    // "publish this week" acted on the UTC week instead of the one on
+    // screen: Sunday-evening drafts (Monday UTC) silently stayed DRAFT and
+    // the previous week's tail snuck in. The UI computes the exact boundary
+    // of the week it displays (zone-aware when the grid renders a store
+    // zone); the server's job is just [weekStart, weekEnd).
     const start = new Date(parsed.data.weekStart);
-    start.setHours(0, 0, 0, 0);
-    const dow = (start.getDay() + 6) % 7; // Mon=0..Sun=6
-    start.setDate(start.getDate() - dow);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 7);
+    const end = parsed.data.weekEnd
+      ? new Date(parsed.data.weekEnd)
+      : new Date(start.getTime() + 7 * 86_400_000);
+    if (end <= start) {
+      throw new HttpError(400, 'invalid_window', 'weekEnd must be after weekStart.');
+    }
 
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
@@ -4226,15 +4233,23 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
       startsAt: { gte: start, lt: end },
       ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
     };
-    const drafts = await prisma.shift.findMany({
-      take: 100,
+    // Cap+1 so a giant week can be REPORTED as truncated instead of
+    // silently publishing the first N and leaving the rest DRAFT with no
+    // signal (the old take:100 did exactly that). Deterministic order so
+    // "run again" continues where this run stopped.
+    const PUBLISH_CAP = 500;
+    const draftRows = await prisma.shift.findMany({
+      take: PUBLISH_CAP + 1,
       where,
+      orderBy: { startsAt: 'asc' },
       include: {
         client: { select: { state: true, name: true } },
         assignedAssociate: { select: { firstName: true, lastName: true } },
         locationRel: { select: { timezone: true } },
       },
     });
+    const truncated = draftRows.length > PUBLISH_CAP;
+    const drafts = truncated ? draftRows.slice(0, PUBLISH_CAP) : draftRows;
 
     const now = new Date();
     const skipped: PublishWeekSkip[] = [];
@@ -4402,7 +4417,11 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
       });
     }
 
-    const body: PublishWeekResponse = { published: publishedCount, skipped };
+    const body: PublishWeekResponse = {
+      published: publishedCount,
+      skipped,
+      ...(truncated ? { truncated: true } : {}),
+    };
     res.json(PublishWeekResponseSchema.parse(body));
   } catch (err) {
     next(err);
@@ -4434,13 +4453,15 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    // Snap to local Monday 00:00 — matches the week the UI is showing.
+    // Same no-resnap contract as /publish-week: server-local Monday
+    // snapping on a UTC box acted on the UTC week, not the one on screen.
     const start = new Date(parsed.data.weekStart);
-    start.setHours(0, 0, 0, 0);
-    const dow = (start.getDay() + 6) % 7; // Mon=0..Sun=6
-    start.setDate(start.getDate() - dow);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 7);
+    const end = parsed.data.weekEnd
+      ? new Date(parsed.data.weekEnd)
+      : new Date(start.getTime() + 7 * 86_400_000);
+    if (end <= start) {
+      throw new HttpError(400, 'invalid_window', 'weekEnd must be after weekStart.');
+    }
 
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),

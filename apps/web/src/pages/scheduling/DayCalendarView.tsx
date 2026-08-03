@@ -13,6 +13,7 @@ import type { AssociateLite, Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
 import { fmtTimeTz, zonedDayKey, zonedMinutesOfDay } from '@/lib/format';
+import { shiftMinutes, ymd } from './calendarDates';
 import {
   ShiftHoverCard,
   useShiftHoverCard,
@@ -55,21 +56,6 @@ const SNAP_MIN = 15;
 
 function fmtTime(d: Date, timeZone?: string | null): string {
   return fmtTimeTz(d, timeZone);
-}
-
-function shiftMinutes(s: Shift): number {
-  return Math.max(
-    0,
-    Math.round(
-      (new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime()) / 60_000
-    )
-  );
-}
-
-/** Local calendar-date key ("YYYY-MM-DD") of the anchored day. */
-function ymd(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function snap(min: number): number {

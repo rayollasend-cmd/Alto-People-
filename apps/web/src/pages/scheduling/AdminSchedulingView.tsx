@@ -839,8 +839,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       return;
     }
     let cancelled = false;
-    const from = view === 'week' ? weekStart : dayAnchor;
-    const to = view === 'week' ? weekEnd : addDaysLocal(dayAnchor, 1);
+    // Padded ±1 day for the same cross-zone edge reason as the shift fetch:
+    // shading keys are store-zone days while these bounds are browser-local.
+    const from = addDaysLocal(view === 'week' ? weekStart : dayAnchor, -1);
+    const to = addDaysLocal(view === 'week' ? weekEnd : addDaysLocal(dayAnchor, 1), 1);
     getAvailabilityOverview(from.toISOString(), to.toISOString())
       .then((r) => {
         if (cancelled) return;
@@ -901,14 +903,27 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   //
   // requestKey encodes every value the active branch below reads, so the
   // values are always fresh whenever this memo recomputes.
+  // Calendar fetch windows are PADDED ±1 day: the boundaries here are
+  // browser-local midnights, but the grids bucket shifts by the STORE's
+  // zone — for a viewer in a different zone, shifts inside the offset gap
+  // at the window edges belonged on a visible day yet were never fetched
+  // (an LA admin viewing an ET store silently lost ET Sunday 00:00–03:00
+  // off the week's first column). The views drop out-of-window buckets, so
+  // the extra day is invisible; it just guarantees every visible day is
+  // fully populated. The list view keeps the user's exact range.
+  const padDay = (d: Date, days: number): string => {
+    const x = new Date(d);
+    x.setDate(x.getDate() + days);
+    return x.toISOString();
+  };
   const requestArgs = useMemo<Parameters<typeof listShifts>[0]>(() => {
     let args: Parameters<typeof listShifts>[0] = {};
     if (view === 'week') {
-      args = { from: weekStart.toISOString(), to: weekEnd.toISOString() };
+      args = { from: padDay(weekStart, -1), to: padDay(weekEnd, 1) };
     } else if (view === 'day') {
       const dayEnd = new Date(dayAnchor);
       dayEnd.setDate(dayEnd.getDate() + 1);
-      args = { from: dayAnchor.toISOString(), to: dayEnd.toISOString() };
+      args = { from: padDay(dayAnchor, -1), to: padDay(dayEnd, 1) };
     } else if (view === 'month') {
       // The month grid renders a full 6-week window (the Monday on/before
       // the 1st through 42 days), so it shows trailing days of the prev/next
@@ -916,7 +931,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       // — or shifts on those adjacent-month cells render blank.
       const gridStart = startOfWeekMonday(monthAnchor);
       const gridEnd = addDaysLocal(gridStart, 42);
-      args = { from: gridStart.toISOString(), to: gridEnd.toISOString() };
+      args = { from: padDay(gridStart, -1), to: padDay(gridEnd, 1) };
     } else {
       args = filter === 'ALL' ? {} : { status: filter };
       // Phase 54.2 — list view honors a date range alongside the status
@@ -1130,16 +1145,27 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   }, [filteredShifts]);
 
   // Phase 53.6 — DRAFT count for the visible week (powers the publish ribbon).
+  // The EXACT window "publish/auto-schedule this week" acts on — zone-aware
+  // when the grid renders a store zone, so the ribbon count, the chips on
+  // screen, and the server's published set all agree. (Browser-local weeks
+  // and store-local weeks differ at the edges by the zone offset.)
+  const publishWindow = useMemo(() => {
+    if (!gridTimeZone) return { from: weekStart, to: weekEnd };
+    const zoneMidnight = (d: Date) =>
+      zonedWallTimeToUtc(d.getFullYear(), d.getMonth() + 1, d.getDate(), 0, 0, gridTimeZone);
+    return { from: zoneMidnight(weekStart), to: zoneMidnight(weekEnd) };
+  }, [weekStart, weekEnd, gridTimeZone]);
+
   const draftsInWeek = useMemo(() => {
     if (!shifts || view === 'list') return 0;
-    const startMs = weekStart.getTime();
-    const endMs = weekEnd.getTime();
+    const startMs = publishWindow.from.getTime();
+    const endMs = publishWindow.to.getTime();
     return shifts.filter((s) => {
       if (s.status !== 'DRAFT') return false;
       const t = new Date(s.startsAt).getTime();
       return t >= startMs && t < endMs;
     }).length;
-  }, [shifts, view, weekStart, weekEnd]);
+  }, [shifts, view, publishWindow]);
 
   // All drafts across the loaded data range (powers the global "Drafts" pill
    // near the view tabs). Lets the manager find unpublished work even when
@@ -1284,9 +1310,15 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     setPublishing(true);
     try {
       const res = await publishWeek({
-        weekStart: weekStart.toISOString(),
+        weekStart: publishWindow.from.toISOString(),
+        weekEnd: publishWindow.to.toISOString(),
         ...(clientFilter ? { clientId: clientFilter } : {}),
       });
+      if (res.truncated) {
+        toast.warning(
+          'This week has more drafts than one publish run covers — run Publish again for the rest.',
+        );
+      }
       if (res.published > 0) {
         toast.success(
           `Published ${res.published} shift${res.published === 1 ? '' : 's'}.${res.skipped.length > 0 ? ` Skipped ${res.skipped.length} (predictive-schedule reason needed).` : ''}`
@@ -1318,7 +1350,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     setAutoScheduling(true);
     try {
       const res = await autoScheduleWeek({
-        weekStart: weekStart.toISOString(),
+        weekStart: publishWindow.from.toISOString(),
+        weekEnd: publishWindow.to.toISOString(),
         ...(clientFilter ? { clientId: clientFilter } : {}),
       });
       if (res.assigned > 0) {
@@ -1565,17 +1598,40 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       };
       try {
         let updated = s;
+        let timesWritten = false;
         if (dateChanged) {
           updated = await updateShift(s.id, {
             startsAt: newStartISO,
             endsAt: newEndISO,
           });
+          timesWritten = true;
         }
         if (assigneeChanged) {
-          updated =
-            target.associateId === null
-              ? await unassignShift(s.id)
-              : await assignShift(s.id, { associateId: target.associateId });
+          try {
+            updated =
+              target.associateId === null
+                ? await unassignShift(s.id)
+                : await assignShift(s.id, { associateId: target.associateId });
+          } catch (assignErr) {
+            // The two writes aren't one transaction. If the reassignment is
+            // refused (double-booked, PTO veto) AFTER the times already
+            // moved, silently keeping the moved times would leave a
+            // half-applied drag the user never asked for — compensate by
+            // putting the times back, so the drop is all-or-nothing.
+            if (timesWritten) {
+              try {
+                await updateShift(s.id, {
+                  startsAt: undoSnapshot.startsAt,
+                  endsAt: undoSnapshot.endsAt,
+                });
+              } catch {
+                toast.error(
+                  'The reassignment was refused and the time change could not be rolled back — the shift kept its new time. Check it.',
+                );
+              }
+            }
+            throw assignErr;
+          }
         }
         replaceShift(updated); // reconcile with server truth
         // A mis-drop is one click away from undone — no Edit-dialog round
