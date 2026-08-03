@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, Download, ExternalLink, FileCheck, XCircle } from 'lucide-react';
 import type { I9DocumentList, I9Verification } from '@alto-people/shared';
 import { listI9s, upsertI9 } from '@/lib/complianceApi';
@@ -94,11 +94,26 @@ const DOC_LIST_LABELS: Record<I9DocumentList, string> = {
 type I9Filter = (typeof I9_FILTERS)[number]['value'];
 
 export function I9Tab({ canManage }: { canManage: boolean }) {
-  const [filter, setFilter] = useState<I9Filter>('pending');
+  // ?associateId= deep-links one person's I-9 (the onboarding checklist
+  // links here) — start on the ALL filter so they're present whatever
+  // their state, then auto-open their drawer once rows arrive.
+  const [deepLinkParams] = useSearchParams();
+  const deepLinkAssociateId = deepLinkParams.get('associateId');
+  const deepLinkOpened = useRef(false);
+  const [filter, setFilter] = useState<I9Filter>(deepLinkAssociateId ? 'all' : 'pending');
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<I9Verification[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<I9Verification | null>(null);
+
+  useEffect(() => {
+    if (!deepLinkAssociateId || deepLinkOpened.current || !rows) return;
+    const match = rows.find((r) => r.associateId === deepLinkAssociateId);
+    if (match) {
+      deepLinkOpened.current = true;
+      setDrawerTarget(match);
+    }
+  }, [rows, deepLinkAssociateId]);
 
   const refresh = useCallback(async () => {
     try {

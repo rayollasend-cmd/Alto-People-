@@ -3266,7 +3266,10 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                 </div>
                 {cat.complianceTab && (
                   <Link
-                    to={`/compliance?tab=${cat.complianceTab}`}
+                    // associateId rides along so tabs that support person
+                    // deep-links (I-9 today) open THIS person; others
+                    // ignore it harmlessly.
+                    to={`/compliance?tab=${cat.complianceTab}&associateId=${associateId}`}
                     className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"
                   >
                     Open in Compliance

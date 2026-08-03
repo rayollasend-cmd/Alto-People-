@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, ChevronDown, ChevronUp, FileSignature, Plus } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { CheckCircle2, ChevronDown, ChevronUp, ExternalLink, FileSignature, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ChecklistTask } from '@alto-people/shared';
 import {
@@ -36,6 +37,8 @@ interface Props {
   canManage: boolean;
   /** Used to populate the "attach to task" picker. */
   esignTasks: ChecklistTask[];
+  /** Deep link target: signed PDFs live in this associate's document vault. */
+  associateId: string;
 }
 
 /**
@@ -46,7 +49,7 @@ interface Props {
  */
 const ESIGN_PREVIEW = 4;
 
-export function EsignSection({ applicationId, canManage, esignTasks }: Props) {
+export function EsignSection({ applicationId, canManage, esignTasks, associateId }: Props) {
   const [items, setItems] = useState<EsignAgreement[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openCreate, setOpenCreate] = useState(false);
@@ -77,7 +80,15 @@ export function EsignSection({ applicationId, canManage, esignTasks }: Props) {
             </CardTitle>
             <CardDescription>
               Drafted by HR, signed by the associate. Each signature renders an
-              audit-stamped PDF stored in the document vault.
+              audit-stamped PDF stored in the{' '}
+              <Link
+                to={`/people?associateId=${associateId}&tab=documents`}
+                className="inline-flex items-center gap-0.5 text-gold hover:underline"
+              >
+                document vault
+                <ExternalLink className="h-3 w-3" aria-hidden />
+              </Link>
+              .
             </CardDescription>
           </div>
           {canManage && (
