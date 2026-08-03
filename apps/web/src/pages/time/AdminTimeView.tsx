@@ -64,6 +64,7 @@ import {
   fmtDateTz,
   fmtPayRate,
   fmtTime,
+  fmtWeekdayTz,
   tzAbbrev,
   ymdLocal,
   ymdToIsoEndExclusive,
@@ -910,6 +911,19 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     });
   }, []);
 
+  // Day-header checkbox in the individual timesheet: select/clear a whole
+  // day's pending entries in one click.
+  const toggleMany = useCallback((ids: string[], select: boolean) => {
+    setSelected((s) => {
+      const next = new Set(s);
+      for (const id of ids) {
+        if (select) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }, []);
+
   return (
     <div className="mx-auto">
       <PageHeader
@@ -1469,7 +1483,25 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 }
               />
             )}
-            {visibleEntries && visibleEntries.length > 0 && (
+            {/* One associate in focus → a real timesheet: day groups inside
+                week sections with subtotals, instead of the flat triage
+                table where two same-day clock-ins read as a data error. */}
+            {visibleEntries && visibleEntries.length > 0 && focusAssociate && (
+              <FocusTimesheet
+                entries={visibleEntries}
+                canManage={canManage}
+                showSelect={canManage && filter === 'COMPLETED'}
+                selected={selected}
+                pendingId={pendingId}
+                bulkBusy={bulkBusy}
+                onToggleSelect={toggleOne}
+                onToggleMany={toggleMany}
+                onOpen={openDrawer}
+                onApprove={onApprove}
+                onReject={openRejectOne}
+              />
+            )}
+            {visibleEntries && visibleEntries.length > 0 && !focusAssociate && (
               <>
                 {/* md+ : full sortable table. Only the breakpoint-active
                     list mounts (useIsDesktop). */}
@@ -1779,6 +1811,390 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
 // parent state that actually concern it (selection, its own pending flag,
 // bulk busy). With stable id-taking handlers, approving one entry no longer
 // re-renders the other ~499 rows.
+/* ---- Individual timesheet (focus mode) --------------------------------- *
+ * The flat queue table is built for triage across MANY associates; for ONE
+ * associate it reads as a wall of undifferentiated rows — two clock-ins on
+ * the same day look like a data error instead of a split shift, and weekly
+ * overtime is invisible. Focus mode now renders a real timesheet: entries
+ * grouped by site-local day inside Sunday-based weeks, day and week
+ * subtotals, a "2 shifts" tag when a day has multiple punches, the gap
+ * between them spelled out ("back in 42m later"), and an overlap warning
+ * when two entries double-book the same minutes.                           */
+
+/** "Mon, Jul 28" from a YYYY-MM-DD day key (parsed as local wall date). */
+function dayKeyLabel(key: string): string {
+  const [y, m, d] = key.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return `${fmtWeekdayTz(date)}, ${fmtDateTz(date)}`;
+}
+
+/** Sunday-based week start (ms) for a YYYY-MM-DD day key. */
+function weekStartOfDayKey(key: string): number {
+  const [y, m, d] = key.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() - date.getDay());
+  return date.getTime();
+}
+
+interface FocusDay {
+  key: string;
+  entries: TimeEntry[];
+  netMin: number;
+  breakMin: number;
+}
+
+interface FocusWeek {
+  startMs: number;
+  days: FocusDay[];
+  netMin: number;
+}
+
+function FocusTimesheet({
+  entries,
+  canManage,
+  showSelect,
+  selected,
+  pendingId,
+  bulkBusy,
+  onToggleSelect,
+  onToggleMany,
+  onOpen,
+  onApprove,
+  onReject,
+}: {
+  entries: TimeEntry[];
+  canManage: boolean;
+  showSelect: boolean;
+  selected: Set<string>;
+  pendingId: string | null;
+  bulkBusy: boolean;
+  onToggleSelect: (id: string) => void;
+  onToggleMany: (ids: string[], select: boolean) => void;
+  onOpen: (entry: TimeEntry) => void;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+}) {
+  const weeks = useMemo<FocusWeek[]>(() => {
+    // Chronological like a paper timesheet — the queue's newest-first order
+    // is for triage, not for reading one person's fortnight.
+    const sorted = [...entries].sort(
+      (a, b) => new Date(a.clockInAt).getTime() - new Date(b.clockInAt).getTime(),
+    );
+    const dayMap = new Map<string, FocusDay>();
+    for (const e of sorted) {
+      const key = zonedDayKey(e.clockInAt, e.locationTimezone ?? undefined);
+      let day = dayMap.get(key);
+      if (!day) {
+        day = { key, entries: [], netMin: 0, breakMin: 0 };
+        dayMap.set(key, day);
+      }
+      day.entries.push(e);
+      if (e.status !== 'REJECTED') {
+        const net = e.netMinutes ?? e.minutesElapsed;
+        day.netMin += net;
+        day.breakMin += Math.max(0, e.minutesElapsed - net);
+      }
+    }
+    const weekMap = new Map<number, FocusWeek>();
+    for (const day of dayMap.values()) {
+      const startMs = weekStartOfDayKey(day.key);
+      let week = weekMap.get(startMs);
+      if (!week) {
+        week = { startMs, days: [], netMin: 0 };
+        weekMap.set(startMs, week);
+      }
+      week.days.push(day);
+      week.netMin += day.netMin;
+    }
+    return [...weekMap.values()].sort((a, b) => a.startMs - b.startMs);
+  }, [entries]);
+
+  return (
+    <div className="space-y-5">
+      {weeks.map((week) => {
+        const otMin = Math.max(0, week.netMin - 40 * 60);
+        return (
+          <section key={week.startMs}>
+            <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2 border-b border-navy-secondary pb-1.5">
+              <h3 className="text-2xs uppercase tracking-widest text-silver">
+                Week of {fmtDateTz(new Date(week.startMs))}
+              </h3>
+              <div className="flex items-center gap-2 text-xs tabular-nums">
+                {otMin > 0 && (
+                  <span className="rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-warning">
+                    {formatHM(otMin)} OT
+                  </span>
+                )}
+                <span className="text-silver">
+                  week total{' '}
+                  <span className="font-medium text-white">{formatHM(week.netMin)}</span>
+                </span>
+              </div>
+            </div>
+            <div className="space-y-3">
+              {week.days.map((day) => (
+                <FocusDaySection
+                  key={day.key}
+                  day={day}
+                  canManage={canManage}
+                  showSelect={showSelect}
+                  selected={selected}
+                  pendingId={pendingId}
+                  bulkBusy={bulkBusy}
+                  onToggleSelect={onToggleSelect}
+                  onToggleMany={onToggleMany}
+                  onOpen={onOpen}
+                  onApprove={onApprove}
+                  onReject={onReject}
+                />
+              ))}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+function FocusDaySection({
+  day,
+  canManage,
+  showSelect,
+  selected,
+  pendingId,
+  bulkBusy,
+  onToggleSelect,
+  onToggleMany,
+  onOpen,
+  onApprove,
+  onReject,
+}: {
+  day: FocusDay;
+  canManage: boolean;
+  showSelect: boolean;
+  selected: Set<string>;
+  pendingId: string | null;
+  bulkBusy: boolean;
+  onToggleSelect: (id: string) => void;
+  onToggleMany: (ids: string[], select: boolean) => void;
+  onOpen: (entry: TimeEntry) => void;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+}) {
+  const selectableIds = day.entries
+    .filter((e) => e.status === 'COMPLETED')
+    .map((e) => e.id);
+  const allDaySelected =
+    selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
+  return (
+    <div className="rounded-md border border-navy-secondary bg-navy/40">
+      <div className="flex flex-wrap items-center gap-2 border-b border-navy-secondary px-3 py-2">
+        {showSelect && selectableIds.length > 0 && (
+          <input
+            type="checkbox"
+            aria-label={`Select all entries on ${dayKeyLabel(day.key)}`}
+            checked={allDaySelected}
+            onChange={() => onToggleMany(selectableIds, !allDaySelected)}
+            className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
+          />
+        )}
+        <span className="text-sm font-medium text-white">{dayKeyLabel(day.key)}</span>
+        {day.entries.length > 1 && (
+          <span className="rounded-full border border-gold/40 bg-gold/10 px-2 py-0.5 text-2xs uppercase tracking-widest text-gold">
+            {day.entries.length} shifts
+          </span>
+        )}
+        <span className="ml-auto text-xs tabular-nums text-silver">
+          {day.breakMin > 0 && (
+            <span className="text-silver/70">{formatHM(day.breakMin)} breaks · </span>
+          )}
+          <span className="font-medium text-white">{formatHM(day.netMin)}</span>
+        </span>
+      </div>
+      <ul>
+        {day.entries.map((e, i) => {
+          const prev = i > 0 ? day.entries[i - 1] : null;
+          // The between-shifts note is what makes a double clock-in
+          // readable at a glance: a second entry 40 minutes after the
+          // first clock-out is a split shift; one that starts BEFORE the
+          // previous ended is double-booked minutes.
+          let gapNote: { text: string; overlap: boolean } | null = null;
+          if (prev?.clockOutAt) {
+            const gapMin = Math.round(
+              (new Date(e.clockInAt).getTime() - new Date(prev.clockOutAt).getTime()) /
+                60_000,
+            );
+            gapNote =
+              gapMin >= 0
+                ? { text: `back in ${formatHM(gapMin)} later`, overlap: false }
+                : {
+                    text: `overlaps previous entry by ${formatHM(Math.abs(gapMin))}`,
+                    overlap: true,
+                  };
+          }
+          return (
+            <li key={e.id} className="border-b border-navy-secondary/60 last:border-b-0">
+              {gapNote && (
+                <div
+                  className={cn(
+                    'flex items-center gap-2 px-3 pt-1.5 text-2xs',
+                    gapNote.overlap ? 'text-alert' : 'text-silver/60',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'h-px flex-none w-4',
+                      gapNote.overlap ? 'bg-alert/50' : 'bg-navy-secondary',
+                    )}
+                  />
+                  {gapNote.text}
+                </div>
+              )}
+              <FocusEntryRow
+                entry={e}
+                canManage={canManage}
+                showSelect={showSelect}
+                isSelected={selected.has(e.id)}
+                isPending={pendingId === e.id}
+                bulkBusy={bulkBusy}
+                onToggleSelect={onToggleSelect}
+                onOpen={onOpen}
+                onApprove={onApprove}
+                onReject={onReject}
+              />
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function FocusEntryRow({
+  entry: e,
+  canManage,
+  showSelect,
+  isSelected,
+  isPending,
+  bulkBusy,
+  onToggleSelect,
+  onOpen,
+  onApprove,
+  onReject,
+}: {
+  entry: TimeEntry;
+  canManage: boolean;
+  showSelect: boolean;
+  isSelected: boolean;
+  isPending: boolean;
+  bulkBusy: boolean;
+  onToggleSelect: (id: string) => void;
+  onOpen: (entry: TimeEntry) => void;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+}) {
+  const isSelectable = showSelect && e.status === 'COMPLETED';
+  const net = e.netMinutes ?? e.minutesElapsed;
+  const breakMin = Math.max(0, e.minutesElapsed - net);
+  const breakCount = e.breaks?.length ?? (breakMin > 0 ? 1 : 0);
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={(ev) => {
+        const target = ev.target as HTMLElement;
+        if (target.closest('button, a, input, [data-no-row-click]')) return;
+        if (window.getSelection()?.toString()) return;
+        onOpen(e);
+      }}
+      onKeyDown={(ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          onOpen(e);
+        }
+      }}
+      className={cn(
+        'group flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 cursor-pointer transition-colors hover:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+        isSelected && 'bg-gold/5',
+      )}
+    >
+      {showSelect && (
+        <span className="w-4 flex-none" data-no-row-click>
+          {isSelectable && (
+            <input
+              type="checkbox"
+              aria-label={`Select entry starting ${fmtPunchTime(e.clockInAt, e.locationTimezone)}`}
+              checked={isSelected}
+              onChange={() => onToggleSelect(e.id)}
+              className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
+            />
+          )}
+        </span>
+      )}
+      <span className="tabular-nums text-sm text-white">
+        {fmtPunchTime(e.clockInAt, e.locationTimezone)}
+        {' → '}
+        {e.clockOutAt ? (
+          <>
+            {fmtPunchTime(e.clockOutAt, e.locationTimezone)}
+            <DayOffsetTag entry={e} />
+          </>
+        ) : (
+          <span className="text-silver">on the clock</span>
+        )}
+      </span>
+      {breakMin > 0 && (
+        <span className="text-2xs tabular-nums text-silver/70 whitespace-nowrap">
+          {breakCount > 1 ? `${breakCount} breaks` : '1 break'} ({formatHM(breakMin)})
+        </span>
+      )}
+      {e.jobName && (
+        <span className="text-2xs text-silver/70 truncate max-w-[10rem]">{e.jobName}</span>
+      )}
+      <span className="ml-auto flex items-center gap-2">
+        <span className="tabular-nums text-sm font-medium text-white">
+          {formatHM(net)}
+        </span>
+        <Badge size="sm" variant={statusVariant(e.status)}>
+          {STATUS_LABELS[e.status]}
+        </Badge>
+        {canManage && (
+          <span className="inline-flex items-center gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+            {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onApprove(e.id)}
+                loading={isPending}
+                disabled={isPending || bulkBusy}
+              >
+                Approve
+              </Button>
+            )}
+            {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-alert hover:text-alert hover:bg-alert/10"
+                onClick={() => onReject(e.id)}
+                disabled={isPending || bulkBusy}
+              >
+                Reject
+              </Button>
+            )}
+          </span>
+        )}
+      </span>
+      <div className="w-full empty:hidden">
+        <AnomalyChips anomalies={e.anomalies} />
+        {e.rejectionReason && (
+          <div className="text-alert text-2xs mt-1">{e.rejectionReason}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const QueueEntryRow = memo(function QueueEntryRow({
   entry: e,
   canManage,

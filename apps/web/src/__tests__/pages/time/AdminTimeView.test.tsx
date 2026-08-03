@@ -393,3 +393,99 @@ describe('<AdminTimeView> export scope', () => {
     expect(body.to).toBeTruthy();
   });
 });
+
+describe('<AdminTimeView> individual timesheet (focus mode)', () => {
+  const baseEntry = {
+    associateId: 'a1',
+    associateName: 'Primavera Vasquez Blanco',
+    clientId: null,
+    clientName: 'Walmart',
+    status: 'COMPLETED' as const,
+    notes: null,
+    rejectionReason: null,
+    approvedById: null,
+    approverEmail: null,
+    approvedAt: null,
+  };
+
+  // Wed Jun 24 2026, browser-local: a split day (two entries, 40m apart)
+  // plus a normal day after it.
+  const ENTRIES = [
+    {
+      ...baseEntry,
+      id: 'e1',
+      clockInAt: isoAt('2026-06-24', '08:00'),
+      clockOutAt: isoAt('2026-06-24', '12:00'),
+      minutesElapsed: 240,
+      netMinutes: 240,
+    },
+    {
+      ...baseEntry,
+      id: 'e2',
+      clockInAt: isoAt('2026-06-24', '12:40'),
+      clockOutAt: isoAt('2026-06-24', '17:00'),
+      minutesElapsed: 260,
+      netMinutes: 260,
+    },
+    {
+      ...baseEntry,
+      id: 'e3',
+      clockInAt: isoAt('2026-06-25', '08:00'),
+      clockOutAt: isoAt('2026-06-25', '16:30'),
+      minutesElapsed: 510,
+      netMinutes: 480,
+    },
+  ];
+
+  async function focusOnAssociate(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
+    // The clickable ROW is also role="button" (whole-row accessible name),
+    // so target the name button by its title.
+    const nameButtons = await screen.findAllByTitle('View individual timesheet');
+    await user.click(nameButtons[0]);
+    await screen.findByText(/individual timesheet/i);
+  }
+
+  it('groups a double clock-in day under one header with the gap spelled out', async () => {
+    vi.mocked(listAdminTimeEntries).mockResolvedValue({ entries: ENTRIES } as never);
+    const user = renderQueueTab();
+    await focusOnAssociate(user);
+
+    expect(await screen.findByText('2 shifts')).toBeInTheDocument();
+    expect(screen.getByText(/back in 40m later/i)).toBeInTheDocument();
+    // Week section with the summed net total: 240 + 260 + 480 = 980m = 16h 20m.
+    expect(screen.getByText(/week of/i)).toBeInTheDocument();
+    expect(screen.getByText('16h 20m')).toBeInTheDocument();
+  });
+
+  it('flags a second entry that starts before the first ended as an overlap', async () => {
+    vi.mocked(listAdminTimeEntries).mockResolvedValue({
+      entries: [
+        ENTRIES[0],
+        {
+          ...ENTRIES[1],
+          clockInAt: isoAt('2026-06-24', '11:30'), // 30m before e1 clocked out
+        },
+      ],
+    } as never);
+    const user = renderQueueTab();
+    await focusOnAssociate(user);
+
+    expect(
+      await screen.findByText(/overlaps previous entry by 30m/i),
+    ).toBeInTheDocument();
+  });
+
+  it('leaving focus returns to the flat queue table', async () => {
+    vi.mocked(listAdminTimeEntries).mockResolvedValue({ entries: ENTRIES } as never);
+    const user = renderQueueTab();
+    await focusOnAssociate(user);
+
+    await user.click(screen.getByRole('button', { name: /back to all associates/i }));
+    await waitFor(() =>
+      expect(screen.queryByText(/week of/i)).not.toBeInTheDocument(),
+    );
+    // The sortable triage table is back.
+    expect(screen.getByRole('table')).toBeInTheDocument();
+  });
+});
