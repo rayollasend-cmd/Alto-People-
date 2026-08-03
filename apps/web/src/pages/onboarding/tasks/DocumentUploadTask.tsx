@@ -4,6 +4,7 @@ import { CheckCircle2, FileText, RotateCcw, Trash2, Upload } from 'lucide-react'
 import { toast } from 'sonner';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
 import { I9_DOC_CATALOG, i9CatalogEntry, i9SetSatisfied } from '@alto-people/shared';
+import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import {
   deleteMyDocument,
   listMyDocuments,
@@ -32,7 +33,7 @@ const LIST_HEADING: Record<'A' | 'B' | 'C', string> = {
   C: 'List C — proves right to work only (also add one from List B)',
 };
 
-const MAX_BYTES = 10 * 1024 * 1024;
+const MAX_BYTES = UPLOAD_MAX_BYTES;
 
 const ACCEPTED_MIMES = 'application/pdf,image/png,image/jpeg,image/webp';
 

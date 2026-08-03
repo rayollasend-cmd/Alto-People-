@@ -9,6 +9,7 @@ import {
   type BenefitsPlan,
   type BenefitsPlanListResponse,
 } from '@alto-people/shared';
+import { toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -269,8 +270,8 @@ function toEnrollment(e: {
     associateId: e.associateId,
     planId: e.planId,
     electedAmountCentsPerPeriod: e.electedAmountCentsPerPeriod,
-    effectiveDate: e.effectiveDate.toISOString(),
-    terminationDate: e.terminationDate ? e.terminationDate.toISOString() : null,
+    effectiveDate: toDateOnly(e.effectiveDate) ?? '',
+    terminationDate: toDateOnly(e.terminationDate),
     planKind: e.plan.kind as BenefitsEnrollment['planKind'],
     planName: e.plan.name,
   };

@@ -21,6 +21,7 @@ import {
   type ShiftPosition,
 } from '@alto-people/shared';
 import { csvCell as sharedCsvCell } from '@alto-people/shared';
+import { toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { piiRevealLimiter, bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
@@ -737,7 +738,7 @@ orgRouter.get(
     res.json({
       history: rows.map((r) => ({
         id: r.id,
-        effectiveFrom: r.effectiveFrom.toISOString(),
+        effectiveFrom: toDateOnly(r.effectiveFrom),
         effectiveTo: r.effectiveTo?.toISOString() ?? null,
         managerId: r.managerId,
         departmentId: r.departmentId,

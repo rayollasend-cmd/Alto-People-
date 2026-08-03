@@ -3,6 +3,7 @@ import { Eye, FileText, RotateCw } from 'lucide-react';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { toast } from 'sonner';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
+import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import {
   deleteMyDocument,
   listMyDocuments,
@@ -54,7 +55,7 @@ const fmtSize = (b: number) => {
 
 // Mirrors the server's upload cap so an oversized file fails instantly
 // with a readable message instead of after a full (doomed) POST.
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = UPLOAD_MAX_BYTES;
 
 export function AssociateDocumentsView() {
   const [docs, setDocs] = useState<DocumentRecord[] | null>(null);

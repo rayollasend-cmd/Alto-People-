@@ -307,6 +307,9 @@ timeRouter.get('/me/active', async (req, res, next) => {
   }
 });
 
+// Display cap for an associate's own history.
+const ME_ENTRY_CAP = 200;
+
 timeRouter.get('/me/entries', async (req, res, next) => {
   try {
     const user = req.user!;
@@ -337,11 +340,15 @@ timeRouter.get('/me/entries', async (req, res, next) => {
             : {}),
       },
       orderBy: { clockInAt: 'desc' },
-      take: 200,
+      // +1 probe: fetch one past the display cap so we can TELL the caller
+      // the list was cut rather than presenting a partial history as
+      // complete. The admin sibling has always done this.
+      take: ME_ENTRY_CAP + 1,
       include: ENTRY_INCLUDE,
     });
-    const entries = await toEntries(rows);
-    const payload = TimeEntryListResponseSchema.parse({ entries });
+    const truncated = rows.length > ME_ENTRY_CAP;
+    const entries = await toEntries(rows.slice(0, ME_ENTRY_CAP));
+    const payload = TimeEntryListResponseSchema.parse({ entries, truncated });
     res.json(payload);
   } catch (err) {
     next(err);
@@ -2230,7 +2237,8 @@ async function loadPayrollSheet(
       where,
       orderBy: { clockInAt: 'asc' },
       include: {
-        associate: { select: { firstName: true, lastName: true } },
+        // state drives the OT thresholds (see PayrollSheetInputRow.state).
+        associate: { select: { firstName: true, lastName: true, state: true } },
         breaks: true,
       },
       take: TIME_SUMMARY_MAX_ROWS,
@@ -2260,6 +2268,7 @@ async function loadPayrollSheet(
     clockInAt: r.clockInAt,
     clockOutAt: r.clockOutAt,
     breaks: r.breaks,
+    state: r.associate.state,
   }));
   const hoursSheet = buildPayrollSheet(inputRows);
 

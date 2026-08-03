@@ -1,3 +1,4 @@
+import { isDateOnly, parseDateOnly } from '@alto-people/shared';
 /**
  * Centralized formatters. Pages have spawned ~3 implementations of money
  * (`toLocaleString(currency)`, custom `fmtPay`, bare `$${n}`) and a
@@ -62,10 +63,26 @@ export function fmtPercent(
   return `${rounded.toFixed(decimals)}%`;
 }
 
-/** "May 13, 2026". Accepts ISO date or full datetime. */
+/**
+ * "May 13, 2026". Accepts a date-only string, a full datetime, or a Date.
+ *
+ * Date-only strings ("2026-03-01") are anchored at LOCAL midnight rather
+ * than handed to `new Date()`, which parses them as UTC and then renders
+ * the PREVIOUS day everywhere west of Greenwich. That was a live bug:
+ * an application's start date read a day early on the list screen while
+ * the detail screen — which parsed it locally — read correctly. Doing it
+ * here means every caller is right by default instead of each screen
+ * needing to remember its own workaround.
+ */
 export function fmtDate(value: string | Date | null | undefined): string {
   if (!value) return DASH;
-  const d = value instanceof Date ? value : new Date(value);
+  // isDateOnly is a STRICT full match: a genuine timestamp
+  // ("2026-03-01T23:00:00Z") still goes through `new Date()` so it keeps
+  // rendering in the viewer's zone, which for a real instant is correct.
+  const d =
+    typeof value === 'string' && isDateOnly(value)
+      ? (parseDateOnly(value) ?? new Date(value))
+      : new Date(value as string | number | Date);
   if (Number.isNaN(d.getTime())) return DASH;
   return d.toLocaleDateString(EN_US, {
     year: 'numeric',

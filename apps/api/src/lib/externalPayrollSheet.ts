@@ -119,7 +119,8 @@ export async function buildExternalPayrollSheet(
     where,
     orderBy: { clockInAt: 'asc' },
     include: {
-      associate: { select: { firstName: true, lastName: true } },
+      // state drives the OT thresholds (see PayrollSheetInputRow.state).
+      associate: { select: { firstName: true, lastName: true, state: true } },
       breaks: true,
     },
     take: MAX_ENTRIES,
@@ -132,6 +133,7 @@ export async function buildExternalPayrollSheet(
       clockInAt: e.clockInAt,
       clockOutAt: e.clockOutAt,
       breaks: e.breaks,
+      state: e.associate.state,
     })),
   );
 

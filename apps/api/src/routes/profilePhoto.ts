@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { PROFILE_PHOTO_MAX_BYTES } from '@alto-people/shared';
 import multer from 'multer';
 import { randomUUID } from 'node:crypto';
 import { writeFile, unlink } from 'node:fs/promises';
@@ -21,7 +22,7 @@ import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
  */
 export const profilePhotoRouter = Router();
 
-const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+const MAX_BYTES = PROFILE_PHOTO_MAX_BYTES;
 const ALLOWED_MIMES = new Set([
   'image/png',
   'image/jpeg',

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import { useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2, Upload } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
@@ -13,7 +14,7 @@ import { Field, SubmitRow, TaskShell, inputCls } from './ProfileInfoTask';
 const SSN_PATTERN = /^\d{3}-?\d{2}-?\d{4}$/;
 
 const CARD_ACCEPTED_MIMES = 'application/pdf,image/png,image/jpeg,image/webp';
-const CARD_MAX_BYTES = 10 * 1024 * 1024;
+const CARD_MAX_BYTES = UPLOAD_MAX_BYTES;
 
 export function W4Task() {
   const { applicationId } = useParams<{ applicationId: string }>();

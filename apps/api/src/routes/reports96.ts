@@ -302,12 +302,26 @@ reports96Router.get('/reports/:id', VIEW, async (req, res) => {
   if (!r.isPublic && r.createdById !== req.user!.id) {
     throw new HttpError(403, 'forbidden', 'This report is private.');
   }
+  // `spec` is a raw Json column. Returning it unvalidated meant the web —
+  // which types it as a fully-required ReportSpec and dereferences
+  // `.columns` — white-screened on any legacy or hand-edited row. Parse
+  // it here so a malformed spec is a clean 422 naming the report, not a
+  // crash in the builder.
+  const spec = SpecSchema.safeParse(r.spec);
+  if (!spec.success) {
+    throw new HttpError(
+      422,
+      'invalid_spec',
+      `"${r.name}" has a saved definition this version can't read. Rebuild it from the report builder.`,
+      spec.error.flatten(),
+    );
+  }
   res.json({
     id: r.id,
     name: r.name,
     description: r.description,
     entity: r.entity,
-    spec: r.spec,
+    spec: spec.data,
     isPublic: r.isPublic,
     createdAt: r.createdAt.toISOString(),
   });

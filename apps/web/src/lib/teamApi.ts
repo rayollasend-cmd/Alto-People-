@@ -47,13 +47,15 @@ export interface TeamTimeEntry {
   status: 'ACTIVE' | 'COMPLETED' | 'APPROVED' | 'REJECTED';
   notes: string | null;
   rejectionReason: string | null;
-  payRate: string | null;
+  payRate: number | null;
 }
 
 export interface TeamTimeOffRequest {
   id: string;
   associateId: string;
-  associateName: string;
+  /** Null when the associate record was removed — the API returns null
+   *  here and this was declared non-null, so string methods on it threw. */
+  associateName: string | null;
   category: string;
   startDate: string;
   endDate: string;
