@@ -67,6 +67,9 @@ import {
   ymdLocal,
   ymdToIsoEndExclusive,
   ymdToIsoStart,
+  zonedDayKey,
+  zonedMinutesOfDay,
+  zonedWallTimeToUtc,
 } from '@/lib/format';
 import {
   AssociatePicker,
@@ -566,7 +569,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     [setFilter],
   );
 
+  // Sequence-guarded like the scheduling grid's refresh: filters, dates,
+  // and the search debounce all re-fire this, and without the guard a slow
+  // earlier response could land LAST and repaint stale rows (plus the wrong
+  // truncated flag) over the fresher result.
+  const queueReqSeq = useRef(0);
   const refresh = useCallback(async () => {
+    const seq = ++queueReqSeq.current;
     try {
       setError(null);
       const res = await listAdminTimeEntries({
@@ -578,11 +587,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         ...(clientFilter ? { clientId: clientFilter } : {}),
         ...(locationFilter ? { locationId: locationFilter } : {}),
       });
+      if (seq !== queueReqSeq.current) return; // newer request in flight
       setEntries(res.entries);
       setTruncated(Boolean(res.truncated));
       // Selection only valid on the COMPLETED filter; clear when refreshing.
       setSelected(new Set());
     } catch (err) {
+      if (seq !== queueReqSeq.current) return;
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
   }, [filter, fromYmd, toYmd, appliedSearch, focusAssociate, clientFilter, locationFilter]);
@@ -602,12 +613,17 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
 
   const refreshPendingCount = useCallback(async () => {
     try {
-      const res = await countAdminTimeEntries('COMPLETED');
+      // Follows the client/site filter so the badge and the queue agree;
+      // still all-time — it's the total backlog, not the date window.
+      const res = await countAdminTimeEntries('COMPLETED', {
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+        ...(locationFilter ? { locationId: locationFilter } : {}),
+      });
       setPendingCount(res.count);
     } catch {
       // KPI is best-effort; leave previous value.
     }
-  }, []);
+  }, [clientFilter, locationFilter]);
 
   // Refresh after an admin create/edit/clock-out — only the visible tab's
   // data plus the pending-review KPI. The other tab refetches on switch.
@@ -2069,30 +2085,11 @@ function pad2(n: number): string {
 }
 
 // The drawer edits ONE calendar date plus separate wall-clock times, so the
-// admin never types the same date twice. These helpers split a Date into
-// those pieces and recombine them (local time throughout, matching how the
-// old datetime-local inputs behaved).
-function dateOf(d: Date): string {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-
-function timeOf(d: Date): string {
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-}
-
-// dayOffset shifts the calendar day — how an overnight clock-out ("ends
-// next day") is represented without asking for a second date.
-function combineLocal(dateStr: string, timeStr: string, dayOffset = 0): Date {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  const [hh, mm] = timeStr.split(':').map(Number);
-  return new Date(y, m - 1, d + dayOffset, hh, mm);
-}
-
-function calendarDayDiff(a: Date, b: Date): number {
-  const a0 = new Date(a.getFullYear(), a.getMonth(), a.getDate()).getTime();
-  const b0 = new Date(b.getFullYear(), b.getMonth(), b.getDate()).getTime();
-  return Math.round((b0 - a0) / 86_400_000);
-}
+// admin never types the same date twice. The wall-clock helpers
+// (dateOfWall/timeOfWall/combineWall/wallDayDiff) live INSIDE
+// TimeEntryFormDrawer — they close over the entry's site zone. The old
+// module-level browser-local copies are gone: they were the bug (a CT
+// admin typing "9:00" for an ET entry stored 9:00 CT).
 
 function fmtDurMin(min: number): string {
   const whole = Math.round(min);
@@ -2228,17 +2225,40 @@ function TimeEntryFormDrawer({
       ? { id: entry.associateId, name: entry.associateName ?? '—' }
       : null,
   );
+  // Every wall-clock string in this form speaks the SITE's clock when the
+  // entry has one. The queue and drawer render punches in the site zone,
+  // but this form used to parse typed times browser-locally — a CT admin
+  // typing "9:00" for an ET entry stored 9:00 CT (= 10:00 ET). Null zone
+  // (create mode, or a legacy entry with no location) = browser-local,
+  // exactly the old behavior.
+  const tz = mode === 'edit' ? entry?.locationTimezone ?? null : null;
+  const dateOfWall = (d: Date) => zonedDayKey(d, tz);
+  const timeOfWall = (d: Date) => {
+    const mins = zonedMinutesOfDay(d, tz);
+    return `${pad2(Math.floor(mins / 60))}:${pad2(mins % 60)}`;
+  };
+  const combineWall = (ds: string, ts: string, dayOffset = 0): Date => {
+    const [y, m, dd] = ds.split('-').map(Number);
+    const [hh, mm] = ts.split(':').map(Number);
+    return zonedWallTimeToUtc(y, m, dd + dayOffset, hh, mm, tz);
+  };
+  const wallDayDiff = (a: Date, b: Date) =>
+    Math.round(
+      (Date.parse(`${zonedDayKey(b, tz)}T00:00:00Z`) -
+        Date.parse(`${zonedDayKey(a, tz)}T00:00:00Z`)) /
+        86_400_000,
+    );
   const editIn = mode === 'edit' && entry ? new Date(entry.clockInAt) : null;
   const editOut =
     mode === 'edit' && entry?.clockOutAt ? new Date(entry.clockOutAt) : null;
-  const [dateStr, setDateStr] = useState(dateOf(editIn ?? new Date()));
-  const [startTime, setStartTime] = useState(editIn ? timeOf(editIn) : '');
-  const [endTime, setEndTime] = useState(editOut ? timeOf(editOut) : '');
+  const [dateStr, setDateStr] = useState(dateOfWall(editIn ?? new Date()));
+  const [startTime, setStartTime] = useState(editIn ? timeOfWall(editIn) : '');
+  const [endTime, setEndTime] = useState(editOut ? timeOfWall(editOut) : '');
   // Calendar days between clock-in and clock-out. The common overnight case
   // (end < start) is derived automatically; this only preserves rarer spans
   // loaded from an existing entry.
   const [extraDays, setExtraDays] = useState(
-    editIn && editOut ? calendarDayDiff(editIn, editOut) : 0,
+    editIn && editOut ? wallDayDiff(editIn, editOut) : 0,
   );
   const [notes, setNotes] = useState(
     mode === 'edit' && entry ? entry.notes ?? '' : '',
@@ -2256,8 +2276,8 @@ function TimeEntryFormDrawer({
     mode === 'edit' && entry?.breaks
       ? entry.breaks.map((b) => ({
           id: b.id,
-          startTime: timeOf(new Date(b.startedAt)),
-          endTime: b.endedAt ? timeOf(new Date(b.endedAt)) : '',
+          startTime: timeOfWall(new Date(b.startedAt)),
+          endTime: b.endedAt ? timeOfWall(new Date(b.endedAt)) : '',
         }))
       : [],
   );
@@ -2272,16 +2292,16 @@ function TimeEntryFormDrawer({
   const overnight = !!startTime && !!endTime && endTime < startTime;
   const endOffset = overnight ? Math.max(1, extraDays) : extraDays;
   const startDate =
-    dateStr && startTime ? combineLocal(dateStr, startTime) : null;
+    dateStr && startTime ? combineWall(dateStr, startTime) : null;
   const endDate =
     dateStr && startTime && endTime
-      ? combineLocal(dateStr, endTime, endOffset)
+      ? combineWall(dateStr, endTime, endOffset)
       : null;
 
   // A break time earlier than clock-in belongs to the next calendar day
   // (overnight shifts).
   const breakDate = (t: string): Date =>
-    combineLocal(dateStr, t, startTime && t < startTime ? 1 : 0);
+    combineWall(dateStr, t, startTime && t < startTime ? 1 : 0);
 
   // The associate's rostered shift for the picked day — one click prefills
   // the times instead of retyping what scheduling already knows.
@@ -2293,8 +2313,8 @@ function TimeEntryFormDrawer({
     }
     let cancelled = false;
     listShifts({
-      from: combineLocal(dateStr, '00:00').toISOString(),
-      to: combineLocal(dateStr, '00:00', 1).toISOString(),
+      from: combineWall(dateStr, '00:00').toISOString(),
+      to: combineWall(dateStr, '00:00', 1).toISOString(),
     })
       .then((r) => {
         if (cancelled) return;
@@ -2319,18 +2339,18 @@ function TimeEntryFormDrawer({
     if (!schedShift) return;
     const s = new Date(schedShift.startsAt);
     const e = new Date(schedShift.endsAt);
-    setDateStr(dateOf(s));
-    setStartTime(timeOf(s));
-    setEndTime(timeOf(e));
-    setExtraDays(calendarDayDiff(s, e));
+    setDateStr(dateOfWall(s));
+    setStartTime(timeOfWall(s));
+    setEndTime(timeOfWall(e));
+    setExtraDays(wallDayDiff(s, e));
   };
 
   const setEndNow = () => {
     const now = new Date();
-    setEndTime(timeOf(now));
+    setEndTime(timeOfWall(now));
     if (dateStr) {
       setExtraDays(
-        Math.max(0, calendarDayDiff(combineLocal(dateStr, '00:00'), now)),
+        Math.max(0, wallDayDiff(combineWall(dateStr, '00:00'), now)),
       );
     }
   };
@@ -2350,8 +2370,8 @@ function TimeEntryFormDrawer({
       ...rows,
       {
         id: null,
-        startTime: timeOf(new Date(bs)),
-        endTime: timeOf(new Date(bs + dur)),
+        startTime: timeOfWall(new Date(bs)),
+        endTime: timeOfWall(new Date(bs + dur)),
       },
     ]);
   };
@@ -2381,8 +2401,8 @@ function TimeEntryFormDrawer({
       setErr('Clock-in time is required.');
       return;
     }
-    const inDate = combineLocal(dateStr, startTime);
-    const outDate = endTime ? combineLocal(dateStr, endTime, endOffset) : null;
+    const inDate = combineWall(dateStr, startTime);
+    const outDate = endTime ? combineWall(dateStr, endTime, endOffset) : null;
     if (outDate && outDate.getTime() <= inDate.getTime()) {
       setErr('Clock-out must be after clock-in.');
       return;
@@ -2541,6 +2561,12 @@ function TimeEntryFormDrawer({
             <FieldLabel>Associate</FieldLabel>
             <div className="text-white">{entry?.associateName ?? '—'}</div>
           </div>
+        )}
+        {tz && tz !== browserTimeZone() && (
+          <p className="text-xs2 text-gold">
+            Times are entered in {tzAbbrev(tz)} — the work site&apos;s clock,
+            matching the queue and drawer.
+          </p>
         )}
         <div>
           <FieldLabel>Date</FieldLabel>
