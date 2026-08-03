@@ -56,13 +56,14 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
+import { ShiftTimeline } from './ShiftTimeline';
+import { fmtPunchDateTime, fmtPunchTime, formatHM, punchDayOffset } from './punchFormat';
 import {
   browserTimeZone,
   fmtDateTime,
   fmtDateTz,
   fmtPayRate,
   fmtTime,
-  fmtTimeTz,
   tzAbbrev,
   ymdLocal,
   ymdToIsoEndExclusive,
@@ -122,34 +123,8 @@ const STATUS_FILTERS: Array<{ value: TimeEntryStatus | 'ALL'; label: string }> =
   { value: 'ALL', label: 'All' },
 ];
 
-/**
- * Punch time on the SITE's wall clock, not the reviewer's browser clock.
- *
- * The queue used to render fmtTime/fmtDateTime (browser-local, unlabelled)
- * while the Fieldglass timesheet rendered a hardcoded America/New_York —
- * the same punch showed two different times on the two screens, which users
- * reported as "the clock-in times don't match". Entries now carry their
- * Location.timezone; when it differs from the viewer's zone the time gets
- * an abbreviation (9:00 AM CDT) so the number explains itself. Entries with
- * no location (legacy rows) fall back to browser-local, exactly as before.
- */
-function fmtPunchTime(iso: string, tz: string | null | undefined): string {
-  if (!tz) return fmtTime(iso);
-  const base = fmtTimeTz(iso, tz);
-  return tz !== browserTimeZone() ? `${base} ${tzAbbrev(tz, iso)}` : base;
-}
-
-function fmtPunchDateTime(iso: string, tz: string | null | undefined): string {
-  if (!tz) return fmtDateTime(iso);
-  return `${fmtDateTz(iso, tz)}, ${fmtPunchTime(iso, tz)}`;
-}
-
-function formatHM(mins: number): string {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  if (h === 0) return `${m}m`;
-  return `${h}h ${m.toString().padStart(2, '0')}m`;
-}
+// Punch formatters live in ./punchFormat so the ShiftTimeline and every
+// other single-entry surface renders identically to the queue.
 
 // PERF: the desktop table and the phone card stack used to BOTH mount — CSS
 // (`hidden md:block` / `md:hidden`) hid one, but React still committed up to
@@ -188,22 +163,33 @@ const STATUS_LABELS: Record<TimeEntryStatus, string> = {
 };
 
 // Net-first duration. The headline figure is worked-time NET of breaks —
-// what payroll actually pays — with the gross span and break time as a
-// subline whenever they differ. Showing only gross made approvals
-// disagree with every money surface (summary export, OT, accrual).
+// what payroll actually pays. The subline used to be a bare equation
+// fragment ("9h 00m gross − 0h 30m break") that users had to decode; it
+// now reads as facts: the on-site span and how many breaks were taken.
 function DurationCell({ entry }: { entry: TimeEntry }) {
   const net = entry.netMinutes ?? entry.minutesElapsed;
   const breakMin = Math.max(0, entry.minutesElapsed - net);
+  const breakCount = entry.breaks?.length ?? (breakMin > 0 ? 1 : 0);
   return (
     <div className="tabular-nums">
       {formatHM(net)}
       {breakMin > 0 && (
-        <div className="text-2xs text-silver/70">
-          {formatHM(entry.minutesElapsed)} gross − {formatHM(breakMin)} break
+        <div className="text-2xs text-silver/70 whitespace-nowrap">
+          {formatHM(entry.minutesElapsed)} on site ·{' '}
+          {breakCount > 1 ? `${breakCount} breaks` : '1 break'} ({formatHM(breakMin)})
         </div>
       )}
     </div>
   );
+}
+
+/** "+1d" tag for punches landing a site-local day after the clock-in, so an
+ *  overnight shift's "Out" column stops reading as the same afternoon. */
+function DayOffsetTag({ entry }: { entry: TimeEntry }) {
+  if (!entry.clockOutAt) return null;
+  const off = punchDayOffset(entry.clockInAt, entry.clockOutAt, entry.locationTimezone);
+  if (off <= 0) return null;
+  return <span className="ml-1 text-2xs text-warning align-super">+{off}d</span>;
 }
 
 // Punch↔shift comparison chip. Entries auto-link to the scheduled shift
@@ -1608,14 +1594,33 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                                 <div className="mt-1.5 flex items-end justify-between gap-3 text-xs2 text-silver">
                                   <span className="tabular-nums">
                                     {fmtPunchDateTime(e.clockInAt, e.locationTimezone)}
-                                    {e.clockOutAt
-                                      ? ` → ${fmtPunchTime(e.clockOutAt, e.locationTimezone)}`
-                                      : ' → —'}
+                                    {e.clockOutAt ? (
+                                      <>
+                                        {` → ${fmtPunchTime(e.clockOutAt, e.locationTimezone)}`}
+                                        <DayOffsetTag entry={e} />
+                                      </>
+                                    ) : (
+                                      ' → —'
+                                    )}
                                   </span>
                                   <span className="tabular-nums text-white">
                                     {formatHM(e.netMinutes ?? e.minutesElapsed)}
                                   </span>
                                 </div>
+                                {(() => {
+                                  const breakMin = Math.max(
+                                    0,
+                                    e.minutesElapsed - (e.netMinutes ?? e.minutesElapsed),
+                                  );
+                                  if (breakMin === 0) return null;
+                                  const n = e.breaks?.length ?? 1;
+                                  return (
+                                    <div className="text-2xs text-silver/70 tabular-nums">
+                                      {formatHM(e.minutesElapsed)} on site ·{' '}
+                                      {n > 1 ? `${n} breaks` : '1 break'} ({formatHM(breakMin)})
+                                    </div>
+                                  );
+                                })()}
                                 <div className="mt-1 empty:hidden">
                                   <LateChip entry={e} />
                                 </div>
@@ -1842,7 +1847,14 @@ const QueueEntryRow = memo(function QueueEntryRow({
         {fmtPunchDateTime(e.clockInAt, e.locationTimezone)}
       </TableCell>
       <TableCell className="tabular-nums">
-        {e.clockOutAt ? fmtPunchTime(e.clockOutAt, e.locationTimezone) : '—'}
+        {e.clockOutAt ? (
+          <>
+            {fmtPunchTime(e.clockOutAt, e.locationTimezone)}
+            <DayOffsetTag entry={e} />
+          </>
+        ) : (
+          '—'
+        )}
       </TableCell>
       <TableCell>
         <DurationCell entry={e} />
@@ -1948,19 +1960,15 @@ function TimeEntryDetailPanel({
           )}
         </div>
 
+        {/* The shift as it happened — bar, punch sequence, totals in one
+            card. Replaces the old scattered layout (clock-in top-left,
+            clock-out top-right, breaks in a separate box below the pay
+            rate) that reviewers had to reassemble mentally. */}
+        <div className="mb-5">
+          <ShiftTimeline entry={entry} />
+        </div>
+
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm mb-5">
-          <DetailRow label="Clock in">
-            {fmtPunchDateTime(entry.clockInAt, entry.locationTimezone)}
-          </DetailRow>
-          <DetailRow label="Clock out">
-            {entry.clockOutAt
-              ? fmtPunchDateTime(entry.clockOutAt, entry.locationTimezone)
-              : 'Still on the clock'}
-          </DetailRow>
-          <DetailRow label="Worked (net of breaks)">
-            {formatHM(entry.netMinutes ?? entry.minutesElapsed)}
-          </DetailRow>
-          <DetailRow label="Gross span">{formatHM(entry.minutesElapsed)}</DetailRow>
           <DetailRow label="Pay rate">
             {entry.payRate != null
               ? fmtPayRate(entry.payRate, 'HOURLY')
@@ -1999,28 +2007,6 @@ function TimeEntryDetailPanel({
             </DetailRow>
           )}
         </dl>
-
-        {entry.breaks && entry.breaks.length > 0 && (
-          <div className="mb-5 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-sm">
-            <div className="text-2xs uppercase tracking-widest text-silver mb-1.5">
-              Breaks
-            </div>
-            <ul className="space-y-1 text-silver">
-              {entry.breaks.map((b) => (
-                <li key={b.id} className="flex items-center justify-between gap-3">
-                  <span>
-                    {b.type === 'MEAL' ? 'Meal' : 'Rest'}{' '}
-                    <span className="tabular-nums">
-                      {fmtPunchTime(b.startedAt, entry.locationTimezone)} –{' '}
-                      {b.endedAt ? fmtPunchTime(b.endedAt, entry.locationTimezone) : 'still open'}
-                    </span>
-                  </span>
-                  <span className="tabular-nums text-white">{formatHM(b.minutes)}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
 
         {entry.anomalies && entry.anomalies.length > 0 && (
           <div className="mb-5 rounded-md border border-warning/40 bg-warning/[0.07] p-3 text-sm">

@@ -29,14 +29,9 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Clock, CalendarRange } from 'lucide-react';
-
-function formatHM(mins: number): string {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  if (h === 0) return `${m}m`;
-  return `${h}h ${m.toString().padStart(2, '0')}m`;
-}
+import { Clock, CalendarRange, ChevronDown } from 'lucide-react';
+import { ShiftTimeline } from './ShiftTimeline';
+import { formatHM } from './punchFormat';
 
 const STATUS_LABELS: Record<TimeEntry['status'], string> = {
   ACTIVE: 'Active',
@@ -78,6 +73,9 @@ function defaultHistoryToYmd(): string {
 export function AssociateTimeView() {
   const [active, setActive] = useState<TimeEntry | null>(null);
   const [entries, setEntries] = useState<TimeEntry[] | null>(null);
+  // History row expanded to its punch timeline. One at a time keeps the
+  // list scannable on a phone.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string>('');
   const [busy, setBusy] = useState(false);
@@ -433,47 +431,69 @@ export function AssociateTimeView() {
           <ul className="space-y-2">
             {entries.map((e) => {
               const anomalies = e.anomalies ?? [];
+              const expanded = expandedId === e.id;
               return (
                 <li
                   key={e.id}
-                  className="flex items-start justify-between gap-4 p-4 bg-navy border border-navy-secondary rounded-lg"
+                  className="bg-navy border border-navy-secondary rounded-lg"
                 >
-                  <div className="min-w-0 flex-1">
-                    <div className="text-white tabular-nums">
-                      {fmtDateTime(e.clockInAt)} –{' '}
-                      {e.clockOutAt ? fmtTime(e.clockOutAt) : '…'}
-                    </div>
-                    <div className="text-sm text-silver">
-                      {formatHM(e.netMinutes ?? e.minutesElapsed)}
-                      {e.netMinutes != null && e.netMinutes < e.minutesElapsed && (
-                        <span className="ml-1 text-silver/70">
-                          ({formatHM(e.minutesElapsed - e.netMinutes)} break)
-                        </span>
-                      )}
-                      {e.jobName && <span className="ml-2">· {e.jobName}</span>}
-                      {e.payRate && (
-                        <span className="ml-2">· {fmtPayRate(e.payRate, 'HOURLY')}</span>
-                      )}
-                      {e.rejectionReason && (
-                        <span className="ml-2 text-alert">· {e.rejectionReason}</span>
-                      )}
-                    </div>
-                    {anomalies.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {anomalies.map((a) => (
-                          <span
-                            key={a}
-                            className="text-xs2 uppercase tracking-widest px-2 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert"
-                          >
-                            {timeAnomalyLabel(a)}
-                          </span>
-                        ))}
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
+                    onClick={() => setExpandedId(expanded ? null : e.id)}
+                    className="flex w-full items-start justify-between gap-4 p-4 text-left rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-white tabular-nums">
+                        {fmtDateTime(e.clockInAt)} –{' '}
+                        {e.clockOutAt ? fmtTime(e.clockOutAt) : '…'}
                       </div>
-                    )}
-                  </div>
-                  <Badge className="shrink-0" variant={STATUS_VARIANTS[e.status]}>
-                    {STATUS_LABELS[e.status]}
-                  </Badge>
+                      <div className="text-sm text-silver">
+                        {formatHM(e.netMinutes ?? e.minutesElapsed)}
+                        {e.netMinutes != null && e.netMinutes < e.minutesElapsed && (
+                          <span className="ml-1 text-silver/70">
+                            ({formatHM(e.minutesElapsed - e.netMinutes)} break)
+                          </span>
+                        )}
+                        {e.jobName && <span className="ml-2">· {e.jobName}</span>}
+                        {e.payRate && (
+                          <span className="ml-2">· {fmtPayRate(e.payRate, 'HOURLY')}</span>
+                        )}
+                        {e.rejectionReason && (
+                          <span className="ml-2 text-alert">· {e.rejectionReason}</span>
+                        )}
+                      </div>
+                      {anomalies.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {anomalies.map((a) => (
+                            <span
+                              key={a}
+                              className="text-xs2 uppercase tracking-widest px-2 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert"
+                            >
+                              {timeAnomalyLabel(a)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <span className="flex shrink-0 items-center gap-2">
+                      <Badge variant={STATUS_VARIANTS[e.status]}>
+                        {STATUS_LABELS[e.status]}
+                      </Badge>
+                      <ChevronDown
+                        aria-hidden
+                        className={cn(
+                          'h-4 w-4 text-silver/60 transition-transform',
+                          expanded && 'rotate-180',
+                        )}
+                      />
+                    </span>
+                  </button>
+                  {expanded && (
+                    <div className="px-4 pb-4">
+                      <ShiftTimeline entry={e} />
+                    </div>
+                  )}
                 </li>
               );
             })}
