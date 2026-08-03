@@ -42,19 +42,25 @@ const ENTITY_COLUMNS: Record<string, Record<string, string>> = {
     state: 'state',
     createdAt: 'createdAt',
   },
+  // The right-hand side must be a REAL Prisma scalar. Several of these
+  // named columns that don't exist on the model (clockIn/clockOut,
+  // runId, grossAmount/netAmount), so selecting or filtering on them
+  // threw a Prisma validation error and surfaced as a 500 — those
+  // report columns had never worked. Public keys are kept stable so
+  // saved reports don't break.
   TIME_ENTRY: {
     id: 'id',
     associateId: 'associateId',
-    clockIn: 'clockIn',
-    clockOut: 'clockOut',
+    clockIn: 'clockInAt',
+    clockOut: 'clockOutAt',
     status: 'status',
   },
   PAYROLL_ITEM: {
     id: 'id',
-    runId: 'runId',
+    runId: 'payrollRunId',
     associateId: 'associateId',
-    grossAmount: 'grossAmount',
-    netAmount: 'netAmount',
+    grossAmount: 'grossPay',
+    netAmount: 'netPay',
   },
   PAYROLL_RUN: {
     id: 'id',
