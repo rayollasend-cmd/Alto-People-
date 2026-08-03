@@ -9,7 +9,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { useVirtualizer } from '@tanstack/react-virtual';
+import { VirtualizedRows } from './VirtualizedRows';
 import { Plus, GripVertical } from 'lucide-react';
 import type { AssociateLite, Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
@@ -250,34 +250,42 @@ export function WeekCalendarView({
     return out;
   }, [shifts, dayKeys, displayTimeZone]);
 
-  // Per-associate weekly minutes (only counting shifts in the visible range).
+  // Per-associate weekly minutes — SAME membership rule as dayTotals and the
+  // cells (store-zone day key inside the visible columns), so the rail badge
+  // and the 36–40h overtime tint always agree with the chips on screen. The
+  // old browser-local-ms window missed store-zone edge shifts that the grid
+  // renders (and, since the fetch window is padded, counted padding days).
   const weeklyMinutes = useMemo(() => {
+    const daySet = new Set(dayKeys);
     const out = new Map<string, number>();
-    const weekEnd = addDays(weekStart, dayCount).getTime();
-    const weekStartMs = weekStart.getTime();
     for (const s of shifts) {
       if (!s.assignedAssociateId) continue;
-      const t = new Date(s.startsAt).getTime();
-      if (t < weekStartMs || t >= weekEnd) continue;
+      if (s.status === 'CANCELLED') continue;
+      if (!daySet.has(zonedDayKey(s.startsAt, displayTimeZone))) continue;
       out.set(
         s.assignedAssociateId,
         (out.get(s.assignedAssociateId) ?? 0) + shiftMinutes(s)
       );
     }
     return out;
-  }, [shifts, weekStart, dayCount]);
+  }, [shifts, dayKeys, displayTimeZone]);
 
   // Decide which associate rows to render.
-  // Default = those with shifts in the week (compact view).
+  // Default = those with shifts in the VISIBLE week (compact view) — the
+  // membership check keeps an associate whose only shift sits on a padded
+  // fetch day from getting a phantom empty row.
   // showAllAssociates = the full roster (Sling default for managers).
   const visibleAssociates = useMemo(() => {
     if (showAllAssociates) return associates;
+    const daySet = new Set(dayKeys);
     const withShifts = new Set<string>();
     for (const s of shifts) {
-      if (s.assignedAssociateId) withShifts.add(s.assignedAssociateId);
+      if (!s.assignedAssociateId) continue;
+      if (!daySet.has(zonedDayKey(s.startsAt, displayTimeZone))) continue;
+      withShifts.add(s.assignedAssociateId);
     }
     return associates.filter((a) => withShifts.has(a.id));
-  }, [associates, shifts, showAllAssociates]);
+  }, [associates, shifts, showAllAssociates, dayKeys, displayTimeZone]);
 
   const today = startOfDay(new Date());
 
@@ -655,79 +663,6 @@ const Row = memo(function Row({
     </div>
   );
 });
-
-/**
- * Roster rows, windowed once the roster gets big.
- *
- * The grid renders one droppable per associate × day, so an org-wide view
- * at the server's 500-row page cap was mounting ~3,500 `useDroppable`
- * registrations — and dnd-kit runs collision detection against every
- * registered droppable on each drag move, so drag latency scaled with
- * roster size rather than with what's on screen.
- *
- * Below the threshold nothing changes: the plain path keeps the page as the
- * scroller, which is the familiar behaviour for a normal-sized team. Past it
- * the body becomes its own scroll container and only the visible window is
- * mounted. Rows are genuinely variable height (a day with three shifts is
- * ~3× a day with one), so each row is measured via `measureElement` rather
- * than assumed — a fixed estimate would drift the scrollbar on dense weeks.
- */
-const VIRTUALIZE_ROWS_THRESHOLD = 60;
-const ROW_ESTIMATE_PX = 56;
-const ROW_OVERSCAN = 6;
-const ROWS_CONTAINER_MAX_VH = 'max-h-[calc(100vh-320px)]';
-
-function VirtualizedRows({
-  count,
-  renderRow,
-}: {
-  count: number;
-  renderRow: (index: number) => React.ReactNode;
-}) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const virtualizer = useVirtualizer({
-    count,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: () => ROW_ESTIMATE_PX,
-    overscan: ROW_OVERSCAN,
-  });
-
-  if (count <= VIRTUALIZE_ROWS_THRESHOLD) {
-    return <>{Array.from({ length: count }, (_, i) => renderRow(i))}</>;
-  }
-
-  const items = virtualizer.getVirtualItems();
-  const totalSize = virtualizer.getTotalSize();
-  const padTop = items.length > 0 ? items[0].start : 0;
-  const padBottom =
-    items.length > 0 ? totalSize - items[items.length - 1].end : 0;
-
-  return (
-    // overflow-x-clip is load-bearing, same reason as Layout.tsx:147 —
-    // overflow-y:auto silently computes overflow-x to auto, which would make
-    // this a horizontal scroll container too. The rail column is
-    // `sticky left-0` and resolves against the nearest horizontal scroller,
-    // so that would pin the rail to THIS box instead of the outer
-    // overflow-x-auto and the names would stop tracking the day columns.
-    // `clip` doesn't create a scroll container, so sticky still resolves out.
-    <div
-      ref={scrollRef}
-      className={cn('overflow-y-auto overflow-x-clip', ROWS_CONTAINER_MAX_VH)}
-    >
-      {padTop > 0 && <div aria-hidden style={{ height: padTop }} />}
-      {items.map((v) => (
-        <div
-          key={v.key}
-          data-index={v.index}
-          ref={virtualizer.measureElement}
-        >
-          {renderRow(v.index)}
-        </div>
-      ))}
-      {padBottom > 0 && <div aria-hidden style={{ height: padBottom }} />}
-    </div>
-  );
-}
 
 function RailCell({
   label,

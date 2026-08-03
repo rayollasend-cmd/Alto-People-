@@ -22,6 +22,7 @@ import {
   zonedWallTimeToUtc,
 } from '@/lib/format';
 import { addDays, sameDay, shiftMinutes, startOfDay, ymd } from './calendarDates';
+import { VirtualizedRows } from './VirtualizedRows';
 import {
   ShiftHoverCard,
   useShiftHoverCard,
@@ -225,12 +226,17 @@ export function TimeGridWeekView({
 
   const visibleAssociates = useMemo(() => {
     if (showAllAssociates) return associates;
+    // Membership-checked (visible columns only) so an associate whose only
+    // shift sits on a padded fetch day doesn't get a phantom empty row.
+    const daySet = new Set(dayKeys);
     const withShifts = new Set<string>();
     for (const s of shifts) {
-      if (s.assignedAssociateId) withShifts.add(s.assignedAssociateId);
+      if (!s.assignedAssociateId) continue;
+      if (!daySet.has(zonedDayKey(s.startsAt, displayTimeZone))) continue;
+      withShifts.add(s.assignedAssociateId);
     }
     return associates.filter((a) => withShifts.has(a.id));
-  }, [associates, shifts, showAllAssociates]);
+  }, [associates, shifts, showAllAssociates, dayKeys, displayTimeZone]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -315,9 +321,15 @@ export function TimeGridWeekView({
   // selected range fits on screen without horizontal scrolling. minWidth only
   // forces a scroller once columns would fall below a ~100px readable floor
   // (very wide ranges or a small viewport) — a normal 7-day week always fits.
-  const gridStyle = {
+  //
+  // The column template lives on EACH row group (not one board-wide grid):
+  // identical templates on full-width siblings align perfectly, and
+  // independent block-level rows are what lets VirtualizedRows window the
+  // roster — the single-grid version mounted every associate × day droppable
+  // at once, so drag latency scaled with roster size (same disease the
+  // pivot week view fixed).
+  const colStyle = {
     gridTemplateColumns: `200px 40px repeat(${dayCount}, minmax(0, 1fr))`,
-    minWidth: `${200 + 40 + dayCount * 100}px`,
   };
 
   return (
@@ -328,8 +340,9 @@ export function TimeGridWeekView({
       onDragCancel={() => setActiveDrag(null)}
     >
       <div className="rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto overscroll-x-contain">
-        <div className="grid" style={gridStyle}>
+        <div style={{ minWidth: `${200 + 40 + dayCount * 100}px` }}>
           {/* Header */}
+          <div className="grid" style={colStyle}>
           <div className="sticky left-0 z-20 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 text-2xs uppercase tracking-wider text-silver">
             Schedule
           </div>
@@ -366,7 +379,10 @@ export function TimeGridWeekView({
             );
           })}
 
+          </div>
+
           {/* Unassigned row */}
+          <div className="grid" style={colStyle}>
           <RailCell
             label="Unassigned"
             sublabel="OPEN shifts"
@@ -396,22 +412,26 @@ export function TimeGridWeekView({
               onTemplateDrop={onTemplateDrop}
             />
           ))}
+          </div>
 
-          {/* Associate rows */}
+          {/* Associate rows — windowed past 60 so an org-wide roster doesn't
+              mount hundreds of hour-grid cells and droppables at once. */}
           {visibleAssociates.length === 0 && (
-            <div
-              className="px-4 py-6 text-center text-sm text-silver/70"
-              style={{ gridColumn: '1 / -1' }}
-            >
+            <div className="px-4 py-6 text-center text-sm text-silver/70">
               No associates have shifts in this range.
             </div>
           )}
-          {visibleAssociates.map((a) => {
+          <VirtualizedRows
+            count={visibleAssociates.length}
+            estimateRowPx={TOTAL_HEIGHT + 2}
+            renderRow={(index) => {
+            const a = visibleAssociates[index];
             const initials = `${a.firstName[0] ?? ''}${a.lastName[0] ?? ''}`.toUpperCase();
             const fit = availabilityFit?.get(a.id);
             return (
               <Row
                 key={a.id}
+                colStyle={colStyle}
                 initials={initials}
                 firstName={a.firstName}
                 lastName={a.lastName}
@@ -457,9 +477,11 @@ export function TimeGridWeekView({
                 })}
               </Row>
             );
-          })}
+          }}
+          />
 
           {/* Daily totals footer */}
+          <div className="grid" style={colStyle}>
           <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-t border-b border-r border-navy-secondary px-3 py-1.5 text-2xs uppercase tracking-wider text-silver/70 flex items-center">
             Daily totals
           </div>
@@ -486,6 +508,7 @@ export function TimeGridWeekView({
               </div>
             );
           })}
+          </div>
         </div>
       </div>
 
@@ -540,6 +563,7 @@ const Row = memo(function Row({
   firstName,
   lastName,
   scheduledMinutes,
+  colStyle,
   children,
 }: {
   initials: string;
@@ -547,6 +571,9 @@ const Row = memo(function Row({
   lastName: string;
   /** Scheduled (non-CANCELLED) minutes within the visible range. */
   scheduledMinutes: number;
+  /** The board's shared column template — each row is its own grid so the
+   *  roster can be windowed (identical templates align across siblings). */
+  colStyle: React.CSSProperties;
   children: React.ReactNode;
 }) {
   const hours = scheduledMinutes / 60;
@@ -555,7 +582,7 @@ const Row = memo(function Row({
     hours >= 40 ? 'text-alert' : hours >= 36 ? 'text-warning' : 'text-silver/70';
   const otLabel = hours >= 40 ? 'OT' : hours >= 36 ? 'near OT' : null;
   return (
-    <>
+    <div className="grid" style={colStyle}>
       <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 flex items-center gap-2.5">
         <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-2xs font-semibold flex items-center justify-center shrink-0">
           {initials || '?'}
@@ -573,7 +600,7 @@ const Row = memo(function Row({
         </div>
       </div>
       {children}
-    </>
+    </div>
   );
 });
 
