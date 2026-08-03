@@ -1259,7 +1259,8 @@ function I9Card({
                         {d.filename}
                       </span>
                       <span className="text-2xs uppercase tracking-wider text-silver/70">
-                        {I9_DOC_KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' ')}
+                        {d.i9DocTitle ?? I9_DOC_KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' ')}
+                        {d.i9List ? ` · List ${d.i9List}` : ''}
                         {d.side
                           ? ` · ${d.side === 'FRONT' ? 'Front' : 'Back'}`
                           : ''}

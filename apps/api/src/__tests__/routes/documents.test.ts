@@ -94,6 +94,45 @@ describe('POST /documents/me/upload', () => {
     expect(res.body.error?.code).toBe('invalid_kind');
   });
 
+  it('stores the federal catalog identity when i9DocTitle is provided', async () => {
+    const { user } = await seedAssociate();
+    const a = await loginAs(user.email);
+    const res = await a
+      .post('/documents/me/upload')
+      .field('kind', 'ID')
+      .field('i9DocTitle', 'U.S. Passport or Passport Card')
+      .field('side', 'FRONT')
+      .attach('file', TINY_PNG, { filename: 'passport.png', contentType: 'image/png' });
+    expect(res.status).toBe(201);
+    expect(res.body.i9DocTitle).toBe('U.S. Passport or Passport Card');
+    expect(res.body.i9List).toBe('A');
+    expect(res.body.side).toBe('FRONT');
+
+    const row = await prisma.documentRecord.findUniqueOrThrow({ where: { id: res.body.id } });
+    expect(row.i9List).toBe('A');
+    expect(row.side).toBe('FRONT');
+  });
+
+  it('rejects an unknown i9DocTitle and a title/kind mismatch', async () => {
+    const { user } = await seedAssociate();
+    const a = await loginAs(user.email);
+    const unknown = await a
+      .post('/documents/me/upload')
+      .field('kind', 'ID')
+      .field('i9DocTitle', 'Library card')
+      .attach('file', TINY_PNG, { filename: 'x.png', contentType: 'image/png' });
+    expect(unknown.status).toBe(400);
+    expect(unknown.body.error?.code).toBe('invalid_i9_doc');
+
+    const mismatch = await a
+      .post('/documents/me/upload')
+      .field('kind', 'ID')
+      .field('i9DocTitle', 'Social Security card (unrestricted)')
+      .attach('file', TINY_PNG, { filename: 'x.png', contentType: 'image/png' });
+    expect(mismatch.status).toBe(400);
+    expect(mismatch.body.error?.code).toBe('i9_kind_mismatch');
+  });
+
   it('returns 400 for unsupported mime type', async () => {
     const { user } = await seedAssociate();
     const a = await loginAs(user.email);

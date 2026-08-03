@@ -116,6 +116,24 @@ enum DocumentKind {
   OTHER
 }
 
+// Which federal I-9 list a document satisfies. A = identity AND work
+// authorization (sufficient alone); B = identity only; C = work
+// authorization only (B must pair with C). NULL on non-I-9 documents and
+// on everything uploaded before the catalog existed — legacy uploads are
+// never reclassified or invalidated.
+enum I9DocList {
+  A
+  B
+  C
+}
+
+// Which face of a card a file shows. NULL = single-sided/unknown (legacy
+// uploads keep the old filename-based inference as a fallback).
+enum DocSide {
+  FRONT
+  BACK
+}
+
 enum DocumentStatus {
   UPLOADED
   VERIFIED
@@ -1101,6 +1119,14 @@ model DocumentRecord {
   mimeType            String
   size                Int
   status              DocumentStatus                @default(UPLOADED)
+  // I-9 document catalog (2026-08). The specific federal document this file
+  // is ("U.S. Passport", "Driver's license", …) and the list it satisfies —
+  // the associate declares it at upload, so HR verification stops guessing
+  // from image.jpg thumbnails. All three NULLABLE by design: legacy uploads
+  // and non-I-9 documents carry NULLs and are never reclassified.
+  i9DocTitle          String?                       @db.VarChar(80)
+  i9List              I9DocList?
+  side                DocSide?
   expiresAt           DateTime?                     @db.Timestamptz(6)
   rejectionReason     String?
   verifiedById        String?                       @db.Uuid

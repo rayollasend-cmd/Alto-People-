@@ -7,6 +7,8 @@ import {
   BackgroundCheckAuthorizeInputSchema,
   BulkInviteInputSchema,
   LocationListResponseSchema,
+  i9CatalogEntry,
+  i9SetSatisfied,
   BulkResendInputSchema,
   DirectDepositInputSchema,
   J1UpsertInputSchema,
@@ -2511,18 +2513,33 @@ onboardingRouter.post('/applications/:id/i9/submit', async (req, res, next) => {
       );
     }
 
-    const docCount = await prisma.documentRecord.count({
+    const docs = await prisma.documentRecord.findMany({
+      take: 100,
       where: {
         associateId: app.associateId,
         deletedAt: null,
+        status: { not: 'REJECTED' },
         kind: { in: ['I9_SUPPORTING', 'ID', 'SSN_CARD', 'J1_VISA', 'J1_DS2019'] },
       },
+      select: { i9List: true },
     });
-    if (docCount === 0) {
+    if (docs.length === 0) {
       throw new HttpError(
         400,
         'no_documents',
         'Upload at least one identification document before submitting.'
+      );
+    }
+    // Federal combination rule: ONE List A document, or List B + List C.
+    // Applies only to catalog-classified uploads — anything unclassified
+    // (uploaded before the catalog existed, or a J-1 visa/DS-2019) passes
+    // under the old any-document rule so nobody mid-onboarding gets stuck.
+    const hasLegacy = docs.some((d) => d.i9List == null);
+    if (!hasLegacy && !i9SetSatisfied(docs.map((d) => d.i9List))) {
+      throw new HttpError(
+        400,
+        'i9_combination_insufficient',
+        'Your documents don’t yet satisfy Form I-9: provide ONE List A document (e.g. U.S. Passport), or one List B document (e.g. driver’s license) PLUS one List C document (e.g. unrestricted Social Security card).'
       );
     }
 
@@ -2550,7 +2567,7 @@ onboardingRouter.post('/applications/:id/i9/submit', async (req, res, next) => {
       action: 'onboarding.i9_documents_submitted',
       applicationId: app.id,
       clientId: app.clientId,
-      metadata: { documentCount: docCount },
+      metadata: { documentCount: docs.length },
       req,
     });
 
@@ -2736,6 +2753,28 @@ onboardingRouter.post(
         throw new HttpError(400, 'invalid_document_side', 'documentSide must be FRONT or BACK');
       }
 
+      // Optional federal catalog title ("U.S. Passport or Passport Card").
+      // The A/B/C list is derived server-side from the catalog — the client
+      // never gets to claim a list directly. Absent → legacy-style
+      // unclassified upload (i9List NULL), which the submit gate passes
+      // through for compatibility.
+      const i9DocTitle = req.body?.i9DocTitle ? String(req.body.i9DocTitle) : null;
+      let i9List: 'A' | 'B' | 'C' | null = null;
+      if (i9DocTitle) {
+        const entry = i9CatalogEntry(i9DocTitle);
+        if (!entry) {
+          throw new HttpError(400, 'invalid_i9_doc', 'Unknown I-9 document title');
+        }
+        if (entry.kind !== documentKind) {
+          throw new HttpError(
+            400,
+            'i9_kind_mismatch',
+            `"${entry.title}" uploads as ${entry.kind}, not ${documentKind}`,
+          );
+        }
+        i9List = entry.list;
+      }
+
       // Hash the file body for content-addressed storage. Keeps duplicate
       // uploads (a user re-tapping submit) from spamming the vault.
       const { createHash } = await import('node:crypto');
@@ -2762,6 +2801,10 @@ onboardingRouter.post(
           mimeType: file.mimetype,
           size: file.size,
           status: 'UPLOADED',
+          // Side lives in a real column now; the filename tag stays as a
+          // fallback for records created before the catalog existed.
+          ...(side ? { side: side as 'FRONT' | 'BACK' } : {}),
+          ...(i9DocTitle ? { i9DocTitle, i9List } : {}),
         },
       });
 
@@ -2770,7 +2813,7 @@ onboardingRouter.post(
         action: 'onboarding.i9_document_uploaded',
         applicationId: app.id,
         clientId: app.clientId,
-        metadata: { documentId: doc.id, documentKind, documentSide: side, sha256: sha, size: file.size },
+        metadata: { documentId: doc.id, documentKind, documentSide: side, i9DocTitle, i9List, sha256: sha, size: file.size },
         req,
       });
 
@@ -2778,6 +2821,8 @@ onboardingRouter.post(
         documentId: doc.id,
         kind: doc.kind,
         side,
+        i9DocTitle,
+        i9List,
         size: doc.size,
         mimeType: doc.mimeType,
         sha256: sha,
@@ -2812,18 +2857,23 @@ onboardingRouter.get('/applications/:id/i9/documents', async (req, res, next) =>
         status: true,
         createdAt: true,
         s3Key: true,
+        side: true,
+        i9DocTitle: true,
+        i9List: true,
       },
     });
     res.json({
       documents: rows.map((d) => {
-        // Filename embeds the side tag (e.g. `id-front.jpg`); pull it back
-        // out so the verifier UI can group front/back of the same doc.
+        // Side column is authoritative; pre-catalog records only embed the
+        // tag in the filename (`id-front.jpg`), so fall back to that.
         const lower = d.filename.toLowerCase();
-        const side: 'FRONT' | 'BACK' | null = lower.includes('-front')
-          ? 'FRONT'
-          : lower.includes('-back')
-            ? 'BACK'
-            : null;
+        const side: 'FRONT' | 'BACK' | null =
+          d.side ??
+          (lower.includes('-front')
+            ? 'FRONT'
+            : lower.includes('-back')
+              ? 'BACK'
+              : null);
         // Same fileAvailable signal as the documents vault — Railway's
         // ephemeral filesystem can leave zombie rows whose blobs are gone.
         // The verifier UI uses this to render a "file missing" tile
@@ -2838,6 +2888,8 @@ onboardingRouter.get('/applications/:id/i9/documents', async (req, res, next) =>
           size: d.size,
           status: d.status,
           side,
+          i9DocTitle: d.i9DocTitle,
+          i9List: d.i9List,
           createdAt: d.createdAt.toISOString(),
           fileAvailable,
         };

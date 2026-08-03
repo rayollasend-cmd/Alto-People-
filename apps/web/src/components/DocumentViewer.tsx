@@ -38,8 +38,13 @@ export interface ViewableDocument {
   filename: string;
   mimeType: string;
   side?: 'FRONT' | 'BACK' | null;
+  /** Federal I-9 catalog title — preferred over the raw kind in labels. */
+  i9DocTitle?: string | null;
   fileAvailable: boolean;
 }
+
+/** Human label: the federal document title when known, else the kind bucket. */
+const docName = (d: ViewableDocument): string => d.i9DocTitle ?? d.kind;
 
 const ZOOM_STEP = 0.25;
 const ZOOM_MIN = 0.5;
@@ -93,7 +98,7 @@ export function DocumentViewer({
 
   const isImage = doc.mimeType.startsWith('image/');
   const canPreview = doc.fileAvailable && isPreviewable(doc.mimeType);
-  const label = `${doc.kind}${doc.side ? ` · ${doc.side.toLowerCase()}` : ''}`;
+  const label = `${docName(doc)}${doc.side ? ` · ${doc.side.toLowerCase()}` : ''}`;
 
   return (
     <div
@@ -228,7 +233,7 @@ export function DocumentViewer({
                 setZoom(1);
                 setRotation(0);
               }}
-              aria-label={`View ${d.kind}${d.side ? ` ${d.side}` : ''}`}
+              aria-label={`View ${docName(d)}${d.side ? ` ${d.side}` : ''}`}
               aria-current={i === index}
               className={cn(
                 'h-14 w-20 shrink-0 overflow-hidden rounded border transition-colors',
@@ -339,7 +344,7 @@ export function DocumentThumbnails({
               // Explicit name: without it the accessible name is scraped from
               // the tile's own text ("ID", "front"), which tells a screen
               // reader what the thing IS but not that activating it opens it.
-              aria-label={`View ${d.kind}${d.side ? ` ${d.side.toLowerCase()}` : ''}`}
+              aria-label={`View ${docName(d)}${d.side ? ` ${d.side.toLowerCase()}` : ''}`}
               className={cn(
                 'block w-full overflow-hidden rounded border text-left transition-colors',
                 d.fileAvailable
@@ -355,7 +360,7 @@ export function DocumentThumbnails({
                 ) : d.mimeType.startsWith('image/') ? (
                   <img
                     src={previewDocumentUrl(d.id)}
-                    alt={`${d.kind}${d.side ? ` ${d.side}` : ''}`}
+                    alt={`${docName(d)}${d.side ? ` ${d.side}` : ''}`}
                     className="h-full w-full object-cover"
                   />
                 ) : (
@@ -363,7 +368,7 @@ export function DocumentThumbnails({
                 )}
               </div>
               <div className="px-2 py-1.5">
-                <div className="truncate text-xs text-white">{d.kind}</div>
+                <div className="truncate text-xs text-white">{docName(d)}</div>
                 <div className="text-2xs text-silver">
                   {d.side ? d.side.toLowerCase() : 'document'}
                   {!d.fileAvailable && (

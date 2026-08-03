@@ -32,11 +32,19 @@ export function getDocumentVault(associateId: string): Promise<DocumentVaultResp
 
 export async function uploadMyDocument(
   file: File,
-  kind: DocumentKind
+  kind: DocumentKind,
+  opts?: {
+    /** Federal catalog title ("U.S. Passport…") — the server derives the
+     *  A/B/C list from it. Omit for legacy-style unclassified uploads. */
+    i9DocTitle?: string;
+    side?: 'FRONT' | 'BACK';
+  },
 ): Promise<DocumentRecord> {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('kind', kind);
+  if (opts?.i9DocTitle) fd.append('i9DocTitle', opts.i9DocTitle);
+  if (opts?.side) fd.append('side', opts.side);
   // apiFetch JSON-encodes; for multipart we hit fetch directly.
   const res = await fetch('/api/documents/me/upload', {
     method: 'POST',

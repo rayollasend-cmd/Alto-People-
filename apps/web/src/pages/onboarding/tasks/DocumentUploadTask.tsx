@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2, FileText, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
+import { I9_DOC_CATALOG, i9CatalogEntry, i9SetSatisfied } from '@alto-people/shared';
 import {
   deleteMyDocument,
   listMyDocuments,
@@ -19,11 +20,17 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 
-const ID_KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
-  { value: 'ID', label: 'Government-issued photo ID (driver license / passport)' },
-  { value: 'SSN_CARD', label: 'Social Security card' },
-  { value: 'I9_SUPPORTING', label: 'Other I-9 supporting document' },
-];
+// The picker offers the FEDERAL document list, not generic buckets — "which
+// document is this?" is knowledge only the associate has at upload time,
+// and losing it forced HR to guess from thumbnails at Section 2. 'OTHER'
+// stays as an escape hatch (receipts, unusual documents): it uploads
+// unclassified, exactly like the pre-catalog behavior.
+const OTHER_VALUE = '__other__';
+const LIST_HEADING: Record<'A' | 'B' | 'C', string> = {
+  A: 'List A — proves identity AND right to work (one is enough)',
+  B: 'List B — proves identity only (also add one from List C)',
+  C: 'List C — proves right to work only (also add one from List B)',
+};
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
@@ -62,7 +69,8 @@ export function DocumentUploadTask() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [docs, setDocs] = useState<DocumentRecord[] | null>(null);
-  const [kind, setKind] = useState<DocumentKind>('ID');
+  const [docTitle, setDocTitle] = useState<string>(I9_DOC_CATALOG[0].title);
+  const [side, setSide] = useState<'' | 'FRONT' | 'BACK'>('');
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [finishing, setFinishing] = useState(false);
@@ -92,6 +100,21 @@ export function DocumentUploadTask() {
   );
   const hasAtLeastOne = idDocs.length > 0;
 
+  // Live federal-requirement meter over the non-rejected uploads. Legacy /
+  // "Other" uploads are unclassified — they don't count toward the meter,
+  // but their presence keeps submit open (HR sorts them at review), which
+  // is exactly the server's rule.
+  const usable = idDocs.filter((d) => d.status !== 'REJECTED');
+  const hasA = usable.some((d) => d.i9List === 'A');
+  const hasB = usable.some((d) => d.i9List === 'B');
+  const hasC = usable.some((d) => d.i9List === 'C');
+  const hasUnclassified = usable.some((d) => d.i9List == null);
+  const combinationOk =
+    i9SetSatisfied(usable.map((d) => d.i9List)) || hasUnclassified;
+  const canSubmit = hasAtLeastOne && combinationOk;
+
+  const selectedEntry = docTitle === OTHER_VALUE ? undefined : i9CatalogEntry(docTitle);
+
   // When set, the next file picked is treated as a replacement: we upload
   // it under the SAME kind, then delete the rejected original. One click
   // for the associate instead of delete + re-upload.
@@ -112,11 +135,23 @@ export function DocumentUploadTask() {
     const target = replaceTarget;
     setReplaceTarget(null);
     try {
-      // Replacement: upload fresh under the same kind, THEN delete the old
-      // rejected doc. If the upload fails we keep the original around so HR
-      // can still see the history.
-      const uploadKind = target ? target.kind : kind;
-      await uploadMyDocument(file, uploadKind);
+      // Replacement: upload fresh under the same kind + classification,
+      // THEN delete the old doc. If the upload fails we keep the original
+      // around so HR can still see the history.
+      const uploadKind: DocumentKind = target
+        ? target.kind
+        : selectedEntry?.kind ?? 'I9_SUPPORTING';
+      await uploadMyDocument(file, uploadKind, {
+        ...(target
+          ? {
+              ...(target.i9DocTitle ? { i9DocTitle: target.i9DocTitle } : {}),
+              ...(target.side ? { side: target.side } : {}),
+            }
+          : {
+              ...(selectedEntry ? { i9DocTitle: selectedEntry.title } : {}),
+              ...(selectedEntry?.card && side ? { side } : {}),
+            }),
+      });
       if (target) {
         try {
           await deleteMyDocument(target.id);
@@ -162,6 +197,12 @@ export function DocumentUploadTask() {
       setError('Upload at least one document before finishing.');
       return;
     }
+    if (!combinationOk) {
+      setError(
+        'Your documents don’t yet satisfy the I-9: add ONE List A document, or one from List B plus one from List C.',
+      );
+      return;
+    }
     setError(null);
     setFinishing(true);
     try {
@@ -184,20 +225,79 @@ export function DocumentUploadTask() {
         you'll see the status update on your checklist.
       </p>
 
+      {/* Federal requirement meter — the associate sees what's still
+          missing BEFORE submitting instead of HR discovering it at
+          Section 2 with the 3-day clock running. */}
+      <div className="mb-4 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-sm">
+        <div className="mb-1.5 font-medium text-white">
+          What the I-9 form needs
+        </div>
+        <div className={cn('flex items-center gap-2', hasA ? 'text-success' : 'text-silver')}>
+          <CheckCircle2 className={cn('h-3.5 w-3.5', !hasA && 'opacity-30')} />
+          ONE List A document (passport, Green Card…)
+        </div>
+        <div className="my-0.5 pl-5 text-xs text-silver/60">— or both of —</div>
+        <div className={cn('flex items-center gap-2', hasB ? 'text-success' : 'text-silver')}>
+          <CheckCircle2 className={cn('h-3.5 w-3.5', !hasB && 'opacity-30')} />
+          One List B document (driver&apos;s license, state ID…)
+        </div>
+        <div className={cn('flex items-center gap-2', hasC ? 'text-success' : 'text-silver')}>
+          <CheckCircle2 className={cn('h-3.5 w-3.5', !hasC && 'opacity-30')} />
+          One List C document (unrestricted Social Security card, birth certificate…)
+        </div>
+        {hasUnclassified && (
+          <div className="mt-1.5 text-xs text-silver/70">
+            Some of your documents were uploaded without a type — HR will
+            classify them at review, so you can still submit.
+          </div>
+        )}
+      </div>
+
       <div className="space-y-4">
-        <Field label="Document type">
+        <Field label="Which document is this?">
           <Select
-            value={kind}
-            onChange={(e) => setKind(e.target.value as DocumentKind)}
+            value={docTitle}
+            onChange={(e) => {
+              setDocTitle(e.target.value);
+              setSide('');
+            }}
             disabled={uploading}
           >
-            {ID_KIND_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
+            {(['A', 'B', 'C'] as const).map((list) => (
+              <optgroup key={list} label={LIST_HEADING[list]}>
+                {I9_DOC_CATALOG.filter((c) => c.list === list).map((c) => (
+                  <option key={c.title} value={c.title}>
+                    {c.title}
+                  </option>
+                ))}
+              </optgroup>
             ))}
+            <optgroup label="Something else">
+              <option value={OTHER_VALUE}>Other I-9 supporting document</option>
+            </optgroup>
           </Select>
         </Field>
+        {docTitle === 'Social Security card (unrestricted)' && (
+          <p className="text-xs text-warning">
+            If your card is printed with a restriction like &ldquo;VALID FOR
+            WORK ONLY WITH DHS AUTHORIZATION&rdquo;, it does NOT count as a
+            List C document — pick &ldquo;Other I-9 supporting
+            document&rdquo; instead and add a different List C document.
+          </p>
+        )}
+        {selectedEntry?.card && (
+          <Field label="Which side of the card? (optional)">
+            <Select
+              value={side}
+              onChange={(e) => setSide(e.target.value as '' | 'FRONT' | 'BACK')}
+              disabled={uploading}
+            >
+              <option value="">One photo shows everything</option>
+              <option value="FRONT">Front</option>
+              <option value="BACK">Back</option>
+            </Select>
+          </Field>
+        )}
 
         <input
           ref={fileInputRef}
@@ -249,7 +349,10 @@ export function DocumentUploadTask() {
                       {d.filename}
                     </div>
                     <div className="text-xs text-silver/70 tabular-nums">
-                      {KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' ')} ·{' '}
+                      {d.i9DocTitle ?? KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' ')}
+                      {d.i9List ? ` · List ${d.i9List}` : ''}
+                      {d.side ? ` · ${d.side === 'FRONT' ? 'front' : 'back'}` : ''}
+                      {' · '}
                       {fmtSize(d.size)}
                     </div>
                     {d.rejectionReason && (
@@ -307,7 +410,7 @@ export function DocumentUploadTask() {
           </p>
         )}
 
-        {hasAtLeastOne && (
+        {canSubmit && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-success/30 bg-success/[0.05] text-success text-xs">
             <CheckCircle2 className="h-3.5 w-3.5" />
             You have {idDocs.length} document{idDocs.length === 1 ? '' : 's'} ready
@@ -320,13 +423,15 @@ export function DocumentUploadTask() {
             type="button"
             onClick={onFinish}
             loading={finishing}
-            disabled={!hasAtLeastOne || finishing}
+            disabled={!canSubmit || finishing}
           >
             {finishing
               ? 'Submitting…'
-              : hasAtLeastOne
+              : canSubmit
                 ? "I'm done — submit for review"
-                : 'Upload at least one'}
+                : hasAtLeastOne
+                  ? 'List A, or List B + C, still needed'
+                  : 'Upload at least one'}
           </Button>
           <Link to={backTo} className="text-sm text-silver hover:text-white">
             Cancel

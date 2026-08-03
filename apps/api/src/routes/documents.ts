@@ -7,10 +7,12 @@ import { writeFile, unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { extname } from 'node:path';
 import {
+  DocSideSchema,
   DocumentKindSchema,
   DocumentListResponseSchema,
   DocumentRejectInputSchema,
   DocumentVaultResponseSchema,
+  i9CatalogEntry,
   type DocumentRecord,
 } from '@alto-people/shared';
 import type { DocumentKind, TaskKind } from '@prisma/client';
@@ -142,6 +144,9 @@ function toRecord(d: RawDoc): DocumentRecord {
     associateName: d.associate ? `${d.associate.firstName} ${d.associate.lastName}` : null,
     clientId: d.clientId,
     kind: d.kind,
+    i9DocTitle: d.i9DocTitle,
+    i9List: d.i9List,
+    side: d.side,
     filename: d.filename,
     mimeType: d.mimeType,
     size: d.size,
@@ -195,6 +200,24 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
     if (!kindParse.success) {
       throw new HttpError(400, 'invalid_kind', 'Invalid or missing "kind" field');
     }
+    // Optional I-9 catalog declaration ("U.S. Passport", "Driver's license",
+    // …). The LIST is derived server-side from the catalog — a client
+    // claiming List A for a school ID gets the catalog's truth. Absent =
+    // legacy-style upload; stays fully supported.
+    const i9TitleRaw = typeof req.body.i9DocTitle === 'string' ? req.body.i9DocTitle : undefined;
+    let i9Fields: { i9DocTitle: string; i9List: 'A' | 'B' | 'C' } | undefined;
+    if (i9TitleRaw) {
+      const entry = i9CatalogEntry(i9TitleRaw);
+      if (!entry) {
+        throw new HttpError(400, 'invalid_i9_doc', 'Unknown I-9 document title');
+      }
+      if (entry.kind !== kindParse.data) {
+        throw new HttpError(400, 'i9_kind_mismatch', 'Document title does not match the upload kind');
+      }
+      i9Fields = { i9DocTitle: entry.title, i9List: entry.list };
+    }
+    const sideParse = DocSideSchema.safeParse(req.body.side);
+    const side = sideParse.success ? sideParse.data : undefined;
     const magicError = verifyFileMagic(req.file.buffer, req.file.mimetype);
     if (magicError) {
       throw new HttpError(400, 'invalid_file_contents', magicError);
@@ -215,6 +238,8 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
         associateId: user.associateId,
         clientId: user.clientId,
         kind: kindParse.data,
+        ...(i9Fields ?? {}),
+        ...(side ? { side } : {}),
         s3Key: relativeKey,
         filename: cleanName,
         mimeType: req.file.mimetype,

@@ -410,6 +410,162 @@ describe('GET /onboarding/applications/:id/i9/documents (Phase 24 verifier list)
   });
 });
 
+describe('I-9 federal document catalog', () => {
+  function fakePng(): Buffer {
+    return Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+      0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+      0x89,
+    ]);
+  }
+
+  async function signSection1(a: TestAgent<Test>, applicationId: string) {
+    const r = await a.post(`/onboarding/applications/${applicationId}/i9/section1`).send({
+      citizenshipStatus: 'US_CITIZEN',
+      typedName: 'Pat Hopeful',
+    });
+    if (r.status !== 200) throw new Error(`section1 failed ${r.status}`);
+  }
+
+  async function uploadCatalogDoc(
+    a: TestAgent<Test>,
+    applicationId: string,
+    title: string,
+    kind: string,
+    side?: 'FRONT' | 'BACK',
+  ) {
+    let req = a
+      .post(`/onboarding/applications/${applicationId}/i9/documents`)
+      .field('documentKind', kind)
+      .field('i9DocTitle', title);
+    if (side) req = req.field('documentSide', side);
+    const r = await req.attach('file', fakePng(), {
+      filename: 'doc.png',
+      contentType: 'image/png',
+    });
+    return r;
+  }
+
+  it('upload with a catalog title stores i9DocTitle, server-derived i9List, and side columns', async () => {
+    const { application, assocUserEmail } = await seedWorld();
+    const a = await loginAs(assocUserEmail);
+    const res = await uploadCatalogDoc(
+      a,
+      application.id,
+      "Driver's license",
+      'ID',
+      'FRONT',
+    );
+    expect(res.status).toBe(201);
+    expect(res.body.i9DocTitle).toBe("Driver's license");
+    expect(res.body.i9List).toBe('B');
+
+    const doc = await prisma.documentRecord.findUniqueOrThrow({
+      where: { id: res.body.documentId },
+    });
+    expect(doc.i9DocTitle).toBe("Driver's license");
+    expect(doc.i9List).toBe('B');
+    expect(doc.side).toBe('FRONT');
+  });
+
+  it('rejects an unknown catalog title (400 invalid_i9_doc)', async () => {
+    const { application, assocUserEmail } = await seedWorld();
+    const a = await loginAs(assocUserEmail);
+    const res = await uploadCatalogDoc(a, application.id, 'Library card', 'ID');
+    expect(res.status).toBe(400);
+    expect(res.body.error?.code).toBe('invalid_i9_doc');
+  });
+
+  it('rejects a title/kind mismatch (400 i9_kind_mismatch)', async () => {
+    const { application, assocUserEmail } = await seedWorld();
+    const a = await loginAs(assocUserEmail);
+    // SSN card belongs under SSN_CARD, not ID.
+    const res = await uploadCatalogDoc(
+      a,
+      application.id,
+      'Social Security card (unrestricted)',
+      'ID',
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error?.code).toBe('i9_kind_mismatch');
+  });
+
+  it('submit gate: List B alone is insufficient (400 i9_combination_insufficient)', async () => {
+    const { application, assocUserEmail } = await seedWorld();
+    const a = await loginAs(assocUserEmail);
+    await signSection1(a, application.id);
+    await uploadCatalogDoc(a, application.id, "Driver's license", 'ID', 'FRONT');
+
+    const res = await a.post(`/onboarding/applications/${application.id}/i9/submit`).send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error?.code).toBe('i9_combination_insufficient');
+  });
+
+  it('submit gate: one List A document passes', async () => {
+    const { application, assocUserEmail } = await seedWorld();
+    const a = await loginAs(assocUserEmail);
+    await signSection1(a, application.id);
+    await uploadCatalogDoc(a, application.id, 'U.S. Passport or Passport Card', 'ID');
+
+    const res = await a.post(`/onboarding/applications/${application.id}/i9/submit`).send({});
+    expect(res.status).toBe(200);
+    expect(res.body.documentsSubmittedAt).toBeTruthy();
+  });
+
+  it('submit gate: List B + List C together pass', async () => {
+    const { application, assocUserEmail } = await seedWorld();
+    const a = await loginAs(assocUserEmail);
+    await signSection1(a, application.id);
+    await uploadCatalogDoc(a, application.id, "Driver's license", 'ID', 'FRONT');
+    await uploadCatalogDoc(
+      a,
+      application.id,
+      'Social Security card (unrestricted)',
+      'SSN_CARD',
+    );
+
+    const res = await a.post(`/onboarding/applications/${application.id}/i9/submit`).send({});
+    expect(res.status).toBe(200);
+  });
+
+  it('submit gate: a legacy unclassified upload passes (compatibility pass-through)', async () => {
+    const { application, assocUserEmail } = await seedWorld();
+    const a = await loginAs(assocUserEmail);
+    await signSection1(a, application.id);
+    // No i9DocTitle at all — exactly what every pre-catalog record looks like.
+    const up = await a
+      .post(`/onboarding/applications/${application.id}/i9/documents`)
+      .field('documentKind', 'ID')
+      .attach('file', fakePng(), { filename: 'old-style.png', contentType: 'image/png' });
+    expect(up.status).toBe(201);
+    expect(up.body.i9List).toBeNull();
+
+    const res = await a.post(`/onboarding/applications/${application.id}/i9/submit`).send({});
+    expect(res.status).toBe(200);
+  });
+
+  it('verifier list prefers the stored side column and carries the federal identity', async () => {
+    const { application, assocUserEmail, hrAgent } = await seedWorld();
+    const a = await loginAs(assocUserEmail);
+    // Filename has no side tag — only the column knows it's the back.
+    await a
+      .post(`/onboarding/applications/${application.id}/i9/documents`)
+      .field('documentKind', 'ID')
+      .field('documentSide', 'BACK')
+      .field('i9DocTitle', 'State ID card')
+      .attach('file', fakePng(), { filename: 'photo.png', contentType: 'image/png' });
+
+    const res = await hrAgent.get(`/onboarding/applications/${application.id}/i9/documents`);
+    expect(res.status).toBe(200);
+    expect(res.body.documents).toHaveLength(1);
+    expect(res.body.documents[0].side).toBe('BACK');
+    expect(res.body.documents[0].i9DocTitle).toBe('State ID card');
+    expect(res.body.documents[0].i9List).toBe('B');
+  });
+});
+
 describe('GET /onboarding/applications/:id/i9', () => {
   it('returns null sections when nothing has happened yet', async () => {
     const { application, assocUserEmail } = await seedWorld();
