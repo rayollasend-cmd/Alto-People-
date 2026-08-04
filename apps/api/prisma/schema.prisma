@@ -4161,6 +4161,7 @@ model AcaMonth {
 
 enum WebhookDeliveryStatus {
   PENDING
+  RETRYING
   DELIVERED
   FAILED
 }
@@ -4214,6 +4215,9 @@ model WebhookDelivery {
   status         WebhookDeliveryStatus @default(PENDING)
   attemptCount   Int                   @default(0)
   lastAttemptAt  DateTime?             @db.Timestamptz(6)
+  // When the worker may (re)attempt this row. NULL = due immediately
+  // (also covers rows enqueued before this column existed).
+  nextAttemptAt  DateTime?             @db.Timestamptz(6)
   responseStatus Int?
   responseBody   String?
   deliveredAt    DateTime?             @db.Timestamptz(6)
@@ -4223,6 +4227,7 @@ model WebhookDelivery {
 
   @@index([webhookId])
   @@index([status])
+  @@index([status, nextAttemptAt])
 }
 
 // Phase 94 — LMS: courses, modules, enrollments, certifications.

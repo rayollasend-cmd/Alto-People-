@@ -151,6 +151,13 @@ const EnvSchema = z.object({
   // should set 3600 (hourly). Thresholds (18h forgotten-shift, 90d selfie
   // retention) are hard-coded in lib/kioskMaintenance.ts.
   KIOSK_MAINTENANCE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // Outbound webhook delivery worker (Phase 93 follow-up). Sweeps due
+  // PENDING/RETRYING WebhookDelivery rows and POSTs them with the HMAC
+  // X-Alto-Signature. On by default (60s) — subscriptions already exist
+  // in the admin UI and silently never delivering is worse than a spare
+  // query per minute. Set 0 to disable (e.g. one-off scripts). Backoff
+  // and the 6-attempt cap are hard-coded in lib/webhookDispatch.ts.
+  WEBHOOK_DELIVERY_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(60),
   // Document maintenance cron: purges blob bytes for REJECTED docs once
   // they've passed REJECTED_DOC_RETENTION_DAYS (30, hard-coded). Defaults
   // to 86400 (daily) — this is a compliance/storage-hygiene sweep we

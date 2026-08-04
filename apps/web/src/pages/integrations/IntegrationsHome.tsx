@@ -56,12 +56,11 @@ type Tab = 'keys' | 'webhooks';
 
 /**
  * Known outbound webhook event types. The server exposes no registry
- * endpoint — the only event the emitter dispatches today is `test.ping`
- * (apps/api/src/routes/apiKeysWebhooks93.ts POST /webhooks/:id/test);
- * domain events mirror the workflow trigger enum
- * (apps/api/src/routes/workflows.ts TriggerSchema) in the dotted form the
- * original free-text placeholder documented (`payroll.finalized`,
- * `onboarding.completed`). Keep in sync with that enum.
+ * endpoint — these are the strings domain code passes to
+ * emitWebhookEvent (apps/api/src/lib/webhookDispatch.ts), which mirror
+ * the workflow trigger enum (apps/api/src/routes/workflows.ts
+ * TriggerSchema) in dotted form, plus `test.ping` from the test-fire
+ * endpoint. Keep in sync with the emit call sites.
  */
 const WEBHOOK_EVENT_TYPES = [
   'associate.hired',

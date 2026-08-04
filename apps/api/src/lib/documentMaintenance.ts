@@ -136,7 +136,16 @@ export async function expireLapsedDocs(
     data: { status: 'EXPIRED' },
   });
   const { notifyAssociate } = await import('./notify.js');
+  const { emitWebhookEvent } = await import('./webhookDispatch.js');
   for (const doc of lapsed) {
+    // Outbound webhooks — one compliance event per lapsed document.
+    // Ids + kind + date only; the filename stays internal.
+    void emitWebhookEvent('compliance.expiring', {
+      documentId: doc.id,
+      associateId: doc.associateId,
+      kind: doc.kind,
+      expiresAt: doc.expiresAt!.toISOString().slice(0, 10),
+    });
     void notifyAssociate(doc.associateId, {
       subject: `Your ${doc.kind.replace(/_/g, ' ').toLowerCase()} on file has expired`,
       body:

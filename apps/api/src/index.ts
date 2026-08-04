@@ -18,6 +18,7 @@ import { startUploadsBackupCron } from './lib/uploadsBackup.js';
 import { startShiftReminderCron } from './lib/shiftReminder.js';
 import { startScheduleDigestCron } from './lib/scheduleDigest.js';
 import { startWeekAheadCron } from './lib/weekAheadDigest.js';
+import { startWebhookDeliveryCron } from './lib/webhookDispatch.js';
 import { ensureBrandingLoaded } from './lib/branding.js';
 import { preloadPayrollTaxConfig } from './lib/payrollTax.js';
 import { flushPendingAudits } from './lib/audit.js';
@@ -58,6 +59,10 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startShiftReminderCron();
   startScheduleDigestCron();
   startWeekAheadCron();
+  // Outbound webhook deliveries — safe under MULTI_REPLICA without a
+  // shared backend: each row is claimed via a guarded attemptCount
+  // update, so two replicas can't double-POST the same delivery.
+  startWebhookDeliveryCron();
 
   // Multi-replica safety check. Three independent per-process subsystems
   // assume a single container today: the kiosk PIN rate limiter (brute-

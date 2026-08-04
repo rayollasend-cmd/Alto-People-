@@ -68,6 +68,7 @@ import multer from 'multer';
 import { decryptString, encryptString, tryDecryptString } from '../lib/crypto.js';
 import { maskRoutingNumber } from '../lib/payoutMethod.js';
 import { recordOnboardingEvent } from '../lib/audit.js';
+import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import {
   notifyAllAdmins,
   notifyAssociate,
@@ -936,6 +937,30 @@ onboardingRouter.post(
         metadata: { hireDate, percentComplete: percent },
         req,
       });
+
+      // Outbound webhooks — approval is both "onboarding done" and the
+      // hire moment (hireDate lands, the User activates). Ids + dates
+      // only; enrichment is the consumer's job via the public API.
+      void emitWebhookEvent(
+        'onboarding.completed',
+        {
+          applicationId: app.id,
+          associateId: app.associateId,
+          clientId: app.clientId,
+          approvedAt: now.toISOString(),
+        },
+        { clientId: app.clientId },
+      );
+      void emitWebhookEvent(
+        'associate.hired',
+        {
+          associateId: app.associateId,
+          applicationId: app.id,
+          clientId: app.clientId,
+          hireDate,
+        },
+        { clientId: app.clientId },
+      );
 
       const approvedAssoc = await prisma.associate.findUnique({
         where: { id: app.associateId },
