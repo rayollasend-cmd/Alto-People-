@@ -91,6 +91,10 @@ interface LoginContext {
 interface LoginSuccessContext extends LoginContext {
   userId: string;
   clientId?: string | null;
+  // How the session was established when it wasn't the default password
+  // flow — 'oidc' for SSO sign-ins. Recorded in metadata.method so the
+  // audit feed can distinguish IdP-brokered logins from local ones.
+  method?: string;
 }
 
 interface LoginFailureContext extends LoginContext {
@@ -117,7 +121,13 @@ interface LoginFailureContext extends LoginContext {
     // account is disabled/deleted/non-human.
     | 'passkey_mismatch'
     | 'passkey_invalid'
-    | 'passkey_ineligible';
+    | 'passkey_ineligible'
+    // OIDC SSO failures. The suffix is the precise machine reason
+    // (state_mismatch, nonce_mismatch, bad_signature, token_expired,
+    // unknown_email, disabled, …) — the browser only ever sees the
+    // generic /login?error=sso_failed|sso_no_account redirect, so the
+    // audit row is the only place the detail lives.
+    | `oidc_${string}`;
 }
 
 interface LogoutContext {
@@ -162,7 +172,10 @@ export async function recordLoginSuccess(ctx: LoginSuccessContext) {
       action: 'auth.login',
       entityType: 'User',
       entityId: ctx.userId,
-      metadata: meta(ctx.req, { email: ctx.email }),
+      metadata: meta(ctx.req, {
+        email: ctx.email,
+        ...(ctx.method ? { method: ctx.method } : {}),
+      }),
     },
     'recordLoginSuccess'
   );

@@ -13,6 +13,7 @@ import helmet from 'helmet';
 import { env } from './config/env.js';
 import { healthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
+import { oidcAuthRouter } from './routes/oidcAuth.js';
 import { clientsRouter } from './routes/clients.js';
 import { onboardingRouter } from './routes/onboarding.js';
 import { timeRouter } from './routes/time.js';
@@ -190,6 +191,11 @@ export function createApp() {
   app.use(attachUser);
 
   app.use('/health', healthRouter);
+  // Enterprise SSO (OIDC). Mounted at the same root-path convention as
+  // authRouter — its cookies (session + flow state, both path=/) must line
+  // up exactly with the password/passkey flows. Mounted before /auth so
+  // the more-specific prefix wins outright.
+  app.use('/auth/oidc', oidcAuthRouter);
   app.use('/auth', authRouter);
   // Public integration API (AltoHR / ShiftReport Nexus, etc.). Authenticates
   // via `Authorization: Bearer altop_<hex>` rather than the session cookie,

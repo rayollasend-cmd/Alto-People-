@@ -36,7 +36,9 @@ issuer URL and signs in existing users matched by email.
 
 **Operator actions (Entra admin center → App registrations):**
 1. New registration → single tenant. Redirect URI (Web):
-   `https://people.altohr.com/auth/oidc/callback`.
+   `https://people.altohr.com/api/auth/oidc/callback` (the `/api` prefix
+   is required — it is the one form that reaches the handler in both dev
+   and prod routing).
 2. Create a client secret (or certificate); note expiry and calendar the
    rotation.
 3. API permissions: `openid`, `profile`, `email` (delegated) — admin
