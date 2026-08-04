@@ -514,6 +514,8 @@ model User {
   // Phase 131 — assignment-row authorship (audit of who moved an
   // associate to which location, and why).
   associateAssignmentsNoted         AssociateAssignment[]         @relation("AssociateAssignmentNoter")
+  // Privacy erasures this admin performed (Associate.erasedById).
+  associatesErased                  Associate[]                   @relation("AssociateEraser")
 
   @@index([role])
   @@index([clientId])
@@ -835,6 +837,14 @@ model Associate {
   // 1 = the original pre-version token format, so URLs minted before
   // this column existed keep verifying.
   calendarFeedVersion Int          @default(1)
+  // Privacy erasure (admin-initiated, lib/erasure.ts). Set exactly once —
+  // identity fields are anonymized in place while payroll/tax history rows
+  // stay untouched (IRS 4-year / FLSA 3-year retention). erasedById is the
+  // admin who ran it; the written reason + per-category scrub counts live
+  // on the privacy.associate_erased AuditLog row.
+  erasedAt          DateTime?      @db.Timestamptz(6)
+  erasedById        String?        @db.Uuid
+  erasedBy          User?          @relation("AssociateEraser", fields: [erasedById], references: [id], onDelete: SetNull)
   createdAt         DateTime       @default(now()) @db.Timestamptz(6)
   updatedAt         DateTime       @updatedAt @db.Timestamptz(6)
   deletedAt         DateTime?      @db.Timestamptz(6)

@@ -155,20 +155,24 @@ export async function purgeDormantFaceReferences(
  * still needs to audit historical hours / anomalies for payroll
  * disputes), but their biometric data leaves the DB immediately
  * rather than waiting for the 90-day retention sweep.
+ *
+ * Accepts a TransactionClient too so callers that scrub biometrics as
+ * part of a larger atomic operation (privacy erasure) can run it inside
+ * their transaction.
  */
 export async function purgeAssociateBiometrics(
-  prisma: PrismaClient,
+  prisma: PrismaClient | Prisma.TransactionClient,
   associateId: string,
 ): Promise<{ selfiesPurged: number; faceReferenceCleared: boolean }> {
-  const [selfieResult, faceResult] = await Promise.all([
-    prisma.kioskPunch.updateMany({
-      where: { associateId, selfie: { not: null } },
-      data: { selfie: null },
-    }),
-    prisma.kioskFaceReference.deleteMany({
-      where: { associateId },
-    }),
-  ]);
+  // Sequential, not Promise.all: a TransactionClient must not run queries
+  // in parallel, and two quick statements gain nothing from overlap.
+  const selfieResult = await prisma.kioskPunch.updateMany({
+    where: { associateId, selfie: { not: null } },
+    data: { selfie: null },
+  });
+  const faceResult = await prisma.kioskFaceReference.deleteMany({
+    where: { associateId },
+  });
   return {
     selfiesPurged: selfieResult.count,
     faceReferenceCleared: faceResult.count > 0,
