@@ -27,6 +27,7 @@ import { piiRevealLimiter, bulkPiiExportLimiter } from '../middleware/rateLimit.
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { asOf, recordChange } from '../lib/associateHistory.js';
+import { eraseAssociate } from '../lib/erasure.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
@@ -1269,6 +1270,58 @@ orgRouter.patch(
       'org.associate.w4_updated_by_hr',
     );
     res.json({ ok: true, effectiveNote: 'Applies from the next payroll run.' });
+  },
+);
+
+// ----- Privacy erasure ----------------------------------------------------
+//
+// POST /associates/:id/erase — anonymize an associate's identity while
+// keeping the legally retained payroll/tax history (see lib/erasure.ts for
+// the full policy). Gated on view:hr-admin — the same capability that
+// guards the admin user-management surface, the most sensitive admin
+// actions in the product. Two cheap integrity checks against fat-fingers:
+// a written reason (min 10 chars, lands on the audit row) and retyping the
+// associate's CURRENT last name (`confirmName`, 409 on mismatch).
+
+const EraseAssociateSchema = z.object({
+  reason: z.string().trim().min(10).max(500),
+  confirmName: z.string().trim().min(1).max(120),
+  force: z.boolean().optional(),
+});
+
+orgRouter.post(
+  '/associates/:id/erase',
+  requireCapability('view:hr-admin'),
+  async (req: Request, res: Response) => {
+    const input = EraseAssociateSchema.parse(req.body);
+    const associate = await prisma.associate.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, lastName: true, erasedAt: true },
+    });
+    if (!associate) {
+      throw new HttpError(404, 'not_found', 'Associate not found.');
+    }
+    if (
+      input.confirmName.toLowerCase() !== associate.lastName.trim().toLowerCase()
+    ) {
+      throw new HttpError(
+        409,
+        'name_mismatch',
+        'The typed name does not match this associate’s last name. Erasure aborted.',
+      );
+    }
+    const result = await eraseAssociate(
+      prisma,
+      associate.id,
+      req.user!.id,
+      input.reason,
+      { force: input.force === true },
+    );
+    res.json({
+      ok: true,
+      erasedAt: result.erasedAt.toISOString(),
+      counts: result.counts,
+    });
   },
 );
 
