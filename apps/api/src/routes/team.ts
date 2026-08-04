@@ -405,7 +405,10 @@ teamRouter.get('/timesheets', VIEW, async (req: Request, res: Response) => {
       status: r.status,
       notes: r.notes,
       rejectionReason: r.rejectionReason,
-      payRate: r.payRate?.toString() ?? null,
+      // Number, matching TimeEntrySchema.payRate and /time/admin/entries.
+      // This route emitted a STRING for the same column, so any shared
+      // formatter silently switched between arithmetic and lexicographic.
+      payRate: r.payRate ? Number(r.payRate) : null,
     })),
   });
 });

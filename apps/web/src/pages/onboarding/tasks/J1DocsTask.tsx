@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2, FileText, Save, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
+import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import {
   deleteMyDocument,
   listMyDocuments,
@@ -24,7 +25,7 @@ const J1_KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
   { value: 'J1_VISA', label: 'J-1 visa (passport visa page)' },
 ];
 
-const MAX_BYTES = 10 * 1024 * 1024;
+const MAX_BYTES = UPLOAD_MAX_BYTES;
 const ACCEPTED_MIMES = 'application/pdf,image/png,image/jpeg,image/webp';
 
 const fmtSize = (b: number): string => {

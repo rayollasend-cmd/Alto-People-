@@ -126,14 +126,19 @@ communicationsRouter.delete('/me/push/subscriptions', async (req, res, next) => 
 communicationsRouter.get('/me/inbox', async (req, res, next) => {
   try {
     const user = req.user!;
-    const rows = await prisma.notification.findMany({
-      where: { recipientUserId: user.id, channel: 'IN_APP' },
-      orderBy: { createdAt: 'desc' },
-      take: 100,
-      include: NOTIF_INCLUDE,
-    });
+    const where = { recipientUserId: user.id, channel: 'IN_APP' as const };
+    const [total, rows] = await Promise.all([
+      prisma.notification.count({ where }),
+      prisma.notification.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+        include: NOTIF_INCLUDE,
+      }),
+    ]);
     const payload: NotificationListResponse = NotificationListResponseSchema.parse({
       notifications: rows.map(toNotif),
+      total,
     });
     res.json(payload);
   } catch (err) {

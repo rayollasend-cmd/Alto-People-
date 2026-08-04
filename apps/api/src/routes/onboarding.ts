@@ -6,6 +6,7 @@ import {
   ApproveApplicationInputSchema,
   BackgroundCheckAuthorizeInputSchema,
   BulkInviteInputSchema,
+  APPLICATION_STATUSES,
   LocationListResponseSchema,
   i9CatalogEntry,
   i9SetSatisfied,
@@ -37,6 +38,8 @@ import {
   type TemplateListResponse,
   type TemplateTask,
 } from '@alto-people/shared';
+import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
+import { toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
@@ -586,7 +589,7 @@ onboardingRouter.get('/applications', async (req, res, next) => {
         onboardingTrack: row.onboardingTrack,
         status: row.status,
         position: row.position,
-        startDate: row.startDate ? row.startDate.toISOString() : null,
+        startDate: toDateOnly(row.startDate),
         invitedAt: row.invitedAt.toISOString(),
         submittedAt: row.submittedAt ? row.submittedAt.toISOString() : null,
         percentComplete: computePercent(tasks),
@@ -642,7 +645,14 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
       }),
     ]);
 
-    const byStatus: Record<string, number> = {};
+    // Seeded with EVERY status at 0. The contract types this as a total
+    // Record<ApplicationStatus, number>, but it was built only from the
+    // statuses the groupBy returned — so TS said byStatus.DRAFT was a
+    // number while the runtime said undefined, and six call sites carried
+    // a defensive ?? 0 to paper over it.
+    const byStatus: Record<string, number> = Object.fromEntries(
+      APPLICATION_STATUSES.map((s) => [s, 0]),
+    );
     let total = 0;
     let inFlight = 0;
     for (const g of grouped) {
@@ -664,7 +674,7 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
       onboardingTrack: row.onboardingTrack,
       status: row.status,
       position: row.position,
-      startDate: row.startDate ? row.startDate.toISOString() : null,
+      startDate: toDateOnly(row.startDate),
       invitedAt: row.invitedAt.toISOString(),
       submittedAt: row.submittedAt ? row.submittedAt.toISOString() : null,
       percentComplete: computePercent(row.checklist?.tasks ?? []),
@@ -750,7 +760,7 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       onboardingTrack: row.onboardingTrack,
       status: row.status,
       position: row.position,
-      startDate: row.startDate ? row.startDate.toISOString() : null,
+      startDate: toDateOnly(row.startDate),
       invitedAt: row.invitedAt.toISOString(),
       submittedAt: row.submittedAt ? row.submittedAt.toISOString() : null,
       percentComplete: computePercent(row.checklist?.tasks ?? []),
@@ -1423,7 +1433,7 @@ onboardingRouter.get(
           status: full.status,
           track: full.onboardingTrack,
           position: full.position,
-          startDate: full.startDate ? full.startDate.toISOString() : null,
+          startDate: toDateOnly(full.startDate),
           invitedAt: full.invitedAt.toISOString(),
           submittedAt: full.submittedAt ? full.submittedAt.toISOString() : null,
         },
@@ -1434,7 +1444,7 @@ onboardingRouter.get(
           email: full.associate.email,
           employmentType: full.associate.employmentType,
           phone: full.associate.phone,
-          dob: full.associate.dob ? full.associate.dob.toISOString() : null,
+          dob: toDateOnly(full.associate.dob),
           addressLine1: full.associate.addressLine1,
           addressLine2: full.associate.addressLine2,
           city: full.associate.city,
@@ -2401,7 +2411,7 @@ onboardingRouter.post(
 //      satisfy the I-9 List A or List B+C requirements, and DONE-s the
 //      I9_VERIFICATION task once both sections are complete.
 
-const I9_MAX_BYTES = 10 * 1024 * 1024;
+const I9_MAX_BYTES = UPLOAD_MAX_BYTES;
 const I9_ALLOWED_MIMES = new Set([
   'application/pdf',
   'image/png',

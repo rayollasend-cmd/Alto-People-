@@ -40,6 +40,8 @@ export const ApplicationStatusSchema = z.enum([
   'REJECTED',
 ]);
 export type ApplicationStatus = z.infer<typeof ApplicationStatusSchema>;
+/** Every status value — for seeding total Record<ApplicationStatus, T> maps. */
+export const APPLICATION_STATUSES = ApplicationStatusSchema.options;
 
 export const TaskKindSchema = z.enum([
   'PROFILE_INFO',
@@ -206,7 +208,10 @@ export const ApplicationSummarySchema = z.object({
   onboardingTrack: OnboardingTrackSchema,
   status: ApplicationStatusSchema,
   position: z.string().nullable(),
-  startDate: z.string().datetime().nullable(),
+  // Calendar date (@db.Date) — YYYY-MM-DD, never a timestamp. Encoding
+  // a zone onto a date can only introduce error (it rendered a day early
+  // west of UTC).
+  startDate: z.string().date().nullable(),
   invitedAt: z.string().datetime(),
   submittedAt: z.string().datetime().nullable(),
   percentComplete: z.number().min(0).max(100),
@@ -634,7 +639,7 @@ export const ProfileSubmissionSchema = z.object({
   // filled in from the E-Verify screen instead.
   middleInitial: z.string().trim().max(1).nullable().optional(),
   otherLastNames: z.array(z.string().trim().min(1).max(80)).max(10).optional(),
-  dob: z.string().datetime().nullable().optional(),
+  dob: z.string().date().nullable().optional(),
   phone: z.string().max(40).nullable().optional(),
   addressLine1: z.string().max(200).nullable().optional(),
   addressLine2: z.string().max(200).nullable().optional(),
@@ -935,8 +940,8 @@ export const BenefitsEnrollmentSchema = z.object({
   associateId: UuidSchema,
   planId: UuidSchema,
   electedAmountCentsPerPeriod: z.number().int().nonnegative(),
-  effectiveDate: z.string().datetime(),
-  terminationDate: z.string().datetime().nullable(),
+  effectiveDate: z.string().date(),
+  terminationDate: z.string().date().nullable(),
   // Joined plan summary so the UI can render without a second fetch.
   planKind: BenefitsPlanKindSchema,
   planName: z.string(),
@@ -951,12 +956,12 @@ export type BenefitsEnrollmentListResponse = z.infer<typeof BenefitsEnrollmentLi
 export const BenefitsEnrollInputSchema = z.object({
   planId: UuidSchema,
   electedAmountCentsPerPeriod: z.number().int().nonnegative(),
-  effectiveDate: z.string().datetime(),
+  effectiveDate: z.string().date(),
 });
 export type BenefitsEnrollInput = z.infer<typeof BenefitsEnrollInputSchema>;
 
 export const BenefitsTerminateInputSchema = z.object({
-  terminationDate: z.string().datetime(),
+  terminationDate: z.string().date(),
 });
 export type BenefitsTerminateInput = z.infer<typeof BenefitsTerminateInputSchema>;
 
@@ -3079,6 +3084,10 @@ export type Notification = z.infer<typeof NotificationSchema>;
 
 export const NotificationListResponseSchema = z.object({
   notifications: z.array(NotificationSchema),
+  /** Total matching rows. The inbox is capped per request, and without
+   *  this the bell silently stopped at the cap — notification N+1 was
+   *  unreachable with no indication it existed. Optional for back-compat. */
+  total: z.number().int().nonnegative().optional(),
 });
 export type NotificationListResponse = z.infer<typeof NotificationListResponseSchema>;
 

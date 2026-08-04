@@ -1,4 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
+import { MulterError } from 'multer';
+import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import { ZodError } from 'zod';
 import { captureException } from '../lib/sentry.js';
 import { logger } from '../lib/logger.js';
@@ -52,6 +54,39 @@ export function errorHandler(
         details: err.flatten(),
         requestId,
       },
+    });
+    return;
+  }
+
+  // Multer rejects oversized / malformed uploads by throwing its own
+  // error class, which is neither HttpError nor ZodError — so a phone
+  // photo over the 10 MB cap was answered with "500 internal_error" and
+  // paged Sentry, on all five upload routes. These are client errors
+  // with actionable messages.
+  if (err instanceof MulterError) {
+    const status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    const code =
+      err.code === 'LIMIT_FILE_SIZE'
+        ? 'file_too_large'
+        : err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE'
+          ? 'too_many_files'
+          : 'invalid_upload';
+    const message =
+      err.code === 'LIMIT_FILE_SIZE'
+        ? `That file is too large. The limit is ${Math.round(UPLOAD_MAX_BYTES / (1024 * 1024))} MB.`
+        : 'That upload could not be read. Try a different file.';
+    res.status(status).json({ error: { code, message, requestId } });
+    return;
+  }
+
+  // A malformed JSON body reaches here as a SyntaxError from
+  // express.json(). That's the client's mistake, not a server fault.
+  if (
+    err instanceof SyntaxError &&
+    'body' in (err as SyntaxError & { body?: unknown })
+  ) {
+    res.status(400).json({
+      error: { code: 'invalid_json', message: 'Request body is not valid JSON.', requestId },
     });
     return;
   }

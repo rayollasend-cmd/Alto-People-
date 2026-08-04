@@ -2,6 +2,7 @@ import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 're
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   keepPreviousData,
+  useInfiniteQuery,
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
@@ -356,19 +357,33 @@ export function PeopleDirectory() {
   // keepPreviousData makes filter/search changes show the old rows
   // (faded by isFetching) until the new ones arrive instead of flashing
   // a skeleton — much smoother on slow connections.
+  // Cursor-paged. The endpoint has always returned `nextCursor`; this
+  // page used to drop it on the floor, so associate #501 onward was
+  // invisible with no "load more" and no warning — the list simply
+  // ended. useInfiniteQuery consumes the cursor the server already sends.
   const {
-    data: rows,
+    data: pages,
     error: rowsError,
     isFetching: rowsFetching,
-  } = useQuery({
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: ['directory', filters],
-    queryFn: async () => (await listDirectory(filters)).associates,
+    queryFn: ({ pageParam }) =>
+      listDirectory({ ...filters, ...(pageParam ? { cursor: pageParam } : {}) }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
     placeholderData: keepPreviousData,
     // A minute of freshness: back-navigating to the directory (or re-
     // applying a recent filter combo) renders instantly from cache instead
-    // of refetching up to 1,000 rows.
+    // of refetching every page.
     staleTime: 60_000,
   });
+  const rows = useMemo(
+    () => pages?.pages.flatMap((p) => p.associates),
+    [pages],
+  );
 
   // Resolve the deep-link associateId once rows load. setTarget is the
   // canonical drawer-open path so we get all the existing render logic
@@ -674,6 +689,21 @@ export function PeopleDirectory() {
             ))}
           </ul>
         )
+      )}
+
+      {/* The list is capped per page. Without this control the directory
+          simply ended at the cap with no indication more people existed. */}
+      {hasNextPage && (
+        <div className="mt-4 flex justify-center">
+          <Button
+            variant="outline"
+            onClick={() => void fetchNextPage()}
+            loading={isFetchingNextPage}
+            disabled={isFetchingNextPage}
+          >
+            Load more associates
+          </Button>
+        </div>
       )}
 
       <Drawer

@@ -15,6 +15,7 @@ import {
   i9CatalogEntry,
   type DocumentRecord,
 } from '@alto-people/shared';
+import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import type { DocumentKind, TaskKind } from '@prisma/client';
 import { prisma } from '../db.js';
 import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
@@ -69,7 +70,7 @@ const DOC_KIND_TO_TASK_KIND: Partial<Record<DocumentKind, TaskKind>> = {
   J1_VISA: 'J1_DOCS',
 };
 
-const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_BYTES = UPLOAD_MAX_BYTES;
 const ALLOWED_MIMES = new Set([
   'application/pdf',
   'image/png',
@@ -173,16 +174,25 @@ documentsRouter.get('/me', async (req, res, next) => {
   try {
     const user = req.user!;
     if (!user.associateId) {
-      res.json({ documents: [] });
+      res.json({ documents: [], total: 0 });
       return;
     }
-    const rows = await prisma.documentRecord.findMany({
-      take: 500,
-      where: { associateId: user.associateId, deletedAt: null },
-      orderBy: { createdAt: 'desc' },
-      include: DOC_INCLUDE,
-    });
-    res.json(DocumentListResponseSchema.parse({ documents: rows.map(toRecord) }));
+    const where = { associateId: user.associateId, deletedAt: null };
+    // total alongside the capped page — the admin sibling reports it and
+    // the schema declares it; only this route left the client unable to
+    // tell a full list from a truncated one.
+    const [total, rows] = await Promise.all([
+      prisma.documentRecord.count({ where }),
+      prisma.documentRecord.findMany({
+        take: 500,
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: DOC_INCLUDE,
+      }),
+    ]);
+    res.json(
+      DocumentListResponseSchema.parse({ documents: rows.map(toRecord), total }),
+    );
   } catch (err) {
     next(err);
   }
