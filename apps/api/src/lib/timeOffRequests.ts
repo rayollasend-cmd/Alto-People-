@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient, TimeOffCategory } from '@prisma/client';
 import { ensureEntitlementApplied } from './timeOffEntitlement.js';
+import { emitWebhookEvent } from './webhookDispatch.js';
 
 /**
  * Phase 30 — request/approval workflow helpers for time-off.
@@ -80,12 +81,15 @@ export async function approveRequest(
   reviewerUserId: string,
   note: string | null
 ): Promise<ApproveResult> {
+  // Captured inside the tx, emitted only after it COMMITS — a rolled-back
+  // approval must never produce an outbound webhook.
+  let approvedEvent: Record<string, unknown> | null = null;
   // Bump the interactive-transaction timeout above Prisma's 5s default.
   // The four sequential round-trips here (find request → find balance →
   // create ledger → update balance + request) can exceed 5s on Neon
   // cold-start; tests routinely paid the full warm-up cost. 30s leaves
   // plenty of headroom while still bounding pathological cases.
-  return client.$transaction(async (tx) => {
+  const result = await client.$transaction(async (tx) => {
     const req = await tx.timeOffRequest.findUnique({
       where: { id: requestId },
       include: { ledgerEntry: { select: { id: true } } },
@@ -138,15 +142,26 @@ export async function approveRequest(
       data: { balanceMinutes: { decrement: req.requestedMinutes } },
     });
 
+    const decidedAt = new Date();
     await tx.timeOffRequest.update({
       where: { id: req.id },
       data: {
         status: 'APPROVED',
         reviewerUserId,
         reviewerNote: note,
-        decidedAt: new Date(),
+        decidedAt,
       },
     });
+
+    approvedEvent = {
+      requestId: req.id,
+      associateId: req.associateId,
+      category: req.category,
+      startDate: formatDateUTC(req.startDate),
+      endDate: formatDateUTC(req.endDate),
+      requestedMinutes: req.requestedMinutes,
+      decidedAt: decidedAt.toISOString(),
+    };
 
     return {
       status: 'APPROVED' as const,
@@ -154,6 +169,11 @@ export async function approveRequest(
       newBalanceMinutes: updatedBalance.balanceMinutes,
     };
   }, { timeout: 30_000 });
+
+  // Outbound webhooks — covers every approve path (admin single, admin
+  // bulk, manager single/bulk) since they all funnel through here.
+  if (approvedEvent) void emitWebhookEvent('time_off.approved', approvedEvent);
+  return result;
 }
 
 /**

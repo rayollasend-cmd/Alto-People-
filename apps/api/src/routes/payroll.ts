@@ -59,6 +59,7 @@ import {
 import { decryptString } from '../lib/crypto.js';
 import type { PayoutMethod } from '@prisma/client';
 import { enqueueAudit, recordCriticalAudit, recordPayrollEvent } from '../lib/audit.js';
+import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import {
   isStubMode as qboIsStubMode,
   postPayrollJournalEntry,
@@ -1133,6 +1134,21 @@ payrollRouter.post('/runs/:id/finalize', PROCESS, async (req, res, next) => {
       clientId: updated.clientId,
       req,
     });
+    // Outbound webhooks — run id + period + status only. Deliberately NO
+    // totals or per-associate amounts: pay data stays out of third-party
+    // payloads; consumers with an API key can pull details themselves.
+    void emitWebhookEvent(
+      'payroll.finalized',
+      {
+        payrollRunId: updated.id,
+        clientId: updated.clientId,
+        periodStart: updated.periodStart.toISOString().slice(0, 10),
+        periodEnd: updated.periodEnd.toISOString().slice(0, 10),
+        status: updated.status,
+        finalizedAt: updated.finalizedAt?.toISOString() ?? null,
+      },
+      { clientId: updated.clientId },
+    );
     res.json(toDetail(updated));
   } catch (err) {
     next(err);
