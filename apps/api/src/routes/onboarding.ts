@@ -49,10 +49,7 @@ import { runWithConcurrency } from '../lib/concurrency.js';
 import { sendReminderForUser } from '../lib/inviteReminder.js';
 import { send } from '../lib/notifications.js';
 import { hashSignedPdf, renderSignedAgreement } from '../lib/esign.js';
-import { resolveStoragePath, UPLOAD_ROOT } from '../lib/storage.js';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { blobExistsForListing, getBlobStore } from '../lib/blobStore.js';
 import {
   assertCanModifyApplication,
   effectiveClientIdFilter,
@@ -2796,9 +2793,8 @@ onboardingRouter.post(
         '';
       const sideTag = side ? `-${side.toLowerCase()}` : '';
       const relativeKey = `i9/${app.associateId}/${sha.slice(0, 16)}${sideTag}${ext}`;
-      const targetDir = join(UPLOAD_ROOT, 'i9', app.associateId);
-      await mkdir(targetDir, { recursive: true });
-      await writeFile(resolveStoragePath(relativeKey), file.buffer);
+      // Driver put() creates intermediate directories on the local driver.
+      await getBlobStore().put(relativeKey, file.buffer, file.mimetype);
 
       const baseFilename = file.originalname || `i9-${documentKind.toLowerCase()}${sideTag}${ext}`;
       const doc = await prisma.documentRecord.create({
@@ -2887,9 +2883,9 @@ onboardingRouter.get('/applications/:id/i9/documents', async (req, res, next) =>
         // Same fileAvailable signal as the documents vault — Railway's
         // ephemeral filesystem can leave zombie rows whose blobs are gone.
         // The verifier UI uses this to render a "file missing" tile
-        // instead of a broken <img>.
-        const fileAvailable =
-          d.s3Key !== null && existsSync(resolveStoragePath(d.s3Key));
+        // instead of a broken <img>. On the s3 driver this assumes
+        // available for any non-null s3Key (see blobStore.ts).
+        const fileAvailable = blobExistsForListing(d.s3Key);
         return {
           id: d.id,
           kind: d.kind,
@@ -3159,11 +3155,9 @@ onboardingRouter.post(
       });
       const pdfHash = hashSignedPdf(pdf);
 
-      // Persist to uploads/esign/<agreementId>/<hash>.pdf
+      // Persist to esign/<agreementId>/<hash>.pdf (relative blob key).
       const relativeKey = `esign/${agreement.id}/${pdfHash.slice(0, 16)}.pdf`;
-      const targetDir = join(UPLOAD_ROOT, 'esign', agreement.id);
-      await mkdir(targetDir, { recursive: true });
-      await writeFile(resolveStoragePath(relativeKey), pdf);
+      await getBlobStore().put(relativeKey, pdf, 'application/pdf');
 
       const result = await prisma.$transaction(async (tx) => {
         const doc = await tx.documentRecord.create({
@@ -3322,9 +3316,13 @@ onboardingRouter.get(
       );
       void app;
 
-      const path = resolveStoragePath(sig.signatureS3Key);
-      const { readFile } = await import('node:fs/promises');
-      const pdf = await readFile(path);
+      const pdf = await getBlobStore().get(sig.signatureS3Key);
+      if (!pdf) {
+        // Blob gone (ephemeral-disk wipe pre-volume, or purged object).
+        // Same 410 semantics as the documents download route; previously
+        // the raw readFile ENOENT surfaced as an opaque 500.
+        throw new HttpError(410, 'document_missing', 'Signed PDF is no longer available');
+      }
       const liveHash = hashSignedPdf(pdf);
 
       res.setHeader('Content-Type', 'application/pdf');

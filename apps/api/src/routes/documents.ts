@@ -3,8 +3,6 @@ import { z } from 'zod';
 import multer from 'multer';
 import { Prisma } from '@prisma/client';
 import { randomUUID, createHash } from 'node:crypto';
-import { writeFile, unlink } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { extname } from 'node:path';
 import {
   DocSideSchema,
@@ -34,7 +32,7 @@ import {
   documentRejectedManagerTemplate,
   documentUploadedTemplate,
 } from '../lib/emailTemplates.js';
-import { resolveStoragePath, UPLOAD_ROOT } from '../lib/storage.js';
+import { blobExistsForListing, getBlobStore } from '../lib/blobStore.js';
 import {
   isRejectedDocPastRetention,
   purgeOneRejectedDoc,
@@ -136,10 +134,12 @@ function toRecord(d: RawDoc): DocumentRecord {
   // cron or lazy-purge actually drops the blob: the file is conceptually
   // gone the moment retention lapses, so the listing UI shouldn't dangle
   // a clickable link that would 404 a moment later.
+  //
+  // Driver note: blobExistsForListing does the real existsSync only on
+  // the local driver; with STORAGE_DRIVER=s3 it assumes available for any
+  // non-null s3Key (S3 doesn't lose blobs on redeploy — see blobStore.ts).
   const fileAvailable =
-    d.s3Key !== null &&
-    !isRejectedDocPastRetention(d) &&
-    existsSync(resolveStoragePath(d.s3Key));
+    !isRejectedDocPastRetention(d) && blobExistsForListing(d.s3Key);
   return {
     id: d.id,
     associateId: d.associateId,
@@ -240,8 +240,7 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
     const id = randomUUID();
     const ext = extname(cleanName).toLowerCase();
     const relativeKey = `${id}-${sha}${ext}`;
-    const fullPath = resolveStoragePath(relativeKey);
-    await writeFile(fullPath, req.file.buffer);
+    await getBlobStore().put(relativeKey, req.file.buffer, req.file.mimetype);
 
     const created = await prisma.documentRecord.create({
       data: {
@@ -349,7 +348,7 @@ documentsRouter.post(
       const id = randomUUID();
       const ext = extname(cleanName).toLowerCase();
       const relativeKey = `${id}-${sha}${ext}`;
-      await writeFile(resolveStoragePath(relativeKey), req.file.buffer);
+      await getBlobStore().put(relativeKey, req.file.buffer, req.file.mimetype);
 
       const created = await prisma.documentRecord.create({
         data: {
@@ -433,8 +432,11 @@ documentsRouter.get('/:id/download', async (req, res, next) => {
       await purgeOneRejectedDoc(prisma, doc.id, doc.s3Key);
       throw new HttpError(404, 'document_not_found', 'Document not found');
     }
-    const path = resolveStoragePath(doc.s3Key);
-    if (!existsSync(path)) {
+    // Driver-based read: get() returns null when the blob is gone — the
+    // same 410 the old existsSync check produced (Railway redeploy wiping
+    // the local disk, or a lost/purged S3 object).
+    const blob = await getBlobStore().get(doc.s3Key);
+    if (!blob) {
       throw new HttpError(410, 'document_missing', 'Underlying file is no longer available');
     }
     const wantInline =
@@ -451,7 +453,7 @@ documentsRouter.get('/:id/download', async (req, res, next) => {
     if (wantInline) {
       res.setHeader('Content-Security-Policy', "default-src 'none'; img-src 'self'; object-src 'self'; frame-ancestors 'self'");
     }
-    res.sendFile(path);
+    res.send(blob);
   } catch (err) {
     next(err);
   }
@@ -653,16 +655,18 @@ documentsRouter.get('/admin/all.zip', MANAGE, bulkPiiExportLimiter, async (req, 
     }
 
     const { default: archiver } = await import('archiver');
-    const { createReadStream, existsSync } = await import('node:fs');
+    const store = getBlobStore();
 
     // Decide what's actually going in BEFORE streaming: the audit row and the
     // manifest both need the real list, and once the archive starts piping
-    // the response headers are gone.
+    // the response headers are gone. exists() is a stat on the local driver
+    // and a HeadObject on s3 — bounded by the take:500 above, and this is a
+    // rate-limited admin-only export.
     const included: Array<{ id: string; kind: string; entry: string }> = [];
     const skipped: Array<{ id: string; kind: string; filename: string }> = [];
     const seen = new Set<string>();
     for (const d of docs) {
-      if (!existsSync(resolveStoragePath(d.s3Key!))) {
+      if (!(await store.exists(d.s3Key!))) {
         // Purged or lost blob. This used to be a silent `continue`, so an
         // auditor received an archive quietly missing documents with no way
         // to tell — it looked like the associate never uploaded them.
@@ -711,9 +715,13 @@ documentsRouter.get('/admin/all.zip', MANAGE, bulkPiiExportLimiter, async (req, 
     for (const d of docs) {
       const inc = included.find((i) => i.id === d.id);
       if (!inc) continue;
-      archive.append(createReadStream(resolveStoragePath(d.s3Key!)), {
-        name: inc.entry,
-      });
+      // Buffer append (works for both drivers). Sequential get() keeps at
+      // most one blob's bytes in flight per iteration; entries are bounded
+      // by the upload size cap. A blob vanishing between exists() and here
+      // is skipped — same race the old createReadStream path had.
+      const blob = await store.get(d.s3Key!);
+      if (!blob) continue;
+      archive.append(blob, { name: inc.entry });
     }
 
     // Manifest so the recipient can tell a complete archive from a partial
@@ -1069,9 +1077,8 @@ documentsRouter.delete('/me/:id', async (req, res, next) => {
       data: { deletedAt: new Date() },
     });
     if (doc.s3Key) {
-      const path = resolveStoragePath(doc.s3Key);
       try {
-        await unlink(path);
+        await getBlobStore().delete(doc.s3Key);
       } catch {
         // Best-effort; the soft-delete is what matters for compliance.
       }
@@ -1090,5 +1097,5 @@ documentsRouter.delete('/me/:id', async (req, res, next) => {
   }
 });
 
-// Reference UPLOAD_ROOT so the storage-init side effect can't be tree-shaken.
-void UPLOAD_ROOT;
+// Storage init (UPLOAD_ROOT mkdir) still runs as a side effect of the
+// blobStore import chain (blobStore.ts imports storage.ts).

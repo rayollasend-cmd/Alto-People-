@@ -235,6 +235,43 @@ const EnvSchema = z.object({
   // a Volume to this service and set UPLOAD_DIR to its mount path
   // (e.g. /data/uploads). See apps/api/STORAGE.md.
   UPLOAD_DIR: z.string().optional(),
+  // Blob storage driver for document/photo/PDF blobs. `local` (default)
+  // keeps today's behavior: files under UPLOAD_ROOT on the filesystem.
+  // `s3` stores blobs in an S3-compatible bucket (AWS S3, Backblaze B2,
+  // Cloudflare R2) — object keys map 1:1 to the relative keys already in
+  // DocumentRecord.s3Key, optionally under STORAGE_S3_PREFIX. Run
+  // scripts/migrate-blobs-to-s3.ts BEFORE flipping this to `s3` on an
+  // existing deployment. See apps/api/STORAGE.md.
+  STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
+  // Required when STORAGE_DRIVER=s3 (fail-loud guard below); ignored for
+  // local. ENDPOINT only for non-AWS providers. Credentials are optional —
+  // when unset, the SDK default provider chain (IAM role / env) applies;
+  // when set, both halves must be set together.
+  STORAGE_S3_BUCKET: z.string().optional(),
+  STORAGE_S3_REGION: z.string().optional(),
+  STORAGE_S3_ENDPOINT: z.string().url().optional(),
+  STORAGE_S3_ACCESS_KEY_ID: z.string().optional(),
+  STORAGE_S3_SECRET_ACCESS_KEY: z.string().optional(),
+  // Optional key prefix inside the bucket ("alto-uploads" stores objects
+  // as "alto-uploads/<s3Key>"). Leading/trailing slashes are stripped.
+  STORAGE_S3_PREFIX: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined) return undefined;
+      const trimmed = v.trim().replace(/^\/+|\/+$/g, '');
+      return trimmed.length === 0 ? undefined : trimmed;
+    }),
+  // Path-style addressing ("https://endpoint/bucket/key"). Unset defaults
+  // to true when STORAGE_S3_ENDPOINT is set (B2/R2 need it), false for
+  // plain AWS. Accepts 1/0/true/false — explicit string parse because
+  // z.coerce.boolean() would treat the string "false" as true.
+  STORAGE_S3_FORCE_PATH_STYLE: z
+    .string()
+    .optional()
+    .transform((v) =>
+      v === undefined ? undefined : v === '1' || v.toLowerCase() === 'true',
+    ),
   // Nightly off-site backup of UPLOAD_ROOT to any S3-compatible bucket
   // (AWS S3, Backblaze B2, Cloudflare R2). The Railway Volume protects
   // files against REDEPLOYS, not against deletion/corruption — Neon has
@@ -299,6 +336,32 @@ if (parsed.data.NODE_ENV === 'production') {
       'FATAL: NODE_ENV=production but KIOSK_PIN_SECRET is not configured. ' +
         'It cannot silently fall back to PAYOUT_ENCRYPTION_KEY in prod — one leaked secret ' +
         'would let an attacker forge every existing kiosk PIN HMAC. Generate with `openssl rand -base64 48`.',
+    );
+    process.exit(1);
+  }
+}
+
+// STORAGE_DRIVER=s3 with a half-configured bucket must never boot: every
+// upload would throw and every download would 500 while the service looks
+// healthy. Applies in every NODE_ENV — a broken s3 config is broken in dev
+// too. Mirrors the WISE/BRANCH fail-loud pattern below.
+if (parsed.data.STORAGE_DRIVER === 's3') {
+  if (!parsed.data.STORAGE_S3_BUCKET || !parsed.data.STORAGE_S3_REGION) {
+    console.error(
+      'FATAL: STORAGE_DRIVER is set to s3 but STORAGE_S3_BUCKET and/or STORAGE_S3_REGION ' +
+        'are not configured. The system will not start with blob storage half-wired. ' +
+        'Set both (plus STORAGE_S3_ENDPOINT/credentials for non-AWS providers) or set ' +
+        'STORAGE_DRIVER=local. See apps/api/STORAGE.md.',
+    );
+    process.exit(1);
+  }
+  if (
+    Boolean(parsed.data.STORAGE_S3_ACCESS_KEY_ID) !==
+    Boolean(parsed.data.STORAGE_S3_SECRET_ACCESS_KEY)
+  ) {
+    console.error(
+      'FATAL: exactly one of STORAGE_S3_ACCESS_KEY_ID / STORAGE_S3_SECRET_ACCESS_KEY is set. ' +
+        'Set both for static credentials, or neither to use the SDK default provider chain.',
     );
     process.exit(1);
   }
