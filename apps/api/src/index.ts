@@ -14,6 +14,7 @@ import { startAttestationReminderCron } from './lib/attestationReminder.js';
 import { startExpirationDigestCron } from './lib/expirationDigest.js';
 import { startKioskMaintenanceCron } from './lib/kioskMaintenance.js';
 import { startDocumentMaintenanceCron } from './lib/documentMaintenance.js';
+import { startReportScheduleCron } from './lib/reportScheduleRunner.js';
 import { startUploadsBackupCron } from './lib/uploadsBackup.js';
 import { startShiftReminderCron } from './lib/shiftReminder.js';
 import { startScheduleDigestCron } from './lib/scheduleDigest.js';
@@ -54,6 +55,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startExpirationDigestCron();
   startKioskMaintenanceCron();
   startDocumentMaintenanceCron();
+  startReportScheduleCron();
   startUploadsBackupCron();
   startShiftReminderCron();
   startScheduleDigestCron();
