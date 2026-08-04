@@ -1,7 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
-import { unlink } from 'node:fs/promises';
 import { prisma as defaultPrisma } from '../db.js';
-import { resolveStoragePath } from './storage.js';
+import { getBlobStore } from './blobStore.js';
 import { env } from '../config/env.js';
 
 /**
@@ -45,7 +44,7 @@ export function isRejectedDocPastRetention(
 }
 
 /**
- * Unlink the blob for one specific DocumentRecord and null its s3Key.
+ * Delete the blob for one specific DocumentRecord and null its s3Key.
  * Inline equivalent of one iteration of `purgeRejectedDocs`. Safe to
  * call repeatedly — second call is a no-op once s3Key is already null.
  */
@@ -55,10 +54,10 @@ export async function purgeOneRejectedDoc(
   s3Key: string,
 ): Promise<void> {
   try {
-    await unlink(resolveStoragePath(s3Key));
+    await getBlobStore().delete(s3Key);
   } catch {
-    // File already gone — proceed to null s3Key so the row stops
-    // being re-picked by the cron and lazy paths.
+    // Blob already gone (or transient store error) — proceed to null
+    // s3Key so the row stops being re-picked by the cron and lazy paths.
   }
   await prisma.documentRecord.update({
     where: { id: docId },
