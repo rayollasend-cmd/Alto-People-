@@ -13,6 +13,9 @@ export interface AdminUser {
   associateName: string | null;
   clientId: string | null;
   clientName: string | null;
+  /** Non-null iff the account is currently brute-force locked (the server
+   *  only surfaces locks that are still in the future). */
+  lockedUntil: string | null;
 }
 
 export interface ListUsersFilters {
@@ -62,4 +65,9 @@ export function forcePasswordReset(id: string): Promise<void> {
   return apiFetch<void>(`/admin/users/${id}/force-password-reset`, {
     method: 'POST',
   });
+}
+
+/** Clear a brute-force lock (failed-login counter + lockedUntil). */
+export function unlockUser(id: string): Promise<void> {
+  return apiFetch<void>(`/admin/users/${id}/unlock`, { method: 'POST' });
 }

@@ -2,7 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { HUMAN_ROLES, type Capability, hasCapability } from '@alto-people/shared';
 import { env } from '../config/env.js';
 import { prisma } from '../db.js';
-import { verifySession } from '../lib/jwt.js';
+import { verifyMfaEnroll, verifySession } from '../lib/jwt.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
 export const SESSION_COOKIE = env.NODE_ENV === 'production'
@@ -17,6 +17,13 @@ export const SESSION_COOKIE = env.NODE_ENV === 'production'
 export const MFA_PENDING_COOKIE = env.NODE_ENV === 'production'
   ? '__Host-alto.mfa_pending'
   : 'alto.mfa_pending';
+
+// Short-lived cookie carrying the mfa_enroll JWT between /auth/login (org
+// policy demands TOTP enrollment) and the /auth/me/mfa/enroll/* endpoints.
+// Same __Host- posture as the other two auth cookies.
+export const MFA_ENROLL_COOKIE = env.NODE_ENV === 'production'
+  ? '__Host-alto.mfa_enroll'
+  : 'alto.mfa_enroll';
 
 // ---------------------------------------------------------------------------
 // In-process user cache
@@ -247,6 +254,82 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     return;
   }
   next();
+}
+
+/**
+ * Accept an mfa_enroll token (org-enforced MFA enrollment) as a stand-in
+ * for a session — ONLY on the routes this middleware is explicitly mounted
+ * on (the two /auth/me/mfa/enroll/* endpoints). Everywhere else the token
+ * is inert: it lives in its own cookie that no other middleware reads, and
+ * its JWT carries no `role` claim so `verifySession` rejects it even if it
+ * were copied into the session cookie.
+ *
+ * A real session (req.user already attached) always wins — an already
+ * signed-in user enrolling from Settings never touches this path. On
+ * success, `req.mfaEnrollment = true` marks the request so enroll/confirm
+ * knows to promote the caller to a real session (mirroring how
+ * /auth/mfa-challenge promotes mfa_pending).
+ */
+export async function allowMfaEnrollToken(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+) {
+  try {
+    if (req.user) return next();
+    const raw = req.cookies?.[MFA_ENROLL_COOKIE] as string | undefined;
+    if (!raw) return next();
+    const payload = verifyMfaEnroll(raw);
+    if (!payload) return next();
+
+    // Always a fresh DB read — never the attachUser cache. The enroll
+    // token skipped the session path entirely, and the promotion decision
+    // downstream must be made on current status/tokenVersion.
+    const user = await prisma.user.findFirst({
+      where: { id: payload.sub, deletedAt: null },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        status: true,
+        clientId: true,
+        associateId: true,
+        tokenVersion: true,
+        timezone: true,
+        mfaEnabledAt: true,
+        associate: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            photoS3Key: true,
+            photoUpdatedAt: true,
+          },
+        },
+      },
+    });
+    if (
+      !user ||
+      user.status !== 'ACTIVE' ||
+      user.tokenVersion !== payload.ver ||
+      !HUMAN_ROLES.includes(user.role)
+    ) {
+      return next();
+    }
+
+    const { associate, mfaEnabledAt, ...rest } = user;
+    req.user = {
+      ...rest,
+      firstName: associate?.firstName ?? null,
+      lastName: associate?.lastName ?? null,
+      photoUrl: associate ? profilePhotoUrlFor(associate) : null,
+      mfaEnabled: mfaEnabledAt !== null,
+    };
+    req.mfaEnrollment = true;
+    next();
+  } catch (err) {
+    next(err);
+  }
 }
 
 export function requireCapability(...caps: Capability[]) {

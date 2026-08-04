@@ -482,9 +482,23 @@ export const LoginMfaRequiredResponseSchema = z.object({
 });
 export type LoginMfaRequiredResponse = z.infer<typeof LoginMfaRequiredResponseSchema>;
 
+/**
+ * Org policy (OrgSetting.mfaRequirement) applies to this user's role but
+ * they have no TOTP enrolled. The server issued a short-lived mfa_enroll
+ * cookie accepted ONLY by the /auth/me/mfa/enroll/* endpoints; the client
+ * drives the QR + confirm flow and receives a real session on confirm.
+ */
+export const LoginMfaEnrollRequiredResponseSchema = z.object({
+  mfaEnrollmentRequired: z.literal(true),
+});
+export type LoginMfaEnrollRequiredResponse = z.infer<
+  typeof LoginMfaEnrollRequiredResponseSchema
+>;
+
 export const LoginResponseSchema = z.union([
   LoginSuccessResponseSchema,
   LoginMfaRequiredResponseSchema,
+  LoginMfaEnrollRequiredResponseSchema,
 ]);
 export type LoginResponse = z.infer<typeof LoginResponseSchema>;
 
@@ -4645,6 +4659,10 @@ export const ORG_LOGO_ALLOWED_TYPES = [
 ] as const;
 export type OrgLogoContentType = (typeof ORG_LOGO_ALLOWED_TYPES)[number];
 
+// Org-enforced MFA policy. Mirrors the Prisma MfaRequirement enum; the
+// role mapping for ADMINS lives in roles.ts (isMfaAdminRole).
+export const MfaRequirementSchema = z.enum(['OFF', 'ADMINS', 'ALL']);
+
 export const OrgBrandingSchema = z.object({
   orgName: z.string().min(1).max(120),
   senderName: z.string().min(1).max(120).nullable(),
@@ -4661,6 +4679,9 @@ export const OrgBrandingSchema = z.object({
   // the right content-type). Null when no logo uploaded.
   logoUrl: z.string().nullable(),
   logoUpdatedAt: z.string().datetime().nullable(),
+  // Security — org-enforced MFA. Not branding, but it lives on the same
+  // OrgSetting singleton and rides the same GET/PATCH surface.
+  mfaRequirement: MfaRequirementSchema,
   updatedAt: z.string().datetime(),
 });
 export type OrgBranding = z.infer<typeof OrgBrandingSchema>;
@@ -4682,6 +4703,7 @@ export const UpdateOrgBrandingInputSchema = z
       .regex(HEX_COLOR_REGEX, 'Must be a #RRGGBB hex colour.')
       .nullable()
       .optional(),
+    mfaRequirement: MfaRequirementSchema.optional(),
   })
   .strict();
 export type UpdateOrgBrandingInput = z.infer<typeof UpdateOrgBrandingInputSchema>;
