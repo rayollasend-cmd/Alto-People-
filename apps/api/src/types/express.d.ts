@@ -43,6 +43,13 @@ declare global {
        */
       sessionStale?: boolean;
       /**
+       * Set by `allowMfaEnrollToken` when `req.user` was attached from a
+       * short-lived mfa_enroll token (org-enforced MFA enrollment) rather
+       * than a real session cookie. The enroll/confirm handler uses it to
+       * promote the caller to a real session on success.
+       */
+      mfaEnrollment?: boolean;
+      /**
        * Per-request correlation ID, set by the `requestId` middleware.
        * Echoed back as the `X-Request-Id` response header and surfaced
        * in error bodies + AuditLog metadata so a single trace ties

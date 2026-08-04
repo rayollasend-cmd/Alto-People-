@@ -10,7 +10,7 @@ import {
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { enqueueAudit } from '../lib/audit.js';
+import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import {
   ensureBrandingLoaded,
   refreshBranding,
@@ -58,6 +58,7 @@ async function loadResponse(): Promise<OrgBranding> {
       primaryColor: null,
       logoUrl: null,
       logoUpdatedAt: null,
+      mfaRequirement: 'OFF',
       updatedAt: new Date(0).toISOString(),
     };
   }
@@ -70,6 +71,7 @@ async function loadResponse(): Promise<OrgBranding> {
       ? `/admin/org/settings/logo?v=${row.logoUpdatedAt?.getTime() ?? row.updatedAt.getTime()}`
       : null,
     logoUpdatedAt: row.logoUpdatedAt?.toISOString() ?? null,
+    mfaRequirement: row.mfaRequirement,
     updatedAt: row.updatedAt.toISOString(),
   };
 }
@@ -98,10 +100,32 @@ orgSettingsRouter.patch(
         senderName: body.senderName ?? null,
         supportEmail: body.supportEmail ?? null,
         primaryColor: body.primaryColor ?? null,
+        // Org-enforced MFA policy — defaults OFF when not supplied.
+        mfaRequirement: body.mfaRequirement ?? 'OFF',
       },
       update: body,
     });
     await refreshBranding(prisma);
+    // Flipping the org MFA requirement is a security-posture change that
+    // affects who can sign in — record it synchronously (critical) and
+    // under its own action so the audit feed distinguishes it from
+    // cosmetic branding edits.
+    if (body.mfaRequirement !== undefined) {
+      await recordCriticalAudit(
+        {
+          actorUserId: req.user!.id,
+          action: 'org.mfa_requirement_updated',
+          entityType: 'OrgSetting',
+          entityId: 'singleton',
+          metadata: {
+            ip: req.ip ?? null,
+            userAgent: req.headers['user-agent'] ?? null,
+            mfaRequirement: body.mfaRequirement,
+          },
+        },
+        'orgSettings.patch.mfaRequirement',
+      );
+    }
     enqueueAudit(
       {
         actorUserId: req.user!.id,

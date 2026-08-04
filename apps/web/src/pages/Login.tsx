@@ -1,11 +1,13 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { Eye, EyeOff, Fingerprint, Lock, Mail, ShieldCheck } from 'lucide-react';
+import type { MfaEnrollStartResponse } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { safeNextPath } from '@/lib/safeNextPath';
 import { passkeysSupported, signInWithPasskey } from '@/lib/webauthn';
 import { useI18n } from '@/lib/i18n';
 import { ApiError, NetworkError } from '@/lib/api';
+import { confirmMfaEnrollment, startMfaEnrollment } from '@/lib/settingsApi';
 import { useFocusFirstError } from '@/lib/useFocusFirstError';
 import { Button } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Field';
@@ -13,6 +15,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 import { Logo } from '@/components/Logo';
+import { Skeleton } from '@/components/ui/Skeleton';
 
 interface LocationState {
   from?: string;
@@ -20,7 +23,7 @@ interface LocationState {
 
 const DEFAULT_DEV_EMAIL = import.meta.env.DEV ? 'admin@altohr.com' : '';
 
-type Step = 'password' | 'mfa';
+type Step = 'password' | 'mfa' | 'enroll';
 
 export function Login() {
   const { t } = useI18n();
@@ -35,6 +38,13 @@ export function Login() {
   const [useRecovery, setUseRecovery] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // Org-enforced MFA enrollment (mfaEnrollmentRequired login response).
+  // Same building blocks as the Settings enrollment card, driven by the
+  // short-lived mfa_enroll cookie instead of a session.
+  const [enroll, setEnroll] = useState<MfaEnrollStartResponse | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [enrollCode, setEnrollCode] = useState('');
 
   const queryNext = new URLSearchParams(location.search).get('next');
   const from = safeNextPath(
@@ -51,6 +61,11 @@ export function Login() {
       if (res.mfaRequired) {
         setStep('mfa');
         setCode('');
+        return;
+      }
+      if (res.mfaEnrollmentRequired) {
+        setStep('enroll');
+        await beginEnrollment();
         return;
       }
       navigate(from, { replace: true });
@@ -95,6 +110,71 @@ export function Login() {
           setError('That code is incorrect or expired.');
         } else if (err.status >= 500) {
           setError("We're having trouble verifying your code. Please try again in a moment.");
+        } else {
+          setError('Could not verify code.');
+        }
+      } else {
+        setError('Could not verify code.');
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Org-enforced enrollment: fetch a fresh secret + recovery codes. The
+  // mfa_enroll cookie set by /auth/login authorizes these two endpoints
+  // (and nothing else) for 15 minutes.
+  const beginEnrollment = async () => {
+    setEnroll(null);
+    setQrDataUrl(null);
+    setAcknowledged(false);
+    setEnrollCode('');
+    try {
+      const res = await startMfaEnrollment();
+      setEnroll(res);
+      // Lazy-load qrcode — only paid for by users actually enrolling.
+      const { default: QRCode } = await import('qrcode');
+      const dataUrl = await QRCode.toDataURL(res.provisioningUri, {
+        margin: 1,
+        width: 176,
+        color: { dark: '#0f172a', light: '#ffffff' },
+      });
+      setQrDataUrl(dataUrl);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        setError('Sign-in expired. Please start again.');
+        setStep('password');
+        setPassword('');
+      } else {
+        setError('Could not start setup. Try signing in again.');
+        setStep('password');
+      }
+    }
+  };
+
+  const handleEnrollSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      // On success the server issues the real session cookie (promotion
+      // from the mfa_enroll token) — refreshUser picks it up.
+      await confirmMfaEnrollment({ code: enrollCode.trim() });
+      await refreshUser();
+      navigate(from, { replace: true });
+    } catch (err) {
+      if (err instanceof NetworkError) {
+        setError('Network error — check your connection and try again.');
+      } else if (err instanceof ApiError) {
+        if (err.status === 429) {
+          setError('Too many code attempts. Try again in a few minutes.');
+        } else if (err.code === 'invalid_code') {
+          setError('That code is incorrect or expired.');
+        } else if (err.status === 401 || err.code === 'no_pending_enrollment') {
+          setError('Sign-in expired. Please start again.');
+          setStep('password');
+          setPassword('');
         } else {
           setError('Could not verify code.');
         }
@@ -279,7 +359,7 @@ export function Login() {
               </p>
             )}
           </form>
-        ) : (
+        ) : step === 'mfa' ? (
           <form
             onSubmit={handleMfaSubmit}
             className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in"
@@ -348,6 +428,123 @@ export function Login() {
                   setPassword('');
                   setCode('');
                   setUseRecovery(false);
+                  setError(null);
+                }}
+                className="text-silver hover:text-gold-bright transition-colors underline-offset-2 hover:underline"
+              >
+                Cancel
+              </button>
+            </div>
+
+            <div className="mt-6 flex items-center justify-center gap-1.5 text-2xs uppercase tracking-widest text-silver/70">
+              <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+              {t('login.securedBy')}
+            </div>
+          </form>
+        ) : (
+          <form
+            onSubmit={handleEnrollSubmit}
+            className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in"
+            noValidate
+          >
+            <h2 className="font-display text-2xl md:text-3xl text-white mb-1">
+              Set up two-step sign-in
+            </h2>
+            <p className="text-silver text-sm mb-6">
+              Your organization requires two-step sign-in for this account.
+              Scan the QR code with an authenticator app, save your recovery
+              codes, and enter a code to finish signing in.
+            </p>
+
+            {enroll ? (
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="shrink-0 self-center sm:self-start">
+                    {qrDataUrl ? (
+                      <img
+                        src={qrDataUrl}
+                        alt="Scan with your authenticator app"
+                        className="rounded-md border border-navy-secondary bg-white p-2"
+                        width={176}
+                        height={176}
+                      />
+                    ) : (
+                      <Skeleton className="h-44 w-44" />
+                    )}
+                  </div>
+                  <div className="flex-1 space-y-3 min-w-0">
+                    <div>
+                      <Label>Manual entry secret</Label>
+                      <code className="block rounded-md bg-navy-secondary/60 px-3 py-2 font-mono text-xs text-white break-all">
+                        {enroll.secret}
+                      </code>
+                    </div>
+                    <div>
+                      <Label>Recovery codes — save these now</Label>
+                      <ul className="grid grid-cols-2 gap-1.5 rounded-md bg-navy-secondary/60 p-3 font-mono text-xs text-white">
+                        {enroll.recoveryCodes.map((c) => (
+                          <li key={c}>{c}</li>
+                        ))}
+                      </ul>
+                      <FormHint>
+                        Each code works once — they are the only way in if you
+                        lose your phone.
+                      </FormHint>
+                    </div>
+                  </div>
+                </div>
+                <label className="flex items-start gap-2 text-sm text-white">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={acknowledged}
+                    onChange={(e) => setAcknowledged(e.target.checked)}
+                  />
+                  <span>I&apos;ve saved my recovery codes somewhere safe.</span>
+                </label>
+                <div>
+                  <Label htmlFor="login-enroll-code" required>
+                    6-digit code from your authenticator app
+                  </Label>
+                  <Input
+                    id="login-enroll-code"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    required
+                    maxLength={6}
+                    value={enrollCode}
+                    onChange={(e) => setEnrollCode(e.target.value.replace(/\D/g, ''))}
+                    placeholder="123456"
+                    className="font-mono tracking-widest text-center"
+                  />
+                </div>
+              </div>
+            ) : (
+              <Skeleton className="h-44 w-full" />
+            )}
+
+            {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
+
+            <Button
+              type="submit"
+              size="lg"
+              disabled={!enroll || !acknowledged || enrollCode.length !== 6 || submitting}
+              loading={submitting}
+              className="w-full mt-6"
+            >
+              {submitting ? 'Verifying…' : 'Turn on and sign in'}
+            </Button>
+
+            <div className="mt-4 text-right text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setStep('password');
+                  setPassword('');
+                  setEnroll(null);
+                  setQrDataUrl(null);
+                  setEnrollCode('');
+                  setAcknowledged(false);
                   setError(null);
                 }}
                 className="text-silver hover:text-gold-bright transition-colors underline-offset-2 hover:underline"

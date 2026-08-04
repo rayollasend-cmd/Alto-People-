@@ -60,6 +60,16 @@ enum ClientStatus {
   PROSPECT
 }
 
+// Org-enforced MFA policy (OrgSetting.mfaRequirement). OFF = opt-in only,
+// ADMINS = every admin-class role (see isMfaAdminRole in packages/shared)
+// must have TOTP enrolled to sign in with a password, ALL = every human
+// role. Passkey sign-in counts as strong auth and is exempt.
+enum MfaRequirement {
+  OFF
+  ADMINS
+  ALL
+}
+
 enum OnboardingTrack {
   STANDARD
   J1
@@ -352,6 +362,14 @@ model User {
   role               Role
   status             UserStatus @default(INVITED)
   tokenVersion       Int        @default(0)
+  // Account lockout — persistent brute-force defense (complements the
+  // in-memory per-email rate limiter, which resets on deploy).
+  // failedLoginCount increments on every wrong-password attempt; when it
+  // reaches 10 the account locks for 15 minutes via lockedUntil. Both are
+  // reset on a successful password verification. Passkey (WebAuthn)
+  // sign-in ignores both fields — see /auth/webauthn/login/verify.
+  failedLoginCount   Int        @default(0)
+  lockedUntil        DateTime?  @db.Timestamptz(6)
   // IANA timezone preference for date display in /settings, login history,
   // and (later) email templates. Nullable — when null, the UI falls back
   // to the browser's locale, the email layer falls back to UTC.
@@ -5776,6 +5794,11 @@ model OrgSetting {
   // re-price already-approved rows. IRS announces the next-year rate in
   // December; HR updates this column at year start.
   mileageRatePerMile Decimal   @default(0.6700) @db.Decimal(8, 4)
+  // Org-enforced MFA policy. OFF = opt-in only. ADMINS = admin-class roles
+  // (derived from capabilities — see isMfaAdminRole in packages/shared)
+  // must enroll in TOTP before a password sign-in completes. ALL = every
+  // human role. Passkey sign-in is exempt (it is already strong auth).
+  mfaRequirement     MfaRequirement @default(OFF)
   updatedAt          DateTime  @updatedAt @db.Timestamptz(6)
 }
 

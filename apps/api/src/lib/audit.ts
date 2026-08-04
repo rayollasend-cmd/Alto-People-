@@ -98,6 +98,11 @@ interface LoginFailureContext extends LoginContext {
     | 'unknown_email'
     | 'no_password'
     | 'wrong_password'
+    // Account lockout: lockedUntil is in the future, so the attempt was
+    // refused regardless of whether the password was right. The HTTP
+    // response is the same generic 401 as wrong_password (no lockout
+    // oracle for attackers) — this reason is the forensic record.
+    | 'locked'
     | 'disabled'
     | 'soft_deleted'
     | 'non_human_role'
