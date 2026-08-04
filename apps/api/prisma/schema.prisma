@@ -352,6 +352,10 @@ model User {
   role               Role
   status             UserStatus @default(INVITED)
   tokenVersion       Int        @default(0)
+  // SCIM 2.0 externalId passthrough — the identity provider's (Entra ID /
+  // Okta) own identifier for this account. Opaque to us; stored so we can
+  // echo it back on every SCIM read and the IdP can correlate resources.
+  scimExternalId     String?    @db.VarChar(255)
   // IANA timezone preference for date display in /settings, login history,
   // and (later) email templates. Nullable — when null, the UI falls back
   // to the browser's locale, the email layer falls back to UTC.

@@ -86,6 +86,7 @@ import { profilePhotoRouter } from './routes/profilePhoto.js';
 import { usersRouter } from './routes/users.js';
 import { orgSettingsRouter } from './routes/orgSettings.js';
 import { integrationsV1Router } from './routes/integrationsV1.js';
+import { scimRouter } from './routes/scim.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { requestId } from './middleware/requestId.js';
@@ -196,6 +197,12 @@ export function createApp() {
   // don't get tangled with cookie-flow routes if a caller forgets the
   // bearer header.
   app.use('/integrations/v1', integrationsV1Router);
+  // SCIM 2.0 user provisioning for IdP-driven lifecycle (Microsoft Entra
+  // ID / Okta). Self-authenticates with the dedicated SCIM_TOKEN bearer —
+  // deliberately NOT the altop_ ApiKey system; see routes/scim.ts for the
+  // rationale — so like /integrations/v1 it sits outside the session-
+  // cookie RBAC chain. 503s when SCIM_TOKEN is unset.
+  app.use('/scim/v2', scimRouter);
   // Public iCal feed — calendar clients poll without credentials, the
   // HMAC token in the URL is the authorization. Mounted before the
   // session-cookie chain so it doesn't get wrapped in view:scheduling.

@@ -196,6 +196,16 @@ const EnvSchema = z.object({
   // request — never run unauthenticated in any environment.
   BRANCH_API_BASE_URL: z.string().url().default('https://api.branchapp.com'),
   BRANCH_WEBHOOK_SECRET: z.string().optional(),
+  // SCIM 2.0 provisioning bearer (Microsoft Entra ID / Okta). When unset,
+  // every /scim/v2/* request answers 503 — the surface never runs
+  // unauthenticated (same posture as BRANCH_WEBHOOK_SECRET above). Min 32
+  // chars; generate with `openssl rand -base64 32` and paste the same value
+  // into the IdP's provisioning credential. Rotating it revokes the old
+  // token immediately — update the IdP at the same time.
+  SCIM_TOKEN: z
+    .string()
+    .min(32, 'SCIM_TOKEN must be at least 32 chars — generate with `openssl rand -base64 32`')
+    .optional(),
   // Phase 44 — QuickBooks Online (Intuit). When both client id and secret
   // are set, OAuth is wired and JournalEntry POSTs hit Intuit's v3 API.
   // Otherwise the integration runs in stub mode: connect/disconnect work
