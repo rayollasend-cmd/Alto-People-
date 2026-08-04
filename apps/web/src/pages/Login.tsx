@@ -1,11 +1,11 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Eye, EyeOff, Fingerprint, Lock, Mail, ShieldCheck } from 'lucide-react';
+import { Building2, Eye, EyeOff, Fingerprint, Lock, Mail, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { safeNextPath } from '@/lib/safeNextPath';
 import { passkeysSupported, signInWithPasskey } from '@/lib/webauthn';
 import { useI18n } from '@/lib/i18n';
-import { ApiError, NetworkError } from '@/lib/api';
+import { ApiError, NetworkError, apiFetch } from '@/lib/api';
 import { useFocusFirstError } from '@/lib/useFocusFirstError';
 import { Button } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Field';
@@ -22,6 +22,28 @@ const DEFAULT_DEV_EMAIL = import.meta.env.DEV ? 'admin@altohr.com' : '';
 
 type Step = 'password' | 'mfa';
 
+interface SsoConfig {
+  enabled: boolean;
+  buttonLabel: string | null;
+}
+
+/**
+ * The OIDC callback bounces failed sign-ins back here as
+ * /login?error=sso_no_account | sso_failed. Deliberately coarse copy —
+ * the server never distinguishes "no account" from "disabled" (no status
+ * oracle), and the operational detail lives in the audit log.
+ */
+function ssoErrorMessage(search: string): string | null {
+  const code = new URLSearchParams(search).get('error');
+  if (code === 'sso_no_account') {
+    return 'No Alto account matches your SSO identity — ask your admin to invite you.';
+  }
+  if (code === 'sso_failed') {
+    return 'SSO sign-in failed — try again or use your password.';
+  }
+  return null;
+}
+
 export function Login() {
   const { t } = useI18n();
   const { signIn, submitMfaChallenge, refreshUser } = useAuth();
@@ -33,8 +55,26 @@ export function Login() {
   const [step, setStep] = useState<Step>('password');
   const [code, setCode] = useState('');
   const [useRecovery, setUseRecovery] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Seed the banner from the ?error= query the OIDC callback redirects with.
+  const [error, setError] = useState<string | null>(() =>
+    ssoErrorMessage(location.search),
+  );
   const [submitting, setSubmitting] = useState(false);
+  const [sso, setSso] = useState<SsoConfig | null>(null);
+
+  // Feature probe alongside initial render. A failed fetch (offline, cold
+  // API) just leaves the button hidden — it must never block password login.
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<SsoConfig>('/auth/oidc/config')
+      .then((cfg) => {
+        if (!cancelled) setSso(cfg);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const queryNext = new URLSearchParams(location.search).get('next');
   const from = safeNextPath(
@@ -244,27 +284,48 @@ export function Login() {
               {submitting ? t('login.signingIn') : t('login.signIn')}
             </Button>
 
-            {passkeysSupported() && (
+            {(passkeysSupported() || sso?.enabled) && (
               <>
                 <div className="my-4 flex items-center gap-3 text-2xs uppercase tracking-widest text-silver/50">
                   <span className="h-px flex-1 bg-navy-secondary" />
                   or
                   <span className="h-px flex-1 bg-navy-secondary" />
                 </div>
-                {/* "Use a passkey", not "Sign in with…": the e2e suite (and
-                    anyone else) targets the primary button by /sign in/i,
-                    and two matches is a strict-mode violation. */}
-                <Button
-                  type="button"
-                  size="lg"
-                  variant="outline"
-                  onClick={() => void handlePasskey()}
-                  disabled={submitting}
-                  className="w-full"
-                >
-                  <Fingerprint className="h-4 w-4" />
-                  Use a passkey
-                </Button>
+                <div className="space-y-3">
+                  {passkeysSupported() && (
+                    /* "Use a passkey", not "Sign in with…": the e2e suite (and
+                        anyone else) targets the primary button by /sign in/i,
+                        and two matches is a strict-mode violation. */
+                    <Button
+                      type="button"
+                      size="lg"
+                      variant="outline"
+                      onClick={() => void handlePasskey()}
+                      disabled={submitting}
+                      className="w-full"
+                    >
+                      <Fingerprint className="h-4 w-4" />
+                      Use a passkey
+                    </Button>
+                  )}
+                  {sso?.enabled && (
+                    /* Full-page navigation, not fetch: /auth/oidc/start
+                       answers a 302 to the IdP, and the browser must follow
+                       it as a top-level document load so the flow cookie and
+                       the eventual callback redirect work. */
+                    <Button
+                      type="button"
+                      size="lg"
+                      variant="outline"
+                      onClick={() => window.location.assign('/api/auth/oidc/start')}
+                      disabled={submitting}
+                      className="w-full"
+                    >
+                      <Building2 className="h-4 w-4" />
+                      {sso.buttonLabel ?? 'Sign in with SSO'}
+                    </Button>
+                  )}
+                </div>
               </>
             )}
 

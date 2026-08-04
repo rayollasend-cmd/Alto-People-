@@ -249,6 +249,26 @@ const EnvSchema = z.object({
   BACKUP_S3_ENDPOINT: z.string().url().optional(),
   BACKUP_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
   BACKUP_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+  // Enterprise SSO — OIDC authorization-code + PKCE login (Microsoft
+  // Entra ID-ready, but any spec-compliant IdP works). All three core
+  // vars unset = the feature is fully off: the login page hides the SSO
+  // button and /auth/oidc/start 404s. https is required — discovery and
+  // the token exchange carry the client secret, and the ID token is
+  // bearer material. Partial configuration is a boot error (see the
+  // cross-field guard at the bottom of this file).
+  OIDC_ISSUER_URL: z
+    .string()
+    .url()
+    .refine((v) => v.startsWith('https://'), {
+      message:
+        'OIDC_ISSUER_URL must be an https:// URL (e.g. https://login.microsoftonline.com/<tenant-id>/v2.0)',
+    })
+    .optional(),
+  OIDC_CLIENT_ID: z.string().min(1).optional(),
+  OIDC_CLIENT_SECRET: z.string().min(1).optional(),
+  // Login-page button copy, e.g. "Sign in with Contoso". Served by
+  // GET /auth/oidc/config; never a secret.
+  OIDC_BUTTON_LABEL: z.string().min(1).max(60).default('Sign in with SSO'),
   // Sentry DSN. When set, unhandled errors from the request pipeline +
   // any error reaching the global error handler get reported. Unset =>
   // no reporting, no SDK init, zero network calls. Reasonable default
@@ -329,6 +349,33 @@ if (parsed.data.PAYROLL_DISBURSEMENT_PROVIDER === 'BRANCH') {
       'FATAL: PAYROLL_DISBURSEMENT_PROVIDER is set to BRANCH but BRANCH_WEBHOOK_SECRET is not configured. ' +
         'The system will not start to prevent silent payment failures. ' +
         'Set BRANCH_WEBHOOK_SECRET in your environment variables.',
+    );
+    process.exit(1);
+  }
+}
+
+// OIDC SSO: all-or-nothing. A half-configured IdP either renders a dead
+// SSO button (issuer without credentials) or crashes mid-flow in front of
+// the user's browser (credentials without an issuer to validate against).
+// Fail loud at boot instead — mirrors the WISE/BRANCH guards above.
+{
+  const oidcVars = {
+    OIDC_ISSUER_URL: parsed.data.OIDC_ISSUER_URL,
+    OIDC_CLIENT_ID: parsed.data.OIDC_CLIENT_ID,
+    OIDC_CLIENT_SECRET: parsed.data.OIDC_CLIENT_SECRET,
+  };
+  const set = Object.entries(oidcVars).filter(
+    ([, v]) => v !== undefined && v.trim() !== '',
+  );
+  if (set.length > 0 && set.length < 3) {
+    const missing = Object.entries(oidcVars)
+      .filter(([, v]) => v === undefined || v.trim() === '')
+      .map(([k]) => k)
+      .join(', ');
+    console.error(
+      `FATAL: OIDC SSO is partially configured — missing ${missing}. ` +
+        'Set OIDC_ISSUER_URL, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET together, ' +
+        'or unset all three to turn SSO off.',
     );
     process.exit(1);
   }
