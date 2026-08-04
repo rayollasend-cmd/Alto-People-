@@ -1,9 +1,8 @@
-import { unlink } from 'node:fs/promises';
 import type { PrismaClient } from '@prisma/client';
 import { HttpError } from '../middleware/error.js';
 import { recordCriticalAudit } from './audit.js';
 import { purgeAssociateBiometrics } from './kioskMaintenance.js';
-import { resolveStoragePath } from './storage.js';
+import { getBlobStore } from './blobStore.js';
 import { logger } from './logger.js';
 
 /**
@@ -296,16 +295,19 @@ export async function eraseAssociate(
     timeout: 30_000,
   });
 
-  // Blob unlink is best-effort, outside the transaction (fs is not
-  // transactional): the DB no longer points at these files either way.
+  // Blob deletion is best-effort, outside the transaction (object
+  // storage is not transactional): the DB no longer points at these
+  // files either way. Goes through the blob-store driver so erasure
+  // reaches the bucket when STORAGE_DRIVER=s3, not just local disk.
+  const blobStore = getBlobStore();
   for (const key of blobKeys) {
     try {
-      await unlink(resolveStoragePath(key));
+      await blobStore.delete(key);
       counts.documentBlobsUnlinked += 1;
     } catch (err) {
       logger.warn(
         { err, associateId, key },
-        'erasure: document blob unlink failed (already gone?)',
+        'erasure: document blob delete failed (already gone?)',
       );
     }
   }
