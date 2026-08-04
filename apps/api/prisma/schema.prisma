@@ -4415,6 +4415,9 @@ model ReportSchedule {
   recipients String
   isActive   Boolean               @default(true)
   lastRunAt  DateTime?             @db.Timestamptz(6)
+  // Outcome of the most recent delivery attempt: "SUCCESS", "PARTIAL (n/m
+  // delivered)", or "FAILED: <reason>". Null until the first run.
+  lastStatus String?
   nextRunAt  DateTime              @db.Timestamptz(6)
   createdAt  DateTime              @default(now()) @db.Timestamptz(6)
   updatedAt  DateTime              @updatedAt @db.Timestamptz(6)

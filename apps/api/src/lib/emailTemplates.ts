@@ -1258,3 +1258,60 @@ export function onboardingReminderTemplate(opts: OnboardingReminderOpts): EmailT
     }),
   };
 }
+
+/* ---------------- REPORTS ------------------------------------ */
+
+export interface ScheduledReportOpts {
+  reportName: string;
+  /** YYYY-MM-DD the run executed (also appears in the subject). */
+  runDate: string;
+  cadence: string;
+  rowCount: number;
+  /** When true, the report matched more rows than fit in the attachment. */
+  truncated: boolean;
+  /** The row cap applied when `truncated` is true. */
+  rowCap: number;
+  /** Absolute URL to the reports page in the web app. */
+  reportsUrl: string;
+}
+export function scheduledReportTemplate(opts: ScheduledReportOpts): EmailTemplate {
+  const refId = formatRef();
+  const subject = `[Report] ${opts.reportName} — ${opts.runDate}`;
+  const heading = `Scheduled report: ${opts.reportName}`;
+  const intro = `Your ${opts.cadence.toLowerCase()} scheduled report "${opts.reportName}" ran on ${opts.runDate}. The results are attached as a CSV file.`;
+  const dataBlock: DataRow[] = [
+    { label: 'Report', value: opts.reportName },
+    { label: 'Cadence', value: opts.cadence },
+    { label: 'Run date', value: opts.runDate },
+    { label: 'Rows', value: String(opts.rowCount) },
+  ];
+  const body: string[] = [];
+  if (opts.truncated) {
+    body.push(
+      `Note: this report matched more rows than the delivery cap. The attachment contains the first ${opts.rowCap.toLocaleString('en-US')} rows — narrow the report's filters, or run it from the app to work with the full result.`,
+    );
+  }
+  body.push(
+    `This report contains workforce data — handle the attachment according to your organization's data-handling policy.`,
+  );
+  return {
+    subject,
+    text: composeText({
+      intro,
+      dataBlock,
+      body,
+      cta: { label: 'Open reports', url: opts.reportsUrl },
+      signatory: { kind: 'system' },
+      refId,
+    }),
+    html: wrapHtml({
+      heading,
+      intro: escapeHtml(intro),
+      dataBlock,
+      body: body.map(escapeHtml),
+      cta: { label: 'Open reports', url: opts.reportsUrl },
+      signatory: { kind: 'system' },
+      refId,
+    }),
+  };
+}

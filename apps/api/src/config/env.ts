@@ -164,6 +164,12 @@ const EnvSchema = z.object({
   // want on by default; set to 0 only if a downstream job handles purges.
   // The DocumentRecord row stays for audit — only the file leaves disk.
   DOCUMENT_MAINTENANCE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
+  // Scheduled-report delivery sweep (lib/reportScheduleRunner.ts): runs
+  // ReportSchedule rows whose nextRunAt has passed and emails the CSV to
+  // the stored recipients. Ticks every N seconds; each tick only touches
+  // due schedules, so a 5-minute cadence (default 300) is cheap. Set 0
+  // to disable (schedules then accumulate as due until re-enabled).
+  REPORT_SCHEDULE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(300),
   // Multi-replica deployment hint. The kiosk rate limit keeps state
   // per-process (see lib/kioskRateLimit.ts). When MULTI_REPLICA=1 we
   // refuse to boot unless a shared rate-limit store has been wired up
