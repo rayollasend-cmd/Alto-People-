@@ -9,6 +9,7 @@ import {
   resolveStoreScope,
 } from '../middleware/apiKeyAuth.js';
 import { integrationsApiKeyLimiter, integrationsAnonLimiter } from '../middleware/rateLimit.js';
+import { integrationsOpenapi } from '../lib/integrationsOpenapi.js';
 
 /**
  * Public integration API for AltoHR / ShiftReport Nexus (a.k.a. ASN) and
@@ -34,6 +35,15 @@ import { integrationsApiKeyLimiter, integrationsAnonLimiter } from '../middlewar
  */
 
 export const integrationsV1Router = Router();
+
+// Machine-readable API description, served WITHOUT a bearer (mounted
+// before the auth chain) so a partner can bootstrap a client before
+// their key arrives. The anon IP limiter still applies. Kept in
+// lockstep with this file by a drift test.
+integrationsV1Router.get('/openapi.json', integrationsAnonLimiter, (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.json(integrationsOpenapi);
+});
 
 // All routes need a valid bearer + the rate limit. Capability checks are
 // per-route since each endpoint requires a different one. We mount with
