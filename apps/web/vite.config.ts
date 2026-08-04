@@ -132,6 +132,11 @@ export default defineConfig({
     },
   },
   build: {
+    // Explicit support floor instead of Vite's implicit default, so the
+    // emitted JS matches the browserslist in package.json (which drives
+    // autoprefixer). Slightly wider than the browserslist floor: store
+    // kiosk tablets skew old, and es2020/safari14 costs little.
+    target: ['es2020', 'safari14'],
     // Route-level lazy loading (see App.tsx) splits each page into its own
     // chunk. The chunks below pull shared vendor code into stable buckets so
     // it's downloaded once and cached across navigations.
