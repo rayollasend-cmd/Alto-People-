@@ -1,3 +1,9 @@
+import {
+  emitApiAuthFailure,
+  emitApiConnectivity,
+  isAuthFlowPath,
+} from './sessionEvents';
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,
@@ -131,13 +137,24 @@ export async function apiFetch<T = unknown>(
   try {
     res = await fetch(url, init);
   } catch (err) {
-    if (timedOut) throw new TimeoutError();
+    // A caller-driven abort (component unmount, superseded query) says
+    // nothing about the network — only our own timeout or a genuine
+    // fetch failure count as connectivity loss.
+    if (timedOut) {
+      emitApiConnectivity('offline');
+      throw new TimeoutError();
+    }
+    if (!externalSignal?.aborted) emitApiConnectivity('offline');
     throw new NetworkError(err);
   } finally {
     clearTimeout(slowTimer);
     clearTimeout(timeoutTimer);
     if (sawSlow) noteSlowEnd();
   }
+
+  // Any response at all — even a 4xx/5xx — proves the network path is
+  // alive again. (The bus dedupes, so this is a no-op while online.)
+  emitApiConnectivity('online');
 
   if (res.status === 204) {
     return undefined as T;
@@ -158,6 +175,12 @@ export async function apiFetch<T = unknown>(
     // but fall back to the X-Request-Id response header — covers cases
     // where helmet / CORS preflights respond without our error envelope.
     const requestId = err?.requestId ?? res.headers.get('x-request-id') ?? undefined;
+    // Session death signal. Auth-flow endpoints are excluded: a 401 from
+    // login / reset / invite / passkey verification is a normal
+    // wrong-credentials outcome, not an expired session.
+    if (res.status === 401 && !isAuthFlowPath(path)) {
+      emitApiAuthFailure(path);
+    }
     throw new ApiError(
       res.status,
       err?.code ?? `http_${res.status}`,
