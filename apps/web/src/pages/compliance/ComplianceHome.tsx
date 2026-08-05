@@ -1,4 +1,4 @@
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { I9Tab } from './I9Tab';
 import { EVerifyTab } from './EVerifyTab';
@@ -7,7 +7,7 @@ import { DrugTestTab } from './DrugTestTab';
 import { J1Tab } from './J1Tab';
 import { ComplianceScorecard } from './ComplianceScorecard';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
+import { Button, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 
 type Tab = 'scorecard' | 'i9' | 'everify' | 'background' | 'drugtests' | 'j1';
 
@@ -36,6 +36,13 @@ export function ComplianceHome() {
       <PageHeader
         title="Compliance"
         subtitle="Track I-9, background-check, drug-test, and J-1 obligations across every active associate."
+        secondaryActions={
+          // Sibling compliance surface with its own route (not a ?tab=) —
+          // this header link is its only way in from the app shell.
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/compliance/osha">OSHA / WC / EEO-1</Link>
+          </Button>
+        }
       />
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>

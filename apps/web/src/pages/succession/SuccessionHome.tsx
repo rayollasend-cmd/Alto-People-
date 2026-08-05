@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Crown, Download, Plus, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -360,7 +361,9 @@ export function SuccessionHome() {
                     </TableCell>
                     <TableCell className="text-sm hidden md:table-cell">
                       {p.incumbent ? (
-                        p.incumbent.name
+                        <AssociateLink associateId={p.incumbent.id}>
+                          {p.incumbent.name}
+                        </AssociateLink>
                       ) : (
                         <span className="text-silver">Vacant</span>
                       )}
@@ -503,7 +506,13 @@ function PositionDrawer({
             <div className="text-sm">
               <span className="text-silver">Currently held by: </span>
               <span className="text-white">
-                {data.position.incumbent ? data.position.incumbent.name : 'Vacant'}
+                {data.position.incumbent ? (
+                  <AssociateLink associateId={data.position.incumbent.id}>
+                    {data.position.incumbent.name}
+                  </AssociateLink>
+                ) : (
+                  'Vacant'
+                )}
               </span>
             </div>
 
@@ -580,7 +589,11 @@ function CandidateRow({
   return (
     <div className="flex items-center gap-2 p-2 rounded border border-navy-secondary">
       <div className="flex-1">
-        <div className="text-sm text-white">{candidate.associateName}</div>
+        <div className="text-sm text-white">
+          <AssociateLink associateId={candidate.associateId}>
+            {candidate.associateName}
+          </AssociateLink>
+        </div>
         <div className="text-xs text-silver">
           {candidate.currentTitle ?? candidate.associateEmail}
         </div>

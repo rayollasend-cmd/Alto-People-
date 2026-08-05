@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { ClipboardList, Download, Plus, Star } from 'lucide-react';
 import { toast } from 'sonner';
@@ -201,6 +202,11 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
           canManage
             ? 'Compose, submit, and track performance reviews.'
             : 'Read-only view of performance reviews.'
+        }
+        secondaryActions={
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/performance/extras">Goals, PIPs &amp; 360s</Link>
+          </Button>
         }
         primaryAction={
           canManage ? (

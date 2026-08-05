@@ -1007,9 +1007,15 @@ function taskDestination(
         label: 'Open I-9 in Compliance',
       };
     case 'BACKGROUND_CHECK':
-      return { to: '/compliance?tab=background', label: 'Open background checks' };
+      return {
+        to: `/compliance?tab=background&associateId=${associateId}`,
+        label: 'Open background checks',
+      };
     case 'J1_DOCS':
-      return { to: '/compliance?tab=j1', label: 'Open J-1 program' };
+      return {
+        to: `/compliance?tab=j1&associateId=${associateId}`,
+        label: 'Open J-1 program',
+      };
     default:
       return null;
   }
@@ -1298,7 +1304,11 @@ function I9Card({
                 {!status?.section2 && (
                   <div className="mt-2">
                     <Button asChild variant="outline" size="sm">
-                      <Link to="/compliance">Open Section 2 verifier</Link>
+                      {/* Same deep link the header uses — landing on bare
+                          /compliance lost the tab AND the person. */}
+                      <Link to={`/compliance?tab=i9&associateId=${associateId}`}>
+                        Open Section 2 verifier
+                      </Link>
                     </Button>
                   </div>
                 )}

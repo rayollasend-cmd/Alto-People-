@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
   Award,
@@ -163,8 +164,8 @@ function writeViewMode(v: ViewMode) {
 export function RecruitingHome() {
   const { can } = useAuth();
   const canManage = can('manage:recruiting');
+  const navigate = useNavigate();
   const [view, setView] = useState<ViewMode>(() => readViewMode());
-  const [filter, setFilter] = useState<CandidateStage | 'ALL'>('APPLIED');
   const [candidates, setCandidates] = useState<Candidate[] | null>(null);
   const [allCandidates, setAllCandidates] = useState<Candidate[] | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -172,11 +173,58 @@ export function RecruitingHome() {
   const [kpiError, setKpiError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
+
+  // Stage filter, search, and the open candidate drawer all live in the
+  // URL (same source-of-truth pattern as ComplianceHome's ?tab= and the
+  // People directory's ?associateId=), so refresh / back / share keep the
+  // pipeline context instead of resetting to the default view.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const stageParam = searchParams.get('stage');
+  const filter: CandidateStage | 'ALL' =
+    stageParam === 'ALL' || (STAGES as string[]).includes(stageParam ?? '')
+      ? (stageParam as CandidateStage | 'ALL')
+      : 'APPLIED';
+  const search = searchParams.get('q') ?? '';
   // The candidate whose detail drawer is open. Held by id rather than by
   // value so a refresh after an advance re-renders the drawer with the new
   // stage instead of leaving a stale snapshot on screen.
-  const [detailId, setDetailId] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
+  const detailId = searchParams.get('candidateId');
+
+  const setFilter = useCallback(
+    (s: CandidateStage | 'ALL') =>
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (s === 'APPLIED') next.delete('stage'); // default stage keeps the URL clean
+        else next.set('stage', s);
+        return next;
+      }),
+    [setSearchParams],
+  );
+  // replace: keystrokes shouldn't each become a Back-button stop.
+  const setSearch = useCallback(
+    (q: string) =>
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (q) next.set('q', q);
+          else next.delete('q');
+          return next;
+        },
+        { replace: true },
+      ),
+    [setSearchParams],
+  );
+  // push (not replace): Back closes the drawer instead of leaving the page.
+  const setDetailId = useCallback(
+    (id: string | null) =>
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (id) next.set('candidateId', id);
+        else next.delete('candidateId');
+        return next;
+      }),
+    [setSearchParams],
+  );
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
   useEffect(() => {
@@ -279,8 +327,26 @@ export function RecruitingHome() {
     if (!dialog || dialog.kind !== 'hire') return;
     setPendingId(dialog.candidate.id);
     try {
-      await hireCandidate(dialog.candidate.id);
-      toast.success('Hired — associate record created.');
+      const hired = await hireCandidate(dialog.candidate.id);
+      // Finish the handoff the dialog promises ("onboarding can begin from
+      // there"): the hire response carries the created application/associate
+      // ids, so offer the jump instead of dead-ending on a toast.
+      const dest = hired.applicationId
+        ? `/onboarding/applications/${hired.applicationId}`
+        : hired.hiredAssociateId
+          ? `/people?associateId=${hired.hiredAssociateId}`
+          : null;
+      toast.success(
+        'Hired — associate record created.',
+        dest
+          ? {
+              action: {
+                label: hired.applicationId ? 'Open onboarding' : 'Open profile',
+                onClick: () => navigate(dest),
+              },
+            }
+          : undefined,
+      );
       setDialog(null);
       await Promise.all([refresh(), refreshKpis()]);
     } catch (err) {
@@ -364,6 +430,11 @@ export function RecruitingHome() {
           canManage
             ? 'Manage candidates from application through hire.'
             : 'Read-only view of the candidate pipeline.'
+        }
+        secondaryActions={
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/recruiting/extras">Interviewing &amp; offers</Link>
+          </Button>
         }
         primaryAction={
           canManage ? (
