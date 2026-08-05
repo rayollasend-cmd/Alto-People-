@@ -13,6 +13,7 @@ import {
   previewDocumentUrl,
 } from '@/lib/documentsApi';
 import { cn } from '@/lib/cn';
+import { fmtSize } from '@/lib/format';
 
 const STATUS_VARIANT: Record<
   DocumentRecord['status'],
@@ -24,11 +25,6 @@ const STATUS_VARIANT: Record<
   EXPIRED: 'destructive',
 };
 
-const fmtSize = (b: number): string => {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  return `${(b / 1024 / 1024).toFixed(2)} MB`;
-};
 
 interface DocumentPreviewProps {
   doc: DocumentRecord | null;

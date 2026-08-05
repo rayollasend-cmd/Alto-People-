@@ -1249,7 +1249,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                             title={
                               f.recipientCopySentAt
                                 ? `Recipient copy sent ${fmtDate(f.recipientCopySentAt)}`
-                                : 'Email the worker their copy'
+                                : 'Email the associate their copy'
                             }
                           >
                             {f.recipientCopySentAt ? '✓ Copy sent' : 'Send copy'}

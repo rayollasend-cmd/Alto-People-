@@ -35,7 +35,7 @@ import {
   rejectDocument,
   verifyDocument,
 } from '@/lib/documentsApi';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtSize } from '@/lib/format';
 import { ApiError } from '@/lib/api';
 import { DocumentPreview } from '@/components/DocumentPreview';
 import { Avatar } from '@/components/ui/Avatar';
@@ -123,11 +123,6 @@ const BULK_REJECT_PRESETS = [
   'Wrong document type',
 ] as const;
 
-const fmtSize = (b: number): string => {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  return `${(b / 1024 / 1024).toFixed(2)} MB`;
-};
 
 const fmtKind = (k: string): string =>
   k.replace(/_/g, ' ').replace(/\bPDF\b/i, 'PDF');

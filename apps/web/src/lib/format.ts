@@ -559,3 +559,20 @@ export function fmtRelativeDate(
   if (days < 7) return `${days}d ago`;
   return fmtDate(d);
 }
+
+/**
+ * Human-readable byte size: "512 B", "3.4 KB", "1.25 MB". Binary units
+ * (1 KB = 1024 B) — matches what the OS file pickers show, so the size an
+ * associate sees next to their upload agrees with Finder/Explorer.
+ * Consolidates six identical per-page copies (documents views, onboarding
+ * upload tasks, DocumentPreview). Follows the module convention: null /
+ * undefined / non-finite input renders as '—'.
+ */
+export function fmtSize(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) {
+    return DASH;
+  }
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}

@@ -1010,14 +1010,16 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         <ErrorBanner className="mb-4">
           <div className="flex items-start gap-2">
             <span className="flex-1">{error}</span>
-            <button
-              type="button"
+            {/* -my keeps the icon-sm hit target from inflating the banner. */}
+            <Button
+              variant="ghost"
+              size="icon-sm"
               onClick={() => setError(null)}
-              className="text-alert/60 hover:text-alert"
+              className="-my-1.5 text-alert/60 hover:text-alert"
               aria-label="Dismiss"
             >
               <X className="h-4 w-4" />
-            </button>
+            </Button>
           </div>
         </ErrorBanner>
       )}
@@ -2801,15 +2803,16 @@ function TimeEntryFormDrawer({
           />
         </div>
         {schedShift && (
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="xs"
             onClick={applySchedule}
-            className="inline-flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold/10 px-3 py-1.5 text-xs text-gold hover:bg-gold/20"
+            className="gap-1.5 rounded-full border-gold/40 bg-gold/10 text-gold hover:border-gold/60 hover:bg-gold/20 hover:text-gold"
           >
             <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
             Use scheduled shift {fmtTime(schedShift.startsAt)} –{' '}
             {fmtTime(schedShift.endsAt)}
-          </button>
+          </Button>
         )}
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -2845,13 +2848,13 @@ function TimeEntryFormDrawer({
           <p className="-mt-2 text-xs text-gold">
             Ends the next day (+{endOffset === 1 ? '1 day' : `${endOffset} days`})
             {!overnight && extraDays > 0 && (
-              <button
-                type="button"
+              <Button
+                variant="link"
                 onClick={() => setExtraDays(0)}
-                className="ml-2 underline hover:text-gold-bright"
+                className="ml-2 text-xs font-normal text-gold underline hover:text-gold-bright"
               >
                 make it same-day
-              </button>
+              </Button>
             )}
           </p>
         )}

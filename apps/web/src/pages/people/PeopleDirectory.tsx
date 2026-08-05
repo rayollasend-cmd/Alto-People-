@@ -1507,18 +1507,19 @@ function PhoneField({
               }
             }}
           />
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onClick={() => void save()}
             disabled={saving}
             aria-label="Save phone"
             title="Save"
-            className="grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60 disabled:opacity-40"
           >
             <Check className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onClick={() => {
               setDraft(a.phone ?? '');
               setEditing(false);
@@ -1526,10 +1527,9 @@ function PhoneField({
             disabled={saving}
             aria-label="Cancel"
             title="Cancel"
-            className="grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60 disabled:opacity-40"
           >
             <X className="h-4 w-4" />
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -1550,17 +1550,18 @@ function PhoneField({
               '—'
             )}
           </span>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onClick={() => setEditing(true)}
             aria-label="Edit phone"
             title="Edit"
             // Always visible on touch devices (no hover to reveal it);
             // hover-revealed on pointer devices to keep the row clean.
-            className="opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 grid place-items-center h-9 w-9 rounded text-silver hover:text-white hover:bg-navy-secondary/60 transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
           >
             <Pencil className="h-3.5 w-3.5" />
-          </button>
+          </Button>
         </div>
       }
     />
@@ -2125,13 +2126,13 @@ function BankNameRow({
               // is a cell the payroll provider expects filled.
               <span className="text-warning">Not set</span>
             )}
-            <button
-              type="button"
+            <Button
+              variant="link"
               onClick={() => setEditing(true)}
-              className="text-2xs uppercase tracking-wider text-silver/70 underline underline-offset-2 hover:text-gold"
+              className="text-2xs font-normal uppercase tracking-wider text-silver/70 underline underline-offset-2 hover:text-gold"
             >
               {bankName ? 'Edit' : 'Add'}
-            </button>
+            </Button>
           </span>
         }
       />
@@ -3318,19 +3319,20 @@ function DocumentsTab({ associateId }: { associateId: string }) {
               </TableCell>
               <TableCell>
                 <div className="flex justify-end items-center gap-1">
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
                     onClick={() => setPreviewDoc(d)}
                     aria-label={`View ${d.filename}`}
                     title={d.fileAvailable ? 'View' : 'File missing — open for details'}
-                    className="grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60"
                   >
                     <Eye className="h-4 w-4" />
-                  </button>
+                  </Button>
                   {d.status === 'UPLOADED' && (
                     <>
-                      <button
-                        type="button"
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
                         onClick={() => void handleVerify(d)}
                         disabled={actingId === d.id || !d.fileAvailable}
                         aria-label={`Verify ${d.filename}`}
@@ -3339,20 +3341,21 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                             ? 'Verify'
                             : "Can't verify — file missing on server"
                         }
-                        className="grid place-items-center h-8 w-8 rounded text-success hover:bg-navy-secondary/60 disabled:opacity-40"
+                        className="text-success hover:text-success"
                       >
                         <Check className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
                         onClick={() => setRejectTarget(d)}
                         disabled={actingId === d.id}
                         aria-label={`Reject ${d.filename}`}
                         title="Reject"
-                        className="grid place-items-center h-8 w-8 rounded text-alert hover:bg-navy-secondary/60 disabled:opacity-40"
+                        className="text-alert hover:text-alert"
                       >
                         <X className="h-4 w-4" />
-                      </button>
+                      </Button>
                     </>
                   )}
                   {d.fileAvailable ? (

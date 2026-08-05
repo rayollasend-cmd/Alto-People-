@@ -14,8 +14,10 @@ import {
 import type { DashboardKPIs } from '@alto-people/shared';
 import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { ApiError } from '@/lib/api';
+import { chartColor, type ChartColorToken } from '@/lib/chartColors';
 import { downloadCsv } from '@/lib/csv';
 import { fmtMoney, ymdLocal } from '@/lib/format';
+import { useTheme } from '@/lib/theme';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -57,12 +59,15 @@ const STATUS_LABELS: Record<string, string> = {
   DRAFT: 'Draft',
   REJECTED: 'Rejected',
 };
-const STATUS_COLORS: Record<string, string> = {
-  APPROVED: '#34A874', // success green
-  IN_REVIEW: '#EDB23C', // warning amber
-  SUBMITTED: '#D9B967', // brand gold
-  DRAFT: '#A8B8C8', // silver
-  REJECTED: '#E96255', // alert red
+// Palette TOKENS, not hexes — resolved via chartColor() at render time so
+// the donut tracks index.css (including the light/dark flip) instead of a
+// hand-copied snapshot of the palette.
+const STATUS_COLORS: Record<string, ChartColorToken> = {
+  APPROVED: 'success',
+  IN_REVIEW: 'warning',
+  SUBMITTED: 'gold',
+  DRAFT: 'silver',
+  REJECTED: 'alert',
 };
 
 const WINDOW_PRESETS = [7, 30, 60, 90] as const;
@@ -75,6 +80,10 @@ type WindowDays = (typeof WINDOW_PRESETS)[number];
  * page.
  */
 export function AnalyticsHome() {
+  // Subscribe to the theme context (value unused) so a light/dark flip
+  // re-renders the page and chartColor() re-reads the swapped CSS vars
+  // for the status donut.
+  useTheme();
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState<WindowDays>(30);
@@ -358,7 +367,7 @@ function buildStatusBreakdown(
       out.push({
         name: STATUS_LABELS[status] ?? status,
         value,
-        color: STATUS_COLORS[status],
+        color: chartColor(STATUS_COLORS[status]),
       });
       seen.add(status);
     }
