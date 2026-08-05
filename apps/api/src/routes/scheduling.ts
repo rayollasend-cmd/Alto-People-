@@ -34,6 +34,8 @@ import {
   ShiftTeamListResponseSchema,
   ShiftTeamMemberInputSchema,
   ShiftTeamUpdateInputSchema,
+  ShiftRateDefaultInputSchema,
+  ShiftRateDefaultListResponseSchema,
   ShiftTemplateApplyInputSchema,
   ShiftTemplateCreateInputSchema,
   ShiftTemplateListResponseSchema,
@@ -182,7 +184,14 @@ async function hasOverlapExcluding(
   return clash !== null;
 }
 
-function toShift(row: RawShift): Shift {
+/**
+ * `effectivePayRate` is the resolved cost rate for labor numbers: the
+ * shift's own payRate when set, else the (client, position) default the
+ * caller looked up via `loadRateResolver`. Callers that don't pass it get
+ * the explicit rate — correct for endpoints where no defaults were loaded.
+ */
+function toShift(row: RawShift, effectivePayRate?: number | null): Shift {
+  const explicitPay = row.payRate ? Number(row.payRate) : null;
   return {
     id: row.id,
     clientId: row.clientId,
@@ -192,7 +201,9 @@ function toShift(row: RawShift): Shift {
     endsAt: row.endsAt.toISOString(),
     location: row.location,
     hourlyRate: row.hourlyRate ? Number(row.hourlyRate) : null,
-    payRate: row.payRate ? Number(row.payRate) : null,
+    payRate: explicitPay,
+    effectivePayRate:
+      effectivePayRate !== undefined ? effectivePayRate : explicitPay,
     status: row.status,
     notes: row.notes,
     // Structured work-site (Phase 131) — powers the cascading
@@ -214,6 +225,70 @@ function toShift(row: RawShift): Shift {
     lateNoticeReason: row.lateNoticeReason,
     acknowledgedAt: row.acknowledgedAt ? row.acknowledgedAt.toISOString() : null,
   };
+}
+
+// Separator for the (clientId, position) map key. Positions are free
+// text, but clientId is a fixed-length UUID that never contains ':' —
+// the prefix is unambiguous, so composite keys cannot collide. (The wip
+// branch this is resurrected from used a literal NUL byte here, which is
+// what corrupted its scheduling.ts. Don't.)
+const RATE_KEY_SEP = ':';
+
+// Schema qualifier for raw SQL. Prisma MODEL queries emit
+// schema-qualified SQL from the datasource URL, but $queryRaw relies on
+// the connection's search_path — which the pooled test connection does
+// not preserve, so an unqualified "Shift" silently resolves against
+// `public` under `?schema=alto_test`. Qualify explicitly instead.
+// Identifier-sanitized because it interpolates as raw SQL.
+const DB_SCHEMA = (() => {
+  try {
+    const s = new URL(env.DATABASE_URL).searchParams.get('schema') ?? 'public';
+    return /^[A-Za-z0-9_]+$/.test(s) ? s : 'public';
+  } catch {
+    return 'public';
+  }
+})();
+const SHIFT_TBL = Prisma.raw(`"${DB_SCHEMA}"."Shift"`);
+const RATE_DEFAULT_TBL = Prisma.raw(`"${DB_SCHEMA}"."ShiftRateDefault"`);
+// The enum TYPE lives in the same schema — an unqualified cast resolves
+// against search_path and mismatches the column's qualified type.
+const SHIFT_STATUS_ENUM = Prisma.raw(`"${DB_SCHEMA}"."ShiftStatus"`);
+
+/**
+ * Loads the (client, position) → payRate defaults for the given clients and
+ * returns a resolver: explicit shift rate wins, else the default, else null.
+ * One query for the whole result set. Resurrected from
+ * wip/scheduling-pay-rates.
+ */
+async function loadRateResolver(
+  clientIds: string[],
+): Promise<(clientId: string, position: string, explicit: number | null) => number | null> {
+  const unique = [...new Set(clientIds)];
+  const rows =
+    unique.length > 0
+      ? await prisma.shiftRateDefault.findMany({
+          where: { clientId: { in: unique } },
+          select: { clientId: true, position: true, payRate: true },
+        })
+      : [];
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    map.set(`${r.clientId}${RATE_KEY_SEP}${r.position}`, Number(r.payRate));
+  }
+  return (clientId, position, explicit) =>
+    explicit ?? map.get(`${clientId}${RATE_KEY_SEP}${position}`) ?? null;
+}
+
+/** Single-row variant for create/update responses: one indexed lookup so
+ *  the grid's optimistic patch carries the resolved rate immediately. */
+async function withEffectiveRate(row: RawShift): Promise<Shift> {
+  const explicit = row.payRate ? Number(row.payRate) : null;
+  if (explicit !== null) return toShift(row, explicit);
+  const def = await prisma.shiftRateDefault.findUnique({
+    where: { clientId_position: { clientId: row.clientId, position: row.position } },
+    select: { payRate: true },
+  });
+  return toShift(row, def ? Number(def.payRate) : null);
 }
 
 /** "YYYY-MM-DD" of an instant as seen in `tz` — for comparing a shift's
@@ -386,8 +461,17 @@ schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
       include: SHIFT_INCLUDE,
     });
     const truncated = rows.length > SHIFT_PAGE_CAP;
+    const page = rows.slice(0, SHIFT_PAGE_CAP);
+    // Resolve (client, position) default rates in one query so the grid's
+    // labor-cost footer lights up for shifts with no explicit rate.
+    const resolveRate = await loadRateResolver(page.map((r) => r.clientId));
     const payload = ShiftListResponseSchema.parse({
-      shifts: rows.slice(0, SHIFT_PAGE_CAP).map(toShift),
+      shifts: page.map((r) =>
+        toShift(
+          r,
+          resolveRate(r.clientId, r.position, r.payRate ? Number(r.payRate) : null),
+        ),
+      ),
       truncated,
     });
     res.json(payload);
@@ -439,19 +523,22 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
     // PERF: minutes + labor cost summed in SQL. The old rollup paged up to
     // 50k rows through the app (5–50 sequential batch queries per KPI-strip
     // render) to compute three numbers. Conditions mirror `where` exactly.
+    // Columns are qualified with the `s` alias — the rate-default LEFT
+    // JOIN below also carries a "clientId", which would otherwise make
+    // the bare column ambiguous.
     const conds: Prisma.Sql[] = [
-      Prisma.sql`"startsAt" >= ${from}`,
-      Prisma.sql`"startsAt" < ${to}`,
-      Prisma.sql`"status" <> 'CANCELLED'::"ShiftStatus"`,
+      Prisma.sql`s."startsAt" >= ${from}`,
+      Prisma.sql`s."startsAt" < ${to}`,
+      Prisma.sql`s."status" <> 'CANCELLED'::${SHIFT_STATUS_ENUM}`,
     ];
     if (effectiveKpiClient) {
-      conds.push(Prisma.sql`"clientId" = ${effectiveKpiClient}::uuid`);
+      conds.push(Prisma.sql`s."clientId" = ${effectiveKpiClient}::uuid`);
     }
     // ASSOCIATE scope (published + own shifts) — mirrors scopeShifts.
     const assocScope = scope as { assignedAssociateId?: string; publishedAt?: unknown };
     if (assocScope.assignedAssociateId) {
-      conds.push(Prisma.sql`"assignedAssociateId" = ${assocScope.assignedAssociateId}::uuid`);
-      conds.push(Prisma.sql`"publishedAt" IS NOT NULL`);
+      conds.push(Prisma.sql`s."assignedAssociateId" = ${assocScope.assignedAssociateId}::uuid`);
+      conds.push(Prisma.sql`s."publishedAt" IS NOT NULL`);
     }
 
     const [grouped, [rollup]] = await Promise.all([
@@ -460,18 +547,23 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
         where,
         _count: { _all: true },
       }),
+      // Labor cost resolves each shift's rate as: explicit payRate, else
+      // the (client, position) ShiftRateDefault. `norate` counts only
+      // shifts NEITHER covers — those genuinely contribute $0.
       prisma.$queryRaw<
         [{ minutes: bigint | null; cost: number | null; norate: bigint | null }]
       >(Prisma.sql`
         SELECT
-          COALESCE(SUM(GREATEST(0, ROUND(EXTRACT(EPOCH FROM ("endsAt" - "startsAt")) / 60))), 0)::bigint AS minutes,
+          COALESCE(SUM(GREATEST(0, ROUND(EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt")) / 60))), 0)::bigint AS minutes,
           COALESCE(SUM(
-            CASE WHEN "payRate" IS NOT NULL
-              THEN "payRate" * GREATEST(0, ROUND(EXTRACT(EPOCH FROM ("endsAt" - "startsAt")) / 60)) / 60
+            CASE WHEN COALESCE(s."payRate", d."payRate") IS NOT NULL
+              THEN COALESCE(s."payRate", d."payRate") * GREATEST(0, ROUND(EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt")) / 60)) / 60
               ELSE 0 END
           ), 0)::float8 AS cost,
-          COUNT(*) FILTER (WHERE "payRate" IS NULL)::bigint AS norate
-        FROM "Shift"
+          COUNT(*) FILTER (WHERE COALESCE(s."payRate", d."payRate") IS NULL)::bigint AS norate
+        FROM ${SHIFT_TBL} s
+        LEFT JOIN ${RATE_DEFAULT_TBL} d
+          ON d."clientId" = s."clientId" AND d."position" = s."position"
         WHERE ${Prisma.join(conds, ' AND ')}
       `),
     ]);
@@ -507,6 +599,143 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
       projectedLaborCost,
       shiftsWithoutRate,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Pay-rate defaults per (client, position) ========================= */
+
+/**
+ * GET /scheduling/rate-defaults?clientId=UUID
+ *
+ * The (client, position) → rate table the labor-cost numbers resolve
+ * from, plus the client's position catalog so the editor can offer a row
+ * per known position. Bounded callers (SHIFT_SUPERVISOR) are clamped to
+ * their own client.
+ */
+schedulingRouter.get('/rate-defaults', MANAGE, async (req, res, next) => {
+  try {
+    const requested = req.query.clientId?.toString();
+    if (!requested) {
+      throw new HttpError(400, 'client_required', 'clientId is required.');
+    }
+    const clamped = effectiveClientIdFilter(req.user!, requested);
+    const clientId = clamped === null ? NO_MATCH_ID : (clamped ?? requested);
+    const [defaults, positions] = await Promise.all([
+      prisma.shiftRateDefault.findMany({
+        where: { clientId },
+        orderBy: { position: 'asc' },
+      }),
+      prisma.shiftPosition.findMany({
+        where: { clientId, deletedAt: null },
+        orderBy: { sortOrder: 'asc' },
+        select: { name: true },
+      }),
+    ]);
+    res.json(
+      ShiftRateDefaultListResponseSchema.parse({
+        rateDefaults: defaults.map((d) => ({
+          id: d.id,
+          clientId: d.clientId,
+          position: d.position,
+          payRate: Number(d.payRate),
+          billRate: d.billRate ? Number(d.billRate) : null,
+        })),
+        positions: positions.map((p) => p.name),
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * PUT /scheduling/rate-defaults — upsert one (client, position) rate.
+ * Bounded callers may only write their own client; anything else is a
+ * 404 (not 403) so client ids can't be probed.
+ */
+schedulingRouter.put('/rate-defaults', MANAGE, async (req, res, next) => {
+  try {
+    const input = ShiftRateDefaultInputSchema.parse(req.body);
+    const clamp = effectiveClientIdFilter(req.user!, input.clientId);
+    if (clamp !== undefined && clamp !== input.clientId) {
+      throw new HttpError(404, 'client_not_found', 'Client not found.');
+    }
+    const client = await prisma.client.findFirst({
+      where: { id: input.clientId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!client) {
+      throw new HttpError(404, 'client_not_found', 'Client not found.');
+    }
+    const position = input.position.trim();
+    const saved = await prisma.shiftRateDefault.upsert({
+      where: { clientId_position: { clientId: input.clientId, position } },
+      create: {
+        clientId: input.clientId,
+        position,
+        payRate: input.payRate,
+        billRate: input.billRate ?? null,
+      },
+      update: {
+        payRate: input.payRate,
+        billRate: input.billRate ?? null,
+      },
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'scheduling.rate_default_upserted',
+        entityType: 'ShiftRateDefault',
+        entityId: saved.id,
+        metadata: {
+          clientId: saved.clientId,
+          position: saved.position,
+          payRate: Number(saved.payRate),
+          billRate: saved.billRate ? Number(saved.billRate) : null,
+        },
+      },
+      'scheduling.rate_default_upserted',
+    );
+    res.json({
+      id: saved.id,
+      clientId: saved.clientId,
+      position: saved.position,
+      payRate: Number(saved.payRate),
+      billRate: saved.billRate ? Number(saved.billRate) : null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** DELETE /scheduling/rate-defaults/:id — remove a default (shifts with
+ *  explicit rates keep them; rate-less shifts go back to $0). */
+schedulingRouter.delete('/rate-defaults/:id', MANAGE, async (req, res, next) => {
+  try {
+    const row = await prisma.shiftRateDefault.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!row) {
+      throw new HttpError(404, 'rate_default_not_found', 'Rate default not found.');
+    }
+    const clamp = effectiveClientIdFilter(req.user!, row.clientId);
+    if (clamp !== undefined && clamp !== row.clientId) {
+      throw new HttpError(404, 'rate_default_not_found', 'Rate default not found.');
+    }
+    await prisma.shiftRateDefault.delete({ where: { id: row.id } });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'scheduling.rate_default_deleted',
+        entityType: 'ShiftRateDefault',
+        entityId: row.id,
+        metadata: { clientId: row.clientId, position: row.position },
+      },
+      'scheduling.rate_default_deleted',
+    );
+    res.status(204).end();
   } catch (err) {
     next(err);
   }
@@ -708,7 +937,7 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
       req,
     });
 
-    res.status(201).json(toShift(created));
+    res.status(201).json(await withEffectiveRate(created));
   } catch (err) {
     next(err);
   }
@@ -1105,7 +1334,7 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
       });
     }
 
-    res.json(toShift(updated));
+    res.json(await withEffectiveRate(updated));
   } catch (err) {
     next(err);
   }
@@ -1263,7 +1492,7 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
       });
     }
 
-    res.json(toShift(updated));
+    res.json(await withEffectiveRate(updated));
   } catch (err) {
     next(err);
   }
@@ -1318,7 +1547,7 @@ schedulingRouter.post('/shifts/:id/unassign', MANAGE, async (req, res, next) => 
       });
     }
 
-    res.json(toShift(updated));
+    res.json(await withEffectiveRate(updated));
   } catch (err) {
     next(err);
   }
@@ -1418,7 +1647,7 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
       });
     }
 
-    res.json(toShift(updated));
+    res.json(await withEffectiveRate(updated));
   } catch (err) {
     next(err);
   }
@@ -1435,7 +1664,13 @@ const MY_SHIFTS_CAP = 100;
  * Nulled rather than omitted so the shared ShiftSchema still parses.
  */
 function toAssociateShift(row: Parameters<typeof toShift>[0]): Shift {
-  return { ...toShift(row), hourlyRate: null, payRate: null };
+  return {
+    ...toShift(row),
+    hourlyRate: null,
+    payRate: null,
+    // Resolved-from-default rate is money-side too — same redaction.
+    effectivePayRate: null,
+  };
 }
 
 schedulingRouter.get('/me/shifts', async (req, res, next) => {
@@ -4057,7 +4292,7 @@ schedulingRouter.post('/templates/:id/apply', MANAGE, async (req, res, next) => 
       req,
     });
 
-    res.status(201).json(toShift(created));
+    res.status(201).json(await withEffectiveRate(created));
   } catch (err) {
     next(err);
   }

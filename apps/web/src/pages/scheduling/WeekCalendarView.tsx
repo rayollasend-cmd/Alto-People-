@@ -245,8 +245,11 @@ export function WeekCalendarView({
       const mins = shiftMinutes(s);
       entry.count += 1;
       entry.minutes += mins;
-      if (s.payRate != null) {
-        entry.cost += (s.payRate * mins) / 60;
+      // effectivePayRate = explicit shift rate, else the (client, position)
+      // default — so the footer lights up for shifts priced by defaults.
+      const rate = s.effectivePayRate ?? s.payRate;
+      if (rate != null) {
+        entry.cost += (rate * mins) / 60;
       }
     }
     return out;

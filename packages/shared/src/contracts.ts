@@ -1459,8 +1459,15 @@ export const ShiftSchema = z.object({
   // store from another timezone still sees the store's wall-clock times.
   timezone: z.string(),
   hourlyRate: z.number().nullable(),
-  /** Cost-side rate (associate is paid this) — drives projected labor cost. */
+  /** Cost-side rate set explicitly ON this shift (null = none entered). */
   payRate: z.number().nullable(),
+  /**
+   * Resolved cost rate used for labor numbers: the shift's own payRate when
+   * set, otherwise the (client, position) ShiftRateDefault. Null when
+   * neither exists. The calendar footer + KPIs read THIS so they light up
+   * from defaults. Nulled (like payRate) in associate-facing responses.
+   */
+  effectivePayRate: z.number().nullable(),
   status: ShiftStatusSchema,
   notes: z.string().nullable(),
   assignedAssociateId: UuidSchema.nullable(),
@@ -1711,6 +1718,37 @@ export const BulkCreateShiftsResponseSchema = z.object({
   ),
 });
 export type BulkCreateShiftsResponse = z.infer<typeof BulkCreateShiftsResponseSchema>;
+
+/* ----- Pay-rate defaults per (client, position) -------------------------- */
+
+export const ShiftRateDefaultSchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema,
+  position: z.string(),
+  payRate: z.number(),
+  billRate: z.number().nullable(),
+});
+export type ShiftRateDefault = z.infer<typeof ShiftRateDefaultSchema>;
+
+/** List response also carries the client's position catalog so the rate
+ *  editor can offer a row per known position without a second capability-
+ *  gated fetch. */
+export const ShiftRateDefaultListResponseSchema = z.object({
+  rateDefaults: z.array(ShiftRateDefaultSchema),
+  positions: z.array(z.string()),
+});
+export type ShiftRateDefaultListResponse = z.infer<
+  typeof ShiftRateDefaultListResponseSchema
+>;
+
+/** Upsert a default rate for a (client, position). */
+export const ShiftRateDefaultInputSchema = z.object({
+  clientId: UuidSchema,
+  position: z.string().min(1).max(120),
+  payRate: z.number().nonnegative().max(100000),
+  billRate: z.number().nonnegative().max(100000).nullable().optional(),
+});
+export type ShiftRateDefaultInput = z.infer<typeof ShiftRateDefaultInputSchema>;
 
 export const ShiftUpdateInputSchema = z
   .object({

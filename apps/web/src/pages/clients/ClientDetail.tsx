@@ -28,6 +28,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { JobsSection } from './JobsSection';
+import { RateDefaultsSection } from './RateDefaultsSection';
 import { LocationsSection } from './LocationsSection';
 import { BenefitsPlansSection } from './BenefitsPlansSection';
 import { QuickbooksSection } from './QuickbooksSection';
@@ -187,6 +188,8 @@ export function ClientDetail() {
       <LocationsSection clientId={client.id} />
 
       <JobsSection clientId={client.id} />
+
+      <RateDefaultsSection clientId={client.id} />
 
       <BenefitsPlansSection clientId={client.id} />
 

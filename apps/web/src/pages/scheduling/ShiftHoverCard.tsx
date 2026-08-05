@@ -212,11 +212,18 @@ export function ShiftHoverCard({
             <div className="whitespace-pre-wrap">{shift.notes}</div>
           </div>
         )}
-        {shift.payRate != null && (
+        {(shift.effectivePayRate ?? shift.payRate) != null && (
           <div className="text-xs text-silver/70 tabular-nums">
-            ${shift.payRate.toFixed(2)}/hr · projected $
+            ${(shift.effectivePayRate ?? shift.payRate)!.toFixed(2)}/hr
+            {/* Rate inherited from the (client, position) default rather
+                than set on the shift — worth flagging to the scheduler. */}
+            {shift.payRate == null && shift.effectivePayRate != null && (
+              <span className="text-silver/50"> (default)</span>
+            )}
+            {' '}· projected $
             {(
-              (shift.payRate * (shift.scheduledMinutes ?? 0)) /
+              ((shift.effectivePayRate ?? shift.payRate)! *
+                (shift.scheduledMinutes ?? 0)) /
               60
             ).toFixed(2)}
           </div>
