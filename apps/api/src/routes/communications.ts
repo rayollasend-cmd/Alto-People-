@@ -83,8 +83,8 @@ communicationsRouter.post('/me/push/subscriptions', async (req, res, next) => {
     }
     const user = req.user!;
     // Upsert on the endpoint (globally unique per browser subscription).
-    // If the endpoint was registered under ANOTHER account â€” shared device,
-    // logout/login â€” it moves to the caller: pushes must follow the person
+    // If the endpoint was registered under ANOTHER account — shared device,
+    // logout/login — it moves to the caller: pushes must follow the person
     // signed in on that browser, never a previous occupant.
     await prisma.pushSubscription.upsert({
       where: { endpoint: parsed.data.endpoint },
@@ -114,7 +114,7 @@ communicationsRouter.delete('/me/push/subscriptions', async (req, res, next) => 
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request', parsed.error.flatten());
     }
-    // Scoped to the caller â€” you can't unsubscribe someone else's device
+    // Scoped to the caller — you can't unsubscribe someone else's device
     // by knowing its endpoint.
     await prisma.pushSubscription.deleteMany({
       where: { endpoint: parsed.data.endpoint, userId: req.user!.id },
@@ -245,7 +245,7 @@ communicationsRouter.post('/admin/send', MANAGE, idempotent, async (req, res, ne
       res.status(201).json(toNotif(sent));
     } catch (sendErr) {
       const reason = sendErr instanceof Error ? sendErr.message : 'unknown error';
-      // A suppressed address is not a provider failure — surface it as its
+      // A suppressed address is not a provider failure � surface it as its
       // own status so the admin sees WHY nothing went out (and where to
       // fix it: the Suppressed emails list below).
       const status = sendErr instanceof EmailSuppressedError ? 'SUPPRESSED' : 'FAILED';
@@ -266,7 +266,7 @@ communicationsRouter.post('/admin/send', MANAGE, idempotent, async (req, res, ne
 /**
  * GET /communications/admin/suppressions
  *
- * Addresses the system refuses to email — populated automatically by the
+ * Addresses the system refuses to email � populated automatically by the
  * Resend webhook on hard bounce / spam complaint. Same manage gate as the
  * other admin actions on this router.
  */
