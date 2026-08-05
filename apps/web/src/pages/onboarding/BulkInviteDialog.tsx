@@ -342,6 +342,10 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
         if (!v) reset();
         onOpenChange(v);
       }}
+      // Dirty = a pasted applicant list that hasn't been sent yet. The
+      // client/template picks alone don't count — they can be auto-seeded
+      // (single-client callers) and re-picking them is cheap.
+      confirmDiscard={() => paste.trim().length > 0 && results === null}
     >
       <DialogContent className="max-w-2xl">
         <DialogHeader>

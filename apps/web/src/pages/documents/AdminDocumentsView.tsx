@@ -77,6 +77,7 @@ import {
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
+import { useSelection } from '@/lib/useSelection';
 
 // Filter value space: the real DocumentStatuses plus two synthetic buckets.
 // 'ACTION_NEEDED' rolls up the states that require HR to do something —
@@ -190,9 +191,6 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   // Optional expiry captured alongside a single verify in the preview
   // viewer ('YYYY-MM-DD'). Bulk verify stays expiry-less on purpose.
   const [verifyExpiresAt, setVerifyExpiresAt] = useState('');
-  // Bulk-verify selection (queue view only). Only docs that can transition to
-  // VERIFIED — UPLOADED or REJECTED — are ever selectable.
-  const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   // Bulk-reject panel state — one reason applied to every selected doc.
   const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
@@ -301,8 +299,9 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
 
   // Drop any selection when the visible slice changes (filter / kind / view),
   // so a bulk-verify can never act on rows the user can no longer see.
+  // (clearSelection is a stable callback from useSelection, declared below.)
   useEffect(() => {
-    setSelectedDocs(new Set());
+    clearSelection();
   }, [filter, kindFilter, view]);
 
   // Day-granularity "now" for the fmtAge labels in the render body. NOT a
@@ -361,6 +360,25 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         d.kind.toLowerCase().includes(q)
     );
   }, [docs, deferredSearch]);
+
+  // Bulk-verify selection (queue view only). Only docs that can transition to
+  // VERIFIED — UPLOADED or REJECTED — are ever selectable; that rule lives
+  // in verifiableIds, the shared hook supplies the mechanics + tri-state.
+  const verifiableIds = useMemo(
+    () =>
+      (visibleDocs ?? [])
+        .filter((d) => d.status === 'UPLOADED' || d.status === 'REJECTED')
+        .map((d) => d.id),
+    [visibleDocs],
+  );
+  const {
+    selected: selectedDocs,
+    toggle: toggleDoc,
+    clear: clearSelection,
+    allSelected: allVerifiableSelected,
+    someSelected: someVerifiableSelected,
+    toggleAll: toggleAllVerifiable,
+  } = useSelection(verifiableIds);
 
   // Click-to-sort for the flat queue table. Operates on the filtered slice
   // the table renders; third click restores server order (newest first).
@@ -507,14 +525,6 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     }
   };
 
-  const toggleDoc = (id: string) =>
-    setSelectedDocs((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
   const onBulkVerify = async () => {
     if (bulkBusy || selectedDocs.size === 0) return;
     setBulkBusy(true);
@@ -523,7 +533,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
       toast.success(
         `Verified ${res.verified}${res.skipped.length ? ` · ${res.skipped.length} skipped` : ''}.`,
       );
-      setSelectedDocs(new Set());
+      clearSelection();
       await Promise.all([refresh(), refreshAll()]);
     } catch (err) {
       toast.error('Bulk verify failed.', {
@@ -586,7 +596,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     }
     setBulkRejectOpen(false);
     setBulkRejectReason('');
-    setSelectedDocs(new Set());
+    clearSelection();
     await Promise.all([refresh(), refreshAll()]);
     setBulkBusy(false);
   };
@@ -833,12 +843,6 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
       )}
 
       {view === 'queue' && visibleDocs && visibleDocs.length > 0 && (() => {
-        const verifiable = visibleDocs.filter(
-          (d) => d.status === 'UPLOADED' || d.status === 'REJECTED',
-        );
-        const allVerifiableSelected =
-          verifiable.length > 0 &&
-          verifiable.every((d) => selectedDocs.has(d.id));
         // Group the queue by associate — one header row per person — in
         // order of first appearance under the current sort, so column
         // sorting still decides both group order and order within a group.
@@ -876,7 +880,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => setSelectedDocs(new Set())}
+                  onClick={clearSelection}
                   disabled={bulkBusy}
                 >
                   Clear
@@ -918,14 +922,11 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       className="accent-gold"
                       aria-label="Select all verifiable"
                       checked={allVerifiableSelected}
-                      disabled={verifiable.length === 0}
-                      onChange={(e) =>
-                        setSelectedDocs(
-                          e.target.checked
-                            ? new Set(verifiable.map((d) => d.id))
-                            : new Set(),
-                        )
-                      }
+                      ref={(el) => {
+                        if (el) el.indeterminate = someVerifiableSelected;
+                      }}
+                      disabled={verifiableIds.length === 0}
+                      onChange={toggleAllVerifiable}
                     />
                   </TableHead>
                 )}

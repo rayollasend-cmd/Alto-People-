@@ -521,8 +521,17 @@ function CreateRequestDialog({
     }
   };
 
+  // Dirty = any field differs from its initial value (the state persists
+  // across opens until a successful submit resets it).
+  const isDirty = () =>
+    category !== 'VACATION' ||
+    startDate !== ymdLocal() ||
+    endDate !== ymdLocal() ||
+    hoursTouched ||
+    reason !== '';
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange} confirmDiscard={isDirty}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t('timeoff.request')}</DialogTitle>
@@ -531,6 +540,13 @@ function CreateRequestDialog({
           </DialogDescription>
         </DialogHeader>
 
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+          className="grid gap-4"
+        >
         <div className="space-y-3">
           <Field label={t('timeoff.category')}>
             {(p) => (
@@ -655,13 +671,14 @@ function CreateRequestDialog({
         </div>
 
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
             {t('common.cancel')}
           </Button>
-          <Button onClick={submit} loading={submitting}>
+          <Button type="submit" loading={submitting}>
             {t('timeoff.submit')}
           </Button>
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

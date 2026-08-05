@@ -2,8 +2,131 @@ import * as React from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { Button } from './Button';
 
-export const Dialog = DialogPrimitive.Root;
+/* ------------------------------------------------------- discard guard */
+
+/**
+ * Dirty-guard plumbing shared by Dialog and Drawer. When a dialog carries
+ * `confirmDiscard`, USER dismissals (Esc, overlay click, the X button, the
+ * swipe/drag gesture) are intercepted with a "Discard your changes?"
+ * confirm before `onOpenChange(false)` propagates. Programmatic closes
+ * (a successful submit flipping `open` to false) are never intercepted —
+ * they don't travel through Radix's dismissal events.
+ *
+ * The confirm is a minimal inline Radix dialog rather than lib/confirm's
+ * imperative API: that API needs the app-level <ConfirmProvider> (absent
+ * in isolated renders/tests) and importing it here would create a module
+ * cycle (Dialog → confirm → ConfirmDialog → Dialog).
+ */
+interface DiscardGuardValue {
+  /** Call from a user-dismissal path; preventDefaults + confirms when dirty. */
+  onUserDismiss: (e: { preventDefault: () => void }) => void;
+}
+
+const DiscardGuardContext = React.createContext<DiscardGuardValue | null>(null);
+
+/** Minimal "Discard your changes?" confirm, stacked above the guarded layer. */
+export function DiscardConfirm({
+  open,
+  onKeep,
+  onDiscard,
+}: {
+  open: boolean;
+  onKeep: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <DialogPrimitive.Root open={open} onOpenChange={(o) => !o && onKeep()}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay
+          className={cn(
+            'fixed inset-0 z-50 bg-backdrop backdrop-blur-sm',
+            'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out'
+          )}
+        />
+        <DialogPrimitive.Content
+          className={cn(
+            'fixed z-50 left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2',
+            'w-[calc(100vw-2rem)] max-w-sm rounded-lg border border-navy-secondary bg-navy elev-3 p-6 grid gap-3 focus:outline-none',
+            'data-[state=open]:animate-zoom-in data-[state=closed]:animate-zoom-out'
+          )}
+        >
+          <DialogPrimitive.Title className="font-display text-2xl text-white leading-none">
+            Discard your changes?
+          </DialogPrimitive.Title>
+          <DialogPrimitive.Description className="text-sm text-silver">
+            You have unsaved edits — closing now will lose them.
+          </DialogPrimitive.Description>
+          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
+            <Button type="button" variant="ghost" onClick={onKeep}>
+              Keep editing
+            </Button>
+            <Button type="button" variant="destructive" onClick={onDiscard}>
+              Discard
+            </Button>
+          </div>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  );
+}
+
+/**
+ * Shared guard state. `intercept(e?)` returns true when the close was
+ * captured (dirty) — event paths pass the Radix event so its default is
+ * prevented; gesture paths (drawer swipe) call it bare and branch on the
+ * return value.
+ */
+export function useDiscardGuard(
+  confirmDiscard: boolean | (() => boolean) | undefined,
+  close: () => void
+) {
+  const [confirming, setConfirming] = React.useState(false);
+  const intercept = (e?: { preventDefault: () => void }): boolean => {
+    const dirty =
+      typeof confirmDiscard === 'function' ? confirmDiscard() : confirmDiscard === true;
+    if (!dirty) return false;
+    e?.preventDefault();
+    setConfirming(true);
+    return true;
+  };
+  const keep = () => setConfirming(false);
+  const discard = () => {
+    setConfirming(false);
+    close();
+  };
+  return { enabled: confirmDiscard !== undefined, confirming, intercept, keep, discard };
+}
+
+export interface DialogProps
+  extends React.ComponentProps<typeof DialogPrimitive.Root> {
+  /**
+   * Guard user dismissals (Esc / overlay / X / drag-down) behind a
+   * "Discard your changes?" confirm while the value (or predicate) is
+   * true. Programmatic closes — the caller setting `open` to false —
+   * are never intercepted.
+   */
+  confirmDiscard?: boolean | (() => boolean);
+}
+
+export function Dialog({ confirmDiscard, ...props }: DialogProps) {
+  const { onOpenChange } = props;
+  const guard = useDiscardGuard(confirmDiscard, () => onOpenChange?.(false));
+  return (
+    <DiscardGuardContext.Provider value={{ onUserDismiss: guard.intercept }}>
+      <DialogPrimitive.Root {...props} />
+      {guard.enabled && (
+        <DiscardConfirm
+          open={guard.confirming}
+          onKeep={guard.keep}
+          onDiscard={guard.discard}
+        />
+      )}
+    </DiscardGuardContext.Provider>
+  );
+}
+
 export const DialogTrigger = DialogPrimitive.Trigger;
 export const DialogPortal = DialogPrimitive.Portal;
 export const DialogClose = DialogPrimitive.Close;
@@ -27,7 +150,11 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 export const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => {
+>(({ className, children, onEscapeKeyDown, onPointerDownOutside, onInteractOutside, ...props }, ref) => {
+  // Dirty-guard: provided by the Dialog wrapper when `confirmDiscard` is
+  // set. Each user-dismissal path below routes through it; it no-ops
+  // (returns false) when the dialog is clean or unguarded.
+  const discardGuard = React.useContext(DiscardGuardContext);
   // Drag-to-dismiss for the phone bottom sheet. The grab handle below is
   // the universal "drag me down" signal — it used to be decoration, which
   // is worse than absent: users tried the gesture and nothing happened.
@@ -80,6 +207,18 @@ export const DialogContent = React.forwardRef<
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={setRefs}
+      onEscapeKeyDown={(e) => {
+        onEscapeKeyDown?.(e);
+        if (!e.defaultPrevented) discardGuard?.onUserDismiss(e);
+      }}
+      onPointerDownOutside={(e) => {
+        onPointerDownOutside?.(e);
+        if (!e.defaultPrevented) discardGuard?.onUserDismiss(e);
+      }}
+      onInteractOutside={(e) => {
+        onInteractOutside?.(e);
+        if (!e.defaultPrevented) discardGuard?.onUserDismiss(e);
+      }}
       className={cn(
         'fixed z-50 bg-navy elev-3 p-6 grid gap-4 focus:outline-none overflow-y-auto overscroll-contain',
         // PHONES: a bottom sheet, not a floating web modal. Anchored to
@@ -120,6 +259,10 @@ export const DialogContent = React.forwardRef<
       {children}
       <DialogPrimitive.Close
         ref={closeRef}
+        // Radix's own close-on-click checks defaultPrevented, so the
+        // guard's preventDefault holds the dialog open. Drag-to-dismiss
+        // funnels through this button (closeRef.click()) — guarded too.
+        onClick={(e) => discardGuard?.onUserDismiss(e)}
         // Same safe-area-aware positioning as Drawer's close button so
         // iOS notches don't clip the X target on full-bleed dialogs.
         className="absolute grid place-items-center h-10 w-10 rounded-md text-silver hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright top-[max(0.5rem,env(safe-area-inset-top))] right-[max(0.5rem,env(safe-area-inset-right))]"
