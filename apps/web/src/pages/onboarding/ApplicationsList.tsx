@@ -41,6 +41,7 @@ import { useAuth } from '@/lib/auth';
 import { ProgressBar } from '@/components/ProgressBar';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
+import { StatusBadge } from '@/lib/status';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import {
@@ -77,25 +78,6 @@ import { usePersistentState } from '@/lib/usePersistentState';
 
 const VIEW_OPTIONS = ['table', 'cards'] as const;
 type ApplicationsView = (typeof VIEW_OPTIONS)[number];
-
-const STATUS_LABEL: Record<string, string> = {
-  DRAFT: 'Draft',
-  SUBMITTED: 'Submitted',
-  IN_REVIEW: 'In review',
-  APPROVED: 'Approved',
-  REJECTED: 'Rejected',
-};
-
-const STATUS_VARIANT: Record<
-  string,
-  'success' | 'pending' | 'destructive' | 'default'
-> = {
-  DRAFT: 'default',
-  SUBMITTED: 'pending',
-  IN_REVIEW: 'pending',
-  APPROVED: 'success',
-  REJECTED: 'destructive',
-};
 
 const TRACK_LABEL: Record<string, string> = {
   STANDARD: 'Standard',
@@ -1186,12 +1168,7 @@ export function ApplicationsList() {
                       </span>
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        variant={STATUS_VARIANT[a.status] ?? 'default'}
-                        data-status={a.status}
-                      >
-                        {STATUS_LABEL[a.status] ?? a.status}
-                      </Badge>
+                      <StatusBadge status={a.status} data-status={a.status} />
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -1478,13 +1455,7 @@ function ApplicationCard({
             {a.position ? ` · ${a.position}` : ''}
           </div>
         </div>
-        <Badge
-          variant={STATUS_VARIANT[a.status] ?? 'default'}
-          data-status={a.status}
-          className="shrink-0"
-        >
-          {STATUS_LABEL[a.status] ?? a.status}
-        </Badge>
+        <StatusBadge status={a.status} data-status={a.status} className="shrink-0" />
       </div>
 
       <div>

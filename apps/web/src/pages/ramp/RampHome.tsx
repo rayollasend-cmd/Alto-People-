@@ -39,17 +39,17 @@ import {
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
+import { statusTone } from '@/lib/status';
 import { Label } from '@/components/ui/Label';
 
-const STATUS_VARIANT: Record<
-  RampMilestoneStatus,
-  'pending' | 'success' | 'destructive' | 'accent'
-> = {
-  PENDING: 'pending',
+// Ramp-only milestone codes the shared vocabulary doesn't carry: ON_TRACK is
+// an in-flight state (gold per the Badge contract), ACHIEVED is terminal-good
+// and MISSED terminal-bad. PENDING comes from the shared map.
+const RAMP_STATUS_TONES = {
   ON_TRACK: 'accent',
   ACHIEVED: 'success',
   MISSED: 'destructive',
-};
+} as const;
 
 export function RampHome() {
   const { user } = useAuth();
@@ -448,7 +448,7 @@ function PlanDetailDrawer({
                           )}
                         </Select>
                       ) : (
-                        <Badge variant={STATUS_VARIANT[m.status]}>
+                        <Badge variant={statusTone(m.status, { overrides: RAMP_STATUS_TONES })}>
                           {STATUS_LABELS[m.status]}
                         </Badge>
                       )}

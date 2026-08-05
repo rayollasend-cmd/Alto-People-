@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, LogOut, MessageSquareQuote, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -19,6 +20,7 @@ import {
 } from '@/lib/separation119Api';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
+import { statusTone } from '@/lib/status';
 import {
   AssociatePicker,
   type PickedAssociate,
@@ -48,14 +50,10 @@ import {
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 
-const STATUS_VARIANT: Record<
-  SeparationStatus,
-  'pending' | 'accent' | 'success'
-> = {
-  PLANNED: 'pending',
-  IN_PROGRESS: 'accent',
-  COMPLETE: 'success',
-};
+// Deliberate departure from the shared vocabulary: an IN_PROGRESS offboarding
+// is actively being worked by HR (gold per the Badge contract), not a passive
+// wait state. PLANNED / COMPLETE come from the shared status vocabulary.
+const SEPARATION_STATUS_TONES = { IN_PROGRESS: 'accent' } as const;
 
 const STATUS_LABELS: Record<SeparationStatus, string> = {
   PLANNED: 'Planned',
@@ -236,7 +234,9 @@ export function SeparationHome() {
                   >
                     <TableCell>
                       <div className="font-medium text-white">
-                        {s.associateName}
+                        <AssociateLink associateId={s.associateId}>
+                          {s.associateName}
+                        </AssociateLink>
                       </div>
                       <div className="text-xs text-silver">{s.associateEmail}</div>
                       <div className="text-xs2 text-silver/70 md:hidden">
@@ -251,7 +251,7 @@ export function SeparationHome() {
                       {fmtDate(parseYmd(s.lastDayWorked))}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={STATUS_VARIANT[s.status]}>
+                      <Badge variant={statusTone(s.status, { overrides: SEPARATION_STATUS_TONES })}>
                         {STATUS_LABELS[s.status]}
                       </Badge>
                     </TableCell>
@@ -500,11 +500,15 @@ function DetailDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>{row.associateName}</DrawerTitle>
+        <DrawerTitle>
+          <AssociateLink associateId={row.associateId}>
+            {row.associateName}
+          </AssociateLink>
+        </DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[row.status]}>
+          <Badge variant={statusTone(row.status, { overrides: SEPARATION_STATUS_TONES })}>
             {STATUS_LABELS[row.status]}
           </Badge>
           <span className="text-sm text-silver">{REASON_LABELS[row.reason]}</span>

@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/Dialog';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
-import { fmtDate, fmtTimeTz, zonedDayKey } from '@/lib/format';
+import { fmtDate, fmtDayHeaderTz, fmtTimeTz, zonedDayKey } from '@/lib/format';
 import { addDays, sameDay, shiftMinutes, startOfDay, ymd } from './calendarDates';
 import { StatusMark, statusLabelClass, statusTileClass } from './shiftTile';
 
@@ -345,7 +345,9 @@ function DayCell({
               ? 'text-gold font-semibold hover:bg-gold/10'
               : 'text-white hover:text-gold hover:bg-gold/5'
           )}
-          title={`Open ${date.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}`}
+          // fmtDayHeaderTz, no zone: `date` is a browser-local cell anchor —
+          // the same calendar day as the `ymd(date)` bucketing key.
+          title={`Open ${fmtDayHeaderTz(date)}`}
         >
           {date.getDate()}
         </button>
@@ -512,13 +514,10 @@ function DayDetailDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {day &&
-              day.toLocaleDateString([], {
-                weekday: 'long',
-                month: 'long',
-                day: 'numeric',
-                year: 'numeric',
-              })}
+            {/* fmtDayHeaderTz, no zone: `day` is the clicked cell's
+                browser-local anchor — the day the overflow list was
+                bucketed under. */}
+            {day && fmtDayHeaderTz(day, null, { year: true })}
           </DialogTitle>
         </DialogHeader>
         <ul className="space-y-1.5 max-h-[60vh] overflow-y-auto">

@@ -20,12 +20,14 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import type {
   DocumentKind,
   DocumentRecord,
   DocumentStatus,
 } from '@alto-people/shared';
+import { useAuth } from '@/lib/auth';
 import {
   bulkVerifyDocuments,
   downloadAllDocumentsUrl,
@@ -33,7 +35,7 @@ import {
   rejectDocument,
   verifyDocument,
 } from '@/lib/documentsApi';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtSize } from '@/lib/format';
 import { ApiError } from '@/lib/api';
 import { DocumentPreview } from '@/components/DocumentPreview';
 import { Avatar } from '@/components/ui/Avatar';
@@ -76,7 +78,9 @@ import {
 } from '@/components/ui/Table';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { cn } from '@/lib/cn';
+import { statusTone } from '@/lib/status';
 import { usePersistentState } from '@/lib/usePersistentState';
+import { useSelection } from '@/lib/useSelection';
 
 // Filter value space: the real DocumentStatuses plus two synthetic buckets.
 // 'ACTION_NEEDED' rolls up the states that require HR to do something —
@@ -96,16 +100,8 @@ const STATUS_FILTERS: Array<{ value: DocFilter; label: string }> = [
   { value: 'ALL', label: 'All' },
 ];
 
-const STATUS_VARIANT: Record<
-  DocumentStatus,
-  'success' | 'pending' | 'destructive' | 'default'
-> = {
-  UPLOADED: 'pending',
-  VERIFIED: 'success',
-  REJECTED: 'destructive',
-  EXPIRED: 'destructive',
-};
-
+// Tones come from the shared status vocabulary; only the wording is local —
+// UPLOADED means "someone must review this", so it reads "Awaiting review".
 const STATUS_LABELS: Record<DocumentStatus, string> = {
   UPLOADED: 'Awaiting review',
   VERIFIED: 'Verified',
@@ -121,11 +117,6 @@ const BULK_REJECT_PRESETS = [
   'Wrong document type',
 ] as const;
 
-const fmtSize = (b: number): string => {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  return `${(b / 1024 / 1024).toFixed(2)} MB`;
-};
 
 const fmtKind = (k: string): string =>
   k.replace(/_/g, ' ').replace(/\bPDF\b/i, 'PDF');
@@ -143,6 +134,7 @@ interface AdminDocumentsViewProps {
 }
 
 export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
+  const { can } = useAuth();
   // Two ways to slice the same data: a flat queue for daily HR triage, and
   // a per-associate folder view for auditing one person's full history.
   const [view, setView] = useViewMode<'queue' | 'associates'>(
@@ -190,9 +182,6 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   // Optional expiry captured alongside a single verify in the preview
   // viewer ('YYYY-MM-DD'). Bulk verify stays expiry-less on purpose.
   const [verifyExpiresAt, setVerifyExpiresAt] = useState('');
-  // Bulk-verify selection (queue view only). Only docs that can transition to
-  // VERIFIED — UPLOADED or REJECTED — are ever selectable.
-  const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   // Bulk-reject panel state — one reason applied to every selected doc.
   const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
@@ -301,8 +290,9 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
 
   // Drop any selection when the visible slice changes (filter / kind / view),
   // so a bulk-verify can never act on rows the user can no longer see.
+  // (clearSelection is a stable callback from useSelection, declared below.)
   useEffect(() => {
-    setSelectedDocs(new Set());
+    clearSelection();
   }, [filter, kindFilter, view]);
 
   // Day-granularity "now" for the fmtAge labels in the render body. NOT a
@@ -361,6 +351,25 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         d.kind.toLowerCase().includes(q)
     );
   }, [docs, deferredSearch]);
+
+  // Bulk-verify selection (queue view only). Only docs that can transition to
+  // VERIFIED — UPLOADED or REJECTED — are ever selectable; that rule lives
+  // in verifiableIds, the shared hook supplies the mechanics + tri-state.
+  const verifiableIds = useMemo(
+    () =>
+      (visibleDocs ?? [])
+        .filter((d) => d.status === 'UPLOADED' || d.status === 'REJECTED')
+        .map((d) => d.id),
+    [visibleDocs],
+  );
+  const {
+    selected: selectedDocs,
+    toggle: toggleDoc,
+    clear: clearSelection,
+    allSelected: allVerifiableSelected,
+    someSelected: someVerifiableSelected,
+    toggleAll: toggleAllVerifiable,
+  } = useSelection(verifiableIds);
 
   // Click-to-sort for the flat queue table. Operates on the filtered slice
   // the table renders; third click restores server order (newest first).
@@ -507,14 +516,6 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     }
   };
 
-  const toggleDoc = (id: string) =>
-    setSelectedDocs((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
   const onBulkVerify = async () => {
     if (bulkBusy || selectedDocs.size === 0) return;
     setBulkBusy(true);
@@ -523,7 +524,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
       toast.success(
         `Verified ${res.verified}${res.skipped.length ? ` · ${res.skipped.length} skipped` : ''}.`,
       );
-      setSelectedDocs(new Set());
+      clearSelection();
       await Promise.all([refresh(), refreshAll()]);
     } catch (err) {
       toast.error('Bulk verify failed.', {
@@ -586,7 +587,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     }
     setBulkRejectOpen(false);
     setBulkRejectReason('');
-    setSelectedDocs(new Set());
+    clearSelection();
     await Promise.all([refresh(), refreshAll()]);
     setBulkBusy(false);
   };
@@ -621,6 +622,15 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
           canManage
             ? 'Verify or reject uploaded documents.'
             : 'Read-only view of associate documents.'
+        }
+        secondaryActions={
+          // Mail-merge letter templates generate the documents that land in
+          // this vault; the /templates route is gated on view:hr-admin.
+          can('view:hr-admin') ? (
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/templates">Document templates</Link>
+            </Button>
+          ) : undefined
         }
       />
 
@@ -833,12 +843,6 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
       )}
 
       {view === 'queue' && visibleDocs && visibleDocs.length > 0 && (() => {
-        const verifiable = visibleDocs.filter(
-          (d) => d.status === 'UPLOADED' || d.status === 'REJECTED',
-        );
-        const allVerifiableSelected =
-          verifiable.length > 0 &&
-          verifiable.every((d) => selectedDocs.has(d.id));
         // Group the queue by associate — one header row per person — in
         // order of first appearance under the current sort, so column
         // sorting still decides both group order and order within a group.
@@ -876,7 +880,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => setSelectedDocs(new Set())}
+                  onClick={clearSelection}
                   disabled={bulkBusy}
                 >
                   Clear
@@ -918,14 +922,11 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       className="accent-gold"
                       aria-label="Select all verifiable"
                       checked={allVerifiableSelected}
-                      disabled={verifiable.length === 0}
-                      onChange={(e) =>
-                        setSelectedDocs(
-                          e.target.checked
-                            ? new Set(verifiable.map((d) => d.id))
-                            : new Set(),
-                        )
-                      }
+                      ref={(el) => {
+                        if (el) el.indeterminate = someVerifiableSelected;
+                      }}
+                      disabled={verifiableIds.length === 0}
+                      onChange={toggleAllVerifiable}
                     />
                   </TableHead>
                 )}
@@ -1040,7 +1041,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     {fmtAge(d.createdAt, now)}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={STATUS_VARIANT[d.status]} data-status={d.status}>
+                    <Badge variant={statusTone(d.status)} data-status={d.status}>
                       {STATUS_LABELS[d.status]}
                     </Badge>
                     {d.rejectionReason && (
@@ -1313,7 +1314,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       </TableCell>
                       <TableCell>
                         <Badge
-                          variant={STATUS_VARIANT[d.status]}
+                          variant={statusTone(d.status)}
                           data-status={d.status}
                         >
                           {STATUS_LABELS[d.status]}

@@ -92,6 +92,9 @@ const en = {
   'dash.actionShiftsPlural': '{count} upcoming shifts to confirm',
   'dash.actionInbox': '{count} unread message in your inbox',
   'dash.actionInboxPlural': '{count} unread messages in your inbox',
+  'dash.pushOnToast':
+    "Notifications on — you'll hear about shifts even with the app closed.",
+  'dash.pushFailed': 'Could not enable notifications.',
 
   // My schedule chrome
   'sched.title': 'My schedule',
@@ -118,6 +121,39 @@ const en = {
   'sched.loadOlder': 'Load older shifts',
   'sched.fullHistory': "That's your full shift history.",
   'sched.offline': "You're offline — showing your schedule from {time}.",
+  'sched.loadFailed': 'Failed to load.',
+  'sched.loadOlderFailed': 'Could not load older shifts.',
+
+  // Open-shift pickups
+  'sched.openHeading': 'Open shifts you can pick up ({count})',
+  'sched.openRequested': 'Requested',
+  'sched.openWithdraw': 'Withdraw',
+  'sched.openPickUp': 'Pick up',
+  'sched.pickupToast': 'Pickup requested — your manager will confirm it.',
+  'sched.pickupFailed': 'Could not request this shift.',
+  'sched.withdrawFailed': 'Could not withdraw the request.',
+  'sched.pickupConfirmTitle': 'Request this shift?',
+  'sched.pickupConfirmNote': "Your manager confirms pickups before they're final.",
+  'sched.pickupConfirmLabel': 'Request pickup',
+
+  // Calendar subscription card
+  'sched.calTitle': 'Subscribe in your calendar',
+  'sched.calBody':
+    "Add this URL once and your published shifts show up in Google, Apple, or Outlook calendars — refreshed hourly. Don't share it; anyone with the link can see your schedule.",
+  'sched.calLoadFailed': 'Could not load calendar URL.',
+  'sched.calUnavailable': 'Calendar subscription is unavailable right now.',
+  'sched.calCopyUrl': 'Copy URL',
+  'sched.calCopied': 'Copied',
+  'sched.calCopiedToast': 'Calendar URL copied. Paste it into Google or Outlook.',
+  'sched.calCopyFailed': 'Could not copy — long-press the URL to copy manually.',
+  'sched.calOpenApple': 'Open in Apple Calendar',
+  'sched.calResetLink': 'Reset link',
+  'sched.calResetConfirmTitle': 'Reset your calendar link?',
+  'sched.calResetConfirmDesc':
+    "If this link got shared, resetting it locks the old one out immediately. Any calendar subscribed with the current link stops updating — you'll need to re-subscribe with the new one.",
+  'sched.calResetToast':
+    'New link created. Re-subscribe in your calendar app — the old link no longer works.',
+  'sched.calResetFailed': 'Could not reset the link.',
 
   // Shift card
   'shift.next': 'Next',
@@ -142,6 +178,50 @@ const en = {
   'shift.noteOptional': 'Note (optional)',
   'shift.notePlaceholder': "e.g. Doctor's appointment that morning",
   'shift.sendRequest': 'Send request',
+  'shift.detailFailed': 'Could not load shift details.',
+  'shift.confirmFailed': 'Could not confirm the shift.',
+  'shift.teammatesFailed': 'Could not load teammates.',
+  'shift.tradeProposedToast':
+    'Trade proposed. They accept first, then your manager approves both halves.',
+  'shift.swapSentToast':
+    'Swap request sent. Track it under Shift swaps below — your manager has the final say.',
+  'shift.swapSendFailed': 'Could not send the swap request.',
+
+  // Shift swaps (marketplace section)
+  'swap.title': 'Shift swaps',
+  'swap.tabIncoming': 'incoming',
+  'swap.tabOutgoing': 'outgoing',
+  'swap.loadFailed': 'Failed to load.',
+  'swap.actionFailed': 'Action failed.',
+  'swap.emptyIncomingTitle': 'No incoming swap requests',
+  'swap.emptyOutgoingTitle': 'No outgoing swap requests',
+  'swap.emptyIncomingDesc':
+    "When a teammate asks to swap a shift with you, it'll show up here.",
+  'swap.emptyOutgoingDesc':
+    'Request a swap from your assigned shift in the schedule above.',
+  'swap.theyTake': 'They take your: ',
+  'swap.youTake': 'You take their: ',
+  'swap.from': 'From',
+  'swap.to': 'To',
+  'swap.accept': 'Accept',
+  'swap.decline': 'Decline',
+  'swap.declineConfirmTitle': 'Decline this swap request?',
+  'swap.declineConfirmDesc': '{name} will be notified that you declined.',
+  'swap.stWaitingYou': 'Waiting for you to accept',
+  'swap.stWaitingYouHint':
+    'Accept or decline below — a manager gives final approval after that.',
+  'swap.stWaitingPeer': 'Waiting for {name} to accept',
+  'swap.stWaitingPeerHint': 'Once they accept, a manager gives final approval.',
+  'swap.stAccepted': 'Accepted — waiting for manager approval',
+  'swap.stAcceptedHint': "You'll be notified when a manager decides.",
+  'swap.stYouDeclined': 'You declined',
+  'swap.stPeerDeclined': '{name} declined',
+  'swap.stApproved': 'Approved — schedules updated',
+  'swap.stRejected': 'Not approved',
+  'swap.stRejectedHint':
+    'A manager rejected this swap — the shift stays as originally scheduled.',
+  'swap.stCancelledByRequester': '{name} cancelled this request',
+  'swap.stCancelled': 'Cancelled',
 
   // Time & attendance — associate kiosk-only explainer
   'time.title': 'Time & Attendance',
@@ -227,6 +307,17 @@ const en = {
   'timeoff.submit': 'Submit',
   'timeoff.balanceLine': '{avail} available · {after} left after this request',
   'timeoff.balanceOver': 'This request exceeds your available balance by {over}.',
+  'timeoff.filterAll': 'All',
+  'timeoff.filterAria': 'Filter requests by status',
+  'timeoff.noneWithStatus': 'No requests with this status.',
+  'timeoff.weekdayWord': '{count} weekday',
+  'timeoff.weekdayWordPlural': '{count} weekdays',
+  'timeoff.holidayWord': '{count} holiday',
+  'timeoff.holidayWordPlural': '{count} holidays',
+  'timeoff.dayWord': '{count} day',
+  'timeoff.dayWordPlural': '{count} days',
+  'timeoff.fullDays': 'Full days ({hours}h)',
+  'timeoff.halfDays': 'Half days ({hours}h)',
 
   // Pay — associate paystub list
   'pay.title': 'My pay',
@@ -283,6 +374,62 @@ const en = {
   'pay.kind.TIPS': 'Tips',
   'pay.kind.REIMBURSEMENT': 'Reimbursement (non-taxable)',
 
+  // Pay — tax & pay settings expander
+  'pay.taxSettingsTitle': 'Tax & pay settings',
+  'pay.taxDocs': 'Tax documents',
+  'pay.taxDocsHint': 'W-2s & year-end forms →',
+  'pay.edit': 'Edit',
+  'pay.save': 'Save',
+  'pay.w4Title': 'Federal W-4',
+  'pay.w4None': 'No W-4 on file yet.',
+  'pay.w4SetUp': 'Set up your W-4',
+  'pay.filing.SINGLE': 'Single or married filing separately',
+  'pay.filing.MARRIED_FILING_JOINTLY': 'Married filing jointly',
+  'pay.filing.HEAD_OF_HOUSEHOLD': 'Head of household',
+  'pay.w4FilingStatus': 'Filing status',
+  'pay.w4Dependents': 'Dependents credit',
+  'pay.w4OtherIncome': 'Other income',
+  'pay.w4Deductions': 'Deductions',
+  'pay.w4ExtraPerCheck': 'Extra withholding / check',
+  'pay.w4DependentsField': 'Dependents credit (W-4 step 3)',
+  'pay.w4OtherIncomeField': 'Other income (4a)',
+  'pay.w4DeductionsField': 'Deductions (4b)',
+  'pay.w4ExtraField': 'Extra withholding per check (4c)',
+  'pay.w4MultipleJobs': 'Multiple jobs / spouse works (step 2)',
+  'pay.w4UpdatedToast': 'W-4 updated — applies from your next paycheck.',
+  'pay.w4UpdateFailed': 'Failed to update W-4.',
+  'pay.ddTitle': 'Direct deposit',
+  'pay.ddChange': 'Change',
+  'pay.ddAdd': 'Add',
+  'pay.ddNone': 'No direct-deposit account on file.',
+  'pay.ddBranchCard': 'Paid to your Branch card.',
+  'pay.ddAccountLine': '{type} account',
+  'pay.ddBank': 'Bank',
+  'pay.ddVerified': 'verified',
+  'pay.ddPendingVerify': 'pending verification',
+  'pay.ddRoutingPh': 'Routing number (9 digits)',
+  'pay.ddAccountPh': 'Account number',
+  'pay.ddConfirmPh': 'Confirm account number',
+  'pay.ddMismatch': 'Account numbers don’t match — re-check both fields.',
+  'pay.ddChecking': 'Checking',
+  'pay.ddSavings': 'Savings',
+  'pay.ddEmailNote':
+    'We’ll email you a confirmation whenever this changes — a heads-up in case it wasn’t you.',
+  'pay.ddValidation': 'Enter a 9-digit routing number and a valid account number.',
+  'pay.ddUpdatedToast': 'Direct deposit updated (account ending {last4}).',
+  'pay.ddUpdateFailed': 'Failed to update direct deposit.',
+
+  // Pay — "ask about this paycheck" HR-case dialog
+  'pay.askButton': 'Ask about this paycheck',
+  'pay.askDesc':
+    'This files an HR case with the paycheck’s details attached, so payroll can look into it and get back to you.',
+  'pay.askLabel': 'What’s your question?',
+  'pay.askPlaceholder': 'e.g., My paycheck shows as failed — when will it be re-sent?',
+  'pay.askEmpty': 'Tell us what you need help with first.',
+  'pay.askSentToast': 'Sent — HR will follow up on your paycheck.',
+  'pay.askSendFailed': 'Could not send your question.',
+  'pay.askSend': 'Send',
+
   // Login
   'login.title': 'Sign in',
   'login.subtitle': 'Use your Alto HR credentials.',
@@ -298,6 +445,46 @@ const en = {
   'login.errRateLimited': 'Too many login attempts. Please wait a minute and try again.',
   'login.errServer': "We're having trouble signing you in. Please try again in a moment.",
   'login.securedBy': 'Secured by Alto HR',
+  'login.or': 'or',
+  'login.usePasskey': 'Use a passkey',
+  'login.ssoButton': 'Sign in with SSO',
+  'login.errSsoNoAccount':
+    'No Alto account matches your SSO identity — ask your admin to invite you.',
+  'login.errSsoFailed': 'SSO sign-in failed — try again or use your password.',
+  'login.errPasskeyEmailFirst': 'Enter your email first, then use your passkey.',
+  'login.errPasskey': 'Passkey sign-in failed — use your password instead.',
+
+  // Login — two-step (MFA) challenge
+  'login.mfaTitle': 'Two-step sign-in',
+  'login.mfaRecoveryDesc':
+    'Enter one of the recovery codes you saved when you set up two-step sign-in. Each code works once.',
+  'login.mfaCodeDesc': 'Enter the 6-digit code from your authenticator app.',
+  'login.recoveryCode': 'Recovery code',
+  'login.authCode': 'Authenticator code',
+  'login.verifying': 'Verifying…',
+  'login.verifyAndSignIn': 'Verify and sign in',
+  'login.useAuthCodeInstead': 'Use authenticator code instead',
+  'login.useRecoveryInstead': 'Use a recovery code instead',
+  'login.errCodeRateLimited': 'Too many code attempts. Try again in a few minutes.',
+  'login.errSignInExpired': 'Sign-in expired. Please start again.',
+  'login.errCodeInvalid': 'That code is incorrect or expired.',
+  'login.errCodeVerifyServer':
+    "We're having trouble verifying your code. Please try again in a moment.",
+  'login.errCodeVerify': 'Could not verify code.',
+
+  // Login — org-enforced MFA enrollment
+  'login.enrollTitle': 'Set up two-step sign-in',
+  'login.enrollBody':
+    'Your organization requires two-step sign-in for this account. Scan the QR code with an authenticator app, save your recovery codes, and enter a code to finish signing in.',
+  'login.errEnrollStart': 'Could not start setup. Try signing in again.',
+  'login.qrAlt': 'Scan with your authenticator app',
+  'login.manualSecret': 'Manual entry secret',
+  'login.recoveryCodesLabel': 'Recovery codes — save these now',
+  'login.recoveryCodesHint':
+    'Each code works once — they are the only way in if you lose your phone.',
+  'login.ackSaved': "I've saved my recovery codes somewhere safe.",
+  'login.enrollCodeLabel': '6-digit code from your authenticator app',
+  'login.turnOnAndSignIn': 'Turn on and sign in',
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -368,6 +555,9 @@ const es: Record<MessageKey, string> = {
   'dash.actionShiftsPlural': '{count} turnos próximos por confirmar',
   'dash.actionInbox': '{count} mensaje sin leer en tu bandeja de entrada',
   'dash.actionInboxPlural': '{count} mensajes sin leer en tu bandeja de entrada',
+  'dash.pushOnToast':
+    'Notificaciones activadas — te avisaremos de tus turnos incluso con la app cerrada.',
+  'dash.pushFailed': 'No se pudieron activar las notificaciones.',
 
   'sched.title': 'Mi horario',
   'sched.subtitle': 'Tus turnos publicados.',
@@ -393,6 +583,40 @@ const es: Record<MessageKey, string> = {
   'sched.loadOlder': 'Cargar turnos anteriores',
   'sched.fullHistory': 'Ese es todo tu historial de turnos.',
   'sched.offline': 'Sin conexión — mostrando tu horario de {time}.',
+  'sched.loadFailed': 'No se pudo cargar.',
+  'sched.loadOlderFailed': 'No se pudieron cargar los turnos anteriores.',
+
+  'sched.openHeading': 'Turnos abiertos que puedes tomar ({count})',
+  'sched.openRequested': 'Solicitado',
+  'sched.openWithdraw': 'Retirar',
+  'sched.openPickUp': 'Tomar',
+  'sched.pickupToast': 'Turno solicitado — tu gerente lo confirmará.',
+  'sched.pickupFailed': 'No se pudo solicitar este turno.',
+  'sched.withdrawFailed': 'No se pudo retirar la solicitud.',
+  'sched.pickupConfirmTitle': '¿Solicitar este turno?',
+  'sched.pickupConfirmNote':
+    'Tu gerente confirma los turnos tomados antes de que sean definitivos.',
+  'sched.pickupConfirmLabel': 'Solicitar turno',
+
+  'sched.calTitle': 'Suscríbete desde tu calendario',
+  'sched.calBody':
+    'Agrega esta URL una vez y tus turnos publicados aparecerán en los calendarios de Google, Apple u Outlook — se actualizan cada hora. No la compartas; cualquiera con el enlace puede ver tu horario.',
+  'sched.calLoadFailed': 'No se pudo cargar la URL del calendario.',
+  'sched.calUnavailable':
+    'La suscripción al calendario no está disponible en este momento.',
+  'sched.calCopyUrl': 'Copiar URL',
+  'sched.calCopied': 'Copiada',
+  'sched.calCopiedToast': 'URL del calendario copiada. Pégala en Google u Outlook.',
+  'sched.calCopyFailed':
+    'No se pudo copiar — mantén presionada la URL para copiarla manualmente.',
+  'sched.calOpenApple': 'Abrir en Calendario de Apple',
+  'sched.calResetLink': 'Restablecer enlace',
+  'sched.calResetConfirmTitle': '¿Restablecer tu enlace de calendario?',
+  'sched.calResetConfirmDesc':
+    'Si este enlace se llegó a compartir, restablecerlo bloquea el anterior de inmediato. Cualquier calendario suscrito con el enlace actual dejará de actualizarse — tendrás que volver a suscribirte con el nuevo.',
+  'sched.calResetToast':
+    'Nuevo enlace creado. Vuelve a suscribirte en tu app de calendario — el enlace anterior ya no funciona.',
+  'sched.calResetFailed': 'No se pudo restablecer el enlace.',
 
   'shift.next': 'Próximo',
   'shift.confirmed': 'Confirmado',
@@ -416,6 +640,49 @@ const es: Record<MessageKey, string> = {
   'shift.noteOptional': 'Nota (opcional)',
   'shift.notePlaceholder': 'p. ej. Cita médica esa mañana',
   'shift.sendRequest': 'Enviar solicitud',
+  'shift.detailFailed': 'No se pudieron cargar los detalles del turno.',
+  'shift.confirmFailed': 'No se pudo confirmar el turno.',
+  'shift.teammatesFailed': 'No se pudieron cargar los compañeros.',
+  'shift.tradeProposedToast':
+    'Intercambio propuesto. Primero acepta tu compañero y luego tu gerente aprueba ambas partes.',
+  'shift.swapSentToast':
+    'Solicitud de cambio enviada. Síguela abajo en Cambios de turno — tu gerente tiene la última palabra.',
+  'shift.swapSendFailed': 'No se pudo enviar la solicitud de cambio.',
+
+  'swap.title': 'Cambios de turno',
+  'swap.tabIncoming': 'recibidas',
+  'swap.tabOutgoing': 'enviadas',
+  'swap.loadFailed': 'No se pudo cargar.',
+  'swap.actionFailed': 'No se pudo completar la acción.',
+  'swap.emptyIncomingTitle': 'No hay solicitudes de cambio recibidas',
+  'swap.emptyOutgoingTitle': 'No hay solicitudes de cambio enviadas',
+  'swap.emptyIncomingDesc':
+    'Cuando un compañero te pida cambiar un turno, aparecerá aquí.',
+  'swap.emptyOutgoingDesc':
+    'Solicita un cambio desde tu turno asignado en el horario de arriba.',
+  'swap.theyTake': 'Toman tu turno: ',
+  'swap.youTake': 'Tomas su turno: ',
+  'swap.from': 'De',
+  'swap.to': 'Para',
+  'swap.accept': 'Aceptar',
+  'swap.decline': 'Rechazar',
+  'swap.declineConfirmTitle': '¿Rechazar esta solicitud de cambio?',
+  'swap.declineConfirmDesc': 'Se notificará a {name} que la rechazaste.',
+  'swap.stWaitingYou': 'Esperando que aceptes',
+  'swap.stWaitingYouHint':
+    'Acepta o rechaza abajo — después un gerente da la aprobación final.',
+  'swap.stWaitingPeer': 'Esperando que {name} acepte',
+  'swap.stWaitingPeerHint': 'Cuando acepte, un gerente da la aprobación final.',
+  'swap.stAccepted': 'Aceptado — esperando la aprobación del gerente',
+  'swap.stAcceptedHint': 'Te avisaremos cuando un gerente decida.',
+  'swap.stYouDeclined': 'La rechazaste',
+  'swap.stPeerDeclined': '{name} la rechazó',
+  'swap.stApproved': 'Aprobado — horarios actualizados',
+  'swap.stRejected': 'No aprobado',
+  'swap.stRejectedHint':
+    'Un gerente rechazó este cambio — el turno queda como estaba programado.',
+  'swap.stCancelledByRequester': '{name} canceló esta solicitud',
+  'swap.stCancelled': 'Cancelada',
 
   'time.title': 'Tiempo y asistencia',
   'time.subtitle': 'Marca tu entrada en el quiosco del sitio de trabajo.',
@@ -499,6 +766,17 @@ const es: Record<MessageKey, string> = {
   'timeoff.submit': 'Enviar',
   'timeoff.balanceLine': '{avail} disponibles · {after} restantes después de esta solicitud',
   'timeoff.balanceOver': 'Esta solicitud excede tu saldo disponible por {over}.',
+  'timeoff.filterAll': 'Todas',
+  'timeoff.filterAria': 'Filtrar solicitudes por estado',
+  'timeoff.noneWithStatus': 'No hay solicitudes con este estado.',
+  'timeoff.weekdayWord': '{count} día hábil',
+  'timeoff.weekdayWordPlural': '{count} días hábiles',
+  'timeoff.holidayWord': '{count} día festivo',
+  'timeoff.holidayWordPlural': '{count} días festivos',
+  'timeoff.dayWord': '{count} día',
+  'timeoff.dayWordPlural': '{count} días',
+  'timeoff.fullDays': 'Días completos ({hours}h)',
+  'timeoff.halfDays': 'Medios días ({hours}h)',
 
   'pay.title': 'Mi pago',
   'pay.subtitle': 'Recibos de pago recientes con totales acumulados del año.',
@@ -554,6 +832,60 @@ const es: Record<MessageKey, string> = {
   'pay.kind.TIPS': 'Propinas',
   'pay.kind.REIMBURSEMENT': 'Reembolso (no gravable)',
 
+  'pay.taxSettingsTitle': 'Impuestos y configuración de pago',
+  'pay.taxDocs': 'Documentos fiscales',
+  'pay.taxDocsHint': 'W-2 y formularios de fin de año →',
+  'pay.edit': 'Editar',
+  'pay.save': 'Guardar',
+  'pay.w4Title': 'W-4 federal',
+  'pay.w4None': 'Aún no hay un W-4 registrado.',
+  'pay.w4SetUp': 'Configura tu W-4',
+  'pay.filing.SINGLE': 'Soltero(a) o casado(a) que declara por separado',
+  'pay.filing.MARRIED_FILING_JOINTLY': 'Casado(a) que declara en conjunto',
+  'pay.filing.HEAD_OF_HOUSEHOLD': 'Cabeza de familia',
+  'pay.w4FilingStatus': 'Estado civil tributario',
+  'pay.w4Dependents': 'Crédito por dependientes',
+  'pay.w4OtherIncome': 'Otros ingresos',
+  'pay.w4Deductions': 'Deducciones',
+  'pay.w4ExtraPerCheck': 'Retención extra por cheque',
+  'pay.w4DependentsField': 'Crédito por dependientes (paso 3 del W-4)',
+  'pay.w4OtherIncomeField': 'Otros ingresos (4a)',
+  'pay.w4DeductionsField': 'Deducciones (4b)',
+  'pay.w4ExtraField': 'Retención extra por cheque (4c)',
+  'pay.w4MultipleJobs': 'Varios empleos / tu cónyuge trabaja (paso 2)',
+  'pay.w4UpdatedToast': 'W-4 actualizado — se aplica desde tu próximo pago.',
+  'pay.w4UpdateFailed': 'No se pudo actualizar el W-4.',
+  'pay.ddTitle': 'Depósito directo',
+  'pay.ddChange': 'Cambiar',
+  'pay.ddAdd': 'Agregar',
+  'pay.ddNone': 'No hay una cuenta de depósito directo registrada.',
+  'pay.ddBranchCard': 'Se te paga a tu tarjeta Branch.',
+  'pay.ddAccountLine': 'Cuenta {type}',
+  'pay.ddBank': 'bancaria',
+  'pay.ddVerified': 'verificada',
+  'pay.ddPendingVerify': 'verificación pendiente',
+  'pay.ddRoutingPh': 'Número de ruta (9 dígitos)',
+  'pay.ddAccountPh': 'Número de cuenta',
+  'pay.ddConfirmPh': 'Confirma el número de cuenta',
+  'pay.ddMismatch': 'Los números de cuenta no coinciden — revisa ambos campos.',
+  'pay.ddChecking': 'Corriente',
+  'pay.ddSavings': 'De ahorros',
+  'pay.ddEmailNote':
+    'Te enviaremos un correo de confirmación cada vez que esto cambie — un aviso por si no fuiste tú.',
+  'pay.ddValidation':
+    'Ingresa un número de ruta de 9 dígitos y un número de cuenta válido.',
+  'pay.ddUpdatedToast': 'Depósito directo actualizado (cuenta que termina en {last4}).',
+  'pay.ddUpdateFailed': 'No se pudo actualizar el depósito directo.',
+  'pay.askButton': 'Preguntar sobre este pago',
+  'pay.askDesc':
+    'Esto crea un caso de RR. HH. con los detalles del pago adjuntos, para que nómina lo revise y te responda.',
+  'pay.askLabel': '¿Cuál es tu pregunta?',
+  'pay.askPlaceholder': 'p. ej., Mi pago aparece como fallido — ¿cuándo se reenviará?',
+  'pay.askEmpty': 'Cuéntanos primero en qué necesitas ayuda.',
+  'pay.askSentToast': 'Enviado — RR. HH. te responderá sobre tu pago.',
+  'pay.askSendFailed': 'No se pudo enviar tu pregunta.',
+  'pay.askSend': 'Enviar',
+
   'login.title': 'Iniciar sesión',
   'login.subtitle': 'Usa tus credenciales de Alto HR.',
   'login.brandTagline': 'Tu horario, tu reloj y tu pago',
@@ -570,6 +902,47 @@ const es: Record<MessageKey, string> = {
   'login.errServer':
     'Tenemos problemas para iniciar tu sesión. Inténtalo de nuevo en un momento.',
   'login.securedBy': 'Protegido por Alto HR',
+  'login.or': 'o',
+  'login.usePasskey': 'Usar una llave de acceso',
+  'login.ssoButton': 'Iniciar sesión con SSO',
+  'login.errSsoNoAccount':
+    'Ninguna cuenta de Alto coincide con tu identidad de SSO — pide a tu administrador que te invite.',
+  'login.errSsoFailed':
+    'No se pudo iniciar sesión con SSO — inténtalo de nuevo o usa tu contraseña.',
+  'login.errPasskeyEmailFirst':
+    'Ingresa primero tu correo y luego usa tu llave de acceso.',
+  'login.errPasskey':
+    'No se pudo iniciar sesión con la llave de acceso — usa tu contraseña.',
+  'login.mfaTitle': 'Inicio de sesión en dos pasos',
+  'login.mfaRecoveryDesc':
+    'Ingresa uno de los códigos de recuperación que guardaste al configurar el inicio de sesión en dos pasos. Cada código funciona una sola vez.',
+  'login.mfaCodeDesc': 'Ingresa el código de 6 dígitos de tu aplicación de autenticación.',
+  'login.recoveryCode': 'Código de recuperación',
+  'login.authCode': 'Código del autenticador',
+  'login.verifying': 'Verificando…',
+  'login.verifyAndSignIn': 'Verificar e iniciar sesión',
+  'login.useAuthCodeInstead': 'Usar el código del autenticador',
+  'login.useRecoveryInstead': 'Usar un código de recuperación',
+  'login.errCodeRateLimited':
+    'Demasiados intentos de código. Inténtalo de nuevo en unos minutos.',
+  'login.errSignInExpired': 'El inicio de sesión expiró. Vuelve a empezar.',
+  'login.errCodeInvalid': 'Ese código es incorrecto o ya expiró.',
+  'login.errCodeVerifyServer':
+    'Tenemos problemas para verificar tu código. Inténtalo de nuevo en un momento.',
+  'login.errCodeVerify': 'No se pudo verificar el código.',
+  'login.enrollTitle': 'Configura el inicio de sesión en dos pasos',
+  'login.enrollBody':
+    'Tu organización requiere el inicio de sesión en dos pasos para esta cuenta. Escanea el código QR con una aplicación de autenticación, guarda tus códigos de recuperación e ingresa un código para terminar de iniciar sesión.',
+  'login.errEnrollStart':
+    'No se pudo iniciar la configuración. Intenta iniciar sesión de nuevo.',
+  'login.qrAlt': 'Escanéalo con tu aplicación de autenticación',
+  'login.manualSecret': 'Clave para ingreso manual',
+  'login.recoveryCodesLabel': 'Códigos de recuperación — guárdalos ahora',
+  'login.recoveryCodesHint':
+    'Cada código funciona una sola vez — son la única forma de entrar si pierdes tu teléfono.',
+  'login.ackSaved': 'Guardé mis códigos de recuperación en un lugar seguro.',
+  'login.enrollCodeLabel': 'Código de 6 dígitos de tu aplicación de autenticación',
+  'login.turnOnAndSignIn': 'Activar e iniciar sesión',
 };
 
 const MESSAGES: Record<Lang, Record<MessageKey, string>> = { en, es };

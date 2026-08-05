@@ -27,3 +27,19 @@ export const TIME_ANOMALY_LABELS: Record<TimeAnomaly, string> = {
 export function timeAnomalyLabel(code: string): string {
   return TIME_ANOMALY_LABELS[code as TimeAnomaly] ?? code;
 }
+
+/**
+ * Time-entry tone overrides for `statusTone` / `<StatusBadge>` — the one
+ * deliberate domain departure from the shared status vocabulary, shared by
+ * every timesheet surface (associate history, My Timesheet, the team and
+ * admin queues) so a punch reads the same everywhere:
+ * - ACTIVE — the clock is literally running: an in-flight state (gold per
+ *   the Badge contract), not the vocabulary's healthy-record green.
+ * - COMPLETED — a completed punch is *awaiting review*, not terminal-good,
+ *   so it reads amber. (The views label it "Pending review" for the same
+ *   reason.)
+ */
+export const TIME_ENTRY_STATUS_TONES = {
+  ACTIVE: 'accent',
+  COMPLETED: 'pending',
+} as const;

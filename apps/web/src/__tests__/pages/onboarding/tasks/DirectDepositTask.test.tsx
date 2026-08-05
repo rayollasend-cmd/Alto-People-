@@ -65,7 +65,9 @@ describe('<DirectDepositTask>', () => {
   it('default tab is BANK_ACCOUNT and shows routing + account fields', () => {
     renderTask();
     expect(screen.getByLabelText(/routing number/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/^account number$/i)).toBeInTheDocument();
+    // "Account number" is a required Field now, so its label carries the
+    // trailing asterisk; keep the anchor to avoid matching "Account type".
+    expect(screen.getByLabelText(/^account number\*?$/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/account type/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/branch card id/i)).not.toBeInTheDocument();
   });
@@ -87,7 +89,7 @@ describe('<DirectDepositTask>', () => {
     // submit, so a synthetic 123456789 placeholder is rejected client-side.
     const ROUTING = '121000248';
     await user.type(screen.getByLabelText(/routing number/i), ROUTING);
-    await user.type(screen.getByLabelText(/^account number$/i), '987654321');
+    await user.type(screen.getByLabelText(/^account number\*?$/i), '987654321');
     await user.selectOptions(screen.getByLabelText(/account type/i), 'SAVINGS');
 
     await user.click(screen.getByRole('button', { name: /save payout method/i }));

@@ -5,7 +5,7 @@ import type { MfaEnrollStartResponse } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { safeNextPath } from '@/lib/safeNextPath';
 import { passkeysSupported, signInWithPasskey } from '@/lib/webauthn';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type Translate } from '@/lib/i18n';
 import { ApiError, NetworkError, apiFetch } from '@/lib/api';
 import { confirmMfaEnrollment, startMfaEnrollment } from '@/lib/settingsApi';
 import { useFocusFirstError } from '@/lib/useFocusFirstError';
@@ -36,13 +36,13 @@ interface SsoConfig {
  * the server never distinguishes "no account" from "disabled" (no status
  * oracle), and the operational detail lives in the audit log.
  */
-function ssoErrorMessage(search: string): string | null {
+function ssoErrorMessage(search: string, t: Translate): string | null {
   const code = new URLSearchParams(search).get('error');
   if (code === 'sso_no_account') {
-    return 'No Alto account matches your SSO identity — ask your admin to invite you.';
+    return t('login.errSsoNoAccount');
   }
   if (code === 'sso_failed') {
-    return 'SSO sign-in failed — try again or use your password.';
+    return t('login.errSsoFailed');
   }
   return null;
 }
@@ -60,7 +60,7 @@ export function Login() {
   const [useRecovery, setUseRecovery] = useState(false);
   // Seed the banner from the ?error= query the OIDC callback redirects with.
   const [error, setError] = useState<string | null>(() =>
-    ssoErrorMessage(location.search),
+    ssoErrorMessage(location.search, t),
   );
   const [submitting, setSubmitting] = useState(false);
   // Org-enforced MFA enrollment (mfaEnrollmentRequired login response).
@@ -137,24 +137,24 @@ export function Login() {
       navigate(from, { replace: true });
     } catch (err) {
       if (err instanceof NetworkError) {
-        setError('Network error — check your connection and try again.');
+        setError(t('login.errNetwork'));
       } else if (err instanceof ApiError) {
         if (err.status === 429) {
-          setError('Too many code attempts. Try again in a few minutes.');
+          setError(t('login.errCodeRateLimited'));
         } else if (err.code === 'mfa_pending_missing' || err.code === 'mfa_state_invalid') {
-          setError('Sign-in expired. Please start again.');
+          setError(t('login.errSignInExpired'));
           setStep('password');
           setPassword('');
           setCode('');
         } else if (err.code === 'invalid_code') {
-          setError('That code is incorrect or expired.');
+          setError(t('login.errCodeInvalid'));
         } else if (err.status >= 500) {
-          setError("We're having trouble verifying your code. Please try again in a moment.");
+          setError(t('login.errCodeVerifyServer'));
         } else {
-          setError('Could not verify code.');
+          setError(t('login.errCodeVerify'));
         }
       } else {
-        setError('Could not verify code.');
+        setError(t('login.errCodeVerify'));
       }
     } finally {
       setSubmitting(false);
@@ -182,11 +182,11 @@ export function Login() {
       setQrDataUrl(dataUrl);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        setError('Sign-in expired. Please start again.');
+        setError(t('login.errSignInExpired'));
         setStep('password');
         setPassword('');
       } else {
-        setError('Could not start setup. Try signing in again.');
+        setError(t('login.errEnrollStart'));
         setStep('password');
       }
     }
@@ -205,21 +205,21 @@ export function Login() {
       navigate(from, { replace: true });
     } catch (err) {
       if (err instanceof NetworkError) {
-        setError('Network error — check your connection and try again.');
+        setError(t('login.errNetwork'));
       } else if (err instanceof ApiError) {
         if (err.status === 429) {
-          setError('Too many code attempts. Try again in a few minutes.');
+          setError(t('login.errCodeRateLimited'));
         } else if (err.code === 'invalid_code') {
-          setError('That code is incorrect or expired.');
+          setError(t('login.errCodeInvalid'));
         } else if (err.status === 401 || err.code === 'no_pending_enrollment') {
-          setError('Sign-in expired. Please start again.');
+          setError(t('login.errSignInExpired'));
           setStep('password');
           setPassword('');
         } else {
-          setError('Could not verify code.');
+          setError(t('login.errCodeVerify'));
         }
       } else {
-        setError('Could not verify code.');
+        setError(t('login.errCodeVerify'));
       }
     } finally {
       setSubmitting(false);
@@ -233,7 +233,7 @@ export function Login() {
     if (submitting) return;
     const trimmed = email.trim();
     if (!trimmed) {
-      setError('Enter your email first, then use your passkey.');
+      setError(t('login.errPasskeyEmailFirst'));
       return;
     }
     setError(null);
@@ -248,7 +248,7 @@ export function Login() {
       if (err instanceof NetworkError) {
         setError(t('login.errNetwork'));
       } else {
-        setError('Passkey sign-in failed — use your password instead.');
+        setError(t('login.errPasskey'));
       }
     } finally {
       setSubmitting(false);
@@ -368,7 +368,7 @@ export function Login() {
               <>
                 <div className="my-4 flex items-center gap-3 text-2xs uppercase tracking-widest text-silver/50">
                   <span className="h-px flex-1 bg-navy-secondary" />
-                  or
+                  {t('login.or')}
                   <span className="h-px flex-1 bg-navy-secondary" />
                 </div>
                 <div className="space-y-3">
@@ -385,7 +385,7 @@ export function Login() {
                       className="w-full"
                     >
                       <Fingerprint className="h-4 w-4" />
-                      Use a passkey
+                      {t('login.usePasskey')}
                     </Button>
                   )}
                   {sso?.enabled && (
@@ -402,7 +402,7 @@ export function Login() {
                       className="w-full"
                     >
                       <Building2 className="h-4 w-4" />
-                      {sso.buttonLabel ?? 'Sign in with SSO'}
+                      {sso.buttonLabel ?? t('login.ssoButton')}
                     </Button>
                   )}
                 </div>
@@ -427,17 +427,15 @@ export function Login() {
             noValidate
           >
             <h2 className="font-display text-2xl md:text-3xl text-white mb-1">
-              Two-step sign-in
+              {t('login.mfaTitle')}
             </h2>
             <p className="text-silver text-sm mb-6">
-              {useRecovery
-                ? 'Enter one of the recovery codes you saved when you set up two-step sign-in. Each code works once.'
-                : 'Enter the 6-digit code from your authenticator app.'}
+              {useRecovery ? t('login.mfaRecoveryDesc') : t('login.mfaCodeDesc')}
             </p>
 
             <div>
               <Label htmlFor="login-mfa-code" required>
-                {useRecovery ? 'Recovery code' : 'Authenticator code'}
+                {useRecovery ? t('login.recoveryCode') : t('login.authCode')}
               </Label>
               <Input
                 id="login-mfa-code"
@@ -467,7 +465,7 @@ export function Login() {
               loading={submitting}
               className="w-full mt-6"
             >
-              {submitting ? 'Verifying…' : 'Verify and sign in'}
+              {submitting ? t('login.verifying') : t('login.verifyAndSignIn')}
             </Button>
 
             <div className="mt-4 flex items-center justify-between gap-2 text-xs">
@@ -480,7 +478,7 @@ export function Login() {
                 }}
                 className="text-silver hover:text-gold-bright transition-colors underline-offset-2 hover:underline"
               >
-                {useRecovery ? 'Use authenticator code instead' : 'Use a recovery code instead'}
+                {useRecovery ? t('login.useAuthCodeInstead') : t('login.useRecoveryInstead')}
               </button>
               <button
                 type="button"
@@ -493,7 +491,7 @@ export function Login() {
                 }}
                 className="text-silver hover:text-gold-bright transition-colors underline-offset-2 hover:underline"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
             </div>
 
@@ -509,13 +507,9 @@ export function Login() {
             noValidate
           >
             <h2 className="font-display text-2xl md:text-3xl text-white mb-1">
-              Set up two-step sign-in
+              {t('login.enrollTitle')}
             </h2>
-            <p className="text-silver text-sm mb-6">
-              Your organization requires two-step sign-in for this account.
-              Scan the QR code with an authenticator app, save your recovery
-              codes, and enter a code to finish signing in.
-            </p>
+            <p className="text-silver text-sm mb-6">{t('login.enrollBody')}</p>
 
             {enroll ? (
               <div className="space-y-4">
@@ -524,7 +518,7 @@ export function Login() {
                     {qrDataUrl ? (
                       <img
                         src={qrDataUrl}
-                        alt="Scan with your authenticator app"
+                        alt={t('login.qrAlt')}
                         className="rounded-md border border-navy-secondary bg-white p-2"
                         width={176}
                         height={176}
@@ -535,22 +529,19 @@ export function Login() {
                   </div>
                   <div className="flex-1 space-y-3 min-w-0">
                     <div>
-                      <Label>Manual entry secret</Label>
+                      <Label>{t('login.manualSecret')}</Label>
                       <code className="block rounded-md bg-navy-secondary/60 px-3 py-2 font-mono text-xs text-white break-all">
                         {enroll.secret}
                       </code>
                     </div>
                     <div>
-                      <Label>Recovery codes — save these now</Label>
+                      <Label>{t('login.recoveryCodesLabel')}</Label>
                       <ul className="grid grid-cols-2 gap-1.5 rounded-md bg-navy-secondary/60 p-3 font-mono text-xs text-white">
                         {enroll.recoveryCodes.map((c) => (
                           <li key={c}>{c}</li>
                         ))}
                       </ul>
-                      <FormHint>
-                        Each code works once — they are the only way in if you
-                        lose your phone.
-                      </FormHint>
+                      <FormHint>{t('login.recoveryCodesHint')}</FormHint>
                     </div>
                   </div>
                 </div>
@@ -561,11 +552,11 @@ export function Login() {
                     checked={acknowledged}
                     onChange={(e) => setAcknowledged(e.target.checked)}
                   />
-                  <span>I&apos;ve saved my recovery codes somewhere safe.</span>
+                  <span>{t('login.ackSaved')}</span>
                 </label>
                 <div>
                   <Label htmlFor="login-enroll-code" required>
-                    6-digit code from your authenticator app
+                    {t('login.enrollCodeLabel')}
                   </Label>
                   <Input
                     id="login-enroll-code"
@@ -593,7 +584,7 @@ export function Login() {
               loading={submitting}
               className="w-full mt-6"
             >
-              {submitting ? 'Verifying…' : 'Turn on and sign in'}
+              {submitting ? t('login.verifying') : t('login.turnOnAndSignIn')}
             </Button>
 
             <div className="mt-4 text-right text-xs">
@@ -610,7 +601,7 @@ export function Login() {
                 }}
                 className="text-silver hover:text-gold-bright transition-colors underline-offset-2 hover:underline"
               >
-                Cancel
+                {t('common.cancel')}
               </button>
             </div>
 

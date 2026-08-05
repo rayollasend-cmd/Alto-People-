@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
 import { fmtDateTime } from '@/lib/format';
+import { statusTone } from '@/lib/status';
 
 /**
  * The manager approval panels shared by /scheduling and /approvals.
@@ -29,17 +30,16 @@ import { fmtDateTime } from '@/lib/format';
 
 /* ===== Swaps panel ======================================================== */
 
-const SWAP_STATUS_VARIANT: Record<
-  ShiftSwapRequest['status'],
-  'success' | 'pending' | 'destructive' | 'default'
-> = {
+// Swap codes are mostly domain-only (peer-negotiation states the shared
+// vocabulary doesn't carry); PEER_ACCEPTED stays amber because the manager
+// still has to decide. MANAGER_APPROVED and CANCELLED come from the shared
+// status vocabulary.
+const SWAP_STATUS_TONES = {
   PENDING_PEER: 'pending',
   PEER_ACCEPTED: 'pending',
   PEER_DECLINED: 'destructive',
-  MANAGER_APPROVED: 'success',
   MANAGER_REJECTED: 'destructive',
-  CANCELLED: 'default',
-};
+} as const;
 
 // Human-readable labels — raw enum values never reach the user's eyes.
 const SWAP_STATUS_LABELS: Record<ShiftSwapRequest['status'], string> = {
@@ -137,7 +137,7 @@ export function AdminSwapsPanel() {
                   {s.wouldExceed40h && (
                     <Badge variant="destructive">Over 40h</Badge>
                   )}
-                  <Badge variant={SWAP_STATUS_VARIANT[s.status]}>
+                  <Badge variant={statusTone(s.status, { overrides: SWAP_STATUS_TONES })}>
                     {SWAP_STATUS_LABELS[s.status] ?? s.status}
                   </Badge>
                   <Button

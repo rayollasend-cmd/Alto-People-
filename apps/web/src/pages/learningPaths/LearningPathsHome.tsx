@@ -15,7 +15,6 @@ import {
   updateLearningPath,
   withdrawLearningPathEnrollment,
   type LearningPathDetail,
-  type LearningPathEnrollmentStatus,
   type LearningPathStatus,
   type LearningPathSummary,
   type PathEnrollment,
@@ -24,6 +23,7 @@ import { listCourses, type Course } from '@/lib/lms94Api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
+import { StatusBadge, statusLabel } from '@/lib/status';
 import {
   Badge,
   Button,
@@ -70,27 +70,10 @@ function LoadError({ message, onRetry }: { message: string; onRetry: () => void 
   );
 }
 
-const PATH_STATUS_LABELS: Record<LearningPathStatus, string> = {
-  DRAFT: 'Draft',
-  PUBLISHED: 'Published',
-  ARCHIVED: 'Archived',
-};
-
-const PATH_STATUS_VARIANT: Record<
-  LearningPathStatus,
-  'success' | 'default' | 'outline'
-> = {
-  DRAFT: 'default',
-  PUBLISHED: 'success',
-  ARCHIVED: 'outline',
-};
-
-const PATH_ENROLL_STATUS_LABELS: Record<LearningPathEnrollmentStatus, string> = {
-  ASSIGNED: 'Assigned',
-  IN_PROGRESS: 'In progress',
-  COMPLETED: 'Completed',
-  WITHDRAWN: 'Withdrawn',
-};
+// Deliberate departures from the shared vocabulary (same reading as course
+// enrollments in LearningHome): ASSIGNED is a to-do awaiting the associate
+// (amber), IN_PROGRESS is actively worked (gold per the Badge contract).
+const PATH_ENROLL_STATUS_TONES = { ASSIGNED: 'pending', IN_PROGRESS: 'accent' } as const;
 
 export function LearningPathsHome() {
   const { user } = useAuth();
@@ -206,9 +189,7 @@ export function LearningPathsHome() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={PATH_STATUS_VARIANT[p.status]}>
-                        {PATH_STATUS_LABELS[p.status]}
-                      </Badge>
+                      <StatusBadge status={p.status} />
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-right tabular-nums">
                       {p.stepCount}
@@ -493,9 +474,7 @@ function PathDetailDrawer({
         ) : (
           <>
             <div className="flex items-center gap-2">
-              <Badge variant={PATH_STATUS_VARIANT[data.status]}>
-                {PATH_STATUS_LABELS[data.status]}
-              </Badge>
+              <StatusBadge status={data.status} />
               {canManage && (
                 <Select
                   size="sm"
@@ -519,7 +498,7 @@ function PathDetailDrawer({
                     }
                     try {
                       await updateLearningPath(pathId, { status: next });
-                      toast.success(`Status set to ${PATH_STATUS_LABELS[next].toLowerCase()}.`);
+                      toast.success(`Status set to ${statusLabel(next).toLowerCase()}.`);
                       refresh();
                     } catch (err) {
                       toast.error(
@@ -713,19 +692,7 @@ function PathDetailDrawer({
                             </div>
                           </TableCell>
                           <TableCell>
-                            <Badge
-                              variant={
-                                e.status === 'COMPLETED'
-                                  ? 'success'
-                                  : e.status === 'IN_PROGRESS'
-                                    ? 'accent'
-                                    : e.status === 'WITHDRAWN'
-                                      ? 'default'
-                                      : 'pending'
-                              }
-                            >
-                              {PATH_ENROLL_STATUS_LABELS[e.status]}
-                            </Badge>
+                            <StatusBadge status={e.status} overrides={PATH_ENROLL_STATUS_TONES} />
                           </TableCell>
                           <TableCell className="text-xs text-silver hidden md:table-cell">
                             {fmtDate(e.assignedAt)}

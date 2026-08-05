@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, Laptop, Pencil, Plus, Smartphone, Key, IdCard, Car, Shirt, Box } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -255,7 +256,13 @@ export function AssetsHome() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        {a.currentAssignment ? a.currentAssignment.associateName : '—'}
+                        {a.currentAssignment ? (
+                          <AssociateLink associateId={a.currentAssignment.associateId}>
+                            {a.currentAssignment.associateName}
+                          </AssociateLink>
+                        ) : (
+                          '—'
+                        )}
                       </TableCell>
                       <TableCell className="text-right space-x-2">
                         {canManage && a.status === 'AVAILABLE' && (

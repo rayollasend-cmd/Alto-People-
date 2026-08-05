@@ -34,8 +34,8 @@ import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
+import { StatusBadge } from '@/lib/status';
 import {
-  Badge,
   Button,
   Card,
   CardContent,
@@ -139,18 +139,6 @@ export function BenefitsLifecycle() {
   );
 }
 
-const OE_BADGE: Record<OpenEnrollmentWindow['status'], 'pending' | 'success' | 'default'> = {
-  DRAFT: 'default',
-  OPEN: 'success',
-  CLOSED: 'default',
-};
-
-const OE_STATUS_LABELS: Record<OpenEnrollmentWindow['status'], string> = {
-  DRAFT: 'Draft',
-  OPEN: 'Open',
-  CLOSED: 'Closed',
-};
-
 function OeTab({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<OpenEnrollmentWindow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -245,7 +233,7 @@ function OeTab({ canManage }: { canManage: boolean }) {
                     </TableCell>
                     <TableCell className="hidden lg:table-cell tabular-nums">{fmtYmd(w.effectiveOn)}</TableCell>
                     <TableCell>
-                      <Badge variant={OE_BADGE[w.status]}>{OE_STATUS_LABELS[w.status]}</Badge>
+                      <StatusBadge status={w.status} />
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && w.status === 'DRAFT' && (
@@ -432,20 +420,6 @@ const QLE_KIND_LABEL: Record<QleKind, string> = {
   OTHER: 'Other',
 };
 
-const QLE_BADGE: Record<Qle['status'], 'pending' | 'success' | 'destructive' | 'default'> = {
-  PENDING: 'pending',
-  APPROVED: 'success',
-  DENIED: 'destructive',
-  EXPIRED: 'destructive',
-};
-
-const QLE_STATUS_LABELS: Record<Qle['status'], string> = {
-  PENDING: 'Pending',
-  APPROVED: 'Approved',
-  DENIED: 'Denied',
-  EXPIRED: 'Expired',
-};
-
 function QleTab({ canManage }: { canManage: boolean }) {
   const prompt = usePrompt();
   const [rows, setRows] = useState<Qle[] | null>(null);
@@ -555,7 +529,7 @@ function QleTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="hidden md:table-cell tabular-nums">{fmtYmd(q.eventDate)}</TableCell>
                     <TableCell className="hidden md:table-cell tabular-nums">{fmtYmd(q.allowedUntil)}</TableCell>
                     <TableCell>
-                      <Badge variant={QLE_BADGE[q.status]}>{QLE_STATUS_LABELS[q.status]}</Badge>
+                      <StatusBadge status={q.status} />
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && q.status === 'PENDING' && (
@@ -702,21 +676,9 @@ function NewQleDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
   );
 }
 
-const COBRA_BADGE: Record<CobraOffer['status'], 'pending' | 'success' | 'default' | 'destructive'> = {
-  NOTIFIED: 'pending',
-  ELECTED: 'success',
-  WAIVED: 'default',
-  EXPIRED: 'destructive',
-  TERMINATED: 'default',
-};
-
-const COBRA_STATUS_LABELS: Record<CobraOffer['status'], string> = {
-  NOTIFIED: 'Notified',
-  ELECTED: 'Elected',
-  WAIVED: 'Waived',
-  EXPIRED: 'Expired',
-  TERMINATED: 'Terminated',
-};
+// COBRA-only codes the shared vocabulary doesn't carry: NOTIFIED is the
+// awaiting-election state; ELECTED is this domain's terminal-good.
+const COBRA_STATUS_TONES = { NOTIFIED: 'pending', ELECTED: 'success' } as const;
 
 function CobraTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
@@ -837,7 +799,7 @@ function CobraTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="hidden lg:table-cell tabular-nums">{fmtYmd(c.electionDeadline)}</TableCell>
                     <TableCell className="hidden md:table-cell tabular-nums">{fmtMoney(c.premiumPerMonth)}</TableCell>
                     <TableCell>
-                      <Badge variant={COBRA_BADGE[c.status]}>{COBRA_STATUS_LABELS[c.status]}</Badge>
+                      <StatusBadge status={c.status} overrides={COBRA_STATUS_TONES} />
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && c.status === 'NOTIFIED' && (

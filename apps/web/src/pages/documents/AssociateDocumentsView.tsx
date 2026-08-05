@@ -11,7 +11,7 @@ import {
 } from '@/lib/documentsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtSize } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -47,11 +47,6 @@ const STATUS_BADGE: Record<
 const kindLabel = (k: DocumentKind): string =>
   KIND_OPTIONS.find((o) => o.value === k)?.label ?? k.replace(/_/g, ' ');
 
-const fmtSize = (b: number) => {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  return `${(b / 1024 / 1024).toFixed(2)} MB`;
-};
 
 // Mirrors the server's upload cap so an oversized file fails instantly
 // with a readable message instead of after a full (doomed) POST.

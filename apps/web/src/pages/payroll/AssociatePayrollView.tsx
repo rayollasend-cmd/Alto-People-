@@ -24,6 +24,7 @@ import {
 import { fileCase } from '@/lib/hrCases123Api';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtMoney, parseYmd } from '@/lib/format';
+import { statusTone } from '@/lib/status';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { dayHeading, groupByDayBy } from '@/lib/dayGroup';
@@ -66,23 +67,14 @@ const KIND_KEY: Record<PayrollItemEarning['kind'], MessageKey> = {
   REIMBURSEMENT: 'pay.kind.REIMBURSEMENT',
 };
 
+// Labels stay i18n keys (this page is translated); tones come from the
+// shared status vocabulary (PENDING amber, HELD amber, VOIDED muted).
 const STATUS_KEY: Record<PayrollItem['status'], MessageKey> = {
   PENDING: 'pay.status.PENDING',
   DISBURSED: 'pay.status.DISBURSED',
   FAILED: 'pay.status.FAILED',
   HELD: 'pay.status.HELD',
   VOIDED: 'pay.status.VOIDED',
-};
-
-const STATUS_VARIANT: Record<
-  PayrollItem['status'],
-  'default' | 'success' | 'destructive' | 'accent'
-> = {
-  PENDING: 'default',
-  DISBURSED: 'success',
-  FAILED: 'destructive',
-  HELD: 'accent',
-  VOIDED: 'destructive',
 };
 
 /**
@@ -211,13 +203,14 @@ export function AssociatePayrollView() {
  *  (/me/w4, /me/payout-method) now let the associate manage them.
  * -------------------------------------------------------------------------- */
 
-const FILING_STATUS_LABEL: Record<MyW4['filingStatus'], string> = {
-  SINGLE: 'Single or married filing separately',
-  MARRIED_FILING_JOINTLY: 'Married filing jointly',
-  HEAD_OF_HOUSEHOLD: 'Head of household',
+const FILING_STATUS_KEY: Record<MyW4['filingStatus'], MessageKey> = {
+  SINGLE: 'pay.filing.SINGLE',
+  MARRIED_FILING_JOINTLY: 'pay.filing.MARRIED_FILING_JOINTLY',
+  HEAD_OF_HOUSEHOLD: 'pay.filing.HEAD_OF_HOUSEHOLD',
 };
 
 function TaxAndPaySettings() {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   return (
     <div className="mb-4 rounded-lg border border-navy-secondary bg-navy-secondary/20">
@@ -228,7 +221,7 @@ function TaxAndPaySettings() {
       >
         <span className="flex items-center gap-2 text-sm font-medium text-white">
           <Settings className="h-4 w-4 text-gold" />
-          Tax &amp; pay settings
+          {t('pay.taxSettingsTitle')}
         </span>
         {open ? (
           <ChevronDown className="h-4 w-4 text-silver" />
@@ -247,8 +240,8 @@ function TaxAndPaySettings() {
             className="flex items-center gap-2 rounded-md border border-navy-secondary bg-navy px-3 py-2.5 text-xs text-silver hover:text-gold coarse:min-h-11"
           >
             <FileText className="h-4 w-4 shrink-0 text-gold" />
-            <span className="font-medium text-white">Tax documents</span>
-            <span className="ml-auto text-silver/70">W-2s &amp; year-end forms →</span>
+            <span className="font-medium text-white">{t('pay.taxDocs')}</span>
+            <span className="ml-auto text-silver/70">{t('pay.taxDocsHint')}</span>
           </Link>
         </div>
       )}
@@ -270,6 +263,7 @@ const EMPTY_W4: MyW4 = {
 };
 
 function W4Card() {
+  const { t } = useI18n();
   const [w4, setW4] = useState<MyW4 | null>(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<MyW4 | null>(null);
@@ -302,11 +296,11 @@ function W4Card() {
         deductions: form.deductions,
         extraWithholding: form.extraWithholding,
       });
-      toast.success('W-4 updated — applies from your next paycheck.');
+      toast.success(t('pay.w4UpdatedToast'));
       setEditing(false);
       await load();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to update W-4.');
+      toast.error(err instanceof ApiError ? err.message : t('pay.w4UpdateFailed'));
     } finally {
       setBusy(false);
     }
@@ -315,7 +309,7 @@ function W4Card() {
   return (
     <div className="rounded-md border border-navy-secondary bg-navy p-3">
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-sm font-medium text-white">Federal W-4</h3>
+        <h3 className="text-sm font-medium text-white">{t('pay.w4Title')}</h3>
         {w4 && !editing && (
           <Button
             size="sm"
@@ -325,13 +319,13 @@ function W4Card() {
               setEditing(true);
             }}
           >
-            Edit
+            {t('pay.edit')}
           </Button>
         )}
       </div>
       {missing && !editing && (
         <div className="space-y-2">
-          <p className="text-xs text-silver">No W-4 on file yet.</p>
+          <p className="text-xs text-silver">{t('pay.w4None')}</p>
           <Button
             size="sm"
             onClick={() => {
@@ -339,17 +333,17 @@ function W4Card() {
               setEditing(true);
             }}
           >
-            Set up your W-4
+            {t('pay.w4SetUp')}
           </Button>
         </div>
       )}
       {w4 && !editing && (
         <dl className="space-y-1 text-xs">
-          <Row label="Filing status" value={FILING_STATUS_LABEL[w4.filingStatus]} />
-          <Row label="Dependents credit" value={fmtMoney(w4.dependentsAmount)} />
-          <Row label="Other income" value={fmtMoney(w4.otherIncome)} />
-          <Row label="Deductions" value={fmtMoney(w4.deductions)} />
-          <Row label="Extra withholding / check" value={fmtMoney(w4.extraWithholding)} />
+          <Row label={t('pay.w4FilingStatus')} value={t(FILING_STATUS_KEY[w4.filingStatus])} />
+          <Row label={t('pay.w4Dependents')} value={fmtMoney(w4.dependentsAmount)} />
+          <Row label={t('pay.w4OtherIncome')} value={fmtMoney(w4.otherIncome)} />
+          <Row label={t('pay.w4Deductions')} value={fmtMoney(w4.deductions)} />
+          <Row label={t('pay.w4ExtraPerCheck')} value={fmtMoney(w4.extraWithholding)} />
         </dl>
       )}
       {editing && form && (
@@ -360,29 +354,29 @@ function W4Card() {
               setForm({ ...form, filingStatus: e.target.value as MyW4['filingStatus'] })
             }
           >
-            {Object.entries(FILING_STATUS_LABEL).map(([v, l]) => (
+            {(Object.keys(FILING_STATUS_KEY) as MyW4['filingStatus'][]).map((v) => (
               <option key={v} value={v}>
-                {l}
+                {t(FILING_STATUS_KEY[v])}
               </option>
             ))}
           </Select>
           <NumField
-            label="Dependents credit (W-4 step 3)"
+            label={t('pay.w4DependentsField')}
             value={form.dependentsAmount}
             onChange={(n) => setForm({ ...form, dependentsAmount: n })}
           />
           <NumField
-            label="Other income (4a)"
+            label={t('pay.w4OtherIncomeField')}
             value={form.otherIncome}
             onChange={(n) => setForm({ ...form, otherIncome: n })}
           />
           <NumField
-            label="Deductions (4b)"
+            label={t('pay.w4DeductionsField')}
             value={form.deductions}
             onChange={(n) => setForm({ ...form, deductions: n })}
           />
           <NumField
-            label="Extra withholding per check (4c)"
+            label={t('pay.w4ExtraField')}
             value={form.extraWithholding}
             onChange={(n) => setForm({ ...form, extraWithholding: n })}
           />
@@ -392,14 +386,14 @@ function W4Card() {
               checked={form.multipleJobs}
               onChange={(e) => setForm({ ...form, multipleJobs: e.target.checked })}
             />
-            Multiple jobs / spouse works (step 2)
+            {t('pay.w4MultipleJobs')}
           </label>
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={busy}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button size="sm" onClick={save} loading={busy} disabled={busy}>
-              Save
+              {t('pay.save')}
             </Button>
           </div>
         </div>
@@ -412,6 +406,7 @@ function W4Card() {
 // path — an account can be replaced but not cleared — so there is no
 // "switch to paper check" affordance here until the server grows one.
 function PayoutMethodCard() {
+  const { t } = useI18n();
   const [method, setMethod] = useState<MyPayoutMethod | null | undefined>(undefined);
   const [editing, setEditing] = useState(false);
   const [routing, setRouting] = useState('');
@@ -441,18 +436,18 @@ function PayoutMethodCard() {
 
   const save = async () => {
     if (!/^\d{9}$/.test(routing) || !/^\d{4,17}$/.test(account)) {
-      toast.error('Enter a 9-digit routing number and a valid account number.');
+      toast.error(t('pay.ddValidation'));
       return;
     }
     if (!accountsMatch) return;
     setBusy(true);
     try {
       const r = await updateMyPayoutMethod({ routingNumber: routing, accountNumber: account, accountType: type });
-      toast.success(`Direct deposit updated (account ending ${r.accountLast4}).`);
+      toast.success(t('pay.ddUpdatedToast', { last4: r.accountLast4 }));
       closeForm();
       await load();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to update direct deposit.');
+      toast.error(err instanceof ApiError ? err.message : t('pay.ddUpdateFailed'));
     } finally {
       setBusy(false);
     }
@@ -461,23 +456,24 @@ function PayoutMethodCard() {
   return (
     <div className="rounded-md border border-navy-secondary bg-navy p-3">
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-sm font-medium text-white">Direct deposit</h3>
+        <h3 className="text-sm font-medium text-white">{t('pay.ddTitle')}</h3>
         {method !== undefined && !editing && (
           <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
-            {method ? 'Change' : 'Add'}
+            {method ? t('pay.ddChange') : t('pay.ddAdd')}
           </Button>
         )}
       </div>
       {!editing && (
         <div className="text-xs text-silver">
           {method === undefined && <Skeleton className="h-4 w-40" />}
-          {method === null && 'No direct-deposit account on file.'}
-          {method && method.branchCard && 'Paid to your Branch card.'}
+          {method === null && t('pay.ddNone')}
+          {method && method.branchCard && t('pay.ddBranchCard')}
           {method && !method.branchCard && (
             <span>
-              {method.accountType ?? 'Bank'} account{' '}
+              {t('pay.ddAccountLine', { type: method.accountType ?? t('pay.ddBank') })}{' '}
               <span className="text-white">••••{method.accountLast4 ?? ''}</span>
-              {method.verifiedAt ? ' · verified' : ' · pending verification'}
+              {' · '}
+              {method.verifiedAt ? t('pay.ddVerified') : t('pay.ddPendingVerify')}
             </span>
           )}
         </div>
@@ -488,7 +484,7 @@ function PayoutMethodCard() {
               associate form on a phone, and the raw 14px fields made iOS
               zoom the viewport on every focus. */}
           <Input
-            placeholder="Routing number (9 digits)"
+            placeholder={t('pay.ddRoutingPh')}
             type="tel"
             inputMode="numeric"
             autoComplete="off"
@@ -496,7 +492,7 @@ function PayoutMethodCard() {
             onChange={(e) => setRouting(e.target.value.replace(/\D/g, '').slice(0, 9))}
           />
           <Input
-            placeholder="Account number"
+            placeholder={t('pay.ddAccountPh')}
             type="tel"
             inputMode="numeric"
             autoComplete="off"
@@ -504,7 +500,7 @@ function PayoutMethodCard() {
             onChange={(e) => setAccount(e.target.value.replace(/\D/g, '').slice(0, 17))}
           />
           <Input
-            placeholder="Confirm account number"
+            placeholder={t('pay.ddConfirmPh')}
             type="tel"
             inputMode="numeric"
             autoComplete="off"
@@ -514,23 +510,20 @@ function PayoutMethodCard() {
           />
           {mismatch && (
             <p role="alert" className="text-xs text-alert">
-              Account numbers don&rsquo;t match — re-check both fields.
+              {t('pay.ddMismatch')}
             </p>
           )}
           <Select value={type} onChange={(e) => setType(e.target.value as 'CHECKING' | 'SAVINGS')}>
-            <option value="CHECKING">Checking</option>
-            <option value="SAVINGS">Savings</option>
+            <option value="CHECKING">{t('pay.ddChecking')}</option>
+            <option value="SAVINGS">{t('pay.ddSavings')}</option>
           </Select>
-          <p className="text-xs text-silver/70">
-            We&rsquo;ll email you a confirmation whenever this changes — a heads-up in case it
-            wasn&rsquo;t you.
-          </p>
+          <p className="text-xs text-silver/70">{t('pay.ddEmailNote')}</p>
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={closeForm} disabled={busy}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button size="sm" onClick={save} loading={busy} disabled={busy || !accountsMatch}>
-              Save
+              {t('pay.save')}
             </Button>
           </div>
         </div>
@@ -674,7 +667,7 @@ function PaystubCard({
               rate: fmtMoney(item.hourlyRate),
             })}
           </div>
-          <Badge className="shrink-0" variant={STATUS_VARIANT[item.status]}>
+          <Badge className="shrink-0" variant={statusTone(item.status)}>
             {t(STATUS_KEY[item.status])}
           </Badge>
         </div>
@@ -861,7 +854,7 @@ function PaystubCard({
                 className="mr-auto"
               >
                 <HelpCircle className="h-3.5 w-3.5" />
-                Ask about this paycheck
+                {t('pay.askButton')}
               </Button>
             )}
             <Button
@@ -900,7 +893,7 @@ function AskPaycheckDialog({
   const submit = async () => {
     if (!item || submitting) return;
     if (message.trim().length === 0) {
-      toast.error('Tell us what you need help with first.');
+      toast.error(t('pay.askEmpty'));
       return;
     }
     setSubmitting(true);
@@ -917,11 +910,11 @@ function AskPaycheckDialog({
           (item.failureReason ? `Failure reason: ${item.failureReason}\n` : '') +
           `Payroll item id: ${item.id}`,
       });
-      toast.success('Sent — HR will follow up on your paycheck.');
+      toast.success(t('pay.askSentToast'));
       setMessage('');
       onClose();
     } catch (err) {
-      toast.error('Could not send your question.', {
+      toast.error(t('pay.askSendFailed'), {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -933,37 +926,35 @@ function AskPaycheckDialog({
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Ask about this paycheck</DialogTitle>
-          <DialogDescription>
-            This files an HR case with the paycheck&rsquo;s details attached, so
-            payroll can look into it and get back to you.
-          </DialogDescription>
+          <DialogTitle>{t('pay.askButton')}</DialogTitle>
+          <DialogDescription>{t('pay.askDesc')}</DialogDescription>
         </DialogHeader>
         {item && (
           <p className="text-xs text-silver tabular-nums">
-            {t(STATUS_KEY[item.status])} · net {fmtMoney(item.netPay)}
+            {t(STATUS_KEY[item.status])} · {t('pay.net').toLowerCase()}{' '}
+            {fmtMoney(item.netPay)}
             {item.disbursedAt ? ` · ${fmtDate(item.disbursedAt)}` : ''}
           </p>
         )}
         <label className="block">
           <span className="text-xs2 uppercase tracking-wider text-silver">
-            What&rsquo;s your question?
+            {t('pay.askLabel')}
           </span>
           <Textarea
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             rows={3}
             maxLength={2000}
-            placeholder="e.g., My paycheck shows as failed — when will it be re-sent?"
+            placeholder={t('pay.askPlaceholder')}
             className="mt-1"
           />
         </label>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={submitting}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button onClick={submit} loading={submitting}>
-            Send
+            {t('pay.askSend')}
           </Button>
         </DialogFooter>
       </DialogContent>

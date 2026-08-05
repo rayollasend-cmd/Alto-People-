@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
-import { fmtTimeTz, zonedDayKey } from '@/lib/format';
+import { fmtDayHeaderTz, fmtTimeTz, zonedDayKey } from '@/lib/format';
 
 /** Local calendar-date key ("YYYY-MM-DD") of the anchored day. */
 function ymd(d: Date): string {
@@ -70,12 +70,13 @@ function fmtTime(d: Date, timeZone?: string | null): string {
   return fmtTimeTz(d, timeZone);
 }
 
+// fmtDayHeaderTz with no zone: dayAnchor is a browser-local calendar
+// anchor — its local Y/M/D is exactly the `ymd(dayAnchor)` key the list
+// buckets shifts under (store-zone via zonedDayKey on the SHIFT side), so
+// the header names the same day as the rows and reads en-US like every
+// other surface.
 function fmtDateHeader(d: Date): string {
-  return d.toLocaleDateString([], {
-    weekday: 'long',
-    month: 'short',
-    day: 'numeric',
-  });
+  return fmtDayHeaderTz(d);
 }
 
 export function MobileScheduleList({

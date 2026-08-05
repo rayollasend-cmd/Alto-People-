@@ -7,6 +7,7 @@ import { useConfirm } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { hasCapability } from '@/lib/roles';
+import { statusTone } from '@/lib/status';
 import {
   cancelEquityGrant,
   createEquityGrant,
@@ -98,16 +99,10 @@ const GRANT_TYPE_LABELS: Record<EquityGrantType, string> = {
   PERFORMANCE_RSU: 'PSU',
 };
 
-const STATUS_VARIANT: Record<
-  EquityGrantStatus,
-  'pending' | 'success' | 'destructive' | 'info'
-> = {
-  PROPOSED: 'pending',
-  GRANTED: 'success',
-  CANCELLED: 'destructive',
-  EXERCISED: 'info',
-  EXPIRED: 'destructive',
-};
+// Domain-only codes the shared vocabulary doesn't carry: GRANTED is this
+// domain's terminal-good; EXERCISED is an informational after-state (steel).
+// PROPOSED / CANCELLED / EXPIRED come from the shared status vocabulary.
+const EQUITY_STATUS_TONES = { GRANTED: 'success', EXERCISED: 'info' } as const;
 
 const STATUS_LABELS: Record<EquityGrantStatus, string> = {
   PROPOSED: 'Proposed',
@@ -450,7 +445,7 @@ export function EquityHome() {
                         {g.totalShares.toLocaleString()}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={STATUS_VARIANT[g.status]}>
+                        <Badge variant={statusTone(g.status, { overrides: EQUITY_STATUS_TONES })}>
                           {STATUS_LABELS[g.status]}
                         </Badge>
                       </TableCell>
@@ -734,7 +729,7 @@ function MyDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[row.status]}>{STATUS_LABELS[row.status]}</Badge>
+          <Badge variant={statusTone(row.status, { overrides: EQUITY_STATUS_TONES })}>{STATUS_LABELS[row.status]}</Badge>
           <span className="text-sm text-silver">
             Granted {fmtYmd(row.grantDate)} · Vesting from {fmtYmd(row.vestingStartDate)}
           </span>
@@ -888,7 +883,7 @@ function AdminDetailDrawer({
         ) : (
           <>
             <div className="flex items-center gap-2">
-              <Badge variant={STATUS_VARIANT[grant.status]}>
+              <Badge variant={statusTone(grant.status, { overrides: EQUITY_STATUS_TONES })}>
                 {STATUS_LABELS[grant.status]}
               </Badge>
               <span className="text-sm text-silver">

@@ -19,6 +19,7 @@ import { DocumentThumbnails } from '@/components/DocumentViewer';
 import { IDENTITY_DOC_KINDS, uploadAdminDocument } from '@/lib/documentsApi';
 import { cn } from '@/lib/cn';
 import { fmtDate } from '@/lib/format';
+import { statusTone } from '@/lib/status';
 import { toast } from 'sonner';
 import {
   Badge,
@@ -58,16 +59,15 @@ const STATUS_LABEL: Record<EVerifyStatus, string> = {
   CLOSE_CASE_AND_RESUBMIT: 'Close and resubmit',
 };
 
-const STATUS_VARIANT: Record<
-  EVerifyStatus,
-  'success' | 'pending' | 'destructive' | 'default'
-> = {
-  PENDING: 'pending',
+// E-Verify case codes are domain-only (except PENDING, which comes from the
+// shared vocabulary): authorization is terminal-good, either nonconfirmation
+// is terminal-bad, and close-and-resubmit is back to a wait state.
+const EVERIFY_STATUS_TONES = {
   EMPLOYMENT_AUTHORIZED: 'success',
   TENTATIVE_NONCONFIRMATION: 'destructive',
   FINAL_NONCONFIRMATION: 'destructive',
   CLOSE_CASE_AND_RESUBMIT: 'pending',
-};
+} as const;
 
 const BLOCKER_LABEL: Record<EVerifyBlocker, string> = {
   NO_I9: 'No I-9 started',
@@ -271,7 +271,7 @@ function RosterRow({ row, onOpen }: { row: EVerifyRosterRow; onOpen: () => void 
           {/* The "indicate it by their name" ask — status sits with the person,
               not in a column you have to scan across to. */}
           {row.status ? (
-            <Badge variant={STATUS_VARIANT[row.status]}>
+            <Badge variant={statusTone(row.status, { overrides: EVERIFY_STATUS_TONES })}>
               {STATUS_LABEL[row.status]}
             </Badge>
           ) : (

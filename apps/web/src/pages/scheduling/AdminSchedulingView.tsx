@@ -73,6 +73,9 @@ import {
   fmtDate,
   fmtDateTime,
   fmtDateTz,
+  fmtDayHeaderTz,
+  fmtMoneyCompact,
+  fmtMonthYearTz,
   fmtTime,
   browserTimeZone,
   tzAbbrev,
@@ -82,6 +85,7 @@ import {
   zonedDayKey,
   zonedMinutesOfDay,
 } from '@/lib/format';
+import { performWithUndo } from '@/lib/undoToast';
 import {
   Dialog,
   DialogContent,
@@ -424,7 +428,10 @@ function fmtPrintRange(from: string, to: string): string {
   const f = fromYmd(from);
   const t = fromYmd(to);
   if (from === to) {
-    return f.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+    // No zone: `f` is a browser-local calendar anchor (fromYmd), so its
+    // local Y/M/D is the day itself — and en-US via format.ts, like every
+    // other schedule header.
+    return fmtDayHeaderTz(f, null, { year: true });
   }
   // Whole-month detection: from is the 1st, to is the last day, same year+month.
   if (
@@ -434,7 +441,7 @@ function fmtPrintRange(from: string, to: string): string {
   ) {
     const lastOfMonth = new Date(f.getFullYear(), f.getMonth() + 1, 0).getDate();
     if (t.getDate() === lastOfMonth) {
-      return f.toLocaleDateString([], { month: 'long', year: 'numeric' });
+      return fmtMonthYearTz(f);
     }
   }
   const sameYear = f.getFullYear() === t.getFullYear();
@@ -862,7 +869,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // Shift being edited (date/time/position/rates) — null = closed.
   const [editTarget, setEditTarget] = useState<Shift | null>(null);
   const [cancelTarget, setCancelTarget] = useState<Shift | null>(null);
-  // Source shift for the "Duplicate to employee…" picker (null = closed).
+  // Source shift for the "Duplicate to associate…" picker (null = closed).
   const [duplicateSource, setDuplicateSource] = useState<Shift | null>(null);
   const [autoFillForShift, setAutoFillForShift] = useState<{
     shiftId: string;
@@ -1480,35 +1487,32 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     );
   }, []);
 
+  // Drag-resize / drag-move undo goes through the shared performWithUndo
+  // (lib/undoToast) — the ONE undo pattern in the app. Deferred-commit: the
+  // chip updates optimistically right away, but the API write only fires
+  // after the 5s undo window, so Undo is a local restore with no reverse
+  // call (and no server round-trip to lose a race against). A second drag
+  // of the same chip inside the window simply queues a second commit;
+  // timers fire in order, so the last gesture's state is what sticks.
   const onShiftResize = useCallback(
     async (s: Shift, newEndsAt: Date) => {
       const endsAt = newEndsAt.toISOString();
       const prevEndsAt = s.endsAt;
       patchShift(s.id, { endsAt }); // optimistic — chip resizes instantly
-      try {
-        const updated = await updateShift(s.id, { endsAt });
-        replaceShift(updated);
-        toast.success('Shift duration updated.', {
-          action: {
-            label: 'Undo',
-            onClick: () => {
-              void updateShift(s.id, { endsAt: prevEndsAt })
-                .then(async () => {
-                  toast.success('Resize undone.');
-                  await refresh();
-                })
-                .catch((err) =>
-                  toast.error(
-                    err instanceof ApiError ? err.message : 'Undo failed.',
-                  ),
-                );
-            },
-          },
-        });
-      } catch (err) {
-        toast.error(err instanceof ApiError ? err.message : 'Resize failed.');
-        await refresh(); // roll back to server truth
-      }
+      performWithUndo({
+        message: 'Shift duration updated.',
+        onCommit: async () => {
+          try {
+            const updated = await updateShift(s.id, { endsAt });
+            replaceShift(updated);
+          } catch (err) {
+            await refresh(); // roll back the optimistic chip to server truth
+            throw err; // performWithUndo surfaces commitFailedMessage
+          }
+        },
+        onUndo: () => patchShift(s.id, { endsAt: prevEndsAt }),
+        commitFailedMessage: 'Resize failed.',
+      });
     },
     [refresh, patchShift, replaceShift],
   );
@@ -1586,88 +1590,69 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       }
       patchShift(s.id, patch);
 
-      // Snapshot for undo BEFORE anything is written.
+      // Snapshot for undo BEFORE anything is written. Includes the display
+      // name so an undone reassignment restores the chip's label too.
       const undoSnapshot = {
         startsAt: s.startsAt,
         endsAt: s.endsAt,
         assignedAssociateId: s.assignedAssociateId,
+        assignedAssociateName: s.assignedAssociateName,
       };
-      try {
-        let updated = s;
-        let timesWritten = false;
-        if (dateChanged) {
-          updated = await updateShift(s.id, {
-            startsAt: newStartISO,
-            endsAt: newEndISO,
-          });
-          timesWritten = true;
-        }
-        if (assigneeChanged) {
+      // A mis-drop is one click away from undone — no Edit-dialog round trip
+      // to put a chip back where it was. Shared deferred-commit undo (see
+      // onShiftResize): nothing is written until the window closes, so Undo
+      // just restores the optimistic patch. The compound write below only
+      // runs on commit; a conflict refusal (double-booked, PTO veto) then
+      // surfaces via the failure toast + refresh snap-back.
+      performWithUndo({
+        message: 'Shift moved.',
+        onCommit: async () => {
           try {
-            updated =
-              target.associateId === null
-                ? await unassignShift(s.id)
-                : await assignShift(s.id, { associateId: target.associateId });
-          } catch (assignErr) {
-            // The two writes aren't one transaction. If the reassignment is
-            // refused (double-booked, PTO veto) AFTER the times already
-            // moved, silently keeping the moved times would leave a
-            // half-applied drag the user never asked for — compensate by
-            // putting the times back, so the drop is all-or-nothing.
-            if (timesWritten) {
-              try {
-                await updateShift(s.id, {
-                  startsAt: undoSnapshot.startsAt,
-                  endsAt: undoSnapshot.endsAt,
-                });
-              } catch {
-                toast.error(
-                  'The reassignment was refused and the time change could not be rolled back — the shift kept its new time. Check it.',
-                );
-              }
+            let updated = s;
+            let timesWritten = false;
+            if (dateChanged) {
+              updated = await updateShift(s.id, {
+                startsAt: newStartISO,
+                endsAt: newEndISO,
+              });
+              timesWritten = true;
             }
-            throw assignErr;
-          }
-        }
-        replaceShift(updated); // reconcile with server truth
-        // A mis-drop is one click away from undone — no Edit-dialog round
-        // trip to put a chip back where it was.
-        toast.success('Shift moved.', {
-          action: {
-            label: 'Undo',
-            onClick: () => {
-              void (async () => {
-                try {
-                  if (dateChanged) {
+            if (assigneeChanged) {
+              try {
+                updated =
+                  target.associateId === null
+                    ? await unassignShift(s.id)
+                    : await assignShift(s.id, { associateId: target.associateId });
+              } catch (assignErr) {
+                // The two writes aren't one transaction. If the reassignment
+                // is refused (double-booked, PTO veto) AFTER the times
+                // already moved, silently keeping the moved times would leave
+                // a half-applied drag the user never asked for — compensate
+                // by putting the times back, so the drop is all-or-nothing.
+                if (timesWritten) {
+                  try {
                     await updateShift(s.id, {
                       startsAt: undoSnapshot.startsAt,
                       endsAt: undoSnapshot.endsAt,
                     });
+                  } catch {
+                    toast.error(
+                      'The reassignment was refused and the time change could not be rolled back — the shift kept its new time. Check it.',
+                    );
                   }
-                  if (assigneeChanged) {
-                    if (undoSnapshot.assignedAssociateId === null) {
-                      await unassignShift(s.id);
-                    } else {
-                      await assignShift(s.id, {
-                        associateId: undoSnapshot.assignedAssociateId,
-                      });
-                    }
-                  }
-                  toast.success('Move undone.');
-                  await refresh();
-                } catch (err) {
-                  toast.error(
-                    err instanceof ApiError ? err.message : 'Undo failed.',
-                  );
                 }
-              })();
-            },
-          },
-        });
-      } catch (err) {
-        toast.error(err instanceof ApiError ? err.message : 'Move failed.');
-        await refresh(); // roll back — a partial write may have stuck
-      }
+                throw assignErr;
+              }
+            }
+            replaceShift(updated); // reconcile with server truth
+          } catch (err) {
+            await refresh(); // roll back — a partial write may have stuck
+            throw err; // performWithUndo surfaces commitFailedMessage
+          }
+        },
+        onUndo: () => patchShift(s.id, undoSnapshot),
+        commitFailedMessage: 'Move failed.',
+      });
     },
     [refresh, gridTimeZone, associates, patchShift, replaceShift]
   );
@@ -1796,7 +1781,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     const ok = await confirm({
       title: published ? 'Delete this shift?' : 'Delete this draft?',
       description: published
-        ? `Permanently delete ${s.position} on ${fmtDateTime(s.startsAt)}? This can't be undone${s.assignedAssociateId ? ' and removes it from the employee’s schedule' : ''}.`
+        ? `Permanently delete ${s.position} on ${fmtDateTime(s.startsAt)}? This can't be undone${s.assignedAssociateId ? ' and removes it from the associate’s schedule' : ''}.`
         : `Permanently delete this draft (${s.position} on ${fmtDateTime(s.startsAt)})?`,
       confirmLabel: 'Delete',
       destructive: true,
@@ -2176,7 +2161,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               <ChevronRight className="h-4 w-4" />
             </Button>
             <span className="text-sm text-silver tabular-nums ml-2">
-              {dayAnchor.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' })}
+              {/* No zone: dayAnchor is a browser-local calendar anchor whose
+                  local Y/M/D is the `ymd(dayAnchor)` key the day view
+                  buckets by (store-zone applies on the shift side). */}
+              {fmtDayHeaderTz(dayAnchor, null, { year: true })}
             </span>
             {/* Jump to any day. */}
             <input
@@ -2233,7 +2221,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               <ChevronRight className="h-4 w-4" />
             </Button>
             <span className="text-sm text-silver tabular-nums ml-2">
-              {monthAnchor.toLocaleDateString([], { month: 'long', year: 'numeric' })}
+              {/* No zone: monthAnchor is a browser-local first-of-month
+                  anchor — same day-identity convention as the grid cells. */}
+              {fmtMonthYearTz(monthAnchor)}
             </span>
             {/* Jump to any month. */}
             <input
@@ -2850,27 +2840,40 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               weeks creates duplicates.
             </DialogDescription>
           </DialogHeader>
-          <Field label="Repeat into the next … weeks" required>
-            {(p) => (
-              <Input
-                type="number"
-                min={1}
-                max={12}
-                step={1}
-                value={copyWeekCount}
-                onChange={(e) => setCopyWeekCount(e.target.value)}
-                {...p}
-              />
-            )}
-          </Field>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setCopyWeeksOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={onRepeatWeeks} loading={copyingWeek}>
-              Copy shifts
-            </Button>
-          </DialogFooter>
+          {/* A real form, like the Create/Edit dialogs, so Enter in the
+              weeks field submits instead of doing nothing. */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void onRepeatWeeks();
+            }}
+          >
+            <Field label="Repeat into the next … weeks" required>
+              {(p) => (
+                <Input
+                  type="number"
+                  min={1}
+                  max={12}
+                  step={1}
+                  value={copyWeekCount}
+                  onChange={(e) => setCopyWeekCount(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <DialogFooter className="mt-4">
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setCopyWeeksOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" loading={copyingWeek}>
+                Copy shifts
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
@@ -2909,10 +2912,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         }}
       />
 
-      {/* Copy a shift onto another employee (as a draft) */}
+      {/* Copy a shift onto another associate (as a draft) */}
       {duplicateSource && (
         <DuplicateToEmployeeDialog
-          // Remount per source shift so the picked employee / search reset
+          // Remount per source shift so the picked associate / search reset
           // instead of carrying over from the previous shift.
           key={duplicateSource.id}
           source={duplicateSource}
@@ -2990,7 +2993,7 @@ function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
         : 'text-alert';
   // Compact currency: $1.2k / $24k / $1.4M — keeps the strip readable on
   // 13" laptops without giving up signal on six-figure weeks.
-  const cost = formatCompactUsd(kpis.projectedLaborCost);
+  const cost = fmtMoneyCompact(kpis.projectedLaborCost);
   const costSuffix =
     kpis.shiftsWithoutRate > 0
       ? `${kpis.shiftsWithoutRate} no rate`
@@ -3014,14 +3017,6 @@ function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
       </div>
     </div>
   );
-}
-
-function formatCompactUsd(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return '$0';
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
-  if (n >= 10_000) return `$${Math.round(n / 1000)}k`;
-  if (n >= 1_000) return `$${(n / 1000).toFixed(1)}k`;
-  return `$${Math.round(n)}`;
 }
 
 function Kpi({
@@ -3740,13 +3735,14 @@ function DuplicateToEmployeeDialog({
     return `${a.firstName} ${a.lastName} ${a.email}`.toLowerCase().includes(q);
   });
 
-  const submit = async () => {
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!pickedId || submitting) return;
     setSubmitting(true);
     try {
-      // Copy the shift definition onto the chosen employee as a DRAFT, so
+      // Copy the shift definition onto the chosen associate as a DRAFT, so
       // it's reviewable before publishing (and won't surprise-notify). The
-      // bulk endpoint skips the employee if they're already booked then.
+      // bulk endpoint skips the associate if they're already booked then.
       const res = await bulkCreateShifts({
         clientId: source.clientId,
         ...(source.locationId ? { locationId: source.locationId } : {}),
@@ -3761,9 +3757,9 @@ function DuplicateToEmployeeDialog({
         associateIds: [pickedId],
       });
       if (res.created === 0) {
-        toast.error('That employee is already scheduled then.');
+        toast.error('That associate is already scheduled then.');
       } else {
-        toast.success('Copied to employee as a draft.');
+        toast.success('Copied to associate as a draft.');
         onDone();
         return;
       }
@@ -3778,20 +3774,22 @@ function DuplicateToEmployeeDialog({
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Copy shift to an employee</DialogTitle>
+          <DialogTitle>Copy shift to an associate</DialogTitle>
           <DialogDescription>
             {source.position} ·{' '}
             {fmtDateTime(source.startsAt)} — creates a draft copy on the
-            employee you pick.
+            associate you pick.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-2">
+        {/* A real form, like the Create/Edit dialogs, so Enter submits from
+            the search field instead of doing nothing. */}
+        <form onSubmit={submit} className="space-y-2">
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search employees…"
+            placeholder="Search associates…"
             className="h-9 text-sm"
-            aria-label="Search employees"
+            aria-label="Search associates"
           />
           <div className="max-h-64 overflow-y-auto rounded border border-navy-secondary/60 divide-y divide-navy-secondary/40">
             {associates === null ? (
@@ -3800,7 +3798,7 @@ function DuplicateToEmployeeDialog({
               </div>
             ) : filtered.length === 0 ? (
               <div className="p-3 text-xs text-silver/70">
-                No employees for this client.
+                No associates for this client.
               </div>
             ) : (
               filtered.map((a) => (
@@ -3810,7 +3808,7 @@ function DuplicateToEmployeeDialog({
                 >
                   <input
                     type="radio"
-                    name="dup-employee"
+                    name="dup-associate"
                     className="accent-gold"
                     checked={pickedId === a.id}
                     onChange={() => setPickedId(a.id)}
@@ -3822,15 +3820,15 @@ function DuplicateToEmployeeDialog({
               ))
             )}
           </div>
-        </div>
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={submit} disabled={!pickedId} loading={submitting}>
-            Copy as draft
-          </Button>
-        </DialogFooter>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!pickedId} loading={submitting}>
+              Copy as draft
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

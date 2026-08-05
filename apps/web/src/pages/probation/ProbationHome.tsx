@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { CheckCircle2, Clock, Plus, ShieldQuestion, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -42,23 +43,13 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { StatusBadge } from '@/lib/status';
 
-const STATUS_VARIANT: Record<
-  ProbationStatus,
-  'success' | 'pending' | 'destructive' | 'outline'
-> = {
-  ACTIVE: 'pending',
-  PASSED: 'success',
-  EXTENDED: 'outline',
-  FAILED: 'destructive',
-};
-
-const STATUS_LABELS: Record<ProbationStatus, string> = {
-  ACTIVE: 'Active',
-  PASSED: 'Passed',
-  EXTENDED: 'Extended',
-  FAILED: 'Failed',
-};
+// Deliberate departures from the shared vocabulary (visible per the status
+// contract): an ACTIVE probation is a watch state, not a healthy one, so it
+// reads amber instead of the canonical green. EXTENDED is domain-only — the
+// original period ended without a decision, rendered muted.
+const PROBATION_STATUS_TONES = { ACTIVE: 'pending', EXTENDED: 'outline' } as const;
 
 /** Parse a YYYY-MM-DD string as a local date (no timezone shift). */
 function parseLocalDate(s: string): Date | null {
@@ -202,7 +193,9 @@ export function ProbationHome() {
                     <TableRow key={p.id} className="group">
                       <TableCell>
                         <div className="font-medium text-white">
-                          {p.associateName}
+                          <AssociateLink associateId={p.associateId}>
+                            {p.associateName}
+                          </AssociateLink>
                         </div>
                         <div className="text-xs text-silver">
                           {p.currentTitle ?? p.associateEmail}
@@ -223,9 +216,7 @@ export function ProbationHome() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={STATUS_VARIANT[p.status]}>
-                          {STATUS_LABELS[p.status]}
-                        </Badge>
+                        <StatusBadge status={p.status} overrides={PROBATION_STATUS_TONES} />
                       </TableCell>
                       <TableCell className="hidden lg:table-cell text-xs text-silver max-w-xs truncate">
                         {p.decision ?? '—'}

@@ -84,7 +84,7 @@ export function ShiftCard({
       setTeammates(res.teammates);
     } catch (err) {
       setDetailError(
-        err instanceof ApiError ? err.message : 'Could not load shift details.',
+        err instanceof ApiError ? err.message : t('shift.detailFailed'),
       );
     }
   };
@@ -251,7 +251,7 @@ function ShiftDetail({
       toast.success(t('shift.confirmedToast'));
     } catch (err) {
       toast.error(
-        err instanceof ApiError ? err.message : 'Could not confirm the shift.',
+        err instanceof ApiError ? err.message : t('shift.confirmFailed'),
       );
     } finally {
       setAcking(false);
@@ -356,7 +356,7 @@ function SwapOfferForm({
         setCandidates(res.candidates);
       } catch (err) {
         setCandError(
-          err instanceof ApiError ? err.message : 'Could not load teammates.',
+          err instanceof ApiError ? err.message : t('shift.teammatesFailed'),
         );
       }
     }
@@ -385,8 +385,8 @@ function SwapOfferForm({
       hapticConfirm();
       toast.success(
         counterpartShiftId
-          ? 'Trade proposed. They accept first, then your manager approves both halves.'
-          : 'Swap request sent. Track it under Shift swaps below — your manager has the final say.',
+          ? t('shift.tradeProposedToast')
+          : t('shift.swapSentToast'),
       );
       setOpen(false);
       setCounterpartyId('');
@@ -395,7 +395,7 @@ function SwapOfferForm({
       onCreated?.();
     } catch (err) {
       toast.error(
-        err instanceof ApiError ? err.message : 'Could not send the swap request.',
+        err instanceof ApiError ? err.message : t('shift.swapSendFailed'),
       );
     } finally {
       setSubmitting(false);
