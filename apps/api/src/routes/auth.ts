@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import {
   AcceptInviteInputSchema,
@@ -2017,17 +2017,40 @@ authRouter.post('/email-change/confirm', async (req, res, next) => {
  *
  * Challenges are server-minted rows consumed exactly once on verify —
  * the server never trusts a challenge echoed back by the client. The
- * expected origin must be one of CORS_ORIGIN; the RP ID is that
- * origin's hostname, so dev (localhost) and prod both work with no new
- * environment variables.
+ * expected origin may be a CORS_ORIGIN entry (the dev Vite front), the
+ * request's own host (production, where this API serves the SPA — a
+ * same-origin setup needs no CORS config, so CORS_ORIGIN alone rejected
+ * every real deployment with "Unrecognized origin"), or APP_BASE_URL
+ * (the canonical public web origin). The RP ID is that origin's
+ * hostname, so dev and prod both work with no new environment variables.
  * ======================================================================= */
 
 const WEBAUTHN_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
-function webauthnOrigin(req: { headers: Record<string, unknown> }): string | null {
+function webauthnOrigin(req: Request): string | null {
   const origin = typeof req.headers.origin === 'string' ? req.headers.origin : null;
   if (!origin) return null;
-  return env.CORS_ORIGIN.includes(origin) ? origin : null;
+  // Dev: the browser's origin is the Vite server, which proxies to this
+  // API — only the allowlist can vouch for it.
+  if (env.CORS_ORIGIN.includes(origin)) return origin;
+  try {
+    const parsed = new URL(origin);
+    // Same-origin serving: the page the ceremony ran on IS this host.
+    // `trust proxy` is enabled in production, so protocol/host reflect
+    // the public edge, not the container. This is authenticity-safe:
+    // the origin that matters for WebAuthn is the one inside the
+    // browser-signed clientDataJSON, which @simplewebauthn compares
+    // against this value — and credentials are scoped by RP ID anyway.
+    if (parsed.host === req.get('host') && parsed.protocol === `${req.protocol}:`) {
+      return origin;
+    }
+    // Canonical public origin (magic links / invites) — covers an edge
+    // that rewrites Host between the proxy and the app.
+    if (origin === new URL(env.APP_BASE_URL).origin) return origin;
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 async function mintWebauthnChallenge(

@@ -56,6 +56,36 @@ describe('POST /auth/webauthn/register/options', () => {
     expect(res.body.error?.code).toBe('bad_origin');
   });
 
+  it('accepts a same-host origin outside CORS_ORIGIN (production same-origin serving)', async () => {
+    // In production the API serves the SPA itself, so the ceremony's
+    // origin is the request's own host — which never appears in
+    // CORS_ORIGIN. This was the "Unrecognized origin" bug that blocked
+    // every real-deployment passkey enrollment.
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(user.email);
+    const res = await a
+      .post('/auth/webauthn/register/options')
+      .set('Host', 'people.example.com')
+      .set('Origin', 'http://people.example.com')
+      .send({});
+    expect(res.status).toBe(200);
+    expect(res.body.options.rp.id).toBe('people.example.com');
+  });
+
+  it('same-host origin must also match the request protocol', async () => {
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(user.email);
+    // https origin against an http request (no trusted proxy in tests)
+    // — host alone is not enough.
+    const res = await a
+      .post('/auth/webauthn/register/options')
+      .set('Host', 'people.example.com')
+      .set('Origin', 'https://people.example.com')
+      .send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error?.code).toBe('bad_origin');
+  });
+
   it('mints a one-shot challenge row and returns registration options', async () => {
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(user.email);
