@@ -126,6 +126,9 @@ export function CsvImportDialog({ open, onOpenChange, onImported }: Props) {
         if (!v) reset();
         onOpenChange(v);
       }}
+      // Dirty = a file is picked but not yet committed — closing would
+      // silently drop the previewed import.
+      confirmDiscard={() => file !== null && results === null}
     >
       <DialogContent className="max-w-3xl">
         <DialogHeader>
@@ -139,6 +142,18 @@ export function CsvImportDialog({ open, onOpenChange, onImported }: Props) {
           </DialogDescription>
         </DialogHeader>
 
+        {/* Enter commits — but only when the preview says there's something
+            valid to import (same guard as the button's disabled state). */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (results || !file || !preview || preview.summary.valid === 0 || previewing || committing) {
+              return;
+            }
+            void commit();
+          }}
+          className="grid gap-4"
+        >
         {results ? (
           <CommitResultsPanel results={results} />
         ) : (
@@ -152,6 +167,7 @@ export function CsvImportDialog({ open, onOpenChange, onImported }: Props) {
                 onChange={(e) => void pickFile(e.target.files?.[0] ?? null)}
               />
               <Button
+                type="button"
                 variant="secondary"
                 loading={previewing}
                 onClick={() => fileInputRef.current?.click()}
@@ -287,14 +303,14 @@ export function CsvImportDialog({ open, onOpenChange, onImported }: Props) {
 
         <DialogFooter>
           {results ? (
-            <Button onClick={() => onOpenChange(false)}>Close</Button>
+            <Button type="button" onClick={() => onOpenChange(false)}>Close</Button>
           ) : (
             <>
-              <Button variant="ghost" onClick={() => onOpenChange(false)}>
+              <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
               <Button
-                onClick={commit}
+                type="submit"
                 loading={committing}
                 disabled={!file || !preview || preview.summary.valid === 0 || previewing}
               >
@@ -306,6 +322,7 @@ export function CsvImportDialog({ open, onOpenChange, onImported }: Props) {
             </>
           )}
         </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

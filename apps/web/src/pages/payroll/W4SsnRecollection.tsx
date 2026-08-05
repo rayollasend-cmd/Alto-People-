@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -20,6 +20,7 @@ import {
 } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { fmtDate } from '@/lib/format';
+import { useSelection } from '@/lib/useSelection';
 import {
   emailW4Recollection,
   getW4Recollection,
@@ -36,27 +37,10 @@ import {
  */
 export function W4SsnRecollection() {
   const queryClient = useQueryClient();
-  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const query = useQuery({
     queryKey: ['w4-recollection'],
     queryFn: getW4Recollection,
-  });
-
-  const emailMutation = useMutation({
-    mutationFn: (ids: string[]) => emailW4Recollection(ids),
-    onSuccess: (result) => {
-      const skippedNote =
-        result.skipped.length > 0 ? ` (${result.skipped.length} skipped)` : '';
-      toast.success(
-        `Re-entry request emailed to ${result.queued} associate${result.queued === 1 ? '' : 's'}${skippedNote}.`,
-      );
-      setSelected(new Set());
-      void queryClient.invalidateQueries({ queryKey: ['w4-recollection'] });
-    },
-    onError: (err) => {
-      toast.error(err instanceof ApiError ? err.message : 'Send failed.');
-    },
   });
 
   const rows = useMemo(() => query.data?.rows ?? [], [query.data]);
@@ -66,20 +50,30 @@ export function W4SsnRecollection() {
     () => rows.filter((r) => r.hasAccount).map((r) => r.associateId),
     [rows],
   );
-  const allSelected =
-    emailableIds.length > 0 && emailableIds.every((id) => selected.has(id));
+  const {
+    selected,
+    toggle: toggleOne,
+    clear: clearSelection,
+    allSelected,
+    someSelected,
+    toggleAll,
+  } = useSelection(emailableIds);
 
-  const toggleAll = () => {
-    setSelected(allSelected ? new Set() : new Set(emailableIds));
-  };
-  const toggleOne = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  const emailMutation = useMutation({
+    mutationFn: (ids: string[]) => emailW4Recollection(ids),
+    onSuccess: (result) => {
+      const skippedNote =
+        result.skipped.length > 0 ? ` (${result.skipped.length} skipped)` : '';
+      toast.success(
+        `Re-entry request emailed to ${result.queued} associate${result.queued === 1 ? '' : 's'}${skippedNote}.`,
+      );
+      clearSelection();
+      void queryClient.invalidateQueries({ queryKey: ['w4-recollection'] });
+    },
+    onError: (err) => {
+      toast.error(err instanceof ApiError ? err.message : 'Send failed.');
+    },
+  });
 
   const sendSelected = () => {
     if (selected.size === 0 || emailMutation.isPending) return;
@@ -174,6 +168,9 @@ export function W4SsnRecollection() {
                       type="checkbox"
                       aria-label="Select all emailable associates"
                       checked={allSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = someSelected;
+                      }}
                       onChange={toggleAll}
                     />
                   </TableHead>

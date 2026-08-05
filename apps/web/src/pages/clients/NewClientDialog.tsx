@@ -94,7 +94,13 @@ export function NewClientDialog({ open, onOpenChange, onCreated }: Props) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    // Dirty = a name has been typed (the one required field); everything
+    // else defaults sensibly, so name-empty closes stay friction-free.
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      confirmDiscard={() => name.trim().length > 0}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>New client</DialogTitle>

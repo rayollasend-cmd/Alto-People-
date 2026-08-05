@@ -147,6 +147,7 @@ export function DirectDepositTask() {
               <>
                 <Field
                   label="Routing number"
+                  required
                   hint="9 digits, printed on your check or in your bank app. We validate the ABA checksum to catch typos."
                 >
                   <input
@@ -173,7 +174,7 @@ export function DirectDepositTask() {
                       : '✗ ABA checksum failed — please re-check'}
                   </span>
                 )}
-                <Field label="Account number">
+                <Field label="Account number" required>
                   <input
                     type="text"
                     inputMode="numeric"
@@ -213,7 +214,7 @@ export function DirectDepositTask() {
                 </Field>
               </>
             ) : (
-              <Field label="Branch card ID" hint="Provided when you receive your Branch card.">
+              <Field label="Branch card ID" required hint="Provided when you receive your Branch card.">
                 <input
                   type="text"
                   required
