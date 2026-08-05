@@ -5,6 +5,7 @@ import {
   Ban,
   BarChart3,
   ClipboardList,
+  FileUp,
   LayoutGrid,
   LayoutTemplate,
   List,
@@ -68,6 +69,7 @@ import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { toast } from 'sonner';
 import { ApplicationDetailBody } from './ApplicationDetail';
 import { BulkInviteDialog } from './BulkInviteDialog';
+import { CsvImportDialog } from './CsvImportDialog';
 import { NewApplicationDialog } from './NewApplicationDialog';
 import { NudgeDialog } from './NudgeDialog';
 import { cn } from '@/lib/cn';
@@ -360,6 +362,7 @@ export function ApplicationsList() {
   const [error, setError] = useState<string | null>(null);
   const [openCreate, setOpenCreate] = useState(false);
   const [openBulkInvite, setOpenBulkInvite] = useState(false);
+  const [openCsvImport, setOpenCsvImport] = useState(false);
   const [resendingIds, setResendingIds] = useState<Set<string>>(new Set());
   const [bulkResending, setBulkResending] = useState(false);
   const [bulkRejecting, setBulkRejecting] = useState(false);
@@ -671,6 +674,10 @@ export function ApplicationsList() {
                   </Link>
                 </>
               )}
+              <Button variant="secondary" onClick={() => setOpenCsvImport(true)}>
+                <FileUp className="h-4 w-4" />
+                Import CSV
+              </Button>
               <Button variant="secondary" onClick={() => setOpenBulkInvite(true)}>
                 <Users className="h-4 w-4" />
                 Bulk invite
@@ -987,6 +994,15 @@ export function ApplicationsList() {
         open={openBulkInvite}
         onOpenChange={setOpenBulkInvite}
         onCreated={() => {
+          refresh();
+          refreshStats();
+        }}
+      />
+
+      <CsvImportDialog
+        open={openCsvImport}
+        onOpenChange={setOpenCsvImport}
+        onImported={() => {
           refresh();
           refreshStats();
         }}
