@@ -473,6 +473,11 @@ if (parsed.data.PAYROLL_DISBURSEMENT_PROVIDER === 'BRANCH') {
   }
 }
 
+// Advisory, not fatal: bounce/complaint feedback is strongly recommended
+// once real email is flowing (bad addresses are otherwise mailed forever,
+// which erodes sender reputation), but email itself works exactly as
+// before without it — so a deploy with today's Railway env must boot
+// cleanly. Everything in this block is a log line only.
 if (
   parsed.data.NODE_ENV === 'production' &&
   parsed.data.RESEND_API_KEY &&
@@ -482,14 +487,14 @@ if (
     !parsed.data.RESEND_WEBHOOK_SECRET ||
     parsed.data.RESEND_WEBHOOK_SECRET.trim() === ''
   ) {
-    console.error(
-      'FATAL: RESEND_API_KEY is set but RESEND_WEBHOOK_SECRET is not configured. ' +
-        'Real email is being sent while bounce/complaint events cannot be received, ' +
-        'so bad addresses would be mailed forever and tank sender reputation. ' +
-        'Create a webhook endpoint at https://resend.com/webhooks pointing at ' +
-        '/api/resend/webhook and set its signing secret (whsec_...) as RESEND_WEBHOOK_SECRET.',
+    console.warn(
+      'WARNING: RESEND_API_KEY is set but RESEND_WEBHOOK_SECRET is not — real ' +
+        'email is being sent while bounce/complaint events cannot be received, ' +
+        'so the suppression list never populates. When convenient, create a ' +
+        'webhook endpoint at https://resend.com/webhooks pointing at ' +
+        '/api/resend/webhook and set its signing secret (whsec_...) as ' +
+        'RESEND_WEBHOOK_SECRET. Email sending works normally in the meantime.',
     );
-    process.exit(1);
   }
 }
 
