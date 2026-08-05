@@ -267,6 +267,13 @@
 :root[data-theme='light'] .border-navy-secondary {
   border-color: rgb(176 187 201); /* 1.94:1 on white, 1.86:1 on the page */
 }
+/* Dark was left at 1.26:1 — the same number light sat at when users called
+   the margins unclear. It reads better there (a LIGHTER border on a dark
+   surface catches the eye more than pale grey on white), but it was the
+   weakest edge left in either theme. Brought to parity with light. */
+:root:not([data-theme='light']) .border-navy-secondary {
+  border-color: rgb(42 74 126); /* 2.00:1 on navy, 2.16:1 on midnight */
+}
 :root[data-theme='light'] .border-navy-secondary\/60 {
   border-color: rgb(176 187 201 / 0.75);
 }

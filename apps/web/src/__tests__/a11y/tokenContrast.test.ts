@@ -159,6 +159,15 @@ describe.each([
     expect(ratio(border, card)).toBeGreaterThanOrEqual(AA_LARGE);
   });
 
+  // Card / divider edge. Not a 1.4.11 requirement (a card boundary is
+  // decorative), but it is what "the margins aren't clear" meant, and the
+  // two themes drifted apart once light was fixed on its own.
+  const CARD_EDGE: RGB = isLight ? [176, 187, 201] : [42, 74, 126];
+
+  it('card edge is visible against the surface, at parity across themes', () => {
+    expect(ratio(CARD_EDGE, card)).toBeGreaterThanOrEqual(1.9);
+  });
+
   // Hover must never read as weaker than rest.
   it('control hover border is at least as strong as resting', () => {
     const hover: RGB = isLight ? [100, 116, 139] : over(T.silver, card, 0.6);
