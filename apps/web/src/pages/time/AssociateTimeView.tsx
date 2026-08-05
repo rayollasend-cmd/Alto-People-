@@ -369,7 +369,7 @@ export function AssociateTimeView() {
 
       <section aria-label="Recent time entries">
         <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
-          <h2 className="font-display text-2xl text-white">Recent entries</h2>
+          <h2 className="text-2xl text-white">Recent entries</h2>
           {/* Full-width 2-up on phones (two fixed w-40 fields overflowed
               360px screens); back to the compact inline pair at sm+. */}
           <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:w-auto sm:items-end">

@@ -178,7 +178,7 @@ export function AcceptInvite() {
 
           {!loading && error && !invite && (
             <>
-              <h2 className="font-display text-2xl md:text-3xl text-white mb-3">
+              <h2 className="text-2xl md:text-3xl text-white mb-3">
                 Invitation problem
               </h2>
               <ErrorBanner className="mb-4">{error}</ErrorBanner>
@@ -225,7 +225,7 @@ export function AcceptInvite() {
 
           {!loading && invite && (
             <form onSubmit={handleSubmit} noValidate>
-              <h2 className="font-display text-2xl md:text-3xl text-white mb-1">
+              <h2 className="text-2xl md:text-3xl text-white mb-1">
                 {invite.firstName ? `Welcome, ${invite.firstName}` : 'Welcome'}
               </h2>
               <p className="text-silver text-sm mb-1">

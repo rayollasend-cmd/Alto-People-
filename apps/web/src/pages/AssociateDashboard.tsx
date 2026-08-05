@@ -460,7 +460,7 @@ function LoadFailedCard({
           <Icon className="h-3 w-3" aria-hidden="true" />
           {label}
         </div>
-        <div role="alert" className="font-display text-xl text-white mt-2">
+        <div role="alert" className="text-xl text-white mt-2">
           {t('dash.loadFailed')}
         </div>
         <p className="text-sm text-silver mt-1">{t('dash.checkConnection')}</p>
@@ -509,7 +509,7 @@ function ClockCard({ active, isClockedIn }: ClockCardProps) {
           <Clock className="h-3 w-3" aria-hidden="true" />
           {t('dash.clock')}
         </div>
-        <div className="font-display text-2xl text-white mt-2 leading-tight">
+        <div className="text-2xl text-white mt-2 leading-tight">
           {isClockedIn ? t('dash.onClock') : t('dash.offClock')}
         </div>
         {isClockedIn && active?.active ? (
@@ -570,7 +570,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
             <Timer className="h-3 w-3" aria-hidden="true" />
             {t('dash.nextShift')}
           </div>
-          <div className="font-display text-xl text-white mt-2">
+          <div className="text-xl text-white mt-2">
             {t('dash.nothingScheduled')}
           </div>
           <p className="text-sm text-silver mt-1">{t('dash.managerWillPublish')}</p>
@@ -593,7 +593,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
           {t('dash.nextShift')}
         </div>
         <div className="flex items-baseline gap-2 mt-2 flex-wrap">
-          <div className="font-display text-2xl text-white leading-tight">
+          <div className="text-2xl text-white leading-tight">
             {fmtRelativeDayTz(nextShift.startsAt, nextShift.timezone)}
           </div>
           <div className="text-lg text-gold tabular-nums">
@@ -661,7 +661,7 @@ function PaystubCard({
             <DollarSign className="h-3 w-3" aria-hidden="true" />
             {t('dash.lastPaystub')}
           </div>
-          <div className="font-display text-xl text-white mt-2">{t('dash.noPaystubs')}</div>
+          <div className="text-xl text-white mt-2">{t('dash.noPaystubs')}</div>
           <p className="text-sm text-silver mt-1">{t('dash.firstPaystub')}</p>
           <button
             type="button"
@@ -743,7 +743,7 @@ function TimeOffCard({
             <CalendarOff className="h-3 w-3" aria-hidden="true" />
             {t('dash.timeOff')}
           </div>
-          <div className="font-display text-xl text-white mt-2">{t('dash.noBalance')}</div>
+          <div className="text-xl text-white mt-2">{t('dash.noBalance')}</div>
           <p className="text-sm text-silver mt-1">{t('dash.sickAccrues')}</p>
           <button
             type="button"
@@ -812,7 +812,7 @@ function QuickActions() {
   const { t } = useI18n();
   return (
     <section>
-      <h2 className="font-display text-xl text-white mb-3">{t('dash.quickLinks')}</h2>
+      <h2 className="text-xl text-white mb-3">{t('dash.quickLinks')}</h2>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
         {QUICK_LINKS.map(({ to, labelKey, icon: Icon }) => (
           <Link

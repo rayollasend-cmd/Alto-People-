@@ -43,7 +43,7 @@ export function EmptyState({
           practice, and an h1 → h3 jump trips axe's heading-order rule.
           Skipped entirely when callers pass an empty title (e.g. the
           Expirations buckets) — an empty <h2> trips axe's empty-heading. */}
-      {title && <h2 className="font-display text-xl text-white mb-1">{title}</h2>}
+      {title && <h2 className="text-xl text-white mb-1">{title}</h2>}
       {description && (
         <p className="text-sm text-silver max-w-sm">{description}</p>
       )}

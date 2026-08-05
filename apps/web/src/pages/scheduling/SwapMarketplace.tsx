@@ -130,7 +130,7 @@ export function SwapMarketplace({
   return (
     <section className="bg-navy border border-navy-secondary rounded-lg p-5 mb-5">
       <div className="flex items-baseline justify-between mb-3">
-        <h2 className="font-display text-2xl text-white">{t('swap.title')}</h2>
+        <h2 className="text-2xl text-white">{t('swap.title')}</h2>
       </div>
       <div role="tablist" className="flex gap-2 mb-4 border-b border-navy-secondary">
         {(['incoming', 'outgoing'] as const).map((tabId) => (

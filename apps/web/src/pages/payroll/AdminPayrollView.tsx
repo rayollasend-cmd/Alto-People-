@@ -1124,7 +1124,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     <div className="text-xs uppercase tracking-wide text-silver">
                       Workers-comp premium (accrual)
                     </div>
-                    <div className="font-display text-lg tabular-nums text-white">
+                    <div className="text-lg tabular-nums text-white">
                       {fmtMoney(wcReport.totalPremium)}
                     </div>
                   </div>
@@ -1401,7 +1401,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     <div className="text-2xs uppercase tracking-widest text-silver">
                       Gross
                     </div>
-                    <div className="font-display text-xl text-white tabular-nums mt-1">
+                    <div className="text-xl text-white tabular-nums mt-1">
                       {fmtMoney(selected.totalGross)}
                     </div>
                   </div>
@@ -1409,7 +1409,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     <div className="text-2xs uppercase tracking-widest text-silver">
                       Tax withheld
                     </div>
-                    <div className="font-display text-xl text-white tabular-nums mt-1">
+                    <div className="text-xl text-white tabular-nums mt-1">
                       −{fmtMoney(selected.totalTax)}
                     </div>
                   </div>

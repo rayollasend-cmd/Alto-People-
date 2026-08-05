@@ -71,7 +71,7 @@ export function SectionTitle({
             id={id}
             className={cn(
               'text-white leading-tight truncate',
-              display ? 'font-display text-xl' : 'text-base font-medium',
+              display ? 'text-xl' : 'text-base font-medium',
             )}
           >
             {title}

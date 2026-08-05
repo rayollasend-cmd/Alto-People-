@@ -122,7 +122,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
             >
               <Briefcase className="h-3.5 w-3.5 text-gold" />
             </div>
-            <span className="font-display text-lg text-white leading-none tracking-tight truncate">
+            <span className="text-lg text-white leading-none tracking-tight truncate">
               Alto <span className="text-gold">People</span>
             </span>
           </div>

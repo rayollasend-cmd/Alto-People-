@@ -322,7 +322,7 @@ function Section({ title, icon: Icon, description, children }: SectionProps) {
     <section className="mb-6">
       <div className="flex items-center gap-2 mb-3">
         <Icon className="h-4 w-4 text-silver/80" aria-hidden="true" />
-        <h2 className="font-display text-xl text-white">{title}</h2>
+        <h2 className="text-xl text-white">{title}</h2>
       </div>
       {description && <p className="text-xs text-silver mb-3">{description}</p>}
       {children}

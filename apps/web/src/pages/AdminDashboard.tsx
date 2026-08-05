@@ -287,7 +287,7 @@ function WelcomeCard({ greetingName }: { greetingName: string }) {
           <Sparkles className="h-3 w-3 text-gold" aria-hidden="true" />
           Welcome
         </div>
-        <h2 className="font-display text-xl md:text-2xl text-white mt-1 leading-tight">
+        <h2 className="text-xl md:text-2xl text-white mt-1 leading-tight">
           You're set up, {greetingName}.
         </h2>
         <p className="text-sm text-silver mt-2 max-w-2xl leading-relaxed">

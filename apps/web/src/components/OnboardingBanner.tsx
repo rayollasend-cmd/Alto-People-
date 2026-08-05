@@ -64,7 +64,7 @@ export function OnboardingBanner() {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-3">
-            <div className="font-display text-lg text-gold">
+            <div className="text-lg text-gold">
               {isFresh ? 'Welcome — let\'s get you set up' : 'Finish your onboarding'}
             </div>
             <div className="text-sm text-silver tabular-nums shrink-0">

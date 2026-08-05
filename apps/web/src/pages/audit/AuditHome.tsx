@@ -207,7 +207,7 @@ export function AuditHome() {
           {/* h2, not CardTitle's h3: this heading sits directly under the
               page h1, and an h1 → h3 jump trips axe's heading-order rule.
               Classes match CardTitle + the old overrides exactly. */}
-          <h2 className="font-display text-white leading-tight flex items-center gap-2 text-base">
+          <h2 className="text-white leading-tight flex items-center gap-2 text-base">
             <Filter className="h-4 w-4 text-silver/80" />
             Filters
           </h2>

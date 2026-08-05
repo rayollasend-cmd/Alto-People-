@@ -686,7 +686,7 @@ function PaystubCard({
           </div>
           <div>
             <div className="text-xs uppercase tracking-widest text-gold">{t('pay.net')}</div>
-            <div className="font-display text-xl text-gold tabular-nums">
+            <div className="text-xl text-gold tabular-nums">
               {fmtMoney(item.netPay)}
             </div>
           </div>
@@ -827,7 +827,7 @@ function PaystubCard({
           <div className="flex items-center justify-between rounded border border-gold/30 bg-gold/5 p-3">
             <span className="text-xs uppercase tracking-widest text-gold">{t('pay.netPay')}</span>
             <div className="text-right">
-              <div className="font-display text-2xl text-gold tabular-nums">
+              <div className="text-2xl text-gold tabular-nums">
                 {fmtMoney(item.netPay)}
               </div>
               <div className="text-2xs uppercase tracking-wide text-silver/70">

@@ -72,7 +72,7 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
             const segClasses = cn(
               'truncate',
               isLast
-                ? 'font-display text-base md:text-lg text-white'
+                ? 'text-base md:text-lg text-white'
                 : 'text-silver'
             );
             // On phones we collapse intermediate crumbs and only show the
@@ -115,7 +115,7 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
           })}
         </nav>
       ) : (
-        <h2 className="font-display text-base md:text-lg text-white truncate min-w-0">
+        <h2 className="text-base md:text-lg text-white truncate min-w-0">
           {pageTitle ?? 'Alto People'}
         </h2>
       )}

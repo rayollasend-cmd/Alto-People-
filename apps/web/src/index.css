@@ -153,12 +153,38 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Editorial serif is reserved for the largest, most expressive headings.
-     h3/h4 inherit the body sans (Geist) so card titles and section labels
-     stay crisp at small sizes — Cormorant Garamond is fragile below ~24px.
-     Pages that want the serif at smaller sizes can opt in via `font-display`. */
+  /* Thinned antialiasing is the right call for light-on-dark, where strokes
+     optically bloom — but it was applied globally, so light mode was also
+     shedding weight from dark-on-light text that had none to spare. Hand
+     light mode back to the platform renderer. (WebKit/macOS only; a no-op
+     on Windows.) */
+  :root[data-theme='light'] body {
+    -webkit-font-smoothing: auto;
+    -moz-osx-font-smoothing: auto;
+  }
+
+  /* Editorial serif is reserved for genuine display type: 30px and up.
+     Measured from the shipped files, Cormorant Garamond's x-height is 38.6%
+     of its em against Geist's 53.0% — lowercase renders 27% smaller at the
+     same nominal size, so the serif needs ~1.37x the point size to read as
+     equal. A 16px serif heading has a smaller lowercase (6.2px) than a 12px
+     sans caption (6.4px), which is why "large" headings were reading small.
+     High stroke contrast compounds it: the hairlines thin out at small sizes
+     and on non-Retina Windows displays, which is most of the admin base.
+
+     h1/h2 therefore no longer inherit the serif — it is opt-in via
+     `font-display`, and only above the floor. Every heading at 3xl+ already
+     carried the class explicitly, so nothing display-scale changed here. */
   h1, h2 {
-    @apply font-display tracking-tight leading-tight;
+    @apply tracking-tight leading-tight;
+  }
+
+  /* Cormorant ships 300-700 and defaults to 400, which is thin enough that
+     its hairlines fade on dark surfaces. 500 holds the stroke without
+     reading as bold. In the base layer so an explicit font-semibold /
+     font-bold utility still wins. */
+  .font-display {
+    font-weight: 500;
   }
 
   /* Tabular numerals everywhere data is presented in columns. Affects

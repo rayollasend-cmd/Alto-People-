@@ -3349,7 +3349,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
     <>
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="font-display text-base font-semibold text-white">Document vault</h2>
+          <h2 className="text-base font-semibold text-white">Document vault</h2>
           <p className="mt-0.5 text-xs text-silver/70">
             {vault.total === 0
               ? 'Nothing on file yet — every document uploaded anywhere on the site lands here.'

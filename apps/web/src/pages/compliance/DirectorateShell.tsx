@@ -64,7 +64,7 @@ export function Kpi({
   return (
     <div>
       <div className="text-2xs uppercase tracking-wider text-silver/70">{label}</div>
-      <div className={cn('font-display text-xl tabular-nums', tone ?? 'text-white')}>
+      <div className={cn('text-xl tabular-nums', tone ?? 'text-white')}>
         {value}
       </div>
     </div>

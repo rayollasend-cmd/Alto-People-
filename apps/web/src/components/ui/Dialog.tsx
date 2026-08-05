@@ -52,7 +52,7 @@ export function DiscardConfirm({
             'data-[state=open]:animate-zoom-in data-[state=closed]:animate-zoom-out'
           )}
         >
-          <DialogPrimitive.Title className="font-display text-2xl text-white leading-none">
+          <DialogPrimitive.Title className="text-2xl text-white leading-none">
             Discard your changes?
           </DialogPrimitive.Title>
           <DialogPrimitive.Description className="text-sm text-silver">
@@ -303,7 +303,7 @@ export const DialogTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Title
     ref={ref}
-    className={cn('font-display text-2xl text-white leading-none', className)}
+    className={cn('text-2xl text-white leading-none', className)}
     {...props}
   />
 ));

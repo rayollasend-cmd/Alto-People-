@@ -284,7 +284,7 @@ export function Login() {
             className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in"
             noValidate
           >
-            <h2 className="font-display text-xl text-white mb-1">
+            <h2 className="text-xl text-white mb-1">
               {t('login.title')}
             </h2>
             <p className="text-silver text-sm mb-6">
@@ -426,7 +426,7 @@ export function Login() {
             className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in"
             noValidate
           >
-            <h2 className="font-display text-2xl md:text-3xl text-white mb-1">
+            <h2 className="text-2xl md:text-3xl text-white mb-1">
               {t('login.mfaTitle')}
             </h2>
             <p className="text-silver text-sm mb-6">
@@ -506,7 +506,7 @@ export function Login() {
             className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in"
             noValidate
           >
-            <h2 className="font-display text-2xl md:text-3xl text-white mb-1">
+            <h2 className="text-2xl md:text-3xl text-white mb-1">
               {t('login.enrollTitle')}
             </h2>
             <p className="text-silver text-sm mb-6">{t('login.enrollBody')}</p>

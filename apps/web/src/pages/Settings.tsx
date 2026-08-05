@@ -565,7 +565,7 @@ function MfaCard() {
                     <div className="text-2xs uppercase tracking-widest text-success">
                       Protected
                     </div>
-                    <div className="font-display text-2xl md:text-3xl text-white leading-tight">
+                    <div className="text-2xl md:text-3xl text-white leading-tight">
                       Two-step sign-in is on.
                     </div>
                     <div className="text-sm text-silver mt-0.5">

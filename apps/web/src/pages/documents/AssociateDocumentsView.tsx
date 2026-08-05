@@ -197,7 +197,7 @@ export function AssociateDocumentsView() {
         onSubmit={handleUpload}
         className="bg-navy border border-navy-secondary rounded-lg p-5 mb-6 space-y-3"
       >
-        <h2 className="font-display text-2xl text-white">Upload</h2>
+        <h2 className="text-2xl text-white">Upload</h2>
         {renewTarget && (
           <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-gold/40 bg-gold/10 px-3 py-1 text-xs text-gold">
             <RotateCw className="h-3 w-3 shrink-0" />
@@ -250,7 +250,7 @@ export function AssociateDocumentsView() {
         </Button>
       </form>
 
-      <h2 className="font-display text-2xl text-white mb-3">Your documents</h2>
+      <h2 className="text-2xl text-white mb-3">Your documents</h2>
       {!docs && <SkeletonRows count={4} rowHeight="h-14" />}
       {docs && docs.length === 0 && (
         <EmptyState

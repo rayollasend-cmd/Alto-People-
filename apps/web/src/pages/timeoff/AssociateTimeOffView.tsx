@@ -339,7 +339,7 @@ function BalanceGrid({ balances }: { balances: TimeOffBalance[] | null }) {
             <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
               {t(CATEGORY_KEYS[b.category])}
             </div>
-            <div className="text-2xl text-white font-display mt-1 tabular-nums">
+            <div className="text-2xl text-white mt-1 tabular-nums">
               {fmtHours(b.balanceMinutes)}
             </div>
             <div className="text-xs text-silver/70 mt-0.5">{t('timeoff.available')}</div>

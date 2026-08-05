@@ -442,7 +442,7 @@ function TimesheetStat({
       </div>
       <div
         className={cn(
-          'font-display text-2xl tabular-nums mt-0.5',
+          'text-2xl tabular-nums mt-0.5',
           tone === 'success' && 'text-success',
           tone === 'gold' && 'text-gold',
           tone === 'muted' && 'text-silver',

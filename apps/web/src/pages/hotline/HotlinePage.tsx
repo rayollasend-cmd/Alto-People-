@@ -61,7 +61,7 @@ export function HotlinePage() {
         </div>
         <div className="flex items-center gap-3 mb-2">
           <ShieldQuestion className="h-7 w-7 text-gold" />
-          <h1 className="font-display text-2xl md:text-3xl text-white">
+          <h1 className="text-2xl md:text-3xl text-white">
             Confidential Reporting
           </h1>
         </div>

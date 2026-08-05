@@ -340,7 +340,7 @@ function ClientCard({ client }: { client: ClientListItem }) {
       <div className="flex items-start gap-3">
         <Avatar name={client.name} size="md" />
         <div className="min-w-0 flex-1">
-          <div className="font-display text-lg text-white group-hover:text-gold-bright transition-colors truncate leading-tight">
+          <div className="text-lg text-white group-hover:text-gold-bright transition-colors truncate leading-tight">
             {client.name}
           </div>
           <div className="text-xs text-silver mt-0.5 flex items-center gap-1.5 flex-wrap">

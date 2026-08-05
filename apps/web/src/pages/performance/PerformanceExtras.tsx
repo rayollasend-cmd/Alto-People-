@@ -1921,7 +1921,7 @@ function AggregateDrawer({
                 <div className="text-2xs uppercase tracking-widest text-silver/70">
                   Responses
                 </div>
-                <div className="font-display text-2xl text-white tabular-nums">
+                <div className="text-2xl text-white tabular-nums">
                   {data.count}
                 </div>
               </div>
@@ -1929,7 +1929,7 @@ function AggregateDrawer({
                 <div className="text-2xs uppercase tracking-widest text-silver/70">
                   Average rating
                 </div>
-                <div className="font-display text-2xl text-gold tabular-nums">
+                <div className="text-2xl text-gold tabular-nums">
                   {data.averageRating !== null
                     ? `${Math.round(data.averageRating * 10) / 10}/5`
                     : '—'}
