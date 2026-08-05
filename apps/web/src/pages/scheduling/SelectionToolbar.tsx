@@ -4,7 +4,6 @@ import {
   CheckCircle2,
   Copy as CopyIcon,
   Send,
-  Trash,
   Trash2,
   UserPlus,
   X,
@@ -176,7 +175,7 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
 
   const onDelete = async () => {
     const assignedNote = assignedCount > 0
-      ? ` ${assignedCount} ${assignedCount === 1 ? 'is' : 'are'} assigned and will be removed from employees’ schedules.`
+      ? ` ${assignedCount} ${assignedCount === 1 ? 'is' : 'are'} assigned and will be removed from associates’ schedules.`
       : '';
     const ok = await confirm({
       title: `Delete ${selected.length} shift${selected.length === 1 ? '' : 's'}?`,
@@ -380,7 +379,9 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
           className="text-alert hover:text-alert"
           title="Delete permanently — removes the shifts entirely"
         >
-          <Trash className="h-3.5 w-3.5" />
+          {/* Same Trash2 glyph as Cancel — the label and red tone carry the
+              distinction, not an icon variant (matches ShiftContextMenu). */}
+          <Trash2 className="h-3.5 w-3.5" />
           Delete
         </Button>
         <span className="text-silver/70">·</span>

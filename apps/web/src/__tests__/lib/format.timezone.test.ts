@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   browserTimeZone,
+  fmtDayHeaderTz,
+  fmtMonthYearTz,
   fmtRelativeDayTz,
   fmtShiftRangeTz,
   localInputToUtcIso,
@@ -130,6 +132,55 @@ describe('fmtShiftRangeTz', () => {
     // And the viewer's own zone gets no suffix noise.
     const local = fmtShiftRangeTz(start, end, browserTimeZone());
     expect(local).not.toContain(tzAbbrev(browserTimeZone(), start));
+  });
+});
+
+/**
+ * The calendar views' day/month headers. Before these helpers, the admin
+ * views hand-rolled `toLocaleDateString([], …)` — browser locale AND
+ * browser zone — so an admin's headers could read differently from the
+ * associate surfaces (which render en-US through format.ts). These pin
+ * both: en-US always, and the STORE zone when one is passed.
+ */
+describe('fmtDayHeaderTz', () => {
+  // 11:30pm Eastern on Fri Jun 12 = 03:30 UTC Sat Jun 13 — a zone that
+  // differs from any CI runner's clock on at least one side of midnight.
+  const instant = '2026-06-13T03:30:00.000Z';
+
+  it('renders the store-local day, not the runner-local one', () => {
+    expect(fmtDayHeaderTz(instant, 'America/New_York')).toBe('Friday, Jun 12');
+    expect(fmtDayHeaderTz(instant, 'UTC')).toBe('Saturday, Jun 13');
+  });
+
+  it('appends the year on request', () => {
+    expect(fmtDayHeaderTz(instant, 'America/New_York', { year: true })).toBe(
+      'Friday, Jun 12, 2026',
+    );
+  });
+
+  it('formats a calendar anchor by its own local Y/M/D when no zone is given', () => {
+    // Anchor Dates (local midnight) ARE the day identity the grids bucket
+    // by — the label must match ymd(anchor) in every runner zone.
+    expect(fmtDayHeaderTz(new Date(2026, 5, 13))).toBe('Saturday, Jun 13');
+  });
+
+  it('is en-US regardless of the runner locale, and dashes null', () => {
+    expect(fmtDayHeaderTz(null)).toBe('—');
+    expect(fmtDayHeaderTz('not a date')).toBe('—');
+  });
+});
+
+describe('fmtMonthYearTz', () => {
+  it('names the store-local month across a month boundary', () => {
+    // 10pm Eastern Jun 30 = 02:00 UTC Jul 1.
+    const instant = '2026-07-01T02:00:00.000Z';
+    expect(fmtMonthYearTz(instant, 'America/New_York')).toBe('June 2026');
+    expect(fmtMonthYearTz(instant, 'UTC')).toBe('July 2026');
+  });
+
+  it('formats a first-of-month anchor without a zone', () => {
+    expect(fmtMonthYearTz(new Date(2026, 3, 1))).toBe('April 2026');
+    expect(fmtMonthYearTz(null)).toBe('—');
   });
 });
 
