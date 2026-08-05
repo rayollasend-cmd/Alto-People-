@@ -136,7 +136,7 @@ function StageTracker({ stage }: { stage: CandidateStage }) {
               aria-current={current ? 'step' : undefined}
               className={cn(
                 'rounded-full px-2 py-0.5 text-2xs whitespace-nowrap transition-colors',
-                current && 'bg-gold text-on-accent font-medium',
+                current && 'bg-gold-fill text-on-accent font-medium',
                 done && 'bg-navy-secondary text-silver',
                 !done && !current && 'text-silver/50',
               )}

@@ -60,7 +60,7 @@ export function Toaster() {
           description: 'group-[.toast]:text-silver',
           // on-accent: theme-stable dark ink on gold (text-navy flips to
           // white in light mode and broke contrast).
-          actionButton: 'group-[.toast]:bg-gold group-[.toast]:text-on-accent',
+          actionButton: 'group-[.toast]:bg-gold-fill group-[.toast]:text-on-accent',
           cancelButton: 'group-[.toast]:bg-navy-secondary group-[.toast]:text-silver',
           success: 'group-[.toast]:!border-success/40',
           error: 'group-[.toast]:!border-alert/40',
