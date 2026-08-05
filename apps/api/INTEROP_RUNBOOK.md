@@ -97,14 +97,20 @@ tracked code task.
 `BACKUP_S3_*` vars in Railway, and verify a restore once. When
 S3-primary lands, the same bucket family serves both.
 
-## 7. Resend webhook endpoint registration
+## 7. Resend webhook endpoint registration — REQUIRED BEFORE DEPLOY
 
-**What the code provides (once the deliverability feature lands):** a
-svix-signature-verified `/resend/webhook` receiver for
-delivered/bounced/complained events plus a suppression list.
+**What the code provides:** a svix-signature-verified `/resend/webhook`
+receiver for delivered/bounced/complained events plus a do-not-email
+suppression list.
+
+**⚠️ Deploy blocker:** production now refuses to boot when
+`RESEND_API_KEY` is set without `RESEND_WEBHOOK_SECRET` (deliberate —
+real sends without bounce feedback ruin sender reputation). Railway HAS
+the API key set, so this step must happen BEFORE the branch merges to
+main, or the next deploy crash-loops.
 
 **Operator actions:** in the Resend dashboard (account
 alto50278@gmail.com): Webhooks → Add endpoint →
 `https://people.altohr.com/api/resend/webhook`, select the
 `email.delivered`, `email.bounced`, `email.complained` events, copy the
-signing secret into `RESEND_WEBHOOK_SECRET` on Railway.
+signing secret (`whsec_…`) into `RESEND_WEBHOOK_SECRET` on Railway.
