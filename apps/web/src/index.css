@@ -68,7 +68,12 @@
   --color-silver:         192 208 224;  /* #C0D0E0 — bumped from #A8B8C8 so
                                           fractional opacities (silver/60,
                                           /70) clear WCAG AA on navy. */
-  --color-steel:           24  95 165;  /* #185FA5 */
+  /* #185FA5 was a light-mode blue left in the dark palette: 2.70:1 as
+     text on navy and 2.41:1 on its own tint, so every steel badge/tone
+     was unreadable here. blue-400 is the dark-surface equivalent. The
+     only solid `bg-steel` uses are a dot and a progress fill (no ink on
+     them), so lightening the token is safe. */
+  --color-steel:           96 165 250;  /* #60A5FA — 6.9:1 on navy (AA) */
   --color-sky:            230 241 251;  /* #E6F1FB */
   --color-teal:            15 110  86;  /* #0F6E56 */
   --color-alert:          233  98  85;  /* #E96255 — brightened for safer AA margin on navy (≈5.3:1) */
@@ -94,11 +99,12 @@
      ~3.25:1 (large-text-only), which failed every small gold link in light
      mode. #87680C ≈ 5.2:1 on white / 5.0:1 on the #F8FAFC app bg. */
   --color-gold:           135 104  12;  /* #87680C — ≈5.2:1 on white (AA) */
-  /* gold-bright is the large-display / hover accent (dashboard hero
-     numbers). #A67908 ≈ 3.9:1 clears the 3:1 large-text bar it needs and
-     stays more saturated than base gold so the "brighter" relationship
-     still reads; not used for small text. */
-  --color-gold-bright:    166 121   8;  /* #A67908 */
+  /* gold-bright is NOT display-only — 33 of its 77 uses are text-sm or
+     smaller, and it is the hover fill under `bg-gold hover:bg-gold-bright
+     text-navy`. Both jobs need 4.5:1, so it lands DARKER than base gold
+     here: in light mode "brighter" has to mean "more emphatic", which on
+     white means more ink, not less. 6.4:1 as text and under white ink. */
+  --color-gold-bright:    122  89   6;  /* #7A5906 — ≈6.4:1 on white (AA) */
   /* Fill tier stays at the LIGHTER golds so dark `on-accent` ink keeps
      clearing AA on top of it: #D49E24 → 7.3:1 and #B8860B → 5.4:1 against
      the #0B1832 ink. Darkening these with the text tier would have taken
@@ -106,16 +112,21 @@
      could not afford to break. */
   --color-gold-fill:      184 134  11;  /* #B8860B — 5.4:1 under on-accent ink */
   --color-gold-fill-bright: 212 158 36; /* #D49E24 — 7.3:1 under on-accent ink */
-  /* "silver" (secondary text) becomes a dark slate. Slate-700 (not
-     slate-600) so the fractional opacity utilities used throughout the
-     app (text-silver/60, /70, /80) still clear WCAG AA on white. A
-     softer slate-600 fails AA at /60 and below; bumping the base lets
-     the same Tailwind classes work in both themes without a sweep. */
+  /* "silver" (secondary text) becomes a dark slate. Slate-700 keeps the
+     high alphas (/80, /90, full) clear of AA on their own; everything at
+     /70 and below is floored by an explicit rule further down, because
+     alpha compositing — not the base colour — is what breaks them. */
   --color-silver:          51  65  85;  /* #334155 — slate-700 */
   --color-steel:           37  99 235;  /* #2563EB — 5.2:1 as link text on white */
-  --color-sky:            219 234 254;  /* #DBEAFE */
-  --color-teal:            13 148 136;  /* #0D9488 */
-  --color-alert:          220  38  38;  /* #DC2626 — 4.8:1 on white (AA) */
+  /* "sky" is a pale tint that only ever works as text on a DARK surface.
+     Left at #DBEAFE it rendered pale-blue-on-pale-blue in light mode —
+     the `info` badge and ErrorBanner info tone measured 1.01:1, i.e.
+     invisible. In light mode it has to be the ink, not the wash. */
+  --color-sky:             29  78 216;  /* #1D4ED8 — 5.4:1 on a steel/8 tint */
+  --color-teal:            15 118 110;  /* #0F766E — teal-700, 4.8:1 on white */
+  /* red-600 was 4.83:1 bare and only 3.82:1 once it sat on its own tint
+     (every destructive badge). red-700 clears both. */
+  --color-alert:          185  28  28;  /* #B91C1C — 6.5:1 on white (AA) */
   /* success + warning darkened a step so SMALL status text / inline
      errors clear AA on white (the emerald-600 / amber-600 tier was only
      ~3.2-3.8:1, large-text-only). */
@@ -223,15 +234,67 @@
   background-color: rgba(15, 23, 42, 0.06);
 }
 
-/* Floor the very-tertiary silver alphas in light mode. Slate-700 base
-   carries /60 and above to AA, but /40 and /50 still wash out on white.
-   Override those two utilities with a fixed slate-500 (≈4.6:1 on white)
-   so labels like timestamps, kbd hints, and "n of N" counts stay legible. */
+/* Floor the tertiary silver alphas. Alpha compositing, not the base
+   colour, is what breaks these: slate-700 at /70 lands on 4.35:1 against
+   a white card and 4.25:1 against the #F8FAFC page — under AA, on the
+   app's single most-used secondary text class (617 uses, 275 of them at
+   10-11px). The earlier version of this rule stopped at /60, so the
+   LIGHTER alphas were repaired while the most-used one was left failing.
+   Floor everything at /70 and below to a solid slate-500; /80 and /90
+   clear AA on their own (5.74 / 7.69) and keep the hierarchy above it. */
+:root[data-theme='light'] .text-silver\/30,
 :root[data-theme='light'] .text-silver\/40,
 :root[data-theme='light'] .text-silver\/50,
-:root[data-theme='light'] .text-silver\/60 {
-  color: rgb(100 116 139); /* slate-500 — readable on white at full opacity */
+:root[data-theme='light'] .text-silver\/60,
+:root[data-theme='light'] .text-silver\/70 {
+  color: rgb(100 116 139); /* slate-500 — 4.76:1 on white, 4.55:1 on the page */
 }
+
+/* The same floor was never written for DARK mode, where /30 (2.14:1),
+   /40 (2.83:1) and /50 (3.71:1) fail on navy. Pin them to the /60
+   composite — the lightest step that still clears AA — so the ramp stays
+   monotonic instead of inverting against /60. */
+:root:not([data-theme='light']) .text-silver\/30,
+:root:not([data-theme='light']) .text-silver\/40,
+:root:not([data-theme='light']) .text-silver\/50 {
+  color: rgb(120 134 154); /* 4.78:1 on navy, 5.19:1 on midnight */
+}
+
+/* ---------------------------------------------------------------------------
+ * Light-mode status tint cap.
+ *
+ * Status chips paint same-hue text on a tint of themselves
+ * (`bg-warning/15 text-warning`). On a dark surface the tint darkens the
+ * background and contrast IMPROVES; on white it lightens the text side of
+ * the pair and contrast DROPS by roughly a full point. Every badge is
+ * 10-11px, so it needs 4.5:1, and at /15 they measured pending 4.08,
+ * accent 4.28, success 4.43, destructive 3.82 — all failing.
+ *
+ * Capping the faint tints at 8% in light mode fixes every chip app-wide
+ * without retuning the four status hues (which are already at their AA
+ * floor on white) and without touching a single component. The high
+ * alphas (/50-/90) are solid fills carrying on-solid ink and are left
+ * alone. Dark mode is unaffected — it was already passing.
+ * ------------------------------------------------------------------------- */
+:root[data-theme='light'] .bg-gold\/10,
+:root[data-theme='light'] .bg-gold\/15,
+:root[data-theme='light'] .bg-gold\/20,
+:root[data-theme='light'] .bg-gold\/30 { background-color: rgb(var(--color-gold) / 0.08); }
+:root[data-theme='light'] .bg-alert\/10,
+:root[data-theme='light'] .bg-alert\/15,
+:root[data-theme='light'] .bg-alert\/20,
+:root[data-theme='light'] .bg-alert\/30 { background-color: rgb(var(--color-alert) / 0.08); }
+:root[data-theme='light'] .bg-warning\/10,
+:root[data-theme='light'] .bg-warning\/15,
+:root[data-theme='light'] .bg-warning\/20,
+:root[data-theme='light'] .bg-warning\/25 { background-color: rgb(var(--color-warning) / 0.08); }
+:root[data-theme='light'] .bg-success\/10,
+:root[data-theme='light'] .bg-success\/15,
+:root[data-theme='light'] .bg-success\/20,
+:root[data-theme='light'] .bg-success\/25 { background-color: rgb(var(--color-success) / 0.08); }
+:root[data-theme='light'] .bg-steel\/10,
+:root[data-theme='light'] .bg-steel\/15,
+:root[data-theme='light'] .bg-steel\/20 { background-color: rgb(var(--color-steel) / 0.08); }
 
 /* ---------------------------------------------------------------------------
  * Theme-aware modal/drawer backdrop.
