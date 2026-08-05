@@ -119,7 +119,7 @@ export function AssociateScheduleView() {
       setHistoryNextBefore(res.nextBefore);
     } catch (err) {
       toast.error(
-        err instanceof ApiError ? err.message : 'Could not load older shifts.',
+        err instanceof ApiError ? err.message : t('sched.loadOlderFailed'),
       );
     } finally {
       setHistoryLoading(false);
@@ -160,7 +160,7 @@ export function AssociateScheduleView() {
           // Corrupt cache — fall through to the plain error state.
         }
       }
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      setError(err instanceof ApiError ? err.message : t('sched.loadFailed'));
     }
   };
 
@@ -399,7 +399,7 @@ export function AssociateScheduleView() {
             !loaded ? (
               <Button variant="secondary" size="sm" onClick={load}>
                 <RefreshCw className="h-4 w-4" />
-                Retry
+                {t('common.retry')}
               </Button>
             ) : undefined
           }
@@ -569,6 +569,7 @@ function ScheduleStat({
  * nothing to offer, so the page stays quiet most days.
  */
 function OpenShiftsSection() {
+  const { t } = useI18n();
   const [items, setItems] = useState<OpenShiftsResponse['shifts'] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmShift, setConfirmShift] = useState<OpenShiftsResponse['shifts'][number] | null>(
@@ -607,10 +608,10 @@ function OpenShiftsSection() {
       );
       setConfirmShift(null);
       hapticConfirm();
-      toast.success('Pickup requested — your manager will confirm it.');
+      toast.success(t('sched.pickupToast'));
     } catch (err) {
       toast.error(
-        err instanceof ApiError ? err.message : 'Could not request this shift.',
+        err instanceof ApiError ? err.message : t('sched.pickupFailed'),
       );
     } finally {
       setBusyId(null);
@@ -630,7 +631,7 @@ function OpenShiftsSection() {
       );
     } catch (err) {
       toast.error(
-        err instanceof ApiError ? err.message : 'Could not withdraw the request.',
+        err instanceof ApiError ? err.message : t('sched.withdrawFailed'),
       );
     } finally {
       setBusyId(null);
@@ -641,7 +642,7 @@ function OpenShiftsSection() {
     <section className="mt-6">
       <h2 className="text-xs2 uppercase tracking-wider text-silver/80 mb-2 flex items-center gap-1.5">
         <HandHelping className="h-3.5 w-3.5" aria-hidden="true" />
-        Open shifts you can pick up ({items.length})
+        {t('sched.openHeading', { count: items.length })}
       </h2>
       <ul className="space-y-2">
         {items.map((s) => (
@@ -669,14 +670,14 @@ function OpenShiftsSection() {
             <div className="shrink-0">
               {s.myClaimStatus === 'PENDING' ? (
                 <div className="flex flex-col items-end gap-1">
-                  <Badge variant="accent">Requested</Badge>
+                  <Badge variant="accent">{t('sched.openRequested')}</Badge>
                   <button
                     type="button"
                     onClick={() => withdraw(s)}
                     disabled={busyId === s.id}
                     className="inline-flex items-center coarse:min-h-11 px-2 -mx-2 text-xs text-silver/70 hover:text-white active:text-white underline underline-offset-2"
                   >
-                    Withdraw
+                    {t('sched.openWithdraw')}
                   </button>
                 </div>
               ) : (
@@ -686,7 +687,7 @@ function OpenShiftsSection() {
                   onClick={() => setConfirmShift(s)}
                   disabled={busyId === s.id}
                 >
-                  Pick up
+                  {t('sched.openPickUp')}
                 </Button>
               )}
             </div>
@@ -698,7 +699,7 @@ function OpenShiftsSection() {
         onOpenChange={(open) => {
           if (!open) setConfirmShift(null);
         }}
-        title="Request this shift?"
+        title={t('sched.pickupConfirmTitle')}
         description={
           confirmShift
             ? `${confirmShift.position} · ${
@@ -707,10 +708,10 @@ function OpenShiftsSection() {
                 confirmShift.startsAt,
                 confirmShift.endsAt,
                 confirmShift.timezone,
-              )}. Your manager confirms pickups before they're final.`
+              )}. ${t('sched.pickupConfirmNote')}`
             : undefined
         }
-        confirmLabel="Request pickup"
+        confirmLabel={t('sched.pickupConfirmLabel')}
         busy={confirmShift !== null && busyId === confirmShift.id}
         onConfirm={() => {
           if (confirmShift) return request(confirmShift);
@@ -721,6 +722,7 @@ function OpenShiftsSection() {
 }
 
 function CalendarSubscribeCard() {
+  const { t } = useI18n();
   const [feed, setFeed] = useState<CalendarFeedUrlResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -735,7 +737,7 @@ function CalendarSubscribeCard() {
         if (!cancelled) setFeed(res);
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof ApiError ? err.message : 'Could not load calendar URL.');
+          setError(err instanceof ApiError ? err.message : t('sched.calLoadFailed'));
         }
       }
     })();
@@ -750,7 +752,7 @@ function CalendarSubscribeCard() {
         <div className="flex items-start gap-3">
           <CalendarDays className="h-5 w-5 text-silver/60 mt-0.5 shrink-0" />
           <div className="text-xs text-silver/70">
-            Calendar subscription is unavailable right now. {error}
+            {t('sched.calUnavailable')} {error}
           </div>
         </div>
       </div>
@@ -766,10 +768,10 @@ function CalendarSubscribeCard() {
     try {
       await navigator.clipboard.writeText(feed.url);
       setCopied(true);
-      toast.success('Calendar URL copied. Paste it into Google or Outlook.');
+      toast.success(t('sched.calCopiedToast'));
       setTimeout(() => setCopied(false), 2500);
     } catch {
-      toast.error('Could not copy — long-press the URL to copy manually.');
+      toast.error(t('sched.calCopyFailed'));
     }
   };
 
@@ -779,12 +781,10 @@ function CalendarSubscribeCard() {
       const res = await rotateMyCalendarUrl();
       setFeed(res);
       setConfirmReset(false);
-      toast.success(
-        'New link created. Re-subscribe in your calendar app — the old link no longer works.',
-      );
+      toast.success(t('sched.calResetToast'));
     } catch (err) {
       toast.error(
-        err instanceof ApiError ? err.message : 'Could not reset the link.',
+        err instanceof ApiError ? err.message : t('sched.calResetFailed'),
       );
     } finally {
       setResetting(false);
@@ -796,12 +796,8 @@ function CalendarSubscribeCard() {
       <div className="flex items-start gap-3">
         <CalendarDays className="h-5 w-5 text-gold mt-0.5 shrink-0" />
         <div className="min-w-0 flex-1">
-          <div className="text-white font-medium">Subscribe in your calendar</div>
-          <div className="text-xs text-silver/70 mt-0.5">
-            Add this URL once and your published shifts show up in Google,
-            Apple, or Outlook calendars — refreshed hourly. Don't share it;
-            anyone with the link can see your schedule.
-          </div>
+          <div className="text-white font-medium">{t('sched.calTitle')}</div>
+          <div className="text-xs text-silver/70 mt-0.5">{t('sched.calBody')}</div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <code className="flex-1 min-w-0 truncate text-xs2 text-silver bg-navy-secondary/40 border border-navy-secondary rounded px-2 py-1.5 tabular-nums">
               {feed.url}
@@ -810,12 +806,12 @@ function CalendarSubscribeCard() {
               {copied ? (
                 <>
                   <Check className="h-3.5 w-3.5" />
-                  Copied
+                  {t('sched.calCopied')}
                 </>
               ) : (
                 <>
                   <Copy className="h-3.5 w-3.5" />
-                  Copy URL
+                  {t('sched.calCopyUrl')}
                 </>
               )}
             </Button>
@@ -824,7 +820,7 @@ function CalendarSubscribeCard() {
               className="inline-flex items-center gap-1 coarse:min-h-11 text-xs text-gold hover:text-gold-bright active:text-gold-bright underline underline-offset-2"
             >
               <ExternalLink className="h-3 w-3" />
-              Open in Apple Calendar
+              {t('sched.calOpenApple')}
             </a>
             <button
               type="button"
@@ -832,7 +828,7 @@ function CalendarSubscribeCard() {
               className="inline-flex items-center gap-1 coarse:min-h-11 text-xs text-silver/70 hover:text-white active:text-white underline underline-offset-2 transition-colors"
             >
               <RotateCcw className="h-3 w-3" />
-              Reset link
+              {t('sched.calResetLink')}
             </button>
           </div>
         </div>
@@ -840,9 +836,9 @@ function CalendarSubscribeCard() {
       <ConfirmDialog
         open={confirmReset}
         onOpenChange={setConfirmReset}
-        title="Reset your calendar link?"
-        description="If this link got shared, resetting it locks the old one out immediately. Any calendar subscribed with the current link stops updating — you'll need to re-subscribe with the new one."
-        confirmLabel="Reset link"
+        title={t('sched.calResetConfirmTitle')}
+        description={t('sched.calResetConfirmDesc')}
+        confirmLabel={t('sched.calResetLink')}
         destructive
         busy={resetting}
         onConfirm={onReset}
