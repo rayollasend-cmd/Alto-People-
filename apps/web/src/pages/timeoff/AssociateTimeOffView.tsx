@@ -227,7 +227,7 @@ export function AssociateTimeOffView() {
             <>
               <SegmentedControl<TimeOffRequest['status'] | 'ALL'>
                 options={[
-                  { value: 'ALL', label: 'All' },
+                  { value: 'ALL', label: t('timeoff.filterAll') },
                   ...STATUS_FILTERS.map((s) => ({
                     value: s,
                     label: t(STATUS_KEYS[s]),
@@ -235,12 +235,12 @@ export function AssociateTimeOffView() {
                 ]}
                 value={statusFilter}
                 onChange={setStatusFilter}
-                ariaLabel="Filter requests by status"
+                ariaLabel={t('timeoff.filterAria')}
                 className="mb-3 flex-wrap"
               />
               {filteredRequests && filteredRequests.length === 0 && (
                 <p className="text-sm text-silver py-4 text-center">
-                  No requests with this status.
+                  {t('timeoff.noneWithStatus')}
                 </p>
               )}
               <ul className="divide-y divide-navy-secondary">
@@ -521,6 +521,10 @@ function CreateRequestDialog({
     }
   };
 
+  /** "1 weekday" / "3 weekdays" — singular/plural key pair with {count}. */
+  const nWord = (one: MessageKey, many: MessageKey, count: number) =>
+    t(count === 1 ? one : many, { count });
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -577,8 +581,8 @@ function CreateRequestDialog({
           {dayInfo.weekdays > 0 && (
             <p className="text-xs text-silver tabular-nums">
               {dayInfo.holidays > 0
-                ? `${dayInfo.weekdays} weekday${dayInfo.weekdays === 1 ? '' : 's'} − ${dayInfo.holidays} holiday${dayInfo.holidays === 1 ? '' : 's'} = ${dayInfo.effective} day${dayInfo.effective === 1 ? '' : 's'}`
-                : `${dayInfo.weekdays} weekday${dayInfo.weekdays === 1 ? '' : 's'}`}
+                ? `${nWord('timeoff.weekdayWord', 'timeoff.weekdayWordPlural', dayInfo.weekdays)} − ${nWord('timeoff.holidayWord', 'timeoff.holidayWordPlural', dayInfo.holidays)} = ${nWord('timeoff.dayWord', 'timeoff.dayWordPlural', dayInfo.effective)}`
+                : nWord('timeoff.weekdayWord', 'timeoff.weekdayWordPlural', dayInfo.weekdays)}
             </p>
           )}
 
@@ -590,7 +594,7 @@ function CreateRequestDialog({
               disabled={dayInfo.effective <= 0}
               onClick={() => pickPreset('FULL')}
             >
-              Full days ({dayInfo.effective * 8}h)
+              {t('timeoff.fullDays', { hours: dayInfo.effective * 8 })}
             </Button>
             <Button
               type="button"
@@ -599,7 +603,7 @@ function CreateRequestDialog({
               disabled={dayInfo.effective <= 0}
               onClick={() => pickPreset('HALF')}
             >
-              Half days ({dayInfo.effective * 4}h)
+              {t('timeoff.halfDays', { hours: dayInfo.effective * 4 })}
             </Button>
           </div>
 
@@ -631,12 +635,12 @@ function CreateRequestDialog({
                   : 'text-xs text-silver tabular-nums'
               }
             >
-              {fmtHours(balance.balanceMinutes)} balance
-              {pendingMinutes > 0 && ` − ${fmtHours(pendingMinutes)} pending`}
-              {` − ${fmtHours(requestedMinutes)} this request = `}
               {afterMinutes < 0
-                ? `${fmtHours(-afterMinutes)} over`
-                : `${fmtHours(afterMinutes)} left`}
+                ? t('timeoff.balanceOver', { over: fmtHours(-afterMinutes) })
+                : t('timeoff.balanceLine', {
+                    avail: fmtHours(balance.balanceMinutes - pendingMinutes),
+                    after: fmtHours(afterMinutes),
+                  })}
             </p>
           )}
 

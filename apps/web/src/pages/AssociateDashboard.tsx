@@ -227,10 +227,10 @@ function EnablePushCard() {
     try {
       await subscribeToPush();
       hapticConfirm();
-      toast.success("Notifications on — you'll hear about shifts even with the app closed.");
+      toast.success(t('dash.pushOnToast'));
       setStatus('hidden');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not enable notifications.');
+      toast.error(err instanceof Error ? err.message : t('dash.pushFailed'));
       setStatus('ready');
     }
   };
@@ -541,7 +541,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
       await queryClient.invalidateQueries({ queryKey: ['me', 'shifts'] });
     } catch (err) {
       toast.error(
-        err instanceof ApiError ? err.message : 'Could not confirm the shift.'
+        err instanceof ApiError ? err.message : t('shift.confirmFailed')
       );
     } finally {
       setAcking(false);
@@ -702,13 +702,15 @@ function PaystubCard({
   );
 }
 
-const CATEGORY_LABEL: Record<string, string> = {
-  SICK: 'Sick',
-  VACATION: 'Vacation',
-  PTO: 'PTO',
-  BEREAVEMENT: 'Bereavement',
-  JURY_DUTY: 'Jury duty',
-  OTHER: 'Other',
+// Same keys the Time-off page uses for these categories — the dashboard
+// chip and the Time-off balance card must never disagree on wording.
+const CATEGORY_KEY: Record<string, MessageKey> = {
+  SICK: 'timeoff.cat.SICK',
+  VACATION: 'timeoff.cat.VACATION',
+  PTO: 'timeoff.cat.PTO',
+  BEREAVEMENT: 'timeoff.cat.BEREAVEMENT',
+  JURY_DUTY: 'timeoff.cat.JURY_DUTY',
+  OTHER: 'timeoff.cat.OTHER',
 };
 
 function TimeOffCard({
@@ -767,7 +769,9 @@ function TimeOffCard({
           <div className="font-display text-3xl text-gold tabular-nums">
             {(primary.balanceMinutes / 60).toFixed(1)}h
           </div>
-          <div className="text-sm text-silver">{CATEGORY_LABEL[primary.category] ?? primary.category}</div>
+          <div className="text-sm text-silver">
+            {CATEGORY_KEY[primary.category] ? t(CATEGORY_KEY[primary.category]) : primary.category}
+          </div>
         </div>
         {rest.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-2">
@@ -776,7 +780,7 @@ function TimeOffCard({
                 key={b.category}
                 className="text-xs text-silver bg-navy-secondary/40 rounded px-2 py-0.5 tabular-nums"
               >
-                {CATEGORY_LABEL[b.category] ?? b.category}: {(b.balanceMinutes / 60).toFixed(1)}h
+                {CATEGORY_KEY[b.category] ? t(CATEGORY_KEY[b.category]) : b.category}: {(b.balanceMinutes / 60).toFixed(1)}h
               </span>
             ))}
           </div>
