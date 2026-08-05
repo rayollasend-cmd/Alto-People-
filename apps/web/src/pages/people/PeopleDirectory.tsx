@@ -140,10 +140,10 @@ import { usePersistentState } from '@/lib/usePersistentState';
 import { StatusBadge, statusLabel } from '@/lib/status';
 
 const PAY_TYPE_SUFFIX: Record<string, string> = {
-  HOURLY: '/ hr',
-  SALARY: '/ yr',
+  HOURLY: '/hr',
+  SALARY: '/yr',
   COMMISSION: ' commission',
-  PIECEWORK: ' / piece',
+  PIECEWORK: '/piece',
 };
 
 function fmtPay(amount: string | null, type: string | null, currency: string | null): string {

@@ -396,7 +396,7 @@ function ActionRequiredSection({
           ssnRecollectionOutstanding === 1
             ? 'SSN needs re-collection'
             : 'SSNs need re-collection',
-        hint: 'W-4 SSNs unreadable since the June 11 key incident, or card photos still missing — blocks new-hire reporting and W-2s.',
+        hint: 'W-4 SSNs that can no longer be read, or card photos still missing — blocks new-hire reporting and W-2s.',
         to: '/payroll/w4-recollection',
         cta: 'Open campaign',
         icon: ShieldCheck,

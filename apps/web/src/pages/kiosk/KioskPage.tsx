@@ -1123,8 +1123,8 @@ function SetupScreen({ onSaved }: { onSaved: (token: string) => void }) {
         </div>
         <h1 className="text-3xl font-display mb-4">Pair this device</h1>
         <p className="text-silver text-sm mb-6">
-          Paste the device token from HR's kiosk admin page. The token
-          starts with <code className="font-mono">altokiosk_</code>.
+          Paste the device token from your admin's kiosk settings page. The
+          token starts with <code className="font-mono">altokiosk_</code>.
         </p>
         <Textarea
           className="h-32 font-mono text-xs"

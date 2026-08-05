@@ -22,6 +22,13 @@ import { Breadcrumb, type BreadcrumbSegment } from './Breadcrumb';
 interface PageHeaderProps {
   title: React.ReactNode;
   subtitle?: React.ReactNode;
+  /**
+   * What the topbar/chrome shows for "you are here", when it should differ
+   * from the on-page hero. Defaults to `title`. Use it when the hero is a
+   * greeting or other non-page-name copy (e.g. "Hey Maria 👋" → "Home") so
+   * the chrome doesn't redundantly echo the h1 sitting right beneath it.
+   */
+  topbarTitle?: string;
   breadcrumbs?: BreadcrumbSegment[];
   /** Primary CTA — typically a single Button. Right-aligned, gold by default. */
   primaryAction?: React.ReactNode;
@@ -35,6 +42,7 @@ interface PageHeaderProps {
 export function PageHeader({
   title,
   subtitle,
+  topbarTitle,
   breadcrumbs,
   primaryAction,
   secondaryActions,
@@ -43,8 +51,11 @@ export function PageHeader({
 }: PageHeaderProps) {
   // Publish the title + breadcrumbs to the topbar context so chrome can
   // show "you are here" wayfinding after the user scrolls past this header.
-  // Only string titles can roundtrip; richer ReactNodes just fall back.
-  usePublishPageTitle(typeof title === 'string' ? title : null, breadcrumbs ?? null);
+  // `topbarTitle` wins when set; otherwise only string titles can roundtrip
+  // (richer ReactNodes fall back to the wordmark).
+  const published =
+    topbarTitle ?? (typeof title === 'string' ? title : null);
+  usePublishPageTitle(published, breadcrumbs ?? null);
 
   return (
     <header className={cn('mb-7', className)}>

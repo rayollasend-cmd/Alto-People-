@@ -84,7 +84,7 @@ export function W4SsnRecollection() {
     <div className="space-y-6">
       <PageHeader
         title="W-4 SSN re-collection"
-        subtitle="Remediation for the June 11 encryption-key incident. Each associate must re-enter their SSN on the W-4 step and upload a photo of their Social Security card — email them the request from here."
+        subtitle="Each affected associate must re-enter their SSN on the W-4 step and upload a photo of their Social Security card — email them the request from here."
       />
 
       {query.error && (

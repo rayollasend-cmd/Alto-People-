@@ -137,6 +137,20 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* Numeric VALUES set in the display serif render their digits in the
+     sans instead. Cormorant Garamond's lining "1" is a serifed vertical
+     stroke that reads as a capital "I" at a glance — unacceptable on KPI
+     tiles and count badges where the number IS the content. The
+     `.font-display.tabular-nums` pair is only ever a metric/stat value
+     (labels + prose headings use font-display WITHOUT tabular-nums), so
+     this swaps exactly the numbers and leaves every editorial heading,
+     greeting, and title in the brand serif. Geist's figures are
+     unambiguous and are the data-viz convention regardless. */
+  .font-display.tabular-nums {
+    font-family: theme('fontFamily.sans');
+    letter-spacing: -0.01em;
+  }
+
   ::selection {
     @apply bg-gold text-navy;
   }

@@ -43,7 +43,14 @@ const en = {
   'common.undo': 'Undo',
   'common.from': 'From',
   'common.to': 'To',
+  'common.gotIt': 'Got it',
   'nav.pinned': 'Pinned',
+
+  // "What's new" release card (associate-visible entries)
+  'whatsnew.title': 'New this week',
+  'whatsnew.weekAhead':
+    "You'll get “Your week ahead” the evening before your work week starts.",
+  'whatsnew.espanol': 'La aplicación ahora habla español — cámbialo en el menú.',
 
   // Associate dashboard
   'dash.greeting': 'Hey {name} 👋',
@@ -505,6 +512,11 @@ const es: Record<MessageKey, string> = {
   'common.undo': 'Deshacer',
   'common.from': 'Desde',
   'common.to': 'Hasta',
+  'common.gotIt': 'Entendido',
+  'whatsnew.title': 'Novedades de la semana',
+  'whatsnew.weekAhead':
+    'Recibirás “Tu semana” la noche antes de que empiece tu semana laboral.',
+  'whatsnew.espanol': 'La aplicación ahora habla español — cámbialo en el menú.',
   'nav.pinned': 'Fijados',
 
   'dash.greeting': 'Hola {name} 👋',

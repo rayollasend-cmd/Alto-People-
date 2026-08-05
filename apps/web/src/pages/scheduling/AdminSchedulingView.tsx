@@ -2985,8 +2985,14 @@ function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
     );
   }
   const hours = kpis.totalScheduledMinutes / 60;
-  const fillTone =
-    kpis.fillRatePercent >= 90
+  // An empty week (nothing scheduled → 0 open + 0 filled) is "no data",
+  // not a staffing failure — don't alarm-red a 0% that just means the
+  // schedule hasn't been built yet. Neutral until there's something to
+  // fill.
+  const noShifts = kpis.openShifts + kpis.assignedShifts + kpis.completedShifts === 0;
+  const fillTone = noShifts
+    ? 'text-silver'
+    : kpis.fillRatePercent >= 90
       ? 'text-success'
       : kpis.fillRatePercent >= 70
         ? 'text-warning'

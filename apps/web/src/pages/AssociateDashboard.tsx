@@ -138,6 +138,9 @@ export function AssociateDashboard() {
       <PageHeader
         title={t('dash.greeting', { name: greetingName })}
         subtitle={t('dash.subtitle')}
+        // The hero is a greeting; the chrome should say the page name, not
+        // echo "Hey Maria 👋" right above its own h1.
+        topbarTitle={t('tabs.home')}
       />
 
       <OnboardingBanner />
