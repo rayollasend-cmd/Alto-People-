@@ -125,4 +125,43 @@ describe.each([
     expect(ratio(T['on-accent'], T['gold-fill'])).toBeGreaterThanOrEqual(AA);
     expect(ratio(T['on-accent'], T['gold-fill-bright'])).toBeGreaterThanOrEqual(AA);
   });
+
+  /**
+   * WCAG 1.4.11 — non-text contrast. Text was the first round of complaints;
+   * "I can't see the fields / the margins aren't clear" was the second, and
+   * none of the checks above would have caught it. A control's boundary is
+   * the only thing identifying it, so it needs 3:1 against BOTH the surface
+   * behind it and its own fill.
+   *
+   * These mirror the override rules in index.css and must be updated
+   * alongside them — the raw navy-secondary token still fails on its own,
+   * which is exactly why the overrides exist.
+   */
+  const CONTROL_BORDER: RGB = isLight ? [130, 140, 150] : [85, 115, 165];
+  const CONTROL_FILL = over(T['navy-secondary'], card, 0.4);
+
+  it('form control border clears 3:1 against the card', () => {
+    expect(ratio(CONTROL_BORDER, card)).toBeGreaterThanOrEqual(AA_LARGE);
+  });
+
+  it('form control border clears 3:1 against its own fill', () => {
+    expect(ratio(CONTROL_BORDER, CONTROL_FILL)).toBeGreaterThanOrEqual(AA_LARGE);
+  });
+
+  it('form control border clears 3:1 against the page', () => {
+    expect(ratio(CONTROL_BORDER, page)).toBeGreaterThanOrEqual(AA_LARGE);
+  });
+
+  // Button boundaries: secondary and outline are identified by their border
+  // alone (the secondary fill is only ~1.09:1 on a light card).
+  it('button border (silver/60) clears 3:1', () => {
+    const border = over(T.silver, card, 0.6);
+    expect(ratio(border, card)).toBeGreaterThanOrEqual(AA_LARGE);
+  });
+
+  // Hover must never read as weaker than rest.
+  it('control hover border is at least as strong as resting', () => {
+    const hover: RGB = isLight ? [100, 116, 139] : over(T.silver, card, 0.6);
+    expect(ratio(hover, card)).toBeGreaterThanOrEqual(ratio(CONTROL_BORDER, card));
+  });
 });

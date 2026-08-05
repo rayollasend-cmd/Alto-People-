@@ -22,11 +22,16 @@ const buttonVariants = cva(
         // affordance reads alongside the rest of the system (Card
         // interactive, ActionCard, etc.). Resting state stays flat to
         // keep visual hierarchy below the primary CTA.
+        // Border is silver/60, not navy-secondary: a button boundary has to
+        // clear 3:1 (WCAG 1.4.11) and navy-secondary is tuned as a surface.
+        // The /40 fill is only 1.09:1 against a light card, so the border is
+        // the sole thing identifying this control.
         secondary:
-          'bg-navy-secondary/40 text-white border border-navy-secondary hover:border-silver/40 hover:bg-navy-secondary hover:elev-1 hover:-translate-y-0.5',
+          'bg-navy-secondary/40 text-white border border-silver/60 hover:border-silver/80 hover:bg-navy-secondary hover:elev-1 hover:-translate-y-0.5',
         // Outline — transparent with an outline. Good for inverse contexts.
+        // /30 composited to 1.72:1 on white; the outline IS the button.
         outline:
-          'border border-silver/30 text-silver hover:text-white hover:border-silver/60 bg-transparent',
+          'border border-silver/60 text-silver hover:text-white hover:border-silver/80 bg-transparent',
         // Ghost — no chrome, used for icon buttons in toolbars.
         ghost:
           'text-silver hover:text-white hover:bg-navy-secondary/60',
