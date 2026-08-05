@@ -23,6 +23,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
+import { StatusBadge, statusLabel } from '@/lib/status';
 import {
   Badge,
   Button,
@@ -108,18 +109,6 @@ function LoadError({ message, onRetry }: { message: string; onRetry: () => void 
     </div>
   );
 }
-
-const COURSE_BADGE: Record<Course['status'], 'pending' | 'success' | 'default'> = {
-  DRAFT: 'default',
-  PUBLISHED: 'success',
-  ARCHIVED: 'default',
-};
-
-const COURSE_STATUS_LABELS: Record<Course['status'], string> = {
-  DRAFT: 'Draft',
-  PUBLISHED: 'Published',
-  ARCHIVED: 'Archived',
-};
 
 function CoursesTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
@@ -233,9 +222,7 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                       {c.enrollmentCount}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={COURSE_BADGE[c.status]}>
-                        {COURSE_STATUS_LABELS[c.status]}
-                      </Badge>
+                      <StatusBadge status={c.status} />
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && c.status === 'DRAFT' && (
@@ -530,21 +517,11 @@ function EnrollDrawer({
   );
 }
 
-const ENROLL_BADGE: Record<EnrollmentStatus, 'pending' | 'accent' | 'success' | 'destructive' | 'default'> = {
-  ASSIGNED: 'pending',
-  IN_PROGRESS: 'accent',
-  COMPLETED: 'success',
-  EXPIRED: 'destructive',
-  WAIVED: 'default',
-};
-
-const ENROLL_STATUS_LABELS: Record<EnrollmentStatus, string> = {
-  ASSIGNED: 'Assigned',
-  IN_PROGRESS: 'In progress',
-  COMPLETED: 'Completed',
-  EXPIRED: 'Expired',
-  WAIVED: 'Waived',
-};
+// Deliberate departures from the shared vocabulary: a learning ASSIGNED is a
+// to-do awaiting the associate (amber) — unlike scheduling, where an assigned
+// shift is a healthy covered one — and IN_PROGRESS here is an actively-worked
+// state (gold per the Badge contract).
+const ENROLL_STATUS_TONES = { ASSIGNED: 'pending', IN_PROGRESS: 'accent' } as const;
 
 function EnrollmentsTab({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<Enrollment[] | null>(null);
@@ -587,7 +564,7 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
       ...filtered.map((e) => [
         e.courseTitle,
         e.associateName,
-        ENROLL_STATUS_LABELS[e.status],
+        statusLabel(e.status),
         e.completedAt ? fmtDate(e.completedAt) : '',
         e.expiresAt ? fmtDate(e.expiresAt) : '',
         e.score ?? '',
@@ -672,9 +649,7 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
                   </TableCell>
                   <TableCell>{e.associateName}</TableCell>
                   <TableCell>
-                    <Badge variant={ENROLL_BADGE[e.status]}>
-                      {ENROLL_STATUS_LABELS[e.status]}
-                    </Badge>
+                    <StatusBadge status={e.status} overrides={ENROLL_STATUS_TONES} />
                   </TableCell>
                   <TableCell className="hidden lg:table-cell">{fmtDate(e.completedAt)}</TableCell>
                   <TableCell className="hidden md:table-cell">{fmtDate(e.expiresAt)}</TableCell>

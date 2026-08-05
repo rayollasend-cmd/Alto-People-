@@ -46,6 +46,7 @@ import {
 } from '@/lib/i9Api';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { statusTone } from '@/lib/status';
 import { ProgressBar } from '@/components/ProgressBar';
 import { AuditTimeline } from '@/components/AuditTimeline';
 import { Badge } from '@/components/ui/Badge';
@@ -1105,17 +1106,9 @@ function addBusinessDays(start: Date, days: number): Date {
   return d;
 }
 
-const I9_DOC_STATUS_VARIANT: Record<
-  I9DocumentListItem['status'],
-  'success' | 'pending' | 'destructive' | 'default'
-> = {
-  VERIFIED: 'success',
-  UPLOADED: 'pending',
-  PENDING: 'default',
-  REJECTED: 'destructive',
-  EXPIRED: 'destructive',
-};
-
+// Tones come from the shared status vocabulary (PENDING now reads amber like
+// every other awaiting state). Only the wording is local: UPLOADED means
+// "someone must review this", so it reads "Awaiting review".
 const I9_DOC_STATUS_LABEL: Record<I9DocumentListItem['status'], string> = {
   VERIFIED: 'Verified',
   UPLOADED: 'Awaiting review',
@@ -1271,7 +1264,7 @@ function I9Card({
                           ? ` · ${d.side === 'FRONT' ? 'Front' : 'Back'}`
                           : ''}
                       </span>
-                      <Badge size="sm" variant={I9_DOC_STATUS_VARIANT[d.status]}>
+                      <Badge size="sm" variant={statusTone(d.status)}>
                         {I9_DOC_STATUS_LABEL[d.status] ?? d.status}
                       </Badge>
                     </li>

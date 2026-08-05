@@ -18,6 +18,7 @@ import { useAuth } from '@/lib/auth';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
 import { hasCapability } from '@/lib/roles';
+import { StatusBadge, statusLabel } from '@/lib/status';
 import {
   AssociatePicker,
   type PickedAssociate,
@@ -59,20 +60,11 @@ const KIND_VARIANT: Record<
   TERMINATION: 'destructive',
 };
 
-const STATUS_VARIANT: Record<
-  DisciplineStatus,
-  'success' | 'pending' | 'outline'
-> = {
-  ACTIVE: 'pending',
-  ACKNOWLEDGED: 'success',
-  RESCINDED: 'outline',
-};
-
-const STATUS_LABELS: Record<DisciplineStatus, string> = {
-  ACTIVE: 'Active',
-  ACKNOWLEDGED: 'Acknowledged',
-  RESCINDED: 'Rescinded',
-};
+// Deliberate departures from the shared vocabulary (visible per the status
+// contract): an ACTIVE disciplinary case is a live warning against the
+// associate, not a healthy state, so it reads amber instead of the canonical
+// green. RESCINDED is this domain's "deliberately ended" terminal — muted.
+const DISCIPLINE_STATUS_TONES = { ACTIVE: 'pending', RESCINDED: 'outline' } as const;
 
 /** Warning ladder, lowest rung first — drives the "suggested next" hint. */
 const KIND_ORDER: DisciplineKind[] = [
@@ -144,7 +136,7 @@ export function DisciplineHome() {
         a.associateName,
         a.associateEmail,
         KIND_LABELS[a.kind],
-        STATUS_LABELS[a.status],
+        statusLabel(a.status),
         a.incidentDate,
         a.effectiveDate,
         a.suspensionDays ?? '',
@@ -172,7 +164,7 @@ export function DisciplineHome() {
               active={filter === s}
               onClick={() => setFilter(s)}
             >
-              {s === 'ALL' ? 'All' : STATUS_LABELS[s]}
+              {s === 'ALL' ? 'All' : statusLabel(s)}
             </FilterChip>
           ))}
         </div>
@@ -288,9 +280,7 @@ export function DisciplineHome() {
                       {fmtDate(parseYmd(a.effectiveDate))}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={STATUS_VARIANT[a.status]}>
-                        {STATUS_LABELS[a.status]}
-                      </Badge>
+                      <StatusBadge status={a.status} overrides={DISCIPLINE_STATUS_TONES} />
                     </TableCell>
                     <TableCell
                       className="text-right"
@@ -599,9 +589,7 @@ function DetailDrawer({
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">
           <Badge variant={KIND_VARIANT[row.kind]}>{KIND_LABELS[row.kind]}</Badge>
-          <Badge variant={STATUS_VARIANT[row.status]}>
-            {STATUS_LABELS[row.status]}
-          </Badge>
+          <StatusBadge status={row.status} overrides={DISCIPLINE_STATUS_TONES} />
           {row.kind === 'SUSPENSION' && row.suspensionDays && (
             <span className="text-sm text-silver">
               {row.suspensionDays} days

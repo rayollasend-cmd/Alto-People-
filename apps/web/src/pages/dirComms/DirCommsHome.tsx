@@ -26,13 +26,11 @@ import {
   updateBroadcast,
   type Broadcast,
   type BroadcastChannel,
-  type BroadcastStatus,
   type Person,
   type Survey,
   type SurveyAggregate,
   type SurveyQuestion,
   type SurveyQuestionKind,
-  type SurveyStatus,
 } from '@/lib/dirCommsApi';
 import { useClients } from '@/lib/useClients';
 import { listCostCenters, listDepartments } from '@/lib/orgApi';
@@ -40,6 +38,7 @@ import type { CostCenter, Department } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
+import { StatusBadge } from '@/lib/status';
 import { downloadCsv } from '@/lib/csv';
 import {
   fmtDateTime,
@@ -80,34 +79,11 @@ import { toast } from 'sonner';
 
 type Tab = 'directory' | 'broadcasts' | 'surveys';
 
-const BROADCAST_STATUS_LABELS: Record<BroadcastStatus, string> = {
-  DRAFT: 'Draft',
-  SCHEDULED: 'Scheduled',
-  SENT: 'Sent',
-  CANCELLED: 'Cancelled',
-};
-
-const BROADCAST_STATUS_VARIANT: Record<
-  BroadcastStatus,
-  'default' | 'info' | 'success' | 'destructive'
-> = {
-  DRAFT: 'default',
-  SCHEDULED: 'info',
-  SENT: 'success',
-  CANCELLED: 'destructive',
-};
-
 const CHANNEL_LABELS: Record<BroadcastChannel, string> = {
   IN_APP: 'In-app',
   EMAIL: 'Email',
   SMS: 'SMS',
   PUSH: 'Push',
-};
-
-const SURVEY_STATUS_LABELS: Record<SurveyStatus, string> = {
-  DRAFT: 'Draft',
-  OPEN: 'Open',
-  CLOSED: 'Closed',
 };
 
 const QUESTION_KIND_LABELS: Record<SurveyQuestionKind, string> = {
@@ -422,9 +398,7 @@ function BroadcastsTab({ canManage }: { canManage: boolean }) {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={BROADCAST_STATUS_VARIANT[b.status]}>
-                        {BROADCAST_STATUS_LABELS[b.status]}
-                      </Badge>
+                      <StatusBadge status={b.status} />
                       {b.status === 'SCHEDULED' && b.scheduledFor && (
                         <div className="text-2xs text-silver/70 mt-0.5">
                           {fmtDateTime(b.scheduledFor)}
@@ -810,17 +784,7 @@ function SurveysTab({ canManage }: { canManage: boolean }) {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        variant={
-                          s.status === 'CLOSED'
-                            ? 'default'
-                            : s.status === 'OPEN'
-                              ? 'success'
-                              : 'default'
-                        }
-                      >
-                        {SURVEY_STATUS_LABELS[s.status]}
-                      </Badge>
+                      <StatusBadge status={s.status} />
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{s.isAnonymous ? 'Yes' : 'No'}</TableCell>
                     <TableCell className="hidden sm:table-cell text-right tabular-nums">

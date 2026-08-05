@@ -21,6 +21,8 @@ import {
 } from '@/lib/teamApi';
 import { fmtDate, fmtDateTime, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
+import { statusTone } from '@/lib/status';
+import { TIME_ENTRY_STATUS_TONES } from '@/lib/timeLabels';
 import {
   Avatar,
   Badge,
@@ -547,20 +549,13 @@ const TS_STATUS_OPTIONS: { value: TeamTimeEntry['status']; label: string }[] = [
   { value: 'REJECTED', label: 'Rejected' },
 ];
 
-const TS_STATUS_BADGE: Record<
-  TeamTimeEntry['status'],
-  'default' | 'success' | 'destructive'
-> = {
-  ACTIVE: 'default',
-  COMPLETED: 'default',
-  APPROVED: 'success',
-  REJECTED: 'destructive',
-};
-
 // Human-readable labels — raw enum values never reach the user's eyes.
+// COMPLETED reads "Pending review" to match the filter above and the admin
+// time queue. Tones come from the shared vocabulary with the time-domain
+// overrides (see lib/timeLabels.ts).
 const TS_STATUS_LABELS: Record<TeamTimeEntry['status'], string> = {
   ACTIVE: 'Active',
-  COMPLETED: 'Completed',
+  COMPLETED: 'Pending review',
   APPROVED: 'Approved',
   REJECTED: 'Rejected',
 };
@@ -950,7 +945,7 @@ function TimesheetsTab() {
                       </Button>
                     </div>
                   ) : (
-                    <Badge variant={TS_STATUS_BADGE[e.status]}>
+                    <Badge variant={statusTone(e.status, { overrides: TIME_ENTRY_STATUS_TONES })}>
                       {TS_STATUS_LABELS[e.status] ?? e.status}
                     </Badge>
                   )}

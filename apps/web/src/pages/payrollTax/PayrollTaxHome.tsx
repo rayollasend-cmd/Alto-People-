@@ -52,10 +52,10 @@ import type { ClientSummary } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
+import { StatusBadge, statusLabel } from '@/lib/status';
 import {
   AssociatePicker,
   type PickedAssociate,
-  Badge,
   Button,
   Card,
   CardContent,
@@ -131,20 +131,6 @@ export function PayrollTaxHome() {
   );
 }
 
-const GARN_BADGE: Record<GarnishmentStatus, 'success' | 'pending' | 'default' | 'destructive'> = {
-  ACTIVE: 'success',
-  SUSPENDED: 'pending',
-  COMPLETED: 'default',
-  TERMINATED: 'destructive',
-};
-
-const GARN_STATUS_LABEL: Record<GarnishmentStatus, string> = {
-  ACTIVE: 'Active',
-  SUSPENDED: 'Suspended',
-  COMPLETED: 'Completed',
-  TERMINATED: 'Terminated',
-};
-
 const GARN_KIND_LABEL: Record<GarnishmentKind, string> = {
   CHILD_SUPPORT: 'Child support',
   TAX_LEVY: 'Tax levy',
@@ -179,11 +165,11 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
 
   const onStatus = async (g: Garnishment, status: GarnishmentStatus) => {
     if (status === g.status) return;
-    const nextLabel = GARN_STATUS_LABEL[status];
+    const nextLabel = statusLabel(status);
     const ok = await confirm({
       title: `Change status to ${nextLabel.toLowerCase()}?`,
       description:
-        `${g.associateName}'s garnishment moves from ${GARN_STATUS_LABEL[g.status].toLowerCase()} to ${nextLabel.toLowerCase()}. ` +
+        `${g.associateName}'s garnishment moves from ${statusLabel(g.status).toLowerCase()} to ${nextLabel.toLowerCase()}. ` +
         'The change takes effect immediately and is recorded.' +
         (status === 'TERMINATED'
           ? ' Terminated garnishments stop withholding entirely.'
@@ -276,9 +262,7 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
                         : fmtMoney(g.amountWithheld)}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={GARN_BADGE[g.status]}>
-                        {GARN_STATUS_LABEL[g.status]}
-                      </Badge>
+                      <StatusBadge status={g.status} />
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -315,9 +299,9 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
                             value={g.status}
                             onChange={(e) => onStatus(g, e.target.value as GarnishmentStatus)}
                           >
-                            <option value="ACTIVE">{GARN_STATUS_LABEL.ACTIVE}</option>
-                            <option value="SUSPENDED">{GARN_STATUS_LABEL.SUSPENDED}</option>
-                            <option value="TERMINATED">{GARN_STATUS_LABEL.TERMINATED}</option>
+                            <option value="ACTIVE">{statusLabel('ACTIVE')}</option>
+                            <option value="SUSPENDED">{statusLabel('SUSPENDED')}</option>
+                            <option value="TERMINATED">{statusLabel('TERMINATED')}</option>
                           </Select>
                         )}
                       </div>
@@ -703,19 +687,12 @@ const FORM_KIND_LABEL: Record<TaxFormKind, string> = {
   F1099_MISC: '1099-MISC (Annual miscellaneous)',
 };
 
-const FORM_STATUS_BADGE: Record<TaxForm['status'], 'pending' | 'success' | 'default' | 'destructive'> = {
-  DRAFT: 'pending',
-  FILED: 'success',
-  AMENDED: 'default',
-  VOIDED: 'destructive',
-};
+const FORM_STATUSES: TaxForm['status'][] = ['DRAFT', 'FILED', 'AMENDED', 'VOIDED'];
 
-const FORM_STATUS_LABEL: Record<TaxForm['status'], string> = {
-  DRAFT: 'Draft',
-  FILED: 'Filed',
-  AMENDED: 'Amended',
-  VOIDED: 'Voided',
-};
+// Domain-only codes the shared vocabulary doesn't carry: FILED is this
+// domain's terminal-good state; AMENDED is a neutral corrected-copy marker.
+// DRAFT/VOIDED come from the shared map (DRAFT reads neutral now, not amber).
+const FORM_TONES = { FILED: 'success', AMENDED: 'default' } as const;
 
 /**
  * Five-step pipeline header. Each step is "done" once any row in the
@@ -1029,9 +1006,9 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
               onChange={(e) => setStatusFilter(e.target.value as 'all' | TaxFormStatus)}
             >
               <option value="all">All statuses</option>
-              {(Object.keys(FORM_STATUS_LABEL) as TaxFormStatus[]).map((s) => (
+              {FORM_STATUSES.map((s) => (
                 <option key={s} value={s}>
-                  {FORM_STATUS_LABEL[s]}
+                  {statusLabel(s)}
                 </option>
               ))}
             </Select>
@@ -1159,9 +1136,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{f.associateName ?? 'Aggregate'}</TableCell>
                     <TableCell>
-                      <Badge variant={FORM_STATUS_BADGE[f.status]}>
-                        {FORM_STATUS_LABEL[f.status]}
-                      </Badge>
+                      <StatusBadge status={f.status} overrides={FORM_TONES} />
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
                       {fmtDate(f.filedAt)}

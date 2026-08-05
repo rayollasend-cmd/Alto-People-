@@ -23,6 +23,7 @@ import {
 } from '@/lib/hrCases123Api';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
+import { statusTone } from '@/lib/status';
 import {
   Badge,
   Button,
@@ -54,16 +55,15 @@ import { Label } from '@/components/ui/Label';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
 
-const STATUS_VARIANT: Record<
-  CaseStatus,
-  'pending' | 'accent' | 'success' | 'outline'
-> = {
+// Deliberate departures from the shared vocabulary: an OPEN case is unclaimed
+// work awaiting triage (amber, not the vocabulary's actionable gold — gold is
+// reserved here for IN_PROGRESS, actively being worked). WAITING_ASSOCIATE is
+// domain-only. RESOLVED / CLOSED come from the shared status vocabulary.
+const CASE_STATUS_TONES = {
   OPEN: 'pending',
   IN_PROGRESS: 'accent',
   WAITING_ASSOCIATE: 'pending',
-  RESOLVED: 'success',
-  CLOSED: 'outline',
-};
+} as const;
 
 const PRIORITY_VARIANT: Record<
   CasePriority,
@@ -332,7 +332,7 @@ export function HrCasesHome() {
                         {c.commentCount > 0 && ` · ${c.commentCount} replies`}
                       </div>
                     </div>
-                    <Badge variant={STATUS_VARIANT[c.status]}>
+                    <Badge variant={statusTone(c.status, { overrides: CASE_STATUS_TONES })}>
                       {STATUS_LABELS[c.status]}
                     </Badge>
                   </button>
@@ -417,7 +417,7 @@ export function HrCasesHome() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={STATUS_VARIANT[c.status]}>
+                        <Badge variant={statusTone(c.status, { overrides: CASE_STATUS_TONES })}>
                           {STATUS_LABELS[c.status]}
                         </Badge>
                       </TableCell>
@@ -625,7 +625,7 @@ function CaseDetailDrawer({
         ) : (
           <>
             <div className="flex items-center gap-2 flex-wrap">
-              <Badge variant={STATUS_VARIANT[data.status]}>
+              <Badge variant={statusTone(data.status, { overrides: CASE_STATUS_TONES })}>
                 {STATUS_LABELS[data.status]}
               </Badge>
               <Badge variant={PRIORITY_VARIANT[data.priority]}>

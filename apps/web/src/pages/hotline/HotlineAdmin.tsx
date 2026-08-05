@@ -42,6 +42,7 @@ import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
+import { statusTone } from '@/lib/status';
 
 const CATEGORY_LABELS: Record<ReportCategory, string> = {
   HARASSMENT: 'Harassment',
@@ -53,17 +54,11 @@ const CATEGORY_LABELS: Record<ReportCategory, string> = {
   OTHER: 'Other',
 };
 
-const STATUS_VARIANT: Record<
-  ReportStatus,
-  'pending' | 'accent' | 'success' | 'destructive' | 'outline'
-> = {
-  RECEIVED: 'destructive',
-  TRIAGING: 'pending',
-  // In-flight work reads gold per the status contract.
-  INVESTIGATING: 'accent',
-  RESOLVED: 'success',
-  CLOSED: 'outline',
-};
+// Deliberate departures from the shared vocabulary: a RECEIVED report is
+// unseen and demands attention NOW in the triage queue (red, not the
+// vocabulary's amber wait state). TRIAGING is domain-only.
+// INVESTIGATING / RESOLVED / CLOSED come from the shared vocabulary.
+const HOTLINE_STATUS_TONES = { RECEIVED: 'destructive', TRIAGING: 'pending' } as const;
 
 const STATUS_LABELS: Record<ReportStatus, string> = {
   RECEIVED: 'New',
@@ -307,7 +302,7 @@ export function HotlineAdmin() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={STATUS_VARIANT[r.status]}>
+                      <Badge variant={statusTone(r.status, { overrides: HOTLINE_STATUS_TONES })}>
                         {STATUS_LABELS[r.status]}
                       </Badge>
                     </TableCell>
@@ -542,7 +537,7 @@ function ReportDrawer({
         ) : (
           <>
             <div className="flex items-center gap-2 flex-wrap">
-              <Badge variant={STATUS_VARIANT[report.status]}>
+              <Badge variant={statusTone(report.status, { overrides: HOTLINE_STATUS_TONES })}>
                 {STATUS_LABELS[report.status]}
               </Badge>
               <SlaChip sla={report.sla} />

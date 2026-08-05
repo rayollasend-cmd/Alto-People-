@@ -49,26 +49,12 @@ import {
 import { Label } from '@/components/ui/Label';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
+import { StatusBadge } from '@/lib/status';
 
-const STATUS_VARIANT: Record<
-  VtoStatus,
-  'pending' | 'success' | 'destructive' | 'accent'
-> = {
-  PENDING: 'pending',
-  // Badge contract: APPROVED is a success state (accent is reserved for
-  // in-flight/being-worked states).
-  APPROVED: 'success',
-  REJECTED: 'destructive',
-  MATCHED: 'success',
-};
-
-// Human-readable labels — raw enum values never reach the user's eyes.
-const STATUS_LABELS: Record<VtoStatus, string> = {
-  PENDING: 'Pending',
-  APPROVED: 'Approved',
-  REJECTED: 'Rejected',
-  MATCHED: 'Matched',
-};
+// MATCHED is domain-only (not in the shared vocabulary): a matched entry is
+// terminal-good, so it reads green like APPROVED. Everything else comes from
+// the shared status vocabulary.
+const VTO_STATUS_TONES = { MATCHED: 'success' } as const;
 
 export function VtoHome() {
   const { user } = useAuth();
@@ -474,9 +460,7 @@ export function VtoHome() {
                         {e.cause ?? '—'}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={STATUS_VARIANT[e.status]}>
-                          {STATUS_LABELS[e.status] ?? e.status}
-                        </Badge>
+                        <StatusBadge status={e.status} overrides={VTO_STATUS_TONES} />
                       </TableCell>
                       <TableCell className="text-sm hidden md:table-cell">
                         {e.matchAmount
@@ -588,9 +572,7 @@ export function VtoHome() {
                         {e.organization}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={STATUS_VARIANT[e.status]}>
-                          {STATUS_LABELS[e.status] ?? e.status}
-                        </Badge>
+                        <StatusBadge status={e.status} overrides={VTO_STATUS_TONES} />
                       </TableCell>
                       <TableCell className="text-xs hidden lg:table-cell">
                         {e.matchRequested ? (
@@ -807,9 +789,7 @@ function MyDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[entry.status]}>
-            {STATUS_LABELS[entry.status] ?? entry.status}
-          </Badge>
+          <StatusBadge status={entry.status} overrides={VTO_STATUS_TONES} />
           <span className="text-sm text-silver">
             {fmtDate(parseYmd(entry.activityDate))} · {entry.hours} hours
           </span>
@@ -914,9 +894,7 @@ function QueueDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[row.status]}>
-            {STATUS_LABELS[row.status] ?? row.status}
-          </Badge>
+          <StatusBadge status={row.status} overrides={VTO_STATUS_TONES} />
           <span className="text-sm text-silver">
             {fmtDate(parseYmd(row.activityDate))} · {row.hours} hours
           </span>

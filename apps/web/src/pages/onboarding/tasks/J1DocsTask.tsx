@@ -15,6 +15,7 @@ import { useAuth } from '@/lib/auth';
 import { TaskShell, inputCls, Field } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { fmtSize } from '@/lib/format';
+import { statusTone } from '@/lib/status';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -35,13 +36,6 @@ const STATUS_LABEL: Record<string, string> = {
   VERIFIED: 'Verified',
   REJECTED: 'Rejected',
   EXPIRED: 'Expired',
-};
-
-const STATUS_VARIANT: Record<string, 'pending' | 'success' | 'destructive'> = {
-  UPLOADED: 'pending',
-  VERIFIED: 'success',
-  REJECTED: 'destructive',
-  EXPIRED: 'destructive',
 };
 
 const KIND_LABEL: Record<string, string> = {
@@ -392,7 +386,7 @@ export function J1DocsTask() {
                   </div>
                   <Badge
                     size="sm"
-                    variant={STATUS_VARIANT[d.status] ?? 'pending'}
+                    variant={statusTone(d.status)}
                     data-status={d.status}
                   >
                     {STATUS_LABEL[d.status] ?? d.status}

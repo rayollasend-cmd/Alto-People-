@@ -78,6 +78,7 @@ import {
 } from '@/components/ui/Table';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { cn } from '@/lib/cn';
+import { statusTone } from '@/lib/status';
 import { usePersistentState } from '@/lib/usePersistentState';
 
 // Filter value space: the real DocumentStatuses plus two synthetic buckets.
@@ -98,16 +99,8 @@ const STATUS_FILTERS: Array<{ value: DocFilter; label: string }> = [
   { value: 'ALL', label: 'All' },
 ];
 
-const STATUS_VARIANT: Record<
-  DocumentStatus,
-  'success' | 'pending' | 'destructive' | 'default'
-> = {
-  UPLOADED: 'pending',
-  VERIFIED: 'success',
-  REJECTED: 'destructive',
-  EXPIRED: 'destructive',
-};
-
+// Tones come from the shared status vocabulary; only the wording is local —
+// UPLOADED means "someone must review this", so it reads "Awaiting review".
 const STATUS_LABELS: Record<DocumentStatus, string> = {
   UPLOADED: 'Awaiting review',
   VERIFIED: 'Verified',
@@ -1047,7 +1040,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     {fmtAge(d.createdAt, now)}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={STATUS_VARIANT[d.status]} data-status={d.status}>
+                    <Badge variant={statusTone(d.status)} data-status={d.status}>
                       {STATUS_LABELS[d.status]}
                     </Badge>
                     {d.rejectionReason && (
@@ -1320,7 +1313,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       </TableCell>
                       <TableCell>
                         <Badge
-                          variant={STATUS_VARIANT[d.status]}
+                          variant={statusTone(d.status)}
                           data-status={d.status}
                         >
                           {STATUS_LABELS[d.status]}

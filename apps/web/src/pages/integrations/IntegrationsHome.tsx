@@ -17,6 +17,7 @@ import {
 import { useClients } from '@/lib/useClients';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
+import { statusTone } from '@/lib/status';
 import { hasCapability, ROLE_CAPABILITIES } from '@/lib/roles';
 import { downloadCsv } from '@/lib/csv';
 import {
@@ -118,12 +119,10 @@ const KEY_STATUS_LABELS: Record<KeyStatus, string> = {
   expired: 'Expired',
 };
 
-/** ACTIVE is success, EXPIRED/REVOKED are both dead keys — destructive. */
-const KEY_STATUS_VARIANT: Record<KeyStatus, 'success' | 'destructive'> = {
-  active: 'success',
-  revoked: 'destructive',
-  expired: 'destructive',
-};
+// REVOKED is domain-only: a revoked key is a dead credential, red like
+// EXPIRED. ACTIVE / EXPIRED come from the shared status vocabulary (the
+// lowercase keys are uppercased by statusTone).
+const KEY_STATUS_TONES = { REVOKED: 'destructive' } as const;
 
 function KeysTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
@@ -304,7 +303,7 @@ function KeysTab({ canManage }: { canManage: boolean }) {
                       {fmtDate(k.lastUsedAt)}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={KEY_STATUS_VARIANT[keyStatus(k)]}>
+                      <Badge variant={statusTone(keyStatus(k), { overrides: KEY_STATUS_TONES })}>
                         {KEY_STATUS_LABELS[keyStatus(k)]}
                       </Badge>
                     </TableCell>

@@ -23,8 +23,8 @@ import {
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
+import { StatusBadge } from '@/lib/status';
 import {
-  Badge,
   Button,
   Card,
   CardContent,
@@ -52,15 +52,12 @@ import {
 import { FormHint, Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
-const STATUS_BADGE: Record<ReimbursementStatus, 'pending' | 'accent' | 'success' | 'destructive' | 'default'> = {
-  DRAFT: 'default',
-  SUBMITTED: 'pending',
-  MANAGER_APPROVED: 'pending',
-  SETTLED: 'accent',
-  REJECTED: 'destructive',
-  PAID: 'success',
-};
+// SETTLED is domain-only: approved and queued into a payroll run but not yet
+// paid — an in-flight state (gold). All other codes use the shared vocabulary
+// (MANAGER_APPROVED now reads green like every other approval).
+const REIMB_STATUS_TONES = { SETTLED: 'accent' } as const;
 
+// Domain wording (SETTLED explains itself); tones come from the shared map.
 const STATUS_LABEL: Record<ReimbursementStatus, string> = {
   DRAFT: 'Draft',
   SUBMITTED: 'Submitted',
@@ -289,7 +286,7 @@ export function ReimbursementsHome() {
                       {fmtMoney(r.totalAmount, { currency: r.currency })}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={STATUS_BADGE[r.status]}>{STATUS_LABEL[r.status]}</Badge>
+                      <StatusBadge status={r.status} overrides={REIMB_STATUS_TONES} label={STATUS_LABEL[r.status]} />
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
                       {fmtDate(r.submittedAt)}
@@ -510,7 +507,7 @@ function ReimbursementDrawer({
         ) : (
           <>
             <div className="flex items-center gap-3">
-              <Badge variant={STATUS_BADGE[data.status]}>{STATUS_LABEL[data.status]}</Badge>
+              <StatusBadge status={data.status} overrides={REIMB_STATUS_TONES} label={STATUS_LABEL[data.status]} />
               <div className="text-sm text-silver">
                 Total: {fmtMoney(data.totalAmount, { currency: data.currency })}
               </div>
