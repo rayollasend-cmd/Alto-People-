@@ -808,7 +808,7 @@ function MyDetailDrawer({
             href={safeHref(entry.evidenceUrl)}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-steel hover:underline"
+            className="text-sm text-gold hover:underline"
           >
             Evidence ↗
           </a>
@@ -913,7 +913,7 @@ function QueueDetailDrawer({
             href={safeHref(row.evidenceUrl)}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-steel hover:underline"
+            className="text-sm text-gold hover:underline"
           >
             Evidence ↗
           </a>

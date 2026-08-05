@@ -12,6 +12,13 @@ export default {
         gold: {
           DEFAULT: 'rgb(var(--color-gold) / <alpha-value>)',
           bright: 'rgb(var(--color-gold-bright) / <alpha-value>)',
+          // Gold as a FILL that carries `text-on-accent` (dark ink). Split
+          // from `gold`/`gold-bright` because those two are tuned as TEXT
+          // colors: in light mode they are dark enough to read on white,
+          // which leaves dark ink on top of them below AA. The fill tier
+          // stays light in both themes so the dark ink always clears.
+          fill: 'rgb(var(--color-gold-fill) / <alpha-value>)',
+          'fill-bright': 'rgb(var(--color-gold-fill-bright) / <alpha-value>)',
         },
         silver: 'rgb(var(--color-silver) / <alpha-value>)',
         steel: 'rgb(var(--color-steel) / <alpha-value>)',

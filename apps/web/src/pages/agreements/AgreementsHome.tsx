@@ -638,7 +638,7 @@ function SignDrawer({
             href={safeHref(row.documentUrl)}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-steel hover:underline"
+            className="text-sm text-gold hover:underline"
           >
             Read the document →
           </a>

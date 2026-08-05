@@ -284,7 +284,7 @@ function DirectoryTab() {
                       <span className="inline-flex items-center gap-1.5">
                         <a
                           href={`mailto:${p.email}`}
-                          className="text-steel hover:text-white hover:underline"
+                          className="text-gold hover:text-gold-bright hover:underline"
                         >
                           {p.email}
                         </a>
@@ -296,7 +296,7 @@ function DirectoryTab() {
                         <span className="inline-flex items-center gap-1.5">
                           <a
                             href={`tel:${p.phone}`}
-                            className="text-steel hover:text-white hover:underline"
+                            className="text-gold hover:text-gold-bright hover:underline"
                           >
                             {p.phone}
                           </a>

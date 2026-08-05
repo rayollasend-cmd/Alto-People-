@@ -60,6 +60,11 @@
   --color-midnight:         8  15  32;  /* #080F20 */
   --color-gold:           217 185 103;  /* #D9B967 — AA-compliant on navy */
   --color-gold-bright:    240 216 120;  /* #F0D878 */
+  /* Gold as a FILL under dark `on-accent` ink (primary button gradient,
+     toast action, drawer active row). In dark mode these match the text
+     tier exactly — the split only matters in light mode. */
+  --color-gold-fill:      217 185 103;  /* #D9B967 */
+  --color-gold-fill-bright: 240 216 120; /* #F0D878 */
   --color-silver:         192 208 224;  /* #C0D0E0 — bumped from #A8B8C8 so
                                           fractional opacities (silver/60,
                                           /70) clear WCAG AA on navy. */
@@ -84,21 +89,38 @@
   --color-navy:           255 255 255;  /* #FFFFFF */
   --color-navy-secondary: 226 232 240;  /* #E2E8F0 — borders / subtle hover */
   --color-midnight:       248 250 252;  /* #F8FAFC — app background */
-  /* Gold dropped a step so it passes AA on white. */
-  --color-gold:           184 134  11;  /* #B8860B — ≈4.6:1 on white */
-  --color-gold-bright:    212 158  36;  /* #D49E24 */
+  /* Gold darkened further so SMALL gold text (links, eyebrow labels, the
+     active nav tab) clears WCAG AA on white — the earlier #B8860B was only
+     ~3.25:1 (large-text-only), which failed every small gold link in light
+     mode. #87680C ≈ 5.2:1 on white / 5.0:1 on the #F8FAFC app bg. */
+  --color-gold:           135 104  12;  /* #87680C — ≈5.2:1 on white (AA) */
+  /* gold-bright is the large-display / hover accent (dashboard hero
+     numbers). #A67908 ≈ 3.9:1 clears the 3:1 large-text bar it needs and
+     stays more saturated than base gold so the "brighter" relationship
+     still reads; not used for small text. */
+  --color-gold-bright:    166 121   8;  /* #A67908 */
+  /* Fill tier stays at the LIGHTER golds so dark `on-accent` ink keeps
+     clearing AA on top of it: #D49E24 → 7.3:1 and #B8860B → 5.4:1 against
+     the #0B1832 ink. Darkening these with the text tier would have taken
+     the primary button's label to 3.4:1 — the one thing the gold change
+     could not afford to break. */
+  --color-gold-fill:      184 134  11;  /* #B8860B — 5.4:1 under on-accent ink */
+  --color-gold-fill-bright: 212 158 36; /* #D49E24 — 7.3:1 under on-accent ink */
   /* "silver" (secondary text) becomes a dark slate. Slate-700 (not
      slate-600) so the fractional opacity utilities used throughout the
      app (text-silver/60, /70, /80) still clear WCAG AA on white. A
      softer slate-600 fails AA at /60 and below; bumping the base lets
      the same Tailwind classes work in both themes without a sweep. */
   --color-silver:          51  65  85;  /* #334155 — slate-700 */
-  --color-steel:           37  99 235;  /* #2563EB */
+  --color-steel:           37  99 235;  /* #2563EB — 5.2:1 as link text on white */
   --color-sky:            219 234 254;  /* #DBEAFE */
   --color-teal:            13 148 136;  /* #0D9488 */
-  --color-alert:          220  38  38;  /* #DC2626 */
-  --color-success:          5 150 105;  /* #059669 */
-  --color-warning:        217 119   6;  /* #D97706 */
+  --color-alert:          220  38  38;  /* #DC2626 — 4.8:1 on white (AA) */
+  /* success + warning darkened a step so SMALL status text / inline
+     errors clear AA on white (the emerald-600 / amber-600 tier was only
+     ~3.2-3.8:1, large-text-only). */
+  --color-success:          4 120  87;  /* #047857 — ≈5.5:1 on white (AA) */
+  --color-warning:        180  83   9;  /* #B45309 — ≈5.0:1 on white (AA) */
   --color-muted:          148 163 184;  /* #94A3B8 */
   /* Primary text in light mode. */
   --color-fg:              15  23  42;  /* #0F172A — slate-900 */
@@ -284,8 +306,8 @@
 .btn-gold {
   background-image: linear-gradient(
     to bottom,
-    rgb(var(--color-gold-bright)) 0%,
-    rgb(var(--color-gold)) 100%
+    rgb(var(--color-gold-fill-bright)) 0%,
+    rgb(var(--color-gold-fill)) 100%
   );
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.25) inset,
@@ -295,8 +317,8 @@
 .btn-gold:hover:not(:disabled) {
   background-image: linear-gradient(
     to bottom,
-    rgb(var(--color-gold-bright)) 0%,
-    rgb(var(--color-gold-bright)) 100%
+    rgb(var(--color-gold-fill-bright)) 0%,
+    rgb(var(--color-gold-fill-bright)) 100%
   );
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.35) inset,
@@ -306,8 +328,8 @@
 .btn-gold:active:not(:disabled) {
   background-image: linear-gradient(
     to bottom,
-    rgb(var(--color-gold)) 0%,
-    rgb(var(--color-gold)) 100%
+    rgb(var(--color-gold-fill)) 0%,
+    rgb(var(--color-gold-fill)) 100%
   );
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.25) inset,
@@ -328,12 +350,9 @@
   background-color: rgb(var(--color-navy-secondary));
   color: rgb(var(--color-silver) / 0.7);
 }
+/* Light mode keeps the base gradient (it already reads off the fill tier,
+   which does not darken with the text tier) and only softens the glow. */
 :root[data-theme='light'] .btn-gold {
-  background-image: linear-gradient(
-    to bottom,
-    rgb(var(--color-gold-bright)) 0%,
-    rgb(var(--color-gold)) 100%
-  );
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.5) inset,
     0 0 0 1px rgba(184, 134, 11, 0.35),
