@@ -21,6 +21,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
+import { statusTone } from '@/lib/status';
 import {
   Badge,
   Button,
@@ -49,15 +50,15 @@ import {
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { FormHint, Label } from '@/components/ui/Label';
 
-const STATUS_VARIANT: Record<
-  AgreementStatus,
-  'pending' | 'success' | 'destructive' | 'outline'
-> = {
+// Domain-only codes the shared vocabulary doesn't carry: PENDING_SIGNATURE
+// awaits the associate's signature (amber), SIGNED is terminal-good, and a
+// SUPERSEDED agreement was deliberately replaced (muted). EXPIRED comes from
+// the shared status vocabulary.
+const AGREEMENT_STATUS_TONES = {
   PENDING_SIGNATURE: 'pending',
   SIGNED: 'success',
-  EXPIRED: 'destructive',
   SUPERSEDED: 'outline',
-};
+} as const;
 
 function daysSince(iso: string): number {
   return Math.max(
@@ -200,7 +201,7 @@ export function AgreementsHome() {
                         {a.expiresOn && ` · expires ${fmtDate(parseYmd(a.expiresOn))}`}
                       </div>
                     </div>
-                    <Badge variant={STATUS_VARIANT[a.status]}>
+                    <Badge variant={statusTone(a.status, { overrides: AGREEMENT_STATUS_TONES })}>
                       {STATUS_LABELS[a.status]}
                     </Badge>
                     {a.documentUrl && (
@@ -294,7 +295,7 @@ export function AgreementsHome() {
                           : KIND_LABELS[a.kind]}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={STATUS_VARIANT[a.status]}>
+                        <Badge variant={statusTone(a.status, { overrides: AGREEMENT_STATUS_TONES })}>
                           {STATUS_LABELS[a.status]}
                         </Badge>
                       </TableCell>

@@ -137,21 +137,7 @@ import {
 } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
-
-const STATUS_VARIANT: Record<
-  DirectoryStatus,
-  'success' | 'pending' | 'destructive'
-> = {
-  ACTIVE: 'success',
-  PENDING: 'pending',
-  INACTIVE: 'destructive',
-};
-
-const STATUS_LABEL: Record<DirectoryStatus, string> = {
-  ACTIVE: 'Active',
-  PENDING: 'Pending',
-  INACTIVE: 'Inactive',
-};
+import { StatusBadge, statusLabel } from '@/lib/status';
 
 const PAY_TYPE_SUFFIX: Record<string, string> = {
   HOURLY: '/ hr',
@@ -471,7 +457,7 @@ export function PeopleDirectory() {
       ['Name', 'Status', 'Email', 'Workplace', 'Type', 'Start date'],
       ...rows.map((r) => [
         `${r.firstName} ${r.lastName}`,
-        STATUS_LABEL[r.status],
+        statusLabel(r.status),
         r.email,
         r.workplaceClientName ?? '',
         EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
@@ -556,7 +542,7 @@ export function PeopleDirectory() {
             active={status === s}
             onClick={() => setStatus(status === s ? '' : s)}
           >
-            {STATUS_LABEL[s]}
+            {statusLabel(s)}
           </FilterChip>
         ))}
         <Select
@@ -939,7 +925,7 @@ const DirectoryRow = memo(function DirectoryRow({
       </TableCell>
       <TableCell>
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[r.status]}>{STATUS_LABEL[r.status]}</Badge>
+          <StatusBadge status={r.status} />
           {r.status === 'PENDING' && r.onboardingPercent !== null && (
             <span className="text-2xs tabular-nums text-silver">
               {r.onboardingPercent}%
@@ -1024,9 +1010,7 @@ const DirectoryPhoneCard = memo(function DirectoryPhoneCard({
               <div className="font-medium text-white truncate">
                 {r.firstName} {r.lastName}
               </div>
-              <Badge variant={STATUS_VARIANT[r.status]} className="shrink-0">
-                {STATUS_LABEL[r.status]}
-              </Badge>
+              <StatusBadge status={r.status} className="shrink-0" />
             </div>
             <div className="text-xs text-silver truncate">{r.email}</div>
             {(r.workplaceClientName || r.position) && (
@@ -1088,9 +1072,7 @@ function DirectoryDrawer({
               {a.firstName} {a.lastName}
             </DrawerTitle>
             <DrawerDescription className="truncate flex items-center gap-2">
-              <Badge variant={STATUS_VARIANT[a.status]} className="text-2xs">
-                {STATUS_LABEL[a.status]}
-              </Badge>
+              <StatusBadge status={a.status} className="text-2xs" />
               <span>{EMPLOYMENT_LABEL[a.employmentType] ?? a.employmentType}</span>
               {a.j1Status && <Badge variant="default">J-1</Badge>}
             </DrawerDescription>
@@ -2964,23 +2946,6 @@ const HR_UPLOAD_KINDS: ReadonlyArray<DocumentKind> = [
   'OTHER',
 ];
 
-const DOC_STATUS_VARIANT: Record<
-  DocumentRecord['status'],
-  'success' | 'pending' | 'destructive'
-> = {
-  VERIFIED: 'success',
-  UPLOADED: 'pending',
-  REJECTED: 'destructive',
-  EXPIRED: 'destructive',
-};
-
-const DOC_STATUS_LABEL: Record<DocumentRecord['status'], string> = {
-  VERIFIED: 'Verified',
-  UPLOADED: 'Uploaded',
-  REJECTED: 'Rejected',
-  EXPIRED: 'Expired',
-};
-
 /* ----- Document vault ----------------------------------------------------
  * The Documents tab is the associate's whole file: every DocumentRecord in
  * the system is keyed here whichever screen uploaded it, grouped by the
@@ -3309,9 +3274,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                 )}
               </TableCell>
               <TableCell>
-                <Badge variant={DOC_STATUS_VARIANT[d.status]}>
-                  {DOC_STATUS_LABEL[d.status]}
-                </Badge>
+                <StatusBadge status={d.status} />
               </TableCell>
               <TableCell className="hidden sm:table-cell text-xs text-silver tabular-nums">
                 {fmtDate(d.createdAt)}

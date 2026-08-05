@@ -52,14 +52,12 @@ import {
   TableRow,
 } from '@/components/ui';
 import { toast } from 'sonner';
+import { statusTone } from '@/lib/status';
 
-const STATUS_VARIANT: Record<PositionStatus, 'default' | 'pending' | 'success' | 'destructive' | 'accent'> = {
-  PLANNED: 'pending',
-  OPEN: 'accent',
-  FILLED: 'success',
-  FROZEN: 'default',
-  CLOSED: 'default',
-};
+// Domain-only codes the shared vocabulary doesn't carry: FILLED is this
+// domain's terminal-good; FROZEN is a neutral on-hold. PLANNED / OPEN /
+// CLOSED come from the shared status vocabulary.
+const POSITION_STATUS_TONES = { FILLED: 'success', FROZEN: 'default' } as const;
 
 const STATUS_LABELS: Record<PositionStatus, string> = {
   PLANNED: 'Planned',
@@ -202,7 +200,7 @@ export function PositionsTab({
                 </TableCell>
                 <TableCell className="text-right tabular-nums hidden lg:table-cell">{p.fteAuthorized}</TableCell>
                 <TableCell>
-                  <Badge variant={STATUS_VARIANT[p.status]}>{STATUS_LABELS[p.status]}</Badge>
+                  <Badge variant={statusTone(p.status, { overrides: POSITION_STATUS_TONES })}>{STATUS_LABELS[p.status]}</Badge>
                 </TableCell>
               </TableRow>
             ))}
@@ -414,7 +412,7 @@ function PositionDrawer({
             ? 'Authorized seat in the org — distinct from the person filling it.'
             : (
               <span className="inline-flex items-center gap-2">
-                <Badge variant={STATUS_VARIANT[initial!.status]}>{STATUS_LABELS[initial!.status]}</Badge>
+                <Badge variant={statusTone(initial!.status, { overrides: POSITION_STATUS_TONES })}>{STATUS_LABELS[initial!.status]}</Badge>
                 {initial!.filledByName ? (
                   <>filled by {initial!.filledByName}</>
                 ) : (

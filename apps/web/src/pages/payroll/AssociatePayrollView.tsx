@@ -24,6 +24,7 @@ import {
 import { fileCase } from '@/lib/hrCases123Api';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtMoney, parseYmd } from '@/lib/format';
+import { statusTone } from '@/lib/status';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { dayHeading, groupByDayBy } from '@/lib/dayGroup';
@@ -66,23 +67,14 @@ const KIND_KEY: Record<PayrollItemEarning['kind'], MessageKey> = {
   REIMBURSEMENT: 'pay.kind.REIMBURSEMENT',
 };
 
+// Labels stay i18n keys (this page is translated); tones come from the
+// shared status vocabulary (PENDING amber, HELD amber, VOIDED muted).
 const STATUS_KEY: Record<PayrollItem['status'], MessageKey> = {
   PENDING: 'pay.status.PENDING',
   DISBURSED: 'pay.status.DISBURSED',
   FAILED: 'pay.status.FAILED',
   HELD: 'pay.status.HELD',
   VOIDED: 'pay.status.VOIDED',
-};
-
-const STATUS_VARIANT: Record<
-  PayrollItem['status'],
-  'default' | 'success' | 'destructive' | 'accent'
-> = {
-  PENDING: 'default',
-  DISBURSED: 'success',
-  FAILED: 'destructive',
-  HELD: 'accent',
-  VOIDED: 'destructive',
 };
 
 /**
@@ -674,7 +666,7 @@ function PaystubCard({
               rate: fmtMoney(item.hourlyRate),
             })}
           </div>
-          <Badge className="shrink-0" variant={STATUS_VARIANT[item.status]}>
+          <Badge className="shrink-0" variant={statusTone(item.status)}>
             {t(STATUS_KEY[item.status])}
           </Badge>
         </div>

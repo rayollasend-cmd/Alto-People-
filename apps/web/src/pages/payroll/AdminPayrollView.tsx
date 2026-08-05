@@ -98,6 +98,7 @@ import {
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime, fmtMoney, parseYmd } from '@/lib/format';
+import { StatusBadge, statusLabel } from '@/lib/status';
 import { FilterChip } from '@/components/ui/FilterBar';
 
 /** "May 13, 2026 → May 26, 2026" — the run period, parsed as local days. */
@@ -112,22 +113,10 @@ const STATUS_FILTERS: Array<{ value: PayrollRunStatus | 'ALL'; label: string }> 
   { value: 'ALL', label: 'All' },
 ];
 
-const RUN_STATUS_VARIANT: Record<
-  PayrollRunStatus,
-  'success' | 'pending' | 'destructive' | 'default' | 'accent'
-> = {
-  DRAFT: 'default',
-  FINALIZED: 'pending',
-  DISBURSED: 'success',
-  CANCELLED: 'destructive',
-};
-
-const RUN_STATUS_LABELS: Record<PayrollRunStatus, string> = {
-  DRAFT: 'Draft',
-  FINALIZED: 'Finalized',
-  DISBURSED: 'Disbursed',
-  CANCELLED: 'Cancelled',
-};
+// FINALIZED is domain-only (not in the shared vocabulary): the run is
+// computed but money hasn't moved, so it reads amber like other wait states.
+// DRAFT / DISBURSED / CANCELLED come from the shared status vocabulary.
+const RUN_STATUS_TONES = { FINALIZED: 'pending' } as const;
 
 interface AdminPayrollViewProps {
   canProcess: boolean;
@@ -936,9 +925,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <Badge variant={RUN_STATUS_VARIANT[r.status]}>
-                              {RUN_STATUS_LABELS[r.status]}
-                            </Badge>
+                            <StatusBadge status={r.status} overrides={RUN_STATUS_TONES} />
                             {r.kind !== 'REGULAR' && <RunKindBadge kind={r.kind} />}
                           </div>
                         </TableCell>
@@ -987,9 +974,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           {r.kind !== 'REGULAR' && <RunKindBadge kind={r.kind} />}
-                          <Badge variant={RUN_STATUS_VARIANT[r.status]}>
-                            {RUN_STATUS_LABELS[r.status]}
-                          </Badge>
+                          <StatusBadge status={r.status} overrides={RUN_STATUS_TONES} />
                         </div>
                       </div>
                       <div className="mt-2 flex items-end justify-between gap-3">
@@ -1031,9 +1016,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 {fmtPeriod(selected.periodStart, selected.periodEnd)}
               </DrawerTitle>
               <DrawerDescription>
-                <Badge variant={RUN_STATUS_VARIANT[selected.status]}>
-                  {RUN_STATUS_LABELS[selected.status]}
-                </Badge>
+                <StatusBadge status={selected.status} overrides={RUN_STATUS_TONES} />
                 <span className="ml-2 text-xs">
                   {selected.items.length} paystub{selected.items.length === 1 ? '' : 's'}
                 </span>
@@ -1759,9 +1742,7 @@ function PayrollHero({
               {fmtPeriod(lr.periodStart, lr.periodEnd)}
             </div>
             <div className="mt-1.5 flex items-center gap-2">
-              <Badge variant={RUN_STATUS_VARIANT[lr.status]}>
-                {RUN_STATUS_LABELS[lr.status]}
-              </Badge>
+              <StatusBadge status={lr.status} overrides={RUN_STATUS_TONES} />
               <span className="text-xs text-silver/70">
                 {lr.itemCount} paystub{lr.itemCount === 1 ? '' : 's'}
               </span>
@@ -2363,7 +2344,7 @@ function FailedPaymentsSummary({
                       )}
                     </div>
                     <div className="text-2xs uppercase tracking-widest text-alert/80">
-                      {PAYSTUB_STATUS_LABELS[it.status] ?? it.status}
+                      {statusLabel(it.status)}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -2405,24 +2386,6 @@ function FailedPaymentsSummary({
  *  hours/rate/net + status pill. Expanded drills into earnings, taxes,
  *  garnishments, plus the Branch enrollment quick-action when canProcess.
  * -------------------------------------------------------------------------- */
-
-const PAYSTUB_STATUS_VARIANT: Record<
-  string,
-  'default' | 'success' | 'pending' | 'destructive'
-> = {
-  PENDING: 'default',
-  DISBURSED: 'success',
-  FAILED: 'destructive',
-  HELD: 'pending',
-};
-
-const PAYSTUB_STATUS_LABELS: Record<string, string> = {
-  PENDING: 'Pending',
-  DISBURSED: 'Disbursed',
-  FAILED: 'Failed',
-  HELD: 'Held',
-  VOIDED: 'Voided',
-};
 
 const PaystubAdminCard = memo(function PaystubAdminCard({
   item,
@@ -2468,12 +2431,7 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
               {item.taxState ? ` · ${item.taxState}` : ''}
             </div>
           </div>
-          <Badge
-            variant={PAYSTUB_STATUS_VARIANT[item.status] ?? 'default'}
-            className="text-2xs shrink-0"
-          >
-            {PAYSTUB_STATUS_LABELS[item.status] ?? item.status}
-          </Badge>
+          <StatusBadge status={item.status} className="text-2xs shrink-0" />
         </div>
         <div className="text-right shrink-0">
           <div className="text-2xs uppercase tracking-widest text-silver/70">Net</div>

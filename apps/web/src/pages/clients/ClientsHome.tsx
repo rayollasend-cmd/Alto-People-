@@ -17,8 +17,8 @@ import { listClients } from '@/lib/clientsApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
+import { StatusBadge } from '@/lib/status';
 import { Avatar } from '@/components/ui/Avatar';
-import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -36,21 +36,6 @@ import {
 } from '@/components/ui/Table';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { NewClientDialog } from './NewClientDialog';
-
-const STATUS_VARIANT: Record<
-  string,
-  'success' | 'pending' | 'destructive' | 'default'
-> = {
-  ACTIVE: 'success',
-  PROSPECT: 'pending',
-  INACTIVE: 'destructive',
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  ACTIVE: 'Active',
-  PROSPECT: 'Prospect',
-  INACTIVE: 'Inactive',
-};
 
 const STATUS_FILTERS: Array<{ value: ClientStatus | 'ALL'; label: string }> = [
   { value: 'ALL', label: 'All' },
@@ -286,9 +271,7 @@ export function ClientsHome() {
                     {c.industry ?? '—'}
                   </TableCell>
                   <TableCell>
-                    <Badge variant={STATUS_VARIANT[c.status] ?? 'default'}>
-                      {STATUS_LABEL[c.status] ?? c.status}
-                    </Badge>
+                    <StatusBadge status={c.status} />
                   </TableCell>
                   <TableCell>
                     {c.state ? (
@@ -369,9 +352,7 @@ function ClientCard({ client }: { client: ClientListItem }) {
             </span>
           </div>
         </div>
-        <Badge variant={STATUS_VARIANT[client.status] ?? 'default'} className="shrink-0">
-          {STATUS_LABEL[client.status] ?? client.status}
-        </Badge>
+        <StatusBadge status={client.status} className="shrink-0" />
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2 border-t border-navy-secondary/60">

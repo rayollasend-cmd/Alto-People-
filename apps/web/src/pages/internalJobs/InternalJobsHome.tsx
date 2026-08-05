@@ -20,6 +20,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
+import { statusTone } from '@/lib/status';
 import {
   Badge,
   Button,
@@ -46,18 +47,13 @@ import {
 import { Label } from '@/components/ui/Label';
 import { fmtDate, fmtMoney } from '@/lib/format';
 
-const STATUS_VARIANT: Record<
-  InternalApplicationStatus,
-  'pending' | 'accent' | 'success' | 'destructive' | 'outline'
-> = {
-  SUBMITTED: 'pending',
+// Domain-only codes the shared vocabulary doesn't carry: UNDER_REVIEW is a
+// wait state; an OFFERED application is in-flight awaiting the associate's
+// decision (gold). The rest come from the shared status vocabulary.
+const INTERNAL_APP_STATUS_TONES = {
   UNDER_REVIEW: 'pending',
-  INTERVIEWING: 'accent',
   OFFERED: 'accent',
-  HIRED: 'success',
-  REJECTED: 'destructive',
-  WITHDRAWN: 'outline',
-};
+} as const;
 
 /** The my-applications DTO may carry the last status-change stamp
  *  (server sets reviewedAt on every manager decision). */
@@ -254,7 +250,7 @@ export function InternalJobsHome() {
                       )}
                     </div>
                     {j.myApplication ? (
-                      <Badge variant={STATUS_VARIANT[j.myApplication.status]}>
+                      <Badge variant={statusTone(j.myApplication.status, { overrides: INTERNAL_APP_STATUS_TONES })}>
                         {STATUS_LABELS[j.myApplication.status]}
                       </Badge>
                     ) : (
@@ -363,7 +359,7 @@ export function InternalJobsHome() {
                       {a.reviewedAt && ` · Status updated ${fmtDate(a.reviewedAt)}`}
                     </div>
                   </div>
-                  <Badge variant={STATUS_VARIANT[a.status]}>
+                  <Badge variant={statusTone(a.status, { overrides: INTERNAL_APP_STATUS_TONES })}>
                     {STATUS_LABELS[a.status]}
                   </Badge>
                   {a.status !== 'WITHDRAWN' &&
