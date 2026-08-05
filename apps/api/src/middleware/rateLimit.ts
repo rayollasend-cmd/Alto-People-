@@ -440,3 +440,34 @@ export const integrationsAnonLimiter = rateLimit({
     },
   },
 });
+
+// ---------------------------------------------------------------------------
+// Default backstop for the authenticated API surface.
+//
+// Every sensitive surface has its own tighter regime (auth flows, careers,
+// kiosk PIN, the integrations bearer API) — but the bulk of authenticated
+// CRUD previously had NO throttle, so a runaway client loop or a stolen
+// session could hammer the DB unchecked. Generous on purpose: an admin
+// dashboard bursts 20-40 requests on a page load; 600/min/user never
+// touches a human, only loops. Keyed by user id (stable across NAT);
+// anonymous requests are skipped entirely — they either hit a surface
+// with its own limiter or the static SPA assets, where a per-IP cap
+// would punish shared-IP offices.
+// ---------------------------------------------------------------------------
+const DEFAULT_API_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 600;
+
+/** 600 requests / minute / authenticated user across the whole API. */
+export const defaultApiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: DEFAULT_API_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skip: (req: Request) => !req.user || req.method === 'OPTIONS',
+  keyGenerator: (req: Request) => `user:${req.user!.id}`,
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many requests — slow down and retry in a minute.',
+    },
+  },
+});

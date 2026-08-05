@@ -482,9 +482,23 @@ export const LoginMfaRequiredResponseSchema = z.object({
 });
 export type LoginMfaRequiredResponse = z.infer<typeof LoginMfaRequiredResponseSchema>;
 
+/**
+ * Org policy (OrgSetting.mfaRequirement) applies to this user's role but
+ * they have no TOTP enrolled. The server issued a short-lived mfa_enroll
+ * cookie accepted ONLY by the /auth/me/mfa/enroll/* endpoints; the client
+ * drives the QR + confirm flow and receives a real session on confirm.
+ */
+export const LoginMfaEnrollRequiredResponseSchema = z.object({
+  mfaEnrollmentRequired: z.literal(true),
+});
+export type LoginMfaEnrollRequiredResponse = z.infer<
+  typeof LoginMfaEnrollRequiredResponseSchema
+>;
+
 export const LoginResponseSchema = z.union([
   LoginSuccessResponseSchema,
   LoginMfaRequiredResponseSchema,
+  LoginMfaEnrollRequiredResponseSchema,
 ]);
 export type LoginResponse = z.infer<typeof LoginResponseSchema>;
 
@@ -3055,7 +3069,17 @@ export type DashboardKPIs = z.infer<typeof DashboardKPIsSchema>;
 export const NotificationChannelSchema = z.enum(['SMS', 'PUSH', 'EMAIL', 'IN_APP']);
 export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
 
-export const NotificationStatusSchema = z.enum(['QUEUED', 'SENT', 'FAILED', 'READ']);
+export const NotificationStatusSchema = z.enum([
+  'QUEUED',
+  'SENT',
+  'FAILED',
+  'READ',
+  // EMAIL only — async statuses driven by Resend's event webhook and the
+  // do-not-email suppression list.
+  'BOUNCED',
+  'COMPLAINED',
+  'SUPPRESSED',
+]);
 export type NotificationStatus = z.infer<typeof NotificationStatusSchema>;
 
 export const NotificationSchema = z.object({
@@ -3069,6 +3093,9 @@ export const NotificationSchema = z.object({
   body: z.string(),
   category: z.string().nullable(),
   externalRef: z.string().nullable(),
+  // Resend's message id for real EMAIL sends; what the events webhook
+  // matches bounces/complaints against. Optional for back-compat.
+  providerMessageId: z.string().nullable().optional(),
   failureReason: z.string().nullable(),
   sentAt: z.string().datetime().nullable(),
   readAt: z.string().datetime().nullable(),
@@ -3123,6 +3150,25 @@ export const NotificationBroadcastInputSchema = z.object({
   category: z.string().min(1).max(80).optional(),
 });
 export type NotificationBroadcastInput = z.infer<typeof NotificationBroadcastInputSchema>;
+
+/* ----- Email suppression list (do-not-email) --------------------------- */
+
+export const EmailSuppressionReasonSchema = z.enum(['BOUNCED', 'COMPLAINED', 'MANUAL']);
+export type EmailSuppressionReason = z.infer<typeof EmailSuppressionReasonSchema>;
+
+export const EmailSuppressionSchema = z.object({
+  id: UuidSchema,
+  email: z.string().email(),
+  reason: EmailSuppressionReasonSchema,
+  notes: z.string().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type EmailSuppression = z.infer<typeof EmailSuppressionSchema>;
+
+export const EmailSuppressionListResponseSchema = z.object({
+  suppressions: z.array(EmailSuppressionSchema),
+});
+export type EmailSuppressionListResponse = z.infer<typeof EmailSuppressionListResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Performance — Phase 13
@@ -3697,6 +3743,13 @@ export const NOTIFICATION_CATEGORIES = [
     key: 'shift_swaps',
     label: 'Shift swap requests',
     description: 'Peer swap offers, accepts, declines, and manager decisions.',
+    mandatory: false,
+  },
+  {
+    key: 'broadcast',
+    label: 'Company announcements',
+    description:
+      'Broadcast messages from HR. Muting this (or using the unsubscribe link in an announcement email) stops the emails; the in-app copy still arrives.',
     mandatory: false,
   },
   {
@@ -4645,6 +4698,10 @@ export const ORG_LOGO_ALLOWED_TYPES = [
 ] as const;
 export type OrgLogoContentType = (typeof ORG_LOGO_ALLOWED_TYPES)[number];
 
+// Org-enforced MFA policy. Mirrors the Prisma MfaRequirement enum; the
+// role mapping for ADMINS lives in roles.ts (isMfaAdminRole).
+export const MfaRequirementSchema = z.enum(['OFF', 'ADMINS', 'ALL']);
+
 export const OrgBrandingSchema = z.object({
   orgName: z.string().min(1).max(120),
   senderName: z.string().min(1).max(120).nullable(),
@@ -4661,6 +4718,9 @@ export const OrgBrandingSchema = z.object({
   // the right content-type). Null when no logo uploaded.
   logoUrl: z.string().nullable(),
   logoUpdatedAt: z.string().datetime().nullable(),
+  // Security — org-enforced MFA. Not branding, but it lives on the same
+  // OrgSetting singleton and rides the same GET/PATCH surface.
+  mfaRequirement: MfaRequirementSchema,
   updatedAt: z.string().datetime(),
 });
 export type OrgBranding = z.infer<typeof OrgBrandingSchema>;
@@ -4682,6 +4742,7 @@ export const UpdateOrgBrandingInputSchema = z
       .regex(HEX_COLOR_REGEX, 'Must be a #RRGGBB hex colour.')
       .nullable()
       .optional(),
+    mfaRequirement: MfaRequirementSchema.optional(),
   })
   .strict();
 export type UpdateOrgBrandingInput = z.infer<typeof UpdateOrgBrandingInputSchema>;
@@ -4858,4 +4919,71 @@ export const PushPublicKeyResponseSchema = z.object({
   publicKey: z.string(),
 });
 export type PushPublicKeyResponse = z.infer<typeof PushPublicKeyResponseSchema>;
+
+/* ===== Bulk associate CSV import (client onboarding / migration) ========= */
+
+/** One parsed + normalized CSV row. Nullable fields were absent/blank in
+ *  the file. clientId is the RESOLVED id (clientName → id lookup done
+ *  server-side); clientName echoes what the file said for display. */
+export const CsvImportRowDataSchema = z.object({
+  firstName: z.string(),
+  lastName: z.string(),
+  email: z.string(),
+  phone: z.string().nullable(),
+  hireDate: z.string().nullable(), // YYYY-MM-DD
+  clientId: z.string().nullable(),
+  clientName: z.string().nullable(),
+  position: z.string().nullable(),
+});
+export type CsvImportRowData = z.infer<typeof CsvImportRowDataSchema>;
+
+export const CsvImportPreviewRowSchema = z.object({
+  /** 1-based physical line in the uploaded file where this row starts
+   *  (the header is line 1, so the first data row is usually line 2). */
+  line: z.number().int().positive(),
+  data: CsvImportRowDataSchema,
+  /** Empty = importable. Human-readable, field-prefixed messages. */
+  errors: z.array(z.string()),
+});
+export type CsvImportPreviewRow = z.infer<typeof CsvImportPreviewRowSchema>;
+
+export const CsvImportPreviewResponseSchema = z.object({
+  rows: z.array(CsvImportPreviewRowSchema),
+  summary: z.object({
+    total: z.number().int().nonnegative(),
+    valid: z.number().int().nonnegative(),
+    invalid: z.number().int().nonnegative(),
+    /** Rows flagged because the email already exists (associate/user) or
+     *  repeats an earlier line in the same file. Subset of `invalid`. */
+    duplicateEmails: z.number().int().nonnegative(),
+  }),
+});
+export type CsvImportPreviewResponse = z.infer<typeof CsvImportPreviewResponseSchema>;
+
+/** 'create' = silent migration (Associate + Application rows, no emails).
+ *  'invite' = additionally mint an INVITED user + send the invite email. */
+export const CsvImportModeSchema = z.enum(['create', 'invite']);
+export type CsvImportMode = z.infer<typeof CsvImportModeSchema>;
+
+export const CsvImportCommitRowSchema = z.object({
+  line: z.number().int().positive(),
+  email: z.string().nullable(),
+  status: z.enum(['created', 'invited', 'skipped']),
+  /** Set when status = skipped: 'already_exists', 'duplicate_in_file',
+   *  'invalid: …', or a runtime failure code/message. */
+  reason: z.string().nullable(),
+});
+export type CsvImportCommitRow = z.infer<typeof CsvImportCommitRowSchema>;
+
+export const CsvImportCommitResponseSchema = z.object({
+  mode: CsvImportModeSchema,
+  results: z.array(CsvImportCommitRowSchema),
+  summary: z.object({
+    total: z.number().int().nonnegative(),
+    created: z.number().int().nonnegative(),
+    invited: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+  }),
+});
+export type CsvImportCommitResponse = z.infer<typeof CsvImportCommitResponseSchema>;
 

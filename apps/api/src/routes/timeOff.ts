@@ -18,6 +18,7 @@ import {
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAllAdmins, notifyAssociate, notifyManager } from '../lib/notify.js';
 import { timeOffRequestTemplate } from '../lib/emailTemplates.js';
@@ -32,6 +33,7 @@ import {
 } from '../lib/timeOffRequests.js';
 import { ensureEntitlementApplied } from '../lib/timeOffEntitlement.js';
 import { scopeTimeOffRequests } from '../lib/scope.js';
+import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 
 export const timeOffRouter = Router();
 
@@ -72,7 +74,7 @@ const REQUEST_INCLUDE = {
 } as const;
 
 /**
- * Phase 26 — read endpoint for an associate's accrued time-off balances
+ * Phase 26 â€” read endpoint for an associate's accrued time-off balances
  * (today: SICK only, plus any USE/ADJUSTMENT lines once Phase 30 ships).
  * Scoped to req.user.associateId; HR-side queries land under /admin/*.
  */
@@ -83,7 +85,7 @@ timeOffRouter.get('/me/balance', async (req, res, next) => {
       throw new HttpError(403, 'not_an_associate', 'Only associates have time-off balances');
     }
 
-    // Phase 43 — fire annual lump-sum grants if the entitlement clock
+    // Phase 43 â€” fire annual lump-sum grants if the entitlement clock
     // has rolled over since the last read. Idempotent.
     const entitlements = await prisma.timeOffEntitlement.findMany({
       take: 500,
@@ -133,11 +135,11 @@ timeOffRouter.get('/me/balance', async (req, res, next) => {
 });
 
 /**
- * Phase 30 — associate-facing request submission. Anyone with an
+ * Phase 30 â€” associate-facing request submission. Anyone with an
  * associate profile can submit; the approval gate is the balance check
  * inside `approveRequest`, so HR can decide whether to approve or deny.
  */
-timeOffRouter.post('/me/requests', async (req, res, next) => {
+timeOffRouter.post('/me/requests', idempotent, async (req, res, next) => {
   try {
     const user = req.user!;
     if (!user.associateId) {
@@ -166,8 +168,19 @@ timeOffRouter.post('/me/requests', async (req, res, next) => {
       include: REQUEST_INCLUDE,
     });
 
+    // Outbound webhooks â€” ids + dates only, no reason text (free-form
+    // prose from the associate stays out of third-party payloads).
+    void emitWebhookEvent('time_off.requested', {
+      requestId: created.id,
+      associateId: created.associateId,
+      category: created.category,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      requestedMinutes,
+    });
+
     // Manager-first routing: time-off is the manager's call. If the associate
-    // has a direct manager assigned, only the manager is notified — admins
+    // has a direct manager assigned, only the manager is notified â€” admins
     // already have the request visible in the HR queue and don't need a ping
     // for every request. If there's no manager, fall through to all admins
     // so the request doesn't sit unowned. (Avoids the manager getting
@@ -176,7 +189,7 @@ timeOffRouter.post('/me/requests', async (req, res, next) => {
     const range =
       formatDateUTC(startDate) === formatDateUTC(endDate)
         ? formatDateUTC(startDate)
-        : `${formatDateUTC(startDate)} → ${formatDateUTC(endDate)}`;
+        : `${formatDateUTC(startDate)} â†’ ${formatDateUTC(endDate)}`;
     const tpl = timeOffRequestTemplate({
       associateName: who,
       category: input.category,
@@ -198,7 +211,7 @@ timeOffRouter.post('/me/requests', async (req, res, next) => {
       void notifyAllAdmins({ ...opts, excludeUserId: user.id });
     }
     // The site's shift supervisor can approve this but holds no admin role
-    // and is rarely the managerId — resolve the associate's client and copy
+    // and is rarely the managerId â€” resolve the associate's client and copy
     // them in. Fire-and-forget; a lookup failure must not fail the request.
     void (async () => {
       try {
@@ -276,7 +289,7 @@ timeOffRouter.post('/me/requests/:id/cancel', async (req, res, next) => {
       where: { id },
       include: REQUEST_INCLUDE,
     });
-    // 404 (not 403) for cross-associate access — same existence-oracle
+    // 404 (not 403) for cross-associate access â€” same existence-oracle
     // discipline as performance reviews.
     if (!row || row.associateId !== user.associateId) {
       throw new HttpError(404, 'not_found', 'Request not found');
@@ -320,7 +333,7 @@ timeOffRouter.get('/admin/requests', MANAGE, async (req, res, next) => {
       prisma.timeOffRequest.count({ where }),
     ]);
     // Attach each associate's current balance for the requested category so
-    // the approver sees "24h requested · 16h available" before clicking —
+    // the approver sees "24h requested Â· 16h available" before clicking â€”
     // over-draw used to surface only as a 409 after the fact.
     // PERF: two IN filters instead of a 200-clause OR (which Postgres
     // can't index-scan efficiently); the cross-product surplus is
@@ -356,7 +369,7 @@ timeOffRouter.get('/admin/requests', MANAGE, async (req, res, next) => {
 });
 
 /**
- * Bulk decide — clearing a Monday-morning queue of 40 requests should be
+ * Bulk decide â€” clearing a Monday-morning queue of 40 requests should be
  * one click, not 40 round-trips. Each id is decided independently; partial
  * failure returns per-id results rather than aborting the batch.
  */
@@ -402,7 +415,7 @@ timeOffRouter.post('/admin/requests/bulk-decide', MANAGE, async (req, res, next)
         const row = rowById.get(id);
         if (!row) throw new IllegalStateError('Request not found');
         if (input.decision === 'APPROVE') {
-          // approveRequest owns the balance CAS — stays per-id.
+          // approveRequest owns the balance CAS â€” stays per-id.
           await approveRequest(prisma, id, user.id, input.note ?? null);
         } else {
           if (row.status !== 'PENDING') {
@@ -417,13 +430,20 @@ timeOffRouter.post('/admin/requests/bulk-decide', MANAGE, async (req, res, next)
               decidedAt: new Date(),
             },
           });
+          void emitWebhookEvent('time_off.denied', {
+            requestId: id,
+            associateId: row.associateId,
+            category: row.category,
+            startDate: formatDateUTC(row.startDate),
+            endDate: formatDateUTC(row.endDate),
+          });
         }
         const verb = input.decision === 'APPROVE' ? 'approved' : 'denied';
         void notifyAssociate(row.associateId, {
-          subject: `Time off ${verb}: ${formatDateUTC(row.startDate)} – ${formatDateUTC(row.endDate)}`,
+          subject: `Time off ${verb}: ${formatDateUTC(row.startDate)} â€“ ${formatDateUTC(row.endDate)}`,
           body:
             `Your ${row.category.toLowerCase().replace(/_/g, ' ')} request for ` +
-            `${formatDateUTC(row.startDate)} – ${formatDateUTC(row.endDate)} was ${verb}.` +
+            `${formatDateUTC(row.startDate)} â€“ ${formatDateUTC(row.endDate)} was ${verb}.` +
             (input.note ? `\n\nReviewer note: ${input.note}` : ''),
           category: 'time-off',
           linkUrl: '/time-off',
@@ -475,7 +495,7 @@ timeOffRouter.post('/admin/requests/:id/approve', MANAGE, async (req, res, next)
         });
       }
       if (err instanceof IllegalStateError) {
-        // "not found" / "already approved" → 409. The lookup inside
+        // "not found" / "already approved" â†’ 409. The lookup inside
         // approveRequest handles both cases; we don't need to distinguish
         // them at the API surface.
         throw new HttpError(409, 'illegal_state', err.message);
@@ -488,13 +508,13 @@ timeOffRouter.post('/admin/requests/:id/approve', MANAGE, async (req, res, next)
       include: REQUEST_INCLUDE,
     });
     if (!updated) throw new HttpError(404, 'not_found', 'Request not found after approve');
-    // The associate hears the decision the moment it's made — before this,
+    // The associate hears the decision the moment it's made â€” before this,
     // approvals were only discoverable by re-opening the page.
     void notifyAssociate(updated.associateId, {
-      subject: `Time off approved: ${formatDateUTC(updated.startDate)} – ${formatDateUTC(updated.endDate)}`,
+      subject: `Time off approved: ${formatDateUTC(updated.startDate)} â€“ ${formatDateUTC(updated.endDate)}`,
       body:
         `Your ${updated.category.toLowerCase().replace(/_/g, ' ')} request for ` +
-        `${formatDateUTC(updated.startDate)} – ${formatDateUTC(updated.endDate)} was approved.` +
+        `${formatDateUTC(updated.startDate)} â€“ ${formatDateUTC(updated.endDate)} was approved.` +
         (input.note ? `\n\nReviewer note: ${input.note}` : ''),
       category: 'time-off',
       linkUrl: '/time-off',
@@ -534,11 +554,18 @@ timeOffRouter.post('/admin/requests/:id/deny', MANAGE, async (req, res, next) =>
       },
       include: REQUEST_INCLUDE,
     });
+    void emitWebhookEvent('time_off.denied', {
+      requestId: updated.id,
+      associateId: updated.associateId,
+      category: updated.category,
+      startDate: formatDateUTC(updated.startDate),
+      endDate: formatDateUTC(updated.endDate),
+    });
     void notifyAssociate(updated.associateId, {
-      subject: `Time off request denied: ${formatDateUTC(updated.startDate)} – ${formatDateUTC(updated.endDate)}`,
+      subject: `Time off request denied: ${formatDateUTC(updated.startDate)} â€“ ${formatDateUTC(updated.endDate)}`,
       body:
         `Your ${updated.category.toLowerCase().replace(/_/g, ' ')} request for ` +
-        `${formatDateUTC(updated.startDate)} – ${formatDateUTC(updated.endDate)} was denied.` +
+        `${formatDateUTC(updated.startDate)} â€“ ${formatDateUTC(updated.endDate)} was denied.` +
         `\n\nReason: ${input.note}`,
       category: 'time-off',
       linkUrl: '/time-off',
@@ -552,7 +579,7 @@ timeOffRouter.post('/admin/requests/:id/deny', MANAGE, async (req, res, next) =>
   }
 });
 
-/* ----------- Phase 43 — entitlements (annual lump-sum config) ----------- */
+/* ----------- Phase 43 â€” entitlements (annual lump-sum config) ----------- */
 
 timeOffRouter.get('/admin/entitlements', MANAGE, async (req, res, next) => {
   try {

@@ -3,13 +3,16 @@ import { ChevronRight, Download, Inbox, Megaphone, RotateCw, Send } from 'lucide
 import { dayHeading, fmtTimeOnly, groupByDay } from '@/lib/dayGroup';
 import { toast } from 'sonner';
 import type {
+  EmailSuppression,
   Notification,
   NotificationChannel,
   NotificationStatus,
 } from '@alto-people/shared';
 import {
   broadcast,
+  deleteSuppression,
   listAdmin,
+  listSuppressions,
   sendNotification,
 } from '@/lib/communicationsApi';
 import { listDirectory } from '@/lib/directoryApi';
@@ -61,10 +64,13 @@ function statusVariant(
     case 'SENT':
       return 'success';
     case 'FAILED':
+    case 'BOUNCED':
+    case 'COMPLAINED':
       return 'destructive';
     case 'READ':
       return 'info';
     case 'QUEUED':
+    case 'SUPPRESSED':
       return 'pending';
   }
 }
@@ -74,6 +80,9 @@ const STATUS_LABELS: Record<NotificationStatus, string> = {
   SENT: 'Sent',
   READ: 'Read',
   FAILED: 'Failed',
+  BOUNCED: 'Bounced',
+  COMPLAINED: 'Marked as spam',
+  SUPPRESSED: 'Suppressed',
 };
 
 const CHANNEL_LABELS: Record<NotificationChannel, string> = {
@@ -226,6 +235,9 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
                 <option value="SENT">Sent</option>
                 <option value="READ">Read</option>
                 <option value="FAILED">Failed</option>
+                <option value="BOUNCED">Bounced</option>
+                <option value="COMPLAINED">Marked as spam</option>
+                <option value="SUPPRESSED">Suppressed</option>
               </Select>
               <Button
                 size="sm"
@@ -398,6 +410,8 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
         </CardContent>
       </Card>
 
+      {canManage && <SuppressionListCard />}
+
       <ComposeDialog
         open={showCompose}
         onOpenChange={setShowCompose}
@@ -423,6 +437,124 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
         {drawerTarget && <NotificationDetailPanel n={drawerTarget} />}
       </Drawer>
     </div>
+  );
+}
+
+const SUPPRESSION_REASON_LABELS: Record<EmailSuppression['reason'], string> = {
+  BOUNCED: 'Hard bounce',
+  COMPLAINED: 'Spam complaint',
+  MANUAL: 'Added manually',
+};
+
+/**
+ * Do-not-email list. Populated automatically by the Resend webhook on hard
+ * bounce / spam complaint; sends to these addresses short-circuit to a
+ * Suppressed status. Removing an address resumes delivery.
+ */
+function SuppressionListCard() {
+  const [rows, setRows] = useState<EmailSuppression[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [removingEmail, setRemovingEmail] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setError(null);
+      const res = await listSuppressions();
+      setRows(res.suppressions);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const remove = async (email: string) => {
+    setRemovingEmail(email);
+    try {
+      await deleteSuppression(email);
+      toast.success(`${email} can receive email again.`);
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Remove failed.');
+    } finally {
+      setRemovingEmail(null);
+    }
+  };
+
+  return (
+    <Card className="mt-6">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Suppressed emails</CardTitle>
+        <p className="text-sm text-silver">
+          Addresses that hard-bounced or reported us as spam. Sends to them are
+          blocked until removed here.
+        </p>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {error && (
+          <ErrorBanner
+            className="mb-3"
+            action={
+              <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+                Retry
+              </Button>
+            }
+          >
+            {error}
+          </ErrorBanner>
+        )}
+        {!rows && !error && <SkeletonRows count={2} rowHeight="h-10" />}
+        {rows && rows.length === 0 && (
+          <p className="text-sm text-silver">
+            No suppressed addresses — every mailbox is deliverable.
+          </p>
+        )}
+        {rows && rows.length > 0 && (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Email</TableHead>
+                <TableHead>Reason</TableHead>
+                <TableHead className="hidden md:table-cell">Since</TableHead>
+                <TableHead className="w-24" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((s) => (
+                <TableRow key={s.id}>
+                  <TableCell className="text-white break-all">{s.email}</TableCell>
+                  <TableCell>
+                    <Badge variant="destructive">
+                      {SUPPRESSION_REASON_LABELS[s.reason]}
+                    </Badge>
+                    {s.notes && (
+                      <div className="text-2xs mt-1 text-silver truncate max-w-xs">
+                        {s.notes}
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell className="hidden md:table-cell text-silver whitespace-nowrap">
+                    {fmtDateTime(s.createdAt)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={removingEmail === s.email}
+                      onClick={() => void remove(s.email)}
+                    >
+                      {removingEmail === s.email ? 'Removing…' : 'Remove'}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

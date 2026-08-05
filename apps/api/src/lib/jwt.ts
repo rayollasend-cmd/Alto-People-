@@ -94,3 +94,59 @@ export function verifyMfaPending(raw: string): MfaPendingPayload | null {
     return null;
   }
 }
+
+/**
+ * Short-lived "you've passed the password step, but org policy says you
+ * must enroll in TOTP before you get a session" token. Issued by
+ * /auth/login when OrgSetting.mfaRequirement applies to the user's role
+ * and they have no TOTP enrolled; accepted ONLY by the two MFA enrollment
+ * endpoints (/auth/me/mfa/enroll/start + /enroll/confirm) via
+ * `allowMfaEnrollToken` in middleware/auth.ts. Same shape/`typ` guard as
+ * mfa_pending so the three JWT surfaces (session / mfa_pending /
+ * mfa_enroll) can never be confused — note it deliberately carries NO
+ * `role` claim, so `verifySession` rejects it even if it were smuggled
+ * into the session cookie.
+ *
+ * 15 minutes (vs mfa_pending's 5): enrollment means installing an
+ * authenticator app, scanning a QR, and saving recovery codes — a first-
+ * time flow, not a code lookup.
+ */
+export const MFA_ENROLL_TTL_SECONDS = 15 * 60;
+
+export interface MfaEnrollPayload {
+  sub: string;
+  ver: number;
+  typ: 'mfa_enroll';
+  iat: number;
+  exp: number;
+}
+
+export function signMfaEnroll(input: { sub: string; ver: number }): string {
+  return jwt.sign(
+    { sub: input.sub, ver: input.ver, typ: 'mfa_enroll' },
+    env.JWT_SECRET,
+    { algorithm: 'HS256', expiresIn: MFA_ENROLL_TTL_SECONDS }
+  );
+}
+
+export function verifyMfaEnroll(raw: string): MfaEnrollPayload | null {
+  try {
+    const decoded = jwt.verify(raw, env.JWT_SECRET, {
+      algorithms: ['HS256'],
+    });
+    if (typeof decoded === 'string') return null;
+    const { sub, ver, typ, iat, exp } = decoded as Record<string, unknown>;
+    if (
+      typeof sub !== 'string' ||
+      typeof ver !== 'number' ||
+      typ !== 'mfa_enroll' ||
+      typeof iat !== 'number' ||
+      typeof exp !== 'number'
+    ) {
+      return null;
+    }
+    return { sub, ver, typ: 'mfa_enroll', iat, exp };
+  } catch {
+    return null;
+  }
+}
