@@ -6056,3 +6056,24 @@ model TimesheetFiling {
   @@unique([weekStart, clientId])
   @@index([weekStart])
 }
+
+/// One remembered response per (user, method, path, Idempotency-Key).
+/// Backs the optional Idempotency-Key request header on money-moving /
+/// bulk-send POST endpoints: a network-level retry with the same key
+/// replays the stored response instead of re-executing the mutation.
+/// responseStatus NULL marks an in-flight original (claims the key);
+/// rows expire after 24h and are swept hourly.
+model IdempotencyRecord {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String   @db.Uuid
+  method         String   @db.VarChar(10)
+  path           String   @db.VarChar(512)
+  key            String   @db.VarChar(200)
+  requestHash    String   @db.VarChar(64)
+  responseStatus Int?
+  responseBody   Json?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([userId, method, path, key])
+  @@index([createdAt])
+}

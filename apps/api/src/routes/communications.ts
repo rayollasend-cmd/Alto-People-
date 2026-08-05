@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import {
   NotificationBroadcastInputSchema,
@@ -15,6 +15,7 @@ import {
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
+import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
 import { sendStubbed } from '../lib/notifications.js';
 import { pushConfigured } from '../lib/webPush.js';
@@ -79,8 +80,8 @@ communicationsRouter.post('/me/push/subscriptions', async (req, res, next) => {
     }
     const user = req.user!;
     // Upsert on the endpoint (globally unique per browser subscription).
-    // If the endpoint was registered under ANOTHER account — shared device,
-    // logout/login — it moves to the caller: pushes must follow the person
+    // If the endpoint was registered under ANOTHER account â€” shared device,
+    // logout/login â€” it moves to the caller: pushes must follow the person
     // signed in on that browser, never a previous occupant.
     await prisma.pushSubscription.upsert({
       where: { endpoint: parsed.data.endpoint },
@@ -110,7 +111,7 @@ communicationsRouter.delete('/me/push/subscriptions', async (req, res, next) => 
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request', parsed.error.flatten());
     }
-    // Scoped to the caller — you can't unsubscribe someone else's device
+    // Scoped to the caller â€” you can't unsubscribe someone else's device
     // by knowing its endpoint.
     await prisma.pushSubscription.deleteMany({
       where: { endpoint: parsed.data.endpoint, userId: req.user!.id },
@@ -203,7 +204,7 @@ communicationsRouter.get('/admin', MANAGE, async (req, res, next) => {
   }
 });
 
-communicationsRouter.post('/admin/send', MANAGE, async (req, res, next) => {
+communicationsRouter.post('/admin/send', MANAGE, idempotent, async (req, res, next) => {
   try {
     const parsed = NotificationSendInputSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -253,7 +254,7 @@ communicationsRouter.post('/admin/send', MANAGE, async (req, res, next) => {
   }
 });
 
-communicationsRouter.post('/admin/broadcast', MANAGE, async (req, res, next) => {
+communicationsRouter.post('/admin/broadcast', MANAGE, idempotent, async (req, res, next) => {
   try {
     const parsed = NotificationBroadcastInputSchema.safeParse(req.body);
     if (!parsed.success) {

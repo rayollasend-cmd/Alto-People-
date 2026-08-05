@@ -1,15 +1,16 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
+import { idempotent } from '../middleware/idempotency.js';
 import { tryDecryptString } from '../lib/crypto.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { notifyUser } from '../lib/notify.js';
 import { w4SsnRecollectionTemplate } from '../lib/emailTemplates.js';
 
 /**
- * W-4 SSN re-collection campaign — remediation surface for the 2026-06-11
+ * W-4 SSN re-collection campaign â€” remediation surface for the 2026-06-11
  * key-rotation incident. W4Submission rows encrypted under the lost key
  * are intact but unreadable; the fix is the associate re-entering their
  * SSN on the (already resubmittable) W-4 onboarding step AND uploading a
@@ -18,7 +19,7 @@ import { w4SsnRecollectionTemplate } from '../lib/emailTemplates.js';
  *
  * This router lets payroll admins see who is still outstanding, email
  * them a request, and watch the list drain. An associate is outstanding
- * while their number is unreadable — and, once we've contacted them,
+ * while their number is unreadable â€” and, once we've contacted them,
  * also while no SSN-card image is on file. The number half is derived
  * straight from the blob (no bookkeeping to forget); the card half uses
  * the campaign's own send history as the "in the campaign" marker, since
@@ -34,7 +35,7 @@ interface CampaignRow {
   needsNumber: boolean;
   /** A non-deleted SSN_CARD document image is on file. */
   hasSsnCard: boolean;
-  /** SSN card OR I-9 supporting image — enough for an admin to re-key from. */
+  /** SSN card OR I-9 supporting image â€” enough for an admin to re-key from. */
   hasRekeyDoc: boolean;
   associate: {
     id: string;
@@ -51,12 +52,12 @@ interface CampaignRow {
 /**
  * Every W-4 row with a stored SSN, annotated with what the campaign still
  * needs from it. ~200 rows org-wide, so decrypt-testing all of them per
- * request is a few milliseconds — the blob itself is the source of truth,
+ * request is a few milliseconds â€” the blob itself is the source of truth,
  * which beats maintaining a parallel "affected" flag that could drift.
  */
 async function loadCampaignRows(): Promise<CampaignRow[]> {
   const rows = await prisma.w4Submission.findMany({
-    // PERF: runaway backstop — this is a full-campaign scan by design.
+    // PERF: runaway backstop â€” this is a full-campaign scan by design.
     take: 10_000,
     where: { ssnEncrypted: { not: null }, associate: { deletedAt: null } },
     orderBy: { createdAt: 'asc' },
@@ -134,7 +135,7 @@ async function loadCampaign(): Promise<Campaign> {
   const [rows, history] = await Promise.all([loadCampaignRows(), loadSendHistory()]);
   const outstanding = rows.filter((r) => {
     const notified = r.associate.user ? history.has(r.associate.user.id) : false;
-    // Card-only rows are held open only for associates we've contacted —
+    // Card-only rows are held open only for associates we've contacted â€”
     // otherwise every pre-campaign associate without a card image would
     // flood the roster.
     return r.needsNumber || (notified && !r.hasSsnCard);
@@ -164,7 +165,7 @@ async function countResolved(outstandingIds: Set<string>): Promise<number> {
   return users.filter((u) => u.associateId && !outstandingIds.has(u.associateId)).length;
 }
 
-// Light payload for the admin-dashboard action card — counts only.
+// Light payload for the admin-dashboard action card â€” counts only.
 w4RecollectionRouter.get('/summary', async (_req, res) => {
   const { outstanding, history } = await loadCampaign();
   const outstandingIds = new Set(outstanding.map((r) => r.associate.id));
@@ -196,9 +197,9 @@ w4RecollectionRouter.get('/', async (_req, res) => {
       hireDate: a.hireDate ? a.hireDate.toISOString() : null,
       w4SubmittedAt: r.submittedAt ? r.submittedAt.toISOString() : null,
       ssnLast4: a.ssnLast4,
-      /** The stored number still doesn't decrypt — must be re-entered. */
+      /** The stored number still doesn't decrypt â€” must be re-entered. */
       needsNumber: r.needsNumber,
-      /** No SSN card image on file — must be uploaded. */
+      /** No SSN card image on file â€” must be uploaded. */
       needsCard: !r.hasSsnCard,
       /** True when an SSN card / I-9 doc image is on file to re-key from. */
       hasSsnDocument: r.hasRekeyDoc,
@@ -223,7 +224,7 @@ const BulkEmailSchema = z.object({
 
 export type W4RecollectionSkipReason = 'not_affected' | 'no_account' | 'no_application';
 
-w4RecollectionRouter.post('/email', async (req, res) => {
+w4RecollectionRouter.post('/email', idempotent, async (req, res) => {
   const { associateIds } = BulkEmailSchema.parse(req.body);
   const { outstanding } = await loadCampaign();
   const byId = new Map(outstanding.map((r) => [r.associate.id, r]));
@@ -234,13 +235,13 @@ w4RecollectionRouter.post('/email', async (req, res) => {
   for (const id of new Set(associateIds)) {
     const row = byId.get(id);
     if (!row) {
-      // Already fully resolved (or never affected) — nothing to ask for.
+      // Already fully resolved (or never affected) â€” nothing to ask for.
       skipped.push({ associateId: id, reason: 'not_affected' });
       continue;
     }
     const a = row.associate;
     if (!a.user || a.user.status !== 'ACTIVE') {
-      // No login → they couldn't reach the W-4 step anyway. The roster
+      // No login â†’ they couldn't reach the W-4 step anyway. The roster
       // flags these so the admin can re-invite them first.
       skipped.push({ associateId: id, reason: 'no_account' });
       continue;
@@ -274,7 +275,7 @@ w4RecollectionRouter.post('/email', async (req, res) => {
     throw new HttpError(
       400,
       'nothing_to_send',
-      'None of the selected associates can be emailed — they have already resubmitted, or have no active account to sign in with.',
+      'None of the selected associates can be emailed â€” they have already resubmitted, or have no active account to sign in with.',
     );
   }
 
