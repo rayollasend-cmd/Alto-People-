@@ -1092,13 +1092,13 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     </div>
                   )}
                   {selected.amendsRunId && (
-                    <button
-                      type="button"
+                    <Button
+                      variant="link"
                       onClick={() => openRun(selected.amendsRunId!)}
-                      className="mt-1 text-silver/70 hover:text-gold focus:outline-none focus-visible:text-gold underline-offset-2 hover:underline"
+                      className="mt-1 text-xs font-normal text-silver/70 hover:text-gold"
                     >
                       View source run
-                    </button>
+                    </Button>
                   )}
                 </div>
               )}
@@ -2140,15 +2140,16 @@ function DraftAddOnsSection({
               </span>
               <span className="flex items-center gap-2">
                 <span className="tabular-nums text-white">{fmtMoney(a.amount)}</span>
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
                   onClick={() => remove(a.id)}
                   disabled={busy}
                   className="text-silver/60 hover:text-alert"
                   aria-label="Remove earning line"
                 >
                   <X className="h-4 w-4" />
-                </button>
+                </Button>
               </span>
             </div>
           ))}
@@ -2576,17 +2577,17 @@ const PaystubAdminCard = memo(function PaystubAdminCard({
 
           {canProcess && (
             <div className="pt-1 border-t border-silver/10">
-              <button
-                type="button"
+              <Button
+                variant="link"
                 onClick={(e) => {
                   e.stopPropagation();
                   onEnrollBranch(item.associateId, item.associateName ?? null);
                 }}
-                className="inline-flex items-center gap-1.5 text-xs text-silver/70 hover:text-gold focus:outline-none focus-visible:text-gold"
+                className="gap-1.5 text-xs font-normal text-silver/70 hover:text-gold"
               >
                 <CreditCard className="h-3.5 w-3.5" />
                 Manage Branch enrollment
-              </button>
+              </Button>
             </div>
           )}
         </div>

@@ -1,5 +1,7 @@
 import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts';
+import { chartColor } from '@/lib/chartColors';
 import { cn } from '@/lib/cn';
+import { useTheme } from '@/lib/theme';
 
 // Chart-only donut (no legend) sized for the Tile 1 hero column. The shared
 // <DonutChart> component bundles its own legend in a flex-row, which doesn't
@@ -10,6 +12,9 @@ import { cn } from '@/lib/cn';
 // Lives in its own module so recharts doesn't sit in the ComplianceScorecard
 // chunk; the parent lazy-imports it.
 export function ComplianceDonut({ fully, total }: { fully: number; total: number }) {
+  // Subscribe to the theme context (value unused) so a light/dark flip
+  // re-renders the donut and chartColor() re-reads the swapped CSS vars.
+  useTheme();
   const pct = total === 0 ? 100 : Math.round((fully / total) * 100);
   const gaps = Math.max(0, total - fully);
   const tone = pct === 100 ? 'text-success' : pct >= 80 ? 'text-warning' : 'text-alert';
@@ -40,8 +45,11 @@ export function ComplianceDonut({ fully, total }: { fully: number; total: number
               isAnimationActive
               animationDuration={500}
             >
-              <Cell fill="#34A874" />
-              <Cell fill="#E96255" />
+              {/* Token-resolved at render time so a palette retune or the
+                  light/dark flip recolors the donut (chartColor reads the
+                  CSS vars off <html>). */}
+              <Cell fill={chartColor('success')} />
+              <Cell fill={chartColor('alert')} />
             </Pie>
           </PieChart>
         </ResponsiveContainer>

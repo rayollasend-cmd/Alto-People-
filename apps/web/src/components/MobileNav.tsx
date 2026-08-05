@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { Briefcase, Search, X, type LucideIcon } from 'lucide-react';
+import { Briefcase, Monitor, Moon, Search, Sun, X, type LucideIcon } from 'lucide-react';
 import {
   DASHBOARD_NAV,
   GROUP_LABEL,
@@ -14,6 +14,7 @@ import { useAuth } from '@/lib/auth';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import { usePinnedModules } from '@/lib/navPersonalization';
 import { useI18n, type Lang } from '@/lib/i18n';
+import { useTheme, type ThemePreference } from '@/lib/theme';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { cn } from '@/lib/cn';
 
@@ -35,6 +36,7 @@ interface MobileNavProps {
 export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProps) {
   const { can } = useAuth();
   const { lang, setLang, t } = useI18n();
+  const { preference, setTheme } = useTheme();
   const approvalsCount = useApprovalsCount();
   const { pinned } = usePinnedModules();
   const visible = MODULES.filter((m) => can(m.requires));
@@ -195,26 +197,72 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
           })}
         </nav>
 
-        {/* Language switcher — the drawer is the one nav surface every
-            phone user opens, so the toggle lives here instead of buried
-            in Settings. stopPropagation: the nav's onClick closes the
-            drawer, and switching language shouldn't. */}
+        {/* Language + theme switchers — the drawer is the one nav surface
+            every phone user opens, so both toggles live here instead of
+            buried in Settings. stopPropagation: the nav's onClick closes
+            the drawer, and flipping a preference shouldn't. */}
         <div
-          className="px-4 py-3 border-t border-navy-secondary flex items-center justify-between gap-3"
+          className="px-4 py-3 border-t border-navy-secondary space-y-2.5"
           onClick={(e) => e.stopPropagation()}
         >
-          <span className="text-2xs font-semibold uppercase tracking-widest text-silver/80">
-            {t('common.language')}
-          </span>
-          <SegmentedControl<Lang>
-            ariaLabel={t('common.language')}
-            options={[
-              { value: 'en', label: 'English' },
-              { value: 'es', label: 'Español' },
-            ]}
-            value={lang}
-            onChange={setLang}
-          />
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-2xs font-semibold uppercase tracking-widest text-silver/80">
+              {t('common.language')}
+            </span>
+            <SegmentedControl<Lang>
+              ariaLabel={t('common.language')}
+              options={[
+                { value: 'en', label: 'English' },
+                { value: 'es', label: 'Español' },
+              ]}
+              value={lang}
+              onChange={setLang}
+            />
+          </div>
+          {/* Same Light / Dark / System choices (and setTheme mechanics) as
+              the desktop Sidebar's Appearance menu — this drawer is the only
+              chrome phones ever see, so without it mobile had no theme
+              control at all. Icon pills keep the three options inside the
+              288px drawer; sr-only text carries the Sidebar's labels. */}
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-2xs font-semibold uppercase tracking-widest text-silver/80">
+              Theme
+            </span>
+            <SegmentedControl<ThemePreference>
+              ariaLabel="Appearance"
+              options={[
+                {
+                  value: 'light',
+                  label: (
+                    <>
+                      <Sun className="h-4 w-4" aria-hidden="true" />
+                      <span className="sr-only">Light</span>
+                    </>
+                  ),
+                },
+                {
+                  value: 'dark',
+                  label: (
+                    <>
+                      <Moon className="h-4 w-4" aria-hidden="true" />
+                      <span className="sr-only">Dark</span>
+                    </>
+                  ),
+                },
+                {
+                  value: 'system',
+                  label: (
+                    <>
+                      <Monitor className="h-4 w-4" aria-hidden="true" />
+                      <span className="sr-only">System</span>
+                    </>
+                  ),
+                },
+              ]}
+              value={preference}
+              onChange={setTheme}
+            />
+          </div>
         </div>
       </aside>
     </div>

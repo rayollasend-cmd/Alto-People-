@@ -15,6 +15,7 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { TaskShell, Field } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
+import { fmtSize } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -37,11 +38,6 @@ const MAX_BYTES = UPLOAD_MAX_BYTES;
 
 const ACCEPTED_MIMES = 'application/pdf,image/png,image/jpeg,image/webp';
 
-const fmtSize = (b: number): string => {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  return `${(b / 1024 / 1024).toFixed(2)} MB`;
-};
 
 const STATUS_LABEL: Record<string, string> = {
   UPLOADED: 'Awaiting review',
