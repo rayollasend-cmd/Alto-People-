@@ -245,7 +245,33 @@
    ladder's own light-mode shadows at equal specificity (which previously
    won or lost purely on source order). */
 :root[data-theme='light'] .bg-navy:not([class*='elev-']) {
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+/* ---------------------------------------------------------------------------
+ * Card / divider edge in light mode.
+ *
+ * A white card on a #F8FAFC page separated by an #E2E8F0 border is three
+ * weak signals stacked: 1.05:1 surface difference, 1.23:1 border, and a
+ * 4%-opacity shadow. Nothing delineates the card, which is what "margins
+ * aren't clear" describes.
+ *
+ * The page background is deliberately NOT darkened to fix this — the text
+ * floors set above are computed against #F8FAFC, and moving the page to
+ * slate-100 would drop slate-500 secondary text to ~4.35:1 and undo the
+ * contrast work. So the edge is strengthened instead: border to ~1.94:1
+ * (visible but not a wireframe outline) and slightly more shadow.
+ * Form controls override this with the 3:1 tier above — a card edge is
+ * decorative, a control boundary is not.
+ * ------------------------------------------------------------------------- */
+:root[data-theme='light'] .border-navy-secondary {
+  border-color: rgb(176 187 201); /* 1.94:1 on white, 1.86:1 on the page */
+}
+:root[data-theme='light'] .border-navy-secondary\/60 {
+  border-color: rgb(176 187 201 / 0.75);
+}
+:root[data-theme='light'] .border-navy-secondary\/50 {
+  border-color: rgb(176 187 201 / 0.65);
 }
 
 /* `bg-black/30` and `bg-black/40` show up across the payroll views as
@@ -502,6 +528,47 @@ select.border-navy-secondary:focus {
   outline: none;
   border-color: rgb(var(--color-gold));
   box-shadow: 0 0 0 2px rgb(var(--color-gold) / 0.4);
+}
+
+/* ---------------------------------------------------------------------------
+ * Form-control boundary — WCAG 1.4.11 (non-text contrast).
+ *
+ * `navy-secondary` is doing two jobs that pull opposite ways: it is the
+ * subtle FILL behind a field (bg-navy-secondary/40) and also the field's
+ * BORDER. Tuned as a fill it has to stay near the surface, which left the
+ * border at 1.23:1 against a white card and 1.14:1 against the field's own
+ * fill — the control was effectively invisible in light mode, and 1.26:1
+ * in dark. 1.4.11 requires 3:1 for the visual information needed to
+ * identify a control, and a text input has no other boundary.
+ *
+ * Fixed here rather than in the components because all 490 border sites
+ * already declare the class, exactly like the <select> hook above. Card
+ * and divider borders keep the softer tier set further down — only real
+ * controls get the strong edge.
+ * ------------------------------------------------------------------------- */
+:root:not([data-theme='light']) input.border-navy-secondary,
+:root:not([data-theme='light']) select.border-navy-secondary,
+:root:not([data-theme='light']) textarea.border-navy-secondary {
+  border-color: rgb(85 115 165); /* 3.68:1 on navy, 3.39:1 on the field fill */
+}
+:root[data-theme='light'] input.border-navy-secondary,
+:root[data-theme='light'] select.border-navy-secondary,
+:root[data-theme='light'] textarea.border-navy-secondary {
+  border-color: rgb(130 140 150); /* 3.42:1 on white, 3.15:1 on the field fill */
+}
+/* Hover must not read as WEAKER than rest. Both themes ship a
+   `hover:border-silver/40` on these controls, which composites to 2.2:1 on
+   white and 2.83:1 on navy — below the resting borders above in BOTH cases,
+   so hovering a field made it fainter. Raised past resting in each theme. */
+:root[data-theme='light'] input.border-navy-secondary:hover:not(:disabled):not(:focus),
+:root[data-theme='light'] select.border-navy-secondary:hover:not(:disabled):not(:focus),
+:root[data-theme='light'] textarea.border-navy-secondary:hover:not(:disabled):not(:focus) {
+  border-color: rgb(100 116 139); /* 4.76:1 — a clear step up from 3.42 resting */
+}
+:root:not([data-theme='light']) input.border-navy-secondary:hover:not(:disabled):not(:focus),
+:root:not([data-theme='light']) select.border-navy-secondary:hover:not(:disabled):not(:focus),
+:root:not([data-theme='light']) textarea.border-navy-secondary:hover:not(:disabled):not(:focus) {
+  border-color: rgb(var(--color-silver) / 0.6); /* 4.78:1 — up from 3.68 resting */
 }
 
 /* Theme native checkboxes / radios with the brand gold so the checked
