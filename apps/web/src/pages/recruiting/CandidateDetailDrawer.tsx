@@ -11,6 +11,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
   Avatar,
   Badge,
@@ -230,6 +231,18 @@ export function CandidateDetailDrawer({
       </DrawerHeader>
 
       <DrawerBody className="space-y-6">
+        {/* The hire handoff's landing spot: a hired candidate's record used
+            to be a dead end with no way out to the associate it created. */}
+        {candidate.stage === 'HIRED' && candidate.hiredAssociateId && (
+          <div className="rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm text-white">
+            <span className="font-medium text-success">Hired</span>
+            {candidate.hiredAt ? ` ${fmtDate(candidate.hiredAt)}` : ''} · associate
+            record:{' '}
+            <AssociateLink associateId={candidate.hiredAssociateId}>
+              {fullName}
+            </AssociateLink>
+          </div>
+        )}
         {outcome && (
           <div
             className={cn(

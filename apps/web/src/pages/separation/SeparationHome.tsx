@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, LogOut, MessageSquareQuote, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -236,7 +237,9 @@ export function SeparationHome() {
                   >
                     <TableCell>
                       <div className="font-medium text-white">
-                        {s.associateName}
+                        <AssociateLink associateId={s.associateId}>
+                          {s.associateName}
+                        </AssociateLink>
                       </div>
                       <div className="text-xs text-silver">{s.associateEmail}</div>
                       <div className="text-xs2 text-silver/70 md:hidden">
@@ -500,7 +503,11 @@ function DetailDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>{row.associateName}</DrawerTitle>
+        <DrawerTitle>
+          <AssociateLink associateId={row.associateId}>
+            {row.associateName}
+          </AssociateLink>
+        </DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">

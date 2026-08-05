@@ -39,6 +39,7 @@ import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDateTime } from '@/lib/format';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
   Avatar,
   Badge,
@@ -1568,14 +1569,24 @@ function PeopleTab({
                   <div className="flex items-center gap-2.5">
                     <Avatar src={a.photoUrl} name={`${a.firstName} ${a.lastName}`} email={a.email} size="sm" />
                     <div className="min-w-0">
-                      <span>{a.firstName} {a.lastName}</span>
+                      <AssociateLink associateId={a.id}>
+                        {a.firstName} {a.lastName}
+                      </AssociateLink>
                       <div className="text-xs2 text-silver/70 md:hidden">
                         {[a.managerName, a.departmentName].filter(Boolean).join(' · ') || '—'}
                       </div>
                     </div>
                   </div>
                 </TableCell>
-                <TableCell className="text-silver hidden md:table-cell">{a.managerName ?? '—'}</TableCell>
+                <TableCell className="text-silver hidden md:table-cell">
+                  {a.managerName ? (
+                    <AssociateLink associateId={a.managerId}>
+                      {a.managerName}
+                    </AssociateLink>
+                  ) : (
+                    '—'
+                  )}
+                </TableCell>
                 <TableCell className="text-silver hidden md:table-cell">{a.departmentName ?? '—'}</TableCell>
                 <TableCell className="text-silver tabular-nums hidden lg:table-cell">
                   {a.costCenterCode ?? '—'}

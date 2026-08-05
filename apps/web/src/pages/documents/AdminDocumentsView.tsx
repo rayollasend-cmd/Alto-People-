@@ -20,12 +20,14 @@ import {
   X,
   XCircle,
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import type {
   DocumentKind,
   DocumentRecord,
   DocumentStatus,
 } from '@alto-people/shared';
+import { useAuth } from '@/lib/auth';
 import {
   bulkVerifyDocuments,
   downloadAllDocumentsUrl,
@@ -143,6 +145,7 @@ interface AdminDocumentsViewProps {
 }
 
 export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
+  const { can } = useAuth();
   // Two ways to slice the same data: a flat queue for daily HR triage, and
   // a per-associate folder view for auditing one person's full history.
   const [view, setView] = useViewMode<'queue' | 'associates'>(
@@ -621,6 +624,15 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
           canManage
             ? 'Verify or reject uploaded documents.'
             : 'Read-only view of associate documents.'
+        }
+        secondaryActions={
+          // Mail-merge letter templates generate the documents that land in
+          // this vault; the /templates route is gated on view:hr-admin.
+          can('view:hr-admin') ? (
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/templates">Document templates</Link>
+            </Button>
+          ) : undefined
         }
       />
 

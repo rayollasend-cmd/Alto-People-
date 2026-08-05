@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { CheckCircle2, Clock, Plus, ShieldQuestion, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -202,7 +203,9 @@ export function ProbationHome() {
                     <TableRow key={p.id} className="group">
                       <TableCell>
                         <div className="font-medium text-white">
-                          {p.associateName}
+                          <AssociateLink associateId={p.associateId}>
+                            {p.associateName}
+                          </AssociateLink>
                         </div>
                         <div className="text-xs text-silver">
                           {p.currentTitle ?? p.associateEmail}

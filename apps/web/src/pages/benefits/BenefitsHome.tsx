@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { CheckCircle2, HeartPulse, Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -60,7 +61,14 @@ function isActiveEnrollment(e: BenefitsEnrollment): boolean {
 }
 
 export function BenefitsHome() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  // HR-only lifecycle console (OE windows, QLEs, COBRA, ACA) — its route is
+  // gated on view:hr-admin, so only offer the door to people it will open for.
+  const lifecycleLink = can('view:hr-admin') ? (
+    <Button asChild variant="ghost" size="sm">
+      <Link to="/benefits/lifecycle">Enrollment &amp; COBRA admin</Link>
+    </Button>
+  ) : undefined;
   const [enrollments, setEnrollments] = useState<BenefitsEnrollment[] | null>(null);
   const [availablePlans, setAvailablePlans] = useState<BenefitsPlan[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -132,6 +140,7 @@ export function BenefitsHome() {
         <PageHeader
           title="Benefits"
           subtitle="Benefits enrollment is for associates. This account isn't linked to one."
+          secondaryActions={lifecycleLink}
         />
       </div>
     );
@@ -142,6 +151,7 @@ export function BenefitsHome() {
       <PageHeader
         title="Benefits"
         subtitle="Pre-tax elections come out of every paycheck before federal, FICA, Medicare, and state tax. Your take-home goes down by less than the elected amount."
+        secondaryActions={lifecycleLink}
       />
 
       {(error || clientsError) && (
