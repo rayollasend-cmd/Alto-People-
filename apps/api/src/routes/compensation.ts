@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
+import { toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -48,7 +49,7 @@ function shapeRecord(r: {
   return {
     id: r.id,
     associateId: r.associateId,
-    effectiveFrom: r.effectiveFrom.toISOString(),
+    effectiveFrom: toDateOnly(r.effectiveFrom),
     effectiveTo: r.effectiveTo?.toISOString() ?? null,
     payType: r.payType,
     amount: r.amount.toFixed(2),
@@ -86,7 +87,7 @@ function shapeBand(b: {
     midAmount: b.midAmount.toFixed(2),
     maxAmount: b.maxAmount.toFixed(2),
     currency: b.currency,
-    effectiveFrom: b.effectiveFrom.toISOString(),
+    effectiveFrom: toDateOnly(b.effectiveFrom),
     effectiveTo: b.effectiveTo?.toISOString() ?? null,
   };
 }

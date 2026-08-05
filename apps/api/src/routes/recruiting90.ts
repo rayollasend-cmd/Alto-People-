@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { CareersApplyInputSchema } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { send } from '../lib/notifications.js';
 import {
   careersApplyEmailLimiter,
@@ -372,7 +372,9 @@ recruiting90Router.get('/referrals', VIEW, async (req, res) => {
   });
 });
 
-recruiting90Router.post('/referrals', async (req, res) => {
+// Explicit requireAuth — this router also serves PUBLIC /careers routes,
+// so auth belongs per-handler rather than on the router.
+recruiting90Router.post('/referrals', requireAuth, async (req, res) => {
   // Any authenticated user with view:dashboard can submit a referral.
   const input = ReferralInputSchema.parse(req.body);
   const created = await prisma.referral.create({

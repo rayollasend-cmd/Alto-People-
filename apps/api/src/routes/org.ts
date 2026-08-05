@@ -20,10 +20,14 @@ import {
   type JobProfile,
   type ShiftPosition,
 } from '@alto-people/shared';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
+import { toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { piiRevealLimiter, bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { asOf, recordChange } from '../lib/associateHistory.js';
+import { eraseAssociate } from '../lib/erasure.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
@@ -735,7 +739,7 @@ orgRouter.get(
     res.json({
       history: rows.map((r) => ({
         id: r.id,
-        effectiveFrom: r.effectiveFrom.toISOString(),
+        effectiveFrom: toDateOnly(r.effectiveFrom),
         effectiveTo: r.effectiveTo?.toISOString() ?? null,
         managerId: r.managerId,
         departmentId: r.departmentId,
@@ -886,6 +890,7 @@ orgRouter.get(
 orgRouter.post(
   '/associates/:id/payout-method/reveal',
   PAYROLL_OR_HR,
+  piiRevealLimiter,
   async (req: Request, res: Response) => {
     // Belt-and-braces: also require process:payroll explicitly here so
     // the middleware change can't accidentally widen exposure. The
@@ -1090,6 +1095,7 @@ orgRouter.get(
 orgRouter.post(
   '/associates/:id/ssn/reveal',
   PAYROLL_OR_HR,
+  piiRevealLimiter,
   async (req: Request, res: Response) => {
     // Same belt-and-braces double check as the payout reveal.
     if (!hasCapability(req.user!.role, 'process:payroll')) {
@@ -1267,6 +1273,58 @@ orgRouter.patch(
   },
 );
 
+// ----- Privacy erasure ----------------------------------------------------
+//
+// POST /associates/:id/erase — anonymize an associate's identity while
+// keeping the legally retained payroll/tax history (see lib/erasure.ts for
+// the full policy). Gated on view:hr-admin — the same capability that
+// guards the admin user-management surface, the most sensitive admin
+// actions in the product. Two cheap integrity checks against fat-fingers:
+// a written reason (min 10 chars, lands on the audit row) and retyping the
+// associate's CURRENT last name (`confirmName`, 409 on mismatch).
+
+const EraseAssociateSchema = z.object({
+  reason: z.string().trim().min(10).max(500),
+  confirmName: z.string().trim().min(1).max(120),
+  force: z.boolean().optional(),
+});
+
+orgRouter.post(
+  '/associates/:id/erase',
+  requireCapability('view:hr-admin'),
+  async (req: Request, res: Response) => {
+    const input = EraseAssociateSchema.parse(req.body);
+    const associate = await prisma.associate.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, lastName: true, erasedAt: true },
+    });
+    if (!associate) {
+      throw new HttpError(404, 'not_found', 'Associate not found.');
+    }
+    if (
+      input.confirmName.toLowerCase() !== associate.lastName.trim().toLowerCase()
+    ) {
+      throw new HttpError(
+        409,
+        'name_mismatch',
+        'The typed name does not match this associate’s last name. Erasure aborted.',
+      );
+    }
+    const result = await eraseAssociate(
+      prisma,
+      associate.id,
+      req.user!.id,
+      input.reason,
+      { force: input.force === true },
+    );
+    res.json({
+      ok: true,
+      erasedAt: result.erasedAt.toISOString(),
+      counts: result.counts,
+    });
+  },
+);
+
 // ----- Payroll-provider census export ------------------------------------
 //
 // POST /associates/payroll-census-export  → text/csv, active associates only
@@ -1310,11 +1368,12 @@ const CENSUS_HEADERS = [
   'Account Number',
 ] as const;
 
-// RFC-4180 quoting: wrap in double-quotes and double any embedded quote
-// whenever the value carries a comma, quote, or newline. null/undefined → "".
+// Kept as a thin wrapper so existing call sites don't change; the escaping
+// itself is the shared implementation (RFC-4180 quoting PLUS formula-
+// injection guarding — this census carries associate-controlled names and
+// addresses next to routing and account numbers, and lands in Excel).
 function csvCell(value: string | null | undefined): string {
-  const s = value == null ? '' : String(value);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return sharedCsvCell(value);
 }
 
 function isoDate(d: Date | null | undefined): string {
@@ -1324,6 +1383,7 @@ function isoDate(d: Date | null | undefined): string {
 orgRouter.post(
   '/associates/payroll-census-export',
   PAYROLL_OR_HR,
+  bulkPiiExportLimiter,
   async (req: Request, res: Response) => {
     // Same belt-and-braces double check as the single-record reveals.
     if (!hasCapability(req.user!.role, 'process:payroll')) {

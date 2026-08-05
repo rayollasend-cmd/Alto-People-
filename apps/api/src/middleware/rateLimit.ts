@@ -319,3 +319,155 @@ export const integrationsApiKeyLimiter = rateLimit({
     },
   },
 });
+
+// ----- High-value PII reveals / bulk exports --------------------------------
+//
+// These endpoints are all capability-gated and critically audited, which
+// is the right first line — but audit is a record, not a brake. A single
+// compromised or malicious admin session could previously loop the whole
+// roster (SSN reveal, bank reveal) or re-trigger 500-file archives at
+// will. These limiters bound the blast radius of ONE session without
+// getting in the way of legitimate one-off HR work.
+//
+// Keyed per acting user, not per IP: the threat is an authenticated
+// actor, and office NAT would otherwise pool unrelated admins together.
+
+const PII_REVEAL_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 30;
+const BULK_EXPORT_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 5;
+
+const perActorKey = (req: Request) =>
+  req.user?.id ? `user:${req.user.id}` : `ip:${req.ip ?? 'unknown'}`;
+
+/**
+ * 30 single-record PII reveals / hour / actor. Covers the decrypted-SSN
+ * and bank-detail endpoints: reading a handful while working a case is
+ * normal, enumerating the roster is not.
+ */
+export const piiRevealLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: PII_REVEAL_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: perActorKey,
+  message: {
+    error: {
+      code: 'rate_limited',
+      message:
+        'Too many sensitive-record reveals in the last hour. This limit exists to bound bulk extraction; contact an administrator if you need a bulk export.',
+    },
+  },
+});
+
+/**
+ * 5 bulk exports / hour / actor — the whole-roster census (SSN + bank),
+ * the multi-document ZIP, and the external payroll sheet. Each of these
+ * is a full-population extract; nobody legitimately needs six an hour.
+ */
+export const bulkPiiExportLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: BULK_EXPORT_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: perActorKey,
+  message: {
+    error: {
+      code: 'rate_limited',
+      message:
+        'Too many bulk exports in the last hour. Wait before generating another.',
+    },
+  },
+});
+
+// ----- Public whistleblower hotline -----------------------------------------
+//
+// /anonymous-reports is unauthenticated by design — that's the point of a
+// hotline. But the same properties that protect a reporter (no account,
+// no attribution) also make it a free-for-all: filing spam, and more
+// importantly BRUTE-FORCING tracking codes on the public lookup, which
+// returns a reporter's follow-up thread. The careers-apply endpoint got
+// layered limiters; this one is at least as sensitive.
+const ANON_REPORT_FILE_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 10;
+const ANON_REPORT_LOOKUP_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 20;
+
+/** 10 filed reports / hour / IP. */
+export const anonReportFileLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: ANON_REPORT_FILE_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many reports from this address. Try again later.',
+    },
+  },
+});
+
+/**
+ * 20 tracking-code lookups / hour / IP. The code is high-entropy, so this
+ * is about removing the online-guessing path entirely rather than making
+ * it merely slow.
+ */
+export const anonReportLookupLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: ANON_REPORT_LOOKUP_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many lookups from this address. Try again later.',
+    },
+  },
+});
+
+// Unauthenticated traffic to the public integration API. This runs BEFORE
+// requireApiKey so garbage bearers are cheap: key auth costs a DB lookup
+// plus an argon2id verify (~19 MB each), which was previously reachable
+// with no throttle at all.
+const INTEGRATIONS_ANON_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 120;
+
+/** 120 requests / minute / IP before authentication. */
+export const integrationsAnonLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: INTEGRATIONS_ANON_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many requests. Try again in a minute.',
+    },
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Default backstop for the authenticated API surface.
+//
+// Every sensitive surface has its own tighter regime (auth flows, careers,
+// kiosk PIN, the integrations bearer API) — but the bulk of authenticated
+// CRUD previously had NO throttle, so a runaway client loop or a stolen
+// session could hammer the DB unchecked. Generous on purpose: an admin
+// dashboard bursts 20-40 requests on a page load; 600/min/user never
+// touches a human, only loops. Keyed by user id (stable across NAT);
+// anonymous requests are skipped entirely — they either hit a surface
+// with its own limiter or the static SPA assets, where a per-IP cap
+// would punish shared-IP offices.
+// ---------------------------------------------------------------------------
+const DEFAULT_API_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 600;
+
+/** 600 requests / minute / authenticated user across the whole API. */
+export const defaultApiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: DEFAULT_API_LIMIT,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skip: (req: Request) => !req.user || req.method === 'OPTIONS',
+  keyGenerator: (req: Request) => `user:${req.user!.id}`,
+  message: {
+    error: {
+      code: 'rate_limited',
+      message: 'Too many requests — slow down and retry in a minute.',
+    },
+  },
+});

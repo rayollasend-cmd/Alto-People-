@@ -10,10 +10,21 @@ export const prisma = new PrismaClient();
 // _prisma_migrations.
 const TABLES = [
   'AuditLog',
+  // Global (clientId=null) webhooks aren't reached by any CASCADE, so
+  // list both tables explicitly or subscriptions leak across tests.
+  'WebhookDelivery',
+  'Webhook',
+  // No FK reaches IdempotencyRecord — truncate explicitly or replay
+  // rows leak across tests.
+  'IdempotencyRecord',
   // BranchWebhookEvent FK to PayrollItem is ON DELETE SET NULL, so rows
   // would persist across tests with payrollItemId=null and trip the
   // branchEventId unique constraint on the next test that reuses an id.
   'BranchWebhookEvent',
+  // ResendWebhookEvent has no FKs but its svixId unique would trip the
+  // next test that reuses an id; EmailSuppression's unique email likewise.
+  'ResendWebhookEvent',
+  'EmailSuppression',
   'PolicyAcknowledgment',
   'EsignAgreement',
   'Signature',

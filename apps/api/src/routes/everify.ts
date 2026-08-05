@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { existsSync } from 'node:fs';
 import {
   EVerifyCaseDetailSchema,
   EVerifyCaseInputSchema,
@@ -12,7 +11,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { recordComplianceEvent } from '../lib/audit.js';
 import { tryDecryptString } from '../lib/crypto.js';
-import { resolveStoragePath } from '../lib/storage.js';
+import { blobExistsForListing } from '../lib/blobStore.js';
 import {
   evaluateEVerifyReadiness,
   isEVerifyOverdue,
@@ -276,7 +275,10 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
             : lower.includes('-back')
               ? ('BACK' as const)
               : null),
-        fileAvailable: d.s3Key !== null && existsSync(resolveStoragePath(d.s3Key)),
+        // Local driver: real existsSync. s3 driver: assumed available when
+        // s3Key is non-null (see blobStore.ts — S3 doesn't lose blobs on
+        // redeploy, which is the failure mode this flag exists for).
+        fileAvailable: blobExistsForListing(d.s3Key),
       };
     };
     const documents = docRows

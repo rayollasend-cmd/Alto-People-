@@ -1,4 +1,5 @@
 import type {
+  EmailSuppressionListResponse,
   Notification,
   NotificationBroadcastInput,
   NotificationChannel,
@@ -43,4 +44,15 @@ export function broadcast(body: NotificationBroadcastInput): Promise<{ count: nu
     method: 'POST',
     body,
   });
+}
+
+export function listSuppressions(): Promise<EmailSuppressionListResponse> {
+  return apiFetch<EmailSuppressionListResponse>('/communications/admin/suppressions');
+}
+
+export function deleteSuppression(email: string): Promise<void> {
+  return apiFetch<void>(
+    `/communications/admin/suppressions/${encodeURIComponent(email)}`,
+    { method: 'DELETE' },
+  );
 }

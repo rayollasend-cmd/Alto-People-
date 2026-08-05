@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { httpUrl } from '@alto-people/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -52,7 +53,7 @@ const SubmitInputSchema = z.object({
   organization: z.string().min(1).max(200),
   cause: z.string().max(200).optional().nullable(),
   description: z.string().min(1).max(5000),
-  evidenceUrl: z.string().url().max(500).optional().nullable(),
+  evidenceUrl: httpUrl(500).optional().nullable(),
   matchRequested: z.boolean().optional().default(false),
 });
 

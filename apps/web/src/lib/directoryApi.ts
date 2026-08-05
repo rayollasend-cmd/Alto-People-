@@ -10,9 +10,11 @@ export interface DirectoryFilters {
   clientId?: string;
   departmentId?: string;
   locationId?: string;
-  /** Server caps at 500; pass a small value for typeahead consumers so a
-   *  two-letter prefix doesn't pull the whole 1000-row directory. */
+  /** Server caps at 500 (and defaults to it); pass a small value for
+   *  typeahead consumers so a two-letter prefix doesn't pull a full page. */
   limit?: number;
+  /** Opaque id of the last row of the previous page — see nextCursor. */
+  cursor?: string;
   employmentType?:
     | 'W2_EMPLOYEE'
     | 'CONTRACTOR_1099_INDIVIDUAL'

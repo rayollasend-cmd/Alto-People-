@@ -13,6 +13,7 @@ import { recordTimeEvent } from '../lib/audit.js';
 import { accrueSickLeaveForEntry } from '../lib/timeOffAccrual.js';
 import { notifyAssociate } from '../lib/notify.js';
 import { runWithConcurrency } from '../lib/concurrency.js';
+import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 
 /**
  * Phase 79 — Manager-scoped routes.
@@ -405,7 +406,10 @@ teamRouter.get('/timesheets', VIEW, async (req: Request, res: Response) => {
       status: r.status,
       notes: r.notes,
       rejectionReason: r.rejectionReason,
-      payRate: r.payRate?.toString() ?? null,
+      // Number, matching TimeEntrySchema.payRate and /time/admin/entries.
+      // This route emitted a STRING for the same column, so any shared
+      // formatter silently switched between arithmetic and lexicographic.
+      payRate: r.payRate ? Number(r.payRate) : null,
     })),
   });
 });
@@ -787,6 +791,13 @@ teamRouter.post(
         reviewerNote: note,
         decidedAt: new Date(),
       },
+    });
+    void emitWebhookEvent('time_off.denied', {
+      requestId: id,
+      associateId: reqRow.associateId,
+      category: reqRow.category,
+      startDate: reqRow.startDate.toISOString().slice(0, 10),
+      endDate: reqRow.endDate.toISOString().slice(0, 10),
     });
     void notifyAssociate(reqRow.associateId, {
       subject: 'Your time off was denied',

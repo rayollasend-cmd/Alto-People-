@@ -17,11 +17,14 @@ import {
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import {
+  MFA_ENROLL_TTL_SECONDS,
   MFA_PENDING_TTL_SECONDS,
+  signMfaEnroll,
   signMfaPending,
   signSession,
   verifyMfaPending,
 } from '../lib/jwt.js';
+import { mfaPolicyAppliesTo } from '@alto-people/shared';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import {
   generateAuthenticationOptions,
@@ -46,7 +49,9 @@ import {
   recordLogout,
 } from '../lib/audit.js';
 import {
+  allowMfaEnrollToken,
   invalidateUserCache,
+  MFA_ENROLL_COOKIE,
   MFA_PENDING_COOKIE,
   requireAuth,
   SESSION_COOKIE,
@@ -176,6 +181,34 @@ function mfaPendingCookieOptions() {
   };
 }
 
+// mfa_enroll cookie (org-enforced MFA enrollment) — same posture again,
+// 15-minute maxAge to match the token TTL.
+function mfaEnrollCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: 'lax' as const,
+    secure: env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: MFA_ENROLL_TTL_SECONDS * 1000,
+  };
+}
+
+// ----- Account lockout ------------------------------------------------------
+//
+// Persistent brute-force defense on the PASSWORD path. The in-memory
+// per-email rate limiter (5/15min) is the first line; this is the durable
+// backstop that survives deploys and can't be reset by waiting out a
+// limiter window from a botnet of IPs.
+//
+// Scope decision: lockout applies to the password path ONLY. Its purpose
+// is defeating online password guessing; a passkey login proves possession
+// of an enrolled authenticator + on-device user verification, which a
+// brute-forcer by definition doesn't have — so passkey sign-in stays
+// available while the password is locked (and is in fact the recommended
+// escape hatch for a user being actively attacked).
+const LOCKOUT_THRESHOLD = 10;
+const LOCKOUT_DURATION_MS = 15 * 60 * 1000;
+
 const GENERIC_LOGIN_ERROR = {
   error: { code: 'invalid_credentials', message: 'Invalid email or password' },
 };
@@ -292,10 +325,47 @@ authRouter.post(
         res.status(401).json(GENERIC_LOGIN_ERROR);
         return;
       }
+      // Account lockout gate — checked AFTER the argon2 verify (timing
+      // stays uniform) and BEFORE the wrong-password branch, so a locked
+      // account returns the identical generic 401 whether or not the
+      // password was right: no oracle telling an attacker "this account
+      // is locked" or "the password I guessed was correct". The audit
+      // reason records the truth for forensics. Expired locks fall
+      // through and unlock naturally.
+      if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
+        await recordLoginFailure({ email, req, reason: 'locked' });
+        res.status(401).json(GENERIC_LOGIN_ERROR);
+        return;
+      }
       if (!passwordOk) {
+        // Atomic increment; at the threshold, lock for 15 minutes. Failed
+        // MFA challenges deliberately do NOT feed this counter — they have
+        // their own rate limiters (mfaChallengeUserLimiter), and a wrong
+        // TOTP code isn't evidence the password is being guessed.
+        const bumped = await prisma.user.update({
+          where: { id: user.id },
+          data: { failedLoginCount: { increment: 1 } },
+          select: { failedLoginCount: true },
+        });
+        if (bumped.failedLoginCount >= LOCKOUT_THRESHOLD) {
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { lockedUntil: new Date(Date.now() + LOCKOUT_DURATION_MS) },
+          });
+        }
         await recordLoginFailure({ email, req, reason: 'wrong_password' });
         res.status(401).json(GENERIC_LOGIN_ERROR);
         return;
+      }
+      // Correct password: clear the lockout state. Runs before the status
+      // and MFA gates on purpose — the counter measures "does the caller
+      // know the password", which they just proved, and an expired lock
+      // must not leave a stale count that re-locks on the next typo.
+      if (user.failedLoginCount > 0 || user.lockedUntil) {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { failedLoginCount: 0, lockedUntil: null },
+        });
       }
       if (user.status !== 'ACTIVE') {
         await recordLoginFailure({ email, req, reason: 'disabled' });
@@ -327,6 +397,31 @@ authRouter.post(
         // both a real session AND a pending challenge.
         res.clearCookie(SESSION_COOKIE, cookieOptions());
         res.json({ mfaRequired: true });
+        return;
+      }
+
+      // Org-enforced MFA. The user has NO TOTP enrolled (an enrolled user
+      // took the mfaRequired branch above) — if the org policy applies to
+      // their role, the correct password still doesn't buy a session.
+      // Instead they get a 15-minute mfa_enroll cookie accepted only by
+      // the /auth/me/mfa/enroll/* endpoints; completing enrollment there
+      // promotes to a real session. "MFA" here means TOTP: passkey
+      // sign-in (/webauthn/login/verify) is exempt from this policy
+      // because a passkey already proves possession + on-device user
+      // verification — strictly stronger than password + TOTP.
+      const policy = await prisma.orgSetting.findUnique({
+        where: { id: 'singleton' },
+        select: { mfaRequirement: true },
+      });
+      if (policy && mfaPolicyAppliesTo(policy.mfaRequirement, user.role)) {
+        const enroll = signMfaEnroll({ sub: user.id, ver: user.tokenVersion });
+        res.cookie(MFA_ENROLL_COOKIE, enroll, mfaEnrollCookieOptions());
+        // Same defensive clear as the mfa_pending branch — never leave a
+        // live session cookie alongside a restricted token.
+        res.clearCookie(SESSION_COOKIE, cookieOptions());
+        // No auth.login audit row — sign-in isn't complete. It fires from
+        // enroll/confirm when the session is actually issued.
+        res.json({ mfaEnrollmentRequired: true });
         return;
       }
 
@@ -1209,7 +1304,10 @@ authRouter.get('/me/data-export', requireAuth, async (req, res, next) => {
  * affects the Settings card. The state machine is built right so PR 2 can
  * just flip the enforcement switch.
  */
-authRouter.post('/me/mfa/enroll/start', requireAuth, async (req, res, next) => {
+// allowMfaEnrollToken: org-enforced enrollment arrives here WITHOUT a
+// session — the short-lived mfa_enroll cookie from /auth/login stands in
+// for one on these two endpoints only.
+authRouter.post('/me/mfa/enroll/start', allowMfaEnrollToken, requireAuth, async (req, res, next) => {
   try {
     const userId = req.user!.id;
     const email = req.user!.email;
@@ -1257,7 +1355,7 @@ authRouter.post('/me/mfa/enroll/start', requireAuth, async (req, res, next) => {
  * the Settings card flips to the "MFA is on" state. tokenVersion is NOT
  * bumped: enabling MFA shouldn't sign anyone out.
  */
-authRouter.post('/me/mfa/enroll/confirm', requireAuth, mfaEnrollConfirmLimiter, async (req, res, next) => {
+authRouter.post('/me/mfa/enroll/confirm', allowMfaEnrollToken, requireAuth, mfaEnrollConfirmLimiter, async (req, res, next) => {
   try {
     const parsed = MfaEnrollConfirmInputSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1305,6 +1403,26 @@ authRouter.post('/me/mfa/enroll/confirm', requireAuth, mfaEnrollConfirmLimiter, 
     );
 
     void sendMfaSecurityEmail(userId, req.user!.email, mfaEnabledTemplate, 'mfa_enabled');
+
+    // Org-enforced enrollment: the caller got here on an mfa_enroll token,
+    // not a real session. Enrollment succeeded, so promote to a session
+    // now (mirroring how /auth/mfa-challenge promotes mfa_pending) and
+    // write the auth.login row that /auth/login deliberately skipped.
+    if (req.mfaEnrollment) {
+      res.clearCookie(MFA_ENROLL_COOKIE, mfaEnrollCookieOptions());
+      const token = signSession({
+        sub: req.user!.id,
+        role: req.user!.role,
+        ver: req.user!.tokenVersion,
+      });
+      res.cookie(SESSION_COOKIE, token, cookieOptions());
+      await recordLoginSuccess({
+        email: req.user!.email,
+        req,
+        userId: req.user!.id,
+        clientId: req.user!.clientId,
+      });
+    }
 
     res.status(204).end();
   } catch (err) {
@@ -2196,7 +2314,14 @@ authRouter.post('/webauthn/login/verify', loginIpLimiter, async (req, res, next)
     });
 
     // Passkey = possession + on-device biometric/PIN, so it satisfies the
-    // MFA policy on its own — no TOTP leg.
+    // MFA policy on its own — no TOTP leg, and the org mfaRequirement
+    // policy does not force TOTP enrollment on passkey sign-ins either.
+    //
+    // Account lockout (failedLoginCount / lockedUntil) is also deliberately
+    // NOT enforced here: the lockout exists to stop online password
+    // guessing, and a verified passkey assertion proves possession of an
+    // enrolled authenticator — something a brute-forcer doesn't have. A
+    // user whose password is under attack keeps a working sign-in path.
     const token = signSession({ sub: user.id, role: user.role, ver: user.tokenVersion });
     res.cookie(SESSION_COOKIE, token, cookieOptions());
     await recordLoginSuccess({ email: user.email, req, userId: user.id, clientId: user.clientId });

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { AuditSearchEntry, AuditSearchResponse } from '@alto-people/shared';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 
@@ -129,10 +130,9 @@ auditRouter.get('/logs.csv', async (req, res, next) => {
   }
 });
 
+// Delegates to the shared escaper: RFC-4180 quoting PLUS formula-injection
+// guarding. This export embeds raw JSON metadata, which is exactly where a
+// crafted value would ride into a spreadsheet.
 function csvEscape(v: string): string {
-  if (v === '') return '';
-  if (/[",\n\r]/.test(v)) {
-    return `"${v.replace(/"/g, '""')}"`;
-  }
-  return v;
+  return sharedCsvCell(v);
 }

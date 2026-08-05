@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { existsSync } from 'node:fs';
 import { Prisma } from '@prisma/client';
 import {
   BackgroundBulkInitiateInputSchema,
@@ -21,7 +20,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeBackgroundChecks } from '../lib/scope.js';
-import { resolveStoragePath } from '../lib/storage.js';
+import { blobExistsForListing } from '../lib/blobStore.js';
 import { recordComplianceEvent } from '../lib/audit.js';
 import { everifyRouter } from './everify.js';
 import { drugTestsRouter } from './drugTests.js';
@@ -407,7 +406,10 @@ complianceRouter.get('/background/:id', async (req, res, next) => {
       kind: d.kind,
       filename: d.filename,
       mimeType: d.mimeType,
-      fileAvailable: d.s3Key !== null && existsSync(resolveStoragePath(d.s3Key)),
+      // Local driver: real existsSync. s3 driver: assumed available when
+      // s3Key is non-null (see blobStore.ts — S3 doesn't lose blobs on
+      // redeploy, which is the failure mode this flag exists for).
+      fileAvailable: blobExistsForListing(d.s3Key),
     }));
 
     await recordComplianceEvent({

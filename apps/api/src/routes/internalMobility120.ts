@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { httpUrl } from '@alto-people/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -124,7 +125,7 @@ internalMobility120Router.get(
 
 const ApplyInputSchema = z.object({
   coverLetter: z.string().max(8000).optional().nullable(),
-  resumeUrl: z.string().url().max(500).optional().nullable(),
+  resumeUrl: httpUrl(500).optional().nullable(),
 });
 
 internalMobility120Router.post(

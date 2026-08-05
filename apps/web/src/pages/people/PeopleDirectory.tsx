@@ -2,6 +2,7 @@ import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 're
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   keepPreviousData,
+  useInfiniteQuery,
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
@@ -70,6 +71,7 @@ import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { nudgeApplicant } from '@/lib/onboardingApi';
 import {
+  eraseAssociatePersonalData,
   getAssociatePayoutMethod,
   getAssociateSsn,
   getAssociateW4,
@@ -356,19 +358,33 @@ export function PeopleDirectory() {
   // keepPreviousData makes filter/search changes show the old rows
   // (faded by isFetching) until the new ones arrive instead of flashing
   // a skeleton — much smoother on slow connections.
+  // Cursor-paged. The endpoint has always returned `nextCursor`; this
+  // page used to drop it on the floor, so associate #501 onward was
+  // invisible with no "load more" and no warning — the list simply
+  // ended. useInfiniteQuery consumes the cursor the server already sends.
   const {
-    data: rows,
+    data: pages,
     error: rowsError,
     isFetching: rowsFetching,
-  } = useQuery({
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: ['directory', filters],
-    queryFn: async () => (await listDirectory(filters)).associates,
+    queryFn: ({ pageParam }) =>
+      listDirectory({ ...filters, ...(pageParam ? { cursor: pageParam } : {}) }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
     placeholderData: keepPreviousData,
     // A minute of freshness: back-navigating to the directory (or re-
     // applying a recent filter combo) renders instantly from cache instead
-    // of refetching up to 1,000 rows.
+    // of refetching every page.
     staleTime: 60_000,
   });
+  const rows = useMemo(
+    () => pages?.pages.flatMap((p) => p.associates),
+    [pages],
+  );
 
   // Resolve the deep-link associateId once rows load. setTarget is the
   // canonical drawer-open path so we get all the existing render logic
@@ -674,6 +690,21 @@ export function PeopleDirectory() {
             ))}
           </ul>
         )
+      )}
+
+      {/* The list is capped per page. Without this control the directory
+          simply ended at the cap with no indication more people existed. */}
+      {hasNextPage && (
+        <div className="mt-4 flex justify-center">
+          <Button
+            variant="outline"
+            onClick={() => void fetchNextPage()}
+            loading={isFetchingNextPage}
+            disabled={isFetchingNextPage}
+          >
+            Load more associates
+          </Button>
+        </div>
       )}
 
       <Drawer
@@ -1258,7 +1289,151 @@ function ProfileTab({
           value={fmtDate(a.createdAt)}
         />
       </Section>
+
+      <DangerZoneSection associate={a} />
     </div>
+  );
+}
+
+/**
+ * Danger zone — privacy erasure. Anonymizes the associate's identity and
+ * scrubs credentials/ciphertext; payroll and tax history is legally
+ * retained and stays. Gated on view:hr-admin, the same capability that
+ * guards admin user management. The dialog demands a written reason and
+ * retyping the associate's last name (the server 409s on a mismatch).
+ */
+function DangerZoneSection({ associate: a }: { associate: DirectoryEntry }) {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [confirmName, setConfirmName] = useState('');
+  const [force, setForce] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const canErase = user ? hasCapability(user.role, 'view:hr-admin') : false;
+  if (!canErase) return null;
+
+  const openDialog = () => {
+    setReason('');
+    setConfirmName('');
+    setForce(false);
+    setOpen(true);
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    try {
+      await eraseAssociatePersonalData(a.id, {
+        reason: reason.trim(),
+        confirmName: confirmName.trim(),
+        ...(force ? { force: true } : {}),
+      });
+      toast.success('Personal data erased. Payroll history is retained.');
+      setOpen(false);
+      void qc.invalidateQueries({ queryKey: ['directory'] });
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : 'Erasure failed. Nothing was changed.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Section title="Danger zone">
+      <p className="text-xs text-silver/80">
+        Permanently anonymize this associate’s identity, delete their login
+        credentials, biometrics and document files. Pay and tax history is
+        kept, as required by law, under the anonymized record.
+      </p>
+      <div className="pt-2">
+        <Button variant="destructive" size="sm" onClick={openDialog}>
+          <ShieldAlert className="mr-2 h-3.5 w-3.5" />
+          Erase personal data
+        </Button>
+      </div>
+
+      <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Erase personal data — {a.firstName} {a.lastName}
+            </DialogTitle>
+            <DialogDescription>
+              This cannot be undone. Name, contact details, SSN, bank
+              details, documents, biometrics and login access are erased.
+              Time and payroll records are retained (IRS: 4 years, FLSA: 3
+              years) against the anonymized record.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={submit} className="grid gap-3">
+            <div className="grid gap-1">
+              <Label htmlFor="erase-reason">Reason (required, min 10 characters)</Label>
+              <Textarea
+                id="erase-reason"
+                autoFocus
+                required
+                minLength={10}
+                maxLength={500}
+                rows={3}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="e.g. GDPR/CCPA deletion request received 2026-07-20, ticket #1234"
+              />
+            </div>
+            <div className="grid gap-1">
+              <Label htmlFor="erase-confirm-name">
+                Type the associate’s last name (“{a.lastName}”) to confirm
+              </Label>
+              <Input
+                id="erase-confirm-name"
+                required
+                value={confirmName}
+                onChange={(e) => setConfirmName(e.target.value)}
+                placeholder={a.lastName}
+                autoComplete="off"
+              />
+            </div>
+            <label className="flex items-start gap-2 text-xs text-silver">
+              <input
+                type="checkbox"
+                checked={force}
+                onChange={(e) => setForce(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                Erase even though this associate is not marked separated
+                (only needed when the server refuses with “not separated”).
+              </span>
+            </label>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setOpen(false)}
+                disabled={busy}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant="destructive"
+                loading={busy}
+                disabled={
+                  busy || reason.trim().length < 10 || confirmName.trim().length === 0
+                }
+              >
+                Erase permanently
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </Section>
   );
 }
 

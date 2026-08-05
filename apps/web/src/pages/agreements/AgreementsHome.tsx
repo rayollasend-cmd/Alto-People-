@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { safeHref } from '@alto-people/shared';
 import { FileSignature, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -210,7 +211,7 @@ export function AgreementsHome() {
                         className="coarse:min-h-11"
                       >
                         <a
-                          href={a.documentUrl}
+                          href={safeHref(a.documentUrl)}
                           target="_blank"
                           rel="noopener noreferrer"
                         >
@@ -633,7 +634,7 @@ function SignDrawer({
       <DrawerBody className="space-y-4">
         {row.documentUrl ? (
           <a
-            href={row.documentUrl}
+            href={safeHref(row.documentUrl)}
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-steel hover:underline"

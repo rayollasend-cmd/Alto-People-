@@ -6,6 +6,7 @@ import {
   ApproveApplicationInputSchema,
   BackgroundCheckAuthorizeInputSchema,
   BulkInviteInputSchema,
+  APPLICATION_STATUSES,
   LocationListResponseSchema,
   i9CatalogEntry,
   i9SetSatisfied,
@@ -37,6 +38,8 @@ import {
   type TemplateListResponse,
   type TemplateTask,
 } from '@alto-people/shared';
+import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
+import { toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
@@ -46,10 +49,7 @@ import { runWithConcurrency } from '../lib/concurrency.js';
 import { sendReminderForUser } from '../lib/inviteReminder.js';
 import { send } from '../lib/notifications.js';
 import { hashSignedPdf, renderSignedAgreement } from '../lib/esign.js';
-import { resolveStoragePath, UPLOAD_ROOT } from '../lib/storage.js';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { blobExistsForListing, getBlobStore } from '../lib/blobStore.js';
 import {
   assertCanModifyApplication,
   effectiveClientIdFilter,
@@ -61,10 +61,24 @@ import {
   markTaskDoneByKind,
   markTaskSkippedById,
 } from '../lib/checklist.js';
-import multer from 'multer';
+import multer, { MulterError } from 'multer';
 import { decryptString, encryptString, tryDecryptString } from '../lib/crypto.js';
 import { maskRoutingNumber } from '../lib/payoutMethod.js';
-import { recordOnboardingEvent } from '../lib/audit.js';
+import { enqueueAudit, recordOnboardingEvent } from '../lib/audit.js';
+import { emitWebhookEvent } from '../lib/webhookDispatch.js';
+import { CsvParseError, parseCsv } from '../lib/csv.js';
+import {
+  CSV_IMPORT_MAX_ROWS,
+  mapCsvHeader,
+  validateCsvRows,
+  type ValidatedCsvRow,
+} from '../lib/csvImport.js';
+import {
+  CsvImportModeSchema,
+  type CsvImportCommitResponse,
+  type CsvImportCommitRow,
+  type CsvImportPreviewResponse,
+} from '@alto-people/shared';
 import {
   notifyAllAdmins,
   notifyAssociate,
@@ -586,7 +600,7 @@ onboardingRouter.get('/applications', async (req, res, next) => {
         onboardingTrack: row.onboardingTrack,
         status: row.status,
         position: row.position,
-        startDate: row.startDate ? row.startDate.toISOString() : null,
+        startDate: toDateOnly(row.startDate),
         invitedAt: row.invitedAt.toISOString(),
         submittedAt: row.submittedAt ? row.submittedAt.toISOString() : null,
         percentComplete: computePercent(tasks),
@@ -642,7 +656,14 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
       }),
     ]);
 
-    const byStatus: Record<string, number> = {};
+    // Seeded with EVERY status at 0. The contract types this as a total
+    // Record<ApplicationStatus, number>, but it was built only from the
+    // statuses the groupBy returned — so TS said byStatus.DRAFT was a
+    // number while the runtime said undefined, and six call sites carried
+    // a defensive ?? 0 to paper over it.
+    const byStatus: Record<string, number> = Object.fromEntries(
+      APPLICATION_STATUSES.map((s) => [s, 0]),
+    );
     let total = 0;
     let inFlight = 0;
     for (const g of grouped) {
@@ -664,7 +685,7 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
       onboardingTrack: row.onboardingTrack,
       status: row.status,
       position: row.position,
-      startDate: row.startDate ? row.startDate.toISOString() : null,
+      startDate: toDateOnly(row.startDate),
       invitedAt: row.invitedAt.toISOString(),
       submittedAt: row.submittedAt ? row.submittedAt.toISOString() : null,
       percentComplete: computePercent(row.checklist?.tasks ?? []),
@@ -750,7 +771,7 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       onboardingTrack: row.onboardingTrack,
       status: row.status,
       position: row.position,
-      startDate: row.startDate ? row.startDate.toISOString() : null,
+      startDate: toDateOnly(row.startDate),
       invitedAt: row.invitedAt.toISOString(),
       submittedAt: row.submittedAt ? row.submittedAt.toISOString() : null,
       percentComplete: computePercent(row.checklist?.tasks ?? []),
@@ -926,6 +947,30 @@ onboardingRouter.post(
         metadata: { hireDate, percentComplete: percent },
         req,
       });
+
+      // Outbound webhooks — approval is both "onboarding done" and the
+      // hire moment (hireDate lands, the User activates). Ids + dates
+      // only; enrichment is the consumer's job via the public API.
+      void emitWebhookEvent(
+        'onboarding.completed',
+        {
+          applicationId: app.id,
+          associateId: app.associateId,
+          clientId: app.clientId,
+          approvedAt: now.toISOString(),
+        },
+        { clientId: app.clientId },
+      );
+      void emitWebhookEvent(
+        'associate.hired',
+        {
+          associateId: app.associateId,
+          applicationId: app.id,
+          clientId: app.clientId,
+          hireDate,
+        },
+        { clientId: app.clientId },
+      );
 
       const approvedAssoc = await prisma.associate.findUnique({
         where: { id: app.associateId },
@@ -1423,7 +1468,7 @@ onboardingRouter.get(
           status: full.status,
           track: full.onboardingTrack,
           position: full.position,
-          startDate: full.startDate ? full.startDate.toISOString() : null,
+          startDate: toDateOnly(full.startDate),
           invitedAt: full.invitedAt.toISOString(),
           submittedAt: full.submittedAt ? full.submittedAt.toISOString() : null,
         },
@@ -1434,7 +1479,7 @@ onboardingRouter.get(
           email: full.associate.email,
           employmentType: full.associate.employmentType,
           phone: full.associate.phone,
-          dob: full.associate.dob ? full.associate.dob.toISOString() : null,
+          dob: toDateOnly(full.associate.dob),
           addressLine1: full.associate.addressLine1,
           addressLine2: full.associate.addressLine2,
           city: full.associate.city,
@@ -2401,7 +2446,7 @@ onboardingRouter.post(
 //      satisfy the I-9 List A or List B+C requirements, and DONE-s the
 //      I9_VERIFICATION task once both sections are complete.
 
-const I9_MAX_BYTES = 10 * 1024 * 1024;
+const I9_MAX_BYTES = UPLOAD_MAX_BYTES;
 const I9_ALLOWED_MIMES = new Set([
   'application/pdf',
   'image/png',
@@ -2786,9 +2831,8 @@ onboardingRouter.post(
         '';
       const sideTag = side ? `-${side.toLowerCase()}` : '';
       const relativeKey = `i9/${app.associateId}/${sha.slice(0, 16)}${sideTag}${ext}`;
-      const targetDir = join(UPLOAD_ROOT, 'i9', app.associateId);
-      await mkdir(targetDir, { recursive: true });
-      await writeFile(resolveStoragePath(relativeKey), file.buffer);
+      // Driver put() creates intermediate directories on the local driver.
+      await getBlobStore().put(relativeKey, file.buffer, file.mimetype);
 
       const baseFilename = file.originalname || `i9-${documentKind.toLowerCase()}${sideTag}${ext}`;
       const doc = await prisma.documentRecord.create({
@@ -2877,9 +2921,9 @@ onboardingRouter.get('/applications/:id/i9/documents', async (req, res, next) =>
         // Same fileAvailable signal as the documents vault — Railway's
         // ephemeral filesystem can leave zombie rows whose blobs are gone.
         // The verifier UI uses this to render a "file missing" tile
-        // instead of a broken <img>.
-        const fileAvailable =
-          d.s3Key !== null && existsSync(resolveStoragePath(d.s3Key));
+        // instead of a broken <img>. On the s3 driver this assumes
+        // available for any non-null s3Key (see blobStore.ts).
+        const fileAvailable = blobExistsForListing(d.s3Key);
         return {
           id: d.id,
           kind: d.kind,
@@ -3149,11 +3193,9 @@ onboardingRouter.post(
       });
       const pdfHash = hashSignedPdf(pdf);
 
-      // Persist to uploads/esign/<agreementId>/<hash>.pdf
+      // Persist to esign/<agreementId>/<hash>.pdf (relative blob key).
       const relativeKey = `esign/${agreement.id}/${pdfHash.slice(0, 16)}.pdf`;
-      const targetDir = join(UPLOAD_ROOT, 'esign', agreement.id);
-      await mkdir(targetDir, { recursive: true });
-      await writeFile(resolveStoragePath(relativeKey), pdf);
+      await getBlobStore().put(relativeKey, pdf, 'application/pdf');
 
       const result = await prisma.$transaction(async (tx) => {
         const doc = await tx.documentRecord.create({
@@ -3312,9 +3354,13 @@ onboardingRouter.get(
       );
       void app;
 
-      const path = resolveStoragePath(sig.signatureS3Key);
-      const { readFile } = await import('node:fs/promises');
-      const pdf = await readFile(path);
+      const pdf = await getBlobStore().get(sig.signatureS3Key);
+      if (!pdf) {
+        // Blob gone (ephemeral-disk wipe pre-volume, or purged object).
+        // Same 410 semantics as the documents download route; previously
+        // the raw readFile ENOENT surfaced as an opaque 500.
+        throw new HttpError(410, 'document_missing', 'Signed PDF is no longer available');
+      }
       const liveHash = hashSignedPdf(pdf);
 
       res.setHeader('Content-Type', 'application/pdf');
@@ -3901,3 +3947,370 @@ onboardingRouter.post(
     }
   }
 );
+
+/* ===== Bulk associate CSV import (client onboarding / migration) ========= */
+//
+// Two-step flow: POST /admin/import/preview parses + validates the file
+// WITHOUT writing anything; POST /admin/import/commit re-uploads the same
+// file with a mode and performs the writes. Both endpoints run the exact
+// same parse/validate pipeline (lib/csvImport.ts) so the preview can never
+// promise something commit won't do.
+//
+// IDEMPOTENCY: commit skips any row whose email already belongs to a
+// non-deleted associate or user (`skipped`/`already_exists`), so re-running
+// the same file after a partial failure is safe — completed rows are
+// reported as skipped instead of being duplicated.
+
+const CSV_IMPORT_MAX_BYTES = 2 * 1024 * 1024; // 2 MB ≈ far beyond 2000 rows
+
+const csvUploadRaw = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: CSV_IMPORT_MAX_BYTES, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    // Browsers disagree wildly on CSV MIME (text/csv, application/
+    // vnd.ms-excel, application/octet-stream…), so the extension is the
+    // gate; content sanity (UTF-8, no NUL bytes) is verified after.
+    if (!file.originalname.toLowerCase().endsWith('.csv')) {
+      cb(new HttpError(400, 'invalid_file_type', 'Upload a .csv file.'));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+// Wrap multer so an oversized upload gets a message quoting THIS route's
+// 2 MB cap rather than the generic uploads limit in the error middleware.
+const csvUpload: import('express').RequestHandler = (req, res, next) => {
+  csvUploadRaw.single('file')(req, res, (err?: unknown) => {
+    if (err instanceof MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      next(new HttpError(413, 'file_too_large', 'CSV file is too large — the limit is 2 MB.'));
+      return;
+    }
+    next(err);
+  });
+};
+
+/**
+ * Shared preview builder for both import endpoints: decode + parse the
+ * uploaded CSV, map its header, resolve clients, and validate every row.
+ * Throws HttpError on file-level problems; row-level problems come back as
+ * per-row errors.
+ */
+async function buildCsvImportPreview(req: import('express').Request): Promise<{
+  rows: ValidatedCsvRow[];
+  summary: { total: number; valid: number; invalid: number; duplicateEmails: number };
+}> {
+  const file = req.file;
+  if (!file) {
+    throw new HttpError(400, 'file_required', 'Attach the CSV as multipart field "file".');
+  }
+  // CSV has no magic bytes — the equivalent sanity check for a text format
+  // is "decodes as UTF-8 and contains no NUL", which rejects binaries
+  // renamed to .csv and UTF-16 exports that would silently mis-parse.
+  if (file.buffer.includes(0)) {
+    throw new HttpError(400, 'invalid_file_content', 'That file is not a text CSV.');
+  }
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(file.buffer);
+  } catch {
+    throw new HttpError(400, 'invalid_encoding', 'CSV must be UTF-8 encoded.');
+  }
+
+  let records;
+  try {
+    records = parseCsv(text);
+  } catch (err) {
+    if (err instanceof CsvParseError) {
+      throw new HttpError(400, 'invalid_csv', err.message);
+    }
+    throw err;
+  }
+  if (records.length === 0) {
+    throw new HttpError(400, 'empty_file', 'The CSV file is empty — a header row is required.');
+  }
+
+  const { map, missing } = mapCsvHeader(records[0].fields);
+  if (missing.length > 0) {
+    throw new HttpError(
+      400,
+      'missing_columns',
+      `Missing required column${missing.length === 1 ? '' : 's'}: ${missing.join(', ')}. ` +
+        'Expected headers (case-insensitive, any order): firstName, lastName, email, ' +
+        'phone, hireDate, clientName or clientId, position.',
+      { missing },
+    );
+  }
+
+  const dataRecords = records.slice(1);
+  if (dataRecords.length > CSV_IMPORT_MAX_ROWS) {
+    throw new HttpError(
+      400,
+      'too_many_rows',
+      `Too many rows (${dataRecords.length}). The limit is ${CSV_IMPORT_MAX_ROWS} data rows per file — split the import.`,
+    );
+  }
+
+  // Tenant-bounded callers (SHIFT_SUPERVISOR) may only import into their
+  // own client — rows resolving elsewhere get a per-row error. Admins see
+  // (and may target) every non-deleted client.
+  const bounded = effectiveClientIdFilter(req.user!, undefined);
+  if (bounded === null) {
+    throw new HttpError(
+      400,
+      'client_required',
+      'Your account has no client assigned — ask an administrator to set one before importing.',
+    );
+  }
+  const clients = await prisma.client.findMany({
+    where: { deletedAt: null, ...(bounded ? { id: bounded } : {}) },
+    select: { id: true, name: true },
+  });
+
+  // Existing-email check against BOTH associates and users (either one
+  // makes the email taken). One `in` query each — 2000 values is fine.
+  const emailCol = map.indexOf('email');
+  const candidateEmails = [
+    ...new Set(
+      dataRecords
+        .map((r) => (r.fields[emailCol] ?? '').trim().toLowerCase())
+        .filter((e) => e !== ''),
+    ),
+  ];
+  const existingEmails = new Set<string>();
+  if (candidateEmails.length > 0) {
+    const [associates, users] = await Promise.all([
+      prisma.associate.findMany({
+        where: { email: { in: candidateEmails }, deletedAt: null },
+        select: { email: true },
+      }),
+      prisma.user.findMany({
+        where: { email: { in: candidateEmails }, deletedAt: null },
+        select: { email: true },
+      }),
+    ]);
+    for (const a of associates) existingEmails.add(a.email.toLowerCase());
+    for (const u of users) existingEmails.add(u.email.toLowerCase());
+  }
+
+  return validateCsvRows(dataRecords, map, clients, existingEmails, bounded ?? null);
+}
+
+/**
+ * POST /onboarding/admin/import/preview — dry-run: parse + validate, write
+ * nothing. Same capability as bulk invite.
+ */
+onboardingRouter.post('/admin/import/preview', INVITE, csvUpload, async (req, res, next) => {
+  try {
+    const { rows, summary } = await buildCsvImportPreview(req);
+    const body: CsvImportPreviewResponse = {
+      rows: rows.map((r) => ({ line: r.line, data: r.data, errors: r.errors })),
+      summary,
+    };
+    res.status(200).json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /onboarding/admin/import/commit — same file re-uploaded plus a
+ * `mode` field:
+ *   - 'create': silent migration — Associate + Application rows only, no
+ *     user accounts, no emails. For onboarding an existing client's roster.
+ *   - 'invite': additionally mints an INVITED user and sends the standard
+ *     invite email (same inviteOneApplicant helper as the JSON bulk path).
+ *
+ * Invalid rows are skipped, each row is isolated in try/catch, and rows
+ * whose email already exists come back skipped/already_exists — which is
+ * what makes re-running the same file safe (see block comment above).
+ */
+onboardingRouter.post('/admin/import/commit', INVITE, csvUpload, async (req, res, next) => {
+  try {
+    const modeParsed = CsvImportModeSchema.safeParse(req.body?.mode);
+    if (!modeParsed.success) {
+      throw new HttpError(400, 'invalid_mode', "mode must be 'create' or 'invite'.");
+    }
+    const mode = modeParsed.data;
+
+    const { rows } = await buildCsvImportPreview(req);
+
+    // Per-client caches so a 2000-row single-client file doesn't run the
+    // same template/location lookups 2000 times.
+    const templateIdByClient = new Map<string, string | null>();
+    const locationIdByClient = new Map<string, string | null>();
+
+    const resolveTemplateId = async (clientId: string): Promise<string | null> => {
+      if (templateIdByClient.has(clientId)) return templateIdByClient.get(clientId)!;
+      // Client-specific STANDARD template wins; global STANDARD is the
+      // fallback. (CSV carries no template column — imports are the
+      // standard track by definition; exotic tracks go through the
+      // regular invite dialogs.)
+      const tpl =
+        (await prisma.onboardingTemplate.findFirst({
+          where: { clientId, track: 'STANDARD' },
+          select: { id: true },
+        })) ??
+        (await prisma.onboardingTemplate.findFirst({
+          where: { clientId: null, track: 'STANDARD' },
+          select: { id: true },
+        }));
+      templateIdByClient.set(clientId, tpl?.id ?? null);
+      return tpl?.id ?? null;
+    };
+
+    const resolveLocationId = async (clientId: string): Promise<string | null> => {
+      if (locationIdByClient.has(clientId)) return locationIdByClient.get(clientId)!;
+      // Single-site clients pick themselves (same rule as the invite
+      // helper). Multi-site clients get NULL here rather than a hard
+      // error — the CSV has no location column, and blocking a whole
+      // migration on it would be worse; HR places/transfers them after.
+      const sites = await prisma.location.findMany({
+        take: 2,
+        where: { clientId, deletedAt: null, isActive: true },
+        select: { id: true },
+      });
+      const id = sites.length === 1 ? sites[0].id : null;
+      locationIdByClient.set(clientId, id);
+      return id;
+    };
+
+    const results: CsvImportCommitRow[] = new Array(rows.length);
+    let created = 0;
+    let invited = 0;
+    let skipped = 0;
+
+    // Bounded parallelism (4 wide, matching the email sender's throttle and
+    // the other bulk endpoints). Each row is isolated — one bad row never
+    // sinks the batch.
+    await runWithConcurrency(rows, 4, async (row, idx) => {
+      const email = row.data.email || null;
+      const skip = (reason: string) => {
+        results[idx] = { line: row.line, email, status: 'skipped', reason };
+        skipped++;
+      };
+      try {
+        if (row.alreadyExists) {
+          skip('already_exists');
+          return;
+        }
+        if (row.duplicateInFile) {
+          skip('duplicate_in_file');
+          return;
+        }
+        if (row.errors.length > 0) {
+          skip(`invalid: ${row.errors[0]}`);
+          return;
+        }
+        const clientId = row.data.clientId!;
+        const hireDate = row.data.hireDate; // validated YYYY-MM-DD or null
+
+        if (mode === 'invite') {
+          const templateId = await resolveTemplateId(clientId);
+          if (!templateId) {
+            skip('no_template: no STANDARD onboarding template exists for this client');
+            return;
+          }
+          const r = await inviteOneApplicant(req.user!.id, req, {
+            associateFirstName: row.data.firstName,
+            associateLastName: row.data.lastName,
+            associateEmail: row.data.email,
+            clientId,
+            templateId,
+            position: row.data.position ?? undefined,
+            startDate: hireDate ? `${hireDate}T00:00:00.000Z` : undefined,
+          });
+          // Phone / hire date aren't part of the invite helper's contract —
+          // stamp them on the associate it created/reused.
+          if (row.data.phone || hireDate) {
+            const invitedUser = await prisma.user.findUniqueOrThrow({
+              where: { id: r.invitedUserId },
+              select: { associateId: true },
+            });
+            if (invitedUser.associateId) {
+              await prisma.associate.update({
+                where: { id: invitedUser.associateId },
+                data: {
+                  ...(row.data.phone ? { phone: row.data.phone } : {}),
+                  ...(hireDate ? { hireDate: new Date(`${hireDate}T00:00:00.000Z`) } : {}),
+                },
+              });
+            }
+          }
+          results[idx] = { line: row.line, email, status: 'invited', reason: null };
+          invited++;
+        } else {
+          // 'create' — silent migration. Associate + Application only: no
+          // user account, no checklist, no email. The application records
+          // which client/site/position the migrated person belongs to.
+          const locationId = await resolveLocationId(clientId);
+          await prisma.$transaction(async (tx) => {
+            const associate = await tx.associate.create({
+              data: {
+                email: row.data.email,
+                firstName: row.data.firstName,
+                lastName: row.data.lastName,
+                phone: row.data.phone,
+                hireDate: hireDate ? new Date(`${hireDate}T00:00:00.000Z`) : null,
+              },
+            });
+            await tx.application.create({
+              data: {
+                associateId: associate.id,
+                clientId,
+                locationId,
+                onboardingTrack: 'STANDARD',
+                status: 'DRAFT',
+                position: row.data.position,
+                startDate: hireDate ? new Date(`${hireDate}T00:00:00.000Z`) : null,
+              },
+            });
+          }, TX_OPTS);
+          results[idx] = { line: row.line, email, status: 'created', reason: null };
+          created++;
+        }
+      } catch (err) {
+        // Unique-violation race (same email landed between our existence
+        // check and the write) IS the idempotent outcome, not an error.
+        const isUniqueViolation =
+          typeof err === 'object' && err !== null && (err as { code?: string }).code === 'P2002';
+        if (isUniqueViolation) {
+          skip('already_exists');
+          return;
+        }
+        const code = err instanceof HttpError ? err.code : null;
+        const message = err instanceof Error ? err.message : String(err);
+        skip(code ? `${code}: ${message}` : message);
+      }
+    });
+
+    // One audit row for the whole batch — counts + actor only, no PII.
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: null,
+        action: 'onboarding.csv_imported',
+        entityType: 'Application',
+        entityId: 'csv-import',
+        metadata: {
+          mode,
+          total: rows.length,
+          created,
+          invited,
+          skipped,
+          requestId: req.id ?? null,
+        },
+      },
+      'csvImportCommit',
+    );
+
+    const body: CsvImportCommitResponse = {
+      mode,
+      results,
+      summary: { total: rows.length, created, invited, skipped },
+    };
+    res.status(200).json(body);
+  } catch (err) {
+    next(err);
+  }
+});

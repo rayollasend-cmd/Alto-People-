@@ -5,6 +5,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { notifyAllAdmins, notifyManager } from '../lib/notify.js';
+import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 
 /**
  * Phase 119 — Separations + exit interviews.
@@ -253,6 +254,14 @@ separation119Router.post(
           { separationId: id, associateId: existing.associateId, err: err instanceof Error ? err.message : err },
         );
       }
+      // Outbound webhooks — the separation completing IS the termination
+      // event (access revoked, biometrics purged). Ids + dates only.
+      void emitWebhookEvent('associate.terminated', {
+        associateId: existing.associateId,
+        separationId: existing.id,
+        reason: existing.reason,
+        lastDayWorked: existing.lastDayWorked.toISOString().slice(0, 10),
+      });
       const who = `${existing.associate.firstName} ${existing.associate.lastName}`;
       void notifyAllAdmins({
         subject: `Separation completed: ${who}`,

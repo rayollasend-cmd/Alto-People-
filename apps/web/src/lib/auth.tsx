@@ -32,10 +32,17 @@ interface AuthState {
   /**
    * POST /auth/login. Returns `{ mfaRequired: true }` when the account
    * has two-step sign-in turned on — the caller is expected to drive a
-   * code prompt and finish the flow with `submitMfaChallenge`. Otherwise
-   * the user is signed in and `user` state is set.
+   * code prompt and finish the flow with `submitMfaChallenge`. Returns
+   * `{ mfaEnrollmentRequired: true }` when the org policy requires TOTP
+   * but the account has none — the caller drives the enrollment flow
+   * (QR + confirm) against /auth/me/mfa/enroll/*, which the short-lived
+   * mfa_enroll cookie set by the server authorizes. Otherwise the user
+   * is signed in and `user` state is set.
    */
-  signIn: (email: string, password: string) => Promise<{ mfaRequired: boolean }>;
+  signIn: (
+    email: string,
+    password: string,
+  ) => Promise<{ mfaRequired: boolean; mfaEnrollmentRequired: boolean }>;
   /** POST /auth/mfa-challenge. Sets `user` state on success. */
   submitMfaChallenge: (input: MfaChallengeInput) => Promise<void>;
   signOut: () => Promise<void>;
@@ -52,6 +59,52 @@ interface AuthState {
 export const AuthContext = createContext<AuthState | null>(null);
 
 const EMPTY_CAPS: ReadonlySet<Capability> = new Set();
+
+/**
+ * Keys that describe the DEVICE rather than the person: theme, density,
+ * language, install/what's-new dismissals, and the kiosk's own pairing.
+ * Everything else under the `alto` namespace belongs to whoever was
+ * signed in and must not survive them.
+ */
+const DEVICE_SCOPED_PREFIXES = [
+  'alto.theme',
+  'alto.density',
+  'alto.lang',
+  'alto.locale',
+  'alto.pwa.',
+  'alto.whatsnew',
+  'alto.kiosk.',
+];
+
+/**
+ * Wipe per-user state on sign-out.
+ *
+ * Signing out used to clear only the server cookie, leaving the previous
+ * person's onboarding draft (DOB, home address, phone), their cached
+ * shift roster, and cover-letter drafts in localStorage. On a shared
+ * store tablet the next associate to sign in saw them. Also drops the
+ * share-target intake cache so a file shared but never filed can't be
+ * picked up by the next user.
+ */
+function clearUserScopedStorage(): void {
+  try {
+    const doomed: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i);
+      if (!key) continue;
+      if (!key.startsWith('alto')) continue;
+      if (DEVICE_SCOPED_PREFIXES.some((p) => key.startsWith(p))) continue;
+      doomed.push(key);
+    }
+    for (const key of doomed) window.localStorage.removeItem(key);
+    window.sessionStorage.clear();
+  } catch {
+    /* storage unavailable — nothing to clear */
+  }
+  if ('caches' in window) {
+    void caches.delete('alto-shared-intake').catch(() => undefined);
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -104,11 +157,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Don't touch user state — the cookie set by the server is the
       // ephemeral mfa_pending one, not a real session. Caller drives the
       // next step.
-      return { mfaRequired: true };
+      return { mfaRequired: true, mfaEnrollmentRequired: false };
+    }
+    // Only the enroll variant carries this key, so a bare `in` check
+    // narrows cleanly (a compound check defeats TS's negation narrowing).
+    if ('mfaEnrollmentRequired' in res) {
+      // Same posture: the only cookie is the ephemeral mfa_enroll one.
+      // The caller drives the enrollment flow; a real session is issued
+      // by /auth/me/mfa/enroll/confirm.
+      return { mfaRequired: false, mfaEnrollmentRequired: true };
     }
     setUser(res.user);
     setIsOffline(false);
-    return { mfaRequired: false };
+    return { mfaRequired: false, mfaEnrollmentRequired: false };
   }, []);
 
   const submitMfaChallenge = useCallback(async (input: MfaChallengeInput) => {
@@ -126,6 +187,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       // Ignore — clear local state regardless so user lands at /login.
     }
+    clearUserScopedStorage();
     setUser(null);
   }, []);
 

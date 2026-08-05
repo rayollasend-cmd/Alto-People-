@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { CalendarClock, FileText, Link2, Mail, Phone } from 'lucide-react';
 import type { Candidate, CandidateStage } from '@alto-people/shared';
+import { safeHref } from '@alto-people/shared';
 import {
   listInterviews,
   listOffers,
@@ -284,7 +285,7 @@ export function CandidateDetailDrawer({
             <div className="flex flex-wrap gap-2 pt-1">
               {candidate.resumeUrl && (
                 <a
-                  href={candidate.resumeUrl}
+                  href={safeHref(candidate.resumeUrl)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 rounded-md border border-navy-secondary px-2.5 py-1 text-xs2 text-silver hover:text-white hover:border-silver/40 transition-colors"
@@ -295,7 +296,7 @@ export function CandidateDetailDrawer({
               )}
               {candidate.linkedinUrl && (
                 <a
-                  href={candidate.linkedinUrl}
+                  href={safeHref(candidate.linkedinUrl)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 rounded-md border border-navy-secondary px-2.5 py-1 text-xs2 text-silver hover:text-white hover:border-silver/40 transition-colors"

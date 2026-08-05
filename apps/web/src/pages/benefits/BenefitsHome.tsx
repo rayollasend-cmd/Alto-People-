@@ -310,7 +310,8 @@ function EnrollmentRow({
     setBusy(true);
     try {
       await terminateMyEnrollment(enrollment.id, {
-        terminationDate: new Date().toISOString(),
+        // Calendar date, in the USER's zone — not a UTC instant.
+        terminationDate: ymdLocal(new Date()),
       });
       toast.success('Enrollment ended.');
       setShowConfirm(false);
@@ -415,8 +416,11 @@ function EnrollDialog({
       setAmountError('Election must be more than $0.00 — to stop contributing, don’t enroll (or end an existing enrollment).');
       return;
     }
-    const startDate = parseYmd(coverageStarts);
-    if (!startDate) {
+    // Validate, but send the raw YYYY-MM-DD. Converting to an ISO
+    // timestamp first anchored the date at LOCAL midnight, which lands on
+    // the previous calendar day for anyone at a positive UTC offset —
+    // and a coverage start date is legally load-bearing.
+    if (!parseYmd(coverageStarts)) {
       setDateError('Pick a valid coverage start date.');
       return;
     }
@@ -425,7 +429,7 @@ function EnrollDialog({
       await enrollMe({
         planId: plan.id,
         electedAmountCentsPerPeriod: cents,
-        effectiveDate: startDate.toISOString(),
+        effectiveDate: coverageStarts,
       });
       toast.success(`Enrolled in ${plan.name}.`);
       onEnrolled();

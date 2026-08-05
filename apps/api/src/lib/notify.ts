@@ -44,7 +44,7 @@ import {
   type NotificationCategory,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { send } from './notifications.js';
+import { EmailSuppressedError, send } from './notifications.js';
 import { sendPushToUser } from './webPush.js';
 import { emitLiveEvent } from './liveEvents.js';
 import { onboardingCompleteTemplate } from './emailTemplates.js';
@@ -71,6 +71,7 @@ const MANDATORY_CATEGORIES = new Set<NotificationCategory>(
  */
 function bucketForRawCategory(raw: string | undefined): NotificationCategory | null {
   if (!raw) return null;
+  if (raw === 'broadcast') return 'broadcast';
   if (raw === 'discipline') return 'discipline';
   if (raw === 'probation') return 'probation';
   if (raw === 'documents') return 'documents';
@@ -156,7 +157,9 @@ function sendEmailNotification(
   return track(
     (async () => {
       let externalRef: string | null = null;
+      let providerMessageId: string | null = null;
       let failureReason: string | null = null;
+      let suppressed = false;
       try {
         const r = await send({
           channel: 'EMAIL',
@@ -164,21 +167,30 @@ function sendEmailNotification(
           subject: opts.subject,
           body: opts.body,
           html: opts.html,
+          // Only the broadcast/announcement bucket carries the one-click
+          // unsubscribe headers. Everything else routed through here is
+          // transactional and must NOT advertise an unsubscribe.
+          includeUnsubscribe: bucketForRawCategory(opts.category) === 'broadcast',
         });
         externalRef = r.externalRef;
+        providerMessageId = r.providerMessageId;
       } catch (err) {
+        if (err instanceof EmailSuppressedError) {
+          suppressed = true;
+        }
         failureReason = err instanceof Error ? err.message : String(err);
       }
       await prisma.notification.create({
         data: {
           channel: 'EMAIL',
-          status: failureReason ? 'FAILED' : 'SENT',
+          status: suppressed ? 'SUPPRESSED' : failureReason ? 'FAILED' : 'SENT',
           recipientUserId: userId,
           recipientEmail: email,
           subject: opts.subject,
           body: opts.body,
           category: opts.category ?? null,
           externalRef,
+          providerMessageId,
           failureReason,
           sentAt: failureReason ? null : new Date(),
         },

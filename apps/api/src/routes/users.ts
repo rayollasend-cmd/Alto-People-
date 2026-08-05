@@ -1,6 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { ROLES, HUMAN_ROLES, type Role } from '@alto-people/shared';
+import {
+  ROLES,
+  ROLE_CAPABILITIES,
+  HUMAN_ROLES,
+  type Role,
+} from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
@@ -74,6 +79,7 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       createdAt: true,
       clientId: true,
       associateId: true,
+      lockedUntil: true,
       associate: {
         select: { firstName: true, lastName: true },
       },
@@ -98,6 +104,12 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
         : null,
       clientId: u.clientId,
       clientName: u.client?.name ?? null,
+      // Account lockout (brute-force lock). Only surfaced while still in
+      // the future — an expired lock is just noise to an admin.
+      lockedUntil:
+        u.lockedUntil && u.lockedUntil.getTime() > Date.now()
+          ? u.lockedUntil.toISOString()
+          : null,
     })),
     // True row count before the 500 cap — the UI (and the billing seat
     // count) must never present a capped page length as the total.
@@ -174,6 +186,31 @@ usersRouter.patch(
       );
     }
 
+    // No privilege escalation: a caller may only grant a role whose
+    // capabilities are a SUBSET of their own.
+    //
+    // Without this, `view:hr-admin` (held by every FULL_ADMIN role) was
+    // enough to promote a second account — one the caller invited — to
+    // HR_ADMINISTRATOR, and then sign in as it to obtain the capabilities
+    // deliberately withheld from FULL_ADMIN: `export:payroll-pii` (the
+    // full-SSN + bank census) and `void:payroll`. The self-edit guard
+    // above doesn't cover the two-account path.
+    //
+    // Demotions and lateral moves are unaffected; only granting strictly
+    // more power than you hold is refused.
+    if (input.role && input.role !== target.role) {
+      const callerCaps = ROLE_CAPABILITIES[req.user!.role];
+      const grantedCaps = ROLE_CAPABILITIES[input.role];
+      const escalating = [...grantedCaps].filter((c) => !callerCaps.has(c));
+      if (escalating.length > 0) {
+        throw new HttpError(
+          403,
+          'role_escalation_forbidden',
+          `You cannot grant ${input.role}: it holds capabilities you don't have (${escalating.join(', ')}).`,
+        );
+      }
+    }
+
     // Validate the client (if one was provided and not being cleared).
     if (input.clientId) {
       const client = await prisma.client.findFirst({
@@ -247,6 +284,68 @@ usersRouter.patch(
         },
       },
       'admin.user_updated',
+    );
+
+    res.status(204).end();
+  },
+);
+
+// ----- Unlock a brute-force-locked account ---------------------------------
+
+/**
+ * POST /admin/users/:id/unlock
+ *
+ * Clears the failed-login counter and lockedUntil so the user can try
+ * their password again immediately instead of waiting out the 15-minute
+ * window. Idempotent — unlocking an unlocked account is a no-op 204 (but
+ * still audited, since the admin's intent to unlock is what matters for
+ * forensics).
+ */
+usersRouter.post(
+  '/admin/users/:id/unlock',
+  requireCapability('view:hr-admin'),
+  async (req, res) => {
+    const id = z.string().uuid().parse(req.params.id);
+
+    const target = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        email: true,
+        clientId: true,
+        deletedAt: true,
+        failedLoginCount: true,
+        lockedUntil: true,
+      },
+    });
+    if (!target || target.deletedAt) {
+      throw new HttpError(404, 'not_found', 'User not found.');
+    }
+
+    await prisma.user.update({
+      where: { id },
+      data: { failedLoginCount: 0, lockedUntil: null },
+    });
+
+    // Critical: unlocking re-opens the password path on an account that
+    // was under active brute-force pressure — the audit row is the only
+    // durable record of who lifted the lock and when.
+    await recordCriticalAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: target.clientId ?? null,
+        action: 'admin.user_unlocked',
+        entityType: 'User',
+        entityId: id,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+          targetEmail: target.email,
+          failedLoginCount: target.failedLoginCount,
+          lockedUntil: target.lockedUntil?.toISOString() ?? null,
+        },
+      },
+      'admin.user_unlocked',
     );
 
     res.status(204).end();

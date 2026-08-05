@@ -2,6 +2,10 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { randomBytes } from 'crypto';
 import { prisma } from '../db.js';
+import {
+  anonReportFileLimiter,
+  anonReportLookupLimiter,
+} from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { send } from '../lib/notifications.js';
@@ -72,7 +76,7 @@ const FileInputSchema = z.object({
   contactEmail: z.string().email().max(200).optional().nullable(),
 });
 
-anonReport128Router.post('/anonymous-reports', async (req, res) => {
+anonReport128Router.post('/anonymous-reports', anonReportFileLimiter, async (req, res) => {
   const input = FileInputSchema.parse(req.body);
   // Try a few times in case of unique-collision (effectively never, but cheap).
   let trackingCode = generateTrackingCode();
@@ -99,6 +103,7 @@ anonReport128Router.post('/anonymous-reports', async (req, res) => {
 
 anonReport128Router.get(
   '/anonymous-reports/code/:code',
+  anonReportLookupLimiter,
   async (req, res) => {
     const code = z.string().min(8).max(64).parse(req.params.code);
     const report = await prisma.anonymousReport.findUnique({
@@ -143,6 +148,7 @@ const ReporterReplySchema = z.object({
 
 anonReport128Router.post(
   '/anonymous-reports/code/:code/messages',
+  anonReportLookupLimiter,
   async (req, res) => {
     const code = z.string().min(8).max(64).parse(req.params.code);
     const input = ReporterReplySchema.parse(req.body);

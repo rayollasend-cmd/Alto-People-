@@ -12,7 +12,13 @@ import {
   type I9DocumentListItem,
   type I9Status,
 } from '@/lib/i9Api';
-import { I9_DOC_CATALOG, i9CatalogEntry, i9SetSatisfied } from '@alto-people/shared';
+import {
+  I9_DOC_CATALOG,
+  UPLOAD_ACCEPT_ATTR,
+  UPLOAD_MAX_BYTES,
+  i9CatalogEntry,
+  i9SetSatisfied,
+} from '@alto-people/shared';
 import { fmtDate, fmtDateTime, parseYmd } from '@/lib/format';
 import { Field, TaskShell, inputCls } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
@@ -366,6 +372,14 @@ function DocumentsCard({
     const file = e.target.files?.[0];
     e.target.value = ''; // allow re-picking the same file
     if (!file) return;
+    // Size checked here, like every sibling upload task: without it an
+    // oversized phone photo hit multer's limit and surfaced as a 500.
+    if (file.size > UPLOAD_MAX_BYTES) {
+      setError(
+        `That file is ${fmtSize(file.size)} — the limit is ${fmtSize(UPLOAD_MAX_BYTES)}. Try a smaller photo or a compressed PDF.`,
+      );
+      return;
+    }
     setError(null);
     setUploading(true);
     try {
@@ -517,7 +531,11 @@ function DocumentsCard({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*,application/pdf"
+                // The server's exact allowlist, not `image/*`: iPhones
+                // shoot HEIC by default, which passed this picker and was
+                // then rejected on upload. Every sibling task already
+                // offers precisely what the server accepts.
+                accept={UPLOAD_ACCEPT_ATTR}
                 capture="environment"
                 className="hidden"
                 onChange={handlePick}

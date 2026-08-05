@@ -63,6 +63,15 @@ export interface BackupResult {
 export async function runUploadsBackup(
   now: Date = new Date(),
 ): Promise<BackupResult> {
+  if (env.STORAGE_DRIVER === 's3') {
+    // This job backs up the LOCAL uploads disk. With the s3 blob driver
+    // the disk holds nothing — tarring it would upload an empty archive
+    // that looks like a healthy backup. Blob durability on the s3 driver
+    // comes from the primary bucket (enable versioning/replication there).
+    throw new Error(
+      'uploads backup is local-disk only; STORAGE_DRIVER=s3 keeps blobs in the primary bucket',
+    );
+  }
   if (!backupConfigured()) {
     throw new Error('uploads backup is not configured (BACKUP_S3_* unset)');
   }
@@ -122,6 +131,13 @@ let timer: NodeJS.Timeout | null = null;
 
 export function startUploadsBackupCron(): void {
   if (timer) return;
+  if (env.STORAGE_DRIVER === 's3') {
+    console.log(
+      '[backup] STORAGE_DRIVER=s3 — local uploads backup cron skipped ' +
+        '(blobs live in the primary bucket; use bucket versioning/replication for backup)',
+    );
+    return;
+  }
   if (!backupConfigured()) {
     if (env.NODE_ENV === 'production') {
       // Loud nudge, not fatal — mirrors the UPLOAD_DIR warning in

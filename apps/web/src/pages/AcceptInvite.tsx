@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { safeNextPath } from '@/lib/safeNextPath';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Eye, EyeOff, Lock } from 'lucide-react';
 import type {
@@ -135,8 +136,10 @@ export function AcceptInvite() {
       // AuthProvider re-runs /auth/me and picks up the new session cleanly.
       // The server tells us where to land — usually the new associate's
       // onboarding checklist; falls back to / for HR-created users.
-      const dest = res?.nextPath && res.nextPath.startsWith('/') ? res.nextPath : '/';
-      window.location.assign(dest);
+      // Same guard as the login page's ?next=: a bare startsWith('/')
+      // still admits "//evil.com", which is protocol-relative and
+      // navigates off-origin.
+      window.location.assign(safeNextPath(res?.nextPath));
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setError('This account is already active. Try signing in instead.');

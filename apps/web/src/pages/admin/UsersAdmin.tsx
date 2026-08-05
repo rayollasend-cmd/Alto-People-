@@ -5,8 +5,10 @@ import {
   ArrowUpDown,
   Download,
   KeyRound,
+  Lock,
   RefreshCw,
   ShieldCheck,
+  Unlock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ROLE_LABELS, ROLES, type Role } from '@/lib/roles';
@@ -19,6 +21,7 @@ import {
   forcePasswordReset,
   listAdminUsers,
   patchAdminUser,
+  unlockUser,
   type AdminUser,
   type UserStatus,
 } from '@/lib/usersAdminApi';
@@ -431,6 +434,19 @@ export function UsersAdmin() {
     }
   };
 
+  const onUnlock = async (u: AdminUser) => {
+    setPendingId(u.id);
+    try {
+      await unlockUser(u.id);
+      toast.success('Account unlocked.');
+      await load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
   const onForceReset = async (u: AdminUser) => {
     if (
       !(await confirm({
@@ -734,6 +750,16 @@ export function UsersAdmin() {
                           <Badge variant={statusVariant(u.status)}>
                             {STATUS_LABELS[u.status]}
                           </Badge>
+                          {u.lockedUntil && (
+                            <Badge
+                              variant="destructive"
+                              withDot={false}
+                              title={`Too many failed sign-in attempts — locked until ${new Date(u.lockedUntil).toLocaleTimeString()}`}
+                            >
+                              <Lock className="h-3 w-3" aria-hidden="true" />
+                              Locked
+                            </Badge>
+                          )}
                           <Select
                             size="sm"
                             value={u.status}
@@ -785,6 +811,18 @@ export function UsersAdmin() {
                         {fmtDate(u.createdAt)}
                       </TableCell>
                       <TableCell className="text-right">
+                        {u.lockedUntil && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => void onUnlock(u)}
+                            disabled={busy}
+                            title="Clear the failed-attempt lock so this user can sign in with their password again"
+                          >
+                            <Unlock className="mr-1 h-3 w-3" />
+                            Unlock
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="sm"

@@ -9,17 +9,16 @@
  *
  * The library itself (~250KB minified) is also lazy-loaded via dynamic
  * import — the kiosk shell paints instantly, and face-api downloads
- * the first time someone reaches the selfie step. Default models URL
- * is jsDelivr; set VITE_FACE_MODELS_URL to override (e.g. `/face-models`
- * after running `npm run build:face-models` for self-hosting).
+ * the first time someone reaches the selfie step.
  *
- * Self-hosting plan (deferred): the build:face-models script pulls
- * the weight files into apps/web/public/face-models/. Switching the
- * default URL to `/face-models` should wait until Railway's build
- * reliably runs it — an earlier attempt to wire it in as `prebuild`
- * broke the web build because Railway couldn't always reach jsDelivr
- * at build time. Keep the runtime fallback on jsDelivr so a kiosk
- * tablet doesn't break the day Railway's outbound hiccups.
+ * Weights are self-hosted first: `/face-models` (populated by the
+ * best-effort `prebuild` fetch script) is tried by default, with
+ * VITE_FACE_MODELS_URL as an override for a different path/CDN. jsDelivr
+ * stays as the runtime fallback ONLY — if the self-hosted weights are
+ * missing (the build ran without outbound network), tablets silently
+ * fall back rather than breaking. Same-origin-first matters here: these
+ * are the ML weights for a biometric feature, and store tablets
+ * shouldn't depend on a public CDN at punch time.
  */
 
 const DEFAULT_MODELS_URL =
@@ -88,27 +87,23 @@ async function loadAllFrom(faceapi: FaceApi, url: string): Promise<void> {
 
 export function loadFaceModels(): Promise<void> {
   if (modelsPromise) return modelsPromise;
-  // Prefer a self-hosted weights dir when configured (set
-  // VITE_FACE_MODELS_URL=/face-models after `npm run build:face-models`).
-  // Self-hosting avoids the ~6.5MB jsDelivr fetch (and its re-fetches when
-  // the tablet cache is evicted), but we fall back to the CDN if the
-  // self-hosted files aren't deployed — a missing manifest makes
-  // loadFromUri reject, which we catch and retry against jsDelivr. This is
-  // less latency-critical now that descriptor extraction runs off the
-  // punch's critical path, but a faster, more reliable model load still
-  // means the fraud signal attaches sooner.
-  const selfHost = (import.meta.env.VITE_FACE_MODELS_URL as string | undefined)?.trim();
+  // Same-origin `/face-models` is the default source (populated by the
+  // best-effort prebuild fetch); VITE_FACE_MODELS_URL overrides it. A
+  // missing manifest makes loadFromUri reject, which we catch and retry
+  // against jsDelivr — so a build that couldn't reach the CDN degrades
+  // to the old behavior instead of breaking the kiosk.
+  const selfHost =
+    (import.meta.env.VITE_FACE_MODELS_URL as string | undefined)?.trim() ||
+    '/face-models';
   setModelsState('loading');
   modelsPromise = (async () => {
     const faceapi = await getFaceApi();
-    if (selfHost) {
-      try {
-        await loadAllFrom(faceapi, selfHost);
-        setModelsState('ready');
-        return;
-      } catch {
-        /* self-hosted weights missing/unreachable — fall back to CDN */
-      }
+    try {
+      await loadAllFrom(faceapi, selfHost);
+      setModelsState('ready');
+      return;
+    } catch {
+      /* self-hosted weights missing/unreachable — fall back to CDN */
     }
     await loadAllFrom(faceapi, DEFAULT_MODELS_URL);
     setModelsState('ready');

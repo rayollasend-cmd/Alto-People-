@@ -26,7 +26,9 @@ import {
   type TimeEntry,
   type TimeEntryListResponse,
 } from '@alto-people/shared';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeTimeEntries, scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
@@ -305,6 +307,9 @@ timeRouter.get('/me/active', async (req, res, next) => {
   }
 });
 
+// Display cap for an associate's own history.
+const ME_ENTRY_CAP = 200;
+
 timeRouter.get('/me/entries', async (req, res, next) => {
   try {
     const user = req.user!;
@@ -335,11 +340,15 @@ timeRouter.get('/me/entries', async (req, res, next) => {
             : {}),
       },
       orderBy: { clockInAt: 'desc' },
-      take: 200,
+      // +1 probe: fetch one past the display cap so we can TELL the caller
+      // the list was cut rather than presenting a partial history as
+      // complete. The admin sibling has always done this.
+      take: ME_ENTRY_CAP + 1,
       include: ENTRY_INCLUDE,
     });
-    const entries = await toEntries(rows);
-    const payload = TimeEntryListResponseSchema.parse({ entries });
+    const truncated = rows.length > ME_ENTRY_CAP;
+    const entries = await toEntries(rows.slice(0, ME_ENTRY_CAP));
+    const payload = TimeEntryListResponseSchema.parse({ entries, truncated });
     res.json(payload);
   } catch (err) {
     next(err);
@@ -1845,10 +1854,11 @@ timeRouter.post('/admin/bulk-apply-break', MANAGE, async (req, res, next) => {
 // hiding entries.
 const TIME_EXPORT_MAX_ROWS = 5000;
 
+// Delegates to the shared escaper: RFC-4180 quoting PLUS formula-injection
+// guarding (a cell starting with =, +, -, @ executes on open in Excel, and
+// these exports carry associate-controlled names and notes).
 function csvEscape(v: string): string {
-  if (v === '') return '';
-  if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
-  return v;
+  return sharedCsvCell(v);
 }
 
 async function loadExportRows(
@@ -2227,7 +2237,8 @@ async function loadPayrollSheet(
       where,
       orderBy: { clockInAt: 'asc' },
       include: {
-        associate: { select: { firstName: true, lastName: true } },
+        // state drives the OT thresholds (see PayrollSheetInputRow.state).
+        associate: { select: { firstName: true, lastName: true, state: true } },
         breaks: true,
       },
       take: TIME_SUMMARY_MAX_ROWS,
@@ -2257,6 +2268,7 @@ async function loadPayrollSheet(
     clockInAt: r.clockInAt,
     clockOutAt: r.clockOutAt,
     breaks: r.breaks,
+    state: r.associate.state,
   }));
   const hoursSheet = buildPayrollSheet(inputRows);
 
@@ -2439,7 +2451,7 @@ function externalSheetFilename(from: Date, to: Date, ext: string): string {
   return `external-payroll-${dayStr(from)}-to-${dayStr(new Date(to.getTime() - 1))}.${ext}`;
 }
 
-timeRouter.post('/admin/external-payroll-sheet.xlsx', EXPORT_PII, async (req, res, next) => {
+timeRouter.post('/admin/external-payroll-sheet.xlsx', EXPORT_PII, bulkPiiExportLimiter, async (req, res, next) => {
   try {
     const data = await loadExternalSheet(req, 'xlsx');
     const xlsx = await renderExternalPayrollSheetXlsx(data, new Date());
@@ -2458,7 +2470,7 @@ timeRouter.post('/admin/external-payroll-sheet.xlsx', EXPORT_PII, async (req, re
   }
 });
 
-timeRouter.post('/admin/external-payroll-sheet.pdf', EXPORT_PII, async (req, res, next) => {
+timeRouter.post('/admin/external-payroll-sheet.pdf', EXPORT_PII, bulkPiiExportLimiter, async (req, res, next) => {
   try {
     const data = await loadExternalSheet(req, 'pdf');
     const pdf = await renderExternalPayrollSheetPdf(data, new Date());
