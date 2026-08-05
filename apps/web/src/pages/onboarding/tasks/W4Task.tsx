@@ -1,19 +1,20 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import { useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2, Trash2, Upload } from 'lucide-react';
-import { toast } from 'sonner';
-import type { DocumentRecord } from '@alto-people/shared';
+import { CheckCircle2, Upload } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { getW4, submitW4, type W4Status } from '@/lib/onboardingApi';
-import { deleteMyDocument, uploadMyDocument } from '@/lib/documentsApi';
+import { uploadI9Document } from '@/lib/i9Api';
 import { ApiError } from '@/lib/api';
+import { cn } from '@/lib/cn';
+import { fmtDateTime } from '@/lib/format';
 import { Select } from '@/components/ui/Select';
 import { Field, SubmitRow, TaskShell, inputCls } from './ProfileInfoTask';
 
 const SSN_PATTERN = /^\d{3}-?\d{2}-?\d{4}$/;
 
-const CARD_MAX_BYTES = 10 * 1024 * 1024;
-const CARD_ACCEPT = 'image/png,image/jpeg,image/webp,application/pdf';
+const CARD_ACCEPTED_MIMES = 'application/pdf,image/png,image/jpeg,image/webp';
+const CARD_MAX_BYTES = UPLOAD_MAX_BYTES;
 
 export function W4Task() {
   const { applicationId } = useParams<{ applicationId: string }>();
@@ -33,9 +34,10 @@ export function W4Task() {
   const [replaceSsn, setReplaceSsn] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [cardDocs, setCardDocs] = useState<DocumentRecord[]>([]);
-  const [cardUploading, setCardUploading] = useState(false);
   const cardInputRef = useRef<HTMLInputElement | null>(null);
+  const [cardOnFile, setCardOnFile] = useState(false);
+  const [cardUploading, setCardUploading] = useState(false);
+  const [cardFilename, setCardFilename] = useState<string | null>(null);
 
   const isAssociate = user?.role === 'ASSOCIATE';
   const backTo = isAssociate
@@ -48,6 +50,7 @@ export function W4Task() {
     if (!applicationId) return;
     void getW4(applicationId).then((s) => {
       setStatus(s);
+      setCardOnFile(!!s.hasSsnCardOnFile);
       if (s.filingStatus) setFilingStatus(s.filingStatus);
       setMultipleJobs(s.multipleJobs);
       if (s.dependentsAmount != null) setDependents(s.dependentsAmount);
@@ -60,17 +63,17 @@ export function W4Task() {
   const ssnOnFile = !!status?.hasSsnOnFile;
   const ssnNeedsResubmit = !!status?.ssnNeedsResubmit;
   const showSsnInput = !ssnOnFile || replaceSsn;
-  // Card-photo upload only exists for the associate themselves — the
-  // upload lands on /documents/me, and the server only gates their own
-  // re-collection resubmit on it.
-  const showCardUpload = isAssociate && showSsnInput;
-  const cardRequired = isAssociate && ssnNeedsResubmit;
-  const hasCard = !!status?.hasSsnCardOnFile || cardDocs.length > 0;
+  // A card image is mandatory for any resubmit without one on file —
+  // re-collection or otherwise. First-time onboarding (no submission yet)
+  // collects it on the I-9 step instead.
+  const showCardSection =
+    !!status && !cardOnFile && (ssnNeedsResubmit || status.hasSubmission);
+  const cardRequired = showCardSection;
 
   const onCardFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // allow same-file re-selection
-    if (!file) return;
+    if (!file || !applicationId) return;
     if (file.size > CARD_MAX_BYTES) {
       setError('Card photo is too large (max 10 MB).');
       return;
@@ -78,24 +81,13 @@ export function W4Task() {
     setError(null);
     setCardUploading(true);
     try {
-      const doc = await uploadMyDocument(file, 'SSN_CARD');
-      setCardDocs((prev) => [...prev, doc]);
-      toast.success(`Uploaded ${file.name}`);
+      await uploadI9Document(applicationId, file, 'SSN_CARD');
+      setCardOnFile(true);
+      setCardFilename(file.name);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed.');
+      setError(err instanceof ApiError ? err.message : 'Card upload failed.');
     } finally {
       setCardUploading(false);
-    }
-  };
-
-  const onRemoveCard = async (doc: DocumentRecord) => {
-    try {
-      await deleteMyDocument(doc.id);
-      setCardDocs((prev) => prev.filter((d) => d.id !== doc.id));
-    } catch (err) {
-      toast.error('Could not remove', {
-        description: err instanceof ApiError ? err.message : undefined,
-      });
     }
   };
 
@@ -109,10 +101,12 @@ export function W4Task() {
         setError('SSN is required and must be 9 digits.');
         return;
       }
-      if (cardRequired && !hasCard) {
-        setError('Please upload a photo of your Social Security card.');
-        return;
-      }
+    }
+    if (cardRequired) {
+      setError(
+        'Please upload a photo of your Social Security card before submitting.',
+      );
+      return;
     }
 
     setSubmitting(true);
@@ -149,16 +143,17 @@ export function W4Task() {
           We need your Social Security number again. The copy you entered
           before can no longer be read after a system encryption-key change —
           it was never exposed, but it must be re-entered before payroll and
-          tax filings can include you. Please also upload a clear photo of
-          your Social Security card so payroll can verify the number.
+          tax filings can include you.
+          {!cardOnFile &&
+            ' We also need a photo of your Social Security card on file — upload it below before submitting.'}
         </div>
       )}
 
       {status?.submittedAt && (
         <div className="mb-4 flex items-center gap-2 px-3 py-2 rounded-md border border-success/30 bg-success/[0.05] text-success text-xs">
           <CheckCircle2 className="h-3.5 w-3.5" />
-          You submitted this on{' '}
-          {new Date(status.submittedAt).toLocaleString()}. Re-submit to update.
+          You submitted this on {fmtDateTime(status.submittedAt)}. Re-submit to
+          update.
         </div>
       )}
 
@@ -233,6 +228,66 @@ export function W4Task() {
           </Field>
         </div>
 
+        {(showCardSection || (cardFilename && cardOnFile)) && (
+          <Field
+            label="Social Security card photo"
+            hint="Required — a clear photo or scan, PDF, PNG, JPG, or WebP, up to 10 MB. Uploads immediately and is visible only to HR."
+          >
+            {/* Composite control: the label + hint bind to whichever upload
+                button is active, so screen readers land on a named action. */}
+            {(p) => (
+              <div>
+                <input
+                  ref={cardInputRef}
+                  type="file"
+                  accept={CARD_ACCEPTED_MIMES}
+                  onChange={onCardFileChange}
+                  className="hidden"
+                  aria-hidden="true"
+                  tabIndex={-1}
+                />
+                {cardOnFile ? (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-success/30 bg-success/[0.05] text-success text-xs">
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                    <span className="min-w-0 truncate">
+                      {cardFilename
+                        ? `Uploaded ${cardFilename}`
+                        : 'A card photo is on file.'}
+                    </span>
+                    <button
+                      type="button"
+                      {...p}
+                      onClick={() => cardInputRef.current?.click()}
+                      disabled={cardUploading}
+                      className="ml-auto text-gold hover:text-gold-bright whitespace-nowrap"
+                    >
+                      Upload a different photo
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    {...p}
+                    onClick={() => cardInputRef.current?.click()}
+                    disabled={cardUploading}
+                    className={cn(
+                      'w-full px-4 py-5 rounded-md border-2 border-dashed transition-colors text-sm',
+                      cardUploading
+                        ? 'border-navy-secondary text-silver/70 cursor-wait'
+                        : 'border-navy-secondary text-silver hover:border-gold/60 hover:text-gold',
+                    )}
+                  >
+                    <Upload className="h-4 w-4 inline-block mr-2 -mt-0.5" />
+                    {cardUploading
+                      ? 'Uploading…'
+                      : 'Click to upload your Social Security card'}
+                  </button>
+                )}
+              </div>
+            )}
+          </Field>
+        )}
+
         {ssnOnFile && !replaceSsn ? (
           <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-3">
             <div className="text-xs uppercase tracking-widest text-silver mb-1">
@@ -253,21 +308,23 @@ export function W4Task() {
             </button>
           </div>
         ) : (
-          <Field
-            label="Social Security number"
-            hint="9 digits — required. Encrypted at rest the moment you submit. Never logged."
-          >
-            <input
-              type="text"
-              inputMode="numeric"
-              pattern="\d{3}-?\d{2}-?\d{4}"
-              required
-              placeholder="123-45-6789"
-              value={ssn}
-              onChange={(e) => setSsn(e.target.value)}
-              className={inputCls}
-              autoComplete="off"
-            />
+          <>
+            <Field
+              label="Social Security number"
+              hint="9 digits — required. Encrypted at rest the moment you submit. Never logged."
+            >
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="\d{3}-?\d{2}-?\d{4}"
+                required
+                placeholder="123-45-6789"
+                value={ssn}
+                onChange={(e) => setSsn(e.target.value)}
+                className={inputCls}
+                autoComplete="off"
+              />
+            </Field>
             {ssnOnFile && replaceSsn && (
               <button
                 type="button"
@@ -275,72 +332,12 @@ export function W4Task() {
                   setReplaceSsn(false);
                   setSsn('');
                 }}
-                className="mt-1 text-xs text-silver hover:text-white"
+                className="-mt-2 text-xs text-silver hover:text-white"
               >
                 Cancel — keep existing SSN
               </button>
             )}
-          </Field>
-        )}
-
-        {showCardUpload && (
-          <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 space-y-2">
-            <div className="text-xs uppercase tracking-widest text-silver">
-              Social Security card photo
-              {cardRequired ? '' : ' (optional)'}
-            </div>
-            <p className="text-xs text-silver">
-              {cardRequired
-                ? 'Upload a clear photo of your card so payroll can verify the number you re-entered. '
-                : 'A clear photo of your card helps payroll verify the number. '}
-              PNG, JPG, WebP, or PDF — up to 10 MB.
-            </p>
-            {status?.hasSsnCardOnFile && cardDocs.length === 0 && (
-              <p className="text-xs text-success">
-                A card image is already on file — upload again only if you
-                want to replace it with a clearer photo.
-              </p>
-            )}
-            <input
-              ref={cardInputRef}
-              type="file"
-              accept={CARD_ACCEPT}
-              onChange={onCardFileChange}
-              className="hidden"
-              aria-label="Social Security card photo file"
-            />
-            <button
-              type="button"
-              onClick={() => cardInputRef.current?.click()}
-              disabled={cardUploading}
-              className="w-full px-4 py-3 rounded-md border-2 border-dashed border-navy-secondary text-silver hover:border-gold/60 hover:text-gold transition-colors disabled:cursor-wait disabled:text-silver/70"
-            >
-              <Upload className="h-4 w-4 inline-block mr-2 -mt-0.5" />
-              {cardUploading ? 'Uploading…' : 'Upload card photo'}
-            </button>
-            {cardDocs.length > 0 && (
-              <ul className="space-y-1.5">
-                {cardDocs.map((d) => (
-                  <li
-                    key={d.id}
-                    className="flex items-center gap-2 text-xs text-white"
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
-                    <span className="truncate flex-1">{d.filename}</span>
-                    <button
-                      type="button"
-                      onClick={() => onRemoveCard(d)}
-                      className="text-alert hover:opacity-80"
-                      aria-label={`Remove ${d.filename}`}
-                      title="Remove"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          </>
         )}
 
         {error && (

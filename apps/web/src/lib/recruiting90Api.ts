@@ -106,8 +106,13 @@ export interface OfferRecord {
   createdAt: string;
 }
 
-export const listOffers = () =>
-  apiFetch<{ offers: OfferRecord[] }>('/offers');
+// candidateId mirrors listInterviews — the server has always supported the
+// filter; without it the candidate drawer would pull all 200 offers to show
+// the two that belong to the person on screen.
+export const listOffers = (candidateId?: string) =>
+  apiFetch<{ offers: OfferRecord[] }>(
+    candidateId ? `/offers?candidateId=${candidateId}` : '/offers',
+  );
 
 export const createOffer = (input: {
   candidateId: string;
@@ -121,8 +126,15 @@ export const createOffer = (input: {
   expiresAt?: string | null;
 }) => apiFetch<{ id: string }>('/offers', { method: 'POST', body: input });
 
+/**
+ * Flip a DRAFT offer to SENT. `emailed: false` means the offer was marked
+ * sent but no candidate email was on file — the UI should surface that.
+ */
 export const sendOffer = (id: string) =>
-  apiFetch<{ ok: true }>(`/offers/${id}/send`, { method: 'POST', body: {} });
+  apiFetch<{ ok: true; emailed: boolean }>(`/offers/${id}/send`, {
+    method: 'POST',
+    body: {},
+  });
 
 export const decideOffer = (
   id: string,
@@ -175,6 +187,16 @@ export const setReferralStatus = (id: string, status: ReferralStatus) =>
 
 export const markReferralBonusPaid = (id: string) =>
   apiFetch<{ ok: true }>(`/referrals/${id}/bonus-paid`, {
+    method: 'POST',
+    body: {},
+  });
+
+/**
+ * Promote a referral into the candidate funnel. Creates (or links an
+ * existing) Candidate with source 'referral' and returns its id.
+ */
+export const convertReferral = (id: string) =>
+  apiFetch<{ candidateId: string }>(`/referrals/${id}/convert`, {
     method: 'POST',
     body: {},
   });

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useDraggable,
   useDroppable,
   useSensor,
@@ -9,9 +10,9 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
+import { VirtualizedRows } from './VirtualizedRows';
 import { Plus, GripVertical } from 'lucide-react';
-import type { AssociateLite, Shift, ShiftStatus } from '@alto-people/shared';
-import { Badge } from '@/components/ui/Badge';
+import type { AssociateLite, Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
 import {
@@ -22,6 +23,7 @@ import {
   zonedMinutesOfDay,
   zonedWallTimeToUtc,
 } from '@/lib/format';
+import { addDays, sameDay, shiftMinutes, startOfDay, ymd } from './calendarDates';
 import {
   ShiftHoverCard,
   useShiftHoverCard,
@@ -32,6 +34,17 @@ import {
   useShiftContextMenu,
 } from './ShiftContextMenu';
 import { TEMPLATE_MIME } from './TemplatesRail';
+import {
+  GRIP_HIT,
+  GRIP_ICON,
+  RESIZE_RAIL_X,
+  SHIFT_STATUS_LABEL,
+  ShiftTouchMenuButton,
+  StatusMark,
+  statusLabelClass,
+  statusTileClass,
+  useTileDensity,
+} from './shiftTile';
 
 // Week-view chips have no time axis to drag against, so resize maps
 // pointer-x-pixels to minutes at a comfortable 1.5px per minute (so a
@@ -41,18 +54,15 @@ const RESIZE_PX_PER_MIN = 1.5;
 const RESIZE_SNAP_MIN = 15;
 const RESIZE_MIN_DURATION_MIN = 15;
 
-const STATUS_VARIANT: Record<
-  ShiftStatus,
-  'success' | 'pending' | 'destructive' | 'default' | 'accent'
-> = {
-  OPEN: 'pending',
-  ASSIGNED: 'success',
-  DRAFT: 'default',
-  COMPLETED: 'success',
-  CANCELLED: 'destructive',
-};
+// Status is rendered by <StatusMark> (shape + screen-reader label) rather
+// than a coloured letter badge — see shiftTile.tsx for why.
 
 const UNASSIGNED_ROW_ID = '__unassigned__';
+
+// Shared empty-cell fallback: `byCell.get(key) ?? EMPTY_SHIFTS` hands every
+// empty cell the SAME array identity, so memo'd Cells with no shifts see
+// referentially-equal props and skip re-rendering.
+const EMPTY_SHIFTS: Shift[] = [];
 
 function fmtTime(iso: string, timeZone?: string | null): string {
   return fmtTimeTz(iso, timeZone);
@@ -89,45 +99,10 @@ function compactRange(
   return `${compactClock(startIso, timeZone)}–${compactClock(endIso, timeZone)}`;
 }
 
-function startOfDay(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-/** Local calendar-date key ("YYYY-MM-DD") of a column day — its stable label. */
-function ymd(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function addDays(d: Date, n: number): Date {
-  const x = new Date(d);
-  x.setDate(x.getDate() + n);
-  return x;
-}
-
-function sameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
-
 function formatCost(n: number): string {
   if (n >= 10_000) return `$${Math.round(n / 1000)}k`;
   if (n >= 1_000) return `$${(n / 1000).toFixed(1)}k`;
   return `$${Math.round(n)}`;
-}
-
-function shiftMinutes(s: Shift): number {
-  return Math.max(
-    0,
-    Math.round(
-      (new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime()) / 60_000
-    )
-  );
 }
 
 interface Props {
@@ -164,6 +139,14 @@ interface Props {
   onTemplateDrop: (templateId: string, dayStart: Date, associateId: string | null) => void;
   /** When true, render every associate as a row (Sling default); otherwise only those with shifts. */
   showAllAssociates: boolean;
+  /**
+   * Availability/PTO shading per associate.
+   *  - `dows`: day-of-week numbers (0=Sun) where the associate has ANY
+   *    weekly availability window. Empty set = no data → no shading.
+   *  - `blocked`: local "YYYY-MM-DD" day keys vetoed by approved PTO /
+   *    availability exceptions.
+   */
+  availabilityFit?: Map<string, { dows: Set<number>; blocked: Set<string> }> | null;
 }
 
 /**
@@ -197,13 +180,33 @@ export function WeekCalendarView({
   selectedIds,
   onTemplateDrop,
   showAllAssociates,
+  availabilityFit = null,
 }: Props) {
   const hover = useShiftHoverCard();
   const ctxMenu = useShiftContextMenu();
+  // hover.bind / ctxMenu.openFor are recreated by their hooks on every
+  // render; route them through refs so the memo'd Cells below receive
+  // stable handler identities (they only close over setState + refs, so
+  // any render's copy behaves identically).
+  const hoverBindFnRef = useRef(hover.bind);
+  hoverBindFnRef.current = hover.bind;
+  const hoverBind = useCallback(
+    (s: Shift) => hoverBindFnRef.current(s),
+    [],
+  );
+  const ctxOpenFnRef = useRef(ctxMenu.openFor);
+  ctxOpenFnRef.current = ctxMenu.openFor;
+  const openContextMenu = useCallback(
+    (s: Shift, e: React.MouseEvent) => ctxOpenFnRef.current(s, e),
+    [],
+  );
   const days = useMemo(
     () => Array.from({ length: dayCount }).map((_, i) => addDays(weekStart, i)),
     [weekStart, dayCount]
   );
+  // The 7 (or dayCount) "YYYY-MM-DD" column keys, computed ONCE per render
+  // instead of re-deriving ymd(d) inside every per-associate loop below.
+  const dayKeys = useMemo(() => days.map(ymd), [days]);
 
   // Bucket shifts by associateId × store-local day. Index by
   // `${associateId|unassigned}_${YYYY-MM-DD}` (null zone → browser-local).
@@ -229,9 +232,6 @@ export function WeekCalendarView({
   // Powers the footer row under each day column.
   const dayTotals = useMemo(() => {
     const out = new Map<string, { count: number; minutes: number; cost: number }>();
-    const dayKeys = Array.from({ length: dayCount }).map((_, i) =>
-      ymd(addDays(weekStart, i)),
-    );
     for (const k of dayKeys) {
       out.set(k, { count: 0, minutes: 0, cost: 0 });
     }
@@ -250,42 +250,54 @@ export function WeekCalendarView({
       }
     }
     return out;
-  }, [shifts, weekStart, dayCount, displayTimeZone]);
+  }, [shifts, dayKeys, displayTimeZone]);
 
-  // Per-associate weekly minutes (only counting shifts in the visible range).
+  // Per-associate weekly minutes — SAME membership rule as dayTotals and the
+  // cells (store-zone day key inside the visible columns), so the rail badge
+  // and the 36–40h overtime tint always agree with the chips on screen. The
+  // old browser-local-ms window missed store-zone edge shifts that the grid
+  // renders (and, since the fetch window is padded, counted padding days).
   const weeklyMinutes = useMemo(() => {
+    const daySet = new Set(dayKeys);
     const out = new Map<string, number>();
-    const weekEnd = addDays(weekStart, dayCount).getTime();
-    const weekStartMs = weekStart.getTime();
     for (const s of shifts) {
       if (!s.assignedAssociateId) continue;
-      const t = new Date(s.startsAt).getTime();
-      if (t < weekStartMs || t >= weekEnd) continue;
+      if (s.status === 'CANCELLED') continue;
+      if (!daySet.has(zonedDayKey(s.startsAt, displayTimeZone))) continue;
       out.set(
         s.assignedAssociateId,
         (out.get(s.assignedAssociateId) ?? 0) + shiftMinutes(s)
       );
     }
     return out;
-  }, [shifts, weekStart, dayCount]);
+  }, [shifts, dayKeys, displayTimeZone]);
 
   // Decide which associate rows to render.
-  // Default = those with shifts in the week (compact view).
+  // Default = those with shifts in the VISIBLE week (compact view) — the
+  // membership check keeps an associate whose only shift sits on a padded
+  // fetch day from getting a phantom empty row.
   // showAllAssociates = the full roster (Sling default for managers).
   const visibleAssociates = useMemo(() => {
     if (showAllAssociates) return associates;
+    const daySet = new Set(dayKeys);
     const withShifts = new Set<string>();
     for (const s of shifts) {
-      if (s.assignedAssociateId) withShifts.add(s.assignedAssociateId);
+      if (!s.assignedAssociateId) continue;
+      if (!daySet.has(zonedDayKey(s.startsAt, displayTimeZone))) continue;
+      withShifts.add(s.assignedAssociateId);
     }
     return associates.filter((a) => withShifts.has(a.id));
-  }, [associates, shifts, showAllAssociates]);
+  }, [associates, shifts, showAllAssociates, dayKeys, displayTimeZone]);
 
   const today = startOfDay(new Date());
 
   const sensors = useSensors(
     // 6px activation distance — chip clicks shouldn't accidentally start a drag.
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+    // Mouse: 6px activation distance so chip clicks don't start drags.
+    // Touch: a hold delay so a finger SCROLLING the grid never picks a
+    // shift up — 6px of drift while panning used to move shifts.
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } })
   );
 
   const [movingShiftId, setMovingShiftId] = useState<string | null>(null);
@@ -332,10 +344,16 @@ export function WeekCalendarView({
   // horizontal scrolling; minWidth only forces a scroller once columns would
   // drop below a ~100px readable floor (very wide ranges or a small viewport),
   // so a normal 7-day week always fits.
-  const gridStyle = {
+  //
+  // The grid used to be ONE element with every rail cell and day cell as a
+  // direct child. That made a row unmeasurable — a row was N sibling
+  // elements, not one box — which is exactly what a virtualizer needs. Rows
+  // are now their own grids sharing this column template, so header, body
+  // and footer still line up while each row is a single measurable element.
+  const colsStyle = {
     gridTemplateColumns: `200px repeat(${dayCount}, minmax(0, 1fr))`,
-    minWidth: `${200 + dayCount * 100}px`,
   };
+  const minWidthStyle = { minWidth: `${200 + dayCount * 100}px` };
 
   // Compute the set of (associateId|unassigned)_dayMs cells that would be
   // conflicts for the currently-dragged shift. Using a Set keeps per-cell
@@ -352,28 +370,33 @@ export function WeekCalendarView({
     // overlap with that associate's other shifts on that same day. The
     // dragged shift itself is excluded so dropping it back onto its own
     // cell never lights up red. Predict the drop in the grid's zone (null →
-    // browser-local, identical to the old setHours math).
+    // browser-local, identical to the old setHours math). The predicted
+    // instant depends only on the DAY, so it's computed once per column
+    // here, not once per associate × day.
+    const dayDrops = dayKeys.map((key) => {
+      const [yy, mm, dd] = key.split('-').map(Number);
+      const target = zonedWallTimeToUtc(
+        yy, mm, dd,
+        Math.floor(dayMinutes / 60), dayMinutes % 60,
+        displayTimeZone,
+      );
+      return { key, target, targetEnd: new Date(target.getTime() + durationMs) };
+    });
     for (const a of visibleAssociates) {
-      for (const d of days) {
-        const [yy, mm, dd] = ymd(d).split('-').map(Number);
-        const target = zonedWallTimeToUtc(
-          yy, mm, dd,
-          Math.floor(dayMinutes / 60), dayMinutes % 60,
-          displayTimeZone,
-        );
-        const targetEnd = new Date(target.getTime() + durationMs);
-        const cellShifts = byCell.get(`${a.id}_${ymd(d)}`) ?? [];
+      for (const { key, target, targetEnd } of dayDrops) {
+        const cellShifts = byCell.get(`${a.id}_${key}`);
+        if (!cellShifts) continue;
         const conflict = cellShifts.some((s) => {
           if (s.id === activeDragShift.id) return false;
           const sStart = new Date(s.startsAt);
           const sEnd = new Date(s.endsAt);
           return sStart < targetEnd && sEnd > target;
         });
-        if (conflict) out.add(`${a.id}_${ymd(d)}`);
+        if (conflict) out.add(`${a.id}_${key}`);
       }
     }
     return out;
-  }, [activeDragShift, visibleAssociates, days, byCell, displayTimeZone]);
+  }, [activeDragShift, visibleAssociates, dayKeys, byCell, displayTimeZone]);
 
   return (
     <DndContext
@@ -383,9 +406,10 @@ export function WeekCalendarView({
       onDragCancel={() => setActiveDragShift(null)}
     >
       <div className="rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto">
-        <div className="grid" style={gridStyle}>
+        <div style={minWidthStyle}>
           {/* ===== Header row ===== */}
-          <div className="sticky left-0 z-20 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 text-[10px] uppercase tracking-wider text-silver">
+          <div className="grid" style={colsStyle}>
+          <div className="sticky left-0 z-20 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 text-2xs uppercase tracking-wider text-silver">
             Schedule
           </div>
           {days.map((d) => {
@@ -400,7 +424,7 @@ export function WeekCalendarView({
               >
                 <div
                   className={cn(
-                    'text-[10px] uppercase tracking-wider',
+                    'text-2xs uppercase tracking-wider',
                     isToday ? 'text-gold' : 'text-silver'
                   )}
                 >
@@ -419,78 +443,108 @@ export function WeekCalendarView({
               </div>
             );
           })}
+          </div>
 
           {/* ===== Unassigned row ===== */}
+          <div className="grid" style={colsStyle}>
           <RailCell
             label="Unassigned"
             sublabel="OPEN shifts"
             tone="warning"
           />
-          {days.map((d) => (
+          {days.map((d, i) => (
             <Cell
               key={`u_${d.getTime()}`}
               cellId={`cell:${UNASSIGNED_ROW_ID}:${d.getTime()}`}
-              shifts={byCell.get(`${UNASSIGNED_ROW_ID}_${ymd(d)}`) ?? []}
+              shifts={byCell.get(`${UNASSIGNED_ROW_ID}_${dayKeys[i]}`) ?? EMPTY_SHIFTS}
               dayStart={d}
+              associateId={null}
               isToday={sameDay(d, today)}
               canManage={canManage}
               onShiftClick={onShiftClick}
-              onCreate={() => onCellCreate(d, null)}
+              onCellCreate={onCellCreate}
               onShiftResize={onShiftResize}
-              hoverBind={hover.bind}
-              onContextMenu={ctxMenu.openFor}
+              hoverBind={hoverBind}
+              onContextMenu={openContextMenu}
               movingShiftId={movingShiftId}
               selectedIds={selectedIds}
               isConflictTarget={false}
               variant="unassigned"
-              onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, null)}
+              onTemplateDrop={onTemplateDrop}
             />
           ))}
+          </div>
 
           {/* ===== Associate rows ===== */}
           {visibleAssociates.length === 0 && (
-            <div
-              className="px-4 py-6 text-center text-sm text-silver/70"
-              style={{ gridColumn: '1 / -1' }}
-            >
+            <div className="px-4 py-6 text-center text-sm text-silver/70">
               No associates have shifts in this range.
             </div>
           )}
-          {visibleAssociates.map((a) => {
+          <VirtualizedRows
+            count={visibleAssociates.length}
+            renderRow={(index) => {
+            const a = visibleAssociates[index];
             const mins = weeklyMinutes.get(a.id) ?? 0;
             const overTime = mins > 40 * 60;
+            const nearOT = !overTime && mins >= 36 * 60;
+            const fit = availabilityFit?.get(a.id);
             return (
-              <Row key={a.id} associate={a} minutes={mins} overTime={overTime}>
-                {days.map((d) => (
-                  <Cell
-                    key={`${a.id}_${d.getTime()}`}
-                    cellId={`cell:${a.id}:${d.getTime()}`}
-                    shifts={byCell.get(`${a.id}_${ymd(d)}`) ?? []}
-                    dayStart={d}
-                    isToday={sameDay(d, today)}
-                    canManage={canManage}
-                    onShiftClick={onShiftClick}
-                    onCreate={() => onCellCreate(d, a.id)}
-                    onShiftResize={onShiftResize}
-                    hoverBind={hover.bind}
-                    onContextMenu={ctxMenu.openFor}
-                    movingShiftId={movingShiftId}
-                    selectedIds={selectedIds}
-                    isConflictTarget={conflictCellKeys.has(`${a.id}_${ymd(d)}`)}
-                    variant="default"
-                    onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, a.id)}
-                  />
-                ))}
+              <Row
+                key={a.id}
+                associate={a}
+                minutes={mins}
+                overTime={overTime}
+                nearOT={nearOT}
+                colsStyle={colsStyle}
+              >
+                {days.map((d, i) => {
+                  const dayKey = dayKeys[i];
+                  // Availability shading: PTO-blocked days beat
+                  // outside-weekly-availability days. Zero windows = no
+                  // data, not "unavailable everywhere" → no shading.
+                  const shade: 'blocked' | 'outside' | null = fit
+                    ? fit.blocked.has(dayKey)
+                      ? 'blocked'
+                      : fit.dows.size > 0 && !fit.dows.has(d.getDay())
+                        ? 'outside'
+                        : null
+                    : null;
+                  return (
+                    <Cell
+                      key={`${a.id}_${d.getTime()}`}
+                      cellId={`cell:${a.id}:${d.getTime()}`}
+                      shifts={byCell.get(`${a.id}_${dayKey}`) ?? EMPTY_SHIFTS}
+                      dayStart={d}
+                      associateId={a.id}
+                      isToday={sameDay(d, today)}
+                      canManage={canManage}
+                      onShiftClick={onShiftClick}
+                      onCellCreate={onCellCreate}
+                      onShiftResize={onShiftResize}
+                      hoverBind={hoverBind}
+                      onContextMenu={openContextMenu}
+                      movingShiftId={movingShiftId}
+                      selectedIds={selectedIds}
+                      isConflictTarget={conflictCellKeys.has(`${a.id}_${dayKey}`)}
+                      variant="default"
+                      onTemplateDrop={onTemplateDrop}
+                      availabilityShade={shade}
+                    />
+                  );
+                })}
               </Row>
             );
-          })}
+          }}
+          />
 
           {/* ===== Day totals footer ===== */}
-          <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-t border-r border-navy-secondary px-3 py-2 text-[10px] uppercase tracking-wider text-silver/70">
+          <div className="grid" style={colsStyle}>
+          <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-t border-r border-navy-secondary px-3 py-2 text-2xs uppercase tracking-wider text-silver/70">
             Daily total
           </div>
-          {days.map((d) => {
-            const t = dayTotals.get(ymd(d));
+          {days.map((d, i) => {
+            const t = dayTotals.get(dayKeys[i]);
             const count = t?.count ?? 0;
             const hrs = (t?.minutes ?? 0) / 60;
             const cost = t?.cost ?? 0;
@@ -504,9 +558,9 @@ export function WeekCalendarView({
                 )}
               >
                 {count === 0 ? (
-                  <div className="text-[11px] text-silver/70">—</div>
+                  <div className="text-xs2 text-silver/70">—</div>
                 ) : (
-                  <div className="flex items-baseline gap-2 text-[11px] tabular-nums">
+                  <div className="flex items-baseline gap-2 text-xs2 tabular-nums">
                     <span className="text-white font-medium">{count}</span>
                     <span className="text-silver/70">·</span>
                     <span className="text-silver">{hrs.toFixed(1)}h</span>
@@ -521,6 +575,7 @@ export function WeekCalendarView({
               </div>
             );
           })}
+          </div>
         </div>
       </div>
       {hover.active && (
@@ -569,20 +624,26 @@ export function WeekCalendarView({
 
 /* ===== Subcomponents ====================================================== */
 
-function Row({
+const Row = memo(function Row({
   associate,
   minutes,
   overTime,
+  nearOT,
+  colsStyle,
   children,
 }: {
   associate: AssociateLite;
   minutes: number;
   overTime: boolean;
+  /** 36h ≤ weekly hours ≤ 40h — approaching overtime. */
+  nearOT: boolean;
+  /** Shared column template — every row grid matches the header's. */
+  colsStyle: React.CSSProperties;
   children: React.ReactNode;
 }) {
   const initials = `${associate.firstName[0] ?? ''}${associate.lastName[0] ?? ''}`.toUpperCase();
   return (
-    <>
+    <div className="grid" style={colsStyle}>
       <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-3 flex items-center gap-2.5">
         <div className="h-8 w-8 rounded-full bg-gold/15 text-gold text-xs font-semibold flex items-center justify-center shrink-0">
           {initials || '?'}
@@ -591,8 +652,13 @@ function Row({
           <div className="text-sm text-white truncate">
             {associate.firstName} {associate.lastName}
           </div>
-          <div className="text-[10px] tabular-nums">
-            <span className={overTime ? 'text-warning' : 'text-silver/70'}>
+          <div className="text-2xs tabular-nums">
+            <span
+              className={
+                overTime || nearOT ? 'text-warning' : 'text-silver/70'
+              }
+              title={nearOT ? 'Near OT — 36–40h scheduled this week' : undefined}
+            >
               {(minutes / 60).toFixed(1)}h
               {overTime && ' • OT'}
             </span>
@@ -600,9 +666,9 @@ function Row({
         </div>
       </div>
       {children}
-    </>
+    </div>
   );
-}
+});
 
 function RailCell({
   label,
@@ -629,7 +695,7 @@ function RailCell({
         {label}
       </div>
       {sublabel && (
-        <div className="text-[10px] uppercase tracking-wider text-silver/70">
+        <div className="text-2xs uppercase tracking-wider text-silver/70">
           {sublabel}
         </div>
       )}
@@ -637,15 +703,16 @@ function RailCell({
   );
 }
 
-function Cell({
+const Cell = memo(function Cell({
   cellId,
   shifts,
-  dayStart: _dayStart,
+  dayStart,
+  associateId,
   isToday,
   canManage,
   onShiftClick,
   onContextMenu,
-  onCreate,
+  onCellCreate,
   onShiftResize,
   hoverBind,
   movingShiftId,
@@ -653,15 +720,18 @@ function Cell({
   isConflictTarget,
   variant,
   onTemplateDrop,
+  availabilityShade = null,
 }: {
   cellId: string;
   shifts: Shift[];
   dayStart: Date;
+  /** Row owner — null for the Unassigned row. */
+  associateId: string | null;
   isToday: boolean;
   canManage: boolean;
   onShiftClick: (s: Shift, e: React.MouseEvent) => void;
   onContextMenu: (s: Shift, e: React.MouseEvent) => void;
-  onCreate: () => void;
+  onCellCreate: (dayStart: Date, associateId: string | null) => void;
   onShiftResize: (s: Shift, newEndsAt: Date) => Promise<void>;
   hoverBind: (s: Shift) => {
     onPointerEnter: (e: React.PointerEvent<HTMLElement>) => void;
@@ -671,7 +741,9 @@ function Cell({
   selectedIds: Set<string>;
   isConflictTarget: boolean;
   variant: 'default' | 'unassigned';
-  onTemplateDrop: (templateId: string) => void;
+  onTemplateDrop: (templateId: string, dayStart: Date, associateId: string | null) => void;
+  /** Availability tint (associate rows only): PTO-blocked or outside windows. */
+  availabilityShade?: 'blocked' | 'outside' | null;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: cellId });
   // Native HTML5 drag from the templates rail. Independent of dnd-kit's
@@ -690,8 +762,10 @@ function Cell({
     const tplId = e.dataTransfer.getData(TEMPLATE_MIME);
     if (!tplId) return;
     e.preventDefault();
-    onTemplateDrop(tplId);
+    onTemplateDrop(tplId, dayStart, associateId);
   };
+  const onCreate = () => onCellCreate(dayStart, associateId);
+  const cellDensity = useTileDensity();
 
   return (
     <div
@@ -699,10 +773,28 @@ function Cell({
       onDragOver={onNativeDragOver}
       onDragLeave={onNativeDragLeave}
       onDrop={onNativeDrop}
+      title={
+        availabilityShade === 'blocked'
+          ? 'Approved time off / unavailable this day'
+          : availabilityShade === 'outside'
+            ? 'Outside weekly availability'
+            : undefined
+      }
       className={cn(
         'group relative border-b border-r border-navy-secondary p-1 min-h-[44px]',
-        'flex flex-col gap-1',
+        'flex flex-col',
+        cellDensity.gap,
         isToday && 'bg-gold/[0.03]',
+        // Availability/PTO tint — a passive background layer. Wins over the
+        // faint "today" tint but is suppressed whenever a hover/drop/conflict
+        // highlight is active so interaction states keep visual priority
+        // (cn's tailwind-merge lets the last bg-* utility win).
+        availabilityShade === 'blocked' &&
+          !isOver && !isConflictTarget && !tplOver &&
+          'bg-alert/[0.07]',
+        availabilityShade === 'outside' &&
+          !isOver && !isConflictTarget && !tplOver &&
+          'bg-silver/[0.05]',
         // Conflict tint shows under the hover/drop highlight so the manager
         // can still see the gold "you're hovering here" outline on top.
         isConflictTarget && !isOver && 'bg-alert/15',
@@ -717,7 +809,7 @@ function Cell({
           <button
             type="button"
             onClick={onCreate}
-            className="absolute inset-0 flex items-center justify-center text-silver/30 hover:text-gold hover:bg-gold/5 transition-colors opacity-60 group-hover:opacity-100"
+            className="absolute inset-0 flex items-center justify-center text-silver/30 hover:text-gold hover:bg-gold/5 transition-colors can-hover:opacity-60 group-hover:opacity-100"
             aria-label="Add shift"
           >
             <Plus className="h-4 w-4" />
@@ -738,22 +830,27 @@ function Cell({
               hoverHandlers={hoverBind(s)}
             />
           ))}
+          {/* "Add another" used to be a flow child, so every occupied cell
+              paid ~18px for an affordance that's only relevant on hover —
+              more vertical space than a third of the shift tile it sat under.
+              As an overlay it costs nothing until wanted, and the reclaimed
+              room is what pays for the taller tiles. */}
           {canManage && (
             <button
               type="button"
               onClick={onCreate}
-              className="text-[10px] text-silver/70 hover:text-gold inline-flex items-center justify-center gap-1 mt-auto opacity-60 group-hover:opacity-100 transition-opacity"
+              className="absolute bottom-0.5 right-0.5 h-6 w-6 coarse:h-9 coarse:w-9 rounded-full flex items-center justify-center bg-navy-secondary/80 backdrop-blur text-silver/70 hover:text-gold hover:bg-navy-secondary can-hover:opacity-0 group-hover:opacity-100 focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright transition-opacity no-print"
               aria-label="Add another shift"
+              title="Add another shift"
             >
-              <Plus className="h-3 w-3" />
-              add
+              <Plus className="h-3.5 w-3.5" />
             </button>
           )}
         </>
       )}
     </div>
   );
-}
+});
 
 function ShiftChip({
   shift,
@@ -849,6 +946,7 @@ function ShiftChip({
     : {};
   const isResizing = resizeDeltaPx !== null;
   const color = colorForPosition(shift.position);
+  const density = useTileDensity();
   return (
     <div
       ref={setNodeRef}
@@ -859,6 +957,8 @@ function ShiftChip({
       }}
       className={cn(
         'relative rounded border transition-colors hover:brightness-125',
+        density.minH,
+        statusTileClass(shift.status),
         isDragging && 'elev-3 ring-2 ring-gold/60 opacity-90',
         isResizing && 'ring-2 ring-gold/70',
         isSelected && 'ring-2 ring-gold ring-offset-1 ring-offset-navy',
@@ -871,7 +971,7 @@ function ShiftChip({
       {isSelected && (
         <div
           aria-hidden
-          className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-gold text-navy flex items-center justify-center text-[10px] font-bold"
+          className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-gold text-navy flex items-center justify-center text-2xs font-bold"
         >
           ✓
         </div>
@@ -882,59 +982,70 @@ function ShiftChip({
         className="absolute left-0 top-0 bottom-0 w-1 rounded-l"
         style={{ backgroundColor: color.accent }}
       />
-      {/* Drag grip — visually subtle, mouse-down here starts the drag */}
+      {/* Drag grip — small icon inside a 24px hit box (WCAG 2.2 SC 2.5.8). */}
       <div
         {...listeners}
         {...attributes}
-        className="absolute left-0.5 top-1/2 -translate-y-1/2 text-silver/60 hover:text-gold cursor-grab active:cursor-grabbing no-print"
+        className={cn('absolute left-0.5 top-1/2 -translate-y-1/2', GRIP_HIT)}
         aria-label={`Move ${shift.position}`}
       >
-        <GripVertical className="h-3 w-3" />
+        <GripVertical className={GRIP_ICON} />
       </div>
-      {/* Sling-style compact bar: time + position on a single line, a small
-          status dot pushed right. The client/sub-zone live in the hover
-          card so the row stays dense and rectangular. */}
+      {/* Single-line bar: time + position, status shape pushed right. The
+          client/sub-zone live in the hover card so the row stays rectangular. */}
       <button
         type="button"
         onClick={onClick}
-        className="w-full text-left py-1 pl-5 pr-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
-        title={`${fmtTime(shift.startsAt, shift.timezone)}–${fmtTime(previewEndsAt.toISOString(), shift.timezone)} · ${shift.position}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
+        className={cn(
+          'w-full h-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded',
+          density.padY,
+          density.padX,
+          // Clear the ⋯ touch-menu trigger, which only renders sans hover.
+          '[@media(hover:none)]:pr-8',
+        )}
+        title={`${fmtTime(shift.startsAt, shift.timezone)}–${fmtTime(previewEndsAt.toISOString(), shift.timezone)} · ${shift.position} · ${SHIFT_STATUS_LABEL[shift.status]}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
       >
         <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-[10px] text-silver/90 tabular-nums shrink-0">
+          <span
+            className={cn(
+              'text-silver/90 tabular-nums shrink-0',
+              density.time,
+            )}
+          >
             {compactRange(
               shift.startsAt,
               previewEndsAt.toISOString(),
               shift.timezone,
             )}
           </span>
-          <span className="flex-1 min-w-0 text-[11px] text-white font-medium truncate">
+          <span
+            className={cn(
+              'flex-1 min-w-0 text-white font-medium truncate',
+              density.label,
+              statusLabelClass(shift.status),
+            )}
+          >
             {shift.position}
           </span>
-          <Badge
-            variant={STATUS_VARIANT[shift.status] ?? 'default'}
-            className="text-[9px] px-1 py-0 shrink-0"
-            data-status={shift.status}
-          >
-            {shift.status === 'ASSIGNED'
-              ? '✓'
-              : shift.status === 'OPEN'
-                ? '○'
-                : shift.status[0]}
-          </Badge>
+          <StatusMark status={shift.status} />
         </div>
       </button>
+      <ShiftTouchMenuButton
+        onOpen={onContextMenu}
+        label={`${shift.position} shift actions`}
+      />
       {canManage && (
         <div
           onMouseDown={onResizeMouseDown}
-          className="absolute right-0 top-0 bottom-0 w-1.5 flex items-center justify-center cursor-ew-resize hover:bg-gold/40 group no-print"
-          aria-label="Drag to resize duration"
-          role="slider"
-          tabIndex={-1}
+          className={RESIZE_RAIL_X}
+          title="Drag to resize duration"
+          aria-hidden="true"
         >
-          {/* Grip line scales to the bar height (h-1/2) so it never
-              overflows the now-thin compact chip. */}
-          <div className="w-0.5 h-1/2 max-h-3 rounded-full bg-silver/30 group-hover:bg-gold" />
+          {/* Mouse-only drag affordance — keyboard/AT users adjust times in
+              the edit dialog, so this is decoration to AT (role="slider"
+              here was a lie: no value, no keyboard operation). Grip line
+              scales to the bar height so it never overflows. */}
+          <div className="w-0.5 h-1/2 max-h-4 rounded-full bg-silver/30 group-hover:bg-gold" />
         </div>
       )}
     </div>

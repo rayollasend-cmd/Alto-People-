@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Crown, Plus, Trash2, Users } from 'lucide-react';
+import { Crown, Download, Plus, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -9,6 +9,7 @@ import {
   getSuccessionSummary,
   listSuccessionPositions,
   READINESS_LABELS,
+  type SuccessionCandidateRow,
   type SuccessionPositionDetail,
   type SuccessionPositionRow,
   type SuccessionReadiness,
@@ -29,7 +30,11 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  FilterBar,
+  FilterChip,
   Input,
+  MetricCard,
   PageHeader,
   Select,
   SkeletonRows,
@@ -41,7 +46,10 @@ import {
   TableRow,
   Textarea,
 } from '@/components/ui';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
+import { ymdLocal } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
 
 const READINESS_VARIANT: Record<
   SuccessionReadiness,
@@ -53,39 +61,168 @@ const READINESS_VARIANT: Record<
   EMERGENCY_COVER: 'accent',
 };
 
+const READINESS_KEYS = Object.keys(READINESS_LABELS) as SuccessionReadiness[];
+
 export function SuccessionHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:performance') : false;
   const [rows, setRows] = useState<SuccessionPositionRow[] | null>(null);
+  const [rowsError, setRowsError] = useState<string | null>(null);
   const [summary, setSummary] = useState<SuccessionSummary | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [filter, setFilter] = useState('');
+  const [readinessFilter, setReadinessFilter] = useState<Set<SuccessionReadiness>>(
+    new Set(),
+  );
+  const [atRiskOnly, setAtRiskOnly] = useState(false);
+  // Per-position successor lists, loaded lazily for the readiness filter and
+  // the bench CSV export (the positions list itself only carries counts).
+  const [candMap, setCandMap] = useState<Map<string, SuccessionCandidateRow[]> | null>(
+    null,
+  );
+  const [candLoading, setCandLoading] = useState(false);
 
-  const refresh = () => {
+  const refreshPositions = () => {
     setRows(null);
+    setRowsError(null);
+    setCandMap(null);
     listSuccessionPositions()
       .then((r) => setRows(r.positions))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setRowsError(
+          err instanceof ApiError ? err.message : 'Failed to load positions.',
+        ),
+      );
+  };
+  const refreshSummary = () => {
+    setSummaryError(null);
     getSuccessionSummary()
       .then(setSummary)
-      .catch(() => setSummary(null));
+      .catch((err) => {
+        setSummary(null);
+        setSummaryError(
+          err instanceof ApiError ? err.message : 'Failed to load the readiness summary.',
+        );
+      });
+  };
+  const refresh = () => {
+    refreshPositions();
+    refreshSummary();
   };
   useEffect(() => {
     refresh();
   }, []);
 
+  const ensureCandidates = async (
+    positions: SuccessionPositionRow[],
+  ): Promise<Map<string, SuccessionCandidateRow[]> | null> => {
+    if (candMap) return candMap;
+    setCandLoading(true);
+    try {
+      const withSuccessors = positions.filter((p) => p.successorCount > 0);
+      const details = await Promise.all(
+        withSuccessors.map(
+          async (p) =>
+            [p.id, (await getSuccessionPosition(p.id)).candidates] as const,
+        ),
+      );
+      const map = new Map(details);
+      setCandMap(map);
+      return map;
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : 'Failed to load successor details.',
+      );
+      return null;
+    } finally {
+      setCandLoading(false);
+    }
+  };
+
+  const toggleReadiness = (r: SuccessionReadiness) => {
+    setReadinessFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(r)) next.delete(r);
+      else next.add(r);
+      return next;
+    });
+    if (!candMap && rows) void ensureCandidates(rows);
+  };
+
   const filtered = useMemo(() => {
     if (!rows) return null;
     const q = filter.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
-      (r) =>
-        r.title.toLowerCase().includes(q) ||
-        r.code.toLowerCase().includes(q) ||
-        (r.clientName ?? '').toLowerCase().includes(q) ||
-        (r.departmentName ?? '').toLowerCase().includes(q),
-    );
-  }, [rows, filter]);
+    return rows.filter((r) => {
+      if (
+        q &&
+        !(
+          r.title.toLowerCase().includes(q) ||
+          r.code.toLowerCase().includes(q) ||
+          (r.clientName ?? '').toLowerCase().includes(q) ||
+          (r.departmentName ?? '').toLowerCase().includes(q)
+        )
+      )
+        return false;
+      if (atRiskOnly && !(r.incumbent === null || r.successorCount === 0))
+        return false;
+      if (readinessFilter.size > 0 && candMap) {
+        const cands = candMap.get(r.id) ?? [];
+        if (!cands.some((c) => readinessFilter.has(c.readiness))) return false;
+      }
+      return true;
+    });
+  }, [rows, filter, atRiskOnly, readinessFilter, candMap]);
+
+  const onExportCsv = async () => {
+    if (!rows || !filtered) return;
+    const map = await ensureCandidates(rows);
+    if (!map) return;
+    const out: Array<Array<string | number>> = [
+      [
+        'Position',
+        'Code',
+        'Department',
+        'Incumbent',
+        'Successor count',
+        'Coverage',
+        'Successor',
+        'Readiness',
+        'Notes',
+      ],
+    ];
+    for (const p of filtered) {
+      const cands = map.get(p.id) ?? [];
+      if (cands.length === 0) {
+        out.push([
+          p.title,
+          p.code,
+          p.departmentName ?? '',
+          p.incumbent?.name ?? 'Vacant',
+          0,
+          'Uncovered',
+          '',
+          '',
+          '',
+        ]);
+      } else {
+        for (const c of cands) {
+          out.push([
+            p.title,
+            p.code,
+            p.departmentName ?? '',
+            p.incumbent?.name ?? 'Vacant',
+            cands.length,
+            'Covered',
+            c.associateName,
+            READINESS_LABELS[c.readiness],
+            c.notes ?? '',
+          ]);
+        }
+      }
+    }
+    downloadCsv(`succession-bench-${ymdLocal()}.csv`, out);
+  };
 
   return (
     <div className="space-y-5">
@@ -93,47 +230,105 @@ export function SuccessionHome() {
         title="Succession planning"
         subtitle="Designate successors for each position. Track who's ready now, in 1–2 years, or beyond."
         breadcrumbs={[{ label: 'Performance' }, { label: 'Succession' }]}
+        secondaryActions={
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onExportCsv}
+            disabled={!filtered || filtered.length === 0}
+            loading={candLoading}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Export CSV
+          </Button>
+        }
       />
 
-      {summary && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <KpiCard label="Positions" value={String(summary.positionCount)} />
-          <KpiCard
-            label="With successor"
-            value={`${summary.positionsWithSuccessor} / ${summary.positionCount}`}
-            sub={`${summary.coverage}% coverage`}
-          />
-          <KpiCard
-            label="Ready now"
-            value={String(summary.byReadiness.READY_NOW)}
-          />
-          <KpiCard
-            label="Emergency cover"
-            value={String(summary.byReadiness.EMERGENCY_COVER)}
-          />
-        </div>
+      {summaryError ? (
+        <ErrorBanner>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>{summaryError}</span>
+            <Button size="sm" variant="outline" onClick={refreshSummary}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      ) : (
+        summary && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <MetricCard label="Positions" value={summary.positionCount} />
+            <MetricCard
+              label="With successor"
+              value={`${summary.positionsWithSuccessor} / ${summary.positionCount}`}
+              hint={`${summary.coverage}% coverage`}
+            />
+            <MetricCard
+              label="Ready now"
+              value={summary.byReadiness.READY_NOW}
+            />
+            <MetricCard
+              label="Emergency cover"
+              value={summary.byReadiness.EMERGENCY_COVER}
+            />
+          </div>
+        )
       )}
 
-      <div className="flex justify-end">
+      <FilterBar>
+        {READINESS_KEYS.map((r) => (
+          <FilterChip
+            key={r}
+            active={readinessFilter.has(r)}
+            onClick={() => toggleReadiness(r)}
+          >
+            {READINESS_LABELS[r]}
+          </FilterChip>
+        ))}
+        <FilterChip
+          active={atRiskOnly}
+          onClick={() => setAtRiskOnly((v) => !v)}
+        >
+          At risk only
+        </FilterChip>
         <Input
           placeholder="Filter positions, codes, departments…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="max-w-sm"
+          className="ml-auto max-w-sm"
         />
-      </div>
+      </FilterBar>
+      {readinessFilter.size > 0 && !candMap && candLoading && (
+        <div className="text-xs text-silver text-right">
+          Loading successor details to apply the readiness filter…
+        </div>
+      )}
 
       <Card>
         <CardContent className="p-0">
-          {filtered === null ? (
+          {rowsError ? (
+            <div className="p-6">
+              <ErrorBanner>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{rowsError}</span>
+                  <Button size="sm" variant="outline" onClick={refreshPositions}>
+                    Retry
+                  </Button>
+                </div>
+              </ErrorBanner>
+            </div>
+          ) : filtered === null ? (
             <div className="p-6">
               <SkeletonRows count={4} />
             </div>
           ) : filtered.length === 0 ? (
             <EmptyState
               icon={Crown}
-              title="No positions"
-              description="Create positions in Org structure first; once they exist you can name successors here."
+              title={rows && rows.length > 0 ? 'No matches' : 'No positions'}
+              description={
+                rows && rows.length > 0
+                  ? 'No position matches the current filters.'
+                  : 'Create positions in Org structure first; once they exist you can name successors here.'
+              }
             />
           ) : (
             <Table>
@@ -156,7 +351,7 @@ export function SuccessionHome() {
                     <TableCell>
                       <div className="font-medium text-white">{p.title}</div>
                       <div className="text-xs text-silver font-mono">{p.code}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {p.departmentName ?? '—'} · {p.incumbent ? p.incumbent.name : 'Vacant'}
                       </div>
                     </TableCell>
@@ -213,26 +408,6 @@ export function SuccessionHome() {
   );
 }
 
-function KpiCard({
-  label,
-  value,
-  sub,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-4">
-        <div className="text-xs uppercase tracking-wider text-silver">{label}</div>
-        <div className="text-2xl font-semibold text-white mt-1">{value}</div>
-        {sub && <div className="text-xs text-silver mt-1">{sub}</div>}
-      </CardContent>
-    </Card>
-  );
-}
-
 function PositionDrawer({
   positionId,
   canManage,
@@ -243,25 +418,81 @@ function PositionDrawer({
   onClose: () => void;
 }) {
   const [data, setData] = useState<SuccessionPositionDetail | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
   const refresh = () => {
     setData(null);
+    setLoadError(null);
     getSuccessionPosition(positionId)
       .then(setData)
-      .catch(() => setData(null));
+      .catch((err) =>
+        setLoadError(
+          err instanceof ApiError ? err.message : 'Failed to load this position.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
   }, [positionId]);
 
+  const changeReadiness = async (
+    candidateId: string,
+    readiness: SuccessionReadiness,
+  ) => {
+    const prev = data;
+    // Optimistic: flip the badge/select immediately, revert on failure.
+    setData((d) =>
+      d
+        ? {
+            ...d,
+            candidates: d.candidates.map((c) =>
+              c.id === candidateId ? { ...c, readiness } : c,
+            ),
+          }
+        : d,
+    );
+    try {
+      await updateSuccessionCandidate(candidateId, { readiness });
+      toast.success(`Readiness set to ${READINESS_LABELS[readiness]}.`);
+    } catch (err) {
+      setData(prev);
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    }
+  };
+
+  const removeCandidate = async (candidateId: string) => {
+    const prev = data;
+    setData((d) =>
+      d
+        ? { ...d, candidates: d.candidates.filter((c) => c.id !== candidateId) }
+        : d,
+    );
+    try {
+      await deleteSuccessionCandidate(candidateId);
+      toast.success('Successor removed.');
+    } catch (err) {
+      setData(prev);
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    }
+  };
+
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>{data?.position.title ?? 'Loading…'}</DrawerTitle>
+        <DrawerTitle>{data?.position.title ?? 'Position'}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
-        {!data ? (
+        {loadError ? (
+          <ErrorBanner>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>{loadError}</span>
+              <Button size="sm" variant="outline" onClick={refresh}>
+                Retry
+              </Button>
+            </div>
+          </ErrorBanner>
+        ) : !data ? (
           <SkeletonRows count={3} />
         ) : (
           <>
@@ -281,17 +512,25 @@ function PositionDrawer({
                 <div className="text-sm uppercase tracking-wider text-silver">
                   Successors
                 </div>
-                {canManage && (
+                {canManage && data.candidates.length > 0 && (
                   <Button size="sm" onClick={() => setAdding(true)}>
                     <Plus className="mr-1 h-3 w-3" /> Add
                   </Button>
                 )}
               </div>
               {data.candidates.length === 0 ? (
-                <div className="text-sm text-silver py-3">
-                  <Users className="inline h-4 w-4 mr-1" />
-                  No successors named yet.
-                </div>
+                <EmptyState
+                  icon={Users}
+                  title="No successors named yet"
+                  description="Name at least one successor so this position isn't a single point of failure."
+                  action={
+                    canManage ? (
+                      <Button size="sm" onClick={() => setAdding(true)}>
+                        <Plus className="mr-1 h-3 w-3" /> Add successor
+                      </Button>
+                    ) : undefined
+                  }
+                />
               ) : (
                 <div className="space-y-1">
                   {data.candidates.map((c) => (
@@ -299,7 +538,8 @@ function PositionDrawer({
                       key={c.id}
                       candidate={c}
                       canManage={canManage}
-                      onChange={refresh}
+                      onReadinessChange={(r) => changeReadiness(c.id, r)}
+                      onRemove={() => removeCandidate(c.id)}
                     />
                   ))}
                 </div>
@@ -328,11 +568,13 @@ function PositionDrawer({
 function CandidateRow({
   candidate,
   canManage,
-  onChange,
+  onReadinessChange,
+  onRemove,
 }: {
-  candidate: SuccessionPositionDetail['candidates'][number];
+  candidate: SuccessionCandidateRow;
   canManage: boolean;
-  onChange: () => void;
+  onReadinessChange: (readiness: SuccessionReadiness) => void;
+  onRemove: () => void;
 }) {
   const confirm = useConfirm();
   return (
@@ -352,18 +594,11 @@ function CandidateRow({
         <Select
           size="sm"
           value={candidate.readiness}
-          onChange={async (e) => {
-            try {
-              await updateSuccessionCandidate(candidate.id, {
-                readiness: e.target.value as SuccessionReadiness,
-              });
-              onChange();
-            } catch (err) {
-              toast.error(err instanceof ApiError ? err.message : 'Failed.');
-            }
-          }}
+          onChange={(e) =>
+            onReadinessChange(e.target.value as SuccessionReadiness)
+          }
         >
-          {(Object.keys(READINESS_LABELS) as SuccessionReadiness[]).map((k) => (
+          {READINESS_KEYS.map((k) => (
             <option key={k} value={k}>
               {READINESS_LABELS[k]}
             </option>
@@ -378,12 +613,7 @@ function CandidateRow({
         <button
           onClick={async () => {
             if (!(await confirm({ title: 'Remove this successor?', destructive: true }))) return;
-            try {
-              await deleteSuccessionCandidate(candidate.id);
-              onChange();
-            } catch (err) {
-              toast.error(err instanceof ApiError ? err.message : 'Failed.');
-            }
+            onRemove();
           }}
           className="text-silver hover:text-alert"
         >
@@ -403,21 +633,21 @@ function AddCandidateDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [readiness, setReadiness] = useState<SuccessionReadiness>('READY_1_2_YEARS');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
-    if (!associateId.trim()) {
-      toast.error('Associate ID required.');
+    if (!associate) {
+      toast.error('Pick an associate.');
       return;
     }
     setSaving(true);
     try {
       await createSuccessionCandidate({
         positionId,
-        associateId: associateId.trim(),
+        associateId: associate.id,
         readiness,
         notes: notes.trim() || null,
       });
@@ -437,12 +667,10 @@ function AddCandidateDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={associate} onChange={setAssociate} />
+          </div>
         </div>
         <div>
           <Label>Readiness</Label>
@@ -451,7 +679,7 @@ function AddCandidateDrawer({
             value={readiness}
             onChange={(e) => setReadiness(e.target.value as SuccessionReadiness)}
           >
-            {(Object.keys(READINESS_LABELS) as SuccessionReadiness[]).map((k) => (
+            {READINESS_KEYS.map((k) => (
               <option key={k} value={k}>
                 {READINESS_LABELS[k]}
               </option>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus, Tags } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
@@ -24,7 +24,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
-  Input,
+  ErrorBanner,
   PageHeader,
   Select,
   SkeletonRows,
@@ -40,10 +40,20 @@ import {
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { Input } from '@/components/ui/Input';
+import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
 type Tab = 'categories' | 'values';
+
+/** "GL Account" → "gl_account" — the machine-key format the API enforces. */
+const slugifyKey = (s: string) =>
+  s
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
 
 export function WorktagsHome() {
   const { user } = useAuth();
@@ -75,13 +85,19 @@ export function WorktagsHome() {
 
 function CategoriesTab({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<WorktagCategory[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 
   const refresh = () => {
     setRows(null);
+    setError(null);
     listCategories()
       .then((r) => setRows(r.categories))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setError(
+          err instanceof ApiError ? err.message : 'Could not load categories.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
@@ -98,13 +114,32 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
       )}
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {error ? (
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {error}
+              </ErrorBanner>
+            </div>
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
               icon={Tags}
               title="No categories"
               description='Create categories like "Project" or "GL Account" first, then add values under each.'
+              action={
+                canManage ? (
+                  <Button size="sm" onClick={() => setShowNew(true)}>
+                    <Plus className="mr-2 h-4 w-4" /> New category
+                  </Button>
+                ) : undefined
+              }
             />
           ) : (
             <Table>
@@ -113,7 +148,7 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
                   <TableHead className="hidden md:table-cell">Key</TableHead>
                   <TableHead>Label</TableHead>
                   <TableHead>Required</TableHead>
-                  <TableHead>Values</TableHead>
+                  <TableHead className="text-right">Values</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -122,7 +157,7 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="font-mono text-xs hidden md:table-cell">{c.key}</TableCell>
                     <TableCell className="font-medium text-white">
                       {c.label}
-                      <div className="md:hidden text-[11px] text-silver/70 truncate font-mono font-normal">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate font-mono font-normal">
                         {c.key}
                       </div>
                     </TableCell>
@@ -133,7 +168,9 @@ function CategoriesTab({ canManage }: { canManage: boolean }) {
                         '—'
                       )}
                     </TableCell>
-                    <TableCell>{c.worktagCount}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {c.worktagCount}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -162,6 +199,9 @@ function NewCategoryDrawer({
   onSaved: () => void;
 }) {
   const [key, setKey] = useState('');
+  // Once the admin edits the key by hand, stop auto-deriving it from the
+  // label — their explicit choice wins.
+  const [keyTouched, setKeyTouched] = useState(false);
   const [label, setLabel] = useState('');
   const [description, setDescription] = useState('');
   const [isRequired, setIsRequired] = useState(false);
@@ -199,22 +239,31 @@ function NewCategoryDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Key (machine name)</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            placeholder="gl_account"
-          />
-        </div>
-        <div>
           <Label>Label</Label>
           <Input
             className="mt-1"
             value={label}
-            onChange={(e) => setLabel(e.target.value)}
+            onChange={(e) => {
+              setLabel(e.target.value);
+              if (!keyTouched) setKey(slugifyKey(e.target.value));
+            }}
             placeholder="GL Account"
           />
+        </div>
+        <div>
+          <Label>Key (machine name)</Label>
+          <Input
+            className="mt-1 font-mono text-xs"
+            value={key}
+            onChange={(e) => {
+              setKeyTouched(true);
+              setKey(e.target.value);
+            }}
+            placeholder="gl_account"
+          />
+          <p className="text-xs2 text-silver mt-1">
+            Auto-derived from the label — edit to override.
+          </p>
         </div>
         <div>
           <Label>Description</Label>
@@ -248,55 +297,123 @@ function NewCategoryDrawer({
 function ValuesTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [categories, setCategories] = useState<WorktagCategory[]>([]);
+  const [categoriesError, setCategoriesError] = useState<string | null>(null);
   const [categoryId, setCategoryId] = useState('');
   const [worktags, setWorktags] = useState<Worktag[] | null>(null);
+  const [worktagsError, setWorktagsError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [search, setSearch] = useState('');
 
-  useEffect(() => {
-    listCategories().then((r) => {
-      setCategories(r.categories);
-      if (r.categories[0]) setCategoryId(r.categories[0].id);
-    });
-  }, []);
+  const loadCategories = () => {
+    setCategoriesError(null);
+    listCategories()
+      .then((r) => {
+        setCategories(r.categories);
+        if (r.categories[0]) {
+          setCategoryId((prev) => prev || r.categories[0].id);
+        }
+      })
+      .catch((err) =>
+        setCategoriesError(
+          err instanceof ApiError ? err.message : 'Could not load categories.',
+        ),
+      );
+  };
+  useEffect(loadCategories, []);
 
   const refresh = () => {
     if (!categoryId) return;
     setWorktags(null);
+    setWorktagsError(null);
     listWorktags(categoryId)
       .then((r) => setWorktags(r.worktags))
-      .catch(() => setWorktags([]));
+      .catch((err) =>
+        setWorktagsError(
+          err instanceof ApiError ? err.message : 'Could not load values.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoryId]);
 
+  const filtered = useMemo(() => {
+    if (!worktags) return null;
+    const q = search.trim().toLowerCase();
+    if (!q) return worktags;
+    return worktags.filter(
+      (w) =>
+        w.value.toLowerCase().includes(q) ||
+        (w.code ?? '').toLowerCase().includes(q),
+    );
+  }, [worktags, search]);
+
   const onDelete = async (id: string) => {
     if (!(await confirm({ title: 'Deactivate this worktag?', destructive: true }))) return;
     try {
       await deleteWorktag(id);
+      toast.success('Worktag deactivated.');
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     }
   };
 
+  if (categoriesError) {
+    return (
+      <div className="py-6">
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={loadCategories}>
+              Retry
+            </Button>
+          }
+        >
+          {categoriesError}
+        </ErrorBanner>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <Label>Category</Label>
-          <Select
-            className="mt-1 w-72"
-            value={categoryId}
-            onChange={(e) => setCategoryId(e.target.value)}
-          >
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </Select>
+      <div className="flex items-end justify-between gap-3 flex-wrap">
+        <div className="flex items-end gap-3 flex-wrap">
+          <div>
+            <Label>Category</Label>
+            <Select
+              className="mt-1 w-72"
+              value={categoryId}
+              onChange={(e) => setCategoryId(e.target.value)}
+            >
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label>Search</Label>
+            <div className="mt-1">
+              <SearchInput
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Value or code"
+                className="w-56"
+                aria-label="Search values"
+              />
+            </div>
+          </div>
+          {worktags && filtered && (
+            <span className="text-xs text-silver tabular-nums pb-2.5">
+              {search.trim()
+                ? `${filtered.length} of ${worktags.length}`
+                : worktags.length}{' '}
+              value{(search.trim() ? filtered.length : worktags.length) === 1 ? '' : 's'}
+            </span>
+          )}
         </div>
         {canManage && categoryId && (
           <Button onClick={() => setShowNew(true)}>
@@ -306,13 +423,43 @@ function ValuesTab({ canManage }: { canManage: boolean }) {
       </div>
       <Card>
         <CardContent className="p-0">
-          {worktags === null ? (
+          {worktagsError ? (
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {worktagsError}
+              </ErrorBanner>
+            </div>
+          ) : worktags === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : worktags.length === 0 ? (
             <EmptyState
               icon={Tags}
               title="No values"
               description="Add values under this category to start tagging transactions."
+              action={
+                canManage && categoryId ? (
+                  <Button size="sm" onClick={() => setShowNew(true)}>
+                    <Plus className="mr-2 h-4 w-4" /> New value
+                  </Button>
+                ) : undefined
+              }
+            />
+          ) : filtered && filtered.length === 0 ? (
+            <EmptyState
+              icon={Tags}
+              title="No values match"
+              description="Try a different value or code."
+              action={
+                <Button variant="outline" size="sm" onClick={() => setSearch('')}>
+                  Clear search
+                </Button>
+              }
             />
           ) : (
             <Table>
@@ -324,18 +471,20 @@ function ValuesTab({ canManage }: { canManage: boolean }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {worktags.map((w) => (
+                {(filtered ?? []).map((w) => (
                   <TableRow key={w.id} className="group">
                     <TableCell className="font-medium text-white">{w.value}</TableCell>
                     <TableCell className="font-mono text-xs">{w.code ?? '—'}</TableCell>
                     <TableCell className="text-right">
                       {canManage && (
-                        <button
-                          onClick={() => onDelete(w.id)}
-                          className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void onDelete(w.id)}
+                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert"
                         >
                           Deactivate
-                        </button>
+                        </Button>
                       )}
                     </TableCell>
                   </TableRow>

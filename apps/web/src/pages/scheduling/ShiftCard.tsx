@@ -15,6 +15,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/Skeleton';
@@ -163,7 +164,7 @@ export function ShiftCard({
         <div id={detailId} className="border-t border-navy-secondary px-4 py-3">
           <ShiftDetail shift={shift} muted={muted} onSwapCreated={onSwapCreated} />
           <div className="mt-3">
-            <div className="text-[11px] uppercase tracking-wider text-silver/80 mb-1.5 flex items-center gap-1.5">
+            <div className="text-xs2 uppercase tracking-wider text-silver/80 mb-1.5 flex items-center gap-1.5">
               <Users className="h-3.5 w-3.5" aria-hidden="true" />
               {t('shift.workingWithYou')}
               {teammates && teammates.length > 0 && ` (${teammates.length})`}
@@ -172,36 +173,44 @@ export function ShiftCard({
               <SkeletonRows count={2} rowHeight="h-5" />
             )}
             {detailError && (
-              <p role="alert" className="text-xs text-alert">
-                {detailError}{' '}
-                <button
-                  type="button"
-                  onClick={loadDetail}
-                  className="underline underline-offset-2 hover:text-white"
-                >
-                  {t('common.retry')}
-                </button>
-              </p>
+              <ErrorBanner
+                className="text-xs"
+                action={
+                  <button
+                    type="button"
+                    onClick={loadDetail}
+                    className="underline underline-offset-2 hover:text-white"
+                  >
+                    {t('common.retry')}
+                  </button>
+                }
+              >
+                {detailError}
+              </ErrorBanner>
             )}
             {teammates && teammates.length === 0 && (
               <p className="text-xs text-silver/70">{t('shift.noTeammates')}</p>
             )}
             {teammates && teammates.length > 0 && (
               <ul className="space-y-1.5">
-                {teammates.map((t) => (
+                {/* `mate`, not `t` — `t` is the translator from useI18n in
+                    the enclosing scope, and shadowing it here means the next
+                    translated string added inside this block fails at
+                    runtime rather than at compile time. */}
+                {teammates.map((mate) => (
                   // Stacked on phones — the one-line layout crushed the
                   // NAME ("Pat Ng…") to make room for position·time·zone
                   // (caught by the visual walk). Single line returns at sm+
                   // where there's room for both.
                   <li
-                    key={t.associateId}
+                    key={mate.associateId}
                     className="text-sm sm:flex sm:items-baseline sm:justify-between sm:gap-3"
                   >
-                    <span className="block text-white sm:truncate">{t.name}</span>
+                    <span className="block text-white sm:truncate">{mate.name}</span>
                     <span className="block text-xs text-silver tabular-nums sm:text-right sm:shrink-0">
-                      {t.position} ·{' '}
-                      {fmtShiftRangeTz(t.startsAt, t.endsAt, shift.timezone)}
-                      {t.location ? ` · ${t.location}` : ''}
+                      {mate.position} ·{' '}
+                      {fmtShiftRangeTz(mate.startsAt, mate.endsAt, shift.timezone)}
+                      {mate.location ? ` · ${mate.location}` : ''}
                     </span>
                   </li>
                 ))}
@@ -395,13 +404,9 @@ function SwapOfferForm({
 
   return (
     <form onSubmit={submit} className="space-y-2 max-w-md w-full">
-      {candError && (
-        <p role="alert" className="text-xs text-alert">
-          {candError}
-        </p>
-      )}
+      {candError && <ErrorBanner className="text-xs">{candError}</ErrorBanner>}
       <label className="block">
-        <span className="text-[11px] uppercase tracking-wider text-silver">
+        <span className="text-xs2 uppercase tracking-wider text-silver">
           {t('shift.offerTo')}
         </span>
         <Select
@@ -425,7 +430,7 @@ function SwapOfferForm({
       </label>
       {counterpartyId && (tradeOptions?.length ?? 0) > 0 && (
         <label className="block">
-          <span className="text-[11px] uppercase tracking-wider text-silver">
+          <span className="text-xs2 uppercase tracking-wider text-silver">
             {t('shift.tradeLabel')}
           </span>
           <Select
@@ -445,7 +450,7 @@ function SwapOfferForm({
         </label>
       )}
       <label className="block">
-        <span className="text-[11px] uppercase tracking-wider text-silver">
+        <span className="text-xs2 uppercase tracking-wider text-silver">
           {t('shift.noteOptional')}
         </span>
         <Textarea

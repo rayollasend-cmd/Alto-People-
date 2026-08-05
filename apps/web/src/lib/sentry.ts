@@ -1,4 +1,8 @@
-import * as Sentry from '@sentry/react';
+// PERF: named imports only. The old `import * as Sentry` + namespace
+// re-export defeated tree-shaking, so the whole SDK core rode in the
+// blocking react-vendor chunk even with no DSN configured.
+import { captureException, init } from '@sentry/react';
+import { scrubDeep, stripUrlSecrets } from '@alto-people/shared';
 
 /**
  * Initialise Sentry on the browser. Reads VITE_SENTRY_DSN at build time
@@ -12,7 +16,7 @@ import * as Sentry from '@sentry/react';
 export function initSentry(): void {
   const dsn = import.meta.env.VITE_SENTRY_DSN as string | undefined;
   if (!dsn) return;
-  Sentry.init({
+  init({
     dsn,
     environment: import.meta.env.MODE,
     // Same conservative default as the API side. Bumpable per env via
@@ -29,7 +33,34 @@ export function initSentry(): void {
       'NetworkError',
       'TimeoutError',
     ],
+    // This app handles SSNs, bank details and PINs; error telemetry must
+    // not become a side channel into them. Query strings are stripped
+    // from URLs and sensitive-looking keys censored before send.
+    beforeSend(event) {
+      if (event.request?.url) {
+        event.request.url = stripUrlSecrets(event.request.url);
+      }
+      if (event.request?.query_string) event.request.query_string = '[redacted]';
+      if (event.request?.data) {
+        event.request.data = scrubDeep(event.request.data) as typeof event.request.data;
+      }
+      if (event.extra) event.extra = scrubDeep(event.extra) as typeof event.extra;
+      if (event.contexts) {
+        event.contexts = scrubDeep(event.contexts) as typeof event.contexts;
+      }
+      return event;
+    },
+    beforeBreadcrumb(crumb) {
+      if (typeof crumb.data?.url === 'string') {
+        crumb.data.url = stripUrlSecrets(crumb.data.url);
+      }
+      // DOM breadcrumbs echo typed input on some integrations — drop the
+      // payload and keep only the fact that an interaction happened.
+      if (crumb.category === 'ui.input') return null;
+      if (crumb.data) crumb.data = scrubDeep(crumb.data) as typeof crumb.data;
+      return crumb;
+    },
   });
 }
 
-export { Sentry };
+export { captureException };

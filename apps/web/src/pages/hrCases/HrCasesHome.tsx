@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Lock, MessageCircle, Plus, Tag } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
+import { Download, Lock, MessageCircle, Plus, Tag } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -33,8 +34,12 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
+  SearchInput,
+  SegmentedControl,
+  type SegmentedControlOption,
   Select,
   SkeletonRows,
   Table,
@@ -46,7 +51,8 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
-import { fmtDate } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
 
 const STATUS_VARIANT: Record<
   CaseStatus,
@@ -69,6 +75,13 @@ const PRIORITY_VARIANT: Record<
   URGENT: 'destructive',
 };
 
+const PRIORITY_LABELS: Record<CasePriority, string> = {
+  LOW: 'Low',
+  MEDIUM: 'Medium',
+  HIGH: 'High',
+  URGENT: 'Urgent',
+};
+
 export function HrCasesHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
@@ -79,28 +92,117 @@ export function HrCasesHome() {
   const [showNew, setShowNew] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<CaseStatus | 'ALL'>('OPEN');
+  const [categoryFilter, setCategoryFilter] = useState<CaseCategory | 'ALL'>(
+    'ALL',
+  );
+  const [assignedToMe, setAssignedToMe] = useState(false);
+  const [search, setSearch] = useState('');
+  const [mineError, setMineError] = useState<string | null>(null);
+  const [queueError, setQueueError] = useState<string | null>(null);
 
   const refresh = () => {
     if (tab === 'mine') {
       setMine(null);
+      setMineError(null);
       listMyCases()
         .then((r) => setMine(r.cases))
-        .catch(() => setMine([]));
+        .catch((err) =>
+          setMineError(
+            err instanceof ApiError ? err.message : 'Failed to load your cases.',
+          ),
+        );
     } else {
       setQueue(null);
+      setQueueError(null);
       listCaseQueue({
         status: statusFilter === 'ALL' ? undefined : statusFilter,
+        category: categoryFilter === 'ALL' ? undefined : categoryFilter,
+        assignedToMe: assignedToMe || undefined,
       })
         .then((r) => setQueue(r.cases))
-        .catch(() => setQueue([]));
-      getCaseSummary()
-        .then(setSummary)
-        .catch(() => setSummary(null));
+        .catch((err) =>
+          setQueueError(
+            err instanceof ApiError ? err.message : 'Failed to load the queue.',
+          ),
+        );
     }
+  };
+  // Filter-independent KPI summary — fetched once on mount and re-fetched
+  // explicitly after mutations, never on tab/filter clicks.
+  const refreshSummary = () => {
+    getCaseSummary()
+      .then(setSummary)
+      .catch(() => setSummary(null));
   };
   useEffect(() => {
     refresh();
-  }, [tab, statusFilter]);
+  }, [tab, statusFilter, categoryFilter, assignedToMe]);
+  useEffect(() => {
+    if (canManage) refreshSummary();
+  }, [canManage]);
+
+  const visibleQueue = useMemo(() => {
+    const rows = queue ?? [];
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (c) =>
+        c.subject.toLowerCase().includes(q) ||
+        c.associateName.toLowerCase().includes(q) ||
+        c.associateEmail.toLowerCase().includes(q),
+    );
+  }, [queue, search]);
+
+  // The queue segment only exists for HR; building the option list up front
+  // keeps the conditional out of the JSX and the generic parameter explicit
+  // (inference would otherwise narrow to 'mine').
+  const tabOptions: SegmentedControlOption<'mine' | 'queue'>[] = [
+    { value: 'mine', label: 'My cases' },
+  ];
+  if (canManage) {
+    tabOptions.push({
+      value: 'queue',
+      label: (
+        <>
+          Queue
+          {summary && summary.openTotal > 0 && (
+            <Badge variant="destructive" className="ml-2">
+              {summary.openTotal}
+            </Badge>
+          )}
+        </>
+      ),
+    });
+  }
+
+  const exportQueueCsv = () => {
+    downloadCsv(`hr-cases-queue-${ymdLocal()}.csv`, [
+      [
+        'Subject',
+        'Associate',
+        'Email',
+        'Category',
+        'Priority',
+        'Status',
+        'Assigned to',
+        'Replies',
+        'Created',
+        'Updated',
+      ],
+      ...visibleQueue.map((c) => [
+        c.subject,
+        c.associateName,
+        c.associateEmail,
+        CATEGORY_LABELS[c.category],
+        PRIORITY_LABELS[c.priority],
+        STATUS_LABELS[c.status],
+        c.assignedToEmail ?? '',
+        c.commentCount,
+        fmtDate(c.createdAt),
+        fmtDate(c.updatedAt),
+      ]),
+    ]);
+  };
 
   return (
     <div className="space-y-5">
@@ -111,46 +213,69 @@ export function HrCasesHome() {
       />
 
       <div className="flex items-center justify-between">
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant={tab === 'mine' ? 'primary' : 'ghost'}
-            onClick={() => setTab('mine')}
-          >
-            My cases
-          </Button>
-          {canManage && (
-            <Button
-              size="sm"
-              variant={tab === 'queue' ? 'primary' : 'ghost'}
-              onClick={() => setTab('queue')}
-            >
-              Queue
-              {summary && summary.openTotal > 0 && (
-                <Badge variant="destructive" className="ml-2">
-                  {summary.openTotal}
-                </Badge>
-              )}
-            </Button>
-          )}
-        </div>
-        <div className="flex gap-2">
+        <SegmentedControl<'mine' | 'queue'>
+          ariaLabel="Case view"
+          value={tab}
+          onChange={setTab}
+          options={tabOptions}
+        />
+        <div className="flex flex-wrap items-center justify-end gap-2">
           {canManage && tab === 'queue' && (
-            <Select
-              size="sm"
-              aria-label="Filter by status"
-              value={statusFilter}
-              onChange={(e) =>
-                setStatusFilter(e.target.value as CaseStatus | 'ALL')
-              }
-            >
-              <option value="ALL">All statuses</option>
-              {(Object.keys(STATUS_LABELS) as CaseStatus[]).map((s) => (
-                <option key={s} value={s}>
-                  {STATUS_LABELS[s]}
-                </option>
-              ))}
-            </Select>
+            <>
+              <SearchInput
+                aria-label="Search subject or associate"
+                className="h-8 w-52 text-xs"
+                placeholder="Search subject/associate"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <Select
+                size="sm"
+                aria-label="Filter by status"
+                value={statusFilter}
+                onChange={(e) =>
+                  setStatusFilter(e.target.value as CaseStatus | 'ALL')
+                }
+              >
+                <option value="ALL">All statuses</option>
+                {(Object.keys(STATUS_LABELS) as CaseStatus[]).map((s) => (
+                  <option key={s} value={s}>
+                    {STATUS_LABELS[s]}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                size="sm"
+                aria-label="Filter by category"
+                value={categoryFilter}
+                onChange={(e) =>
+                  setCategoryFilter(e.target.value as CaseCategory | 'ALL')
+                }
+              >
+                <option value="ALL">All categories</option>
+                {(Object.keys(CATEGORY_LABELS) as CaseCategory[]).map((k) => (
+                  <option key={k} value={k}>
+                    {CATEGORY_LABELS[k]}
+                  </option>
+                ))}
+              </Select>
+              <Button
+                size="sm"
+                variant={assignedToMe ? 'primary' : 'secondary'}
+                aria-pressed={assignedToMe}
+                onClick={() => setAssignedToMe((v) => !v)}
+              >
+                Assigned to me
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={exportQueueCsv}
+                disabled={visibleQueue.length === 0}
+              >
+                <Download className="mr-2 h-4 w-4" /> Export CSV
+              </Button>
+            </>
           )}
           <Button onClick={() => setShowNew(true)}>
             <Plus className="mr-2 h-4 w-4" /> New case
@@ -161,7 +286,19 @@ export function HrCasesHome() {
       {tab === 'mine' ? (
         <Card>
           <CardContent className="p-0">
-            {mine === null ? (
+            {mineError ? (
+              <div className="p-6">
+                <ErrorBanner
+                  action={
+                    <Button size="sm" variant="secondary" onClick={refresh}>
+                      Retry
+                    </Button>
+                  }
+                >
+                  {mineError}
+                </ErrorBanner>
+              </div>
+            ) : mine === null ? (
               <div className="p-6">
                 <SkeletonRows count={3} />
               </div>
@@ -170,6 +307,11 @@ export function HrCasesHome() {
                 icon={MessageCircle}
                 title="No cases yet"
                 description="Have a question or concern? File a new case — HR will reply here."
+                action={
+                  <Button onClick={() => setShowNew(true)}>
+                    <Plus className="mr-2 h-4 w-4" /> File a case
+                  </Button>
+                }
               />
             ) : (
               <div className="divide-y divide-navy-secondary">
@@ -202,15 +344,33 @@ export function HrCasesHome() {
       ) : (
         <Card>
           <CardContent className="p-0">
-            {queue === null ? (
+            {queueError ? (
+              <div className="p-6">
+                <ErrorBanner
+                  action={
+                    <Button size="sm" variant="secondary" onClick={refresh}>
+                      Retry
+                    </Button>
+                  }
+                >
+                  {queueError}
+                </ErrorBanner>
+              </div>
+            ) : queue === null ? (
               <div className="p-6">
                 <SkeletonRows count={4} />
               </div>
-            ) : queue.length === 0 ? (
+            ) : visibleQueue.length === 0 ? (
               <EmptyState
                 icon={MessageCircle}
-                title="Queue is empty"
-                description="Nothing pending. Nice."
+                title={
+                  search.trim() ? 'No matching cases' : 'Queue is empty'
+                }
+                description={
+                  search.trim()
+                    ? 'No cases match your search.'
+                    : 'Nothing pending. Nice.'
+                }
               />
             ) : (
               <Table>
@@ -225,7 +385,7 @@ export function HrCasesHome() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {queue.map((c) => (
+                  {visibleQueue.map((c) => (
                     <TableRow
                       key={c.id}
                       className="cursor-pointer"
@@ -238,12 +398,12 @@ export function HrCasesHome() {
                             {c.commentCount} replies
                           </div>
                         )}
-                        <div className="text-[11px] text-silver/70 md:hidden">
+                        <div className="text-xs2 text-silver/70 md:hidden">
                           {c.associateName} · {CATEGORY_LABELS[c.category]}
                         </div>
                       </TableCell>
                       <TableCell className="hidden md:table-cell">
-                        <div className="text-sm">{c.associateName}</div>
+                        <div className="text-sm"><AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink></div>
                         <div className="text-xs text-silver">
                           {c.associateEmail}
                         </div>
@@ -253,7 +413,7 @@ export function HrCasesHome() {
                       </TableCell>
                       <TableCell>
                         <Badge variant={PRIORITY_VARIANT[c.priority]}>
-                          {c.priority}
+                          {PRIORITY_LABELS[c.priority]}
                         </Badge>
                       </TableCell>
                       <TableCell>
@@ -280,6 +440,7 @@ export function HrCasesHome() {
             setShowNew(false);
             setOpenId(id);
             refresh();
+            if (canManage) refreshSummary();
           }}
         />
       )}
@@ -290,6 +451,7 @@ export function HrCasesHome() {
           onClose={() => {
             setOpenId(null);
             refresh();
+            if (canManage) refreshSummary();
           }}
         />
       )}
@@ -326,7 +488,7 @@ function NewCaseDrawer({
       toast.success('Case filed.');
       onSaved(r.id);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not file the case.');
     } finally {
       setSaving(false);
     }
@@ -406,15 +568,21 @@ function CaseDetailDrawer({
   onClose: () => void;
 }) {
   const [data, setData] = useState<CaseDetail | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [reply, setReply] = useState('');
   const [internal, setInternal] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const refresh = () => {
     setData(null);
+    setLoadError(null);
     getCase(caseId)
       .then(setData)
-      .catch(() => setData(null));
+      .catch((err) =>
+        setLoadError(
+          err instanceof ApiError ? err.message : 'Failed to load case.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
@@ -425,11 +593,12 @@ function CaseDetailDrawer({
     setBusy(true);
     try {
       await addComment(caseId, reply.trim(), internal);
+      toast.success(internal ? 'Internal note added.' : 'Reply sent.');
       setReply('');
       setInternal(false);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not send the reply.');
     } finally {
       setBusy(false);
     }
@@ -438,10 +607,20 @@ function CaseDetailDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>{data?.subject ?? 'Loading…'}</DrawerTitle>
+        <DrawerTitle>{data?.subject ?? 'Case details'}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
-        {!data ? (
+        {loadError ? (
+          <ErrorBanner
+            action={
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            }
+          >
+            {loadError}
+          </ErrorBanner>
+        ) : !data ? (
           <SkeletonRows count={3} />
         ) : (
           <>
@@ -450,7 +629,7 @@ function CaseDetailDrawer({
                 {STATUS_LABELS[data.status]}
               </Badge>
               <Badge variant={PRIORITY_VARIANT[data.priority]}>
-                {data.priority}
+                {PRIORITY_LABELS[data.priority]}
               </Badge>
               <Badge variant="outline">{CATEGORY_LABELS[data.category]}</Badge>
               {data.assignedToEmail && (
@@ -460,8 +639,7 @@ function CaseDetailDrawer({
               )}
             </div>
             <div className="text-xs text-silver">
-              Filed by {data.associateName} ·{' '}
-              {new Date(data.createdAt).toLocaleString()}
+              Filed by {data.associateName} · {fmtDateTime(data.createdAt)}
             </div>
             <div className="text-sm text-white whitespace-pre-wrap p-3 rounded border border-navy-secondary bg-midnight">
               {data.description}
@@ -493,9 +671,9 @@ function CaseDetailDrawer({
                           <Lock className="h-3 w-3 text-warning" />
                         )}
                         <span>{c.authorEmail ?? c.authorName ?? 'Unknown'}</span>
-                        <span>· {new Date(c.createdAt).toLocaleString()}</span>
+                        <span>· {fmtDateTime(c.createdAt)}</span>
                         {c.internalNote && (
-                          <span className="text-warning">internal</span>
+                          <span className="text-warning">Internal</span>
                         )}
                       </div>
                       <div className="text-sm text-white whitespace-pre-wrap">
@@ -551,11 +729,41 @@ function TriageBlock({
   detail: CaseDetail;
   onChange: () => void;
 }) {
+  const { user } = useAuth();
   const [resolution, setResolution] = useState(detail.resolution ?? '');
+  const [claiming, setClaiming] = useState(false);
+  const assignedToMe =
+    user !== null && detail.assignedToEmail === user.email;
+
+  const claim = async () => {
+    if (!user) return;
+    setClaiming(true);
+    try {
+      await triageCase(detail.id, { assignedToId: user.id });
+      toast.success('Case assigned to you.');
+      onChange();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not assign the case.');
+    } finally {
+      setClaiming(false);
+    }
+  };
 
   return (
     <div className="space-y-2 p-3 rounded border border-navy-secondary">
       <div className="text-xs uppercase tracking-wider text-silver">Triage</div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-silver">
+          {detail.assignedToEmail
+            ? `Assigned to ${assignedToMe ? 'you' : detail.assignedToEmail}`
+            : 'Unassigned'}
+        </span>
+        {!assignedToMe && (
+          <Button size="xs" variant="secondary" loading={claiming} onClick={claim}>
+            Assign to me
+          </Button>
+        )}
+      </div>
       <div className="flex gap-2 flex-wrap">
         <Select
           size="sm"
@@ -570,7 +778,9 @@ function TriageBlock({
               });
               onChange();
             } catch (err) {
-              toast.error(err instanceof ApiError ? err.message : 'Failed.');
+              toast.error(
+                err instanceof ApiError ? err.message : 'Could not update the status.',
+              );
             }
           }}
         >
@@ -590,7 +800,9 @@ function TriageBlock({
               });
               onChange();
             } catch (err) {
-              toast.error(err instanceof ApiError ? err.message : 'Failed.');
+              toast.error(
+                err instanceof ApiError ? err.message : 'Could not update the priority.',
+              );
             }
           }}
         >
@@ -612,7 +824,9 @@ function TriageBlock({
                 await triageCase(detail.id, { resolution: resolution.trim() || null });
                 onChange();
               } catch (err) {
-                toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                toast.error(
+                  err instanceof ApiError ? err.message : 'Could not save the resolution.',
+                );
               }
             }
           }}

@@ -84,7 +84,31 @@ const CLAUSE = {
 // Returns the union of associate ids whose most-recent active Application is
 // APPROVED. Reused by tiles 1 + 5. Includes Application.clientId so the
 // scorecard can show client-scoped rollups later.
-async function getActiveAssociates() {
+//
+// PERF: micro-cached for 5s. /compliance-scorecard/actions builds three
+// tiles in parallel that each call this — without the cache one dashboard
+// render executed the identical 500-row query three times.
+let activeAssociatesCache: {
+  at: number;
+  value: ReturnType<typeof loadActiveAssociates>;
+} | null = null;
+const ACTIVE_ASSOCIATES_TTL_MS = 5_000;
+
+function getActiveAssociates() {
+  const now = Date.now();
+  if (activeAssociatesCache && now - activeAssociatesCache.at < ACTIVE_ASSOCIATES_TTL_MS) {
+    return activeAssociatesCache.value;
+  }
+  const value = loadActiveAssociates();
+  activeAssociatesCache = { at: now, value };
+  // A failed load must not get pinned for the TTL.
+  value.catch(() => {
+    if (activeAssociatesCache?.value === value) activeAssociatesCache = null;
+  });
+  return value;
+}
+
+async function loadActiveAssociates() {
   const apps = await prisma.application.findMany({
     take: 500,
     where: {
@@ -311,7 +335,7 @@ complianceScorecardRouter.get('/expirations', VIEW, async (_req, res) => {
   res.json(body);
 });
 
-async function buildExpirationsTile(): Promise<ScorecardExpirationsResponse> {
+export async function buildExpirationsTile(): Promise<ScorecardExpirationsResponse> {
   const now = new Date();
   const ninetyDaysOut = new Date(now.getTime() + 90 * 24 * 3600 * 1000);
 

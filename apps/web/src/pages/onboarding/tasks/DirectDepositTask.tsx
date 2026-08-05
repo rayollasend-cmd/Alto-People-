@@ -9,6 +9,7 @@ import {
 } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { fmtDateTime } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { Field, SubmitRow, TaskShell, inputCls } from './ProfileInfoTask';
@@ -35,6 +36,7 @@ export function DirectDepositTask() {
   const [routingNumber, setRoutingNumber] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
   const [accountType, setAccountType] = useState<'CHECKING' | 'SAVINGS'>('CHECKING');
+  const [bankName, setBankName] = useState('');
   const [branchCardId, setBranchCardId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -56,6 +58,9 @@ export function DirectDepositTask() {
         if (s.accountType === 'CHECKING' || s.accountType === 'SAVINGS') {
           setAccountType(s.accountType);
         }
+        // Safe to prefill — a bank's name isn't a secret, and retyping it on
+        // every edit is how it ends up blank or inconsistent.
+        if (s.bankName) setBankName(s.bankName);
       }
     });
   }, [applicationId]);
@@ -84,6 +89,7 @@ export function DirectDepositTask() {
               routingNumber,
               accountNumber,
               accountType,
+              ...(bankName.trim() ? { bankName: bankName.trim() } : {}),
             }
           : {
               type: 'BRANCH_CARD' as const,
@@ -153,19 +159,20 @@ export function DirectDepositTask() {
                     className={inputCls}
                     maxLength={9}
                   />
-                  {routingNumber.length === 9 && (
-                    <span
-                      className={cn(
-                        'text-xs mt-1 inline-flex items-center gap-1',
-                        isValidAba(routingNumber) ? 'text-success' : 'text-alert'
-                      )}
-                    >
-                      {isValidAba(routingNumber)
-                        ? '✓ Valid routing number format'
-                        : '✗ ABA checksum failed — please re-check'}
-                    </span>
-                  )}
                 </Field>
+                {routingNumber.length === 9 && (
+                  <span
+                    role="status"
+                    className={cn(
+                      'text-xs -mt-2 inline-flex items-center gap-1',
+                      isValidAba(routingNumber) ? 'text-success' : 'text-alert'
+                    )}
+                  >
+                    {isValidAba(routingNumber)
+                      ? '✓ Valid routing number format'
+                      : '✗ ABA checksum failed — please re-check'}
+                  </span>
+                )}
                 <Field label="Account number">
                   <input
                     type="text"
@@ -189,6 +196,20 @@ export function DirectDepositTask() {
                     <option value="CHECKING">Checking</option>
                     <option value="SAVINGS">Savings</option>
                   </Select>
+                </Field>
+                <Field
+                  label="Bank name"
+                  hint="The institution that holds this account — e.g. Chase, Wells Fargo. Your payroll provider needs it on file."
+                >
+                  <input
+                    type="text"
+                    value={bankName}
+                    onChange={(e) => setBankName(e.target.value.slice(0, 120))}
+                    className={inputCls}
+                    maxLength={120}
+                    autoComplete="off"
+                    placeholder="Chase"
+                  />
                 </Field>
               </>
             ) : (
@@ -243,7 +264,7 @@ function PayoutOnFileCard({
               Account
             </span>
             <div className="font-mono">
-              {status.accountType ?? 'CHECKING'} ••••{' '}
+              {status.accountType === 'SAVINGS' ? 'Savings' : 'Checking'} ••••{' '}
               {status.accountLast4 ?? '••••'}
             </div>
           </div>
@@ -266,7 +287,7 @@ function PayoutOnFileCard({
       )}
       {status.updatedAt && (
         <div className="text-xs text-silver/70 mt-2">
-          Updated {new Date(status.updatedAt).toLocaleString()}
+          Updated {fmtDateTime(status.updatedAt)}
           {status.verifiedAt
             ? ' · Verified'
             : ' · Pending verification'}
@@ -284,6 +305,11 @@ function PayoutOnFileCard({
   );
 }
 
+/**
+ * Kept as role="tab" (not SegmentedControl's radiogroup) — the task's
+ * test suite drives this switcher via getByRole('tab'). Styling matches
+ * the app-wide segmented-pill selection language.
+ */
 function TabButton({
   active,
   onClick,
@@ -300,13 +326,14 @@ function TabButton({
       aria-selected={active}
       onClick={onClick}
       className={cn(
-        'px-4 py-2 rounded text-sm border',
+        'px-3 py-1 rounded-full border text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40 coarse:min-h-11 inline-flex items-center',
         active
-          ? 'border-gold text-gold bg-gold/10'
-          : 'border-navy-secondary text-silver hover:text-white'
+          ? 'bg-gold/15 border-gold/50 text-gold'
+          : 'bg-navy-secondary/40 border-navy-secondary text-silver hover:text-white'
       )}
     >
       {children}
     </button>
   );
 }
+

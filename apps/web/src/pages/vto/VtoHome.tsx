@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { safeHref } from '@alto-people/shared';
 import { Heart, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -6,6 +7,7 @@ import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import {
   decideVolunteerEntry,
+  getVtoPolicy,
   getVolunteerSummary,
   listMyVolunteer,
   listVolunteerQueue,
@@ -28,8 +30,12 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
+  MetricCard,
   PageHeader,
+  SearchInput,
+  SegmentedControl,
   Select,
   SkeletonRows,
   Table,
@@ -41,15 +47,27 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
 
 const STATUS_VARIANT: Record<
   VtoStatus,
   'pending' | 'success' | 'destructive' | 'accent'
 > = {
   PENDING: 'pending',
-  APPROVED: 'accent',
+  // Badge contract: APPROVED is a success state (accent is reserved for
+  // in-flight/being-worked states).
+  APPROVED: 'success',
   REJECTED: 'destructive',
   MATCHED: 'success',
+};
+
+// Human-readable labels — raw enum values never reach the user's eyes.
+const STATUS_LABELS: Record<VtoStatus, string> = {
+  PENDING: 'Pending',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+  MATCHED: 'Matched',
 };
 
 export function VtoHome() {
@@ -65,26 +83,149 @@ export function VtoHome() {
   const [showNew, setShowNew] = useState(false);
   const [openMine, setOpenMine] = useState<MyVolunteerEntry | null>(null);
   const [openQueueId, setOpenQueueId] = useState<string | null>(null);
+  const [mineError, setMineError] = useState<string | null>(null);
+  const [queueError, setQueueError] = useState<string | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const refresh = () => {
     if (tab === 'mine') {
       setMine(null);
+      setMineError(null);
       listMyVolunteer()
         .then(setMine)
-        .catch(() => setMine(null));
+        .catch((err) =>
+          setMineError(
+            err instanceof ApiError
+              ? err.message
+              : 'Failed to load your volunteer hours.',
+          ),
+        );
     } else {
       setQueue(null);
+      setQueueError(null);
+      setSelected(new Set());
       listVolunteerQueue(statusFilter === 'ALL' ? undefined : statusFilter)
         .then((r) => setQueue(r.entries))
-        .catch(() => setQueue([]));
-      getVolunteerSummary()
-        .then(setSummary)
-        .catch(() => setSummary(null));
+        .catch((err) =>
+          setQueueError(
+            err instanceof ApiError
+              ? err.message
+              : 'Failed to load the review queue.',
+          ),
+        );
     }
+  };
+  // Filter-independent KPI summary — fetched once on mount and re-fetched
+  // explicitly after mutations, never on tab/filter clicks.
+  const refreshSummary = () => {
+    setSummaryError(null);
+    getVolunteerSummary()
+      .then(setSummary)
+      .catch((err) =>
+        setSummaryError(
+          err instanceof ApiError
+            ? err.message
+            : 'Failed to load the summary.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
   }, [tab, statusFilter]);
+  useEffect(() => {
+    if (canManage) refreshSummary();
+  }, [canManage]);
+
+  const term = search.trim().toLowerCase();
+  const filteredQueue =
+    queue === null
+      ? null
+      : term
+        ? queue.filter(
+            (e) =>
+              e.associateName.toLowerCase().includes(term) ||
+              e.associateEmail.toLowerCase().includes(term),
+          )
+        : queue;
+
+  const selectedRows = (filteredQueue ?? []).filter((e) => selected.has(e.id));
+  const decidableIds = selectedRows
+    .filter((e) => e.status === 'PENDING')
+    .map((e) => e.id);
+  const matchableIds = selectedRows
+    .filter(
+      (e) => e.status === 'APPROVED' && e.matchRequested && !e.matchAmount,
+    )
+    .map((e) => e.id);
+
+  const toggleSelected = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const runBulk = async (
+    ids: string[],
+    run: (id: string) => Promise<unknown>,
+    verb: string,
+  ) => {
+    setBulkBusy(true);
+    try {
+      const results = await Promise.allSettled(ids.map((id) => run(id)));
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      const ok = results.length - failed;
+      if (failed === 0) toast.success(`${ok} ${verb}.`);
+      else toast.error(`${ok} ${verb}, ${failed} failed.`);
+    } finally {
+      setBulkBusy(false);
+      setSelected(new Set());
+      refresh();
+      if (canManage) refreshSummary();
+    }
+  };
+
+  const exportCsv = () => {
+    if (!filteredQueue) return;
+    downloadCsv(`volunteer-queue-${ymdLocal()}.csv`, [
+      [
+        'Associate',
+        'Email',
+        'Date',
+        'Hours',
+        'Organization',
+        'Cause',
+        'Status',
+        'Match requested',
+        'Match amount',
+        'Currency',
+        'Reviewer notes',
+      ],
+      ...filteredQueue.map((e) => [
+        e.associateName,
+        e.associateEmail,
+        e.activityDate,
+        e.hours,
+        e.organization,
+        e.cause ?? '',
+        e.status,
+        e.matchRequested ? 'yes' : 'no',
+        e.matchAmount ?? '',
+        e.matchCurrency,
+        e.reviewerNotes ?? '',
+      ]),
+    ]);
+  };
+
+  const openQueueRow =
+    openQueueId && queue
+      ? queue.find((q) => q.id === openQueueId) ?? null
+      : null;
 
   return (
     <div className="space-y-5">
@@ -95,29 +236,31 @@ export function VtoHome() {
       />
 
       <div className="flex items-center justify-between">
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant={tab === 'mine' ? 'primary' : 'ghost'}
-            onClick={() => setTab('mine')}
-          >
-            My hours
-          </Button>
-          {canManage && (
-            <Button
-              size="sm"
-              variant={tab === 'queue' ? 'primary' : 'ghost'}
-              onClick={() => setTab('queue')}
-            >
-              Queue
-              {summary && summary.pendingCount > 0 && (
-                <Badge variant="destructive" className="ml-2">
-                  {summary.pendingCount}
-                </Badge>
-              )}
-            </Button>
-          )}
-        </div>
+        <SegmentedControl<'mine' | 'queue'>
+          options={[
+            { value: 'mine', label: 'My hours' },
+            ...(canManage
+              ? [
+                  {
+                    value: 'queue' as const,
+                    label: (
+                      <span className="inline-flex items-center">
+                        Queue
+                        {summary && summary.pendingCount > 0 && (
+                          <Badge variant="destructive" className="ml-2">
+                            {summary.pendingCount}
+                          </Badge>
+                        )}
+                      </span>
+                    ),
+                  },
+                ]
+              : []),
+          ]}
+          value={tab}
+          onChange={setTab}
+          ariaLabel="Volunteer time view"
+        />
         <div className="flex gap-2">
           {canManage && tab === 'queue' && (
             <Select
@@ -143,12 +286,93 @@ export function VtoHome() {
         </div>
       </div>
 
+      {tab === 'queue' && queue !== null && (
+        <div className="flex flex-wrap items-center gap-2">
+          <SearchInput
+            wrapperClassName="w-56"
+            className="h-8 text-xs"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search associate name…"
+            aria-label="Search by associate name"
+          />
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={exportCsv}
+            disabled={!filteredQueue || filteredQueue.length === 0}
+          >
+            Export CSV
+          </Button>
+          {selected.size > 0 && (
+            <>
+              <span className="text-xs text-silver">
+                {selected.size} selected
+              </span>
+              <Button
+                size="sm"
+                disabled={bulkBusy || decidableIds.length === 0}
+                onClick={() =>
+                  runBulk(
+                    decidableIds,
+                    (id) => decideVolunteerEntry(id, 'APPROVED'),
+                    'approved',
+                  )
+                }
+              >
+                Approve ({decidableIds.length})
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={bulkBusy || decidableIds.length === 0}
+                onClick={() =>
+                  runBulk(
+                    decidableIds,
+                    (id) => decideVolunteerEntry(id, 'REJECTED'),
+                    'rejected',
+                  )
+                }
+              >
+                Reject ({decidableIds.length})
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={bulkBusy || matchableIds.length === 0}
+                onClick={() =>
+                  runBulk(
+                    matchableIds,
+                    (id) => matchVolunteerEntry(id),
+                    'marked matched',
+                  )
+                }
+              >
+                Mark matched ({matchableIds.length})
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+
+      {tab === 'queue' && summaryError && (
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={refreshSummary}>
+              Retry
+            </Button>
+          }
+        >
+          {summaryError}
+        </ErrorBanner>
+      )}
+
       {tab === 'mine' && mine && (
         <Card>
           <CardContent className="p-4">
             <div className="flex justify-between items-baseline mb-2">
               <div>
-                <div className="text-xs uppercase tracking-wider text-silver">
+                <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
                   {mine.year} approved hours
                 </div>
                 <div className="text-2xl font-semibold text-white mt-1">
@@ -175,11 +399,15 @@ export function VtoHome() {
 
       {tab === 'queue' && summary && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <SummaryCard label="Pending review" value={summary.pendingCount} />
-          <SummaryCard label="Hours YTD" value={summary.hoursYtd} />
-          <SummaryCard
+          <MetricCard
+            label="Pending review"
+            value={summary.pendingCount}
+            accent={summary.pendingCount > 0}
+          />
+          <MetricCard label="Hours YTD" value={summary.hoursYtd} />
+          <MetricCard
             label="Matched $ YTD"
-            value={`$${summary.matchedAmountYtd}`}
+            value={fmtMoney(summary.matchedAmountYtd)}
           />
         </div>
       )}
@@ -188,9 +416,23 @@ export function VtoHome() {
         <Card>
           <CardContent className="p-0">
             {mine === null ? (
-              <div className="p-6">
-                <SkeletonRows count={3} />
-              </div>
+              mineError ? (
+                <div className="p-6">
+                  <ErrorBanner
+                    action={
+                      <Button size="sm" variant="secondary" onClick={refresh}>
+                        Retry
+                      </Button>
+                    }
+                  >
+                    {mineError}
+                  </ErrorBanner>
+                </div>
+              ) : (
+                <div className="p-6">
+                  <SkeletonRows count={3} />
+                </div>
+              )
             ) : mine.entries.length === 0 ? (
               <EmptyState
                 icon={Heart}
@@ -202,7 +444,7 @@ export function VtoHome() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Date</TableHead>
-                    <TableHead>Hours</TableHead>
+                    <TableHead className="text-right">Hours</TableHead>
                     <TableHead className="hidden md:table-cell">Organization</TableHead>
                     <TableHead className="hidden lg:table-cell">Cause</TableHead>
                     <TableHead>Status</TableHead>
@@ -217,13 +459,13 @@ export function VtoHome() {
                       onClick={() => setOpenMine(e)}
                     >
                       <TableCell className="text-xs text-silver">
-                        {e.activityDate}
-                        <div className="md:hidden text-[11px] text-silver/70 truncate">
+                        {fmtDate(parseYmd(e.activityDate))}
+                        <div className="md:hidden text-xs2 text-silver/70 truncate">
                           {e.organization}{e.cause ? ` · ${e.cause}` : ''}
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm font-medium text-white">
-                        {e.hours}
+                      <TableCell className="text-sm font-medium text-white text-right tabular-nums">
+                        {Number(e.hours).toFixed(2)}
                       </TableCell>
                       <TableCell className="text-sm hidden md:table-cell">
                         {e.organization}
@@ -233,7 +475,7 @@ export function VtoHome() {
                       </TableCell>
                       <TableCell>
                         <Badge variant={STATUS_VARIANT[e.status]}>
-                          {e.status}
+                          {STATUS_LABELS[e.status] ?? e.status}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm hidden md:table-cell">
@@ -254,34 +496,77 @@ export function VtoHome() {
         <Card>
           <CardContent className="p-0">
             {queue === null ? (
-              <div className="p-6">
-                <SkeletonRows count={4} />
-              </div>
-            ) : queue.length === 0 ? (
+              queueError ? (
+                <div className="p-6">
+                  <ErrorBanner
+                    action={
+                      <Button size="sm" variant="secondary" onClick={refresh}>
+                        Retry
+                      </Button>
+                    }
+                  >
+                    {queueError}
+                  </ErrorBanner>
+                </div>
+              ) : (
+                <div className="p-6">
+                  <SkeletonRows count={4} />
+                </div>
+              )
+            ) : !filteredQueue || filteredQueue.length === 0 ? (
               <EmptyState
                 icon={Heart}
-                title="Queue is empty"
-                description="Nothing pending."
+                title={term ? 'No matches' : 'Queue is empty'}
+                description={
+                  term
+                    ? `No entries match “${search.trim()}”.`
+                    : 'Nothing pending.'
+                }
               />
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      <input
+                        type="checkbox"
+                        aria-label="Select all"
+                        checked={
+                          filteredQueue.length > 0 &&
+                          filteredQueue.every((e) => selected.has(e.id))
+                        }
+                        onChange={(ev) =>
+                          setSelected(
+                            ev.target.checked
+                              ? new Set(filteredQueue.map((e) => e.id))
+                              : new Set(),
+                          )
+                        }
+                      />
+                    </TableHead>
                     <TableHead>Associate</TableHead>
                     <TableHead className="hidden md:table-cell">Date</TableHead>
-                    <TableHead>Hours</TableHead>
+                    <TableHead className="text-right">Hours</TableHead>
                     <TableHead className="hidden md:table-cell">Organization</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="hidden lg:table-cell">Match</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {queue.map((e) => (
+                  {filteredQueue.map((e) => (
                     <TableRow
                       key={e.id}
                       className="cursor-pointer"
                       onClick={() => setOpenQueueId(e.id)}
                     >
+                      <TableCell onClick={(ev) => ev.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${e.associateName}`}
+                          checked={selected.has(e.id)}
+                          onChange={() => toggleSelected(e.id)}
+                        />
+                      </TableCell>
                       <TableCell>
                         <div className="font-medium text-white">
                           {e.associateName}
@@ -289,20 +574,22 @@ export function VtoHome() {
                         <div className="text-xs text-silver">
                           {e.associateEmail}
                         </div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate">
-                          {e.activityDate} · {e.organization}
+                        <div className="md:hidden text-xs2 text-silver/70 truncate">
+                          {fmtDate(parseYmd(e.activityDate))} · {e.organization}
                         </div>
                       </TableCell>
                       <TableCell className="text-xs text-silver hidden md:table-cell">
-                        {e.activityDate}
+                        {fmtDate(parseYmd(e.activityDate))}
                       </TableCell>
-                      <TableCell className="text-sm">{e.hours}</TableCell>
+                      <TableCell className="text-sm text-right tabular-nums">
+                        {Number(e.hours).toFixed(2)}
+                      </TableCell>
                       <TableCell className="text-sm hidden md:table-cell">
                         {e.organization}
                       </TableCell>
                       <TableCell>
                         <Badge variant={STATUS_VARIANT[e.status]}>
-                          {e.status}
+                          {STATUS_LABELS[e.status] ?? e.status}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-xs hidden lg:table-cell">
@@ -329,23 +616,26 @@ export function VtoHome() {
 
       {showNew && (
         <NewEntryDrawer
+          mine={mine}
           onClose={() => setShowNew(false)}
           onSaved={() => {
             setShowNew(false);
             refresh();
+            if (canManage) refreshSummary();
           }}
         />
       )}
       {openMine && (
         <MyDetailDrawer entry={openMine} onClose={() => setOpenMine(null)} />
       )}
-      {openQueueId && queue && (
+      {openQueueRow && (
         <QueueDetailDrawer
-          row={queue.find((q) => q.id === openQueueId)!}
+          row={openQueueRow}
           onClose={() => setOpenQueueId(null)}
           onSaved={() => {
             setOpenQueueId(null);
             refresh();
+            if (canManage) refreshSummary();
           }}
         />
       )}
@@ -353,33 +643,18 @@ export function VtoHome() {
   );
 }
 
-function SummaryCard({
-  label,
-  value,
-}: {
-  label: string;
-  value: number | string;
-}) {
-  return (
-    <Card>
-      <CardContent className="p-3">
-        <div className="text-xs uppercase tracking-wider text-silver">
-          {label}
-        </div>
-        <div className="text-xl font-semibold text-white mt-1">{value}</div>
-      </CardContent>
-    </Card>
-  );
-}
-
 function NewEntryDrawer({
+  mine,
   onClose,
   onSaved,
 }: {
+  mine: MyVolunteerResponse | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  // ymdLocal, not toISOString: UTC "today" is tomorrow for an evening
+  // user west of Greenwich.
+  const today = ymdLocal();
   const [activityDate, setActivityDate] = useState(today);
   const [hours, setHours] = useState('');
   const [organization, setOrganization] = useState('');
@@ -426,6 +701,7 @@ function NewEntryDrawer({
             <Input
               type="date"
               className="mt-1"
+              max={today}
               value={activityDate}
               onChange={(e) => setActivityDate(e.target.value)}
             />
@@ -443,6 +719,22 @@ function NewEntryDrawer({
             />
           </div>
         </div>
+        {mine && Number.isFinite(parseFloat(hours)) && parseFloat(hours) > 0 && (
+          <p className="text-xs text-silver">
+            {parseFloat(hours)}h → {mine.usedHours + parseFloat(hours)}h of{' '}
+            {mine.capHours}h used
+            {mine.matchRatio > 0 && (
+              <>
+                {' '}· est. match{' '}
+                <span className="text-gold">
+                  {fmtMoney(parseFloat(hours) * mine.matchRatio, {
+                    currency: mine.matchCurrency,
+                  })}
+                </span>
+              </>
+            )}
+          </p>
+        )}
         <div>
           <Label>Organization</Label>
           <Input
@@ -515,9 +807,11 @@ function MyDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[entry.status]}>{entry.status}</Badge>
+          <Badge variant={STATUS_VARIANT[entry.status]}>
+            {STATUS_LABELS[entry.status] ?? entry.status}
+          </Badge>
           <span className="text-sm text-silver">
-            {entry.activityDate} · {entry.hours} hours
+            {fmtDate(parseYmd(entry.activityDate))} · {entry.hours} hours
           </span>
         </div>
         {entry.cause && (
@@ -531,7 +825,7 @@ function MyDetailDrawer({
         </div>
         {entry.evidenceUrl && (
           <a
-            href={entry.evidenceUrl}
+            href={safeHref(entry.evidenceUrl)}
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-steel hover:underline"
@@ -576,6 +870,40 @@ function QueueDetailDrawer({
   const [notes, setNotes] = useState(row.reviewerNotes ?? '');
   const [matchAmount, setMatchAmount] = useState('');
   const [busy, setBusy] = useState(false);
+  // What "blank = use policy ratio" would actually pay — fetched so the
+  // reviewer isn't left doing hours × ratio in their head. Uses the org
+  // default policy; the server applies the entry's client policy if one
+  // overrides it.
+  const [policyRatio, setPolicyRatio] = useState<{
+    ratio: number;
+    currency: string;
+  } | null>(null);
+  const [policyError, setPolicyError] = useState(false);
+  const showMatchForm =
+    row.status === 'APPROVED' && row.matchRequested && !row.matchAmount;
+  useEffect(() => {
+    if (!showMatchForm) return;
+    let cancelled = false;
+    setPolicyError(false);
+    getVtoPolicy()
+      .then((p) => {
+        if (cancelled) return;
+        const ratio = Number(p.effective.matchRatio);
+        if (Number.isFinite(ratio) && ratio > 0) {
+          setPolicyRatio({ ratio, currency: p.effective.matchCurrency });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPolicyError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showMatchForm]);
+  const policyEstimate =
+    policyRatio && Number.isFinite(Number(row.hours))
+      ? Number(row.hours) * policyRatio.ratio
+      : null;
 
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
@@ -586,9 +914,11 @@ function QueueDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[row.status]}>{row.status}</Badge>
+          <Badge variant={STATUS_VARIANT[row.status]}>
+            {STATUS_LABELS[row.status] ?? row.status}
+          </Badge>
           <span className="text-sm text-silver">
-            {row.activityDate} · {row.hours} hours
+            {fmtDate(parseYmd(row.activityDate))} · {row.hours} hours
           </span>
         </div>
         {row.cause && (
@@ -602,7 +932,7 @@ function QueueDetailDrawer({
         </div>
         {row.evidenceUrl && (
           <a
-            href={row.evidenceUrl}
+            href={safeHref(row.evidenceUrl)}
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-steel hover:underline"
@@ -677,7 +1007,7 @@ function QueueDetailDrawer({
           </div>
         )}
 
-        {row.status === 'APPROVED' && row.matchRequested && !row.matchAmount && (
+        {showMatchForm && (
           <div className="space-y-2 pt-2 border-t border-navy-secondary">
             <Label>Match amount (USD, blank = use policy ratio)</Label>
             <Input
@@ -688,6 +1018,21 @@ function QueueDetailDrawer({
               onChange={(e) => setMatchAmount(e.target.value)}
               placeholder="Auto from policy if blank"
             />
+            {policyError && (
+              <ErrorBanner severity="warning" className="text-xs">
+                Couldn’t load the policy ratio — leaving this blank still
+                applies the server-side policy, or enter an amount manually.
+              </ErrorBanner>
+            )}
+            {policyEstimate !== null && matchAmount === '' && (
+              <p className="text-xs text-silver">
+                Policy would pay {row.hours}h × {policyRatio!.ratio} ≈{' '}
+                <span className="text-gold">
+                  {policyRatio!.currency} {policyEstimate.toFixed(2)}
+                </span>
+                {' '}(org default ratio; a client-specific policy may differ).
+              </p>
+            )}
             <Button
               size="sm"
               onClick={async () => {

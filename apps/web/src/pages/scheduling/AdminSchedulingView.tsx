@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -19,6 +20,7 @@ import {
   Printer,
   Send,
   Sparkles,
+  Pencil,
   UserPlus,
   Wand2,
   X,
@@ -30,9 +32,12 @@ import type {
   LocationSummary,
   Shift,
   ShiftStatus,
+  ShiftTeam as ShiftTeamData,
   ShiftTemplate,
 } from '@alto-people/shared';
+import { ShiftTeamsDialog } from './ShiftTeamsDialog';
 import { listClientLocations } from '@/lib/clientsApi';
+import { downloadCsv } from '@/lib/csv';
 import { listShiftPositions } from '@/lib/orgApi';
 import {
   applyShiftTemplate,
@@ -44,10 +49,12 @@ import {
   createShiftTemplate,
   deleteShiftTemplate,
   getAutoFillCandidates,
+  getAvailabilityOverview,
   getSchedulingKpis,
   getShiftConflicts,
   listSchedulingAssociates,
   listShifts,
+  listShiftTeams,
   listShiftTemplates,
   autoScheduleWeek,
   deleteShift,
@@ -57,6 +64,7 @@ import {
   type SchedulingKpis,
 } from '@/lib/schedulingApi';
 import { apiFetch, ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { useConfirm, type ConfirmOptions } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -89,7 +97,8 @@ import { Input, Textarea } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { Select } from '@/components/ui/Select';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { Skeleton } from '@/components/ui/Skeleton';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import {
   Table,
   TableBody,
@@ -100,6 +109,7 @@ import {
 } from '@/components/ui/Table';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import {
   WeekCalendarView,
   shiftWeek,
@@ -111,6 +121,11 @@ import { SelectionToolbar } from './SelectionToolbar';
 import { TemplatesRail } from './TemplatesRail';
 import { MonthCalendarView } from './MonthCalendarView';
 import { MobileScheduleList } from './MobileScheduleList';
+import {
+  StatusMarkLegend,
+  TileDensityProvider,
+  type TileDensity,
+} from './shiftTile';
 import {
   AdminPickupPanel,
   AdminSwapsPanel,
@@ -209,20 +224,54 @@ const STATUS_VARIANT: Record<
   CANCELLED: 'destructive',
 };
 
+// Human-readable labels — raw enum values never reach the user's eyes.
+const STATUS_LABELS: Record<ShiftStatus, string> = {
+  OPEN: 'Open',
+  ASSIGNED: 'Assigned',
+  DRAFT: 'Draft',
+  COMPLETED: 'Completed',
+  CANCELLED: 'Cancelled',
+};
+
 function fmt(iso: string): string {
   return fmtDateTime(iso);
 }
 
+/** "8h", "7h 30m", "45m" — the live duration hint under the time fields. */
+function fmtDurShort(min: number): string {
+  const whole = Math.round(min);
+  const h = Math.floor(whole / 60);
+  const m = whole % 60;
+  if (h === 0) return `${m}m`;
+  return m === 0 ? `${h}h` : `${h}h ${String(m).padStart(2, '0')}m`;
+}
+
 /**
- * <input type="datetime-local"> wants "YYYY-MM-DDTHH:MM" in *local* time.
- * `toISOString()` gives UTC and breaks the form. This builds the local
- * representation manually.
+ * Wall-clock duration + overnight hint for a date + two time-only fields.
+ * end <= start reads as "rolls past midnight", matching how both shift
+ * dialogs (and template apply) compose the final timestamps.
  */
-function toLocalDatetimeInput(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
+function ShiftTimesHint({
+  startTime,
+  endTime,
+  extraDays = 0,
+}: {
+  startTime: string;
+  endTime: string;
+  extraDays?: number;
+}) {
+  if (!startTime || !endTime) return null;
+  const [sh, sm] = startTime.split(':').map(Number);
+  const [eh, em] = endTime.split(':').map(Number);
+  const overnight = endTime <= startTime;
+  const offset = overnight ? Math.max(1, extraDays) : extraDays;
+  const dur = eh * 60 + em + offset * 1440 - (sh * 60 + sm);
+  if (!Number.isFinite(dur) || dur <= 0) return null;
   return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+    <p className="md:col-span-2 -mt-1 text-xs text-silver">
+      Duration {fmtDurShort(dur)}
+      {offset > 0 && <span className="text-gold"> · ends the next day</span>}
+    </p>
   );
 }
 
@@ -321,6 +370,8 @@ function readStoredFilters(): {
 // Date()`, so any navigation away reset day/month/list views to "now". Persist
 // them so each view resumes where it was left. The Today/This-month buttons
 // still reset on demand.
+const LIST_PAGE_SIZE = 200;
+
 const ANCHORS_KEY = 'alto:scheduling.anchors.v1';
 function readStoredAnchors(): {
   day?: string;
@@ -346,14 +397,8 @@ function readStoredAnchors(): {
 }
 
 /* ----- CSV / file-download helpers (Phase 54.3) -------------------------- */
-
-function csvCell(v: string | number | null | undefined): string {
-  if (v === null || v === undefined) return '';
-  const s = String(v);
-  // RFC 4180: quote anything containing a delimiter, quote, or newline; double inner quotes.
-  if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
+// csvCell comes from lib/csv — this file used to keep a private RFC-4180
+// copy (and a private BOM); both now live in the shared helper.
 
 function csvRow(s: Shift): Array<string | number | null> {
   const start = new Date(s.startsAt);
@@ -372,18 +417,6 @@ function csvRow(s: Shift): Array<string | number | null> {
     s.hourlyRate ?? '',
     s.notes ?? '',
   ];
-}
-
-function downloadBlob(filename: string, mime: string, content: string): void {
-  const blob = new Blob([content], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
 }
 
 /** Human-readable single-line date range — "April 2026", "Apr 1 – Apr 7, 2026", or "Apr 12, 2026". */
@@ -427,6 +460,24 @@ function parseView(raw: string | null): ViewMode {
 
 export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const confirm = useConfirm();
+  const { user } = useAuth();
+  // Client-scoped roles (SHIFT_SUPERVISOR) can't list clients — /clients
+  // 403s for them. Pin every client control to their one bound client
+  // instead of fetching, so the Location → Team cascade still unlocks.
+  const boundedClient = useMemo<ClientSummary | null>(
+    () =>
+      user?.clientId
+        ? {
+            id: user.clientId,
+            name: user.clientName ?? 'Your client',
+            industry: null,
+            status: 'ACTIVE',
+            contactEmail: null,
+            state: null,
+          }
+        : null,
+    [user?.clientId, user?.clientName],
+  );
   const [searchParams, setSearchParams] = useSearchParams();
   // View mode persists in the URL so deep links stay stable.
   const view: ViewMode = parseView(searchParams.get('view'));
@@ -467,6 +518,21 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     window.localStorage.setItem('alto:scheduling.weekLayout.v2', weekLayout);
   }, [weekLayout]);
 
+  // Tile density — how much room each shift rectangle gets across the
+  // week/day/month grids. 'comfortable' is the default: the week grid is
+  // associate-rows × day-columns, so its height is driven by roster size,
+  // not tile height, and most cells hold a single shift. Managers running a
+  // very deep roster can trade legibility back for rows.
+  const [tileDensity, setTileDensity] = useState<TileDensity>(() => {
+    if (typeof window === 'undefined') return 'comfortable';
+    const stored = window.localStorage.getItem('alto:scheduling.tileDensity.v1');
+    return stored === 'compact' ? 'compact' : 'comfortable';
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('alto:scheduling.tileDensity.v1', tileDensity);
+  }, [tileDensity]);
+
   const [filter, setFilter] = useState<ShiftStatus | 'ALL'>(() => {
     const s = readStoredFilters()?.status;
     const valid = ['ALL', 'OPEN', 'ASSIGNED', 'DRAFT', 'COMPLETED', 'CANCELLED'];
@@ -480,6 +546,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const [associates, setAssociates] = useState<AssociateLite[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [createInitialDate, setCreateInitialDate] = useState<Date | null>(null);
+  // End of a drag-created range (time-grid drag-to-create); null = default.
+  const [createInitialEnd, setCreateInitialEnd] = useState<Date | null>(null);
   const [createInitialAssociateId, setCreateInitialAssociateId] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
@@ -494,8 +562,15 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     () => readStoredFilters()?.position ?? '',
   );
   const [clientFilter, setClientFilter] = useState<string>(
-    () => readStoredFilters()?.client ?? '',
+    () => boundedClient?.id ?? readStoredFilters()?.client ?? '',
   ); // '' = all
+  // Belt-and-braces: a bounded user's scope can never widen (Clear button,
+  // stale localStorage, late-arriving auth state) — re-pin whenever it drifts.
+  useEffect(() => {
+    if (boundedClient && clientFilter !== boundedClient.id) {
+      setClientFilter(boundedClient.id);
+    }
+  }, [boundedClient, clientFilter]);
   const [locationFilter, setLocationFilter] = useState<string>(
     () => readStoredFilters()?.location ?? '',
   ); // '' = all
@@ -516,6 +591,30 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // null = loading; [] = client has none (or no client selected).
   const [clientLocations, setClientLocations] = useState<LocationSummary[]>([]);
   const [showAllAssociates, setShowAllAssociates] = useState<boolean>(true);
+  // Standing shift crews at the selected location — the third level of the
+  // Client → Location → Shift cascade. Picking one narrows the roster (grid
+  // rows, assign + create pickers) to that crew's members.
+  const [teams, setTeams] = useState<ShiftTeamData[]>([]);
+  const [teamFilter, setTeamFilter] = useState<string>('');
+  const [teamsOpen, setTeamsOpen] = useState(false);
+  const refreshTeams = useCallback(() => {
+    if (!clientFilter || !locationFilter) {
+      setTeams([]);
+      return;
+    }
+    listShiftTeams({ locationId: locationFilter })
+      .then((r) => setTeams(r.teams))
+      .catch(() => setTeams([]));
+  }, [clientFilter, locationFilter]);
+  useEffect(() => {
+    refreshTeams();
+  }, [refreshTeams]);
+  // A team belongs to one location — clear the selection when the site (or
+  // client) changes so a stale crew can't silently keep filtering.
+  useEffect(() => {
+    setTeamFilter('');
+  }, [clientFilter, locationFilter]);
+  const selectedTeam = teams.find((t) => t.id === teamFilter) ?? null;
 
   // Week-view range. weekStart is the FIRST day shown (any day, not forced
   // to Monday) and weekDayCount is how many days the grid spans — so the
@@ -579,6 +678,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // Phase 54.2 — list-view date range (defaults to the current month, or the
   // last range used). When either bound is empty the field is treated as
   // unbounded on that side.
+  // List view renders in pages of 200 — the server cap is 500 and mounting
+  // 500 action-heavy table rows at once made the tab visibly chug. Most
+  // ranges fit one page (so printing is unaffected); bigger ones get an
+  // explicit "Show more" instead of a wall.
+  const [listVisibleCount, setListVisibleCount] = useState(LIST_PAGE_SIZE);
   const [listFrom, setListFrom] = useState<string>(() => {
     const stored = readStoredAnchors();
     if (stored && stored.listFrom !== undefined) return stored.listFrom;
@@ -632,48 +736,69 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   }, []);
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
-  const onCopyWeekToNext = async () => {
+  // "Repeat this week" — copies the visible week forward 1..12 weeks in one
+  // action, so staffing a month/quarter isn't a click-per-week grind.
+  const [copyWeeksOpen, setCopyWeeksOpen] = useState(false);
+  const [copyWeekCount, setCopyWeekCount] = useState('1');
+  const onRepeatWeeks = async () => {
     if (copyingWeek) return;
-    if (
-      !window.confirm(
-        "Copy every non-cancelled shift from this week into next week — keeping each shift's associate? Copies land as drafts you can review and edit before publishing."
-      )
-    )
+    const n = Math.trunc(Number(copyWeekCount));
+    if (!Number.isFinite(n) || n < 1 || n > 12) {
+      toast.error('Enter how many weeks to repeat into (1–12).');
       return;
+    }
     setCopyingWeek(true);
     try {
-      const target = shiftWeek(weekStart, 1);
-      const result = await copyWeek({
-        sourceWeekStart: weekStart.toISOString(),
-        targetWeekStart: target.toISOString(),
-        preserveAssignments: true,
-      });
+      let created = 0;
+      let assigned = 0;
+      let skippedTotal = 0;
+      for (let i = 1; i <= n; i++) {
+        const target = shiftWeek(weekStart, i);
+        const r = await copyWeek({
+          sourceWeekStart: weekStart.toISOString(),
+          targetWeekStart: target.toISOString(),
+          preserveAssignments: true,
+        });
+        created += r.created;
+        assigned += r.assigned ?? 0;
+        skippedTotal += r.skipped;
+      }
       toast.success(
-        result.created === 0
+        created === 0
           ? 'Nothing to copy — this week is empty.'
-          : `Copied ${result.created} shift${result.created === 1 ? '' : 's'} to next week${
-              result.assigned ? `, ${result.assigned} pre-assigned` : ''
-            } (DRAFT).`
+          : `Copied ${created} shift${created === 1 ? '' : 's'} across the next ${n} week${
+              n === 1 ? '' : 's'
+            }${assigned ? `, ${assigned} pre-assigned` : ''} (DRAFT).${
+              skippedTotal
+                ? ` ${skippedTotal} shift${skippedTotal === 1 ? '' : 's'} exceeded the batch cap and did NOT copy.`
+                : ''
+            }`,
       );
-      // Hop to the target week so HR can review the new drafts immediately.
-      setWeekStart(target);
+      setCopyWeeksOpen(false);
+      // Hop to the first target week so HR can review the new drafts.
+      setWeekStart(shiftWeek(weekStart, 1));
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Copy failed.');
     } finally {
       setCopyingWeek(false);
     }
   };
-  // The KPI strip is always "this week" stats. `shifts` changing is a proxy for
-  // "something happened" — but it also fires on every week/day navigation
-  // (which doesn't change this-week data) and on every keystroke-free filter
-  // change, so naively it double-fetched on every action. Debounce so a burst
-  // (bulk action, rapid paging) collapses to one request, and guard with a
-  // sequence id so a slow earlier response can't overwrite a newer one.
+  // The KPI strip follows the RANGE BEING PLANNED (the visible week), not
+  // the calendar's current week — stats about a week you're not looking at
+  // are dead weight while building a future one. `shifts` changing is a
+  // proxy for "something happened"; debounce so a burst (bulk action, rapid
+  // paging) collapses to one request, and guard with a sequence id so a
+  // slow earlier response can't overwrite a newer one.
   const kpiSeq = useRef(0);
   useEffect(() => {
     const seq = ++kpiSeq.current;
     const t = window.setTimeout(() => {
-      getSchedulingKpis()
+      getSchedulingKpis({
+        ...(view === 'week'
+          ? { from: weekStart.toISOString(), to: weekEnd.toISOString() }
+          : {}),
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+      })
         .then((k) => {
           if (seq === kpiSeq.current) setKpis(k);
         })
@@ -682,7 +807,55 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         });
     }, 300);
     return () => window.clearTimeout(t);
-  }, [shifts]);
+  }, [shifts, view, weekStart, weekEnd, clientFilter]);
+
+  // Last position used in the create dialog this session — most weeks
+  // schedule one role at a time, so it prefills the next create.
+  const lastPositionRef = useRef('');
+
+  // Mobile action sheet — a tapped row on the phone list gets the full
+  // action set (edit/assign/publish/cancel/delete), not just Assign.
+  const [mobileAction, setMobileAction] = useState<Shift | null>(null);
+
+  // Availability/PTO fit for the visible range — shades grid cells where
+  // an associate is on approved time off or outside their weekly windows,
+  // BEFORE a shift gets dropped on them.
+  const [availabilityFit, setAvailabilityFit] = useState<Map<
+    string,
+    { dows: Set<number>; blocked: Set<string> }
+  > | null>(null);
+  useEffect(() => {
+    if (!canManage || (view !== 'week' && view !== 'day')) {
+      setAvailabilityFit(null);
+      return;
+    }
+    let cancelled = false;
+    // Padded ±1 day for the same cross-zone edge reason as the shift fetch:
+    // shading keys are store-zone days while these bounds are browser-local.
+    const from = addDaysLocal(view === 'week' ? weekStart : dayAnchor, -1);
+    const to = addDaysLocal(view === 'week' ? weekEnd : addDaysLocal(dayAnchor, 1), 1);
+    getAvailabilityOverview(from.toISOString(), to.toISOString())
+      .then((r) => {
+        if (cancelled) return;
+        setAvailabilityFit(
+          new Map(
+            r.associates.map((a) => [
+              a.associateId,
+              {
+                dows: new Set(a.windows.map((w) => w.dayOfWeek)),
+                blocked: new Set(a.blockedDays),
+              },
+            ]),
+          ),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setAvailabilityFit(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canManage, view, weekStart, weekEnd, dayAnchor]);
 
   // Dialog state — replaces window.prompt + window.confirm.
   const [assignTarget, setAssignTarget] = useState<Shift | null>(null);
@@ -696,6 +869,86 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     candidates: AutoFillCandidate[];
   } | null>(null);
 
+  // Identity key of ONLY the inputs the ACTIVE view's request reads. Each
+  // view fetches a different window: week → weekStart/weekEnd, day →
+  // dayAnchor, month → monthAnchor, list → status filter + listFrom/listTo.
+  // Client (and location, which only narrows within a client) apply to all.
+  // Keying the request on this string means touching a knob another view
+  // owns — e.g. clicking a list-only status chip while in week view — does
+  // NOT rebuild the args, recreate refresh(), or re-fire the fetch effect.
+  const requestKey = [
+    view === 'week'
+      ? `week|${weekStart.toISOString()}|${weekEnd.toISOString()}`
+      : view === 'day'
+        ? `day|${dayAnchor.toISOString()}`
+        : view === 'month'
+          ? `month|${monthAnchor.toISOString()}`
+          : `list|${filter}|${listFrom}|${listTo}`,
+    clientFilter,
+    clientFilter ? locationFilter : '',
+  ].join('|');
+
+  // Calendar views load the visible window; list view honors the status
+  // filter chips. Position/client/location filters apply client-side
+  // because they're cheap and lets the calendar respond instantly.
+  //
+  // requestKey encodes every value the active branch below reads, so the
+  // values are always fresh whenever this memo recomputes.
+  // Calendar fetch windows are PADDED ±1 day: the boundaries here are
+  // browser-local midnights, but the grids bucket shifts by the STORE's
+  // zone — for a viewer in a different zone, shifts inside the offset gap
+  // at the window edges belonged on a visible day yet were never fetched
+  // (an LA admin viewing an ET store silently lost ET Sunday 00:00–03:00
+  // off the week's first column). The views drop out-of-window buckets, so
+  // the extra day is invisible; it just guarantees every visible day is
+  // fully populated. The list view keeps the user's exact range.
+  const padDay = (d: Date, days: number): string => {
+    const x = new Date(d);
+    x.setDate(x.getDate() + days);
+    return x.toISOString();
+  };
+  const requestArgs = useMemo<Parameters<typeof listShifts>[0]>(() => {
+    let args: Parameters<typeof listShifts>[0] = {};
+    if (view === 'week') {
+      args = { from: padDay(weekStart, -1), to: padDay(weekEnd, 1) };
+    } else if (view === 'day') {
+      const dayEnd = new Date(dayAnchor);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      args = { from: padDay(dayAnchor, -1), to: padDay(dayEnd, 1) };
+    } else if (view === 'month') {
+      // The month grid renders a full 6-week window (the Monday on/before
+      // the 1st through 42 days), so it shows trailing days of the prev/next
+      // month. Fetch that whole VISIBLE range — not just [1st, 1st-of-next)
+      // — or shifts on those adjacent-month cells render blank.
+      const gridStart = startOfWeekMonday(monthAnchor);
+      const gridEnd = addDaysLocal(gridStart, 42);
+      args = { from: padDay(gridStart, -1), to: padDay(gridEnd, 1) };
+    } else {
+      args = filter === 'ALL' ? {} : { status: filter };
+      // Phase 54.2 — list view honors a date range alongside the status
+      // filter. Empty bounds = unbounded on that side.
+      if (listFrom) {
+        args = { ...args, from: fromYmd(listFrom).toISOString() };
+      }
+      if (listTo) {
+        // Inclusive end-of-day: send the *next* day at 00:00 as the exclusive
+        // upper bound (server uses `lt`), capturing the full last day.
+        const end = fromYmd(listTo);
+        end.setDate(end.getDate() + 1);
+        args = { ...args, to: end.toISOString() };
+      }
+    }
+    if (clientFilter) args = { ...args, clientId: clientFilter };
+    // Location only narrows within a client (a Location belongs to one).
+    if (clientFilter && locationFilter) {
+      args = { ...args, locationId: locationFilter };
+    }
+    return args;
+    // requestKey is a serialized identity of exactly the inputs the active
+    // branch reads, so depending on it alone is safe.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestKey]);
+
   // Monotonic request id: a newer refresh() supersedes any in-flight one, so
   // a slow earlier response can't land last and repaint stale shifts (rapid
   // week paging, or a mutation's refresh racing a navigation's).
@@ -703,45 +956,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const refresh = useCallback(async () => {
     const seq = ++reqSeq.current;
     try {
-      // Calendar views load the visible window; list view honors the status
-      // filter chips. Position/client/location filters apply client-side
-      // because they're cheap and lets the calendar respond instantly.
-      let args: Parameters<typeof listShifts>[0] = {};
-      if (view === 'week') {
-        args = { from: weekStart.toISOString(), to: weekEnd.toISOString() };
-      } else if (view === 'day') {
-        const dayEnd = new Date(dayAnchor);
-        dayEnd.setDate(dayEnd.getDate() + 1);
-        args = { from: dayAnchor.toISOString(), to: dayEnd.toISOString() };
-      } else if (view === 'month') {
-        // The month grid renders a full 6-week window (the Monday on/before
-        // the 1st through 42 days), so it shows trailing days of the prev/next
-        // month. Fetch that whole VISIBLE range — not just [1st, 1st-of-next)
-        // — or shifts on those adjacent-month cells render blank.
-        const gridStart = startOfWeekMonday(monthAnchor);
-        const gridEnd = addDaysLocal(gridStart, 42);
-        args = { from: gridStart.toISOString(), to: gridEnd.toISOString() };
-      } else {
-        args = filter === 'ALL' ? {} : { status: filter };
-        // Phase 54.2 — list view honors a date range alongside the status
-        // filter. Empty bounds = unbounded on that side.
-        if (listFrom) {
-          args = { ...args, from: fromYmd(listFrom).toISOString() };
-        }
-        if (listTo) {
-          // Inclusive end-of-day: send the *next* day at 00:00 as the exclusive
-          // upper bound (server uses `lt`), capturing the full last day.
-          const end = fromYmd(listTo);
-          end.setDate(end.getDate() + 1);
-          args = { ...args, to: end.toISOString() };
-        }
-      }
-      if (clientFilter) args = { ...args, clientId: clientFilter };
-      // Location only narrows within a client (a Location belongs to one).
-      if (clientFilter && locationFilter) {
-        args = { ...args, locationId: locationFilter };
-      }
-      const res = await listShifts(args);
+      const res = await listShifts(requestArgs);
       // A newer request started while we were awaiting → discard this result.
       if (seq !== reqSeq.current) return;
       setShifts(res.shifts);
@@ -751,36 +966,76 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       const msg = err instanceof ApiError ? err.message : 'Failed to load shifts.';
       toast.error(msg);
     }
-  }, [filter, view, weekStart, weekEnd, dayAnchor, monthAnchor, clientFilter, locationFilter, listFrom, listTo]);
+  }, [requestArgs]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
+  // New query window or position filter → back to the first page. NOT reset
+  // on every refresh: a mutation's refetch would collapse an expanded list.
   useEffect(() => {
+    setListVisibleCount(LIST_PAGE_SIZE);
+  }, [requestArgs, posFilter]);
+
+  // True when the admin client fetch failed — the New-shift dialog shows an
+  // error + retry instead of the old silent free-text UUID fallback.
+  const [clientsError, setClientsError] = useState(false);
+  const loadClients = useCallback(async () => {
     if (!canManage) return;
-    (async () => {
-      try {
-        const res = await apiFetch<{ clients: ClientSummary[] }>('/clients');
-        setClients(res.clients);
-      } catch {
-        // Silent — Create form falls back to free-text Client UUID entry.
-      }
-    })();
-  }, [canManage]);
+    if (boundedClient) {
+      // Client-bound role: /clients would 403 — seed with the one client.
+      setClients([boundedClient]);
+      setClientsError(false);
+      return;
+    }
+    try {
+      const res = await apiFetch<{ clients: ClientSummary[] }>('/clients');
+      setClients(res.clients);
+      setClientsError(false);
+    } catch {
+      setClientsError(true);
+    }
+  }, [canManage, boundedClient]);
+  useEffect(() => {
+    loadClients();
+  }, [loadClients]);
 
   // Associate list for the pivot grid Y axis — scoped to the selected
   // client/location so the rows match the filtered schedule (picking a
   // client now narrows the people shown, not just the shifts).
-  useEffect(() => {
+  //
+  // A failure here used to fall back to [] silently, which renders as a
+  // grid with no roster rows — indistinguishable from "this client has
+  // nobody". Surface it so the manager knows to retry instead of
+  // concluding the schedule is empty.
+  const [associatesError, setAssociatesError] = useState(false);
+  // The roster is the grid's row axis, and the server pages it. Without
+  // surfacing the cut, an org-wide view past the page cap renders an
+  // incomplete grid that looks complete — the manager scans for unstaffed
+  // people and never sees the ones that fell off the end.
+  const [associatesTruncated, setAssociatesTruncated] = useState(false);
+  const loadAssociates = useCallback(() => {
     if (!canManage) return;
     listSchedulingAssociates({
       clientId: clientFilter || undefined,
       locationId: (clientFilter && locationFilter) || undefined,
+      teamId: (clientFilter && locationFilter && teamFilter) || undefined,
     })
-      .then((res) => setAssociates(res.associates))
-      .catch(() => setAssociates([]));
-  }, [canManage, clientFilter, locationFilter]);
+      .then((res) => {
+        setAssociates(res.associates);
+        setAssociatesTruncated(res.truncated === true);
+        setAssociatesError(false);
+      })
+      .catch(() => {
+        setAssociates([]);
+        setAssociatesTruncated(false);
+        setAssociatesError(true);
+      });
+  }, [canManage, clientFilter, locationFilter, teamFilter]);
+  useEffect(() => {
+    loadAssociates();
+  }, [loadAssociates]);
 
   // Cascade: when the client narrows, load THAT client's locations for the
   // location dropdown and clear any stale location selection. Selecting
@@ -824,6 +1079,14 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     if (!pos) return shifts;
     return shifts.filter((s) => s.position.trim().toLowerCase() === pos);
   }, [shifts, posFilter]);
+
+  // Shift objects behind the current bulk selection — memoized so the
+  // SelectionToolbar doesn't get a freshly-allocated array (new identity)
+  // on every parent render.
+  const selectedShifts = useMemo(
+    () => (filteredShifts ?? []).filter((s) => selectedIds.has(s.id)),
+    [filteredShifts, selectedIds],
+  );
 
   // The distinct positions actually used in the loaded schedule — drives the
   // position filter dropdown (Sling-style: pick from what you've scheduled
@@ -879,16 +1142,27 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   }, [filteredShifts]);
 
   // Phase 53.6 — DRAFT count for the visible week (powers the publish ribbon).
+  // The EXACT window "publish/auto-schedule this week" acts on — zone-aware
+  // when the grid renders a store zone, so the ribbon count, the chips on
+  // screen, and the server's published set all agree. (Browser-local weeks
+  // and store-local weeks differ at the edges by the zone offset.)
+  const publishWindow = useMemo(() => {
+    if (!gridTimeZone) return { from: weekStart, to: weekEnd };
+    const zoneMidnight = (d: Date) =>
+      zonedWallTimeToUtc(d.getFullYear(), d.getMonth() + 1, d.getDate(), 0, 0, gridTimeZone);
+    return { from: zoneMidnight(weekStart), to: zoneMidnight(weekEnd) };
+  }, [weekStart, weekEnd, gridTimeZone]);
+
   const draftsInWeek = useMemo(() => {
     if (!shifts || view === 'list') return 0;
-    const startMs = weekStart.getTime();
-    const endMs = weekEnd.getTime();
+    const startMs = publishWindow.from.getTime();
+    const endMs = publishWindow.to.getTime();
     return shifts.filter((s) => {
       if (s.status !== 'DRAFT') return false;
       const t = new Date(s.startsAt).getTime();
       return t >= startMs && t < endMs;
     }).length;
-  }, [shifts, view, weekStart, weekEnd]);
+  }, [shifts, view, publishWindow]);
 
   // All drafts across the loaded data range (powers the global "Drafts" pill
    // near the view tabs). Lets the manager find unpublished work even when
@@ -913,17 +1187,24 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     setView('week');
   }, [allDrafts]);
 
-  // Unassigned OPEN shifts in the visible week (powers the auto-schedule ribbon).
+  // Unassigned OPEN *or DRAFT* shifts in the visible week (powers the
+  // auto-schedule ribbon). Drafts are the normal state of a week being
+  // built, so excluding them meant the ribbon never appeared in the
+  // build → auto-fill → publish flow.
   const openInWeek = useMemo(() => {
     if (!shifts || view === 'list') return 0;
-    const startMs = weekStart.getTime();
-    const endMs = weekEnd.getTime();
+    // Same zone-aware window auto-schedule acts on server-side — the
+    // confirm dialog's count must match what actually gets filled
+    // (draftsInWeek got this in the first sweep; this is its twin).
+    const startMs = publishWindow.from.getTime();
+    const endMs = publishWindow.to.getTime();
     return shifts.filter((s) => {
-      if (s.status !== 'OPEN' || s.assignedAssociateId) return false;
+      if (s.assignedAssociateId) return false;
+      if (s.status !== 'OPEN' && s.status !== 'DRAFT') return false;
       const t = new Date(s.startsAt).getTime();
       return t >= startMs && t < endMs;
     }).length;
-  }, [shifts, view, weekStart, weekEnd]);
+  }, [shifts, view, publishWindow]);
 
   // Phase 54 — print / CSV / PDF exports.
 
@@ -967,15 +1248,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       'Hourly rate',
       'Notes',
     ];
-    const csv = [header, ...rows.map((s) => csvRow(s))]
-      .map((r) => r.map(csvCell).join(','))
-      .join('\r\n');
-    downloadBlob(
-      `shifts-${exportRange.from}-to-${exportRange.to}.csv`,
-      'text/csv;charset=utf-8',
-      // BOM keeps Excel from mojibake-ing UTF-8 names like "José".
-      '﻿' + csv
-    );
+    // Shared helper carries RFC-4180 quoting AND the Excel BOM now.
+    downloadCsv(`shifts-${exportRange.from}-to-${exportRange.to}.csv`, [
+      header,
+      ...rows.map((s) => csvRow(s)),
+    ]);
   };
 
   const onExportPdf = async () => {
@@ -1018,16 +1295,26 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     if (publishing) return;
     const ok = await confirm({
       title: `Publish ${draftsInWeek} draft shift${draftsInWeek === 1 ? '' : 's'}?`,
-      description: `Assigned associates will be notified. Drafts inside a fair-workweek state's 14-day notice window will be skipped — open those individually to add a late-notice reason before publishing.`,
+      description: `Assigned associates will be notified. Drafts inside a fair-workweek state's 14-day notice window will be skipped — open those individually (Edit) to add a late-notice reason before publishing.${
+        listTruncated
+          ? ' WARNING: this range is showing a truncated shift list — narrow the range first so you can see everything you are publishing.'
+          : ''
+      }`,
       confirmLabel: 'Publish week',
     });
     if (!ok) return;
     setPublishing(true);
     try {
       const res = await publishWeek({
-        weekStart: weekStart.toISOString(),
+        weekStart: publishWindow.from.toISOString(),
+        weekEnd: publishWindow.to.toISOString(),
         ...(clientFilter ? { clientId: clientFilter } : {}),
       });
+      if (res.truncated) {
+        toast.warning(
+          'This week has more drafts than one publish run covers — run Publish again for the rest.',
+        );
+      }
       if (res.published > 0) {
         toast.success(
           `Published ${res.published} shift${res.published === 1 ? '' : 's'}.${res.skipped.length > 0 ? ` Skipped ${res.skipped.length} (predictive-schedule reason needed).` : ''}`
@@ -1050,16 +1337,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const onAutoScheduleWeek = async () => {
     if (autoScheduling) return;
     const ok = await confirm({
-      title: `Auto-schedule ${openInWeek} open shift${openInWeek === 1 ? '' : 's'}?`,
+      title: `Auto-schedule ${openInWeek} unassigned shift${openInWeek === 1 ? '' : 's'}?`,
       description:
-        'Picks the best-scoring associate for each open shift this week (availability, no conflicts, under 40h, not on PTO). Earlier shifts get first pick. Assignments stay private until you publish the week.',
+        'Picks the best-scoring associate for each unassigned shift this week (availability, no conflicts, under 40h, not on PTO). Earlier shifts get first pick. Drafts stay drafts — nothing is visible to associates until you publish the week.',
       confirmLabel: 'Auto-schedule',
     });
     if (!ok) return;
     setAutoScheduling(true);
     try {
       const res = await autoScheduleWeek({
-        weekStart: weekStart.toISOString(),
+        weekStart: publishWindow.from.toISOString(),
+        weekEnd: publishWindow.to.toISOString(),
         ...(clientFilter ? { clientId: clientFilter } : {}),
       });
       if (res.assigned > 0) {
@@ -1101,8 +1389,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           return;
         }
         // Resolve client: template's clientId wins; else fall back to the
-        // current filter; else error (global template needs a target client).
-        const targetClientId = tpl.clientId ?? clientFilter ?? '';
+        // current filter, then to a bounded user's own client; else error
+        // (global template needs a target client).
+        const targetClientId = tpl.clientId ?? (clientFilter || user?.clientId || '');
         if (!targetClientId) {
           toast.error('Pick a client filter first — global templates need a target.');
           return;
@@ -1173,7 +1462,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         toast.error(err instanceof ApiError ? err.message : 'Apply failed.');
       }
     },
-    [clientFilter, locationFilter, clientLocations, refresh],
+    [clientFilter, locationFilter, clientLocations, refresh, user?.clientId],
   );
 
   // Optimistic local-state helpers — patch the one changed shift immediately so
@@ -1194,11 +1483,28 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const onShiftResize = useCallback(
     async (s: Shift, newEndsAt: Date) => {
       const endsAt = newEndsAt.toISOString();
+      const prevEndsAt = s.endsAt;
       patchShift(s.id, { endsAt }); // optimistic — chip resizes instantly
       try {
         const updated = await updateShift(s.id, { endsAt });
         replaceShift(updated);
-        toast.success('Shift duration updated.');
+        toast.success('Shift duration updated.', {
+          action: {
+            label: 'Undo',
+            onClick: () => {
+              void updateShift(s.id, { endsAt: prevEndsAt })
+                .then(async () => {
+                  toast.success('Resize undone.');
+                  await refresh();
+                })
+                .catch((err) =>
+                  toast.error(
+                    err instanceof ApiError ? err.message : 'Undo failed.',
+                  ),
+                );
+            },
+          },
+        });
       } catch (err) {
         toast.error(err instanceof ApiError ? err.message : 'Resize failed.');
         await refresh(); // roll back to server truth
@@ -1280,22 +1586,84 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       }
       patchShift(s.id, patch);
 
+      // Snapshot for undo BEFORE anything is written.
+      const undoSnapshot = {
+        startsAt: s.startsAt,
+        endsAt: s.endsAt,
+        assignedAssociateId: s.assignedAssociateId,
+      };
       try {
         let updated = s;
+        let timesWritten = false;
         if (dateChanged) {
           updated = await updateShift(s.id, {
             startsAt: newStartISO,
             endsAt: newEndISO,
           });
+          timesWritten = true;
         }
         if (assigneeChanged) {
-          updated =
-            target.associateId === null
-              ? await unassignShift(s.id)
-              : await assignShift(s.id, { associateId: target.associateId });
+          try {
+            updated =
+              target.associateId === null
+                ? await unassignShift(s.id)
+                : await assignShift(s.id, { associateId: target.associateId });
+          } catch (assignErr) {
+            // The two writes aren't one transaction. If the reassignment is
+            // refused (double-booked, PTO veto) AFTER the times already
+            // moved, silently keeping the moved times would leave a
+            // half-applied drag the user never asked for — compensate by
+            // putting the times back, so the drop is all-or-nothing.
+            if (timesWritten) {
+              try {
+                await updateShift(s.id, {
+                  startsAt: undoSnapshot.startsAt,
+                  endsAt: undoSnapshot.endsAt,
+                });
+              } catch {
+                toast.error(
+                  'The reassignment was refused and the time change could not be rolled back — the shift kept its new time. Check it.',
+                );
+              }
+            }
+            throw assignErr;
+          }
         }
         replaceShift(updated); // reconcile with server truth
-        toast.success('Shift moved.');
+        // A mis-drop is one click away from undone — no Edit-dialog round
+        // trip to put a chip back where it was.
+        toast.success('Shift moved.', {
+          action: {
+            label: 'Undo',
+            onClick: () => {
+              void (async () => {
+                try {
+                  if (dateChanged) {
+                    await updateShift(s.id, {
+                      startsAt: undoSnapshot.startsAt,
+                      endsAt: undoSnapshot.endsAt,
+                    });
+                  }
+                  if (assigneeChanged) {
+                    if (undoSnapshot.assignedAssociateId === null) {
+                      await unassignShift(s.id);
+                    } else {
+                      await assignShift(s.id, {
+                        associateId: undoSnapshot.assignedAssociateId,
+                      });
+                    }
+                  }
+                  toast.success('Move undone.');
+                  await refresh();
+                } catch (err) {
+                  toast.error(
+                    err instanceof ApiError ? err.message : 'Undo failed.',
+                  );
+                }
+              })();
+            },
+          },
+        });
       } catch (err) {
         toast.error(err instanceof ApiError ? err.message : 'Move failed.');
         await refresh(); // roll back — a partial write may have stuck
@@ -1375,6 +1743,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         position: s.position,
         startsAt: s.startsAt,
         endsAt: s.endsAt,
+        // Keep the structured Location FK — dropping it would detach the
+        // copy from the kiosk geofence and client→location filters.
+        ...(s.locationId ? { locationId: s.locationId } : {}),
         ...(s.location ? { location: s.location } : {}),
         ...(s.hourlyRate != null ? { hourlyRate: s.hourlyRate } : {}),
         ...(s.payRate != null ? { payRate: s.payRate } : {}),
@@ -1457,22 +1828,27 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     onDelete: onDeleteShift,
   };
 
+  const pullState = usePullToRefresh(refresh);
+
   return (
     <div className="mx-auto print-area">
+      <PullToRefreshIndicator state={pullState} />
       {/* Print-only header — appears on paper above the schedule, hidden on screen. */}
       <div className="print-only mb-3">
         <div className="text-xl font-semibold">Schedule</div>
         <div className="text-sm text-gray-700">
           {fmtPrintRange(exportRange.from, exportRange.to)}
-          {clientFilter && clients.find((c) => c.id === clientFilter)
-            ? ` · ${clients.find((c) => c.id === clientFilter)?.name}`
-            : ''}
+          {boundedClient
+            ? ` · ${boundedClient.name}`
+            : clientFilter && clients.find((c) => c.id === clientFilter)
+              ? ` · ${clients.find((c) => c.id === clientFilter)?.name}`
+              : ''}
           {locationFilter && clientLocations.find((l) => l.id === locationFilter)
             ? ` › ${clientLocations.find((l) => l.id === locationFilter)?.name}`
             : ''}
           {posFilter ? ` · position: ${posFilter}` : ''}
         </div>
-        <div className="text-[10px] text-gray-500 mt-1">
+        <div className="text-2xs text-gray-500 mt-1">
           Generated {fmtDateTime(new Date())}
         </div>
       </div>
@@ -1492,7 +1868,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 <Printer className="h-4 w-4" />
                 Print
               </Button>
-              <Button variant="ghost" size="sm" onClick={onExportCsv} title="Download as CSV">
+              <Button variant="ghost" size="sm" onClick={onExportCsv} title="Export CSV">
                 <Download className="h-4 w-4" />
                 CSV
               </Button>
@@ -1530,7 +1906,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       )}
 
       {tzHint && (
-        <div className="no-print mb-2 text-[11px] text-silver/70 inline-flex items-center gap-1">
+        <div className="no-print mb-2 text-xs2 text-silver/70 inline-flex items-center gap-1">
           <Clock className="h-3 w-3" />
           {tzHint}
         </div>
@@ -1540,19 +1916,32 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         <CreateShiftDialog
           open={showCreate}
           clients={clients}
+          boundedClient={boundedClient}
+          clientsError={clientsError}
+          onRetryClients={loadClients}
           associates={associates}
           initialDate={createInitialDate}
+          initialEnd={createInitialEnd}
           initialAssociateId={createInitialAssociateId}
+          initialClientId={clientFilter || null}
+          initialLocationId={locationFilter || null}
+          initialPosition={lastPositionRef.current || null}
+          onPositionUsed={(p) => {
+            lastPositionRef.current = p;
+          }}
+          team={selectedTeam}
           onOpenChange={(o) => {
             setShowCreate(o);
             if (!o) {
               setCreateInitialDate(null);
+              setCreateInitialEnd(null);
               setCreateInitialAssociateId(null);
             }
           }}
           onCreated={() => {
             setShowCreate(false);
             setCreateInitialDate(null);
+            setCreateInitialEnd(null);
             setCreateInitialAssociateId(null);
             toast.success('Shift created.');
             refresh();
@@ -1562,7 +1951,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
       {/* View-mode toggle + per-view navigator */}
       <div className="flex flex-wrap items-center gap-3 mb-4 no-print">
-        <div className="inline-flex rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30">
+        <div
+          role="radiogroup"
+          aria-label="Schedule view"
+          className="inline-flex gap-0.5 rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30"
+        >
           <ViewTab current={view} value="list" onClick={setView} icon={List} label="List" />
           <ViewTab current={view} value="day" onClick={setView} icon={Calendar} label="Day" />
           <ViewTab current={view} value="week" onClick={setView} icon={CalendarDays} label="Week" />
@@ -1617,7 +2010,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               <ChevronRight className="h-4 w-4" />
             </Button>
             {/* Pick the exact start and end of the range to schedule. */}
-            <label className="ml-2 inline-flex items-center gap-1 text-[11px] text-silver/70">
+            <label className="ml-2 inline-flex items-center gap-1 text-xs2 text-silver/70">
               From
               <input
                 type="date"
@@ -1632,10 +2025,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                   setWeekStart(nextStart);
                   setWeekDayCount(span);
                 }}
-                className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                className="h-7 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs coarse:text-base text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
               />
             </label>
-            <label className="inline-flex items-center gap-1 text-[11px] text-silver/70">
+            <label className="inline-flex items-center gap-1 text-xs2 text-silver/70">
               To
               <input
                 type="date"
@@ -1648,22 +2041,22 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                   const span = Math.min(31, Math.max(1, daysBetweenLocal(weekStart, end) + 1));
                   setWeekDayCount(span);
                 }}
-                className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                className="h-7 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs coarse:text-base text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
               />
             </label>
-            <span className="text-[11px] text-silver/60 tabular-nums">
+            <span className="text-xs2 text-silver/60 tabular-nums">
               {weekDayCount}d
             </span>
             {canManage && (
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={onCopyWeekToNext}
+                onClick={() => setCopyWeeksOpen(true)}
                 loading={copyingWeek}
-                title="Copy this week's shifts — associates and all — into next week as drafts"
+                title="Repeat this week's shifts — associates and all — into the next N weeks as drafts"
               >
                 <Copy className="h-3.5 w-3.5" />
-                Copy to next week
+                Repeat week…
               </Button>
             )}
             <div className="ml-auto inline-flex rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30">
@@ -1695,6 +2088,50 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               >
                 Compact
               </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Status key + tile density. Shown on every calendar layout so the
+            shape vocabulary is learnable and the manager can trade
+            legibility against rows without hunting through settings. */}
+        {(view === 'week' || view === 'day' || view === 'month') && (
+          <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 no-print">
+            <StatusMarkLegend />
+            <div className="ml-auto inline-flex items-center gap-2">
+              <span className="text-2xs uppercase tracking-wider text-silver/70">
+                Density
+              </span>
+              <div className="inline-flex rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => setTileDensity('comfortable')}
+                  className={cn(
+                    'uppercase tracking-wider',
+                    tileDensity === 'comfortable' &&
+                      'bg-gold/15 text-gold hover:bg-gold/15 hover:text-gold',
+                  )}
+                  title="Comfortable — larger, more legible shift tiles"
+                >
+                  Comfortable
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => setTileDensity('compact')}
+                  className={cn(
+                    'uppercase tracking-wider',
+                    tileDensity === 'compact' &&
+                      'bg-gold/15 text-gold hover:bg-gold/15 hover:text-gold',
+                  )}
+                  title="Compact — smaller tiles, more rows on screen"
+                >
+                  Compact
+                </Button>
+              </div>
             </div>
           </div>
         )}
@@ -1750,7 +2187,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               onChange={(e) => {
                 if (e.target.value) setDayAnchor(fromYmd(e.target.value));
               }}
-              className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+              className="h-7 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs coarse:text-base text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
             />
           </div>
         )}
@@ -1808,31 +2245,19 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                 const [y, m] = e.target.value.split('-').map(Number);
                 if (y && m) setMonthAnchor(new Date(y, m - 1, 1));
               }}
-              className="h-7 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+              className="h-7 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 text-xs coarse:text-base text-white [color-scheme:dark] focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
             />
           </div>
         )}
 
         {view === 'list' && (
-          <div className="flex flex-wrap gap-2">
-            {STATUS_FILTERS.map((f) => (
-              <Button
-                key={f.value}
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setFilter(f.value)}
-                className={cn(
-                  'text-sm font-normal',
-                  filter === f.value
-                    ? 'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
-                    : 'border-navy-secondary hover:border-silver/40'
-                )}
-              >
-                {f.label}
-              </Button>
-            ))}
-          </div>
+          <SegmentedControl
+            options={STATUS_FILTERS}
+            value={filter}
+            onChange={setFilter}
+            ariaLabel="Filter by shift status"
+            className="flex-wrap"
+          />
         )}
       </div>
 
@@ -1845,12 +2270,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             posFilter={posFilter}
             setPosFilter={setPosFilter}
             positions={knownPositions}
+            boundedClient={boundedClient}
             clientFilter={clientFilter}
             setClientFilter={setClientFilter}
             locationFilter={locationFilter}
             setLocationFilter={setLocationFilter}
             clientLocations={clientLocations}
             clients={clients}
+            teams={teams}
+            teamFilter={teamFilter}
+            setTeamFilter={setTeamFilter}
+            onManageTeams={canManage ? () => setTeamsOpen(true) : undefined}
             showAllAssociates={showAllAssociates}
             setShowAllAssociates={setShowAllAssociates}
             showAssociateToggle={view === 'week' || view === 'day'}
@@ -1862,7 +2292,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           status filter chips). Defaults to the current month. */}
       {view === 'list' && (
         <div className="no-print mb-3 flex flex-wrap items-center gap-2 px-3 py-2 rounded-md border border-navy-secondary bg-navy-secondary/20">
-          <div className="text-[10px] uppercase tracking-wider text-silver/70 inline-flex items-center gap-1">
+          <div className="text-2xs uppercase tracking-wider text-silver/70 inline-flex items-center gap-1">
             <Calendar className="h-3 w-3" />
             Range
           </div>
@@ -1870,7 +2300,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             type="date"
             value={listFrom}
             onChange={(e) => setListFrom(e.target.value)}
-            className="h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+            className="h-8 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs coarse:text-base text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
             aria-label="From date"
           />
           <span className="text-silver/70 text-xs">→</span>
@@ -1878,7 +2308,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             type="date"
             value={listTo}
             onChange={(e) => setListTo(e.target.value)}
-            className="h-8 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+            className="h-8 coarse:h-11 rounded-md border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs coarse:text-base text-white focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
             aria-label="To date"
           />
           <button
@@ -1888,7 +2318,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               setListFrom(ymd(new Date(d.getFullYear(), d.getMonth(), 1)));
               setListTo(ymd(new Date(d.getFullYear(), d.getMonth() + 1, 0)));
             }}
-            className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2 ml-1"
+            className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2 ml-1"
           >
             This month
           </button>
@@ -1902,7 +2332,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               sunday.setDate(sunday.getDate() + 6);
               setListTo(ymd(sunday));
             }}
-            className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2"
+            className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2"
           >
             This week
           </button>
@@ -1912,11 +2342,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               setListFrom('');
               setListTo('');
             }}
-            className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2"
+            className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2"
           >
             Clear
           </button>
-          <span className="ml-auto text-[10px] text-silver/70 tabular-nums">
+          <span className="ml-auto text-2xs text-silver/70 tabular-nums">
             {filteredShifts ? `${filteredShifts.length} shifts` : ''}
           </span>
         </div>
@@ -1967,13 +2397,24 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       {/* Calendar shift-click router — shared by day/week views */}
       {/* eslint-disable react-hooks/rules-of-hooks */}
 
+      {/* One density value for every shift tile below, so week / day / month
+          all render at the same weight instead of each grid picking its own. */}
+      <TileDensityProvider value={tileDensity}>
+
       {/* Mobile-only schedule list. The desktop grids (week/day pivots)
           are min-w-[700px]–[1200px] and force horizontal scroll on a
           phone — a scheduler can only see one column at a time. On
           <md AND on coarse-pointer tablets below lg we show a vertical,
           time-sorted list anchored to dayAnchor — an iPad manager in
           portrait gets tappable rows, not a two-finger-pan grid. The
-          assign / create drawers are shared with the desktop path. */}
+          assign / create drawers are shared with the desktop path.
+
+          Day nav uses addDaysLocal, not ±24h: dayAnchor is a local midnight
+          and a DST day is 23 or 25 hours. A fixed 86.4e6 ms lands on 23:00 of
+          the SAME day when clocks fall back (so "next day" does nothing), and
+          leaves the anchor at 01:00 on spring-forward — which then skews every
+          from/to fetch window built from it. The desktop nav already does
+          this correctly; only this path had drifted. */}
       {filteredShifts && (
         <div className="lg:hidden fine:md:hidden">
           <MobileScheduleList
@@ -1982,17 +2423,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             dayAnchor={dayAnchor}
             displayTimeZone={gridTimeZone}
             canManage={canManage}
-            onShiftClick={(s) => {
-              if (s.status === 'OPEN' || s.status === 'DRAFT' || s.status === 'ASSIGNED') {
-                setAssignTarget(s);
-              }
-            }}
-            onPrevDay={() =>
-              setDayAnchor(new Date(dayAnchor.getTime() - 24 * 60 * 60 * 1000))
-            }
-            onNextDay={() =>
-              setDayAnchor(new Date(dayAnchor.getTime() + 24 * 60 * 60 * 1000))
-            }
+            onShiftClick={(s) => setMobileAction(s)}
+            onPrevDay={() => setDayAnchor(addDaysLocal(dayAnchor, -1))}
+            onNextDay={() => setDayAnchor(addDaysLocal(dayAnchor, 1))}
             onCreate={(dayStart) => {
               setCreateInitialDate(dayStart);
               setCreateInitialAssociateId(null);
@@ -2025,6 +2458,13 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           }}
           onCellCreate={(start, associateId) => {
             setCreateInitialDate(start);
+            setCreateInitialEnd(null);
+            setCreateInitialAssociateId(associateId);
+            setShowCreate(true);
+          }}
+          onCellCreateRange={(start, end, associateId) => {
+            setCreateInitialDate(start);
+            setCreateInitialEnd(end);
             setCreateInitialAssociateId(associateId);
             setShowCreate(true);
           }}
@@ -2033,6 +2473,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           quickActions={quickActions}
           selectedIds={selectedIds}
           onTemplateDrop={onTemplateDrop}
+          availabilityFit={availabilityFit}
         />
         </div>
       )}
@@ -2046,6 +2487,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           displayTimeZone={gridTimeZone}
           canManage={canManage}
           showAllAssociates={showAllAssociates}
+          availabilityFit={availabilityFit}
           onShiftClick={(s, e) => {
             if (e.shiftKey || e.metaKey || e.ctrlKey) {
               toggleSelection(s.id);
@@ -2121,9 +2563,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         />
         </div>
       )}
+      </TileDensityProvider>
 
       {/* List view: empty state */}
-      {shifts && view === 'list' && shifts.length === 0 && (
+      {filteredShifts && view === 'list' && filteredShifts.length === 0 && (
         <EmptyState
           icon={Calendar}
           title="No shifts match this filter"
@@ -2143,14 +2586,45 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         />
       )}
 
-      {view === 'list' && listTruncated && (
-        <ErrorBanner severity="warning" className="mb-3">
-          Showing the first 200 shifts — more match this filter than fit. Narrow
-          the date range, client, or status to see the rest.
+      {listTruncated && (
+        <ErrorBanner severity="warning" className="mb-3 no-print">
+          Showing only the first 500 shifts — more match this range than fit,
+          so days may look emptier than they are and totals are incomplete.
+          Narrow the range or filter by client/location before trusting counts
+          or publishing.
         </ErrorBanner>
       )}
 
-      {shifts && view === 'list' && shifts.length > 0 && (
+      {associatesError && (
+        <ErrorBanner
+          className="mb-3 no-print"
+          action={
+            <Button size="sm" variant="secondary" onClick={loadAssociates}>
+              Retry
+            </Button>
+          }
+        >
+          Couldn’t load the roster — the calendar rows may be missing people.
+        </ErrorBanner>
+      )}
+
+      {associatesTruncated && !associatesError && (
+        <div className="mb-3 flex items-start gap-2 p-3 rounded-md border border-warning/40 bg-warning/[0.07] text-sm no-print">
+          <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="font-medium text-white">
+              Showing the first {associates.length} people — this roster is
+              larger than one page
+            </div>
+            <div className="text-silver text-xs mt-0.5">
+              Rows past that aren’t on the grid. Narrow by client, location, or
+              team to see everyone in scope.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {filteredShifts && view === 'list' && filteredShifts.length > 0 && (
         <Card className="overflow-hidden">
           <Table>
             <TableHeader>
@@ -2165,12 +2639,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {shifts.map((s) => (
+              {filteredShifts.slice(0, listVisibleCount).map((s) => (
                 <TableRow key={s.id}>
                   <TableCell className="font-medium">
                     <div className="min-w-0">
                       <div className="truncate">{s.position}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {s.assignedAssociateName ?? 'Unassigned'}
                         {s.clientName ? ` · ${s.clientName}` : ''}
                       </div>
@@ -2187,10 +2661,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                       variant={STATUS_VARIANT[s.status] ?? 'default'}
                       data-status={s.status}
                     >
-                      {s.status}
+                      {STATUS_LABELS[s.status] ?? s.status}
                     </Badge>
                     {s.cancellationReason && (
-                      <div className="text-alert text-[10px] mt-1">
+                      <div className="text-alert text-2xs mt-1">
                         {s.cancellationReason}
                       </div>
                     )}
@@ -2248,6 +2722,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               ))}
             </TableBody>
           </Table>
+          {filteredShifts.length > listVisibleCount && (
+            <div className="flex justify-center border-t border-navy-secondary p-3 no-print">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setListVisibleCount((n) => n + LIST_PAGE_SIZE)}
+              >
+                Show {Math.min(LIST_PAGE_SIZE, filteredShifts.length - listVisibleCount)} more
+                of {filteredShifts.length - listVisibleCount} remaining
+              </Button>
+            </div>
+          )}
         </Card>
       )}
 
@@ -2270,6 +2756,137 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           refresh();
         }}
       />
+
+      {/* Mobile action sheet — every desktop quick action, one tap away. */}
+      <Dialog open={mobileAction !== null} onOpenChange={(o) => !o && setMobileAction(null)}>
+        <DialogContent className="max-w-sm">
+          {mobileAction && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{mobileAction.position}</DialogTitle>
+                <DialogDescription>
+                  {mobileAction.clientName ?? '—'} · {fmt(mobileAction.startsAt)} ·{' '}
+                  {STATUS_LABELS[mobileAction.status] ?? mobileAction.status}
+                  {mobileAction.assignedAssociateName
+                    ? ` · ${mobileAction.assignedAssociateName}`
+                    : ''}
+                </DialogDescription>
+              </DialogHeader>
+              {(() => {
+                const s = mobileAction;
+                const terminal = s.status === 'COMPLETED' || s.status === 'CANCELLED';
+                const act = (fn: (shift: Shift) => Promise<void> | void) => () => {
+                  setMobileAction(null);
+                  void fn(s);
+                };
+                return (
+                  <div className="grid grid-cols-2 gap-2">
+                    {!terminal && (
+                      <Button variant="secondary" onClick={act(quickActions.onEdit)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                        Edit
+                      </Button>
+                    )}
+                    {!terminal && (
+                      <Button variant="secondary" onClick={act(quickActions.onAssign)}>
+                        <UserPlus className="h-3.5 w-3.5" />
+                        {s.assignedAssociateId ? 'Reassign' : 'Assign'}
+                      </Button>
+                    )}
+                    {!terminal && s.assignedAssociateId && (
+                      <Button variant="ghost" onClick={act(quickActions.onUnassign)}>
+                        Unassign
+                      </Button>
+                    )}
+                    {s.status === 'DRAFT' && (
+                      <Button variant="ghost" onClick={act(quickActions.onPublish)}>
+                        Publish
+                      </Button>
+                    )}
+                    {(s.status === 'OPEN' || s.status === 'ASSIGNED') && (
+                      <Button variant="ghost" onClick={act(quickActions.onUnpublish)}>
+                        Move to draft
+                      </Button>
+                    )}
+                    {!terminal && (
+                      <Button variant="ghost" onClick={act(quickActions.onDuplicate)}>
+                        <Copy className="h-3.5 w-3.5" />
+                        Duplicate
+                      </Button>
+                    )}
+                    {!terminal && (
+                      <Button
+                        variant="ghost"
+                        className="text-alert hover:text-alert"
+                        onClick={act(quickActions.onCancel)}
+                      >
+                        Cancel shift
+                      </Button>
+                    )}
+                    <Button
+                      variant="ghost"
+                      className="text-alert hover:text-alert"
+                      onClick={act(quickActions.onDelete)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                );
+              })()}
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Repeat-this-week dialog — 1..12 weeks forward as drafts. */}
+      <Dialog open={copyWeeksOpen} onOpenChange={setCopyWeeksOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Repeat this week</DialogTitle>
+            <DialogDescription>
+              Copies every non-cancelled shift from the visible week — keeping
+              each shift&rsquo;s associate — into the following weeks as
+              drafts you review and publish. Running it twice for the same
+              weeks creates duplicates.
+            </DialogDescription>
+          </DialogHeader>
+          <Field label="Repeat into the next … weeks" required>
+            {(p) => (
+              <Input
+                type="number"
+                min={1}
+                max={12}
+                step={1}
+                value={copyWeekCount}
+                onChange={(e) => setCopyWeekCount(e.target.value)}
+                {...p}
+              />
+            )}
+          </Field>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setCopyWeeksOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={onRepeatWeeks} loading={copyingWeek}>
+              Copy shifts
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Manage the standing crews at the selected work site. */}
+      {clientFilter && locationFilter && (
+        <ShiftTeamsDialog
+          open={teamsOpen}
+          onOpenChange={setTeamsOpen}
+          clientId={clientFilter}
+          locationId={locationFilter}
+          locationName={
+            clientLocations.find((l) => l.id === locationFilter)?.name ?? null
+          }
+          onChanged={refreshTeams}
+        />
+      )}
 
       {/* Edit date/time/position/rates/notes */}
       <EditShiftDialog
@@ -2321,6 +2938,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           open={showTemplates}
           onOpenChange={setShowTemplates}
           clients={clients}
+          activeClientId={clientFilter || boundedClient?.id || null}
           weekStart={weekStart}
           onApplied={() => {
             toast.success('Template applied as a draft shift.');
@@ -2333,7 +2951,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           one or more chips are selected. Lives at the page level so it
           floats over both week-view layouts. */}
       <SelectionToolbar
-        selected={(filteredShifts ?? []).filter((s) => selectedIds.has(s.id))}
+        selected={selectedShifts}
         onClear={clearSelection}
         onAfterAction={refresh}
       />
@@ -2343,7 +2961,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           cell to apply. */}
       {canManage && (view === 'week' || view === 'day') && (
         <TemplatesRail
-          clientId={clientFilter || null}
+          clientId={clientFilter || boundedClient?.id || null}
           onManage={() => setShowTemplates(true)}
         />
       )}
@@ -2391,7 +3009,7 @@ function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
       {kpis.draftShifts > 0 && (
         <Kpi label="Draft" value={String(kpis.draftShifts)} tone="text-silver" />
       )}
-      <div className="text-[10px] uppercase tracking-wider text-silver/70 self-end ml-auto">
+      <div className="text-2xs uppercase tracking-wider text-silver/70 self-end ml-auto">
         this week
       </div>
     </div>
@@ -2419,10 +3037,10 @@ function Kpi({
 }) {
   return (
     <div className="min-w-[6rem]">
-      <div className="text-[10px] uppercase tracking-wider text-silver">{label}</div>
+      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">{label}</div>
       <div className={cn('text-xl font-semibold tabular-nums', tone)}>{value}</div>
       {suffix ? (
-        <div className="text-[10px] text-warning/80 tabular-nums">{suffix}</div>
+        <div className="text-2xs text-warning/80 tabular-nums">{suffix}</div>
       ) : null}
     </div>
   );
@@ -2474,6 +3092,32 @@ function AssignDialog({
       setHighlight(0);
     }
   }, [target]);
+
+  // Ranked fit for THIS shift — availability, conflicts, PTO, weekly hours.
+  // Shown as the default list so assigning starts from "who fits" instead
+  // of a blind name search.
+  const [candidates, setCandidates] = useState<AutoFillCandidate[] | null>(null);
+  useEffect(() => {
+    setCandidates(null);
+    if (!target) return;
+    let cancelled = false;
+    getAutoFillCandidates(target.id)
+      .then((r) => {
+        if (!cancelled) {
+          setCandidates([...r.candidates].sort((a, b) => b.score - a.score));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setCandidates([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [target]);
+  const candidateById = useMemo(
+    () => new Map((candidates ?? []).map((c) => [c.associateId, c])),
+    [candidates],
+  );
 
   // Live conflict check on the picked associate — debounced.
   useEffect(() => {
@@ -2545,10 +3189,21 @@ function AssignDialog({
   };
 
   // Substring match across "first last" and email. Lowercase once per
-  // query so we're not normalizing per-row on every keystroke.
+  // query so we're not normalizing per-row on every keystroke. With no
+  // query, the ranked fit list leads (best candidates first); typing
+  // searches the whole roster.
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return associates.slice(0, 10);
+    if (!q) {
+      if (candidates && candidates.length > 0) {
+        const byId = new Map(associates.map((a) => [a.id, a]));
+        const ranked = candidates
+          .map((c) => byId.get(c.associateId))
+          .filter((a): a is AssociateLite => !!a);
+        if (ranked.length > 0) return ranked.slice(0, 10);
+      }
+      return associates.slice(0, 10);
+    }
     return associates
       .filter((a) => {
         const full = `${a.firstName} ${a.lastName}`.toLowerCase();
@@ -2559,7 +3214,7 @@ function AssignDialog({
         );
       })
       .slice(0, 12);
-  }, [query, associates]);
+  }, [query, associates, candidates]);
 
   // Keep highlight in range when results change.
   useEffect(() => {
@@ -2615,7 +3270,7 @@ function AssignDialog({
             {picked ? (
               <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-md border border-gold/40 bg-gold/[0.06]">
                 <div className="flex items-center gap-2 min-w-0">
-                  <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-[10px] font-semibold flex items-center justify-center shrink-0">
+                  <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-2xs font-semibold flex items-center justify-center shrink-0">
                     {picked.firstName[0]}
                     {picked.lastName[0]}
                   </div>
@@ -2623,7 +3278,7 @@ function AssignDialog({
                     <div className="text-sm text-white truncate">
                       {picked.firstName} {picked.lastName}
                     </div>
-                    <div className="text-[11px] text-silver/70 truncate">
+                    <div className="text-xs2 text-silver/70 truncate">
                       {picked.email}
                     </div>
                   </div>
@@ -2634,7 +3289,7 @@ function AssignDialog({
                     setPicked(null);
                     setQuery('');
                   }}
-                  className="text-[11px] text-silver/70 hover:text-gold underline underline-offset-2"
+                  className="text-xs2 text-silver/70 hover:text-gold underline underline-offset-2"
                 >
                   Change
                 </button>
@@ -2679,7 +3334,7 @@ function AssignDialog({
                             : 'text-silver hover:bg-navy-secondary/40',
                         )}
                       >
-                        <div className="h-6 w-6 rounded-full bg-gold/10 text-gold text-[9px] font-semibold flex items-center justify-center shrink-0">
+                        <div className="h-6 w-6 rounded-full bg-gold/10 text-gold text-3xs font-semibold flex items-center justify-center shrink-0">
                           {a.firstName[0]}
                           {a.lastName[0]}
                         </div>
@@ -2687,13 +3342,49 @@ function AssignDialog({
                           <div className="truncate">
                             {a.firstName} {a.lastName}
                           </div>
-                          <div className="text-[10px] text-silver/70 truncate">
+                          <div className="text-2xs text-silver/70 truncate">
                             {a.email}
                           </div>
                         </div>
+                        {(() => {
+                          const c = candidateById.get(a.id);
+                          if (!c) return null;
+                          const hrs =
+                            Math.round((c.weeklyMinutesScheduled / 60) * 10) / 10;
+                          return (
+                            <div className="shrink-0 text-right leading-tight">
+                              <div className="text-2xs tabular-nums text-silver/80">
+                                {hrs}h wk
+                              </div>
+                              {c.onApprovedTimeOff ? (
+                                <span className="text-3xs uppercase tracking-wide text-alert">
+                                  PTO
+                                </span>
+                              ) : !c.noConflict ? (
+                                <span className="text-3xs uppercase tracking-wide text-warning">
+                                  conflict
+                                </span>
+                              ) : c.matchesAvailability ? (
+                                <span className="text-3xs uppercase tracking-wide text-success">
+                                  fits
+                                </span>
+                              ) : (
+                                <span className="text-3xs uppercase tracking-wide text-silver/60">
+                                  outside avail.
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </li>
                     ))}
                   </ul>
+                )}
+                {!query.trim() && candidates && candidates.length > 0 && (
+                  <p className="mt-1 text-2xs text-silver/60">
+                    Best fits first — availability, conflicts, PTO, and weekly
+                    hours considered. Type to search everyone.
+                  </p>
                 )}
                 {query.trim() && matches.length === 0 && (
                   <div className="mt-1 px-3 py-2 text-xs text-silver/70 rounded-md border border-navy-secondary bg-navy">
@@ -2703,16 +3394,16 @@ function AssignDialog({
               </div>
             )}
             {checking && (
-              <div className="text-[11px] text-silver/70 mt-1">Checking conflicts…</div>
+              <div className="text-xs2 text-silver/70 mt-1">Checking conflicts…</div>
             )}
             {!checking && checkError && (
-              <div className="text-[11px] text-warning mt-1 inline-flex items-center gap-1">
+              <div className="text-xs2 text-warning mt-1 inline-flex items-center gap-1">
                 <AlertTriangle className="h-3 w-3" />
                 {checkError}
               </div>
             )}
             {isClean && !checkError && (
-              <div className="text-[11px] text-success mt-1 inline-flex items-center gap-1">
+              <div className="text-xs2 text-success mt-1 inline-flex items-center gap-1">
                 <CheckCircle2 className="h-3 w-3" />
                 No conflicts
               </div>
@@ -2925,7 +3616,9 @@ function AutoFillDialog({
                 className="flex items-center justify-between gap-3 p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md"
               >
                 <div className="min-w-0 flex-1">
-                  <div className="text-white text-sm font-medium">{c.associateName}</div>
+                  <div className="text-white text-sm font-medium">
+                    <AssociateLink associateId={c.associateId}>{c.associateName}</AssociateLink>
+                  </div>
                   <div className="text-xs text-silver flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
                     <span
                       className={cn(
@@ -3102,7 +3795,9 @@ function DuplicateToEmployeeDialog({
           />
           <div className="max-h-64 overflow-y-auto rounded border border-navy-secondary/60 divide-y divide-navy-secondary/40">
             {associates === null ? (
-              <div className="p-3 text-xs text-silver/70">Loading…</div>
+              <div className="p-2">
+                <SkeletonRows count={4} rowHeight="h-7" />
+              </div>
             ) : filtered.length === 0 ? (
               <div className="p-3 text-xs text-silver/70">
                 No employees for this client.
@@ -3152,30 +3847,56 @@ function EditShiftDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [startsAt, setStartsAt] = useState('');
-  const [endsAt, setEndsAt] = useState('');
+  const [dateStr, setDateStr] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  // Calendar days between start and end beyond what the wall-clock times
+  // imply — preserves a rare 24h+ shift on load; the common overnight case
+  // is derived from end <= start.
+  const [extraDays, setExtraDays] = useState(0);
   const [position, setPosition] = useState('');
   const positionOptions = useShiftPositionNames(target?.clientId);
   const [subzone, setSubzone] = useState('');
   const [hourlyRate, setHourlyRate] = useState('');
   const [payRate, setPayRate] = useState('');
   const [notes, setNotes] = useState('');
+  // Fair-workweek documentation for changes inside the 14-day notice
+  // window. Hidden until the server demands it (or one is already on
+  // file) so the common case stays uncluttered.
+  const [lateNotice, setLateNotice] = useState('');
+  const [showLateNotice, setShowLateNotice] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   // Pre-fill from the shift each time a new one is opened. Times show in the
   // WORK SITE's zone (same as the calendar grid), so editing a FL store from
-  // CA shows—and saves—the store's wall-clock, not the browser's.
+  // CA shows—and saves—the store's wall-clock, not the browser's. The date
+  // is edited ONCE; the end time rolls past midnight on its own.
   useEffect(() => {
     if (!target) return;
-    setStartsAt(utcToZonedDatetimeInput(target.startsAt, target.timezone));
-    setEndsAt(utcToZonedDatetimeInput(target.endsAt, target.timezone));
+    const [startDay, startClock] = utcToZonedDatetimeInput(
+      target.startsAt,
+      target.timezone,
+    ).split('T');
+    const [endDay, endClock] = utcToZonedDatetimeInput(
+      target.endsAt,
+      target.timezone,
+    ).split('T');
+    setDateStr(startDay!);
+    setStartTime(startClock!);
+    setEndTime(endClock!);
+    setExtraDays(daysBetweenLocal(fromYmd(startDay!), fromYmd(endDay!)));
     setPosition(target.position);
     setSubzone(target.location ?? '');
     setHourlyRate(target.hourlyRate != null ? String(target.hourlyRate) : '');
     setPayRate(target.payRate != null ? String(target.payRate) : '');
     setNotes(target.notes ?? '');
+    setLateNotice(target.lateNoticeReason ?? '');
+    setShowLateNotice(!!target.lateNoticeReason);
     setSubmitting(false);
   }, [target]);
+
+  const overnight = !!startTime && !!endTime && endTime <= startTime;
+  const endOffset = overnight ? Math.max(1, extraDays) : extraDays;
 
   const tzHint =
     target && target.timezone && target.timezone !== browserTimeZone()
@@ -3187,10 +3908,20 @@ function EditShiftDialog({
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
+    if (!dateStr || !startTime || !endTime) {
+      toast.error('Enter the day plus start and end times.');
+      return;
+    }
     // Inputs are wall-clock at the work site → convert back through the
-    // shift's zone (symmetric with the pre-fill above).
-    const start = new Date(localInputToUtcIso(startsAt, target.timezone));
-    const end = new Date(localInputToUtcIso(endsAt, target.timezone));
+    // shift's zone (symmetric with the pre-fill above). The end lands on
+    // dateStr + endOffset days (overnight rolls past midnight).
+    const endDay = ymd(addDaysLocal(fromYmd(dateStr), endOffset));
+    const start = new Date(
+      localInputToUtcIso(`${dateStr}T${startTime}`, target.timezone),
+    );
+    const end = new Date(
+      localInputToUtcIso(`${endDay}T${endTime}`, target.timezone),
+    );
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
       toast.error('Enter a valid start and end.');
       return;
@@ -3213,18 +3944,27 @@ function EditShiftDialog({
         hourlyRate: hourlyRate ? Number(hourlyRate) : null,
         payRate: payRate ? Number(payRate) : null,
         notes: notes.trim() || null,
+        ...(lateNotice.trim() ? { lateNoticeReason: lateNotice.trim() } : {}),
       });
       toast.success('Shift updated.');
       onSaved();
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'late_notice_reason_required') {
+        // Reveal the reason field right here instead of dead-ending the
+        // manager — documenting the late change is all the server wants.
+        setShowLateNotice(true);
+        toast.error(
+          'This change lands inside the 14-day fair-workweek notice window — add a late-notice reason below and save again.',
+        );
+        setSubmitting(false);
+        return;
+      }
       const msg =
-        err instanceof ApiError && err.code === 'late_notice_reason_required'
-          ? 'This is a published shift moving inside the 14-day notice window — un-publish it (Move to draft) before re-timing, or keep it outside the window.'
-          : err instanceof ApiError && err.code === 'shift_not_editable'
-            ? 'A completed or cancelled shift can’t be edited.'
-            : err instanceof ApiError
-              ? err.message
-              : 'Update failed.';
+        err instanceof ApiError && err.code === 'shift_not_editable'
+          ? 'A completed or cancelled shift can’t be edited.'
+          : err instanceof ApiError
+            ? err.message
+            : 'Update failed.';
       toast.error(msg);
       setSubmitting(false);
     }
@@ -3258,26 +3998,41 @@ function EditShiftDialog({
                 <Input value={subzone} onChange={(e) => setSubzone(e.target.value)} {...p} />
               )}
             </Field>
-            <Field label="Starts at" required hint={tzHint}>
+            <Field label="Day" required className="md:col-span-2">
               {(p) => (
                 <Input
-                  type="datetime-local"
-                  value={startsAt}
-                  onChange={(e) => setStartsAt(e.target.value)}
+                  type="date"
+                  value={dateStr}
+                  onChange={(e) => setDateStr(e.target.value)}
                   {...p}
                 />
               )}
             </Field>
-            <Field label="Ends at" required>
+            <Field label="Start time" required hint={tzHint}>
               {(p) => (
                 <Input
-                  type="datetime-local"
-                  value={endsAt}
-                  onChange={(e) => setEndsAt(e.target.value)}
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
                   {...p}
                 />
               )}
             </Field>
+            <Field label="End time" required>
+              {(p) => (
+                <Input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <ShiftTimesHint
+              startTime={startTime}
+              endTime={endTime}
+              extraDays={extraDays}
+            />
             <Field label="Bill rate /hr (optional)">
               {(p) => (
                 <Input
@@ -3306,6 +4061,23 @@ function EditShiftDialog({
           <Field label="Notes (optional)">
             {(p) => <Input value={notes} onChange={(e) => setNotes(e.target.value)} {...p} />}
           </Field>
+          {showLateNotice && (
+            <Field
+              label="Late-notice reason"
+              required
+              hint="Recorded for fair-workweek compliance — why this shift is changing inside the 14-day notice window."
+            >
+              {(p) => (
+                <Input
+                  value={lateNotice}
+                  onChange={(e) => setLateNotice(e.target.value)}
+                  maxLength={500}
+                  placeholder="e.g. Unplanned absence — coverage swap"
+                  {...p}
+                />
+              )}
+            </Field>
+          )}
           <DialogFooter>
             <Button type="button" variant="ghost" onClick={onClose}>
               Cancel
@@ -3325,21 +4097,49 @@ function EditShiftDialog({
 function CreateShiftDialog({
   open,
   clients,
+  boundedClient,
+  clientsError,
+  onRetryClients,
   associates,
   initialDate,
+  initialEnd,
   initialAssociateId,
+  initialClientId,
+  initialLocationId,
+  initialPosition,
+  team,
   onOpenChange,
   onCreated,
+  onPositionUsed,
 }: {
   open: boolean;
   clients: ClientSummary[];
+  /** Client-bound roles (SHIFT_SUPERVISOR): the client is fixed — render it
+   *  as read-only text instead of a picker. */
+  boundedClient?: ClientSummary | null;
+  /** True when the admin client fetch failed — show an error + retry. */
+  clientsError?: boolean;
+  onRetryClients?: () => void;
   /** Schedulable employees, for the multi-assign picker. */
   associates: AssociateLite[];
   initialDate?: Date | null;
+  /** End of a drag-created time range — used instead of the 4h default. */
+  initialEnd?: Date | null;
   /** When set, the created shift is auto-assigned to this associate. */
   initialAssociateId?: string | null;
+  /** The page's active client/location filter — the dialog opens already
+   *  scoped to what the manager is looking at instead of resetting to the
+   *  first client in the org. */
+  initialClientId?: string | null;
+  initialLocationId?: string | null;
+  /** Last position used this session — most weeks schedule one role at a
+   *  time, so re-typing it per shift was pure friction. */
+  initialPosition?: string | null;
+  /** Selected shift team — scopes the picker and prefills default times. */
+  team?: ShiftTeamData | null;
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
+  onPositionUsed?: (position: string) => void;
 }) {
   const [clientId, setClientId] = useState(clients[0]?.id ?? '');
   const [locationId, setLocationId] = useState('');
@@ -3348,17 +4148,19 @@ function CreateShiftDialog({
   // picker only offers people who work for that client. Seeded from the
   // page-level roster prop, then refined per client below.
   const [scopedAssociates, setScopedAssociates] = useState<AssociateLite[]>(associates);
+  // A failed roster fetch used to silently render "no employees" — which
+  // reads as "nobody works here", not "the request failed". Track the
+  // failure so the picker can say so and offer a retry.
+  const [rosterError, setRosterError] = useState(false);
+  const [rosterRetry, setRosterRetry] = useState(0);
   const [position, setPosition] = useState('');
   const positionOptions = useShiftPositionNames(clientId);
-  // When opened from a calendar cell we know the day → switch to time-only
-  // inputs (`HH:MM`) and show the date as a header label. When opened from
-  // the toolbar the day is unknown, so fall back to full datetime-local.
+  // One Date field + time-only start/end. Opened from a calendar cell the
+  // date is the clicked day; from the toolbar it defaults to today. An end
+  // at or before the start rolls past midnight — no second date to type.
+  const [dateStr, setDateStr] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
-  const [startsAt, setStartsAt] = useState('');
-  const [endsAt, setEndsAt] = useState('');
-  // The "anchor day" for time-only mode. null means full datetime mode.
-  const [anchorDay, setAnchorDay] = useState<Date | null>(null);
   const [location, setLocation] = useState('');
   const [hourlyRate, setHourlyRate] = useState('');
   const [payRate, setPayRate] = useState('');
@@ -3396,7 +4198,14 @@ function CreateShiftDialog({
       .then((r) => {
         if (cancelled) return;
         setLocations(r.locations);
-        if (r.locations.length > 0) setLocationId(r.locations[0]!.id);
+        // Honor the page's location filter when it belongs to this client;
+        // otherwise auto-pick the first so single-site clients need no click.
+        const preferred =
+          initialLocationId && clientId === initialClientId
+            ? r.locations.find((l) => l.id === initialLocationId)
+            : undefined;
+        if (preferred) setLocationId(preferred.id);
+        else if (r.locations.length > 0) setLocationId(r.locations[0]!.id);
       })
       .catch(() => {
         if (!cancelled) setLocations([]);
@@ -3404,7 +4213,7 @@ function CreateShiftDialog({
     return () => {
       cancelled = true;
     };
-  }, [clientId, open]);
+  }, [clientId, open, initialClientId, initialLocationId]);
 
   // Scope the multi-assign picker to the chosen client's employees. Without
   // a client we fall back to the page roster prop. (Scoped by client, not
@@ -3417,50 +4226,66 @@ function CreateShiftDialog({
       return;
     }
     let cancelled = false;
-    listSchedulingAssociates({ clientId })
+    // When a shift team is selected (and the dialog is still on that
+    // team's client), the multi-assign picker narrows to the crew.
+    setRosterError(false);
+    listSchedulingAssociates({
+      clientId,
+      ...(team && team.clientId === clientId ? { teamId: team.id } : {}),
+    })
       .then((r) => {
         if (!cancelled) setScopedAssociates(r.associates);
       })
       .catch(() => {
-        if (!cancelled) setScopedAssociates([]);
+        if (!cancelled) {
+          setScopedAssociates([]);
+          setRosterError(true);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [open, clientId, associates]);
+  }, [open, clientId, associates, team, rosterRetry]);
 
   useEffect(() => {
     if (open) {
-      setClientId(clients[0]?.id ?? '');
-      setPosition('');
-      // When opened from a calendar cell, pre-fill 9am–5pm on that day —
-      // the most common shift shape for hourly workforce, easy to edit.
+      setClientId(initialClientId || clients[0]?.id || '');
+      setPosition(initialPosition ?? '');
+      // Pre-fill times: the selected shift team's defaults win (that's the
+      // shift being scheduled), else 9–5 — the most common shape for hourly
+      // workforce. A calendar-cell open pins the clicked day (and clicked
+      // hour, if any); a toolbar open defaults to today.
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const minuteToTime = (m: number) =>
+        `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+      const defStart =
+        team?.startMinute != null ? minuteToTime(team.startMinute) : '09:00';
+      const defEnd =
+        team?.endMinute != null ? minuteToTime(team.endMinute) : '17:00';
       if (initialDate) {
-        const day = new Date(initialDate);
-        day.setHours(0, 0, 0, 0);
-        setAnchorDay(day);
+        setDateStr(ymd(initialDate));
         // initialDate may include a clicked time-of-day (TimeGridWeekView
-        // passes the snapped hour); honor it when set, else default 9–5.
+        // passes the snapped hour); honor it when set, else use the defaults.
         const initHasTime =
           initialDate.getHours() !== 0 || initialDate.getMinutes() !== 0;
         if (initHasTime) {
           const start = new Date(initialDate);
-          const end = new Date(initialDate);
-          end.setHours(end.getHours() + 4); // 4h default block off the click
+          // A drag-created range carries its own end; a bare click gets a
+          // 4h default block off the clicked hour.
+          const end = initialEnd
+            ? new Date(initialEnd)
+            : new Date(initialDate);
+          if (!initialEnd) end.setHours(end.getHours() + 4);
           setStartTime(toLocalTimeInput(start));
           setEndTime(toLocalTimeInput(end));
         } else {
-          setStartTime('09:00');
-          setEndTime('17:00');
+          setStartTime(defStart);
+          setEndTime(defEnd);
         }
-        setStartsAt('');
-        setEndsAt('');
       } else {
-        setAnchorDay(null);
-        setStartTime('');
-        setEndTime('');
-        setStartsAt('');
-        setEndsAt('');
+        setDateStr(ymd(new Date()));
+        setStartTime(defStart);
+        setEndTime(defEnd);
       }
       setLocation('');
       setHourlyRate('');
@@ -3475,37 +4300,35 @@ function CreateShiftDialog({
       setOpenSlots('0');
       setEmpSearch('');
     }
-  }, [open, clients, initialDate, initialAssociateId]);
+  }, [open, clients, initialDate, initialEnd, initialAssociateId, initialClientId, initialPosition, team]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
-    // Compose final ISO timestamps from whichever input mode is active. The
-    // times the admin types are wall-clock at the WORK SITE — interpret them
-    // in the selected location's zone (the grid renders shifts in that zone
-    // too), not the admin's browser zone. siteTz null → browser-local, which
-    // matches the old behavior for location-less / full-org shifts.
+    if (!dateStr || !startTime || !endTime) {
+      toast.error('Enter the day plus start and end times.');
+      return;
+    }
+    // Compose final ISO timestamps. The times the admin types are wall-clock
+    // at the WORK SITE — interpret them in the selected location's zone (the
+    // grid renders shifts in that zone too), not the admin's browser zone.
+    // siteTz null → browser-local, which matches the old behavior for
+    // location-less / full-org shifts.
     const siteTz =
       locations?.find((l) => l.id === locationId)?.timezone ?? null;
-    let startISO: string;
-    let endISO: string;
-    if (anchorDay) {
-      const [sh, sm] = startTime.split(':').map(Number);
-      const [eh, em] = endTime.split(':').map(Number);
-      const y = anchorDay.getFullYear();
-      const mo = anchorDay.getMonth() + 1;
-      const d = anchorDay.getDate();
-      const start = zonedWallTimeToUtc(y, mo, d, sh, sm, siteTz);
-      let end = zonedWallTimeToUtc(y, mo, d, eh, em, siteTz);
-      // Overnight: end <= start rolls end to the next site-local day (re-convert
-      // so a DST boundary that night is handled). Matches template-apply.
-      if (end <= start) end = zonedWallTimeToUtc(y, mo, d + 1, eh, em, siteTz);
-      startISO = start.toISOString();
-      endISO = end.toISOString();
-    } else {
-      startISO = localInputToUtcIso(startsAt, siteTz);
-      endISO = localInputToUtcIso(endsAt, siteTz);
-    }
+    const [sh, sm] = startTime.split(':').map(Number);
+    const [eh, em] = endTime.split(':').map(Number);
+    const day = fromYmd(dateStr);
+    const y = day.getFullYear();
+    const mo = day.getMonth() + 1;
+    const d = day.getDate();
+    const start = zonedWallTimeToUtc(y, mo, d, sh, sm, siteTz);
+    let end = zonedWallTimeToUtc(y, mo, d, eh, em, siteTz);
+    // Overnight: end <= start rolls end to the next site-local day (re-convert
+    // so a DST boundary that night is handled). Matches template-apply.
+    if (end <= start) end = zonedWallTimeToUtc(y, mo, d + 1, eh, em, siteTz);
+    const startISO = start.toISOString();
+    const endISO = end.toISOString();
     const assignList = [...assignIds];
     const open = Math.max(0, Math.trunc(Number(openSlots)) || 0);
     const shared = {
@@ -3544,6 +4367,7 @@ function CreateShiftDialog({
         await createShift(shared);
         toast.success('Shift created.');
       }
+      onPositionUsed?.(position);
       onCreated();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Create failed.');
@@ -3574,7 +4398,16 @@ function CreateShiftDialog({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Field label="Client" required>
               {(p) =>
-                clients.length > 0 ? (
+                boundedClient ? (
+                  // Client-bound role — the client is fixed, not a choice.
+                  <div
+                    id={p.id}
+                    aria-describedby={p['aria-describedby']}
+                    className="flex h-10 coarse:h-11 w-full items-center rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 text-sm coarse:text-base text-white"
+                  >
+                    {boundedClient.name}
+                  </div>
+                ) : clients.length > 0 ? (
                   <Select
                     value={clientId}
                     onChange={(e) => setClientId(e.target.value)}
@@ -3587,12 +4420,23 @@ function CreateShiftDialog({
                     ))}
                   </Select>
                 ) : (
-                  <Input
-                    placeholder="Client UUID"
-                    value={clientId}
-                    onChange={(e) => setClientId(e.target.value)}
-                    {...p}
-                  />
+                  <div
+                    id={p.id}
+                    className="rounded-md border border-alert/40 bg-alert/[0.06] px-3 py-2 text-xs text-alert"
+                  >
+                    {clientsError
+                      ? "Couldn't load the client list."
+                      : 'No clients available yet.'}{' '}
+                    {onRetryClients && (
+                      <button
+                        type="button"
+                        onClick={onRetryClients}
+                        className="underline underline-offset-2 hover:text-white"
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </div>
                 )
               }
             </Field>
@@ -3637,90 +4481,37 @@ function CreateShiftDialog({
                 />
               )}
             </Field>
-            {anchorDay ? (
-              <>
-                <div className="md:col-span-2 -mb-1">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-[10px] uppercase tracking-wider text-silver/70">
-                        Day
-                      </div>
-                      <div className="text-sm text-white tabular-nums">
-                        {anchorDay.toLocaleDateString(undefined, {
-                          weekday: 'long',
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric',
-                        })}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        // Drop into full datetime-local mode if the user
-                        // wants to span multiple days or pick a different
-                        // date. Pre-seed from the current time-only values.
-                        const [sh, sm] = startTime.split(':').map(Number);
-                        const [eh, em] = endTime.split(':').map(Number);
-                        const start = new Date(anchorDay);
-                        start.setHours(sh || 9, sm || 0, 0, 0);
-                        const end = new Date(anchorDay);
-                        end.setHours(eh || 17, em || 0, 0, 0);
-                        setStartsAt(toLocalDatetimeInput(start));
-                        setEndsAt(toLocalDatetimeInput(end));
-                        setAnchorDay(null);
-                      }}
-                      className="text-[11px] text-silver/70 hover:text-gold underline underline-offset-2"
-                    >
-                      Different day?
-                    </button>
-                  </div>
-                </div>
-                <Field label="Start time" required hint={tzHint}>
-                  {(p) => (
-                    <Input
-                      type="time"
-                      value={startTime}
-                      onChange={(e) => setStartTime(e.target.value)}
-                      {...p}
-                    />
-                  )}
-                </Field>
-                <Field label="End time" required>
-                  {(p) => (
-                    <Input
-                      type="time"
-                      value={endTime}
-                      onChange={(e) => setEndTime(e.target.value)}
-                      {...p}
-                    />
-                  )}
-                </Field>
-              </>
-            ) : (
-              <>
-                <Field label="Starts at" required hint={tzHint}>
-                  {(p) => (
-                    <Input
-                      type="datetime-local"
-                      value={startsAt}
-                      onChange={(e) => setStartsAt(e.target.value)}
-                      {...p}
-                    />
-                  )}
-                </Field>
-                <Field label="Ends at" required>
-                  {(p) => (
-                    <Input
-                      type="datetime-local"
-                      value={endsAt}
-                      onChange={(e) => setEndsAt(e.target.value)}
-                      {...p}
-                    />
-                  )}
-                </Field>
-              </>
-            )}
+            <Field label="Day" required className="md:col-span-2">
+              {(p) => (
+                <Input
+                  type="date"
+                  value={dateStr}
+                  onChange={(e) => setDateStr(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="Start time" required hint={tzHint}>
+              {(p) => (
+                <Input
+                  type="time"
+                  value={startTime}
+                  onChange={(e) => setStartTime(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <Field label="End time" required>
+              {(p) => (
+                <Input
+                  type="time"
+                  value={endTime}
+                  onChange={(e) => setEndTime(e.target.value)}
+                  {...p}
+                />
+              )}
+            </Field>
+            <ShiftTimesHint startTime={startTime} endTime={endTime} />
             <Field
               label="Sub-zone (optional)"
               hint='Free-text label within the Location (e.g. "Bar", "Patio", "Floor 2").'
@@ -3747,7 +4538,7 @@ function CreateShiftDialog({
                 )}
               </div>
               {scopedAssociates.length > 0 && (
-                <div className="flex items-center gap-2 text-[11px]">
+                <div className="flex items-center gap-2 text-xs2">
                   <button
                     type="button"
                     onClick={() => setAssignIds(new Set(scopedAssociates.map((a) => a.id)))}
@@ -3767,8 +4558,19 @@ function CreateShiftDialog({
                 </div>
               )}
             </div>
-            {scopedAssociates.length === 0 ? (
-              <div className="text-[11px] text-silver/70">
+            {rosterError ? (
+              <div className="flex items-center gap-2 text-xs2 text-alert">
+                Couldn&apos;t load this client&apos;s employees.
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() => setRosterRetry((n) => n + 1)}
+                >
+                  Retry
+                </Button>
+              </div>
+            ) : scopedAssociates.length === 0 ? (
+              <div className="text-xs2 text-silver/70">
                 No schedulable employees for this client. The shift will be created unassigned.
               </div>
             ) : (
@@ -3819,7 +4621,7 @@ function CreateShiftDialog({
               </>
             )}
             <div className="flex items-center gap-2 pt-1">
-              <label className="text-[11px] text-silver/70" htmlFor="open-slots">
+              <label className="text-xs2 text-silver/70" htmlFor="open-slots">
                 Extra open (unassigned) slots
               </label>
               <Input
@@ -3832,7 +4634,7 @@ function CreateShiftDialog({
                 className="h-8 w-20 text-xs"
               />
             </div>
-            <div className="text-[11px] text-silver/60">
+            <div className="text-xs2 text-silver/60">
               {assignIds.size + (Math.max(0, Math.trunc(Number(openSlots)) || 0)) > 0
                 ? `Creates ${assignIds.size} assigned + ${Math.max(0, Math.trunc(Number(openSlots)) || 0)} open = ${assignIds.size + Math.max(0, Math.trunc(Number(openSlots)) || 0)} shift${assignIds.size + Math.max(0, Math.trunc(Number(openSlots)) || 0) === 1 ? '' : 's'}. Anyone already scheduled then is skipped.`
                 : 'No employees selected — creates one unassigned shift.'}
@@ -3846,7 +4648,7 @@ function CreateShiftDialog({
             <button
               type="button"
               onClick={() => setShowAdvanced((v) => !v)}
-              className="text-[11px] uppercase tracking-wider text-silver/70 hover:text-gold inline-flex items-center gap-1"
+              className="text-xs2 uppercase tracking-wider text-silver/70 hover:text-gold inline-flex items-center gap-1"
             >
               {showAdvanced ? '▾' : '▸'} Advanced
               {!showAdvanced && (
@@ -3922,7 +4724,7 @@ function CreateShiftDialog({
               <div className="text-sm text-white font-medium">
                 Publish immediately
               </div>
-              <div className="text-[11px] text-silver/70">
+              <div className="text-xs2 text-silver/70">
                 {publishImmediately
                   ? 'Will be visible to assigned associate the moment you save.'
                   : 'Saved as draft. Stays private until you click "Publish week".'}
@@ -3959,18 +4761,22 @@ function TemplatesDialog({
   open,
   onOpenChange,
   clients,
+  activeClientId,
   weekStart,
   onApplied,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   clients: ClientSummary[];
+  /** The page's client filter — global templates apply to THIS client. */
+  activeClientId: string | null;
   weekStart: Date;
   onApplied: () => void;
 }) {
   const [templates, setTemplates] = useState<ShiftTemplate[] | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const confirmDialog = useConfirm();
 
   const refresh = useCallback(async () => {
     try {
@@ -3988,12 +4794,16 @@ function TemplatesDialog({
   const onApply = async (id: string, requiresClient: boolean) => {
     let clientId: string | undefined;
     if (requiresClient) {
-      const fallback = clients[0]?.id;
-      if (!fallback) {
-        toast.error('Create a client first to apply a global template.');
+      // A global template needs a target client: use the one the page is
+      // filtered to — silently defaulting to the first client in the org
+      // created shifts against the wrong company.
+      if (!activeClientId) {
+        toast.error(
+          'Pick a client in the schedule filter first, then apply the global template.',
+        );
         return;
       }
-      clientId = fallback;
+      clientId = activeClientId;
     }
     setPendingId(id);
     try {
@@ -4010,7 +4820,12 @@ function TemplatesDialog({
   };
 
   const onDelete = async (id: string) => {
-    if (!confirm('Delete this template? Existing shifts created from it are not affected.')) return;
+    const ok = await confirmDialog({
+      title: 'Delete this template?',
+      description: 'Existing shifts created from it are not affected.',
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
     setPendingId(id);
     try {
       await deleteShiftTemplate(id);
@@ -4297,16 +5112,25 @@ function ViewTab({
 }) {
   const active = current === value;
   return (
-    <Button
+    <button
       type="button"
-      variant={active ? 'primary' : 'ghost'}
-      size="xs"
+      role="radio"
+      aria-checked={active}
       onClick={() => onClick(value)}
-      className="uppercase tracking-wider rounded-sm"
+      className={cn(
+        // Matches SegmentedControl's selection language: the app-wide
+        // gold-tint ghost for the active choice, quiet ghost otherwise —
+        // no solid primary fill competing with real CTAs.
+        'inline-flex h-7 items-center gap-1.5 rounded-sm border px-2.5 text-xs font-medium uppercase tracking-wider transition coarse:h-9 coarse:px-3',
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40',
+        active
+          ? 'bg-gold/15 border-gold/50 text-gold'
+          : 'border-transparent text-silver hover:text-white',
+      )}
     >
       <Icon className="h-3.5 w-3.5" />
       {label}
-    </Button>
+    </button>
   );
 }
 
@@ -4314,12 +5138,17 @@ function FilterBar({
   posFilter,
   setPosFilter,
   positions,
+  boundedClient,
   clientFilter,
   setClientFilter,
   locationFilter,
   setLocationFilter,
   clientLocations,
   clients,
+  teams,
+  teamFilter,
+  setTeamFilter,
+  onManageTeams,
   showAllAssociates,
   setShowAllAssociates,
   showAssociateToggle,
@@ -4327,28 +5156,58 @@ function FilterBar({
   posFilter: string;
   setPosFilter: (v: string) => void;
   positions: string[];
+  /** Client-bound roles: the one client the viewer is scoped to. The client
+   *  control renders as a read-only label and can never be cleared. */
+  boundedClient?: ClientSummary | null;
   clientFilter: string;
   setClientFilter: (v: string) => void;
   locationFilter: string;
   setLocationFilter: (v: string) => void;
   clientLocations: LocationSummary[];
   clients: ClientSummary[];
+  teams: ShiftTeamData[];
+  teamFilter: string;
+  setTeamFilter: (v: string) => void;
+  onManageTeams?: () => void;
   showAllAssociates: boolean;
   setShowAllAssociates: (v: boolean) => void;
   showAssociateToggle: boolean;
 }) {
   const anyActive =
-    posFilter.trim() !== '' || clientFilter !== '' || locationFilter !== '';
-  const clientName = clients.find((c) => c.id === clientFilter)?.name;
+    posFilter.trim() !== '' ||
+    (!boundedClient && clientFilter !== '') ||
+    locationFilter !== '' ||
+    teamFilter !== '';
+  const clientName =
+    clients.find((c) => c.id === clientFilter)?.name ?? boundedClient?.name;
   const locationName = clientLocations.find((l) => l.id === locationFilter)?.name;
+  const teamName = teams.find((t) => t.id === teamFilter)?.name;
   // Location only makes sense once a client is chosen (a Location belongs to
   // one client). With "All clients" selected this stays disabled.
   const locationDisabled = !clientFilter;
   return (
     <div className="mb-3 rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 py-2">
       {/* Scope line — tells the admin exactly what they're looking at. */}
-      <div className="mb-2 text-[11px] text-silver/80">
-        {!clientFilter ? (
+      <div className="mb-2 text-xs2 text-silver/80">
+        {boundedClient ? (
+          <span className="inline-flex flex-wrap items-center gap-1">
+            <span className="font-medium text-white">Schedule</span>
+            <span className="text-silver/50">·</span>
+            <span className="font-medium text-white">{boundedClient.name}</span>
+            {locationName && (
+              <>
+                <span className="text-silver/50">›</span>
+                <span className="font-medium text-white">{locationName}</span>
+                {teamName && (
+                  <>
+                    <span className="text-silver/50">›</span>
+                    <span className="font-medium text-gold">{teamName}</span>
+                  </>
+                )}
+              </>
+            )}
+          </span>
+        ) : !clientFilter ? (
           <span>
             <span className="font-medium text-white">Full schedule</span>
             <span className="text-silver/60"> · every client &amp; location in the organization</span>
@@ -4360,6 +5219,12 @@ function FilterBar({
               <>
                 <span className="text-silver/50">›</span>
                 <span className="font-medium text-white">{locationName}</span>
+                {teamName && (
+                  <>
+                    <span className="text-silver/50">›</span>
+                    <span className="font-medium text-gold">{teamName}</span>
+                  </>
+                )}
               </>
             ) : (
               <span className="text-silver/60">· all locations</span>
@@ -4368,25 +5233,35 @@ function FilterBar({
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <div className="text-[10px] uppercase tracking-wider text-silver/70 inline-flex items-center gap-1">
+        <div className="text-2xs uppercase tracking-wider text-silver/70 inline-flex items-center gap-1">
           <Filter className="h-3 w-3" />
           Filter
         </div>
-        <div className="min-w-[10rem]">
-          <Select
-            value={clientFilter}
-            onChange={(e) => setClientFilter(e.target.value)}
-            size="sm"
-            aria-label="Filter by client"
+        {boundedClient ? (
+          // Client-bound role — the client is pinned; no "All clients".
+          <div
+            className="inline-flex h-8 items-center rounded-md border border-navy-secondary bg-navy-secondary/30 px-2.5 text-xs text-white"
+            title="Your account is scoped to this client"
           >
-            <option value="">All clients (full schedule)</option>
-            {clients.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-        </div>
+            {boundedClient.name}
+          </div>
+        ) : (
+          <div className="min-w-[10rem]">
+            <Select
+              value={clientFilter}
+              onChange={(e) => setClientFilter(e.target.value)}
+              size="sm"
+              aria-label="Filter by client"
+            >
+              <option value="">All clients (full schedule)</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
         <div className="min-w-[11rem]">
           <Select
             value={locationFilter}
@@ -4411,6 +5286,37 @@ function FilterBar({
         </div>
         <div className="min-w-[10rem]">
           <Select
+            value={teamFilter}
+            onChange={(e) => setTeamFilter(e.target.value)}
+            size="sm"
+            aria-label="Filter by shift team"
+            disabled={!locationFilter}
+          >
+            <option value="">
+              {!locationFilter
+                ? 'Select a location first'
+                : teams.length === 0
+                  ? 'No shifts defined here'
+                  : 'All associates'}
+            </option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+        {onManageTeams && locationFilter && (
+          <button
+            type="button"
+            onClick={onManageTeams}
+            className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2"
+          >
+            Shift teams…
+          </button>
+        )}
+        <div className="min-w-[10rem]">
+          <Select
             value={posFilter}
             onChange={(e) => setPosFilter(e.target.value)}
             size="sm"
@@ -4432,16 +5338,19 @@ function FilterBar({
             type="button"
             onClick={() => {
               setPosFilter('');
-              setClientFilter('');
+              // A bounded viewer's client can't be cleared — only widened
+              // filters below it reset.
+              if (!boundedClient) setClientFilter('');
               setLocationFilter('');
+              setTeamFilter('');
             }}
-            className="text-[10px] text-silver/70 hover:text-gold underline underline-offset-2 ml-1"
+            className="text-2xs text-silver/70 hover:text-gold underline underline-offset-2 ml-1"
           >
             Clear
           </button>
         )}
         {showAssociateToggle && (
-          <label className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-silver cursor-pointer">
+          <label className="ml-auto inline-flex items-center gap-1.5 text-xs2 text-silver cursor-pointer">
             <input
               type="checkbox"
               checked={showAllAssociates}

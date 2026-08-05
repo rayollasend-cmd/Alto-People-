@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AlertTriangle,
   CheckCircle2,
   Circle,
   Clock,
@@ -10,15 +11,18 @@ import {
   FileDown,
   MailCheck,
   MailWarning,
+  ExternalLink,
   MinusCircle,
   PartyPopper,
   Send,
+  ShieldCheck,
   Sparkles,
   ThumbsDown,
   ThumbsUp,
   UserCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { fmtDate, fmtWeekdayTz, parseYmd } from '@/lib/format';
 import {
   hasCapability,
   type ApplicationDetail as ApplicationDetailType,
@@ -35,6 +39,11 @@ import {
   resendInvite,
   skipTask,
 } from '@/lib/onboardingApi';
+import {
+  getI9Status,
+  listI9Documents,
+  type I9DocumentListItem,
+} from '@/lib/i9Api';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { ProgressBar } from '@/components/ProgressBar';
@@ -68,6 +77,12 @@ const EMPLOYMENT_LABEL: Record<string, string> = {
   W2_EMPLOYEE: 'W-2',
   CONTRACTOR_1099_INDIVIDUAL: '1099 (Individual)',
   CONTRACTOR_1099_BUSINESS: '1099 (Business)',
+};
+
+const TRACK_LABEL: Record<string, string> = {
+  STANDARD: 'Standard',
+  J1: 'J-1',
+  CLIENT_SPECIFIC: 'Client-specific',
 };
 
 const TASK_LABEL: Record<string, string> = {
@@ -128,6 +143,10 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
   const queryClient = useQueryClient();
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [approveOpen, setApproveOpen] = useState(false);
+  // Non-null once the approve endpoint answered 409 `approval_warnings`.
+  // The dialog stays open, lists the gaps, and relabels its confirm button
+  // "Approve anyway" (which resubmits with acknowledgeWarnings: true).
+  const [approveWarnings, setApproveWarnings] = useState<string[] | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
   // Ceremony screen surfaced after a successful approval. Captures the
   // hire date so the celebration can show it; cleared when the user
@@ -203,39 +222,53 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
       const res = await resendInvite(detail.id);
       if (res.inviteUrl) {
         await navigator.clipboard.writeText(res.inviteUrl).catch(() => {});
-        toast.success('Fresh invite link copied', {
-          description: 'Email is stubbed — paste the link in Slack / a manual email.',
+        toast.success('Fresh invite link copied.', {
+          description: 'Email is stubbed — paste the link in Slack or a manual email.',
           icon: <Copy className="h-4 w-4" />,
         });
       } else {
-        toast.success('Fresh invite emailed');
+        toast.success('Fresh invite emailed.');
       }
     } catch (err) {
       if (err instanceof ApiError && err.code === 'user_already_active') {
-        toast.message('Already accepted', {
+        toast.message('Invite already accepted.', {
           description: 'This associate has already set their password.',
         });
         return;
       }
-      toast.error('Could not resend', {
+      toast.error('Could not resend the invite.', {
         description: err instanceof Error ? err.message : String(err),
       });
     }
   };
 
-  const handleApprove = async (hireDate: string) => {
+  const handleApprove = async (hireDate: string, acknowledgeWarnings: boolean) => {
     try {
-      await approveApplication(detail.id, { hireDate });
+      // Widened variable (not a fresh literal) so the extra optional flag is
+      // structurally assignable to the client fn's `{ hireDate }` parameter —
+      // the API contract (ApproveApplicationInputSchema) accepts it.
+      const body: { hireDate: string; acknowledgeWarnings?: boolean } = {
+        hireDate,
+      };
+      if (acknowledgeWarnings) body.acknowledgeWarnings = true;
+      await approveApplication(detail.id, body);
       setApproveOpen(false);
+      setApproveWarnings(null);
       await refresh();
       // Skip the toast — open the celebration instead. The "hire is real"
       // moment is the most consequential surface in the onboarding flow
       // and deserves a ceremony, not a passing notification.
       setCelebration({ hireDate });
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'approval_warnings') {
+        // Not a failure toast — surface the gaps inside the dialog so the
+        // admin can read them and either cancel or approve anyway.
+        setApproveWarnings(extractApprovalWarnings(err.details));
+        return;
+      }
       const msg =
         err instanceof ApiError ? err.message : 'Could not approve.';
-      toast.error('Approval failed', { description: msg });
+      toast.error('Approval failed.', { description: msg });
     }
   };
 
@@ -243,14 +276,14 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
     if (!reason) return;
     try {
       await rejectApplication(detail.id, { reason });
-      toast.success('Application rejected', {
+      toast.success('Application rejected.', {
         icon: <ThumbsDown className="h-4 w-4" />,
       });
       setRejectOpen(false);
       await refresh();
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Could not reject.';
-      toast.error('Rejection failed', { description: msg });
+      toast.error('Rejection failed.', { description: msg });
     }
   };
 
@@ -269,7 +302,17 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="min-w-0">
               <h1 className="font-display text-3xl md:text-4xl text-white mb-2 leading-tight">
-                {detail.associateName}
+                {canManage ? (
+                  <Link
+                    to={`/people?associateId=${detail.associateId}`}
+                    className="hover:text-gold transition-colors"
+                    title="Open this associate's profile"
+                  >
+                    {detail.associateName}
+                  </Link>
+                ) : (
+                  detail.associateName
+                )}
               </h1>
               <DetailMeta detail={detail} />
             </div>
@@ -325,7 +368,7 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
         </CardHeader>
         <CardContent className="pt-2">
           <ProgressBar percent={detail.percentComplete} hideLabel />
-          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-[11px]">
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs2">
             <CountChip
               icon={CheckCircle2}
               label="Done"
@@ -372,17 +415,40 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
             task={t}
             canSkip={canManage && STUB_KINDS.has(t.kind)}
             onSkip={() => handleSkip(t)}
+            // Destinations are admin surfaces (People directory, Compliance)
+            // that invite-scoped roles can't open — no dead links for them.
+            destination={canManage ? taskDestination(t.kind, detail.associateId) : null}
           />
         ))}
       </section>
 
-      <section className="mb-6">
-        <EsignSection
-          applicationId={detail.id}
-          canManage={canManage}
-          esignTasks={detail.tasks.filter((t) => t.kind === 'E_SIGN')}
-        />
-      </section>
+      {/* I-9 Section 1 data and the uploaded identity documents behind it are
+          HR-only — invite-scoped roles (SHIFT_SUPERVISOR) see checklist
+          progress, never the documents. The API enforces the same boundary in
+          assertCanModifyApplication; this just avoids rendering a card that
+          would only 403. */}
+      {canManage && detail.tasks.some((t) => t.kind === 'I9_VERIFICATION') && (
+        <section className="mb-6">
+          <I9Card
+            applicationId={detail.id}
+            startDate={detail.startDate}
+            associateId={detail.associateId}
+          />
+        </section>
+      )}
+
+      {/* Same reasoning — EsignSection loads signed agreement bodies on mount,
+          which are now gated server-side. */}
+      {canManage && (
+        <section className="mb-6">
+          <EsignSection
+            applicationId={detail.id}
+            canManage={canManage}
+            esignTasks={detail.tasks.filter((t) => t.kind === 'E_SIGN')}
+            associateId={detail.associateId}
+          />
+        </section>
+      )}
 
       {canManage && (
         <Card>
@@ -408,8 +474,14 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
 
       <ApproveDialog
         open={approveOpen}
-        onOpenChange={setApproveOpen}
+        onOpenChange={(o) => {
+          setApproveOpen(o);
+          // Cancel / close discards the warning state — reopening starts a
+          // fresh attempt (the server re-checks and re-issues if still true).
+          if (!o) setApproveWarnings(null);
+        }}
         defaultDate={detail.startDate ? detail.startDate.slice(0, 10) : null}
+        warnings={approveWarnings}
         onConfirm={handleApprove}
       />
       <ApprovedCelebration
@@ -449,8 +521,17 @@ function DetailMeta({ detail }: { detail: ApplicationDetailType }) {
           <span>{detail.position}</span>
         </>
       )}
-      <Badge variant="outline" className="text-[10px]">
-        {detail.onboardingTrack} TRACK
+      {detail.startDate && (
+        <>
+          <span className="text-silver/70">·</span>
+          <span>
+            Starts{' '}
+            <span className="text-white">{fmtDateLabel(detail.startDate)}</span>
+          </span>
+        </>
+      )}
+      <Badge variant="outline" className="text-2xs">
+        {TRACK_LABEL[detail.onboardingTrack] ?? detail.onboardingTrack} track
       </Badge>
       <Badge
         variant={detail.employmentType === 'W2_EMPLOYEE' ? 'default' : 'accent'}
@@ -555,16 +636,36 @@ function DetailActions({
   );
 }
 
+/**
+ * Best-effort extraction of `details.warnings: string[]` from the 409
+ * `approval_warnings` error envelope. Falls back to a generic line so the
+ * dialog never shows an empty alert box if the payload shape drifts.
+ */
+function extractApprovalWarnings(details: unknown): string[] {
+  if (details && typeof details === 'object' && 'warnings' in details) {
+    const w = (details as { warnings?: unknown }).warnings;
+    if (Array.isArray(w)) {
+      const lines = w.filter((x): x is string => typeof x === 'string');
+      if (lines.length > 0) return lines;
+    }
+  }
+  return ['This application has unresolved verification gaps.'];
+}
+
 function ApproveDialog({
   open,
   onOpenChange,
   defaultDate,
+  warnings,
   onConfirm,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultDate: string | null;
-  onConfirm: (hireDate: string) => Promise<void>;
+  /** Non-null after a 409 `approval_warnings` — switches the dialog into
+   *  "Approve anyway" mode. */
+  warnings: string[] | null;
+  onConfirm: (hireDate: string, acknowledgeWarnings: boolean) => Promise<void>;
 }) {
   const today = new Date().toISOString().slice(0, 10);
   const [hireDate, setHireDate] = useState(defaultDate ?? today);
@@ -581,7 +682,9 @@ function ApproveDialog({
     if (submitting || !hireDate) return;
     setSubmitting(true);
     try {
-      await onConfirm(hireDate);
+      // Once warnings are on screen, resubmitting means the admin has read
+      // and accepted them.
+      await onConfirm(hireDate, warnings !== null);
     } finally {
       setSubmitting(false);
     }
@@ -607,6 +710,26 @@ function ApproveDialog({
               />
             )}
           </Field>
+          {warnings && (
+            <div
+              role="alert"
+              className="rounded-md border border-alert/40 bg-alert/[0.07] px-3 py-2.5 text-sm"
+            >
+              <div className="flex items-center gap-2 text-alert font-medium">
+                <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
+                Verification gaps found
+              </div>
+              <ul className="mt-1.5 space-y-1 text-xs text-alert/90 list-disc pl-5">
+                {warnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-xs text-silver leading-relaxed">
+                Cancel to resolve these first, or approve anyway to activate
+                the hire despite them.
+              </p>
+            </div>
+          )}
           <DialogFooter>
             <Button
               type="button"
@@ -618,7 +741,7 @@ function ApproveDialog({
             </Button>
             <Button type="submit" loading={submitting} disabled={!hireDate}>
               <ThumbsUp className="h-4 w-4" />
-              Approve
+              {warnings ? 'Approve anyway' : 'Approve'}
             </Button>
           </DialogFooter>
         </form>
@@ -667,13 +790,11 @@ function ApprovedCelebration({
   totalTasks: number;
 }) {
   const navigate = useNavigate();
-  const hireDateLabel = hireDate
-    ? new Date(`${hireDate}T00:00:00`).toLocaleDateString('en-US', {
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric',
-      })
+  // parseYmd → local midnight, so the label can't shift a day across
+  // timezones; weekday + fmtDate keeps the ceremony copy on-system.
+  const hireDateParsed = hireDate ? parseYmd(hireDate.slice(0, 10)) : null;
+  const hireDateLabel = hireDateParsed
+    ? `${fmtWeekdayTz(hireDateParsed)}, ${fmtDate(hireDateParsed)}`
     : '';
 
   return (
@@ -685,7 +806,7 @@ function ApprovedCelebration({
             className="absolute -top-8 -right-8 h-32 w-32 rounded-full bg-success/15 blur-2xl"
           />
           <div className="relative">
-            <div className="inline-flex items-center gap-2 text-[10px] uppercase tracking-widest text-success">
+            <div className="inline-flex items-center gap-2 text-2xs uppercase tracking-widest text-success">
               <PartyPopper className="h-3 w-3" aria-hidden="true" />
               Hired
             </div>
@@ -705,7 +826,7 @@ function ApprovedCelebration({
 
             <div className="mt-6 rounded-md border border-navy-secondary bg-navy/60 p-4">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-[10px] uppercase tracking-widest text-silver">
+                <div className="text-2xs uppercase tracking-widest text-silver">
                   Onboarding checklist
                 </div>
                 <div className="text-xs text-silver tabular-nums">
@@ -796,6 +917,8 @@ interface TaskTileProps {
   task: ChecklistTask;
   canSkip: boolean;
   onSkip: () => void;
+  /** Deep link to where this task's full record lives (null = no link). */
+  destination: { to: string; label: string } | null;
 }
 
 const STATUS_TONE: Record<
@@ -857,7 +980,42 @@ const STATUS_TONE: Record<
   },
 };
 
-function TaskTile({ task, canSkip, onSkip }: TaskTileProps) {
+/**
+ * Where each checklist task's FULL record lives. The tiles used to be dead
+ * ends — seeing the I-9 meant menu → Compliance → I-9 → find the person
+ * again. Every destination is a deep link that lands with the person open.
+ */
+function taskDestination(
+  kind: string,
+  associateId: string,
+): { to: string; label: string } | null {
+  switch (kind) {
+    case 'PROFILE_INFO':
+    case 'DIRECT_DEPOSIT':
+      return { to: `/people?associateId=${associateId}`, label: 'Open profile' };
+    case 'DOCUMENT_UPLOAD':
+    case 'W4':
+    case 'POLICY_ACK':
+    case 'E_SIGN':
+      return {
+        to: `/people?associateId=${associateId}&tab=documents`,
+        label: 'Open document vault',
+      };
+    case 'I9_VERIFICATION':
+      return {
+        to: `/compliance?tab=i9&associateId=${associateId}`,
+        label: 'Open I-9 in Compliance',
+      };
+    case 'BACKGROUND_CHECK':
+      return { to: '/compliance?tab=background', label: 'Open background checks' };
+    case 'J1_DOCS':
+      return { to: '/compliance?tab=j1', label: 'Open J-1 program' };
+    default:
+      return null;
+  }
+}
+
+function TaskTile({ task, canSkip, onSkip, destination }: TaskTileProps) {
   const tone = STATUS_TONE[task.status] ?? STATUS_TONE.PENDING;
   const Icon = tone.icon;
   const isComplete = task.status === 'DONE' || task.status === 'SKIPPED';
@@ -879,7 +1037,7 @@ function TaskTile({ task, canSkip, onSkip }: TaskTileProps) {
             </div>
             <span
               className={cn(
-                'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0',
+                'text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0',
                 tone.badgeBg,
                 tone.badgeText
               )}
@@ -893,6 +1051,15 @@ function TaskTile({ task, canSkip, onSkip }: TaskTileProps) {
               {task.description}
             </div>
           )}
+          {destination && (
+            <Link
+              to={destination.to}
+              className="mt-2 inline-flex items-center gap-1 text-xs text-gold hover:underline"
+            >
+              {destination.label}
+              <ExternalLink className="h-3 w-3" aria-hidden />
+            </Link>
+          )}
         </div>
         {canSkip && !isComplete && (
           <Button size="sm" variant="outline" onClick={onSkip} className="shrink-0">
@@ -901,6 +1068,246 @@ function TaskTile({ task, canSkip, onSkip }: TaskTileProps) {
         )}
       </div>
     </div>
+  );
+}
+
+/* ===== I-9 employment verification card =================================== */
+
+/** Parse the date part of an ISO string as local midnight (avoids the UTC
+ *  off-by-one you get from `new Date('YYYY-MM-DD')`). */
+function parseDateOnly(iso: string): Date {
+  return new Date(`${iso.slice(0, 10)}T00:00:00`);
+}
+
+function fmtDateLabel(iso: string | Date): string {
+  // Date-only strings parse at LOCAL midnight first so the label can't
+  // shift a day across timezones; fmtDate keeps rendering consistent.
+  const d = typeof iso === 'string' ? parseDateOnly(iso) : iso;
+  return fmtDate(d);
+}
+
+/** Federal I-9 rule: Section 2 is due within 3 business days (Mon–Fri) of
+ *  the start date. Holidays are not modeled — matches the server. */
+function addBusinessDays(start: Date, days: number): Date {
+  const d = new Date(start);
+  let added = 0;
+  while (added < days) {
+    d.setDate(d.getDate() + 1);
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) added += 1;
+  }
+  return d;
+}
+
+const I9_DOC_STATUS_VARIANT: Record<
+  I9DocumentListItem['status'],
+  'success' | 'pending' | 'destructive' | 'default'
+> = {
+  VERIFIED: 'success',
+  UPLOADED: 'pending',
+  PENDING: 'default',
+  REJECTED: 'destructive',
+  EXPIRED: 'destructive',
+};
+
+const I9_DOC_STATUS_LABEL: Record<I9DocumentListItem['status'], string> = {
+  VERIFIED: 'Verified',
+  UPLOADED: 'Awaiting review',
+  PENDING: 'Pending',
+  REJECTED: 'Rejected',
+  EXPIRED: 'Expired',
+};
+
+const I9_DOC_KIND_LABEL: Record<string, string> = {
+  ID: 'Photo ID',
+  SSN_CARD: 'Social Security card',
+  I9_SUPPORTING: 'I-9 supporting document',
+  J1_VISA: 'J-1 visa',
+  J1_DS2019: 'DS-2019',
+};
+
+function I9StepIcon({ done }: { done: boolean }) {
+  return done ? (
+    <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-success" aria-hidden />
+  ) : (
+    <Circle className="h-4 w-4 mt-0.5 shrink-0 text-silver/70" aria-hidden />
+  );
+}
+
+function I9Card({
+  applicationId,
+  startDate,
+  associateId,
+}: {
+  applicationId: string;
+  startDate: string | null;
+  /** Powers the "Open in Compliance" deep link to this person's I-9. */
+  associateId: string;
+}) {
+  // Keyed under ['application', id, …] so the parent's prefix-match
+  // invalidation (after skip/approve) refreshes these too.
+  const statusQuery = useQuery({
+    queryKey: ['application', applicationId, 'i9', 'status'],
+    queryFn: () => getI9Status(applicationId),
+    retry: false,
+  });
+  const docsQuery = useQuery({
+    queryKey: ['application', applicationId, 'i9', 'documents'],
+    queryFn: async () => (await listI9Documents(applicationId)).documents,
+    retry: false,
+  });
+
+  const failed = statusQuery.isError || docsQuery.isError;
+  const loading = statusQuery.isPending || docsQuery.isPending;
+  const status = statusQuery.data ?? null;
+  const docs = docsQuery.data ?? [];
+
+  // Section 2 deadline: startDate + 3 business days. Only meaningful while
+  // Section 2 is incomplete and a start date exists.
+  const deadline = startDate
+    ? addBusinessDays(parseDateOnly(startDate), 3)
+    : null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const daysLeft = deadline
+    ? Math.round((deadline.getTime() - today.getTime()) / ONE_DAY_MS)
+    : null;
+  const deadlineCx =
+    daysLeft !== null && daysLeft < 0
+      ? 'text-alert'
+      : daysLeft !== null && daysLeft <= 2
+        ? 'text-warning'
+        : 'text-silver';
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 text-gold" aria-hidden />
+            I-9 employment verification
+          </CardTitle>
+          <Link
+            to={`/compliance?tab=i9&associateId=${associateId}`}
+            className="inline-flex items-center gap-1 text-xs text-gold hover:underline"
+          >
+            Open in Compliance
+            <ExternalLink className="h-3 w-3" aria-hidden />
+          </Link>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {failed ? (
+          <ErrorBanner
+            action={
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  void statusQuery.refetch();
+                  void docsQuery.refetch();
+                }}
+              >
+                Retry
+              </Button>
+            }
+          >
+            Couldn't load I-9 status.
+          </ErrorBanner>
+        ) : loading ? (
+          <div className="space-y-2">
+            <Skeleton className="h-5 w-56" />
+            <Skeleton className="h-5 w-72" />
+            <Skeleton className="h-5 w-64" />
+          </div>
+        ) : (
+          <div className="space-y-4 text-sm">
+            {/* Section 1 — employee attestation */}
+            <div className="flex items-start gap-2">
+              <I9StepIcon done={!!status?.section1} />
+              <div>
+                <span className="text-white">Section 1 (employee)</span>{' '}
+                {status?.section1 ? (
+                  <span className="text-silver">
+                    — completed {fmtDateLabel(status.section1.completedAt)}
+                  </span>
+                ) : (
+                  <span className="text-silver">— pending</span>
+                )}
+              </div>
+            </div>
+
+            {/* Documents */}
+            <div>
+              <div className="flex items-start gap-2">
+                <I9StepIcon done={docs.length > 0} />
+                <div>
+                  <span className="text-white">Documents submitted</span>{' '}
+                  <span className="text-silver tabular-nums">
+                    — {docs.length === 0 ? 'none yet' : docs.length}
+                  </span>
+                </div>
+              </div>
+              {docs.length > 0 && (
+                <ul className="mt-2 ml-6 space-y-1.5">
+                  {docs.map((d) => (
+                    <li
+                      key={d.id}
+                      className="flex items-center gap-2 flex-wrap text-xs"
+                    >
+                      <span className="text-white truncate max-w-[16rem]">
+                        {d.filename}
+                      </span>
+                      <span className="text-2xs uppercase tracking-wider text-silver/70">
+                        {d.i9DocTitle ?? I9_DOC_KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' ')}
+                        {d.i9List ? ` · List ${d.i9List}` : ''}
+                        {d.side
+                          ? ` · ${d.side === 'FRONT' ? 'Front' : 'Back'}`
+                          : ''}
+                      </span>
+                      <Badge size="sm" variant={I9_DOC_STATUS_VARIANT[d.status]}>
+                        {I9_DOC_STATUS_LABEL[d.status] ?? d.status}
+                      </Badge>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* Section 2 — employer verification */}
+            <div className="flex items-start gap-2">
+              <I9StepIcon done={!!status?.section2} />
+              <div className="min-w-0">
+                <span className="text-white">Section 2 (employer)</span>{' '}
+                {status?.section2 ? (
+                  <span className="text-silver">
+                    — completed {fmtDateLabel(status.section2.completedAt)}
+                    {status.section2.verifierEmail
+                      ? ` by ${status.section2.verifierEmail}`
+                      : ''}
+                  </span>
+                ) : (
+                  <span className="text-silver">— incomplete</span>
+                )}
+                {!status?.section2 && deadline && (
+                  <div className={cn('mt-0.5 text-xs', deadlineCx)}>
+                    Due {fmtDateLabel(deadline)} (start date + 3 business days)
+                    {daysLeft !== null && daysLeft < 0 ? ' — past due' : ''}
+                  </div>
+                )}
+                {!status?.section2 && (
+                  <div className="mt-2">
+                    <Button asChild variant="outline" size="sm">
+                      <Link to="/compliance">Open Section 2 verifier</Link>
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -9,6 +9,7 @@ import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { decryptString, encryptString } from '../lib/crypto.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { send } from '../lib/notifications.js';
+import { notifyAllAdmins } from '../lib/notify.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 
 /**
@@ -459,6 +460,8 @@ selfServiceRouter.get('/me/life-events', async (req, res) => {
 selfServiceRouter.post('/me/life-events', async (req, res) => {
   const associateId = requireAssociate(req);
   const input = LifeEventInputSchema.parse(req.body);
+  // include the associate's name — one joined read is cheaper than a
+  // follow-up query, and admins shouldn't get a bare UUID in their inbox.
   const created = await prisma.lifeEvent.create({
     data: {
       associateId,
@@ -466,6 +469,21 @@ selfServiceRouter.post('/me/life-events', async (req, res) => {
       eventDate: new Date(input.eventDate),
       notes: input.notes ?? null,
     },
+    include: {
+      associate: { select: { firstName: true, lastName: true } },
+    },
+  });
+  // Fire-and-forget after the write — life events gate benefits windows
+  // (30-day qualifying-event clock), so HR needs a nudge, but a
+  // notification hiccup must never fail the associate's submission.
+  const who = created.associate
+    ? `${created.associate.firstName} ${created.associate.lastName}`
+    : associateId;
+  void notifyAllAdmins({
+    subject: `Life event reported: ${input.kind.replace(/_/g, ' ')}`,
+    body: `${who} reported ${input.kind} effective ${input.eventDate} — review benefits eligibility.`,
+    category: 'benefits',
+    linkUrl: '/people',
   });
   // Fire workflow: associate hired isn't relevant; this is informational
   // for HR. We use ASSOCIATE_HIRED-style channel? No — there's no
@@ -605,16 +623,14 @@ selfServiceRouter.post('/me/w4', async (req, res) => {
   const id = requireAssociate(req);
   const input = W4UpdateSchema.parse(req.body ?? {});
   const existing = await prisma.w4Submission.findUnique({ where: { associateId: id } });
-  if (!existing) {
-    throw new HttpError(
-      409,
-      'no_w4',
-      'No W-4 on file — the onboarding W-4 (with SSN) must be completed first.',
-    );
-  }
-  await prisma.w4Submission.update({
+  // First-time election set is allowed: an associate hired before the
+  // onboarding W-4 flow existed (or whose flow was skipped) was previously
+  // stuck being withheld at defaults with a 409 dead end. `ssnEncrypted`
+  // stays null on this path — HR captures it via onboarding/HR tooling;
+  // the election fields alone are what payroll math needs.
+  await prisma.w4Submission.upsert({
     where: { associateId: id },
-    data: {
+    update: {
       filingStatus: input.filingStatus,
       ...(input.multipleJobs !== undefined ? { multipleJobs: input.multipleJobs } : {}),
       ...(input.dependentsAmount !== undefined ? { dependentsAmount: input.dependentsAmount } : {}),
@@ -623,16 +639,26 @@ selfServiceRouter.post('/me/w4', async (req, res) => {
       ...(input.extraWithholding !== undefined ? { extraWithholding: input.extraWithholding } : {}),
       signedAt: new Date(),
     },
+    create: {
+      associateId: id,
+      filingStatus: input.filingStatus,
+      multipleJobs: input.multipleJobs ?? false,
+      dependentsAmount: input.dependentsAmount ?? 0,
+      otherIncome: input.otherIncome ?? 0,
+      deductions: input.deductions ?? 0,
+      extraWithholding: input.extraWithholding ?? 0,
+      signedAt: new Date(),
+    },
   });
   enqueueAudit(
     {
       actorUserId: req.user!.id,
-      action: 'self.w4_updated',
+      action: existing ? 'self.w4_updated' : 'self.w4_created',
       entityType: 'Associate',
       entityId: id,
       metadata: { fields: Object.keys(input) },
     },
-    'self.w4_updated',
+    existing ? 'self.w4_updated' : 'self.w4_created',
   );
   res.json({ ok: true, effectiveNote: 'Applies from the next payroll run.' });
 });
@@ -652,6 +678,7 @@ const PayoutUpdateSchema = z.object({
   routingNumber: z.string().regex(/^\d{9}$/),
   accountNumber: z.string().regex(/^\d{4,17}$/),
   accountType: z.enum(['CHECKING', 'SAVINGS']),
+  bankName: z.string().trim().min(1).max(120).optional(),
 });
 
 selfServiceRouter.get('/me/payout-method', async (req, res) => {
@@ -668,6 +695,7 @@ selfServiceRouter.get('/me/payout-method', async (req, res) => {
     method: {
       type: pm.type,
       accountType: pm.accountType,
+      bankName: pm.bankName,
       accountLast4: account ? account.slice(-4) : null,
       branchCard: pm.branchCardId !== null,
       verifiedAt: pm.verifiedAt?.toISOString() ?? null,
@@ -701,6 +729,10 @@ selfServiceRouter.post('/me/payout-method', async (req, res) => {
     routingNumberEnc: encryptString(input.routingNumber),
     accountNumberEnc: encryptString(input.accountNumber),
     accountType: input.accountType,
+    // This replaces the whole account, so a bank name carried over from the
+    // previous one would name the wrong institution on the payroll file.
+    // Take the new value, or clear it.
+    bankName: input.bankName ?? null,
     verifiedAt: null,
     isPrimary: true,
   };

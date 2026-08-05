@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { CheckCircle2, Plus, Target, Trash2, XCircle } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { CheckCircle2, Download, Plus, Target, Trash2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -29,13 +29,16 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
   SkeletonRows,
   Textarea,
 } from '@/components/ui';
-import { fmtDate } from '@/lib/format';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
+import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
 import { Label } from '@/components/ui/Label';
 
 const STATUS_VARIANT: Record<
@@ -52,18 +55,52 @@ export function RampHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
   const [rows, setRows] = useState<RampPlanRow[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null); // associateId
   const [showNew, setShowNew] = useState(false);
+  const [search, setSearch] = useState('');
+  const [missedOnly, setMissedOnly] = useState(false);
 
   const refresh = () => {
     setRows(null);
+    setLoadError(null);
     listRampPlans()
       .then((r) => setRows(r.plans))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setLoadError(
+          err instanceof ApiError ? err.message : 'Failed to load ramp plans.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
   }, []);
+
+  const filtered = useMemo(() => {
+    if (!rows) return null;
+    const q = search.trim().toLowerCase();
+    return rows.filter(
+      (p) =>
+        (!q || p.associateName.toLowerCase().includes(q)) &&
+        (!missedOnly || p.missed > 0),
+    );
+  }, [rows, search, missedOnly]);
+
+  const onExportCsv = () => {
+    if (!filtered) return;
+    downloadCsv(`ramp-plans-${ymdLocal()}.csv`, [
+      ['Associate', 'Email', 'Start date', 'Manager email', 'Milestones', 'Achieved', 'Missed'],
+      ...filtered.map((p) => [
+        p.associateName,
+        p.associateEmail,
+        p.startDate,
+        p.managerEmail ?? '',
+        p.total,
+        p.achieved,
+        p.missed,
+      ]),
+    ]);
+  };
 
   return (
     <div className="space-y-5">
@@ -73,33 +110,77 @@ export function RampHome() {
         breadcrumbs={[{ label: 'Workforce' }, { label: 'Ramp plans' }]}
       />
 
-      {canManage && (
-        <div className="flex justify-end">
+      <div className="flex flex-wrap items-center gap-2 justify-end">
+        <Input
+          placeholder="Search by name…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="max-w-xs"
+          aria-label="Search plans by associate name"
+        />
+        <Button
+          size="sm"
+          variant={missedOnly ? 'secondary' : 'ghost'}
+          aria-pressed={missedOnly}
+          onClick={() => setMissedOnly((v) => !v)}
+        >
+          Has missed milestones
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onExportCsv}
+          disabled={!filtered || filtered.length === 0}
+        >
+          <Download className="mr-2 h-4 w-4" /> Export CSV
+        </Button>
+        {canManage && (
           <Button onClick={() => setShowNew(true)}>
             <Plus className="mr-2 h-4 w-4" /> New ramp plan
           </Button>
-        </div>
-      )}
+        )}
+      </div>
 
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {loadError}
+              </ErrorBanner>
+            </div>
+          ) : filtered === null ? (
             <div className="p-6">
               <SkeletonRows count={3} />
             </div>
-          ) : rows.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <EmptyState
               icon={Target}
-              title="No active plans"
+              title={rows && rows.length > 0 ? 'No matches' : 'No active plans'}
               description={
-                canManage
-                  ? "Start a ramp plan when a new hire's first day is scheduled."
-                  : "Your manager hasn't set one up yet."
+                rows && rows.length > 0
+                  ? 'No plan matches the current search or filter.'
+                  : canManage
+                    ? "Start a ramp plan when a new hire's first day is scheduled."
+                    : "Your manager hasn't set one up yet."
+              }
+              action={
+                canManage && (!rows || rows.length === 0) ? (
+                  <Button onClick={() => setShowNew(true)}>
+                    <Plus className="mr-2 h-4 w-4" /> New ramp plan
+                  </Button>
+                ) : undefined
               }
             />
           ) : (
             <div className="divide-y divide-navy-secondary">
-              {rows.map((p) => {
+              {filtered.map((p) => {
                 const pct = p.total === 0 ? 0 : Math.round((p.achieved / p.total) * 100);
                 return (
                   <button
@@ -113,7 +194,7 @@ export function RampHome() {
                         {p.associateName}
                       </div>
                       <div className="text-xs text-silver">
-                        Started {p.startDate}
+                        Started {fmtDate(parseYmd(p.startDate))}
                         {p.managerEmail && ` · Manager ${p.managerEmail}`}
                       </div>
                     </div>
@@ -173,29 +254,29 @@ function NewPlanDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
-  const [startDate, setStartDate] = useState(
-    new Date().toISOString().slice(0, 10),
-  );
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
+  const [startDate, setStartDate] = useState(ymdLocal());
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
-    if (!associateId.trim()) {
-      toast.error('Associate ID required.');
+    if (!associate) {
+      toast.error('Pick an associate.');
       return;
     }
     setSaving(true);
     try {
       await createRampPlan({
-        associateId: associateId.trim(),
+        associateId: associate.id,
         startDate,
         notes: notes.trim() || null,
       });
       toast.success('Ramp plan created with 30/60/90 milestones.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not create the plan.',
+      );
     } finally {
       setSaving(false);
     }
@@ -208,12 +289,10 @@ function NewPlanDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={associate} onChange={setAssociate} />
+          </div>
         </div>
         <div>
           <Label>Start date</Label>
@@ -259,14 +338,21 @@ function PlanDetailDrawer({
   onClose: () => void;
 }) {
   const confirm = useConfirm();
-  const [plan, setPlan] = useState<RampPlan | null>(null);
+  // undefined = loading; null = the associate has no active plan.
+  const [plan, setPlan] = useState<RampPlan | null | undefined>(undefined);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
 
   const refresh = () => {
-    setPlan(null);
+    setPlan(undefined);
+    setLoadError(null);
     getActivePlanForAssociate(associateId)
       .then((r) => setPlan(r.plan))
-      .catch(() => setPlan(null));
+      .catch((err) =>
+        setLoadError(
+          err instanceof ApiError ? err.message : 'Failed to load the plan.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
@@ -275,15 +361,29 @@ function PlanDetailDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>{plan?.associateName ?? 'Loading…'}</DrawerTitle>
+        <DrawerTitle>{plan?.associateName ?? 'Ramp plan'}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
-        {!plan ? (
+        {loadError ? (
+          <ErrorBanner
+            action={
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            }
+          >
+            {loadError}
+          </ErrorBanner>
+        ) : plan === undefined ? (
           <SkeletonRows count={3} />
+        ) : plan === null ? (
+          <div className="text-sm text-silver">
+            This associate has no active ramp plan.
+          </div>
         ) : (
           <>
             <div className="text-sm text-silver">
-              Started {plan.startDate}
+              Started {fmtDate(parseYmd(plan.startDate))}
               {plan.managerEmail && ` · Manager ${plan.managerEmail}`}
             </div>
             {plan.notes && (
@@ -323,16 +423,18 @@ function PlanDetailDrawer({
                           size="sm"
                           value={m.status}
                           onChange={async (e) => {
+                            const next = e.target.value as RampMilestoneStatus;
                             try {
-                              await updateMilestone(m.id, {
-                                status: e.target.value as RampMilestoneStatus,
-                              });
+                              await updateMilestone(m.id, { status: next });
+                              toast.success(
+                                `Milestone marked ${STATUS_LABELS[next]}.`,
+                              );
                               refresh();
                             } catch (err) {
                               toast.error(
                                 err instanceof ApiError
                                   ? err.message
-                                  : 'Failed.',
+                                  : 'Could not update the milestone.',
                               );
                             }
                           }}
@@ -356,12 +458,13 @@ function PlanDetailDrawer({
                             if (!(await confirm({ title: `Delete "${m.title}"?`, destructive: true }))) return;
                             try {
                               await deleteMilestone(m.id);
+                              toast.success('Milestone deleted.');
                               refresh();
                             } catch (err) {
                               toast.error(
                                 err instanceof ApiError
                                   ? err.message
-                                  : 'Failed.',
+                                  : 'Could not delete the milestone.',
                               );
                             }
                           }}
@@ -399,11 +502,13 @@ function PlanDetailDrawer({
                     if (!(await confirm({ title: 'Archive this plan?', destructive: true }))) return;
                     try {
                       await archiveRampPlan(plan.id);
-                      toast.success('Archived.');
+                      toast.success('Plan archived.');
                       onClose();
                     } catch (err) {
                       toast.error(
-                        err instanceof ApiError ? err.message : 'Failed.',
+                        err instanceof ApiError
+                          ? err.message
+                          : 'Could not archive the plan.',
                       );
                     }
                   }}
@@ -448,7 +553,7 @@ function AddMilestoneDrawer({
 
   const submit = async () => {
     if (!title.trim()) {
-      toast.error('Title required.');
+      toast.error('Title is required.');
       return;
     }
     setSaving(true);
@@ -461,7 +566,9 @@ function AddMilestoneDrawer({
       toast.success('Milestone added.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not add the milestone.',
+      );
     } finally {
       setSaving(false);
     }

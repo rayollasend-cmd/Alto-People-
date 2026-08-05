@@ -37,6 +37,30 @@ export const logger = pino({
   // Strip default `pid` and `hostname` — Railway already tags those at
   // the platform layer, and they add noise to every line.
   base: { service: 'alto-people-api' },
+  // Belt-and-braces redaction. Nothing deliberately logs a secret today,
+  // but this app handles SSNs, bank details and kiosk PINs — a single
+  // future `req.log.info({ body })` would otherwise ship them to the
+  // platform log drain, where they are effectively unrecallable.
+  redact: {
+    paths: [
+      'req.headers.cookie',
+      'req.headers.authorization',
+      'req.headers["x-api-key"]',
+      '*.password',
+      '*.passwordHash',
+      '*.ssn',
+      '*.ssnEncrypted',
+      '*.pin',
+      '*.pinHmac',
+      '*.accountNumber',
+      '*.routingNumber',
+      '*.deviceToken',
+      '*.token',
+      '*.secret',
+      '*.selfie',
+    ],
+    censor: '[redacted]',
+  },
 });
 
 /**

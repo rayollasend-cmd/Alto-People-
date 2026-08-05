@@ -1,5 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import type { ReactElement } from 'react';
+
+// The drawer header links to the associate's profile, so renders need a
+// Router context.
+const render = (ui: ReactElement) => rtlRender(<MemoryRouter>{ui}</MemoryRouter>);
 import userEvent from '@testing-library/user-event';
 import type { I9Verification } from '@alto-people/shared';
 
@@ -225,6 +231,10 @@ describe('<I9Tab> Section 2 verifier card', () => {
 
     const user = userEvent.setup();
     render(<I9Tab canManage={true} />);
+
+    // Filtering is client-side over the full list now — a completed row is
+    // hidden from the default Pending view, so switch chips first.
+    await user.click(await screen.findByRole('button', { name: /^complete$/i }));
 
     await openRowDrawer(user);
     // Legacy form contains "Section 1 complete" + "Section 2 complete" checkboxes.

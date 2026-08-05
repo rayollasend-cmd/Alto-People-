@@ -99,6 +99,19 @@ export const createBroadcast = (input: {
   costCenterId?: string | null;
   scheduledFor?: string | null;
 }) => apiFetch<{ id: string }>('/broadcasts', { method: 'POST', body: input });
+export const updateBroadcast = (
+  id: string,
+  input: Partial<{
+    title: string;
+    body: string;
+    channels: BroadcastChannel[];
+    clientId: string | null;
+    departmentId: string | null;
+    costCenterId: string | null;
+    scheduledFor: string | null;
+  }>,
+) =>
+  apiFetch<{ ok: true }>(`/broadcasts/${id}`, { method: 'PUT', body: input });
 export const sendBroadcast = (id: string) =>
   apiFetch<{ recipientCount: number }>(`/broadcasts/${id}/send`, {
     method: 'POST',

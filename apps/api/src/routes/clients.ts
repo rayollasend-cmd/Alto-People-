@@ -190,6 +190,25 @@ clientsRouter.post('/', MANAGE, async (req, res, next) => {
     } catch {
       // non-fatal
     }
+    // Every client gets a work site at birth, named after the client.
+    // Most clients ARE one store ("Walmart Front Beach"); with a sole site
+    // on record, invites auto-assign it, approval opens the assignment,
+    // and the associate's site is recorded from day one — no picker, no
+    // "not at this site" drift. Multi-store clients just add more sites,
+    // which flips the invite dialogs to an explicit picker. Best-effort
+    // for the same reason as positions: without it, invites simply fall
+    // back to the no-site behavior until an admin adds one.
+    try {
+      await prisma.location.create({
+        data: {
+          clientId: created.id,
+          name: created.name,
+          state: created.state,
+        },
+      });
+    } catch {
+      // non-fatal
+    }
     await auditClient(req, 'client.created', created.id, {
       name: created.name,
       status: created.status,
@@ -303,12 +322,28 @@ clientsRouter.get('/:id/locations', async (req, res, next) => {
       typeof req.query.includeInactive === 'string' &&
       req.query.includeInactive.toLowerCase() === 'true';
     const rows = await prisma.location.findMany({
+      take: 500,
       where: {
         clientId: client.id,
         deletedAt: null,
         ...(includeInactive ? {} : { isActive: true }),
       },
       orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
+      select: {
+        id: true,
+        clientId: true,
+        name: true,
+        addressLine1: true,
+        addressLine2: true,
+        city: true,
+        state: true,
+        zip: true,
+        latitude: true,
+        longitude: true,
+        geofenceRadiusMeters: true,
+        isActive: true,
+        timezone: true,
+      },
     });
     const locations: LocationSummary[] = rows.map((r) => ({
       id: r.id,

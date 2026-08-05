@@ -40,6 +40,9 @@ export interface MyApplicationRow {
   id: string;
   status: InternalApplicationStatus;
   coverLetter: string | null;
+  /** The hiring manager's decision note — shown to the applicant so a
+   *  REJECTED badge isn't a dead end. */
+  reviewerNotes: string | null;
   createdAt: string;
   posting: { id: string; title: string; location: string | null };
 }

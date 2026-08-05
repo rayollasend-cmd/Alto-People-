@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Clock,
   DollarSign,
+  Download,
   ExternalLink,
   GraduationCap,
   Info,
@@ -30,12 +31,12 @@ import {
   DrawerDescription,
   DrawerHeader,
   DrawerTitle,
+  ErrorBanner,
   Skeleton,
-  Tooltip,
-  TooltipContent,
   TooltipProvider,
-  TooltipTrigger,
 } from '@/components/ui';
+import { FilterChip } from '@/components/ui/FilterBar';
+import { downloadCsv } from '@/lib/csv';
 import type {
   ScorecardOnboardingSignal,
   ScorecardSeverity,
@@ -55,7 +56,8 @@ import type {
   ManualAttestationSignal,
 } from '@alto-people/shared';
 import { Input, Textarea, Label } from '@/components/ui';
-import { fmtDate } from '@/lib/format';
+import { downloadDocumentUrl } from '@/lib/documentsApi';
+import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { ApiError } from '@/lib/api';
@@ -230,7 +232,7 @@ function HeroStrip({
           </div>
 
           <div className="flex items-center gap-3 ml-auto">
-            <span className="text-[11px] text-silver tabular-nums">
+            <span className="text-xs2 text-silver tabular-nums">
               Updated {fmtTimeAgo(lastRefreshedAt)}
             </span>
             <Button size="sm" variant="outline" onClick={onRefresh} disabled={refreshing}>
@@ -261,7 +263,7 @@ function KpiNumber({
         {icon}
         {value}
       </div>
-      <div className="text-[10px] uppercase tracking-widest text-silver/80 mt-0.5">{label}</div>
+      <div className="text-2xs uppercase tracking-widest text-silver/80 mt-0.5">{label}</div>
     </div>
   );
 }
@@ -314,10 +316,10 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
             {/* Per-signal grid — wider on the right so labels breathe. */}
             <div className="space-y-1">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] uppercase tracking-widest text-silver/80">
+                <span className="text-2xs uppercase tracking-widest text-silver/80">
                   Per signal
                 </span>
-                <span className="text-[10px] text-silver/80 tabular-nums">
+                <span className="text-2xs text-silver/80 tabular-nums">
                   {data.activeAssociateCount} active
                 </span>
               </div>
@@ -335,10 +337,10 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
                       <span className="text-xs text-white truncate">{s.label}</span>
                     </ClauseTooltip>
                     <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-[11px] text-silver tabular-nums hidden sm:inline">
+                      <span className="text-xs2 text-silver tabular-nums hidden sm:inline">
                         {s.completedCount}/{total} ({pct}%)
                       </span>
-                      <span className="text-[11px] text-silver tabular-nums sm:hidden">
+                      <span className="text-xs2 text-silver tabular-nums sm:hidden">
                         {pct}%
                       </span>
                       <PctBar pct={pct} severity={pctSeverity(pct)} className="w-16 sm:w-24" />
@@ -372,11 +374,11 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
                     >
                       <div>
                         <div className="text-sm text-white">{m.associateName ?? '—'}</div>
-                        <div className="text-[10px] text-silver">{m.clientName ?? '—'}</div>
+                        <div className="text-2xs text-silver">{m.clientName ?? '—'}</div>
                       </div>
                       {m.associateId && (
                         <Link
-                          to={`/people?associate=${m.associateId}`}
+                          to={`/people?associateId=${m.associateId}`}
                           className="text-xs text-gold hover:underline flex items-center gap-1"
                         >
                           Open <ExternalLink className="h-3 w-3" />
@@ -385,7 +387,7 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
                     </li>
                   ))}
                   {drawerSignal && drawerSignal.missingCount > drawerSignal.missing.length && (
-                    <li className="text-[11px] text-silver/80 px-2 pt-1">
+                    <li className="text-xs2 text-silver/80 px-2 pt-1">
                       Showing {drawerSignal.missing.length} of {drawerSignal.missingCount}.
                     </li>
                   )}
@@ -439,7 +441,7 @@ function ExpirationsTile({ refreshEpoch }: { refreshEpoch: number }) {
             if (items.length === 0) return null;
             return (
               <div key={bucket} className="mb-2">
-                <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-1">
+                <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1">
                   {bucket === 'red' ? '0–30 days' : bucket === 'amber' ? '31–60 days' : '61–90 days'}
                 </div>
                 <ul className="space-y-1">
@@ -452,7 +454,7 @@ function ExpirationsTile({ refreshEpoch }: { refreshEpoch: number }) {
                     </li>
                   ))}
                   {items.length > 5 && (
-                    <li className="text-[10px] text-silver/80">+{items.length - 5} more</li>
+                    <li className="text-2xs text-silver/80">+{items.length - 5} more</li>
                   )}
                 </ul>
               </div>
@@ -460,7 +462,7 @@ function ExpirationsTile({ refreshEpoch }: { refreshEpoch: number }) {
           })}
           {signals.length > 0 && (
             <div className="mt-3 pt-3 border-t border-navy-secondary">
-              <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-1.5">
+              <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1.5">
                 Insurance attestations
               </div>
               <ul className="space-y-1.5">
@@ -509,7 +511,7 @@ function ShiftsTile({ refreshEpoch }: { refreshEpoch: number }) {
     >
       {data && (
         <div className="space-y-2">
-          <p className="text-[11px] text-silver">Window: last {data.windowDays} days</p>
+          <p className="text-xs2 text-silver">Window: last {data.windowDays} days</p>
           {data.signals.map((s) => (
             <div
               key={s.key}
@@ -529,7 +531,7 @@ function ShiftsTile({ refreshEpoch }: { refreshEpoch: number }) {
                   <PctBar pct={s.value} severity={liveSeverity(s.value, s.target ?? 0)} />
                 </div>
               ) : s.status === 'live' && s.value === null ? (
-                <span className="text-[11px] text-silver/80 shrink-0">No data in window</span>
+                <span className="text-xs2 text-silver/80 shrink-0">No data in window</span>
               ) : (
                 <Badge variant="outline" className="shrink-0">Coming soon</Badge>
               )}
@@ -573,7 +575,7 @@ function BillingTile({ refreshEpoch }: { refreshEpoch: number }) {
     >
       {data && (
         <>
-          <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-1">
+          <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1">
             Bill rates vs SOW
           </div>
           {mismatches.length === 0 ? (
@@ -594,13 +596,13 @@ function BillingTile({ refreshEpoch }: { refreshEpoch: number }) {
                 </li>
               ))}
               {mismatches.length > 6 && (
-                <li className="text-[10px] text-silver/80">+{mismatches.length - 6} more</li>
+                <li className="text-2xs text-silver/80">+{mismatches.length - 6} more</li>
               )}
             </ul>
           )}
           {signals.length > 0 && (
             <div className="mt-3 pt-3 border-t border-navy-secondary">
-              <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-1.5">
+              <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1.5">
                 Manual attestations
               </div>
               <ul className="space-y-1.5">
@@ -672,10 +674,9 @@ function AttestationRow({
         1,
         Math.floor((now.getTime() - due.getTime()) / (1000 * 60 * 60 * 24)),
       );
-      return `Overdue by ${days} day${days === 1 ? '' : 's'} (was due ${signal.dueDate})`;
+      return `Overdue by ${days} day${days === 1 ? '' : 's'} (was due ${fmtDate(parseYmd(signal.dueDate))})`;
     }
-    if (status === 'due_soon') return `Due ${signal.dueDate}`;
-    return `Due ${signal.dueDate}`;
+    return `Due ${fmtDate(parseYmd(signal.dueDate))}`;
   })();
 
   return (
@@ -700,6 +701,12 @@ function AttestationRow({
     </li>
   );
 }
+
+const OUTCOME_LABELS: Record<ManualAttestationOutcome, string> = {
+  YES: 'Yes',
+  NO: 'No',
+  NOT_APPLICABLE: 'N/A',
+};
 
 function AttestationDrawer({
   signal,
@@ -759,7 +766,12 @@ function AttestationDrawer({
             ? null
             : new Date(`${actionTakenAt}T12:00:00Z`).toISOString(),
         notes: notes.trim() || null,
-        evidenceDocumentId: null,
+        // Preserve any evidence already attached (e.g. via API/backfill)
+        // instead of nulling it out on every re-attestation. New-file
+        // upload is not offered here: POST /documents/admin/upload
+        // strictly requires an associateId, and these attestations are
+        // organization/client-scoped — they carry no associate subject.
+        evidenceDocumentId: signal.current?.evidenceDocumentId ?? null,
       });
       onSaved(r.signal);
     } catch (e) {
@@ -779,19 +791,20 @@ function AttestationDrawer({
         <div className="text-xs text-silver/80 mb-3">
           Period:{' '}
           <span className="text-white">
-            {signal.periodStart} → {signal.periodEnd}
+            {fmtDate(parseYmd(signal.periodStart))} →{' '}
+            {fmtDate(parseYmd(signal.periodEnd))}
           </span>{' '}
-          · due {signal.dueDate}
+          · due {fmtDate(parseYmd(signal.dueDate))}
         </div>
 
         {signal.previous && (
           <div className="rounded border border-navy-secondary bg-navy-secondary/30 p-2.5 text-xs mb-4">
             <div className="text-silver/70">
-              Previous period ({signal.previous.periodStart} →{' '}
-              {signal.previous.periodEnd})
+              Previous period ({fmtDate(parseYmd(signal.previous.periodStart))} →{' '}
+              {fmtDate(parseYmd(signal.previous.periodEnd))})
             </div>
             <div className="text-white mt-0.5">
-              {signal.previous.outcome}
+              {OUTCOME_LABELS[signal.previous.outcome]}
               {signal.previous.actionTakenAt && (
                 <>
                   {' '}
@@ -824,7 +837,7 @@ function AttestationDrawer({
                       : 'border-navy-secondary text-silver/70 hover:text-white',
                   )}
                 >
-                  {o === 'NOT_APPLICABLE' ? 'N/A' : o}
+                  {OUTCOME_LABELS[o]}
                 </button>
               ))}
             </div>
@@ -853,6 +866,26 @@ function AttestationDrawer({
               placeholder="e.g. submitted with adjusted hours for J. Smith"
               className="mt-1"
             />
+          </div>
+          <div>
+            <Label>Evidence</Label>
+            {signal.current?.evidenceDocumentId ? (
+              <a
+                href={downloadDocumentUrl(signal.current.evidenceDocumentId)}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-flex items-center gap-1.5 text-xs text-gold hover:underline"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                View evidence document
+              </a>
+            ) : (
+              <p className="mt-1 text-xs2 text-silver/70">
+                No evidence document attached.
+                {canManage &&
+                  ' File upload is not available for these organization-scoped attestations yet — admin document uploads must be attached to an associate.'}
+              </p>
+            )}
           </div>
         </div>
 
@@ -912,10 +945,10 @@ function TrainingTile({ refreshEpoch }: { refreshEpoch: number }) {
                   </ClauseTooltip>
                   {s.status === 'live' ? (
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-[11px] text-silver tabular-nums hidden sm:inline">
+                      <span className="text-xs2 text-silver tabular-nums hidden sm:inline">
                         {s.completedCount}/{s.totalAssociates} ({pct}%)
                       </span>
-                      <span className="text-[11px] text-silver tabular-nums sm:hidden">
+                      <span className="text-xs2 text-silver tabular-nums sm:hidden">
                         {pct}%
                       </span>
                       <PctBar pct={pct} severity={pctSeverity(pct)} />
@@ -930,7 +963,7 @@ function TrainingTile({ refreshEpoch }: { refreshEpoch: number }) {
               );
             })}
           </div>
-          <p className="text-[10px] text-silver/80 mt-2">
+          <p className="text-2xs text-silver/80 mt-2">
             "Tag a course" means no Learning course has the matching <span className="font-mono">complianceTag</span>. Set it from the Learning admin page to start tracking.
           </p>
 
@@ -954,11 +987,11 @@ function TrainingTile({ refreshEpoch }: { refreshEpoch: number }) {
                     >
                       <div>
                         <div className="text-sm text-white">{m.associateName ?? '—'}</div>
-                        <div className="text-[10px] text-silver">{m.clientName ?? '—'}</div>
+                        <div className="text-2xs text-silver">{m.clientName ?? '—'}</div>
                       </div>
                       {m.associateId && (
                         <Link
-                          to={`/people?associate=${m.associateId}`}
+                          to={`/people?associateId=${m.associateId}`}
                           className="text-xs text-gold hover:underline flex items-center gap-1"
                         >
                           Open <ExternalLink className="h-3 w-3" />
@@ -990,6 +1023,22 @@ function ActionsTile({ refreshEpoch }: { refreshEpoch: number }) {
     return data.actions.filter((a) => a.severity === filter);
   }, [data, filter]);
 
+  // Client-side CSV of the currently filtered list — no extra endpoint.
+  const exportCsv = () => {
+    if (filtered.length === 0) return;
+    downloadCsv(`compliance-open-actions-${ymdLocal()}.csv`, [
+      ['severity', 'title', 'contract_clause', 'associate', 'client', 'link'],
+      ...filtered.map((a) => [
+        a.severity,
+        a.title,
+        a.contractClause,
+        a.subject.associateName ?? '',
+        a.subject.clientName ?? '',
+        a.link ?? '',
+      ]),
+    ]);
+  };
+
   return (
     <Card>
       <CardContent className="space-y-3">
@@ -997,52 +1046,71 @@ function ActionsTile({ refreshEpoch }: { refreshEpoch: number }) {
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
             <Sparkles className="h-4 w-4 text-gold" />
             Open actions
+            {/* The meaning lives in the visible text, not a tooltip —
+                hover doesn't exist on the tablets these dashboards run on. */}
             {stale && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex items-center gap-1 text-[10px] text-warning ml-1">
-                    <WifiOff className="h-3 w-3" />
-                    Stale
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  Last refresh failed.
-                </TooltipContent>
-              </Tooltip>
+              <span className="inline-flex items-center gap-1 text-2xs text-warning ml-1">
+                <WifiOff className="h-3 w-3" />
+                Stale — refresh failed
+              </span>
             )}
           </div>
           {data && data.actions.length > 0 && (
-            <div className="flex items-center gap-1">
-              <FilterChip
-                active={filter === 'all'}
-                onClick={() => setFilter('all')}
-                label="All"
-                count={data.actions.length}
-              />
+            <div className="flex items-center gap-1.5">
+              <FilterChip active={filter === 'all'} onClick={() => setFilter('all')}>
+                All
+                <span className="tabular-nums font-semibold">
+                  {data.actions.length}
+                </span>
+              </FilterChip>
               <FilterChip
                 active={filter === 'critical'}
                 onClick={() => setFilter('critical')}
-                label="Critical"
-                count={data.criticalCount}
-                tone="alert"
-              />
+              >
+                Critical
+                <span
+                  className={cn(
+                    'tabular-nums font-semibold',
+                    filter !== 'critical' && 'text-alert',
+                  )}
+                >
+                  {data.criticalCount}
+                </span>
+              </FilterChip>
               <FilterChip
                 active={filter === 'warn'}
                 onClick={() => setFilter('warn')}
-                label="Warn"
-                count={data.warnCount}
-                tone="warning"
-              />
+              >
+                Warn
+                <span
+                  className={cn(
+                    'tabular-nums font-semibold',
+                    filter !== 'warn' && 'text-warning',
+                  )}
+                >
+                  {data.warnCount}
+                </span>
+              </FilterChip>
+              <Button
+                size="sm"
+                variant="outline"
+                className="ml-1"
+                onClick={exportCsv}
+                disabled={filtered.length === 0}
+              >
+                <Download className="h-3.5 w-3.5" />
+                Export CSV
+              </Button>
             </div>
           )}
         </div>
-        {error && <div className="text-sm text-alert">{error}</div>}
+        {error && <ErrorBanner>{error}</ErrorBanner>}
         {!data && !error && <Skeleton className="h-32" />}
         {data && data.actions.length === 0 && (
           <div className="rounded-md border border-success/40 bg-success/10 px-4 py-6 flex flex-col items-center text-center">
             <CheckCircle2 className="h-6 w-6 text-success mb-2" />
             <div className="text-sm text-success font-medium">No open compliance actions</div>
-            <div className="text-[11px] text-silver mt-0.5">
+            <div className="text-xs2 text-silver mt-0.5">
               Every signal across all five tiles is clear.
             </div>
           </div>
@@ -1060,13 +1128,13 @@ function ActionsTile({ refreshEpoch }: { refreshEpoch: number }) {
                   <SeverityDot severity={a.severity} />
                   <div className="min-w-0">
                     <div className="text-xs text-white truncate">{a.title}</div>
-                    <div className="text-[10px] text-silver/80 truncate">{a.contractClause}</div>
+                    <div className="text-2xs text-silver/80 truncate">{a.contractClause}</div>
                   </div>
                 </div>
                 {a.link && (
                   <Link
                     to={a.link}
-                    className="text-[11px] text-gold hover:underline flex items-center gap-1 shrink-0"
+                    className="text-xs2 text-gold hover:underline flex items-center gap-1 shrink-0"
                   >
                     Fix <ExternalLink className="h-3 w-3" />
                   </Link>
@@ -1077,42 +1145,6 @@ function ActionsTile({ refreshEpoch }: { refreshEpoch: number }) {
         )}
       </CardContent>
     </Card>
-  );
-}
-
-function FilterChip({
-  active,
-  onClick,
-  label,
-  count,
-  tone,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  count: number;
-  tone?: 'alert' | 'warning';
-}) {
-  const accentTone =
-    tone === 'alert' ? 'text-alert' :
-    tone === 'warning' ? 'text-warning' :
-    'text-white';
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'h-7 px-2.5 rounded-md border text-[11px] flex items-center gap-1.5 transition-colors',
-        active
-          ? 'border-gold bg-gold/10 text-white'
-          : 'border-navy-secondary text-silver hover:text-white hover:bg-navy-secondary/40',
-      )}
-    >
-      <span>{label}</span>
-      <span className={cn('tabular-nums font-semibold', active ? 'text-white' : accentTone)}>
-        {count}
-      </span>
-    </button>
   );
 }
 
@@ -1145,24 +1177,17 @@ function TileShell({
           </div>
           <div className="flex items-center gap-2">
             {stale && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex items-center gap-1 text-[10px] text-warning">
-                    <WifiOff className="h-3 w-3" />
-                    Stale
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="left" className="max-w-xs">
-                  Last refresh failed. Numbers may be out of date — click Refresh to retry.
-                </TooltipContent>
-              </Tooltip>
+              <span className="inline-flex items-center gap-1 text-2xs text-warning">
+                <WifiOff className="h-3 w-3" />
+                Stale — refresh failed
+              </span>
             )}
             <Badge variant={SEVERITY_BADGE[severity].variant}>
               {SEVERITY_BADGE[severity].label}
             </Badge>
           </div>
         </div>
-        {error && <div className="text-sm text-alert">{error}</div>}
+        {error && <ErrorBanner>{error}</ErrorBanner>}
         {loading && <Skeleton className="h-32" />}
         {!loading && !error && children}
       </CardContent>
@@ -1195,21 +1220,53 @@ function BucketTile({ label, count, severity }: { label: string; count: number; 
   return (
     <div className={cn('rounded border px-2 py-2 text-center', tone)}>
       <div className="text-lg font-bold tabular-nums">{count}</div>
-      <div className="text-[10px] uppercase tracking-wider opacity-80">{label}</div>
+      <div className="text-2xs uppercase tracking-wider opacity-80">{label}</div>
     </div>
   );
 }
 
+/**
+ * Dotted-underlined legal term that reveals its clause text on TAP or
+ * click. This was a hover Tooltip, which made the clause unreachable on
+ * touch devices — and the clause is the whole point of the underline.
+ */
 function ClauseTooltip({ clause, children }: { clause: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="cursor-help underline decoration-dotted decoration-silver/40 underline-offset-4">
-          {children}
+    <span ref={ref} className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="cursor-help underline decoration-dotted decoration-silver/40 underline-offset-4 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-sm"
+      >
+        {children}
+      </button>
+      {open && (
+        <span
+          role="note"
+          className="absolute left-0 top-full z-50 mt-1.5 block w-72 max-w-[80vw] rounded-md border border-navy-secondary bg-navy p-2.5 text-xs leading-relaxed text-silver elev-3"
+        >
+          {clause}
         </span>
-      </TooltipTrigger>
-      <TooltipContent side="top">{clause}</TooltipContent>
-    </Tooltip>
+      )}
+    </span>
   );
 }
 

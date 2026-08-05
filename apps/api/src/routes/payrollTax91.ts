@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { decryptString, encryptString } from '../lib/crypto.js';
 import {
   aggregateW2Wages,
@@ -421,6 +421,45 @@ payrollTax91Router.post('/tax-forms/:id/file', MANAGE, async (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * POST /tax-forms/bulk-file { ids: string[] } — file many drafts in one
+ * action. W-2 season for 200 employees was 400 clicks of per-row
+ * File+confirm; this is the select-all path. Per-form failures (wrong
+ * state, duplicate filing) skip with a reason instead of failing the
+ * batch.
+ */
+payrollTax91Router.post('/tax-forms/bulk-file', MANAGE, async (req, res) => {
+  const ids = z.array(z.string().uuid()).min(1).max(1000).parse(req.body?.ids);
+  const now = new Date();
+  let filed = 0;
+  const skipped: { id: string; reason: string }[] = [];
+  for (const id of [...new Set(ids)]) {
+    const f = await prisma.taxForm.findUnique({ where: { id } });
+    if (!f) {
+      skipped.push({ id, reason: 'not_found' });
+      continue;
+    }
+    if (f.status !== 'DRAFT' && f.status !== 'AMENDED') {
+      skipped.push({ id, reason: `invalid_state:${f.status}` });
+      continue;
+    }
+    try {
+      await prisma.taxForm.update({
+        where: { id: f.id },
+        data: { status: 'FILED', filedAt: now, filedById: req.user!.id },
+      });
+      filed += 1;
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        skipped.push({ id, reason: 'duplicate_filing' });
+        continue;
+      }
+      throw err;
+    }
+  }
+  res.json({ filed, skipped });
+});
+
 payrollTax91Router.post('/tax-forms/:id/void', MANAGE, async (req, res) => {
   await prisma.taxForm.update({
     where: { id: req.params.id },
@@ -613,51 +652,90 @@ payrollTax91Router.get('/tax-forms/w3.pdf', VIEW, async (req, res, next) => {
  * recipientCopySentAt. Filing isn't complete until the recipient copy is
  * distributed; this makes that step auditable. `force: true` re-sends.
  */
+async function sendRecipientCopyForForm(
+  formId: string,
+  force: boolean,
+): Promise<{ sentTo: string }> {
+  const form = await prisma.taxForm.findUnique({
+    where: { id: formId },
+    include: { associate: { select: { email: true, firstName: true, lastName: true } } },
+  });
+  if (!form) throw new HttpError(404, 'not_found', 'Form not found.');
+  if (form.kind === 'F941' || form.kind === 'F940') {
+    throw new HttpError(400, 'no_recipient', 'Aggregate forms have no recipient copy.');
+  }
+  if (!form.associate?.email) {
+    throw new HttpError(409, 'no_email', 'Associate has no email on file.');
+  }
+  if (form.recipientCopySentAt && !force) {
+    throw new HttpError(409, 'already_sent', `Recipient copy already sent ${form.recipientCopySentAt.toISOString()}. Pass force:true to re-send.`);
+  }
+
+  const { pdf, filename } =
+    form.kind === 'F1099_NEC'
+      ? await renderF1099NecForForm(form.id)
+      : form.kind === 'F1099_MISC'
+        ? await renderF1099MiscForForm(form.id)
+        : await renderW2ForForm(form.id, { layout: 'single', copy: 'B' });
+
+  const label =
+    form.kind === 'W2' ? 'W-2' : form.kind === 'W2C' ? 'W-2c (corrected W-2)' : form.kind === 'F1099_NEC' ? '1099-NEC' : '1099-MISC';
+  await send({
+    channel: 'EMAIL',
+    recipient: { userId: null, phone: null, email: form.associate.email },
+    subject: `Your ${form.taxYear} ${label} from Alto HR`,
+    body:
+      `Hi ${form.associate.firstName},\n\nAttached is your ${form.taxYear} ${label}. ` +
+      `Keep it for your tax records — you'll need it to file your ${form.taxYear} return.\n\n` +
+      `If anything on it looks wrong, contact your manager right away so a correction can be issued.`,
+    attachments: [{ filename, content: pdf, contentType: 'application/pdf' }],
+  });
+  await prisma.taxForm.update({
+    where: { id: form.id },
+    data: { recipientCopySentAt: new Date() },
+  });
+  return { sentTo: form.associate.email };
+}
+
 payrollTax91Router.post('/tax-forms/:id/send-recipient-copy', MANAGE, async (req, res, next) => {
   try {
-    const form = await prisma.taxForm.findUnique({
-      where: { id: req.params.id },
-      include: { associate: { select: { email: true, firstName: true, lastName: true } } },
-    });
-    if (!form) throw new HttpError(404, 'not_found', 'Form not found.');
-    if (form.kind === 'F941' || form.kind === 'F940') {
-      throw new HttpError(400, 'no_recipient', 'Aggregate forms have no recipient copy.');
-    }
-    if (!form.associate?.email) {
-      throw new HttpError(409, 'no_email', 'Associate has no email on file.');
-    }
-    const force = req.body?.force === true;
-    if (form.recipientCopySentAt && !force) {
-      throw new HttpError(409, 'already_sent', `Recipient copy already sent ${form.recipientCopySentAt.toISOString()}. Pass force:true to re-send.`);
-    }
-
-    const { pdf, filename } =
-      form.kind === 'F1099_NEC'
-        ? await renderF1099NecForForm(form.id)
-        : form.kind === 'F1099_MISC'
-          ? await renderF1099MiscForForm(form.id)
-          : await renderW2ForForm(form.id, { layout: 'single', copy: 'B' });
-
-    const label =
-      form.kind === 'W2' ? 'W-2' : form.kind === 'W2C' ? 'W-2c (corrected W-2)' : form.kind === 'F1099_NEC' ? '1099-NEC' : '1099-MISC';
-    await send({
-      channel: 'EMAIL',
-      recipient: { userId: null, phone: null, email: form.associate.email },
-      subject: `Your ${form.taxYear} ${label} from Alto HR`,
-      body:
-        `Hi ${form.associate.firstName},\n\nAttached is your ${form.taxYear} ${label}. ` +
-        `Keep it for your tax records — you'll need it to file your ${form.taxYear} return.\n\n` +
-        `If anything on it looks wrong, contact your manager right away so a correction can be issued.`,
-      attachments: [{ filename, content: pdf, contentType: 'application/pdf' }],
-    });
-    await prisma.taxForm.update({
-      where: { id: form.id },
-      data: { recipientCopySentAt: new Date() },
-    });
-    res.json({ ok: true, sentTo: form.associate.email });
+    const result = await sendRecipientCopyForForm(
+      req.params.id,
+      req.body?.force === true,
+    );
+    res.json({ ok: true, sentTo: result.sentTo });
   } catch (err) {
     next(err);
   }
+});
+
+/**
+ * POST /tax-forms/bulk-send-copies { ids: string[], force? } — distribute
+ * recipient copies for many forms in one action. Per-form failures
+ * (no email, already sent, aggregate form) skip with a reason.
+ */
+payrollTax91Router.post('/tax-forms/bulk-send-copies', MANAGE, async (req, res) => {
+  const ids = z.array(z.string().uuid()).min(1).max(1000).parse(req.body?.ids);
+  const force = req.body?.force === true;
+  let sent = 0;
+  const skipped: { id: string; reason: string }[] = [];
+  for (const id of [...new Set(ids)]) {
+    try {
+      await sendRecipientCopyForForm(id, force);
+      sent += 1;
+    } catch (err) {
+      skipped.push({
+        id,
+        reason:
+          err instanceof HttpError
+            ? err.code
+            : err instanceof Error
+              ? err.message.slice(0, 120)
+              : 'unknown',
+      });
+    }
+  }
+  res.json({ sent, skipped });
 });
 
 // ----- W-2 generation (Gap 1) --------------------------------------------
@@ -1447,7 +1525,12 @@ async function renderF1099MiscForForm(formId: string): Promise<{
  * Scope: associates may download their own form; HR/Finance/Manager can
  * download any. Mirrors /payroll/items/:itemId/paystub.pdf scoping.
  */
-payrollTax91Router.get('/tax-forms/:id/pdf', async (req, res, next) => {
+// requireAuth is explicit here: this router is mounted bare at '/' with
+// no router-level auth, and the handler dereferences req.user! to decide
+// owner-vs-manager. Without it an unauthenticated request only failed by
+// ACCIDENT — a TypeError producing a 500 — and this endpoint serves W-2
+// PDFs containing the full SSN.
+payrollTax91Router.get('/tax-forms/:id/pdf', requireAuth, async (req, res, next) => {
   try {
     const form = await loadW2Form(req.params.id);
     if (!form) throw new HttpError(404, 'not_found', 'Form not found.');

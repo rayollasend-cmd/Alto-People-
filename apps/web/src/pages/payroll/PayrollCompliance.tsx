@@ -17,6 +17,7 @@ import {
   type NewHireRow,
   type TaxDeposit,
 } from '@/lib/payrollApi';
+import { fmtDate, fmtMoney, parseYmd } from '@/lib/format';
 import {
   Badge,
   Button,
@@ -24,6 +25,7 @@ import {
   Select,
   CardContent,
   EmptyState,
+  ErrorBanner,
   PageHeader,
   SkeletonRows,
   Table,
@@ -42,8 +44,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/Tabs';
  * new-hire reporting (20-day rule). Everything overdue is loud.
  */
 
-const money = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+const money = fmtMoney;
 
 type Tab = 'deposits' | 'remittances' | 'newhire';
 
@@ -90,10 +91,13 @@ function TaxDepositsTab() {
   const [deposits, setDeposits] = useState<TaxDeposit[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const refresh = useCallback(() => {
     setDeposits(null);
     setError(null);
+    setSelectedIds(new Set());
     listTaxDeposits(year)
       .then((r) => setDeposits(r.deposits))
       .catch((err) =>
@@ -133,6 +137,56 @@ function TaxDepositsTab() {
     }
   };
 
+  const toggleSelected = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const selectedPending = (deposits ?? []).filter(
+    (d) => d.status === 'PENDING' && selectedIds.has(d.id),
+  );
+
+  const onBulkMarkPaid = async () => {
+    if (bulkBusy || selectedPending.length === 0) return;
+    const n = selectedPending.length;
+    const ack = await prompt({
+      title: `Mark ${n} deposit${n === 1 ? '' : 's'} paid`,
+      description:
+        'Pay through EFTPS (or your bank) first. One acknowledgment reference is recorded on every selected deposit — leave it blank to record none.',
+      reasonLabel: 'EFTPS acknowledgment number (applied to all selected)',
+      reasonPlaceholder: 'e.g. 270123456789012',
+      required: false,
+    });
+    if (ack === null) return;
+    setBulkBusy(true);
+    let done = 0;
+    let firstError: string | null = null;
+    for (const d of selectedPending) {
+      setBusyId(d.id);
+      try {
+        await markTaxDepositPaid(d.id, ack.trim() || null);
+        done += 1;
+      } catch (err) {
+        if (!firstError) {
+          firstError = err instanceof ApiError ? err.message : 'Request failed.';
+        }
+      }
+    }
+    setBusyId(null);
+    setBulkBusy(false);
+    if (firstError) {
+      toast.error(
+        `${done} of ${n} deposit${n === 1 ? '' : 's'} marked paid — first failure: ${firstError}`,
+      );
+    } else {
+      toast.success(`${done} deposit${done === 1 ? '' : 's'} marked paid.`);
+    }
+    refresh();
+  };
+
   return (
     <Card>
       <CardContent>
@@ -167,11 +221,24 @@ function TaxDepositsTab() {
               </span>
             )}
           </div>
+          {selectedPending.length > 0 && (
+            <Button size="sm" onClick={onBulkMarkPaid} loading={bulkBusy} disabled={bulkBusy}>
+              <CheckCircle2 className="h-4 w-4" />
+              Mark {selectedPending.length} selected paid
+            </Button>
+          )}
         </div>
         {error && (
-          <div role="alert" className="mb-3 rounded-md border border-alert/40 bg-alert/10 p-2 text-sm text-alert">
+          <ErrorBanner
+            className="mb-3"
+            action={
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            }
+          >
             {error}
-          </div>
+          </ErrorBanner>
         )}
         {!deposits && !error && <SkeletonRows count={4} rowHeight="h-12" />}
         {deposits && deposits.length === 0 && (
@@ -186,8 +253,11 @@ function TaxDepositsTab() {
             <Table caption="Federal tax deposits">
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8">
+                    <span className="sr-only">Select</span>
+                  </TableHead>
                   <TableHead>Kind</TableHead>
-                  <TableHead>Liability</TableHead>
+                  <TableHead className="hidden md:table-cell">Liability</TableHead>
                   <TableHead>Due</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
                   <TableHead>Status</TableHead>
@@ -199,15 +269,28 @@ function TaxDepositsTab() {
                 {deposits.map((d) => (
                   <TableRow key={d.id}>
                     <TableCell>
+                      {d.status === 'PENDING' && (
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${money(d.amount)} deposit due ${fmtDate(parseYmd(d.dueDate))}`}
+                          checked={selectedIds.has(d.id)}
+                          onChange={() => toggleSelected(d.id)}
+                          disabled={bulkBusy}
+                        />
+                      )}
+                    </TableCell>
+                    <TableCell>
                       <div className="font-medium text-white">
                         {d.kind === 'FED_941' ? 'Form 941' : 'FUTA'}
                       </div>
                       <div className="text-xs text-silver">{d.periodLabel}</div>
                     </TableCell>
-                    <TableCell className="text-silver">{d.liabilityDate}</TableCell>
+                    <TableCell className="hidden md:table-cell text-silver">
+                      {fmtDate(parseYmd(d.liabilityDate))}
+                    </TableCell>
                     <TableCell>
                       <span className={d.overdue ? 'font-medium text-alert' : undefined}>
-                        {d.dueDate}
+                        {fmtDate(parseYmd(d.dueDate))}
                       </span>
                       {d.overdue && (
                         <Badge variant="destructive" className="ml-2">
@@ -246,7 +329,7 @@ function TaxDepositsTab() {
                             size="sm"
                             variant="secondary"
                             loading={busyId === d.id}
-                            disabled={busyId !== null}
+                            disabled={busyId === d.id || bulkBusy}
                             onClick={() => onMarkPaid(d)}
                           >
                             <CheckCircle2 className="h-4 w-4" />
@@ -274,10 +357,13 @@ function RemittancesTab() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showSent, setShowSent] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const refresh = useCallback(() => {
     setRemittances(null);
     setError(null);
+    setSelectedIds(new Set());
     listGarnishmentRemittances()
       .then((r) => setRemittances(r.remittances))
       .catch((err) =>
@@ -313,6 +399,56 @@ function RemittancesTab() {
     }
   };
 
+  const toggleSelected = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const selectedPending = (remittances ?? []).filter(
+    (r) => r.status === 'PENDING' && selectedIds.has(r.id),
+  );
+
+  const onBulkMarkSent = async () => {
+    if (bulkBusy || selectedPending.length === 0) return;
+    const n = selectedPending.length;
+    const reference = await prompt({
+      title: `Mark ${n} remittance${n === 1 ? '' : 's'} sent`,
+      description:
+        'Send the payments first (check or agency portal). One payment reference is recorded on every selected remittance — leave it blank to record none.',
+      reasonLabel: 'Payment reference (applied to all selected)',
+      reasonPlaceholder: 'e.g. check batch #1042 / portal conf. 88213',
+      required: false,
+    });
+    if (reference === null) return;
+    setBulkBusy(true);
+    let done = 0;
+    let firstError: string | null = null;
+    for (const r of selectedPending) {
+      setBusyId(r.id);
+      try {
+        await markRemittanceSent(r.id, reference.trim() || null);
+        done += 1;
+      } catch (err) {
+        if (!firstError) {
+          firstError = err instanceof ApiError ? err.message : 'Request failed.';
+        }
+      }
+    }
+    setBusyId(null);
+    setBulkBusy(false);
+    if (firstError) {
+      toast.error(
+        `${done} of ${n} remittance${n === 1 ? '' : 's'} marked sent — first failure: ${firstError}`,
+      );
+    } else {
+      toast.success(`${done} remittance${done === 1 ? '' : 's'} marked sent.`);
+    }
+    refresh();
+  };
+
   return (
     <Card>
       <CardContent>
@@ -325,19 +461,34 @@ function RemittancesTab() {
               </>
             )}
           </div>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={showSent}
-              onChange={(e) => setShowSent(e.target.checked)}
-            />
-            Show sent
-          </label>
+          <div className="flex items-center gap-3">
+            {selectedPending.length > 0 && (
+              <Button size="sm" onClick={onBulkMarkSent} loading={bulkBusy} disabled={bulkBusy}>
+                <CheckCircle2 className="h-4 w-4" />
+                Mark {selectedPending.length} selected sent
+              </Button>
+            )}
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={showSent}
+                onChange={(e) => setShowSent(e.target.checked)}
+              />
+              Show sent
+            </label>
+          </div>
         </div>
         {error && (
-          <div role="alert" className="mb-3 rounded-md border border-alert/40 bg-alert/10 p-2 text-sm text-alert">
+          <ErrorBanner
+            className="mb-3"
+            action={
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            }
+          >
             {error}
-          </div>
+          </ErrorBanner>
         )}
         {!remittances && !error && <SkeletonRows count={4} rowHeight="h-12" />}
         {remittances && visible.length === 0 && (
@@ -352,6 +503,9 @@ function RemittancesTab() {
             <Table caption="Garnishment remittances">
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8">
+                    <span className="sr-only">Select</span>
+                  </TableHead>
                   <TableHead>Payee</TableHead>
                   <TableHead className="hidden md:table-cell">Pay period</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
@@ -363,6 +517,17 @@ function RemittancesTab() {
                 {visible.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell>
+                      {r.status === 'PENDING' && (
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${money(r.amount)} remittance to ${r.payeeName}`}
+                          checked={selectedIds.has(r.id)}
+                          onChange={() => toggleSelected(r.id)}
+                          disabled={bulkBusy}
+                        />
+                      )}
+                    </TableCell>
+                    <TableCell>
                       <div className="font-medium text-white">{r.payeeName}</div>
                       <div className="text-xs text-silver">
                         {r.deductionCount} deduction{r.deductionCount === 1 ? '' : 's'}
@@ -370,7 +535,7 @@ function RemittancesTab() {
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-silver">
-                      {r.period.start} – {r.period.end}
+                      {fmtDate(parseYmd(r.period.start))} – {fmtDate(parseYmd(r.period.end))}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-white">
                       {money(r.amount)}
@@ -400,7 +565,7 @@ function RemittancesTab() {
                             size="sm"
                             variant="secondary"
                             loading={busyId === r.id}
-                            disabled={busyId !== null}
+                            disabled={busyId === r.id || bulkBusy}
                             onClick={() => onMarkSent(r)}
                           >
                             <CheckCircle2 className="h-4 w-4" />
@@ -492,9 +657,16 @@ function NewHireTab() {
           </Button>
         </div>
         {error && (
-          <div role="alert" className="mb-3 rounded-md border border-alert/40 bg-alert/10 p-2 text-sm text-alert">
+          <ErrorBanner
+            className="mb-3"
+            action={
+              <Button size="sm" variant="secondary" onClick={refresh}>
+                Retry
+              </Button>
+            }
+          >
             {error}
-          </div>
+          </ErrorBanner>
         )}
         {!rows && !error && <SkeletonRows count={4} rowHeight="h-12" />}
         {rows && rows.length === 0 && (
@@ -519,7 +691,9 @@ function NewHireTab() {
                 {rows.map((r) => (
                   <TableRow key={r.associateId}>
                     <TableCell className="font-medium text-white">{r.name}</TableCell>
-                    <TableCell className="text-silver">{r.hireDate ?? '—'}</TableCell>
+                    <TableCell className="text-silver">
+                      {r.hireDate ? fmtDate(parseYmd(r.hireDate)) : '—'}
+                    </TableCell>
                     <TableCell className="hidden md:table-cell text-silver">
                       {r.state ?? '—'}
                     </TableCell>

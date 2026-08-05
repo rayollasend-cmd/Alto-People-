@@ -66,7 +66,7 @@ export function ConfirmEmailChange() {
           </p>
         </div>
 
-        <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 shadow-2xl animate-zoom-in text-center">
+        <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in text-center">
           {state === 'pending' && (
             <>
               <AtSign className="mx-auto h-12 w-12 text-gold mb-4 animate-pulse" />

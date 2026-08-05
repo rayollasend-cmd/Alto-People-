@@ -1,6 +1,27 @@
 import type { NotificationChannel } from '@alto-people/shared';
 import { env } from '../config/env.js';
+import { prisma } from '../db.js';
 import { getBrandingSync } from './branding.js';
+import { mintUnsubscribeToken } from './emailUnsubscribe.js';
+
+/**
+ * Thrown by send() when the recipient is on the EmailSuppression
+ * do-not-email list (hard bounce / spam complaint / manual). Callers that
+ * record delivery outcomes should catch this specifically and write a
+ * SUPPRESSED Notification status; callers with only generic error handling
+ * fall through to their FAILED path — either way the send is never
+ * silently reported as SENT.
+ */
+export class EmailSuppressedError extends Error {
+  readonly code = 'email_suppressed';
+  constructor(
+    readonly email: string,
+    readonly reason: string,
+  ) {
+    super(`email_suppressed: ${email} is on the suppression list (${reason})`);
+    this.name = 'EmailSuppressedError';
+  }
+}
 
 /* ---------------------------------------------------------------------------
  * Resend rate-limit throttle.
@@ -122,36 +143,81 @@ export interface SendInput {
   html?: string;
   /** EMAIL-only. Resend supports attachments; in stub mode we log size + name. */
   attachments?: SendAttachment[];
+  /**
+   * EMAIL-only. When true, the message goes out with RFC 8058 one-click
+   * unsubscribe headers (List-Unsubscribe + List-Unsubscribe-Post) bound
+   * to the recipient address. Set ONLY for broadcast/announcement-category
+   * mail — transactional email (invites, password resets, paystubs, the
+   * W-4 campaign) must never advertise an unsubscribe.
+   */
+  includeUnsubscribe?: boolean;
+}
+
+export interface SendResult {
+  externalRef: string | null;
+  /**
+   * Resend's message id when a real EMAIL send happened; null for stub
+   * sends and non-EMAIL channels. Persist this on the Notification row so
+   * async webhook events (delivered / bounced / complained) can be matched
+   * back to it.
+   */
+  providerMessageId: string | null;
 }
 
 export async function sendStubbed(
   channel: NotificationChannel,
   recipient: { userId: string | null; phone: string | null; email: string | null }
-): Promise<{ externalRef: string | null }> {
+): Promise<SendResult> {
   // Backwards-compatible signature for existing callers that don't have
   // subject/body to forward. EMAIL still falls back to stub here.
   return send({ channel, recipient, subject: null, body: '' });
 }
 
-export async function send(input: SendInput): Promise<{ externalRef: string | null }> {
+export async function send(input: SendInput): Promise<SendResult> {
   await new Promise((r) => setTimeout(r, 1));
 
   switch (input.channel) {
     case 'SMS':
-      return { externalRef: `STUB-SMS-${Math.random().toString(36).slice(2, 10)}` };
+      return {
+        externalRef: `STUB-SMS-${Math.random().toString(36).slice(2, 10)}`,
+        providerMessageId: null,
+      };
     case 'PUSH':
-      return { externalRef: `STUB-PUSH-${Math.random().toString(36).slice(2, 10)}` };
+      return {
+        externalRef: `STUB-PUSH-${Math.random().toString(36).slice(2, 10)}`,
+        providerMessageId: null,
+      };
     case 'EMAIL':
       return sendEmail(input);
     case 'IN_APP':
-      return { externalRef: null };
+      return { externalRef: null, providerMessageId: null };
   }
 }
 
-async function sendEmail(input: SendInput): Promise<{ externalRef: string | null }> {
+async function sendEmail(input: SendInput): Promise<SendResult> {
   const to = input.recipient.email;
   if (!to) {
-    return { externalRef: `STUB-EMAIL-no-recipient-${Math.random().toString(36).slice(2, 8)}` };
+    return {
+      externalRef: `STUB-EMAIL-no-recipient-${Math.random().toString(36).slice(2, 8)}`,
+      providerMessageId: null,
+    };
+  }
+  // Do-not-email gate. Checked before BOTH the stub and real branches so
+  // behavior is identical across environments (and testable without Resend
+  // credentials). Continuing to mail hard-bounced/complaining addresses
+  // tanks domain reputation for every other recipient, so this throws —
+  // never a silent "pretend it sent".
+  const suppression = await prisma.emailSuppression.findUnique({
+    where: { email: to.trim().toLowerCase() },
+    select: { reason: true },
+  });
+  if (suppression) {
+    console.warn(
+      `[notifications.send] suppressed email to ${to} — address is on the ` +
+        `do-not-email list (${suppression.reason}). Remove it under ` +
+        `Communications → Suppressed emails to resume delivery.`,
+    );
+    throw new EmailSuppressedError(to, suppression.reason);
   }
   if (!env.RESEND_API_KEY || !env.RESEND_FROM) {
     // Stubbed mode — print to the API console so the developer can copy
@@ -168,7 +234,10 @@ async function sendEmail(input: SendInput): Promise<{ externalRef: string | null
         .map((l) => '    ' + l)
         .join('\n')}\n  (Set RESEND_API_KEY + RESEND_FROM in apps/api/.env to send for real.)\n`
     );
-    return { externalRef: `STUB-EMAIL-${Math.random().toString(36).slice(2, 10)}` };
+    return {
+      externalRef: `STUB-EMAIL-${Math.random().toString(36).slice(2, 10)}`,
+      providerMessageId: null,
+    };
   }
   // Real Resend call.
   try {
@@ -191,6 +260,24 @@ async function sendEmail(input: SendInput): Promise<{ externalRef: string | null
         content: a.content.toString('base64'),
         content_type: a.contentType,
       }));
+    }
+    if (input.includeUnsubscribe) {
+      // RFC 8058 one-click unsubscribe for broadcast/announcement mail.
+      // The https URL is what Gmail/Yahoo POST on "unsubscribe" (no body
+      // parsing needed — the HMAC token binds the recipient); the mailto
+      // is the fallback for older clients. Transactional mail must not
+      // set includeUnsubscribe, so it never carries these headers.
+      const token = mintUnsubscribeToken(to);
+      const unsubscribeUrl = `${env.APP_BASE_URL}/api/communications/unsubscribe/${token}`;
+      const mailtoAddr =
+        env.RESEND_REPLY_TO ??
+        (from ? (from.match(/<([^>]+)>/)?.[1] ?? from) : null);
+      payload.headers = {
+        'List-Unsubscribe': mailtoAddr
+          ? `<${unsubscribeUrl}>, <mailto:${mailtoAddr}?subject=unsubscribe>`
+          : `<${unsubscribeUrl}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      };
     }
     const res = await throttledResendFetch(payload);
     if (!res.ok) {
@@ -215,7 +302,10 @@ async function sendEmail(input: SendInput): Promise<{ externalRef: string | null
       throw new Error(`Resend ${res.status}: ${text.slice(0, 200)}`);
     }
     const json = (await res.json()) as { id?: string };
-    return { externalRef: json.id ?? null };
+    // The Resend id doubles as externalRef (back-compat with every caller
+    // that only stores that column) AND as the dedicated providerMessageId
+    // the /resend/webhook matcher prefers.
+    return { externalRef: json.id ?? null, providerMessageId: json.id ?? null };
   } catch (err) {
     // Surface the failure to the route handler so the Notification row gets
     // FAILED status. The route already wraps this in try/catch.

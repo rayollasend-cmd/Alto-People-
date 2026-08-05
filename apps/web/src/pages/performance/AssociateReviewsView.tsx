@@ -3,8 +3,11 @@ import { ClipboardCheck } from 'lucide-react';
 import type { PerformanceReview } from '@alto-people/shared';
 import { acknowledgeReview, listMyReviews } from '@/lib/performanceApi';
 import { ApiError } from '@/lib/api';
-import { cn } from '@/lib/cn';
+import { useConfirm } from '@/lib/confirm';
+import { fmtDate, parseYmd } from '@/lib/format';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -13,7 +16,16 @@ function ratingStars(n: number): string {
   return '★'.repeat(n) + '☆'.repeat(Math.max(0, 5 - n));
 }
 
+/** Associate-facing wording for review states — "SUBMITTED" is manager
+ *  jargon; from this side it just means the review reached you. */
+const STATUS_LABEL: Record<PerformanceReview['status'], string> = {
+  DRAFT: 'Draft',
+  SUBMITTED: 'Shared with you',
+  ACKNOWLEDGED: 'Acknowledged',
+};
+
 export function AssociateReviewsView() {
+  const confirm = useConfirm();
   const [reviews, setReviews] = useState<PerformanceReview[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -24,7 +36,7 @@ export function AssociateReviewsView() {
       const res = await listMyReviews();
       setReviews(res.reviews);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      setError(err instanceof ApiError ? err.message : 'Could not load your reviews.');
     }
   }, []);
 
@@ -33,12 +45,23 @@ export function AssociateReviewsView() {
   }, [refresh]);
 
   const onAck = async (id: string) => {
+    if (
+      !(await confirm({
+        title: 'Acknowledge this review?',
+        description:
+          "Acknowledging confirms you've read this review — it doesn't mean you agree with it.",
+        confirmLabel: 'Acknowledge',
+      }))
+    )
+      return;
     setPendingId(id);
     try {
       await acknowledgeReview(id);
       await refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Acknowledge failed.');
+      setError(
+        err instanceof ApiError ? err.message : 'Could not record your acknowledgment.',
+      );
     } finally {
       setPendingId(null);
     }
@@ -52,11 +75,18 @@ export function AssociateReviewsView() {
       />
 
       {error && (
-        <p role="alert" className="text-sm text-alert mb-3">
+        <ErrorBanner
+          className="mb-3"
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          }
+        >
           {error}
-        </p>
+        </ErrorBanner>
       )}
-      {!reviews && <SkeletonRows count={2} rowHeight="h-40" />}
+      {!reviews && !error && <SkeletonRows count={2} rowHeight="h-40" />}
       {reviews && reviews.length === 0 && (
         <EmptyState
           icon={ClipboardCheck}
@@ -74,22 +104,24 @@ export function AssociateReviewsView() {
               <div className="flex items-start justify-between gap-4 mb-3">
                 <div>
                   <div className="text-xs uppercase tracking-widest text-silver">
-                    {r.periodStart} → {r.periodEnd}
+                    {fmtDate(parseYmd(r.periodStart))} → {fmtDate(parseYmd(r.periodEnd))}
                   </div>
                   <div className="font-display text-2xl text-gold tabular-nums">
                     {ratingStars(r.overallRating)}
                   </div>
                 </div>
-                <span
-                  className={cn(
-                    'text-xs uppercase tracking-widest px-2 py-1 rounded border',
+                <Badge
+                  size="lg"
+                  variant={
                     r.status === 'ACKNOWLEDGED'
-                      ? 'border-success/40 bg-success/15 text-success'
-                      : 'border-gold/40 bg-gold/10 text-gold'
-                  )}
+                      ? 'success'
+                      : r.status === 'SUBMITTED'
+                        ? 'pending'
+                        : 'default'
+                  }
                 >
-                  {r.status}
-                </span>
+                  {STATUS_LABEL[r.status]}
+                </Badge>
               </div>
               <div className="text-white whitespace-pre-line mb-3">{r.summary}</div>
               {r.strengths && (
@@ -113,7 +145,7 @@ export function AssociateReviewsView() {
                 </div>
               )}
               {r.reviewerEmail && (
-                <div className="text-[10px] uppercase tracking-widest text-silver/70 mt-3">
+                <div className="text-2xs uppercase tracking-widest text-silver/70 mt-3">
                   Reviewed by {r.reviewerEmail}
                 </div>
               )}
@@ -128,7 +160,7 @@ export function AssociateReviewsView() {
 function Section({ label, body }: { label: string; body: string }) {
   return (
     <div className="mb-2">
-      <div className="text-[10px] uppercase tracking-widest text-silver/70">{label}</div>
+      <div className="text-2xs uppercase tracking-widest text-silver/70">{label}</div>
       <div className="text-sm text-silver whitespace-pre-line">{body}</div>
     </div>
   );

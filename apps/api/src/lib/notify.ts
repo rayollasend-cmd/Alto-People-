@@ -44,7 +44,7 @@ import {
   type NotificationCategory,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { send } from './notifications.js';
+import { EmailSuppressedError, send } from './notifications.js';
 import { sendPushToUser } from './webPush.js';
 import { emitLiveEvent } from './liveEvents.js';
 import { onboardingCompleteTemplate } from './emailTemplates.js';
@@ -71,6 +71,7 @@ const MANDATORY_CATEGORIES = new Set<NotificationCategory>(
  */
 function bucketForRawCategory(raw: string | undefined): NotificationCategory | null {
   if (!raw) return null;
+  if (raw === 'broadcast') return 'broadcast';
   if (raw === 'discipline') return 'discipline';
   if (raw === 'probation') return 'probation';
   if (raw === 'documents') return 'documents';
@@ -156,7 +157,9 @@ function sendEmailNotification(
   return track(
     (async () => {
       let externalRef: string | null = null;
+      let providerMessageId: string | null = null;
       let failureReason: string | null = null;
+      let suppressed = false;
       try {
         const r = await send({
           channel: 'EMAIL',
@@ -164,21 +167,30 @@ function sendEmailNotification(
           subject: opts.subject,
           body: opts.body,
           html: opts.html,
+          // Only the broadcast/announcement bucket carries the one-click
+          // unsubscribe headers. Everything else routed through here is
+          // transactional and must NOT advertise an unsubscribe.
+          includeUnsubscribe: bucketForRawCategory(opts.category) === 'broadcast',
         });
         externalRef = r.externalRef;
+        providerMessageId = r.providerMessageId;
       } catch (err) {
+        if (err instanceof EmailSuppressedError) {
+          suppressed = true;
+        }
         failureReason = err instanceof Error ? err.message : String(err);
       }
       await prisma.notification.create({
         data: {
           channel: 'EMAIL',
-          status: failureReason ? 'FAILED' : 'SENT',
+          status: suppressed ? 'SUPPRESSED' : failureReason ? 'FAILED' : 'SENT',
           recipientUserId: userId,
           recipientEmail: email,
           subject: opts.subject,
           body: opts.body,
           category: opts.category ?? null,
           externalRef,
+          providerMessageId,
           failureReason,
           sentAt: failureReason ? null : new Date(),
         },
@@ -328,19 +340,94 @@ export function notifyAllAdmins(
 }
 
 /**
+ * Notify every ACTIVE SHIFT_SUPERVISOR bound to `clientId`. Supervisors
+ * hold no admin capability, so notifyAllAdmins never reaches them — yet
+ * they're the person physically on the floor for client-attributable
+ * events (shift claims, swaps, possible no-shows). Call this ALONGSIDE
+ * the existing notifyManager/notifyAllAdmins fan-outs, not instead.
+ */
+export function notifyClientSupervisors(
+  clientId: string | null | undefined,
+  opts: NotifyOpts & { excludeUserId?: string | null },
+): Promise<void> {
+  return track(
+    (async () => {
+      if (!clientId) return;
+      const recipients = await prisma.user.findMany({
+        where: {
+          role: 'SHIFT_SUPERVISOR',
+          status: 'ACTIVE',
+          clientId,
+          ...(opts.excludeUserId ? { NOT: { id: opts.excludeUserId } } : {}),
+        },
+        select: { id: true, email: true },
+      });
+      if (recipients.length === 0) return;
+      const now = new Date();
+      await prisma.notification.createMany({
+        data: recipients.map((u) => ({
+          channel: 'IN_APP' as const,
+          status: 'SENT' as const,
+          recipientUserId: u.id,
+          subject: opts.subject,
+          body: opts.body,
+          category: opts.category ?? null,
+          linkUrl: opts.linkUrl ?? null,
+          sentAt: now,
+        })),
+      });
+      for (const u of recipients) emitLiveEvent(u.id, 'notification');
+      for (const u of recipients) {
+        if (!u.email) continue;
+        const muted = await isEmailMutedForCategory(u.id, opts.category);
+        if (!muted) void sendEmailNotification(u.id, u.email, opts);
+      }
+    })().catch((err: unknown) => {
+      console.warn(
+        '[notify] notifyClientSupervisors failed:',
+        err instanceof Error ? err.message : err,
+      );
+    }),
+  );
+}
+
+/**
  * Notify the associate (via their User row, if one exists). No-op if the
  * associate has no active User account yet — invited-but-unaccepted
  * accounts have no confirmed inbox to mail.
+ *
+ * Pass `emailFallback: true` for messages that MUST reach the person even
+ * without an active account (e.g. "your application was declined" — the
+ * population most likely to be rejected is exactly the one that never
+ * logged in). Falls back to a direct email to Associate.email.
  */
-export function notifyAssociate(associateId: string, opts: NotifyOpts): Promise<void> {
+export function notifyAssociate(
+  associateId: string,
+  opts: NotifyOpts & { emailFallback?: boolean },
+): Promise<void> {
   return track(
     (async () => {
       const user = await prisma.user.findFirst({
         where: { associateId, status: 'ACTIVE' },
         select: { id: true },
       });
-      if (!user) return;
-      await notifyUser(user.id, opts);
+      if (user) {
+        await notifyUser(user.id, opts);
+        return;
+      }
+      if (!opts.emailFallback) return;
+      const associate = await prisma.associate.findUnique({
+        where: { id: associateId },
+        select: { email: true },
+      });
+      if (!associate?.email) return;
+      await send({
+        channel: 'EMAIL',
+        recipient: { userId: null, phone: null, email: associate.email },
+        subject: opts.subject ?? 'Notification from Alto HR',
+        body: opts.body,
+        ...(opts.html ? { html: opts.html } : {}),
+      });
     })().catch((err: unknown) => {
       console.warn('[notify] notifyAssociate failed:', err instanceof Error ? err.message : err);
     }),
@@ -407,9 +494,15 @@ export function notifyHrOnApplicationComplete(applicationId: string): Promise<vo
       if (!allDone) return;
 
       // Stamp first; if the stamp succeeds we own the notification fan-out.
+      // Also advance the status machine: a fully-complete DRAFT is
+      // SUBMITTED — this is what the list's Submitted chip, the stale
+      // banner's Review button, and the associate's status banner read.
       await prisma.application.update({
         where: { id: applicationId },
-        data: { submittedAt: new Date() },
+        data: {
+          submittedAt: new Date(),
+          ...(app.status === 'DRAFT' ? { status: 'SUBMITTED' } : {}),
+        },
       });
 
       const who = `${app.associate.firstName} ${app.associate.lastName}`;
@@ -417,7 +510,7 @@ export function notifyHrOnApplicationComplete(applicationId: string): Promise<vo
         associateName: who,
         clientName: app.client.name,
         submittedAt: new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
-        applicationUrl: `${env.APP_BASE_URL}/admin/applications/${app.id}`,
+        applicationUrl: `${env.APP_BASE_URL}/onboarding/applications/${app.id}`,
       });
       await notifyAllAdmins({
         subject: tpl.subject,

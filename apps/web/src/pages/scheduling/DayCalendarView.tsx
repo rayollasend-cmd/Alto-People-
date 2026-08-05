@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useDraggable,
   useDroppable,
   useSensor,
@@ -9,11 +10,11 @@ import {
   type DragEndEvent,
 } from '@dnd-kit/core';
 import { GripVertical, Plus } from 'lucide-react';
-import type { AssociateLite, Shift, ShiftStatus } from '@alto-people/shared';
-import { Badge } from '@/components/ui/Badge';
+import type { AssociateLite, Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
 import { fmtTimeTz, zonedDayKey, zonedMinutesOfDay } from '@/lib/format';
+import { shiftMinutes, ymd } from './calendarDates';
 import {
   ShiftHoverCard,
   useShiftHoverCard,
@@ -23,19 +24,25 @@ import {
   ShiftContextMenu,
   useShiftContextMenu,
 } from './ShiftContextMenu';
+import {
+  GRIP_HIT,
+  GRIP_ICON,
+  RESIZE_RAIL_Y,
+  SHIFT_STATUS_LABEL,
+  ShiftTouchMenuButton,
+  StatusMark,
+  statusLabelClass,
+  statusTileClass,
+} from './shiftTile';
 
-const STATUS_VARIANT: Record<
-  ShiftStatus,
-  'success' | 'pending' | 'destructive' | 'default' | 'accent'
-> = {
-  OPEN: 'pending',
-  ASSIGNED: 'success',
-  DRAFT: 'default',
-  COMPLETED: 'success',
-  CANCELLED: 'destructive',
-};
+// Status is rendered by <StatusMark> — see shiftTile.tsx.
 
 const UNASSIGNED_ROW_ID = '__unassigned__';
+
+// Shared empty-column fallback: `byAssociate.get(k) ?? EMPTY_SHIFTS` hands
+// every empty column the SAME array identity, so memo'd DayColumns with no
+// shifts see referentially-equal props and skip re-rendering.
+const EMPTY_SHIFTS: Shift[] = [];
 
 // Time grid runs 6:00 → 24:00 (an 18-hour day fits the hourly-workforce
 // shape we care about). Override here when we need night-shift coverage.
@@ -51,21 +58,6 @@ const SNAP_MIN = 15;
 
 function fmtTime(d: Date, timeZone?: string | null): string {
   return fmtTimeTz(d, timeZone);
-}
-
-function shiftMinutes(s: Shift): number {
-  return Math.max(
-    0,
-    Math.round(
-      (new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime()) / 60_000
-    )
-  );
-}
-
-/** Local calendar-date key ("YYYY-MM-DD") of the anchored day. */
-function ymd(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function snap(min: number): number {
@@ -115,6 +107,32 @@ export function DayCalendarView({
 }: Props) {
   const hover = useShiftHoverCard();
   const ctxMenu = useShiftContextMenu();
+  // hover.bind / ctxMenu.openFor are recreated by their hooks on every
+  // render; route them through refs so the memo'd DayColumns below receive
+  // stable handler identities (they only close over setState + refs, so
+  // any render's copy behaves identically).
+  const hoverBindFnRef = useRef(hover.bind);
+  hoverBindFnRef.current = hover.bind;
+  const hoverBind = useCallback(
+    (s: Shift) => hoverBindFnRef.current(s),
+    [],
+  );
+  const ctxOpenFnRef = useRef(ctxMenu.openFor);
+  ctxOpenFnRef.current = ctxMenu.openFor;
+  const openContextMenu = useCallback(
+    (s: Shift, e: React.MouseEvent) => ctxOpenFnRef.current(s, e),
+    [],
+  );
+  // Single stable click-to-create handler shared by every column (instead
+  // of a fresh closure per column per render, which defeats DayColumn's memo).
+  const handleCreate = useCallback(
+    (gridMinutes: number, associateId: string | null) => {
+      const d = new Date(dayAnchor);
+      d.setMinutes(d.getMinutes() + gridMinutes);
+      onCellCreate(d, associateId);
+    },
+    [dayAnchor, onCellCreate],
+  );
   // Filter to shifts that fall on `dayAnchor` IN THE STORE's zone (null →
   // browser-local, unchanged) so a late-night shift shows on its real day.
   const todayShifts = useMemo(() => {
@@ -144,7 +162,11 @@ export function DayCalendarView({
   }, [associates, todayShifts, showAllAssociates]);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } })
+    // Mouse: 6px activation distance so chip clicks don't start drags.
+    // Touch: a hold delay so a finger SCROLLING the grid never picks a
+    // shift up — 6px of drift while panning used to move shifts.
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } })
   );
 
   const handleDragEnd = async (e: DragEndEvent) => {
@@ -176,7 +198,7 @@ export function DayCalendarView({
               {hourLabels.map((h, i) => (
                 <div
                   key={h}
-                  className="absolute left-0 right-0 px-2 text-[10px] text-silver/70 tabular-nums"
+                  className="absolute left-0 right-0 px-2 text-2xs text-silver/70 tabular-nums"
                   style={{ top: i * PX_PER_HOUR - 6 }}
                 >
                   {h % 12 === 0 ? 12 : h % 12}
@@ -189,27 +211,15 @@ export function DayCalendarView({
           {/* Unassigned column */}
           <DayColumn
             colId={`day-col:${UNASSIGNED_ROW_ID}`}
-            header={
-              <div className="px-2 py-2 text-xs font-medium text-warning border-b border-navy-secondary bg-warning/10 h-12 flex flex-col justify-center">
-                Unassigned
-                <div className="text-[10px] uppercase tracking-wider text-silver/70 font-normal">
-                  OPEN shifts
-                </div>
-              </div>
-            }
-            shifts={byAssociate.get(UNASSIGNED_ROW_ID) ?? []}
+            associate={null}
+            shifts={byAssociate.get(UNASSIGNED_ROW_ID) ?? EMPTY_SHIFTS}
             displayTimeZone={displayTimeZone}
             canManage={canManage}
             onShiftClick={onShiftClick}
-            onCreate={(t) => {
-              const d = new Date(dayAnchor);
-              d.setMinutes(d.getMinutes() + t);
-              onCellCreate(d, null);
-            }}
+            onCreate={handleCreate}
             onShiftResize={onShiftResize}
-            hoverBind={hover.bind}
-            onContextMenu={ctxMenu.openFor}
-            tone="warning"
+            hoverBind={hoverBind}
+            onContextMenu={openContextMenu}
           />
 
           {/* Associate columns */}
@@ -222,29 +232,15 @@ export function DayCalendarView({
               <DayColumn
                 key={a.id}
                 colId={`day-col:${a.id}`}
-                header={
-                  <div className="px-2 py-2 border-b border-navy-secondary h-12 flex items-center gap-2 bg-navy/95">
-                    <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-[10px] font-semibold flex items-center justify-center shrink-0">
-                      {a.firstName[0]}
-                      {a.lastName[0]}
-                    </div>
-                    <div className="text-xs text-white truncate">
-                      {a.firstName} {a.lastName}
-                    </div>
-                  </div>
-                }
-                shifts={byAssociate.get(a.id) ?? []}
+                associate={a}
+                shifts={byAssociate.get(a.id) ?? EMPTY_SHIFTS}
                 displayTimeZone={displayTimeZone}
                 canManage={canManage}
                 onShiftClick={onShiftClick}
-                onCreate={(t) => {
-                  const d = new Date(dayAnchor);
-                  d.setMinutes(d.getMinutes() + t);
-                  onCellCreate(d, a.id);
-                }}
+                onCreate={handleCreate}
                 onShiftResize={onShiftResize}
-                hoverBind={hover.bind}
-                onContextMenu={ctxMenu.openFor}
+                hoverBind={hoverBind}
+                onContextMenu={openContextMenu}
               />
             ))
           )}
@@ -294,9 +290,9 @@ export function DayCalendarView({
   );
 }
 
-function DayColumn({
+const DayColumn = memo(function DayColumn({
   colId,
-  header,
+  associate,
   shifts,
   displayTimeZone,
   canManage,
@@ -305,25 +301,26 @@ function DayColumn({
   onShiftResize,
   hoverBind,
   onContextMenu,
-  tone,
 }: {
   colId: string;
-  header: React.ReactNode;
+  /** Column owner — null renders the pinned "Unassigned" (warning) column. */
+  associate: AssociateLite | null;
   shifts: Shift[];
   displayTimeZone: string | null;
   canManage: boolean;
   onShiftClick: (s: Shift) => void;
-  onCreate: (gridMinutes: number) => void;
+  onCreate: (gridMinutes: number, associateId: string | null) => void;
   onShiftResize: (s: Shift, newEndsAt: Date) => Promise<void>;
   hoverBind: (s: Shift) => {
     onPointerEnter: (e: React.PointerEvent<HTMLElement>) => void;
     onPointerLeave: () => void;
   };
   onContextMenu: (s: Shift, e: React.MouseEvent) => void;
-  tone?: 'warning';
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: colId });
   const totalHeight = HOURS_VISIBLE * PX_PER_HOUR;
+  const associateId = associate ? associate.id : null;
+  const tone = associate ? undefined : ('warning' as const);
 
   // Click-to-create at the y position the user clicked (snapped).
   const onColumnClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -332,17 +329,56 @@ function DayColumn({
     const rect = e.currentTarget.getBoundingClientRect();
     const y = e.clientY - rect.top;
     const min = snap(y / PX_PER_MIN + DAY_START_HOUR * 60);
-    onCreate(min);
+    onCreate(min, associateId);
   };
 
   return (
     <div className="flex-1 min-w-[160px] border-r border-navy-secondary">
-      {header}
+      {associate ? (
+        <div className="px-2 py-2 border-b border-navy-secondary h-12 flex items-center gap-2 bg-navy/95">
+          <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-2xs font-semibold flex items-center justify-center shrink-0">
+            {associate.firstName[0]}
+            {associate.lastName[0]}
+          </div>
+          <div className="text-xs text-white truncate">
+            {associate.firstName} {associate.lastName}
+          </div>
+        </div>
+      ) : (
+        <div className="px-2 py-2 text-xs font-medium text-warning border-b border-navy-secondary bg-warning/10 h-12 flex flex-col justify-center">
+          Unassigned
+          <div className="text-2xs uppercase tracking-wider text-silver/70 font-normal">
+            OPEN shifts
+          </div>
+        </div>
+      )}
       <div
         ref={setNodeRef}
         onClick={onColumnClick}
+        // Click-to-create derives the time from the pointer's Y position,
+        // which a keyboard user doesn't have. Enter/Space opens creation at
+        // the start of the visible day instead and lets the dialog set the
+        // real time — same destination, reachable without a mouse. Same
+        // role/tabIndex/onKeyDown shape CandidateBoard already uses.
+        {...(canManage
+          ? {
+              role: 'button' as const,
+              tabIndex: 0,
+              'aria-label': associate
+                ? `Add a shift for ${associate.firstName} ${associate.lastName}`
+                : 'Add an unassigned shift',
+              onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => {
+                if (e.target !== e.currentTarget) return;
+                if (e.key !== 'Enter' && e.key !== ' ') return;
+                e.preventDefault();
+                onCreate(DAY_START_HOUR * 60, associateId);
+              },
+            }
+          : {})}
         className={cn(
           'relative cursor-pointer',
+          canManage &&
+            'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-inset',
           isOver && 'bg-gold/15 outline outline-1 outline-gold/40 -outline-offset-1',
           tone === 'warning' && !isOver && 'bg-warning/[0.04]'
         )}
@@ -366,14 +402,14 @@ function DayColumn({
           />
         ))}
         {shifts.length === 0 && canManage && (
-          <div className="pointer-events-none absolute inset-0 flex items-start justify-center pt-4 text-silver/30 text-[11px]">
+          <div className="pointer-events-none absolute inset-0 flex items-start justify-center pt-4 text-silver/30 text-xs2">
             <Plus className="h-3 w-3 mr-1 mt-0.5" /> click to add
           </div>
         )}
       </div>
     </div>
   );
-}
+});
 
 function DayShiftChip({
   shift,
@@ -492,6 +528,7 @@ function DayShiftChip({
       }}
       className={cn(
         'rounded border transition-colors hover:brightness-125 overflow-hidden',
+        statusTileClass(shift.status),
         isDragging && 'elev-3 ring-2 ring-gold/60 opacity-90',
         resizeDeltaPx !== null && 'ring-2 ring-gold/70'
       )}
@@ -510,56 +547,58 @@ function DayShiftChip({
           className="absolute bottom-0 left-0 right-0 h-4 bg-gradient-to-t from-navy/80 to-transparent flex items-end justify-center pointer-events-none"
           title="Continues overnight"
         >
-          <span className="text-[9px] leading-none text-white mb-0.5">⌄ overnight</span>
+          <span className="text-3xs leading-none text-white mb-0.5">⌄ overnight</span>
         </div>
       )}
       <div
         {...listeners}
         {...attributes}
-        className="absolute left-1.5 top-1 text-silver/70 hover:text-gold cursor-grab active:cursor-grabbing no-print"
+        className={cn('absolute left-1 top-0.5', GRIP_HIT)}
         aria-label={`Move ${shift.position}`}
       >
-        <GripVertical className="h-3 w-3" />
+        <GripVertical className={GRIP_ICON} />
       </div>
       <button
         type="button"
         onClick={onClick}
-        className="w-full h-full text-left px-1.5 pl-5 pt-1 pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+        className="w-full h-full text-left pl-6 pr-2 pt-1.5 pb-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+        title={`${fmtTime(startsAt, shift.timezone)}–${fmtTime(previewEnds, shift.timezone)} · ${shift.position} · ${SHIFT_STATUS_LABEL[shift.status]}`}
       >
-        <div className="flex items-center justify-between gap-1">
-          <div className="text-[10px] text-silver tabular-nums truncate">
+        <div className="flex items-center justify-between gap-1.5">
+          <div className="text-xs2 text-silver tabular-nums truncate">
             {fmtTime(startsAt, shift.timezone)}–{fmtTime(previewEnds, shift.timezone)}
           </div>
-          <Badge
-            variant={STATUS_VARIANT[shift.status] ?? 'default'}
-            className="text-[9px] px-1 py-0 shrink-0"
-            data-status={shift.status}
-          >
-            {shift.status === 'ASSIGNED'
-              ? '✓'
-              : shift.status === 'OPEN'
-                ? '○'
-                : shift.status[0]}
-          </Badge>
+          <StatusMark status={shift.status} />
         </div>
-        <div className="text-[11px] text-white font-medium truncate">
+        <div
+          className={cn(
+            'text-xs text-white font-medium truncate',
+            statusLabelClass(shift.status),
+          )}
+        >
           {shift.position}
         </div>
         {shift.clientName && (
-          <div className="text-[10px] text-silver/70 truncate">
+          <div className="text-2xs text-silver/70 truncate">
             {shift.clientName}
           </div>
         )}
       </button>
+      <ShiftTouchMenuButton
+        onOpen={onContextMenu}
+        label={`${shift.position} shift actions`}
+      />
       {canManage && (
         <div
           onMouseDown={onResizeMouseDown}
-          className="absolute left-0 right-0 bottom-0 h-1.5 cursor-ns-resize hover:bg-gold/40 group no-print"
-          aria-label="Drag to resize duration"
-          role="slider"
-          tabIndex={-1}
+          className={RESIZE_RAIL_Y}
+          title="Drag to resize duration"
+          aria-hidden="true"
         >
-          <div className="mx-auto w-8 h-0.5 mt-0.5 rounded-full bg-silver/30 group-hover:bg-gold" />
+          {/* Mouse-only drag affordance — keyboard/AT users adjust times in
+              the edit dialog, so this is decoration to AT (role="slider"
+              here was a lie: no value, no keyboard operation). */}
+          <div className="w-8 h-0.5 rounded-full bg-silver/30 group-hover:bg-gold" />
         </div>
       )}
     </div>

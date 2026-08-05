@@ -6,6 +6,22 @@ import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { ShiftCard, shiftMinutes } from './ShiftCard';
 
 /**
+ * Day-dot colour for the month grid, ordered by what the associate still
+ * owes: an upcoming assigned shift they haven't confirmed is the only thing
+ * that needs a tap, so it keeps the gold (the brand's "act here" accent).
+ * Everything else recedes to a status tone.
+ */
+function dayDotTone(shift: Shift, now: number): string {
+  if (shift.status === 'CANCELLED') return 'bg-alert/60';
+  if (shift.status === 'OPEN') return 'bg-warning/80';
+  const upcoming = new Date(shift.startsAt).getTime() > now;
+  if (shift.status === 'ASSIGNED' && upcoming && !shift.acknowledgedAt) {
+    return 'bg-gold';
+  }
+  return 'bg-success/70';
+}
+
+/**
  * Week and month calendar views for My Schedule.
  *
  * Both render from the shifts the page already has (all upcoming + the
@@ -185,7 +201,7 @@ export function ScheduleWeekView({
             <section key={d.key}>
               <h3
                 className={[
-                  'text-[11px] uppercase tracking-wider mb-1.5',
+                  'text-xs2 uppercase tracking-wider mb-1.5',
                   isToday ? 'text-gold' : 'text-silver/80',
                 ].join(' ')}
               >
@@ -298,7 +314,7 @@ export function ScheduleMonthView({
 
       <div className="grid grid-cols-7 gap-1 text-center">
         {WEEKDAYS.map((w) => (
-          <div key={w} className="text-[10px] uppercase tracking-wider text-silver/60 py-1">
+          <div key={w} className="text-2xs uppercase tracking-wider text-silver/60 py-1">
             {w}
           </div>
         ))}
@@ -348,14 +364,41 @@ export function ScheduleMonthView({
               >
                 {day}
               </span>
+              {/* One dot per shift, toned by what that shift needs from the
+                  associate. Every dot used to be gold, so the month grid
+                  could tell you a day was busy but not whether anything on
+                  it was still waiting on you — which is the whole reason to
+                  open the month view. */}
               <span className="h-1.5 flex items-center gap-0.5" aria-hidden="true">
-                {Array.from({ length: Math.min(count, 3) }, (_, j) => (
-                  <span key={j} className="h-1 w-1 rounded-full bg-gold/80" />
+                {(byDay.get(key) ?? []).slice(0, 3).map((s) => (
+                  <span
+                    key={s.id}
+                    className={[
+                      'h-1 w-1 rounded-full',
+                      dayDotTone(s, now),
+                    ].join(' ')}
+                  />
                 ))}
               </span>
             </button>
           );
         })}
+      </div>
+
+      {/* Key for the day dots — new colour meaning needs to be learnable. */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-silver/70">
+        <span className="inline-flex items-center gap-1">
+          <span className="h-1.5 w-1.5 rounded-full bg-gold" />
+          Needs your confirmation
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="h-1.5 w-1.5 rounded-full bg-success/70" />
+          Confirmed
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="h-1.5 w-1.5 rounded-full bg-warning/80" />
+          Open
+        </span>
       </div>
 
       <div className="mt-4">

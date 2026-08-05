@@ -109,13 +109,55 @@ const THROTTLE_SPACING_MS = 1100;
 // burns a throttle slot.
 let draining = false;
 
+// Punches the server refused permanently. Persisted so the idle screen can
+// tell someone "N punches never made it — see HR" instead of the queue badge
+// silently ticking down while worked hours disappear.
+const DROPPED_KEY = 'alto.kiosk.dropped.v1';
+
+export function droppedCount(): number {
+  try {
+    const n = Number(window.localStorage.getItem(DROPPED_KEY) ?? '0');
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function clearDroppedCount(): void {
+  try {
+    window.localStorage.removeItem(DROPPED_KEY);
+  } catch {
+    /* private mode */
+  }
+}
+
+function recordDropped(n: number): void {
+  if (n <= 0) return;
+  try {
+    window.localStorage.setItem(DROPPED_KEY, String(droppedCount() + n));
+  } catch {
+    /* private mode — the count just isn't persisted */
+  }
+}
+
 /**
  * Try to send all queued punches. Stops on the first network failure —
  * no point hammering an offline server. Returns the count successfully
  * synced. Permanent failures (4xx) drop the entry; transient failures
  * (network / 5xx / 429) leave it in place with attempts++.
+ *
+ * `currentDeviceToken` — the token the kiosk holds RIGHT NOW, used in
+ * place of the token frozen into each queue item. The stored-token
+ * replay had a destructive failure mode: tokens expire on a schedule,
+ * so a tablet that queued punches offline and came back after expiry
+ * got 401 device_token_expired on every item, and the old "4xx is
+ * permanent" rule deleted the entire queue in one drain — days of
+ * worked time, no server trace, no notice. Replaying with the current
+ * token means a re-paired tablet can still deliver its backlog.
  */
-export async function drainQueue(): Promise<{
+export async function drainQueue(
+  currentDeviceToken?: string | null,
+): Promise<{
   synced: number;
   remaining: number;
   errors: number;
@@ -125,13 +167,16 @@ export async function drainQueue(): Promise<{
   if (draining) return { synced: 0, remaining: q.length, errors: 0 };
   draining = true;
   try {
-    return await drainItems(q);
+    return await drainItems(q, currentDeviceToken ?? null);
   } finally {
     draining = false;
   }
 }
 
-async function drainItems(q: QueuedPunch[]): Promise<{
+async function drainItems(
+  q: QueuedPunch[],
+  currentDeviceToken: string | null,
+): Promise<{
   synced: number;
   remaining: number;
   errors: number;
@@ -139,11 +184,11 @@ async function drainItems(q: QueuedPunch[]): Promise<{
   let synced = 0;
   let errors = 0;
   const remaining: QueuedPunch[] = [];
-  let networkDown = false;
+  let stopped = false;
   let first = true;
 
   for (const item of q) {
-    if (networkDown) {
+    if (stopped) {
       remaining.push(item);
       continue;
     }
@@ -153,7 +198,7 @@ async function drainItems(q: QueuedPunch[]): Promise<{
     first = false;
     try {
       await kioskPunch({
-        deviceToken: item.deviceToken,
+        deviceToken: currentDeviceToken ?? item.deviceToken,
         pin: item.pin,
         selfie: item.selfie,
         latitude: item.latitude,
@@ -166,20 +211,37 @@ async function drainItems(q: QueuedPunch[]): Promise<{
       synced++;
     } catch (err: unknown) {
       const status = (err as { status?: number } | undefined)?.status;
-      if (status && status >= 400 && status < 500 && status !== 408 && status !== 429) {
-        // Permanent client error (bad PIN, geofence, etc.) — drop the
-        // entry, it'll never succeed. The audit log already recorded
-        // the rejection on the server side via idempotencyKey.
+      const code = (err as { code?: string } | undefined)?.code;
+      // Device-auth failures are NOT per-item verdicts — every item in the
+      // queue shares the same device, so dropping "permanently" here wipes
+      // the whole backlog over a token problem that HR fixes by re-pairing.
+      // Keep everything and stop; the next drain (with a fresh token) will
+      // deliver.
+      const deviceAuthFailure =
+        code === 'device_token_expired' || code === 'invalid_device';
+      if (
+        status &&
+        status >= 400 &&
+        status < 500 &&
+        status !== 408 &&
+        status !== 429 &&
+        !deviceAuthFailure
+      ) {
+        // Permanent client error (bad PIN, too-old punch, wrong site) —
+        // drop the entry, it'll never succeed. The server records a
+        // REJECTED punch row for these, and the persisted dropped-count
+        // surfaces it on the idle screen so the loss isn't silent.
         errors++;
       } else {
-        // Network / 5xx / timeout — keep, mark for retry.
+        // Network / 5xx / timeout / device-auth — keep, mark for retry.
         item.attempts += 1;
         item.lastError = err instanceof Error ? err.message : 'unknown';
         remaining.push(item);
-        networkDown = true;
+        stopped = true;
       }
     }
   }
+  recordDropped(errors);
 
   // A paced drain takes ~1.1s per item, so punches enqueued WHILE we were
   // draining are in storage but not in our `q` snapshot. Carry them over

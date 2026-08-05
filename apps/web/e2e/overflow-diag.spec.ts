@@ -72,7 +72,7 @@ for (const persona of PERSONAS) {
   test(`no element escapes the viewport horizontally (${persona.name})`, async ({ page }) => {
     await page.goto('/login');
     await page.getByLabel(/email/i).fill(persona.email);
-    await page.getByLabel(/password/i).fill(persona.pass);
+    await page.getByLabel(/^password/i).fill(persona.pass);
     await page.getByRole('button', { name: /sign in/i }).click();
     await page.waitForTimeout(3000);
 

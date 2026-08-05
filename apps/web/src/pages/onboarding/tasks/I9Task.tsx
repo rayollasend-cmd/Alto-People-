@@ -12,8 +12,17 @@ import {
   type I9DocumentListItem,
   type I9Status,
 } from '@/lib/i9Api';
+import {
+  I9_DOC_CATALOG,
+  UPLOAD_ACCEPT_ATTR,
+  UPLOAD_MAX_BYTES,
+  i9CatalogEntry,
+  i9SetSatisfied,
+} from '@alto-people/shared';
+import { fmtDate, fmtDateTime, parseYmd } from '@/lib/format';
 import { Field, TaskShell, inputCls } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -22,13 +31,23 @@ import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 type I9DocumentKind = 'ID' | 'SSN_CARD' | 'I9_SUPPORTING' | 'J1_VISA' | 'J1_DS2019';
 type I9DocumentSide = 'FRONT' | 'BACK';
 
-const DOC_KIND_OPTIONS: { value: I9DocumentKind; label: string }[] = [
-  { value: 'ID', label: "Driver license / passport / state ID" },
-  { value: 'SSN_CARD', label: 'Social Security card' },
-  { value: 'I9_SUPPORTING', label: 'Other I-9 supporting document' },
-  { value: 'J1_VISA', label: 'J-1 visa' },
-  { value: 'J1_DS2019', label: 'J-1 DS-2019' },
-];
+// Same federal picker as the Documents task — the associate names the exact
+// document so HR isn't guessing from thumbnails at Section 2. The non-catalog
+// values keep this flow's extra buckets (J-1 papers, unusual documents);
+// those upload unclassified, exactly like the pre-catalog behavior.
+const OTHER_VALUE = '__other__';
+const J1_VISA_VALUE = '__j1_visa__';
+const J1_DS2019_VALUE = '__j1_ds2019__';
+const SPECIAL_KIND: Record<string, I9DocumentKind> = {
+  [OTHER_VALUE]: 'I9_SUPPORTING',
+  [J1_VISA_VALUE]: 'J1_VISA',
+  [J1_DS2019_VALUE]: 'J1_DS2019',
+};
+const LIST_HEADING: Record<'A' | 'B' | 'C', string> = {
+  A: 'List A — proves identity AND right to work (one is enough)',
+  B: 'List B — proves identity only (also add one from List C)',
+  C: 'List C — proves right to work only (also add one from List B)',
+};
 
 const KIND_LABEL: Record<string, string> = {
   ID: 'Driver license / passport / state ID',
@@ -211,7 +230,9 @@ function Section1Card({
           {status.section1.workAuthExpiresAt && (
             <div>
               Work auth expires:{' '}
-              <span className="text-white">{status.section1.workAuthExpiresAt}</span>
+              <span className="text-white">
+                {fmtDate(parseYmd(status.section1.workAuthExpiresAt))}
+              </span>
             </div>
           )}
           {status.section1.typedName && (
@@ -221,7 +242,7 @@ function Section1Card({
             </div>
           )}
           <div className="text-xs text-silver/70 mt-2">
-            Signed at {new Date(status.section1.completedAt).toLocaleString()}.
+            Signed at {fmtDateTime(status.section1.completedAt)}.
           </div>
         </div>
       ) : (
@@ -297,17 +318,38 @@ function DocumentsCard({
   onChanged: () => void;
 }) {
   const [docs, setDocs] = useState<I9DocumentListItem[] | null>(null);
+  // Doc count from the FIRST fetch this session — i.e. before any upload
+  // made here. Non-zero means identity documents already exist in the shared
+  // vault (same records as the Documents task), so tell the associate they
+  // can just submit those.
+  const [preexistingCount, setPreexistingCount] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [docKind, setDocKind] = useState<I9DocumentKind>('ID');
+  const [docTitle, setDocTitle] = useState<string>(I9_DOC_CATALOG[0].title);
   const [docSide, setDocSide] = useState<I9DocumentSide | ''>('');
   const section2Done = status.section2 !== null;
   const section1Done = status.section1 !== null;
   const submitted = status.documentsSubmittedAt !== null;
   const docCount = docs?.length ?? 0;
-  const canSubmit = section1Done && docCount > 0 && !submitted && !section2Done;
+
+  const selectedEntry = i9CatalogEntry(docTitle);
+  const selectedKind: I9DocumentKind =
+    selectedEntry?.kind ?? SPECIAL_KIND[docTitle] ?? 'I9_SUPPORTING';
+
+  // Live federal-requirement meter, mirroring the server's submit gate:
+  // List A alone, or B + C. Unclassified uploads (legacy, "Other", J-1
+  // papers) keep submit open — HR classifies those at review.
+  const usable = (docs ?? []).filter((d) => d.status !== 'REJECTED');
+  const hasA = usable.some((d) => d.i9List === 'A');
+  const hasB = usable.some((d) => d.i9List === 'B');
+  const hasC = usable.some((d) => d.i9List === 'C');
+  const hasUnclassified = usable.some((d) => d.i9List == null);
+  const combinationOk =
+    i9SetSatisfied(usable.map((d) => d.i9List)) || hasUnclassified;
+  const canSubmit =
+    section1Done && docCount > 0 && combinationOk && !submitted && !section2Done;
 
   // Hydrate from the server so the list survives a page reload — fixes the
   // "where did my upload go?" gap from the prior version that only kept
@@ -316,6 +358,7 @@ function DocumentsCard({
     try {
       const r = await listI9Documents(applicationId);
       setDocs(r.documents);
+      setPreexistingCount((cur) => cur ?? r.documents.length);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load documents.');
     }
@@ -329,14 +372,23 @@ function DocumentsCard({
     const file = e.target.files?.[0];
     e.target.value = ''; // allow re-picking the same file
     if (!file) return;
+    // Size checked here, like every sibling upload task: without it an
+    // oversized phone photo hit multer's limit and surfaced as a 500.
+    if (file.size > UPLOAD_MAX_BYTES) {
+      setError(
+        `That file is ${fmtSize(file.size)} — the limit is ${fmtSize(UPLOAD_MAX_BYTES)}. Try a smaller photo or a compressed PDF.`,
+      );
+      return;
+    }
     setError(null);
     setUploading(true);
     try {
       await uploadI9Document(
         applicationId,
         file,
-        docKind,
-        docSide === '' ? undefined : docSide
+        selectedKind,
+        selectedEntry?.card && docSide !== '' ? docSide : undefined,
+        selectedEntry?.title
       );
       await refresh();
       onChanged();
@@ -392,38 +444,98 @@ function DocumentsCard({
 
       {!section2Done && !submitted && (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-            <Field label="Document type">
-              <Select
-                value={docKind}
-                onChange={(e) => setDocKind(e.target.value as I9DocumentKind)}
-                disabled={uploading}
-              >
-                {DOC_KIND_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <Field label="Side (for cards/IDs)" hint="Leave blank for single-page documents like a passport.">
-              <Select
-                value={docSide}
-                onChange={(e) => setDocSide(e.target.value as I9DocumentSide | '')}
-                disabled={uploading}
-              >
-                <option value="">— Not applicable —</option>
-                <option value="FRONT">Front</option>
-                <option value="BACK">Back</option>
-              </Select>
-            </Field>
+          {preexistingCount !== null && preexistingCount > 0 && (
+            <div className="mb-4 px-3 py-2.5 rounded border border-gold/40 bg-gold/[0.06] text-sm text-silver">
+              {preexistingCount} identity document
+              {preexistingCount === 1 ? '' : 's'} already on file from your
+              Documents step — you can submit these for review or add more.
+            </div>
+          )}
+          <div className="mb-4 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-sm">
+            <div className="mb-1.5 font-medium text-white">
+              What the I-9 form needs
+            </div>
+            <div className={cn('flex items-center gap-2', hasA ? 'text-success' : 'text-silver')}>
+              <span aria-hidden>{hasA ? '✓' : '○'}</span>
+              ONE List A document (passport, Green Card…)
+            </div>
+            <div className="my-0.5 pl-5 text-xs text-silver/60">— or both of —</div>
+            <div className={cn('flex items-center gap-2', hasB ? 'text-success' : 'text-silver')}>
+              <span aria-hidden>{hasB ? '✓' : '○'}</span>
+              One List B document (driver&apos;s license, state ID…)
+            </div>
+            <div className={cn('flex items-center gap-2', hasC ? 'text-success' : 'text-silver')}>
+              <span aria-hidden>{hasC ? '✓' : '○'}</span>
+              One List C document (unrestricted Social Security card, birth certificate…)
+            </div>
+            {hasUnclassified && (
+              <div className="mt-1.5 text-xs text-silver/70">
+                Some documents have no type — HR will classify them at
+                review, so you can still submit.
+              </div>
+            )}
           </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+            <Field label="Which document is this?">
+              <Select
+                value={docTitle}
+                onChange={(e) => {
+                  setDocTitle(e.target.value);
+                  setDocSide('');
+                }}
+                disabled={uploading}
+              >
+                {(['A', 'B', 'C'] as const).map((list) => (
+                  <optgroup key={list} label={LIST_HEADING[list]}>
+                    {I9_DOC_CATALOG.filter((c) => c.list === list).map((c) => (
+                      <option key={c.title} value={c.title}>
+                        {c.title}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+                <optgroup label="Something else">
+                  <option value={OTHER_VALUE}>Other I-9 supporting document</option>
+                  <option value={J1_VISA_VALUE}>J-1 visa</option>
+                  <option value={J1_DS2019_VALUE}>J-1 DS-2019</option>
+                </optgroup>
+              </Select>
+            </Field>
+            {selectedEntry?.card && (
+              <Field
+                label="Which side of the card?"
+                hint="Leave blank if one photo shows everything."
+              >
+                <Select
+                  value={docSide}
+                  onChange={(e) => setDocSide(e.target.value as I9DocumentSide | '')}
+                  disabled={uploading}
+                >
+                  <option value="">— One photo shows everything —</option>
+                  <option value="FRONT">Front</option>
+                  <option value="BACK">Back</option>
+                </Select>
+              </Field>
+            )}
+          </div>
+          {docTitle === 'Social Security card (unrestricted)' && (
+            <p className="-mt-1 mb-3 text-xs text-warning">
+              If your card is printed with a restriction like &ldquo;VALID FOR
+              WORK ONLY WITH DHS AUTHORIZATION&rdquo;, it does NOT count as a
+              List C document — pick &ldquo;Other I-9 supporting
+              document&rdquo; instead and add a different List C document.
+            </p>
+          )}
           <div className="mb-4">
             <label className="inline-flex items-center gap-2 px-4 py-2.5 rounded bg-gold text-navy hover:bg-gold-bright cursor-pointer transition">
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*,application/pdf"
+                // The server's exact allowlist, not `image/*`: iPhones
+                // shoot HEIC by default, which passed this picker and was
+                // then rejected on upload. Every sibling task already
+                // offers precisely what the server accepts.
+                accept={UPLOAD_ACCEPT_ATTR}
                 capture="environment"
                 className="hidden"
                 onChange={handlePick}
@@ -442,7 +554,7 @@ function DocumentsCard({
         <div className="mb-4 px-3 py-2.5 rounded border border-success/40 bg-success/[0.06] text-sm text-silver">
           Submitted on{' '}
           <span className="text-white">
-            {new Date(status.documentsSubmittedAt!).toLocaleString()}
+            {fmtDateTime(status.documentsSubmittedAt)}
           </span>
           . HR will verify your documents and complete Section 2. You can close this page — you'll be notified when verification is complete.
         </div>
@@ -460,7 +572,8 @@ function DocumentsCard({
               <div className="flex-1 min-w-0">
                 <div className="text-white truncate">{d.filename}</div>
                 <div className="text-xs text-silver/70 mt-0.5">
-                  {KIND_LABEL[d.kind] ?? d.kind}
+                  {d.i9DocTitle ?? KIND_LABEL[d.kind] ?? d.kind}
+                  {d.i9List ? ` · List ${d.i9List}` : ''}
                   {d.side ? ` · ${d.side === 'FRONT' ? 'Front' : 'Back'}` : ''}
                   {' · '}
                   {fmtSize(d.size)}
@@ -469,22 +582,22 @@ function DocumentsCard({
                   )}
                 </div>
               </div>
-              <span
-                className={cn(
-                  'text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border whitespace-nowrap',
+              <Badge
+                size="sm"
+                variant={
                   d.status === 'VERIFIED'
-                    ? 'text-success border-success/40 bg-success/[0.06]'
+                    ? 'success'
                     : d.status === 'REJECTED'
-                      ? 'text-alert border-alert/40 bg-alert/[0.07]'
-                      : 'text-warning border-warning/40 bg-warning/[0.06]'
-                )}
+                      ? 'destructive'
+                      : 'pending'
+                }
               >
                 {d.status === 'VERIFIED'
                   ? 'Verified'
                   : d.status === 'REJECTED'
                     ? 'Rejected'
                     : 'Awaiting review'}
-              </span>
+              </Badge>
             </li>
           ))}
         </ul>
@@ -510,7 +623,9 @@ function DocumentsCard({
                 ? 'Sign Section 1 first.'
                 : docCount === 0
                   ? 'Upload at least one document first.'
-                  : ''}
+                  : !combinationOk
+                    ? 'Add ONE List A document, or one from List B plus one from List C.'
+                    : ''}
             </span>
           )}
         </div>
@@ -538,7 +653,7 @@ function Section2Status({ status }: { status: I9Status }) {
       </header>
       {s2 ? (
         <div className="text-sm text-silver">
-          Verified at {new Date(s2.completedAt).toLocaleString()}
+          Verified at {fmtDateTime(s2.completedAt)}
           {s2.verifierEmail && (
             <>
               {' '}by <span className="text-white">{s2.verifierEmail}</span>

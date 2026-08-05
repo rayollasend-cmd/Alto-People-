@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, BookOpen, GraduationCap, Plus } from 'lucide-react';
+import { AlertTriangle, BookOpen, GraduationCap, Plus, X } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { fmtDate } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDate, ymdLocal } from '@/lib/format';
 import {
   archiveCourse,
   completeEnrollment,
@@ -14,6 +15,7 @@ import {
   publishCourse,
   waiveEnrollment,
   type Course,
+  type CourseStatus,
   type Enrollment,
   type EnrollmentStatus,
   type ExpiringEnrollment,
@@ -33,8 +35,12 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
+  SearchInput,
+  SegmentedControl,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -48,6 +54,7 @@ import {
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
 import { toast } from 'sonner';
 
@@ -85,46 +92,111 @@ export function LearningHome() {
   );
 }
 
+/** Shared load-failure block: message + Retry. Never fake an empty state. */
+function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="p-6">
+      <ErrorBanner
+        action={
+          <Button size="sm" variant="secondary" onClick={onRetry}>
+            Retry
+          </Button>
+        }
+      >
+        {message}
+      </ErrorBanner>
+    </div>
+  );
+}
+
 const COURSE_BADGE: Record<Course['status'], 'pending' | 'success' | 'default'> = {
-  DRAFT: 'pending',
+  DRAFT: 'default',
   PUBLISHED: 'success',
   ARCHIVED: 'default',
+};
+
+const COURSE_STATUS_LABELS: Record<Course['status'], string> = {
+  DRAFT: 'Draft',
+  PUBLISHED: 'Published',
+  ARCHIVED: 'Archived',
 };
 
 function CoursesTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [rows, setRows] = useState<Course[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<CourseStatus | 'ALL'>('ALL');
   const [showNew, setShowNew] = useState(false);
   const [enrollFor, setEnrollFor] = useState<Course | null>(null);
 
   const refresh = () => {
     setRows(null);
+    setError(null);
     listCourses()
       .then((r) => setRows(r.courses))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setError(err instanceof ApiError ? err.message : 'Failed to load courses.'),
+      );
   };
   useEffect(() => {
     refresh();
   }, []);
 
+  const q = search.trim().toLowerCase();
+  const filtered = (rows ?? []).filter(
+    (c) =>
+      (!q || c.title.toLowerCase().includes(q)) &&
+      (statusFilter === 'ALL' || c.status === statusFilter),
+  );
+
   return (
     <div className="space-y-4">
-      {canManage && (
-        <div className="flex justify-end">
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New course
-          </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <SearchInput
+          className="h-8 w-64"
+          placeholder="Search courses…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search courses by name"
+        />
+        <Select
+          size="sm"
+          className="w-40"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as CourseStatus | 'ALL')}
+          aria-label="Filter courses by status"
+        >
+          <option value="ALL">All statuses</option>
+          <option value="DRAFT">Draft</option>
+          <option value="PUBLISHED">Published</option>
+          <option value="ARCHIVED">Archived</option>
+        </Select>
+        <div className="ml-auto">
+          {canManage && (
+            <Button onClick={() => setShowNew(true)}>
+              <Plus className="mr-2 h-4 w-4" /> New course
+            </Button>
+          )}
         </div>
-      )}
+      </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {error ? (
+            <LoadError message={error} onRetry={refresh} />
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
               icon={BookOpen}
               title="No courses"
               description="Build a course catalog with required and optional training."
+            />
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              icon={BookOpen}
+              title="No matching courses"
+              description="Adjust the search or status filter."
             />
           ) : (
             <Table>
@@ -133,18 +205,18 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                   <TableHead>Title</TableHead>
                   <TableHead className="hidden md:table-cell">Required</TableHead>
                   <TableHead className="hidden lg:table-cell">Validity</TableHead>
-                  <TableHead className="hidden lg:table-cell">Modules</TableHead>
-                  <TableHead className="hidden md:table-cell">Enrolled</TableHead>
+                  <TableHead className="hidden lg:table-cell text-right">Modules</TableHead>
+                  <TableHead className="hidden md:table-cell text-right">Enrolled</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((c) => (
+                {filtered.map((c) => (
                   <TableRow key={c.id} className="group">
                     <TableCell className="font-medium text-white">
                       {c.title}
-                      <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                         {c.isRequired ? 'Required · ' : ''}{c.enrollmentCount} enrolled
                       </div>
                     </TableCell>
@@ -154,18 +226,31 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="hidden lg:table-cell">
                       {c.validityDays ? `${c.validityDays}d` : 'Never expires'}
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell">{c.moduleCount}</TableCell>
-                    <TableCell className="hidden md:table-cell">{c.enrollmentCount}</TableCell>
+                    <TableCell className="hidden lg:table-cell text-right tabular-nums">
+                      {c.moduleCount}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums">
+                      {c.enrollmentCount}
+                    </TableCell>
                     <TableCell>
-                      <Badge variant={COURSE_BADGE[c.status]}>{c.status}</Badge>
+                      <Badge variant={COURSE_BADGE[c.status]}>
+                        {COURSE_STATUS_LABELS[c.status]}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && c.status === 'DRAFT' && (
                         <Button
                           size="sm"
                           onClick={async () => {
-                            await publishCourse(c.id);
-                            refresh();
+                            try {
+                              await publishCourse(c.id);
+                              toast.success(`Published "${c.title}".`);
+                              refresh();
+                            } catch (err) {
+                              toast.error(
+                                err instanceof ApiError ? err.message : 'Failed to publish.',
+                              );
+                            }
                           }}
                         >
                           Publish
@@ -180,8 +265,24 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                             size="sm"
                             variant="ghost"
                             onClick={async () => {
-                              await archiveCourse(c.id);
-                              refresh();
+                              if (
+                                !(await confirm({
+                                  title: 'Archive this course?',
+                                  description: `"${c.title}" will stop accepting new enrollments. Existing enrollments are kept.`,
+                                  confirmLabel: 'Archive',
+                                  destructive: true,
+                                }))
+                              )
+                                return;
+                              try {
+                                await archiveCourse(c.id);
+                                toast.success(`Archived "${c.title}".`);
+                                refresh();
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof ApiError ? err.message : 'Failed to archive.',
+                                );
+                              }
                             }}
                           >
                             Archive
@@ -196,10 +297,14 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                               await deleteCourse(c.id);
                               refresh();
                             } catch (err) {
-                              toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                              toast.error(
+                                err instanceof ApiError
+                                  ? err.message
+                                  : 'Could not delete the course.',
+                              );
                             }
                           }}
-                          className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
+                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
                         >
                           Delete
                         </button>
@@ -264,7 +369,7 @@ function NewCourseDrawer({
       toast.success('Course drafted.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the course.');
     } finally {
       setSaving(false);
     }
@@ -293,11 +398,14 @@ function NewCourseDrawer({
         </div>
         <div className="flex items-center gap-3">
           <input
+            id="new-course-required"
             type="checkbox"
             checked={isRequired}
             onChange={(e) => setIsRequired(e.target.checked)}
           />
-          <Label>Required for compliance</Label>
+          <Label htmlFor="new-course-required" className="mb-0">
+            Required for compliance
+          </Label>
         </div>
         <div>
           <Label>Validity (days) — leave empty for never expires</Label>
@@ -331,25 +439,37 @@ function EnrollDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [ids, setIds] = useState('');
+  // Multi-pick built on the single-value AssociatePicker: the picker's own
+  // value stays null so it never collapses into its "selected" chip; each
+  // onChange appends to this list (deduped) and selections render as
+  // removable chips below.
+  const [picked, setPicked] = useState<PickedAssociate[]>([]);
   const [saving, setSaving] = useState(false);
 
   const onSubmit = async () => {
-    const associateIds = ids
-      .split(/[\s,;]+/)
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const associateIds = picked.map((p) => p.id);
     if (associateIds.length === 0) {
-      toast.error('Paste at least one associate ID.');
+      toast.error('Pick at least one associate.');
       return;
     }
     setSaving(true);
     try {
       const r = await enrollAssociates(course.id, associateIds);
-      toast.success(`Enrolled ${r.created}, skipped ${r.skipped}.`);
+      // The API may grow a skippedNames list; prefer names over a bare
+      // count when they're provided so HR knows exactly who was skipped.
+      const skippedNames = (r as { skippedNames?: string[] }).skippedNames;
+      if (r.skipped > 0 && skippedNames && skippedNames.length > 0) {
+        toast.success(
+          `Enrolled ${r.created}. Skipped (already enrolled): ${skippedNames.join(', ')}.`,
+        );
+      } else if (r.skipped > 0) {
+        toast.success(`Enrolled ${r.created}, skipped ${r.skipped}.`);
+      } else {
+        toast.success(`Enrolled ${r.created}.`);
+      }
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not enroll the associates.');
     } finally {
       setSaving(false);
     }
@@ -361,13 +481,41 @@ function EnrollDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate IDs</Label>
-          <Textarea
-            className="mt-1 min-h-32 font-mono text-xs"
-            value={ids}
-            onChange={(e) => setIds(e.target.value)}
-            placeholder="UUID per line, comma-separated, or whitespace-separated."
-          />
+          <Label>Associates</Label>
+          <div className="mt-1">
+            <AssociatePicker
+              value={null}
+              onChange={(a) => {
+                if (!a) return;
+                setPicked((prev) =>
+                  prev.some((p) => p.id === a.id) ? prev : [...prev, a],
+                );
+              }}
+              placeholder="Search to add an associate…"
+            />
+          </div>
+          {picked.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {picked.map((p) => (
+                <span
+                  key={p.id}
+                  className="inline-flex items-center gap-1 rounded-full border border-navy-secondary bg-navy px-2.5 py-1 text-xs text-white"
+                >
+                  {p.name}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${p.name}`}
+                    className="text-silver/60 hover:text-white"
+                    onClick={() =>
+                      setPicked((prev) => prev.filter((x) => x.id !== p.id))
+                    }
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </DrawerBody>
       <DrawerFooter>
@@ -390,8 +538,19 @@ const ENROLL_BADGE: Record<EnrollmentStatus, 'pending' | 'accent' | 'success' | 
   WAIVED: 'default',
 };
 
+const ENROLL_STATUS_LABELS: Record<EnrollmentStatus, string> = {
+  ASSIGNED: 'Assigned',
+  IN_PROGRESS: 'In progress',
+  COMPLETED: 'Completed',
+  EXPIRED: 'Expired',
+  WAIVED: 'Waived',
+};
+
 function EnrollmentsTab({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<Enrollment[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<EnrollmentStatus | 'ALL'>('ALL');
   const [completeId, setCompleteId] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
   const [waiveId, setWaiveId] = useState<string | null>(null);
@@ -399,9 +558,12 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
 
   const refresh = () => {
     setRows(null);
+    setError(null);
     listEnrollments()
       .then((r) => setRows(r.enrollments))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setError(err instanceof ApiError ? err.message : 'Failed to load enrollments.'),
+      );
   };
   useEffect(() => {
     refresh();
@@ -410,16 +572,81 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
   const onComplete = (id: string) => setCompleteId(id);
   const onWaive = (id: string) => setWaiveId(id);
 
+  const q = search.trim().toLowerCase();
+  const filtered = (rows ?? []).filter(
+    (e) =>
+      (!q ||
+        e.associateName.toLowerCase().includes(q) ||
+        e.courseTitle.toLowerCase().includes(q)) &&
+      (statusFilter === 'ALL' || e.status === statusFilter),
+  );
+
+  const exportCsv = () => {
+    downloadCsv(`enrollments-${ymdLocal()}.csv`, [
+      ['Course', 'Associate', 'Status', 'Completed', 'Expires', 'Score', 'Assigned'],
+      ...filtered.map((e) => [
+        e.courseTitle,
+        e.associateName,
+        ENROLL_STATUS_LABELS[e.status],
+        e.completedAt ? fmtDate(e.completedAt) : '',
+        e.expiresAt ? fmtDate(e.expiresAt) : '',
+        e.score ?? '',
+        fmtDate(e.assignedAt),
+      ]),
+    ]);
+  };
+
   return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <SearchInput
+          className="h-8 w-64"
+          placeholder="Search associate or course…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search enrollments by associate or course"
+        />
+        <Select
+          size="sm"
+          className="w-40"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as EnrollmentStatus | 'ALL')}
+          aria-label="Filter enrollments by status"
+        >
+          <option value="ALL">All statuses</option>
+          <option value="ASSIGNED">Assigned</option>
+          <option value="IN_PROGRESS">In progress</option>
+          <option value="COMPLETED">Completed</option>
+          <option value="EXPIRED">Expired</option>
+          <option value="WAIVED">Waived</option>
+        </Select>
+        <Button
+          size="sm"
+          variant="secondary"
+          className="ml-auto"
+          onClick={exportCsv}
+          disabled={filtered.length === 0}
+        >
+          Export CSV
+        </Button>
+      </div>
     <Card>
       <CardContent className="p-0">
-        {rows === null ? (
+        {error ? (
+          <LoadError message={error} onRetry={refresh} />
+        ) : rows === null ? (
           <div className="p-6"><SkeletonRows count={3} /></div>
         ) : rows.length === 0 ? (
           <EmptyState
             icon={GraduationCap}
             title="No enrollments"
             description="Assign associates to a course from the Courses tab."
+          />
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            icon={GraduationCap}
+            title="No matching enrollments"
+            description="Adjust the search or status filter."
           />
         ) : (
           <Table>
@@ -430,26 +657,30 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
                 <TableHead>Status</TableHead>
                 <TableHead className="hidden lg:table-cell">Completed</TableHead>
                 <TableHead className="hidden md:table-cell">Expires</TableHead>
-                <TableHead className="hidden lg:table-cell">Score</TableHead>
+                <TableHead className="hidden lg:table-cell text-right">Score</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((e) => (
+              {filtered.map((e) => (
                 <TableRow key={e.id}>
                   <TableCell className="font-medium text-white">
                     {e.courseTitle}
-                    <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                    <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                       Expires {fmtDate(e.expiresAt)}
                     </div>
                   </TableCell>
                   <TableCell>{e.associateName}</TableCell>
                   <TableCell>
-                    <Badge variant={ENROLL_BADGE[e.status]}>{e.status}</Badge>
+                    <Badge variant={ENROLL_BADGE[e.status]}>
+                      {ENROLL_STATUS_LABELS[e.status]}
+                    </Badge>
                   </TableCell>
                   <TableCell className="hidden lg:table-cell">{fmtDate(e.completedAt)}</TableCell>
                   <TableCell className="hidden md:table-cell">{fmtDate(e.expiresAt)}</TableCell>
-                  <TableCell className="hidden lg:table-cell">{e.score ?? '—'}</TableCell>
+                  <TableCell className="hidden lg:table-cell text-right tabular-nums">
+                    {e.score ?? '—'}
+                  </TableCell>
                   <TableCell className="text-right space-x-2">
                     {(e.status === 'ASSIGNED' || e.status === 'IN_PROGRESS') && (
                       <Button size="sm" onClick={() => onComplete(e.id)}>
@@ -493,7 +724,9 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
             setCompleteId(null);
             refresh();
           } catch (err) {
-            toast.error(err instanceof ApiError ? err.message : 'Failed.');
+            toast.error(
+              err instanceof ApiError ? err.message : 'Could not mark the enrollment complete.',
+            );
           } finally {
             setCompleting(false);
           }
@@ -516,51 +749,84 @@ function EnrollmentsTab({ canManage }: { canManage: boolean }) {
             setWaiveId(null);
             refresh();
           } catch (err) {
-            toast.error(err instanceof ApiError ? err.message : 'Failed.');
+            toast.error(
+              err instanceof ApiError ? err.message : 'Could not waive the enrollment.',
+            );
           } finally {
             setWaiving(false);
           }
         }}
       />
     </Card>
+    </div>
   );
 }
 
+const EXPIRING_WINDOWS = [30, 60, 90] as const;
+
 function ExpiringTab() {
-  const [days, setDays] = useState('30');
+  const [days, setDays] = useState<number>(30);
   const [rows, setRows] = useState<ExpiringEnrollment[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
     setRows(null);
+    setError(null);
     try {
-      const r = await listExpiring(Number(days));
+      const r = await listExpiring(days);
       setRows(r.expiring);
-    } catch {
-      setRows([]);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : 'Failed to load expiring enrollments.',
+      );
     }
   };
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [days]);
+
+  const exportCsv = () => {
+    downloadCsv(`expiring-${days}d-${ymdLocal()}.csv`, [
+      ['Course', 'Associate', 'Required', 'Expires', 'Days left'],
+      ...(rows ?? []).map((e) => [
+        e.courseTitle,
+        e.associateName,
+        e.isRequired ? 'Yes' : 'No',
+        fmtDate(e.expiresAt),
+        e.daysLeft,
+      ]),
+    ]);
+  };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-end gap-3">
-        <div>
-          <Label>Window (days)</Label>
-          <Input
-            type="number"
-            className="mt-1 w-28"
-            value={days}
-            onChange={(e) => setDays(e.target.value)}
-          />
-        </div>
-        <Button onClick={refresh}>Refresh</Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs uppercase tracking-wider text-silver">Window</span>
+        <SegmentedControl<number>
+          ariaLabel="Expiration window"
+          value={days}
+          onChange={setDays}
+          options={EXPIRING_WINDOWS.map((w) => ({
+            value: w,
+            label: `${w} days`,
+          }))}
+        />
+        <Button
+          size="sm"
+          variant="secondary"
+          className="ml-auto"
+          onClick={exportCsv}
+          disabled={!rows || rows.length === 0}
+        >
+          Export CSV
+        </Button>
       </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {error ? (
+            <LoadError message={error} onRetry={() => void refresh()} />
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -584,7 +850,7 @@ function ExpiringTab() {
                   <TableRow key={e.id}>
                     <TableCell className="font-medium text-white">
                       {e.courseTitle}
-                      <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                         Expires {fmtDate(e.expiresAt)}{e.isRequired ? ' · Required' : ''}
                       </div>
                     </TableCell>

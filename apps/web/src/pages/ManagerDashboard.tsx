@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import {
   Activity,
+  AlertCircle,
   ArrowRight,
   Calendar,
   CalendarOff,
@@ -14,10 +16,13 @@ import {
   Users,
   type LucideIcon,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
-import { fmtDateTz } from '@/lib/format';
+import { fmtDate, fmtRelativeDate, ymdLocal } from '@/lib/format';
+import { useConfirm } from '@/lib/confirm';
 import {
+  bulkApproveTeamTimesheets,
   getTeamDashboard,
   listReports,
   listTeamTimeOff,
@@ -28,39 +33,12 @@ import {
   type TeamTimeOffRequest,
 } from '@/lib/teamApi';
 import { Avatar } from '@/components/ui/Avatar';
+import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
-
-const fmtRelative = (iso: string): string => {
-  const ms = Date.now() - new Date(iso).getTime();
-  const min = Math.floor(ms / 60_000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min}m ago`;
-  const hrs = Math.floor(min / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d ago`;
-  // fmtDateTz without a zone renders "May 13" in the browser zone —
-  // byte-for-byte the previous inline toLocaleDateString options.
-  return fmtDateTz(iso);
-};
-
-const fmtHM = (mins: number): string => {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
-};
-
-const fmtDateRange = (start: string, end: string): string => {
-  const a = new Date(start);
-  const b = new Date(end);
-  const sameDay = a.toDateString() === b.toDateString();
-  return sameDay ? fmtDateTz(a) : `${fmtDateTz(a)} – ${fmtDateTz(b)}`;
-};
 
 const greetingFor = (hour: number): string => {
   if (hour < 5) return 'Up late';
@@ -76,15 +54,6 @@ const firstNameFromEmail = (email: string): string => {
   return first ? first.charAt(0).toUpperCase() + first.slice(1) : 'there';
 };
 
-const CATEGORY_LABEL: Record<string, string> = {
-  SICK: 'Sick',
-  VACATION: 'Vacation',
-  PTO: 'PTO',
-  BEREAVEMENT: 'Bereavement',
-  JURY_DUTY: 'Jury duty',
-  OTHER: 'Other',
-};
-
 /**
  * Manager dashboard. All data is direct-report-scoped on the server
  * (`managerId == req.user.associateId`). Surfaces what a line manager
@@ -92,6 +61,8 @@ const CATEGORY_LABEL: Record<string, string> = {
  * requests, and a roster of direct reports with current status.
  */
 export function ManagerDashboard() {
+  const pullQueryClient = useQueryClient();
+  const pullState = usePullToRefresh(() => pullQueryClient.invalidateQueries());
   const { user } = useAuth();
   const [now, setNow] = useState(() => new Date());
 
@@ -123,6 +94,12 @@ export function ManagerDashboard() {
     queryKey: ['team', 'timeoff', 'PENDING'],
     queryFn: async () => (await listTeamTimeOff('PENDING')).requests,
   });
+  // Approved PTO overlapping today drives the roster's "Out today" pill —
+  // a genuinely-approved absence, distinct from the pending-request hint.
+  const approvedPtoQuery = useQuery({
+    queryKey: ['team', 'timeoff', 'APPROVED'],
+    queryFn: async () => (await listTeamTimeOff('APPROVED')).requests,
+  });
 
   const summary: TeamDashboard | null = summaryQuery.data ?? null;
   const reports: DirectReport[] | null = reportsQuery.data ?? null;
@@ -131,9 +108,12 @@ export function ManagerDashboard() {
     pendingTimesheetsQuery.data ?? null;
   const pendingPto: TeamTimeOffRequest[] | null =
     pendingPtoQuery.data ?? null;
+  const approvedPto: TeamTimeOffRequest[] | null =
+    approvedPtoQuery.data ?? null;
 
-  // Only the two essential queries surface a banner. The other three are
-  // best-effort (mirror previous .catch(() => empty) behaviour).
+  // The two essential queries surface a page-level banner; the approval
+  // and active-entry queries surface their own inline error + retry so a
+  // failure can never masquerade as a permanent skeleton or a zero count.
   const fatalErr = summaryQuery.error ?? reportsQuery.error;
   const error = fatalErr
     ? fatalErr instanceof ApiError
@@ -141,13 +121,19 @@ export function ManagerDashboard() {
       : 'Failed to load team data.'
     : null;
 
-  const greetingName = user?.email ? firstNameFromEmail(user.email) : 'there';
+  const approvalsError = Boolean(
+    pendingTimesheetsQuery.error ?? pendingPtoQuery.error,
+  );
+  const retryApprovals = () => {
+    if (pendingTimesheetsQuery.error) void pendingTimesheetsQuery.refetch();
+    if (pendingPtoQuery.error) void pendingPtoQuery.refetch();
+  };
+
+  const greetingName =
+    user?.firstName?.trim() ||
+    (user?.email ? firstNameFromEmail(user.email) : 'there');
   const greeting = greetingFor(now.getHours());
-  const dateLabel = now.toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-  });
+  const dateLabel = fmtDate(now);
 
   // Index of associateId → active time entry (so we can mark "on the
   // clock" badges in the team list).
@@ -159,14 +145,15 @@ export function ManagerDashboard() {
 
   return (
     <div className="mx-auto space-y-8">
+      <PullToRefreshIndicator state={pullState} />
       {/* Greeting */}
       <header>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-silver flex items-center gap-2">
+          <div className="text-xs2 uppercase tracking-[0.18em] text-silver flex items-center gap-2">
             <Calendar className="h-3 w-3" aria-hidden="true" />
             {dateLabel}
           </div>
-          <span className="inline-flex items-center gap-1 rounded-full border border-steel/60 bg-steel/20 px-2 py-0.5 text-[10px] uppercase tracking-widest text-white">
+          <span className="inline-flex items-center gap-1 rounded-full border border-steel/60 bg-steel/20 px-2 py-0.5 text-2xs uppercase tracking-widest text-white">
             Manager view
           </span>
         </div>
@@ -185,14 +172,22 @@ export function ManagerDashboard() {
       <ApprovalsSection
         pendingTimesheets={pendingTimesheets}
         pendingPto={pendingPto}
+        error={approvalsError}
+        onRetry={retryApprovals}
       />
 
-      <TeamSnapshot summary={summary} activeCount={activeByReport.size} />
+      <TeamSnapshot
+        summary={summary}
+        activeCount={activeByReport.size}
+        activeError={Boolean(activeQuery.error)}
+        onRetryActive={() => void activeQuery.refetch()}
+      />
 
       <TeamRoster
         reports={reports}
         activeByReport={activeByReport}
         pendingPto={pendingPto}
+        approvedPto={approvedPto}
       />
     </div>
   );
@@ -203,13 +198,57 @@ export function ManagerDashboard() {
 function ApprovalsSection({
   pendingTimesheets,
   pendingPto,
+  error,
+  onRetry,
 }: {
   pendingTimesheets: TeamTimeEntry[] | null;
   pendingPto: TeamTimeOffRequest[] | null;
+  error: boolean;
+  onRetry: () => void;
 }) {
+  const qc = useQueryClient();
+  const confirm = useConfirm();
+  const bulkApproveM = useMutation({
+    mutationFn: (ids: string[]) => bulkApproveTeamTimesheets(ids),
+    onSuccess: (r) => {
+      toast.success(
+        `Approved ${r.approved}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ''}.`,
+      );
+      void qc.invalidateQueries({ queryKey: ['team'] });
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Bulk approve failed.'),
+  });
+
   const tsCount = pendingTimesheets?.length ?? 0;
   const ptoCount = pendingPto?.length ?? 0;
-  const loading = pendingTimesheets === null || pendingPto === null;
+  const loading =
+    !error && (pendingTimesheets === null || pendingPto === null);
+
+  const approveAll = async () => {
+    const ids = (pendingTimesheets ?? []).map((e) => e.id);
+    if (ids.length === 0) return;
+    const ok = await confirm({
+      title: `Approve all ${ids.length} ${ids.length === 1 ? 'timesheet' : 'timesheets'}?`,
+      description:
+        'Approved hours are locked for the associate and included in the next payroll run.',
+      confirmLabel: 'Approve all',
+    });
+    if (!ok) return;
+    bulkApproveM.mutate(ids);
+  };
+
+  if (error) {
+    return (
+      <section aria-label="Pending approvals" className="space-y-3">
+        <SectionTitle icon={ClipboardList}>Needs your approval</SectionTitle>
+        <QueryErrorCard
+          label="Couldn't load your approval queues"
+          onRetry={onRetry}
+        />
+      </section>
+    );
+  }
 
   if (loading) {
     return (
@@ -263,6 +302,16 @@ function ApprovalsSection({
           cta="Open queue"
           severity={tsCount > 10 ? 'urgent' : 'attention'}
           show={tsCount > 0}
+          action={
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={approveAll}
+              loading={bulkApproveM.isPending}
+            >
+              Approve all {tsCount}
+            </Button>
+          }
         />
         <ApprovalCard
           icon={CalendarOff}
@@ -292,6 +341,7 @@ function ApprovalCard({
   cta,
   severity,
   show,
+  action,
 }: {
   icon: LucideIcon;
   count: number;
@@ -301,6 +351,9 @@ function ApprovalCard({
   cta: string;
   severity: 'attention' | 'urgent';
   show: boolean;
+  /** Optional inline action (e.g. "Approve all N") rendered beside the CTA.
+   *  The card root is a div (not a Link) so buttons can live inside it. */
+  action?: React.ReactNode;
 }) {
   if (!show) return null;
   const tone =
@@ -316,12 +369,12 @@ function ApprovalCard({
           count: 'text-warning',
         };
   return (
-    <Link
-      to={to}
+    <div
       className={cn(
-        'group flex flex-col rounded-lg border bg-navy p-5 transition-all',
-        'hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/20',
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight',
+        // Same elevation ladder as the AdminDashboard cards: rest at
+        // elev-1, lift to elev-2 on hover.
+        'group flex flex-col rounded-lg border bg-navy p-5 elev-1 transition-all',
+        'hover:-translate-y-0.5 hover:elev-2',
         tone.ring,
       )}
     >
@@ -345,11 +398,51 @@ function ApprovalCard({
       </div>
       <div className="mt-4 text-white font-medium leading-snug">{label}</div>
       {hint && <div className="mt-1 text-xs text-silver">{hint}</div>}
-      <div className="mt-4 flex items-center gap-1 text-sm text-gold group-hover:text-gold-bright">
-        {cta}
-        <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
+      <div className="mt-4 flex items-center justify-between gap-3">
+        <Link
+          to={to}
+          className="flex items-center gap-1 text-sm text-gold hover:text-gold-bright focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+        >
+          {cta}
+          <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
+        </Link>
+        {action}
       </div>
-    </Link>
+    </div>
+  );
+}
+
+/* ============================ Load-failure card ========================== */
+
+/**
+ * Rendered in place of a card whose query failed. Deliberately NOT a
+ * skeleton or a zero count — "0 of 12 on the clock" when the request
+ * never landed is confidently wrong.
+ */
+function QueryErrorCard({
+  label,
+  onRetry,
+}: {
+  label: string;
+  onRetry: () => void;
+}) {
+  return (
+    <Card className="border-alert/40">
+      <CardContent className="pt-5">
+        <div role="alert" className="flex items-start gap-2 text-sm text-alert">
+          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
+          <span>{label}</span>
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          className="mt-3"
+          onClick={onRetry}
+        >
+          Retry
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -358,9 +451,13 @@ function ApprovalCard({
 function TeamSnapshot({
   summary,
   activeCount,
+  activeError,
+  onRetryActive,
 }: {
   summary: TeamDashboard | null;
   activeCount: number;
+  activeError: boolean;
+  onRetryActive: () => void;
 }) {
   return (
     <section aria-label="Team snapshot" className="space-y-3">
@@ -371,7 +468,7 @@ function TeamSnapshot({
             <KpiTile
               icon={Users}
               label="Direct reports"
-              value={summary.directReports.toLocaleString()}
+              value={summary.directReports.toString()}
               hint={
                 summary.directReports === 0
                   ? 'No one currently reports to you.'
@@ -379,21 +476,28 @@ function TeamSnapshot({
               }
               to="/team"
             />
-            <KpiTile
-              icon={Clock}
-              label="On the clock now"
-              value={activeCount.toLocaleString()}
-              hint={
-                summary.directReports > 0
-                  ? `${activeCount} of ${summary.directReports}`
-                  : undefined
-              }
-              to="/team"
-            />
+            {activeError ? (
+              <QueryErrorCard
+                label="On the clock now — failed to load"
+                onRetry={onRetryActive}
+              />
+            ) : (
+              <KpiTile
+                icon={Clock}
+                label="On the clock now"
+                value={activeCount.toString()}
+                hint={
+                  summary.directReports > 0
+                    ? `${activeCount} of ${summary.directReports}`
+                    : undefined
+                }
+                to="/team"
+              />
+            )}
             <KpiTile
               icon={Clock}
               label="Pending timesheets"
-              value={summary.pendingTimesheets.toLocaleString()}
+              value={summary.pendingTimesheets.toString()}
               hint={
                 summary.pendingTimesheets === 0 ? 'Inbox clear.' : undefined
               }
@@ -402,7 +506,7 @@ function TeamSnapshot({
             <KpiTile
               icon={CalendarOff}
               label="Pending time-off"
-              value={summary.pendingTimeOff.toLocaleString()}
+              value={summary.pendingTimeOff.toString()}
               hint={summary.pendingTimeOff === 0 ? 'Nothing waiting.' : undefined}
               to="/team"
             />
@@ -439,7 +543,8 @@ function KpiTile({
   const inner = (
     <>
       <div className="flex items-center justify-between">
-        <div className="text-[10px] md:text-[11px] uppercase tracking-[0.15em] text-silver">
+        {/* Canonical KPI label spec (matches MetricCard). */}
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
           {label}
         </div>
         <Icon
@@ -450,7 +555,7 @@ function KpiTile({
           aria-hidden="true"
         />
       </div>
-      <div className="font-display text-3xl md:text-[2rem] text-gold-bright mt-3 leading-none tabular-nums">
+      <div className="font-display text-3xl md:text-hero text-gold-bright mt-3 leading-none tabular-nums">
         {value}
       </div>
       {hint && (
@@ -463,8 +568,8 @@ function KpiTile({
       <Link
         to={to}
         className={cn(
-          'group block rounded-lg border border-navy-secondary border-l-2 border-l-gold/40 bg-navy p-5 transition-all',
-          'hover:-translate-y-0.5 hover:border-l-gold-bright hover:shadow-lg hover:shadow-black/20',
+          'group block rounded-lg border border-navy-secondary border-l-2 border-l-gold/40 bg-navy p-5 elev-1 transition-all',
+          'hover:-translate-y-0.5 hover:border-l-gold-bright hover:elev-2',
           'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight',
         )}
       >
@@ -481,10 +586,9 @@ function KpiTile({
 
 /* ============================== Team roster ============================== */
 
-const TODAY_KEY = () => {
-  const d = new Date();
-  return d.toISOString().slice(0, 10);
-};
+// Local calendar day — toISOString() is UTC and flips to tomorrow for
+// evening users west of UTC, mislabeling who's "out today".
+const TODAY_KEY = () => ymdLocal();
 
 const TEAM_ROSTER_PREVIEW = 8;
 
@@ -492,16 +596,29 @@ function TeamRoster({
   reports,
   activeByReport,
   pendingPto,
+  approvedPto,
 }: {
   reports: DirectReport[] | null;
   activeByReport: Map<string, TeamTimeEntry>;
   pendingPto: TeamTimeOffRequest[] | null;
+  approvedPto: TeamTimeOffRequest[] | null;
 }) {
   const [expanded, setExpanded] = useState(false);
 
-  // Mark anyone with a PENDING PTO that overlaps today so the manager
-  // sees "out today (pending)" status. Approved PTO would use a
-  // different feed; for v1 this is the most useful signal.
+  // Approved PTO overlapping today → "Out today" (a real absence).
+  // Pending PTO overlapping today stays a softer "Pending PTO today"
+  // hint so the manager knows a decision is still open.
+  const outToday = useMemo(() => {
+    const today = TODAY_KEY();
+    const out = new Set<string>();
+    for (const r of approvedPto ?? []) {
+      if (r.startDate <= today && r.endDate >= today) {
+        out.add(r.associateId);
+      }
+    }
+    return out;
+  }, [approvedPto]);
+
   const pendingPtoToday = useMemo(() => {
     const today = TODAY_KEY();
     const out = new Set<string>();
@@ -555,27 +672,30 @@ function TeamRoster({
                   : reports.slice(0, TEAM_ROSTER_PREVIEW)
                 ).map((r) => {
                   const active = activeByReport.get(r.id);
+                  const isOut = outToday.has(r.id);
                   const isPto = pendingPtoToday.has(r.id);
                   return (
-                    <li
-                      key={r.id}
-                      className="px-5 py-3 flex items-center gap-3 hover:bg-navy-secondary/20 transition-colors"
-                    >
-                      <Avatar
-                        name={`${r.firstName} ${r.lastName}`}
-                        email={r.email}
-                        size="sm"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium text-white truncate">
-                          {r.firstName} {r.lastName}
+                    <li key={r.id}>
+                      <Link
+                        to={`/people?associateId=${r.id}`}
+                        className="px-5 py-3 flex items-center gap-3 hover:bg-navy-secondary/20 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                      >
+                        <Avatar
+                          name={`${r.firstName} ${r.lastName}`}
+                          email={r.email}
+                          size="sm"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-white truncate">
+                            {r.firstName} {r.lastName}
+                          </div>
+                          <div className="text-xs2 text-silver/80 truncate">
+                            {r.jobTitle ?? '—'}
+                            {r.departmentName ? ` · ${r.departmentName}` : ''}
+                          </div>
                         </div>
-                        <div className="text-[11px] text-silver/80 truncate">
-                          {r.jobTitle ?? '—'}
-                          {r.departmentName ? ` · ${r.departmentName}` : ''}
-                        </div>
-                      </div>
-                      <StatusPill active={active} pto={isPto} />
+                        <StatusPill active={active} out={isOut} pto={isPto} />
+                      </Link>
                     </li>
                   );
                 })}
@@ -616,31 +736,43 @@ function TeamRoster({
 
 function StatusPill({
   active,
+  out,
   pto,
 }: {
   active: TeamTimeEntry | undefined;
+  out: boolean;
   pto: boolean;
 }) {
+  // Sentence-case status chips on the Badge variant contract:
+  // success = on the clock, info = scheduled absence, pending = awaiting
+  // a decision, default = neutral off-the-clock.
   if (active) {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] bg-success/15 text-success border border-success/30">
-        <span className="h-1.5 w-1.5 rounded-full bg-success" />
-        On the clock · since {fmtRelative(active.clockInAt)}
-      </span>
+      <Badge variant="success" className="normal-case tracking-normal">
+        On the clock · since {fmtRelativeDate(active.clockInAt)}
+      </Badge>
+    );
+  }
+  if (out) {
+    return (
+      <Badge variant="info" className="normal-case tracking-normal">
+        <CalendarOff className="h-3 w-3" aria-hidden="true" />
+        Out today
+      </Badge>
     );
   }
   if (pto) {
     return (
-      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] bg-warning/15 text-warning border border-warning/30">
-        <CalendarOff className="h-3 w-3" />
+      <Badge variant="pending" withDot={false} className="normal-case tracking-normal">
+        <CalendarOff className="h-3 w-3" aria-hidden="true" />
         Pending PTO today
-      </span>
+      </Badge>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] bg-navy-secondary/50 text-silver border border-navy-secondary">
+    <Badge variant="default" className="normal-case tracking-normal">
       Off the clock
-    </span>
+    </Badge>
   );
 }
 
@@ -661,5 +793,3 @@ function SectionTitle({
   );
 }
 
-// Helpers re-exported for tests / future use.
-export { fmtRelative as _fmtRelative, fmtHM as _fmtHM, fmtDateRange as _fmtDateRange, CATEGORY_LABEL as _CATEGORY_LABEL };

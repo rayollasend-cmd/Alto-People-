@@ -15,7 +15,7 @@
 // The wizard runs `createPayrollRun` only at step 4 — the prior steps are
 // pure UI projections so the user can back out without polluting the DB.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertCircle,
@@ -51,11 +51,6 @@ import { ApiError } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/Tooltip';
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -69,9 +64,11 @@ import { Select } from '@/components/ui/Select';
 import { Stepper } from '@/components/ui/Stepper';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
+import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 
-const fmtMoney = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+/** "May 13, 2026 → May 26, 2026" — a YMD period, parsed as local days. */
+const fmtPeriod = (startYmd: string, endYmd: string) =>
+  `${fmtDate(parseYmd(startYmd))} → ${fmtDate(parseYmd(endYmd))}`;
 
 interface Props {
   open: boolean;
@@ -88,8 +85,11 @@ const STEP_TITLES: Record<Step, string> = {
   4: 'Approve & submit',
 };
 
+type RunKind = 'REGULAR' | 'OFF_CYCLE';
+
 export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
   const [step, setStep] = useState<Step>(1);
+  const [runKind, setRunKind] = useState<RunKind>('REGULAR');
   const [schedules, setSchedules] = useState<PayrollSchedule[] | null>(null);
   const [scheduleId, setScheduleId] = useState<string>('');
   const [periodStart, setPeriodStart] = useState('');
@@ -109,6 +109,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
   useEffect(() => {
     if (!open) return;
     setStep(1);
+    setRunKind('REGULAR');
     setNotes('');
     setSubmitting(false);
     setSchedules(null);
@@ -129,12 +130,28 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
   );
 
   // When a schedule is picked, default the period to its computed "next"
-  // window. The user can override.
+  // window. The user can override. Off-cycle runs keep their arbitrary
+  // dates — the schedule only scopes the client there.
   useEffect(() => {
-    if (!activeSchedule) return;
+    if (!activeSchedule || runKind === 'OFF_CYCLE') return;
     setPeriodStart(activeSchedule.nextPeriodStart);
     setPeriodEnd(activeSchedule.nextPeriodEnd);
-  }, [activeSchedule]);
+  }, [activeSchedule, runKind]);
+
+  // Switching run type re-defaults the period: off-cycle → today/today
+  // (arbitrary, editable); back to regular → the schedule's next window.
+  const chooseRunKind = (k: RunKind) => {
+    if (k === runKind) return;
+    setRunKind(k);
+    if (k === 'OFF_CYCLE') {
+      const today = ymdLocal();
+      setPeriodStart(today);
+      setPeriodEnd(today);
+    } else if (activeSchedule) {
+      setPeriodStart(activeSchedule.nextPeriodStart);
+      setPeriodEnd(activeSchedule.nextPeriodEnd);
+    }
+  };
 
   const blockingCount = exceptions?.counts.blocking ?? 0;
   const canSubmit = blockingCount === 0 || overrideBlocking;
@@ -182,6 +199,16 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
   const next = async () => {
     if (!canAdvance[step]) return;
     if (step === 1) {
+      if (runKind === 'OFF_CYCLE') {
+        // Off-cycle runs skip time aggregation entirely — a preview computed
+        // from approved time would describe paychecks that won't exist.
+        setPreview(null);
+        setPreviewError(null);
+        setExceptions(null);
+        setOverrideBlocking(false);
+        setStep(2);
+        return;
+      }
       await fetchPreview();
       setStep(2);
       return;
@@ -202,8 +229,13 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
         periodEnd,
         defaultHourlyRate: defaultRate ? Number(defaultRate) : undefined,
         notes: notes || undefined,
+        ...(runKind === 'OFF_CYCLE' ? { kind: 'OFF_CYCLE' as const } : {}),
       });
-      toast.success(`Run created — ${detail.items.length} paystubs aggregated.`);
+      toast.success(
+        runKind === 'OFF_CYCLE'
+          ? 'Off-cycle run created — add earning lines on the run page to build the paychecks.'
+          : `Run created — ${detail.items.length} paystubs aggregated.`
+      );
       onCreated(detail);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Create failed.');
@@ -235,6 +267,8 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
         <div className="min-h-[260px]">
           {step === 1 && (
             <Step1
+              runKind={runKind}
+              onRunKindChange={chooseRunKind}
               schedules={schedules}
               scheduleId={scheduleId}
               setScheduleId={setScheduleId}
@@ -248,6 +282,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
           )}
           {step === 2 && (
             <Step2
+              offCycle={runKind === 'OFF_CYCLE'}
               periodStart={periodStart}
               periodEnd={periodEnd}
               schedule={activeSchedule}
@@ -261,6 +296,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
           )}
           {step === 3 && (
             <Step3
+              offCycle={runKind === 'OFF_CYCLE'}
               periodStart={periodStart}
               periodEnd={periodEnd}
               schedule={activeSchedule}
@@ -274,6 +310,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
           )}
           {step === 4 && (
             <Step4
+              offCycle={runKind === 'OFF_CYCLE'}
               periodStart={periodStart}
               periodEnd={periodEnd}
               schedule={activeSchedule}
@@ -330,6 +367,8 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
 }
 
 function Step1(props: {
+  runKind: 'REGULAR' | 'OFF_CYCLE';
+  onRunKindChange: (k: 'REGULAR' | 'OFF_CYCLE') => void;
   schedules: PayrollSchedule[] | null;
   scheduleId: string;
   setScheduleId: (v: string) => void;
@@ -340,8 +379,46 @@ function Step1(props: {
   defaultRate: string;
   setDefaultRate: (v: string) => void;
 }) {
+  const offCycle = props.runKind === 'OFF_CYCLE';
   return (
     <div className="space-y-4">
+      <fieldset>
+        <legend className="mb-1.5 text-sm font-medium text-silver">Run type</legend>
+        <div className="space-y-1.5">
+          <label className="flex cursor-pointer items-start gap-2 text-xs text-silver/80">
+            <input
+              type="radio"
+              name="run-kind"
+              className="mt-0.5"
+              checked={!offCycle}
+              onChange={() => props.onRunKindChange('REGULAR')}
+            />
+            <span>
+              <span className="text-white">Regular</span> — from approved time in the period
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2 text-xs text-silver/80">
+            <input
+              type="radio"
+              name="run-kind"
+              className="mt-0.5"
+              checked={offCycle}
+              onChange={() => props.onRunKindChange('OFF_CYCLE')}
+            />
+            <span>
+              <span className="text-white">Off-cycle</span> — bonus / terminal pay; starts empty,
+              add earnings after creating
+            </span>
+          </label>
+        </div>
+      </fieldset>
+      {offCycle && (
+        <div className="rounded border border-gold/30 bg-gold/5 p-3 text-xs text-silver/80">
+          Off-cycle runs skip time aggregation and are created with no paychecks. After creating,
+          open the run page and add add-on earning lines (bonus, severance, retro pay) — those
+          lines become the paychecks. Period dates are up to you and default to today.
+        </div>
+      )}
       <Field
         label="Pay schedule"
         hint={
@@ -388,26 +465,29 @@ function Step1(props: {
           )}
         </Field>
       </div>
-      <Field
-        label="Default hourly rate"
-        hint="Falls back to this only for associates without an hourly rate set on their Compensation record. Everyone with a rate on file is paid that rate."
-      >
-        {(p) => (
-          <Input
-            type="number"
-            min={0}
-            step="0.01"
-            value={props.defaultRate}
-            onChange={(e) => props.setDefaultRate(e.target.value)}
-            {...p}
-          />
-        )}
-      </Field>
+      {!offCycle && (
+        <Field
+          label="Default hourly rate"
+          hint="Falls back to this only for associates without an hourly rate set on their Compensation record. Everyone with a rate on file is paid that rate."
+        >
+          {(p) => (
+            <Input
+              type="number"
+              min={0}
+              step="0.01"
+              value={props.defaultRate}
+              onChange={(e) => props.setDefaultRate(e.target.value)}
+              {...p}
+            />
+          )}
+        </Field>
+      )}
     </div>
   );
 }
 
 interface PreviewProps {
+  offCycle: boolean;
   periodStart: string;
   periodEnd: string;
   schedule: PayrollSchedule | null;
@@ -480,6 +560,8 @@ const EXCEPTION_COPY: Record<PayrollException['kind'], { label: string }> = {
   TERMINATED_IN_RUN: { label: 'Terminated in period' },
   OT_SPIKE: { label: 'OT spike' },
   UNSUPPORTED_STATE: { label: 'Unsupported SIT state' },
+  UNAPPROVED_TIME: { label: 'Unapproved time' },
+  MISSING_COMP_RECORD: { label: 'No comp record' },
 };
 
 function ExceptionStrip({
@@ -492,7 +574,7 @@ function ExceptionStrip({
   const [open, setOpen] = useState(false);
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-[11px] text-silver/70 py-2">
+      <div className="flex items-center gap-2 text-xs2 text-silver/70 py-2">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
         Checking pre-flight exceptions…
       </div>
@@ -500,7 +582,7 @@ function ExceptionStrip({
   }
   if (!exceptions || exceptions.exceptions.length === 0) {
     return (
-      <div className="flex items-center gap-2 rounded border border-success/20 bg-success/5 px-3 py-2 text-[11px] text-success">
+      <div className="flex items-center gap-2 rounded border border-success/20 bg-success/5 px-3 py-2 text-xs2 text-success">
         <CheckCircle2 className="h-3.5 w-3.5" />
         No exceptions — every associate has a W-4, a payout method, and a supported state.
       </div>
@@ -554,13 +636,13 @@ function ExceptionStrip({
                       ? 'pending'
                       : 'default'
                   }
-                  className="text-[10px]"
+                  className="text-2xs"
                 >
                   {EXCEPTION_COPY[ex.kind].label}
                 </Badge>
                 <Link
                   to={`/people?associateId=${ex.associateId}`}
-                  className="ml-auto inline-flex items-center gap-1 text-[10px] text-gold hover:underline"
+                  className="ml-auto inline-flex items-center gap-1 text-2xs text-gold hover:underline"
                   title="Open associate profile to fix"
                 >
                   Fix <ExternalLink className="h-2.5 w-2.5" />
@@ -644,17 +726,26 @@ function PaycheckCard({
           )}
           <div className="min-w-0">
             <div className="text-sm text-white truncate">{item.associateName}</div>
-            <div className="text-[11px] text-silver/70 truncate">
+            <div className="text-xs2 text-silver/70 truncate">
               {item.taxState ?? '—'} · {item.payFrequency.toLowerCase()}
               {item.overtimeHours > 0 && (
                 <> · <span className="text-gold">{item.overtimeHours.toFixed(1)}h OT</span></>
               )}
             </div>
           </div>
+          {item.rateSource === 'DEFAULT' && (
+            <Badge
+              variant="pending"
+              className="text-2xs shrink-0"
+              title="No compensation record; paying the wizard's default rate. Set their rate in People → Compensation."
+            >
+              default rate — no comp record
+            </Badge>
+          )}
           {(blockingCount > 0 || otherCount > 0) && (
             <Badge
               variant={blockingCount > 0 ? 'destructive' : 'pending'}
-              className="text-[10px] shrink-0"
+              className="text-2xs shrink-0"
             >
               {blockingCount > 0
                 ? `${blockingCount} blocking`
@@ -682,7 +773,7 @@ function PaycheckCard({
         </div>
       </button>
       {expanded && (
-        <div className="border-t border-silver/10 px-3 py-3 text-[11px] space-y-3">
+        <div className="border-t border-silver/10 px-3 py-3 text-xs2 space-y-3">
           {variant === 'hours' ? (
             <HoursDrillDown item={item} />
           ) : (
@@ -690,7 +781,7 @@ function PaycheckCard({
           )}
           {exceptions.length > 0 && (
             <div className="border-t border-silver/10 pt-2">
-              <div className="text-[10px] uppercase tracking-widest text-silver/70 mb-1">
+              <div className="text-2xs uppercase tracking-widest text-silver/70 mb-1">
                 Exceptions
               </div>
               <ul className="space-y-1">
@@ -726,7 +817,7 @@ function CardStat({
 }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-widest text-silver/70">
+      <div className="text-2xs uppercase tracking-widest text-silver/70">
         {label}
       </div>
       <div className={cn('tabular-nums text-sm', highlight ? 'text-gold' : 'text-white')}>
@@ -737,27 +828,52 @@ function CardStat({
 }
 
 /**
- * QBO-style "?" icon next to a label. Hover/focus reveals a one-sentence
- * explanation of the rate, cap, or source used by the math engine. The
- * tooltips deliberately cite the 2024 numbers — bumping the year means
- * editing the constants in payrollTax.ts and these strings together.
+ * QBO-style "?" icon next to a label — TAP or click opens a one-sentence
+ * explanation of the rate, cap, or source used by the math engine. This
+ * was a hover Tooltip, which made all eleven tax-line explanations
+ * unreachable on touch devices (Radix suppresses focus-open after a tap);
+ * a click-toggled popover works for every pointer. The texts deliberately
+ * cite the 2024 numbers — bumping the year means editing the constants in
+ * payrollTax.ts and these strings together.
  */
 function InfoTip({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex items-center justify-center text-silver/70 hover:text-silver focus:outline-none focus-visible:text-gold align-middle ml-1"
-          aria-label={`What is this?`}
+    <span ref={ref} className="relative inline-block align-middle ml-1">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="What is this?"
+        className="inline-flex items-center justify-center p-1 coarse:p-2 -m-1 coarse:-m-2 text-silver/70 hover:text-silver focus:outline-none focus-visible:text-gold"
+      >
+        <HelpCircle className="h-3 w-3" />
+      </button>
+      {open && (
+        <span
+          role="note"
+          className="absolute left-1/2 top-full z-50 mt-1.5 block w-64 max-w-[80vw] -translate-x-1/2 rounded-md border border-navy-secondary bg-navy p-2.5 text-left text-xs2 font-normal leading-relaxed text-silver normal-case tracking-normal elev-3"
         >
-          <HelpCircle className="h-3 w-3" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent className="max-w-xs text-[11px] leading-relaxed">
-        {text}
-      </TooltipContent>
-    </Tooltip>
+          {text}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -911,6 +1027,7 @@ function DrillRow({
 }
 
 function Step2({
+  offCycle,
   periodStart,
   periodEnd,
   schedule,
@@ -922,10 +1039,25 @@ function Step2({
   exceptionsLoading,
 }: PreviewProps) {
   const exMap = exceptionsByAssociate(exceptions);
+  if (offCycle) {
+    return (
+      <div className="space-y-3 text-sm">
+        <Pill icon={<Calendar className="h-3.5 w-3.5" />}>
+          {fmtPeriod(periodStart, periodEnd)} · off-cycle
+        </Pill>
+        <div className="rounded border border-gold/30 bg-gold/5 p-3 text-xs text-silver/80">
+          Nothing to review yet — off-cycle runs don't pull hours from time
+          entries. The run is created empty; paychecks come from add-on earning
+          lines (bonus, severance, retro pay) you add on the run page after
+          creating.
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="space-y-3 text-sm">
       <Pill icon={<Calendar className="h-3.5 w-3.5" />}>
-        {periodStart} → {periodEnd}{schedule ? ` · ${schedule.name}` : ''}
+        {fmtPeriod(periodStart, periodEnd)}{schedule ? ` · ${schedule.name}` : ''}
       </Pill>
 
       <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} />
@@ -969,6 +1101,7 @@ function Step2({
 }
 
 function Step3({
+  offCycle,
   periodStart,
   periodEnd,
   schedule,
@@ -982,6 +1115,17 @@ function Step3({
   void periodStart;
   void periodEnd;
   const exMap = exceptionsByAssociate(exceptions);
+  if (offCycle) {
+    return (
+      <div className="space-y-3 text-sm">
+        <div className="rounded border border-gold/30 bg-gold/5 p-3 text-xs text-silver/80">
+          No wages or deductions to review yet — this off-cycle run starts
+          empty. Taxes and deductions are computed when you add earning lines
+          on the run page after creating.
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="space-y-3 text-sm">
       <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} />
@@ -1024,7 +1168,7 @@ function Step3({
             ))}
           </div>
 
-          <p className="text-[10px] text-silver/70">
+          <p className="text-2xs text-silver/70">
             Withholding tables: IRS Pub 15-T 2024. State tables include CA, NY,
             NJ, GA, OH, VA, MN (bracketed) and 11 flat-rate states. Long-tail
             states use a 4% conservative fallback.
@@ -1035,7 +1179,7 @@ function Step3({
       {schedule && (
         <p className="text-xs text-silver/70">
           Pay date will land on{' '}
-          <strong className="text-silver/80">{schedule.nextPayDate}</strong>{' '}
+          <strong className="text-silver/80">{fmtDate(parseYmd(schedule.nextPayDate))}</strong>{' '}
           ({schedule.payDateOffsetDays} day offset from period end).
         </p>
       )}
@@ -1046,7 +1190,7 @@ function Step3({
 function Stat({ label, value, highlight }: { label: React.ReactNode; value: string; highlight?: boolean }) {
   return (
     <div className={cn('rounded border border-silver/15 bg-black/30 px-3 py-2', highlight && 'border-gold/40 bg-gold/5')}>
-      <div className={cn('text-[10px] uppercase tracking-widest inline-flex items-center', highlight ? 'text-gold' : 'text-silver/70')}>
+      <div className={cn('text-2xs uppercase tracking-widest inline-flex items-center', highlight ? 'text-gold' : 'text-silver/70')}>
         {label}
       </div>
       <div className={cn('mt-0.5 tabular-nums', highlight ? 'text-gold' : 'text-white')}>{value}</div>
@@ -1055,6 +1199,7 @@ function Stat({ label, value, highlight }: { label: React.ReactNode; value: stri
 }
 
 function Step4({
+  offCycle,
   periodStart,
   periodEnd,
   schedule,
@@ -1065,6 +1210,7 @@ function Step4({
   overrideBlocking,
   setOverrideBlocking,
 }: {
+  offCycle: boolean;
   periodStart: string;
   periodEnd: string;
   schedule: PayrollSchedule | null;
@@ -1100,7 +1246,13 @@ function Step4({
           <span className="font-medium uppercase tracking-wide">Ready to create</span>
         </div>
         <ul className="space-y-1 text-silver/80">
-          <li>• Period {periodStart} → {periodEnd}</li>
+          <li>• Period {fmtPeriod(periodStart, periodEnd)}</li>
+          {offCycle && (
+            <li>
+              • <strong>Off-cycle</strong> — created empty; paychecks come from add-on earning
+              lines you add on the run page after creating.
+            </li>
+          )}
           {schedule && <li>• Schedule: {schedule.name} ({schedule.frequency.toLowerCase()})</li>}
           {preview && (
             <li>
@@ -1110,7 +1262,7 @@ function Step4({
               employer cost {fmtMoney(preview.totals.totalEmployerTax)}
             </li>
           )}
-          <li>• Status will be <strong>DRAFT</strong> until you finalize it from the run drawer.</li>
+          <li>• Status will be <strong>Draft</strong> until you finalize it from the run drawer.</li>
           <li>• A QuickBooks journal entry will be queued on disbursement.</li>
         </ul>
       </div>

@@ -1,6 +1,5 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { Outlet, useLocation, useNavigationType } from 'react-router-dom';
-import { AnimatePresence, motion } from 'framer-motion';
 import { TooltipProvider } from '@/components/ui/Tooltip';
 import { CommandPalette, useCommandPalette } from '@/components/ui/CommandPalette';
 import {
@@ -82,7 +81,7 @@ export function Layout() {
     scrollPositions.set(prevKey.current, main.scrollTop);
     if (navigationType === 'POP') {
       const saved = scrollPositions.get(location.key);
-      // Wait one frame: AnimatePresence is mid-swap, and a synchronous
+      // Wait one frame: the route swap is mid-commit, and a synchronous
       // scrollTop = 0 would race the new page's first paint. requestAnimation
       // schedules us after the layout commits.
       requestAnimationFrame(() => {
@@ -153,23 +152,28 @@ export function Layout() {
             // overflow-x-auto wrappers, which still scroll.
             className="flex-1 overflow-y-auto overflow-x-clip overscroll-contain p-4 md:p-6 lg:p-8 focus:outline-none pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))] lg:pl-[max(2rem,env(safe-area-inset-left))] lg:pr-[max(2rem,env(safe-area-inset-right))]"
           >
-            <AnimatePresence mode="wait" initial={false}>
-              <motion.div
-                key={location.pathname}
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
-                transition={{ duration: 0.18, ease: 'easeOut' }}
-              >
-                <Suspense fallback={<RouteFallback />}>
-                  <Outlet />
-                </Suspense>
-              </motion.div>
-            </AnimatePresence>
+            {/* PERF: pure-CSS route fade (keyed remount replays the
+                animation) — this was the ONLY framer-motion usage in the
+                app, and it kept 42 KB gz of animation runtime in the
+                blocking first-paint path. index.css flattens the
+                keyframes under prefers-reduced-motion. */}
+            {/* max-w: 49 page roots carry a no-op `mx-auto` (no max-width
+                anywhere in the chain), so ultrawide monitors stretched
+                every table to 2400px+. One content ceiling here fixes all
+                of them. */}
+            <div key={location.pathname} className="route-fade mx-auto w-full max-w-[1600px]">
+              <Suspense fallback={<RouteFallback />}>
+                <Outlet />
+              </Suspense>
+            </div>
           </main>
           <BottomTabBar onOpenMenu={() => setMobileOpen(true)} />
         </div>
-        <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+        <CommandPalette
+          open={paletteOpen}
+          onOpenChange={setPaletteOpen}
+          onShowKeyboardShortcuts={() => setShortcutsOpen(true)}
+        />
         <KeyboardShortcutsDialog
           open={shortcutsOpen}
           onOpenChange={setShortcutsOpen}

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { BadgeDollarSign, CreditCard, FileText, Users as UsersIcon } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { getOrgBranding } from '@/lib/brandingApi';
-import { listAdminUsers } from '@/lib/usersAdminApi';
+import { getUserCounts } from '@/lib/usersAdminApi';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -28,14 +28,20 @@ export function BillingHome() {
   const [activeSeats, setActiveSeats] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Bumped by the Retry button to re-run the loader effect.
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([getOrgBranding(), listAdminUsers({ status: 'ACTIVE' })])
-      .then(([branding, users]) => {
+    setLoading(true);
+    setError(null);
+    // getUserCounts is uncapped — the /admin/users list truncates at the
+    // server page size, so its length undercounts seats on large orgs.
+    Promise.all([getOrgBranding(), getUserCounts()])
+      .then(([branding, counts]) => {
         if (cancelled) return;
         setSupportEmail(branding.supportEmail);
-        setActiveSeats(users.users.length);
+        setActiveSeats(counts.counts.ACTIVE);
       })
       .catch((err) => {
         if (cancelled) return;
@@ -47,7 +53,7 @@ export function BillingHome() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadTick]);
 
   const supportLine = supportEmail ?? 'your account manager';
 
@@ -79,7 +85,16 @@ export function BillingHome() {
       </div>
 
       {error ? (
-        <ErrorBanner>{error}</ErrorBanner>
+        <div className="space-y-3">
+          <ErrorBanner>{error}</ErrorBanner>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => setReloadTick((t) => t + 1)}
+          >
+            Retry
+          </Button>
+        </div>
       ) : (
         <div className="grid gap-6 md:grid-cols-2">
           <Card>

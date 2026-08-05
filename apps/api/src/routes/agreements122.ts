@@ -1,8 +1,12 @@
 import { Router } from 'express';
+import { httpUrl } from '@alto-people/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { enqueueAudit } from '../lib/audit.js';
+import { notifyAssociate } from '../lib/notify.js';
+import { env } from '../config/env.js';
 
 /**
  * Phase 122 — Per-associate legal agreements.
@@ -44,6 +48,7 @@ agreements122Router.get('/agreements', VIEW, async (req, res) => {
   const rows = await prisma.agreement.findMany({
     take: 500,
     where: {
+      deletedAt: null,
       ...(associateId ? { associateId } : {}),
       ...(kind ? { kind } : {}),
       ...(status ? { status } : {}),
@@ -73,6 +78,7 @@ agreements122Router.get('/agreements', VIEW, async (req, res) => {
       supersedesId: a.supersedesId,
       notes: a.notes,
       issuedByEmail: a.issuedBy?.email ?? null,
+      createdAt: a.createdAt.toISOString(),
     })),
   });
 });
@@ -88,7 +94,7 @@ agreements122Router.get(
     }
     const rows = await prisma.agreement.findMany({
       take: 500,
-      where: { associateId: req.user!.associateId },
+      where: { associateId: req.user!.associateId, deletedAt: null },
       orderBy: { createdAt: 'desc' },
     });
     res.json({
@@ -113,7 +119,7 @@ const IssueInputSchema = z.object({
   associateId: z.string().uuid(),
   kind: KIND,
   customLabel: z.string().max(120).optional().nullable(),
-  documentUrl: z.string().url().max(500).optional().nullable(),
+  documentUrl: httpUrl(500).optional().nullable(),
   effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   expiresOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   supersedesId: z.string().uuid().optional().nullable(),
@@ -157,6 +163,21 @@ agreements122Router.post('/agreements', MANAGE, async (req, res) => {
         issuedById: req.user!.id,
       },
     });
+  });
+  // Issuing was a notification black hole — the associate only found out
+  // if they happened to browse /agreements. Direct email fallback covers
+  // pre-activation associates too.
+  const label =
+    input.kind === 'OTHER' ? (input.customLabel ?? 'agreement') : input.kind.replace(/_/g, ' ');
+  void notifyAssociate(input.associateId, {
+    subject: `Action required: ${label} awaiting your signature`,
+    body:
+      `A ${label} has been issued to you and is awaiting your signature. ` +
+      `Review and sign it here: ${env.APP_BASE_URL}/agreements` +
+      (input.expiresOn ? ` (sign by ${input.expiresOn})` : ''),
+    category: 'agreements',
+    linkUrl: '/agreements',
+    emailFallback: true,
   });
   res.status(201).json({ id: created.id });
 });
@@ -232,9 +253,28 @@ agreements122Router.post(
 agreements122Router.delete('/agreements/:id', MANAGE, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
   const a = await prisma.agreement.findUnique({ where: { id } });
-  if (!a) {
+  if (!a || a.deletedAt) {
     throw new HttpError(404, 'not_found', 'Agreement not found.');
   }
-  await prisma.agreement.delete({ where: { id } });
+  // Soft delete + audit — a legal record is never silently hard-deleted.
+  await prisma.agreement.update({
+    where: { id },
+    data: { deletedAt: new Date() },
+  });
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      action: 'agreement.deleted',
+      entityType: 'Agreement',
+      entityId: a.id,
+      metadata: {
+        associateId: a.associateId,
+        kind: a.kind,
+        status: a.status,
+        customLabel: a.customLabel,
+      },
+    },
+    'agreement.deleted',
+  );
   res.status(204).end();
 });

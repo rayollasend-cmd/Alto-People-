@@ -8,6 +8,7 @@ import type {
   AvailabilityExceptionListResponse,
   AvailabilityException,
   AvailabilityListResponse,
+  AvailabilityOverviewResponse,
   AvailabilityReplaceInput,
   MyShiftHistoryResponse,
   OpenShiftClaim,
@@ -27,6 +28,11 @@ import type {
   ShiftConflictsResponse,
   ShiftCreateInput,
   ShiftListResponse,
+  ShiftTeam as ShiftTeamData,
+  ShiftTeamCreateInput,
+  ShiftTeamDetailResponse,
+  ShiftTeamListResponse,
+  ShiftTeamUpdateInput,
   ShiftStatus,
   ShiftSwapListResponse,
   ShiftSwapRequest,
@@ -347,14 +353,93 @@ export function copyWeek(body: CopyWeekInput): Promise<CopyWeekResponse> {
 /* Phase 53 — pivot week view + publish-week ============================== */
 
 export function listSchedulingAssociates(
-  filters: { clientId?: string; locationId?: string } = {},
+  filters: { clientId?: string; locationId?: string; teamId?: string } = {},
 ): Promise<AssociateListResponse> {
   const p = new URLSearchParams();
   if (filters.clientId) p.set('clientId', filters.clientId);
   if (filters.locationId) p.set('locationId', filters.locationId);
+  if (filters.teamId) p.set('teamId', filters.teamId);
   const qs = p.toString();
   return apiFetch<AssociateListResponse>(
     `/scheduling/associates${qs ? `?${qs}` : ''}`,
+  );
+}
+
+/** Fit data (availability windows + PTO-blocked days) for the visible range. */
+export function getAvailabilityOverview(
+  from: string,
+  to: string,
+): Promise<AvailabilityOverviewResponse> {
+  const p = new URLSearchParams({ from, to });
+  return apiFetch<AvailabilityOverviewResponse>(
+    `/scheduling/availability-overview?${p.toString()}`,
+  );
+}
+
+/* Shift teams — standing crews that scope the scheduling roster. */
+
+export function listShiftTeams(
+  filters: { clientId?: string; locationId?: string } = {},
+): Promise<ShiftTeamListResponse> {
+  const p = new URLSearchParams();
+  if (filters.clientId) p.set('clientId', filters.clientId);
+  if (filters.locationId) p.set('locationId', filters.locationId);
+  const qs = p.toString();
+  return apiFetch<ShiftTeamListResponse>(
+    `/scheduling/teams${qs ? `?${qs}` : ''}`,
+  );
+}
+
+export function createShiftTeam(body: ShiftTeamCreateInput): Promise<ShiftTeamData> {
+  return apiFetch<ShiftTeamData>('/scheduling/teams', { method: 'POST', body });
+}
+
+export function updateShiftTeam(
+  id: string,
+  body: ShiftTeamUpdateInput,
+): Promise<ShiftTeamData> {
+  return apiFetch<ShiftTeamData>(`/scheduling/teams/${id}`, {
+    method: 'PATCH',
+    body,
+  });
+}
+
+export function deleteShiftTeam(id: string): Promise<void> {
+  return apiFetch<void>(`/scheduling/teams/${id}`, { method: 'DELETE' });
+}
+
+export function getShiftTeam(id: string): Promise<ShiftTeamDetailResponse> {
+  return apiFetch<ShiftTeamDetailResponse>(`/scheduling/teams/${id}`);
+}
+
+export function addShiftTeamMember(
+  teamId: string,
+  associateId: string,
+): Promise<void> {
+  return apiFetch<void>(`/scheduling/teams/${teamId}/members`, {
+    method: 'POST',
+    body: { associateId },
+  });
+}
+
+export function removeShiftTeamMember(
+  teamId: string,
+  associateId: string,
+): Promise<void> {
+  return apiFetch<void>(`/scheduling/teams/${teamId}/members/${associateId}`, {
+    method: 'DELETE',
+  });
+}
+
+/** One-click cure for "not at this site": opens an AssociateAssignment at
+ *  the team's location (close-then-open, same as the org transfer). */
+export function assignTeamMemberHere(
+  teamId: string,
+  associateId: string,
+): Promise<{ assignmentId: string }> {
+  return apiFetch<{ assignmentId: string }>(
+    `/scheduling/teams/${teamId}/members/${associateId}/assign-here`,
+    { method: 'POST' },
   );
 }
 

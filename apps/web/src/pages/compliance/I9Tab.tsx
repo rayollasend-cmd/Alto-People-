@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, FileCheck, XCircle } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { CheckCircle2, Download, ExternalLink, FileCheck, Fingerprint, XCircle } from 'lucide-react';
+import { DirectorateHeader, Kpi, KpiStrip } from './DirectorateShell';
 import type { I9DocumentList, I9Verification } from '@alto-people/shared';
 import { listI9s, upsertI9 } from '@/lib/complianceApi';
 import {
@@ -8,7 +10,14 @@ import {
   type I9DocumentListItem,
 } from '@/lib/i9Api';
 import { ApiError } from '@/lib/api';
+import { DocumentViewer } from '@/components/DocumentViewer';
+import {
+  downloadAllDocumentsUrl,
+  previewDocumentUrl,
+  IDENTITY_DOC_KINDS,
+} from '@/lib/documentsApi';
 import { cn } from '@/lib/cn';
+import { fmtDate, fmtDateTime } from '@/lib/format';
 import {
   Avatar,
   Badge,
@@ -22,20 +31,97 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Select,
   SkeletonRows,
 } from '@/components/ui';
+import { FilterChip, SearchInput } from '@/components/ui/FilterBar';
+
+/* ---------------- Section 2 deadline helpers ----------------
+ * Date-only strings ("YYYY-MM-DD") are parsed at LOCAL midnight —
+ * `new Date('YYYY-MM-DD')` would parse UTC and shift the day for
+ * anyone west of Greenwich. */
+
+function parseLocalDate(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
+
+/** Advance `days` business days (Mon–Fri) past `start`. */
+function addBusinessDays(start: Date, days: number): Date {
+  const d = new Date(start);
+  let added = 0;
+  while (added < days) {
+    d.setDate(d.getDate() + 1);
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) added++;
+  }
+  return d;
+}
+
+/** Section 2 must be completed within 3 business days of the start date. */
+function section2DueDate(startDate: string | null | undefined): Date | null {
+  if (!startDate) return null;
+  return addBusinessDays(parseLocalDate(startDate), 3);
+}
+
+/** Whole days from local-today to `d` (negative = in the past). */
+function daysFromToday(d: Date): number {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((d.getTime() - today.getTime()) / 86_400_000);
+}
+
+/** Shared urgency tone: past → alert, within 2 days → warning, else muted. */
+function toneForDays(days: number): string {
+  if (days < 0) return 'text-alert';
+  if (days <= 2) return 'text-warning';
+  return 'text-silver';
+}
+
+const WORK_AUTH_WINDOW_DAYS = 90;
+
+const I9_FILTERS = [
+  { value: 'pending', label: 'Pending' },
+  { value: 'complete', label: 'Complete' },
+  { value: 'all', label: 'All' },
+  { value: 'work_auth', label: 'Work auth expiring' },
+] as const;
+
+const DOC_LIST_LABELS: Record<I9DocumentList, string> = {
+  LIST_A: 'List A',
+  LIST_B_AND_C: 'Lists B + C',
+};
+type I9Filter = (typeof I9_FILTERS)[number]['value'];
 
 export function I9Tab({ canManage }: { canManage: boolean }) {
-  const [filter, setFilter] = useState<'pending' | 'complete' | 'all'>('pending');
+  // ?associateId= deep-links one person's I-9 (the onboarding checklist
+  // links here) — start on the ALL filter so they're present whatever
+  // their state, then auto-open their drawer once rows arrive.
+  const [deepLinkParams] = useSearchParams();
+  const deepLinkAssociateId = deepLinkParams.get('associateId');
+  const deepLinkOpened = useRef(false);
+  const [filter, setFilter] = useState<I9Filter>(deepLinkAssociateId ? 'all' : 'pending');
+  const [search, setSearch] = useState('');
   const [rows, setRows] = useState<I9Verification[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<I9Verification | null>(null);
 
+  useEffect(() => {
+    if (!deepLinkAssociateId || deepLinkOpened.current || !rows) return;
+    const match = rows.find((r) => r.associateId === deepLinkAssociateId);
+    if (match) {
+      deepLinkOpened.current = true;
+      setDrawerTarget(match);
+    }
+  }, [rows, deepLinkAssociateId]);
+
   const refresh = useCallback(async () => {
     try {
       setError(null);
-      const res = await listI9s(filter);
+      // Always fetch the full list: the filters are client-side views and
+      // the KPI strip must count the whole population, not one slice.
+      const res = await listI9s('all');
       setRows(res.i9s);
       setDrawerTarget((prev) =>
         prev ? res.i9s.find((r) => r.id === prev.id) ?? null : null,
@@ -43,7 +129,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
-  }, [filter]);
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -54,42 +140,141 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     refresh();
   };
 
+  // Client-side view over the fetched rows: work-auth window filter, name
+  // search, then deadline-first ordering (pending rows with the earliest
+  // Section 2 due date first; pending without a start date next; complete
+  // rows last).
+  const displayRows = useMemo(() => {
+    if (!rows) return null;
+    let list = rows;
+    if (filter === 'pending') list = list.filter((r) => !r.section2CompletedAt);
+    if (filter === 'complete') list = list.filter((r) => !!r.section2CompletedAt);
+    if (filter === 'work_auth') {
+      list = list.filter(
+        (r) =>
+          r.workAuthExpiresAt &&
+          daysFromToday(parseLocalDate(r.workAuthExpiresAt)) <= WORK_AUTH_WINDOW_DAYS,
+      );
+    }
+    const q = search.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (r) =>
+          r.associateName.toLowerCase().includes(q) ||
+          r.associateEmail.toLowerCase().includes(q),
+      );
+    }
+    const rank = (r: I9Verification): [number, number] => {
+      if (r.section2CompletedAt) return [2, 0];
+      const due = section2DueDate(r.startDate);
+      return due ? [0, due.getTime()] : [1, 0];
+    };
+    return [...list].sort((a, b) => {
+      const [ga, ka] = rank(a);
+      const [gb, kb] = rank(b);
+      return ga - gb || ka - kb;
+    });
+  }, [rows, filter, search]);
+
+  // Whole-population stats (rows is always the full list).
+  const kpi = useMemo(() => {
+    const all = rows ?? [];
+    const pending2 = all.filter((r) => !r.section2CompletedAt);
+    return {
+      total: all.length,
+      pendingS1: all.filter((r) => !r.section1CompletedAt).length,
+      pendingS2: pending2.length,
+      overdue: pending2.filter((r) => {
+        const due = section2DueDate(r.startDate);
+        return due !== null && due.getTime() < Date.now();
+      }).length,
+      complete: all.filter((r) => !!r.section2CompletedAt).length,
+      workAuth: all.filter(
+        (r) =>
+          r.workAuthExpiresAt &&
+          daysFromToday(parseLocalDate(r.workAuthExpiresAt)) <= WORK_AUTH_WINDOW_DAYS,
+      ).length,
+    };
+  }, [rows]);
+
   return (
     <section>
-      <div className="flex flex-wrap gap-2 mb-4">
-        {(['pending', 'complete', 'all'] as const).map((f) => (
-          <button
-            key={f}
-            type="button"
-            onClick={() => setFilter(f)}
-            className={cn(
-              'px-3 py-1.5 rounded text-xs uppercase tracking-wider border transition-colors',
-              filter === f
-                ? 'border-gold text-gold bg-gold/10'
-                : 'border-navy-secondary text-silver hover:text-white',
-            )}
+      <DirectorateHeader
+        icon={Fingerprint}
+        title="I-9 verification"
+        blurb="Federal employment-eligibility verification — Section 1 by the associate, Section 2 by HR within 3 business days of the start date"
+      />
+
+      {rows && rows.length > 0 && (
+        <KpiStrip>
+          <Kpi label="Associates" value={kpi.total} />
+          <Kpi
+            label="Section 1 pending"
+            value={kpi.pendingS1}
+            tone={kpi.pendingS1 > 0 ? 'text-warning' : undefined}
+          />
+          <Kpi
+            label="Section 2 pending"
+            value={kpi.pendingS2}
+            tone={kpi.pendingS2 > 0 ? 'text-warning' : undefined}
+          />
+          <Kpi
+            label="Overdue"
+            value={kpi.overdue}
+            tone={kpi.overdue > 0 ? 'text-alert' : undefined}
+          />
+          <Kpi label="Complete" value={kpi.complete} tone="text-success" />
+          <Kpi
+            label={`Work auth ≤ ${WORK_AUTH_WINDOW_DAYS}d`}
+            value={kpi.workAuth}
+            tone={kpi.workAuth > 0 ? 'text-alert' : undefined}
+          />
+        </KpiStrip>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {I9_FILTERS.map((f) => (
+          <FilterChip
+            key={f.value}
+            active={filter === f.value}
+            onClick={() => setFilter(f.value)}
           >
-            {f}
-          </button>
+            {f.label}
+          </FilterChip>
         ))}
+        <div className="w-full sm:w-64 sm:ml-auto">
+          <SearchInput
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by name…"
+            aria-label="Search by name"
+          />
+        </div>
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-alert mb-3">
+        <ErrorBanner
+          className="mb-3"
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          }
+        >
           {error}
-        </p>
+        </ErrorBanner>
       )}
-      {!rows && <SkeletonRows count={4} rowHeight="h-20" />}
-      {rows && rows.length === 0 && (
+      {!displayRows && <SkeletonRows count={4} rowHeight="h-20" />}
+      {displayRows && displayRows.length === 0 && (
         <EmptyState
           icon={FileCheck}
           title="No I-9 records match this filter"
-          description="Switch to a different filter or wait for associates to complete Section 1."
+          description="Switch to a different filter, clear the search, or wait for associates to complete Section 1."
         />
       )}
-      {rows && rows.length > 0 && (
+      {displayRows && displayRows.length > 0 && (
         <ul className="space-y-2">
-          {rows.map((r) => {
+          {displayRows.map((r) => {
             const sec1Done = !!r.section1CompletedAt;
             const sec2Done = !!r.section2CompletedAt;
             return (
@@ -116,12 +301,39 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <SectionBadge label="Sec 1" done={sec1Done} />
-                        <SectionBadge label="Sec 2" done={sec2Done} />
-                        {r.documentList && (
-                          <Badge variant="outline">{r.documentList}</Badge>
+                      <div className="flex items-center gap-4 flex-wrap">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <SectionBadge label="Sec 1" done={sec1Done} />
+                          <SectionBadge label="Sec 2" done={sec2Done} />
+                          {r.documentList && (
+                            <Badge variant="outline">
+                              {DOC_LIST_LABELS[r.documentList]}
+                            </Badge>
+                          )}
+                        </div>
+                        {r.workAuthExpiresAt && (
+                          <div className="text-right">
+                            <div className="text-2xs uppercase tracking-widest text-silver/80">
+                              Work auth
+                            </div>
+                            <div
+                              className={cn(
+                                'text-xs tabular-nums',
+                                toneForDays(
+                                  daysFromToday(parseLocalDate(r.workAuthExpiresAt)),
+                                ),
+                              )}
+                            >
+                              {fmtDate(parseLocalDate(r.workAuthExpiresAt))}
+                            </div>
+                          </div>
                         )}
+                        <div className="text-right min-w-[84px]">
+                          <div className="text-2xs uppercase tracking-widest text-silver/80">
+                            Sec 2 due
+                          </div>
+                          <Section2DueCell row={r} />
+                        </div>
                       </div>
                     </div>
                   </CardContent>
@@ -146,6 +358,27 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
         )}
       </Drawer>
     </section>
+  );
+}
+
+/** "Section 2 due" cell: overdue Nd in alert, due within 2 days in warning,
+ *  otherwise a muted date. Em dash when complete or no start date. */
+function Section2DueCell({ row }: { row: I9Verification }) {
+  if (row.section2CompletedAt) {
+    return <div className="text-xs text-silver/60">—</div>;
+  }
+  const due = section2DueDate(row.startDate);
+  if (!due) return <div className="text-xs text-silver/60">—</div>;
+  const days = daysFromToday(due);
+  if (days < 0) {
+    return (
+      <div className="text-xs font-medium text-alert">overdue {-days}d</div>
+    );
+  }
+  return (
+    <div className={cn('text-xs tabular-nums', toneForDays(days))}>
+      {fmtDate(due)}
+    </div>
   );
 }
 
@@ -189,6 +422,13 @@ function I9DetailPanel({
               {current.associateEmail}
             </DrawerDescription>
           </div>
+          <Link
+            to={`/people?associateId=${current.associateId}`}
+            className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"
+          >
+            View profile
+            <ExternalLink className="h-3 w-3" />
+          </Link>
         </div>
       </DrawerHeader>
       <DrawerBody>
@@ -196,19 +436,15 @@ function I9DetailPanel({
           <SectionBadge label="Section 1" done={sec1Done} />
           <SectionBadge label="Section 2" done={sec2Done} />
           {current.documentList && (
-            <Badge variant="outline">{current.documentList}</Badge>
+            <Badge variant="outline">{DOC_LIST_LABELS[current.documentList]}</Badge>
           )}
         </div>
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-xs mb-5">
           <DetailRow label="Section 1 completed">
-            {current.section1CompletedAt
-              ? new Date(current.section1CompletedAt).toLocaleString()
-              : '—'}
+            {fmtDateTime(current.section1CompletedAt)}
           </DetailRow>
           <DetailRow label="Section 2 completed">
-            {current.section2CompletedAt
-              ? new Date(current.section2CompletedAt).toLocaleString()
-              : '—'}
+            {fmtDateTime(current.section2CompletedAt)}
           </DetailRow>
           <DetailRow label="Verifier">
             {current.section2VerifierEmail ?? '—'}
@@ -218,11 +454,30 @@ function I9DetailPanel({
               ? `${current.supportingDocIds.length} on file`
               : '—'}
           </DetailRow>
+          <DetailRow label="Start date">
+            {current.startDate
+              ? fmtDate(parseLocalDate(current.startDate))
+              : '—'}
+          </DetailRow>
+          <DetailRow label="Work auth expires">
+            {current.workAuthExpiresAt ? (
+              <span
+                className={toneForDays(
+                  daysFromToday(parseLocalDate(current.workAuthExpiresAt)),
+                )}
+              >
+                {fmtDate(parseLocalDate(current.workAuthExpiresAt))}
+              </span>
+            ) : (
+              '—'
+            )}
+          </DetailRow>
         </dl>
 
         {showVerifier && current.applicationId && (
           <Section2Verifier
             applicationId={current.applicationId}
+            associateId={current.associateId}
             onDone={onDone}
           />
         )}
@@ -242,7 +497,7 @@ function I9DetailPanel({
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-[10px] uppercase tracking-widest text-silver/80">{label}</dt>
+      <dt className="text-2xs uppercase tracking-widest text-silver/80">{label}</dt>
       <dd className="text-white text-sm mt-0.5">{children}</dd>
     </div>
   );
@@ -250,9 +505,11 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 
 function Section2Verifier({
   applicationId,
+  associateId,
   onDone,
 }: {
   applicationId: string;
+  associateId: string;
   onDone: () => void;
 }) {
   const [docs, setDocs] = useState<I9DocumentListItem[] | null>(null);
@@ -261,12 +518,27 @@ function Section2Verifier({
   const [documentList, setDocumentList] = useState<I9DocumentList>('LIST_A');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  /** Index into `docs` currently open in the full-screen viewer. */
+  const [viewerAt, setViewerAt] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     listI9Documents(applicationId)
       .then((res) => {
-        if (!cancelled) setDocs(res.documents);
+        if (cancelled) return;
+        setDocs(res.documents);
+        // Pre-select the list the associate's classified uploads support —
+        // a passport pre-picks List A, license + SSN card pre-pick B+C.
+        // Unclassified (pre-catalog) docs suggest nothing; HR still decides.
+        const usable = res.documents.filter((d) => d.status !== 'REJECTED');
+        if (usable.some((d) => d.i9List === 'A')) {
+          setDocumentList('LIST_A');
+        } else if (
+          usable.some((d) => d.i9List === 'B') &&
+          usable.some((d) => d.i9List === 'C')
+        ) {
+          setDocumentList('LIST_B_AND_C');
+        }
       })
       .catch((err) => {
         if (!cancelled) {
@@ -312,11 +584,11 @@ function Section2Verifier({
 
   return (
     <div className="space-y-4">
-      <div className="text-[10px] uppercase tracking-widest text-silver/80">
+      <div className="text-2xs uppercase tracking-widest text-silver/80">
         Section 2 verification
       </div>
       <div className="flex flex-wrap gap-3 items-center">
-        <span className="block text-[11px] uppercase tracking-wider text-silver">
+        <span className="block text-xs2 uppercase tracking-wider text-silver">
           Document list
         </span>
         {(['LIST_A', 'LIST_B_AND_C'] as const).map((opt) => (
@@ -335,11 +607,7 @@ function Section2Verifier({
         ))}
       </div>
 
-      {loadError && (
-        <p role="alert" className="text-sm text-alert">
-          {loadError}
-        </p>
-      )}
+      {loadError && <ErrorBanner>{loadError}</ErrorBanner>}
 
       {docs === null && <SkeletonRows count={2} rowHeight="h-24" />}
       {docs !== null && docs.length === 0 && !loadError && (
@@ -351,9 +619,20 @@ function Section2Verifier({
 
       {docs && docs.length > 0 && (
         <div>
-          <p className="text-[11px] uppercase tracking-wider text-silver mb-2">
-            Pick the documents you inspected (need at least {minDocs})
-          </p>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs2 uppercase tracking-wider text-silver">
+              Pick the documents you inspected (need at least {minDocs})
+            </p>
+            {/* Identity documents only — not the associate's whole file.
+                Audited server-side like any bulk PII export. */}
+            <a
+              href={downloadAllDocumentsUrl(associateId, IDENTITY_DOC_KINDS)}
+              className="inline-flex items-center gap-1.5 rounded border border-navy-secondary px-2 py-1 text-xs text-silver/80 transition-colors hover:border-gold/60 hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Download all
+            </a>
+          </div>
           <ul className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {docs.map((doc) => {
               const isImage = doc.mimeType.startsWith('image/');
@@ -377,25 +656,34 @@ function Section2Verifier({
                       checked={checked && !missing}
                       onChange={() => !missing && togglePick(doc.id)}
                       disabled={missing}
-                      aria-label={`${doc.kind} ${doc.side ?? ''}`.trim()}
+                      aria-label={`${doc.i9DocTitle ?? doc.kind} ${doc.side ?? ''}`.trim()}
                     />
                     <div className="aspect-[3/2] bg-navy-secondary rounded mb-2 overflow-hidden flex items-center justify-center">
                       {missing ? (
-                        <span className="text-[10px] text-alert text-center px-2 leading-tight">
+                        <span className="text-2xs text-alert text-center px-2 leading-tight">
                           File missing on server
                         </span>
                       ) : isImage ? (
                         <img
-                          src={`/api/documents/${doc.id}/download`}
-                          alt={`${doc.kind}${doc.side ? ` ${doc.side}` : ''}`}
+                          src={previewDocumentUrl(doc.id)}
+                          alt={`${doc.i9DocTitle ?? doc.kind}${doc.side ? ` ${doc.side}` : ''}`}
                           className="w-full h-full object-cover"
                         />
                       ) : (
                         <span className="text-xs text-silver">PDF</span>
                       )}
                     </div>
-                    <div className="text-xs text-white truncate">{doc.kind}</div>
-                    <div className="text-[10px] text-silver">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <div className="text-xs text-white truncate">
+                        {doc.i9DocTitle ?? doc.kind}
+                      </div>
+                      {doc.i9List && (
+                        <Badge size="sm" variant="outline">
+                          {doc.i9List}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="text-2xs text-silver">
                       {doc.side ?? 'document'}
                       {missing ? (
                         <> · <span className="text-alert">re-upload required</span></>
@@ -403,16 +691,21 @@ function Section2Verifier({
                         <>
                           {' '}
                           ·{' '}
-                          <a
-                            href={`/api/documents/${doc.id}/download`}
-                            target="_blank"
-                            rel="noreferrer"
+                          {/* Opens the in-site viewer rather than downloading.
+                              This used to hand the reviewer a copy of the
+                              associate's ID on every Section 2 check. */}
+                          <button
+                            type="button"
                             className="text-gold hover:underline"
-                            onClick={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setViewerAt(docs.findIndex((x) => x.id === doc.id));
+                            }}
                             data-no-row-click
                           >
-                            Open
-                          </a>
+                            View
+                          </button>
                         </>
                       )}
                     </div>
@@ -424,11 +717,15 @@ function Section2Verifier({
         </div>
       )}
 
-      {submitError && (
-        <p role="alert" className="text-sm text-alert">
-          {submitError}
-        </p>
+      {viewerAt !== null && docs && docs.length > 0 && (
+        <DocumentViewer
+          documents={docs}
+          startIndex={viewerAt}
+          onClose={() => setViewerAt(null)}
+        />
       )}
+
+      {submitError && <ErrorBanner>{submitError}</ErrorBanner>}
       <DrawerFooter className="-mx-6 -mb-6 mt-2">
         <Button
           type="button"
@@ -484,7 +781,7 @@ function I9EditForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
-      <div className="text-[10px] uppercase tracking-widest text-silver/80">
+      <div className="text-2xs uppercase tracking-widest text-silver/80">
         Manual edit
       </div>
       <div className="flex flex-wrap gap-4 items-end">
@@ -505,7 +802,7 @@ function I9EditForm({
           Section 2 complete (HR verifies)
         </label>
         <label className="block">
-          <span className="block text-[11px] uppercase tracking-wider text-silver mb-1">
+          <span className="block text-xs2 uppercase tracking-wider text-silver mb-1">
             Document list
           </span>
           <div className="w-48">

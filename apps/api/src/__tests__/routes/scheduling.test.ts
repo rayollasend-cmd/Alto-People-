@@ -794,4 +794,429 @@ describe('POST /scheduling/copy-week', () => {
     expect(copies).toHaveLength(2);
     for (const c of copies) expect(c.assignedAssociateId).toBeNull();
   });
+
+  it('uses the sent window verbatim — a Monday-anchored week copies ITS Sunday, not the previous one', async () => {
+    // Regression: the old handler re-snapped both dates to the preceding
+    // server-local Sunday, so a Monday-anchored week's own Sunday never
+    // copied while the PREVIOUS week's Sunday copied into the visible week.
+    const client = await createClient();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const MON_SOURCE = new Date('2026-06-08T00:00:00'); // Monday
+    const MON_TARGET = new Date('2026-06-15T00:00:00'); // next Monday
+    // Inside the Monday week — its last day (Sunday Jun 14).
+    const inWindow = await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        position: 'Server',
+        startsAt: new Date('2026-06-14T09:00:00'),
+        endsAt: new Date('2026-06-14T17:00:00'),
+        status: 'OPEN',
+      },
+    });
+    // The day BEFORE the window (Sunday Jun 7) — the old snap wrongly
+    // included this one.
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        position: 'Cook',
+        startsAt: new Date('2026-06-07T09:00:00'),
+        endsAt: new Date('2026-06-07T17:00:00'),
+        status: 'OPEN',
+      },
+    });
+
+    const res = await a.post('/scheduling/copy-week').send({
+      sourceWeekStart: MON_SOURCE.toISOString(),
+      targetWeekStart: MON_TARGET.toISOString(),
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.created).toBe(1);
+
+    const copies = await prisma.shift.findMany({
+      where: {
+        startsAt: { gte: MON_TARGET, lt: new Date(MON_TARGET.getTime() + WEEK_MS) },
+      },
+    });
+    expect(copies).toHaveLength(1);
+    expect(copies[0]!.position).toBe('Server');
+    expect(copies[0]!.startsAt.getTime()).toBe(
+      inWindow.startsAt.getTime() + WEEK_MS,
+    );
+  });
+
+  it('keeps wall-clock time at the site across a DST boundary', async () => {
+    // US DST ends Sun Nov 1 2026. A 2pm Eastern shift copied from the week
+    // before must land at 2pm Eastern (19:00Z, not 18:00Z) the week after.
+    const client = await createClient();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        position: 'Server',
+        startsAt: new Date('2026-10-28T18:00:00Z'), // Wed 2pm EDT
+        endsAt: new Date('2026-10-28T22:00:00Z'), // Wed 6pm EDT
+        status: 'OPEN',
+      },
+    });
+
+    const res = await a.post('/scheduling/copy-week').send({
+      sourceWeekStart: '2026-10-26T00:00:00Z',
+      targetWeekStart: '2026-11-02T00:00:00Z',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.created).toBe(1);
+
+    const copy = await prisma.shift.findFirstOrThrow({
+      where: { startsAt: { gte: new Date('2026-11-02T00:00:00Z') }, status: 'DRAFT' },
+    });
+    // 2pm EST = 19:00Z (one hour MORE than a raw +7×24h offset).
+    expect(copy.startsAt.toISOString()).toBe('2026-11-04T19:00:00.000Z');
+    expect(copy.endsAt.toISOString()).toBe('2026-11-04T23:00:00.000Z');
+  });
+
+  it('rejects a copy where source and target are the same week', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const res = await a.post('/scheduling/copy-week').send({
+      sourceWeekStart: SUN_SOURCE.toISOString(),
+      targetWeekStart: SUN_SOURCE.toISOString(),
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error?.code).toBe('same_week');
+  });
+});
+
+/** ACTIVE_ASSOCIATE_FILTER needs an approved application OR an open
+ *  assignment — give the fixture associate an open assignment at a site. */
+async function placeAtSite(associateId: string, clientId: string) {
+  const location = await prisma.location.create({
+    data: { clientId, name: `Site ${Math.random().toString(36).slice(2, 8)}` },
+  });
+  await prisma.associateAssignment.create({
+    data: { associateId, locationId: location.id, startedAt: new Date('2026-01-01') },
+  });
+  return location;
+}
+
+describe('POST /scheduling/auto-schedule-week — drafts', () => {
+  it('assigns an unassigned DRAFT and keeps it DRAFT (publish-week stays the gate)', async () => {
+    const client = await createClient();
+    const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    await createUser({ role: 'ASSOCIATE', associateId: maria.id });
+    await placeAtSite(maria.id, client.id);
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    // A DST-free week; the shift is a Monday 9–17.
+    const draft = await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        position: 'Server',
+        startsAt: new Date('2026-06-08T13:00:00Z'),
+        endsAt: new Date('2026-06-08T21:00:00Z'),
+        status: 'DRAFT',
+      },
+    });
+
+    const res = await a.post('/scheduling/auto-schedule-week').send({
+      weekStart: '2026-06-08T00:00:00Z',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.assigned).toBe(1);
+
+    const after = await prisma.shift.findUniqueOrThrow({ where: { id: draft.id } });
+    expect(after.assignedAssociateId).toBe(maria.id);
+    // Auto-filled drafts must stay invisible to associates until publish.
+    expect(after.status).toBe('DRAFT');
+  });
+});
+
+describe('GET /scheduling/availability-overview', () => {
+  it('returns weekly windows and PTO/exception-blocked days per associate', async () => {
+    const client = await createClient();
+    const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    await createUser({ role: 'ASSOCIATE', associateId: maria.id });
+    await placeAtSite(maria.id, client.id);
+    await prisma.associateAvailability.create({
+      data: { associateId: maria.id, dayOfWeek: 1, startMinute: 480, endMinute: 1020 },
+    });
+    await prisma.timeOffRequest.create({
+      data: {
+        associateId: maria.id,
+        category: 'VACATION',
+        startDate: new Date('2026-06-10'),
+        endDate: new Date('2026-06-11'),
+        requestedMinutes: 960,
+        status: 'APPROVED',
+      },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const res = await a.get(
+      '/scheduling/availability-overview?from=2026-06-08T00:00:00Z&to=2026-06-15T00:00:00Z',
+    );
+    expect(res.status).toBe(200);
+    const row = res.body.associates.find(
+      (x: { associateId: string }) => x.associateId === maria.id,
+    );
+    expect(row).toBeTruthy();
+    expect(row.windows).toEqual([
+      { dayOfWeek: 1, startMinute: 480, endMinute: 1020 },
+    ]);
+    expect(row.blockedDays).toEqual(
+      expect.arrayContaining(['2026-06-10', '2026-06-11']),
+    );
+  });
+
+  it('rejects a missing or oversized range', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    expect((await a.get('/scheduling/availability-overview')).status).toBe(400);
+    const wide = await a.get(
+      '/scheduling/availability-overview?from=2026-01-01T00:00:00Z&to=2026-06-01T00:00:00Z',
+    );
+    expect(wide.status).toBe(400);
+  });
+});
+
+describe('POST /scheduling/templates/:id/apply — site-timezone times', () => {
+  it('stamps template minutes as wall-clock at the site, not server-local', async () => {
+    const client = await createClient();
+    // Default Location timezone is America/New_York.
+    await prisma.location.create({
+      data: { clientId: client.id, name: 'Front Beach' },
+    });
+    const tpl = await prisma.shiftTemplate.create({
+      data: {
+        clientId: client.id,
+        name: 'Wed opener',
+        position: 'Server',
+        dayOfWeek: 3, // Wednesday
+        startMinute: 540, // 9:00
+        endMinute: 1020, // 17:00
+      },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const res = await a.post(`/scheduling/templates/${tpl.id}/apply`).send({
+      weekStart: '2026-06-08T00:00:00Z',
+    });
+    expect(res.status).toBe(201);
+    // Week containing Jun 8 00:00Z (= Jun 7 EDT evening → site-local week of
+    // Sun Jun 7); Wednesday = Jun 10. 9:00 EDT = 13:00Z, machine-tz-agnostic.
+    expect(new Date(res.body.startsAt).toISOString()).toBe('2026-06-10T13:00:00.000Z');
+    expect(new Date(res.body.endsAt).toISOString()).toBe('2026-06-10T21:00:00.000Z');
+  });
+});
+
+describe('Shift teams', () => {
+  async function seedSite() {
+    const client = await createClient();
+    const location = await prisma.location.create({
+      data: { clientId: client.id, name: 'Front Beach' },
+    });
+    return { client, location };
+  }
+
+  it('creates a team, manages members, and filters the roster by teamId', async () => {
+    const { client, location } = await seedSite();
+    const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    await createUser({ role: 'ASSOCIATE', associateId: maria.id });
+    const omar = await createAssociate({ firstName: 'Omar', lastName: 'Nye' });
+    await createUser({ role: 'ASSOCIATE', associateId: omar.id });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const created = await a.post('/scheduling/teams').send({
+      clientId: client.id,
+      locationId: location.id,
+      name: 'Morning',
+      startMinute: 360,
+      endMinute: 840,
+    });
+    expect(created.status).toBe(201);
+    expect(created.body).toMatchObject({
+      name: 'Morning',
+      startMinute: 360,
+      endMinute: 840,
+      locationName: 'Front Beach',
+      memberCount: 0,
+    });
+    const teamId = created.body.id as string;
+
+    // Add Maria (twice — the second must be an idempotent no-op).
+    expect(
+      (await a.post(`/scheduling/teams/${teamId}/members`).send({ associateId: maria.id })).status,
+    ).toBe(204);
+    expect(
+      (await a.post(`/scheduling/teams/${teamId}/members`).send({ associateId: maria.id })).status,
+    ).toBe(204);
+
+    const list = await a.get(`/scheduling/teams?locationId=${location.id}`);
+    expect(list.status).toBe(200);
+    expect(list.body.teams).toHaveLength(1);
+    expect(list.body.teams[0].memberCount).toBe(1);
+
+    // The roster narrowed to the team shows ONLY Maria — Omar (same org,
+    // not on the crew) is out. This is the "only my shift's people" filter.
+    const roster = await a.get(`/scheduling/associates?teamId=${teamId}`);
+    expect(roster.status).toBe(200);
+    expect(roster.body.associates.map((x: { id: string }) => x.id)).toEqual([maria.id]);
+
+    // Detail flags Maria as not-at-this-site (no assignment/application there).
+    const detail = await a.get(`/scheduling/teams/${teamId}`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.members).toHaveLength(1);
+    expect(detail.body.members[0]).toMatchObject({
+      associateId: maria.id,
+      atLocation: false,
+    });
+
+    // Remove her; the team roster drains.
+    expect(
+      (await a.delete(`/scheduling/teams/${teamId}/members/${maria.id}`)).status,
+    ).toBe(204);
+    const after = await a.get(`/scheduling/associates?teamId=${teamId}`);
+    expect(after.body.associates).toHaveLength(0);
+  });
+
+  it('assign-here opens an assignment at the team site and clears "not at this site"', async () => {
+    const { client, location } = await seedSite();
+    const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    await createUser({ role: 'ASSOCIATE', associateId: maria.id });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const created = await a.post('/scheduling/teams').send({
+      clientId: client.id,
+      locationId: location.id,
+      name: 'Morning',
+    });
+    const teamId = created.body.id as string;
+    await a.post(`/scheduling/teams/${teamId}/members`).send({ associateId: maria.id });
+
+    // Flagged before: nothing on her record points at this location.
+    const before = await a.get(`/scheduling/teams/${teamId}`);
+    expect(before.body.members[0].atLocation).toBe(false);
+
+    const assign = await a.post(
+      `/scheduling/teams/${teamId}/members/${maria.id}/assign-here`,
+    );
+    expect(assign.status).toBe(200);
+    expect(assign.body.assignmentId).toBeTruthy();
+
+    // The badge clears, and she now appears in the LOCATION-scoped roster
+    // (the other place the missing site record was hiding her).
+    const after = await a.get(`/scheduling/teams/${teamId}`);
+    expect(after.body.members[0].atLocation).toBe(true);
+    const roster = await a.get(`/scheduling/associates?locationId=${location.id}`);
+    expect(roster.body.associates.map((x: { id: string }) => x.id)).toContain(maria.id);
+  });
+
+  it('assign-here refuses to poach someone employed by a different client', async () => {
+    const { client, location } = await seedSite();
+    const otherClient = await createClient('Other Corp');
+    const theirs = await createAssociate({ firstName: 'Their', lastName: 'Person' });
+    await createUser({ role: 'ASSOCIATE', associateId: theirs.id });
+    await prisma.application.create({
+      data: {
+        associateId: theirs.id,
+        clientId: otherClient.id,
+        onboardingTrack: 'STANDARD',
+        status: 'APPROVED',
+      },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const created = await a.post('/scheduling/teams').send({
+      clientId: client.id,
+      locationId: location.id,
+      name: 'Morning',
+    });
+    const teamId = created.body.id as string;
+    await a.post(`/scheduling/teams/${teamId}/members`).send({ associateId: theirs.id });
+
+    const res = await a.post(
+      `/scheduling/teams/${teamId}/members/${theirs.id}/assign-here`,
+    );
+    expect(res.status).toBe(400);
+    expect(res.body.error?.code).toBe('cross_client_transfer');
+    // No assignment row snuck in.
+    const count = await prisma.associateAssignment.count({
+      where: { associateId: theirs.id },
+    });
+    expect(count).toBe(0);
+  });
+
+  it('a team member with an INVITED portal account still shows in the team roster', async () => {
+    const { client, location } = await seedSite();
+    const evaristus = await createAssociate({ firstName: 'Evaristus', lastName: 'Okon' });
+    await prisma.user.create({
+      data: {
+        email: evaristus.email,
+        role: 'ASSOCIATE',
+        status: 'INVITED',
+        associateId: evaristus.id,
+      },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const created = await a.post('/scheduling/teams').send({
+      clientId: client.id,
+      locationId: location.id,
+      name: 'F&D Morning',
+    });
+    const teamId = created.body.id as string;
+    await a.post(`/scheduling/teams/${teamId}/members`).send({ associateId: evaristus.id });
+
+    // The reported bug: added to the crew but missing from the grid rows.
+    const roster = await a.get(`/scheduling/associates?teamId=${teamId}`);
+    expect(roster.body.associates.map((x: { id: string }) => x.id)).toEqual([evaristus.id]);
+
+    // The dialog says WHY their login doesn't work, instead of hiding them.
+    const detail = await a.get(`/scheduling/teams/${teamId}`);
+    expect(detail.body.members[0].portalActive).toBe(false);
+  });
+
+  it('soft-deleting a team removes it from lists and empties the team roster filter', async () => {
+    const { client, location } = await seedSite();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const created = await a.post('/scheduling/teams').send({
+      clientId: client.id,
+      locationId: location.id,
+      name: 'Overnight',
+    });
+    const teamId = created.body.id as string;
+    expect((await a.delete(`/scheduling/teams/${teamId}`)).status).toBe(204);
+
+    const list = await a.get(`/scheduling/teams?locationId=${location.id}`);
+    expect(list.body.teams).toHaveLength(0);
+    const roster = await a.get(`/scheduling/associates?teamId=${teamId}`);
+    expect(roster.body.associates).toHaveLength(0);
+  });
+
+  it("rejects creating a team under another client's location", async () => {
+    const { location } = await seedSite();
+    const otherClient = await createClient();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const res = await a.post('/scheduling/teams').send({
+      clientId: otherClient.id,
+      locationId: location.id,
+      name: 'Sneaky',
+    });
+    expect(res.status).toBe(404);
+    expect(res.body.error?.code).toBe('location_not_found');
+  });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Route as RouteIcon, Trash2, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, Route as RouteIcon, Trash2, ArrowUp, ArrowDown, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -15,13 +15,14 @@ import {
   updateLearningPath,
   withdrawLearningPathEnrollment,
   type LearningPathDetail,
+  type LearningPathEnrollmentStatus,
+  type LearningPathStatus,
   type LearningPathSummary,
   type PathEnrollment,
 } from '@/lib/learningPaths114Api';
 import { listCourses, type Course } from '@/lib/lms94Api';
-import { listOrgAssociates } from '@/lib/orgApi';
-import type { AssociateOrgSummary } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -35,7 +36,9 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   PageHeader,
+  SearchInput,
   Select,
   SkeletonRows,
   Table,
@@ -45,14 +48,57 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Input, Textarea } from '@/components/ui/Input';
 import { fmtDate } from '@/lib/format';
 import { Label } from '@/components/ui/Label';
+
+/** Shared load-failure block: message + Retry. Never fake an empty state. */
+function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="p-6">
+      <ErrorBanner
+        action={
+          <Button size="sm" variant="secondary" onClick={onRetry}>
+            Retry
+          </Button>
+        }
+      >
+        {message}
+      </ErrorBanner>
+    </div>
+  );
+}
+
+const PATH_STATUS_LABELS: Record<LearningPathStatus, string> = {
+  DRAFT: 'Draft',
+  PUBLISHED: 'Published',
+  ARCHIVED: 'Archived',
+};
+
+const PATH_STATUS_VARIANT: Record<
+  LearningPathStatus,
+  'success' | 'default' | 'outline'
+> = {
+  DRAFT: 'default',
+  PUBLISHED: 'success',
+  ARCHIVED: 'outline',
+};
+
+const PATH_ENROLL_STATUS_LABELS: Record<LearningPathEnrollmentStatus, string> = {
+  ASSIGNED: 'Assigned',
+  IN_PROGRESS: 'In progress',
+  COMPLETED: 'Completed',
+  WITHDRAWN: 'Withdrawn',
+};
 
 export function LearningPathsHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
   const [rows, setRows] = useState<LearningPathSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<LearningPathStatus | 'ALL'>('ALL');
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<LearningPathSummary | null>(null);
@@ -60,13 +106,23 @@ export function LearningPathsHome() {
 
   const refresh = () => {
     setRows(null);
+    setError(null);
     listLearningPaths()
       .then((r) => setRows(r.paths))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setError(err instanceof ApiError ? err.message : 'Failed to load learning paths.'),
+      );
   };
   useEffect(() => {
     refresh();
   }, []);
+
+  const q = search.trim().toLowerCase();
+  const filtered = (rows ?? []).filter(
+    (p) =>
+      (!q || p.title.toLowerCase().includes(q)) &&
+      (statusFilter === 'ALL' || p.status === statusFilter),
+  );
 
   return (
     <div className="space-y-5">
@@ -75,22 +131,58 @@ export function LearningPathsHome() {
         subtitle="Sequence courses into ordered tracks. Associates work through them in order."
         breadcrumbs={[{ label: 'Learning' }, { label: 'Paths' }]}
       />
-      {canManage && (
-        <div className="flex justify-end">
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New path
-          </Button>
+      <div className="flex flex-wrap items-center gap-2">
+        <SearchInput
+          className="h-8 w-64"
+          placeholder="Search paths…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search learning paths by name"
+        />
+        <Select
+          size="sm"
+          className="w-40"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as LearningPathStatus | 'ALL')}
+          aria-label="Filter learning paths by status"
+        >
+          <option value="ALL">All statuses</option>
+          <option value="DRAFT">Draft</option>
+          <option value="PUBLISHED">Published</option>
+          <option value="ARCHIVED">Archived</option>
+        </Select>
+        <div className="ml-auto">
+          {canManage && (
+            <Button onClick={() => setShowNew(true)}>
+              <Plus className="mr-2 h-4 w-4" /> New path
+            </Button>
+          )}
         </div>
-      )}
+      </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {error ? (
+            <LoadError message={error} onRetry={refresh} />
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
               icon={RouteIcon}
               title="No learning paths"
               description="Create one to bundle courses into a curriculum."
+              action={
+                canManage ? (
+                  <Button onClick={() => setShowNew(true)}>
+                    <Plus className="mr-2 h-4 w-4" /> New path
+                  </Button>
+                ) : undefined
+              }
+            />
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              icon={RouteIcon}
+              title="No matching paths"
+              description="Adjust the search or status filter."
             />
           ) : (
             <Table>
@@ -98,36 +190,32 @@ export function LearningPathsHome() {
                 <TableRow>
                   <TableHead>Title</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="hidden md:table-cell">Steps</TableHead>
-                  <TableHead className="hidden md:table-cell">Enrollments</TableHead>
+                  <TableHead className="hidden md:table-cell text-right">Steps</TableHead>
+                  <TableHead className="hidden md:table-cell text-right">Enrollments</TableHead>
                   <TableHead className="hidden lg:table-cell">Required</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((p) => (
+                {filtered.map((p) => (
                   <TableRow key={p.id} className="group">
                     <TableCell className="font-medium text-white">
                       {p.title}
-                      <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                         {p.stepCount} step{p.stepCount === 1 ? '' : 's'} · {p.enrollmentCount} enrolled
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        variant={
-                          p.status === 'PUBLISHED'
-                            ? 'success'
-                            : p.status === 'DRAFT'
-                              ? 'pending'
-                              : 'outline'
-                        }
-                      >
-                        {p.status}
+                      <Badge variant={PATH_STATUS_VARIANT[p.status]}>
+                        {PATH_STATUS_LABELS[p.status]}
                       </Badge>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell">{p.stepCount}</TableCell>
-                    <TableCell className="hidden md:table-cell">{p.enrollmentCount}</TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums">
+                      {p.stepCount}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums">
+                      {p.enrollmentCount}
+                    </TableCell>
                     <TableCell className="hidden lg:table-cell">
                       {p.isRequired ? <Badge variant="accent">Required</Badge> : '—'}
                     </TableCell>
@@ -138,7 +226,7 @@ export function LearningPathsHome() {
                       {canManage && (
                         <button
                           onClick={() => setDeleteTarget(p)}
-                          className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
+                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
                         >
                           Delete
                         </button>
@@ -192,7 +280,7 @@ export function LearningPathsHome() {
             setDeleteTarget(null);
             refresh();
           } catch (err) {
-            toast.error(err instanceof ApiError ? err.message : 'Failed.');
+            toast.error(err instanceof ApiError ? err.message : 'Could not delete the path.');
           } finally {
             setDeleting(false);
           }
@@ -229,7 +317,7 @@ function NewPathDrawer({
       toast.success('Path created.');
       onSaved(r.id);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the path.');
     } finally {
       setSaving(false);
     }
@@ -260,11 +348,14 @@ function NewPathDrawer({
         </div>
         <div className="flex items-center gap-2">
           <input
+            id="new-path-required"
             type="checkbox"
             checked={isRequired}
             onChange={(e) => setIsRequired(e.target.checked)}
           />
-          <Label>Required path (mandatory completion)</Label>
+          <Label htmlFor="new-path-required" className="mb-0">
+            Required path (mandatory completion)
+          </Label>
         </div>
       </DrawerBody>
       <DrawerFooter>
@@ -286,34 +377,52 @@ function PathDetailDrawer({
   canManage: boolean;
   onClose: () => void;
 }) {
+  const confirm = useConfirm();
   const [data, setData] = useState<LearningPathDetail | null>(null);
+  const [detailError, setDetailError] = useState<string | null>(null);
   const [enrollments, setEnrollments] = useState<PathEnrollment[] | null>(null);
+  const [enrollmentsError, setEnrollmentsError] = useState<string | null>(null);
   const [courses, setCourses] = useState<Course[] | null>(null);
-  const [associates, setAssociates] = useState<AssociateOrgSummary[] | null>(null);
+  const [coursesError, setCoursesError] = useState<string | null>(null);
   const [courseId, setCourseId] = useState('');
-  const [associateId, setAssociateId] = useState('');
+  const [picked, setPicked] = useState<PickedAssociate[]>([]);
+  const [enrolling, setEnrolling] = useState(false);
 
   const refresh = () => {
     setData(null);
+    setDetailError(null);
     setEnrollments(null);
-    getLearningPath(pathId).then(setData).catch(() => setData(null));
+    setEnrollmentsError(null);
+    getLearningPath(pathId)
+      .then(setData)
+      .catch((err) =>
+        setDetailError(
+          err instanceof ApiError ? err.message : 'Failed to load the learning path.',
+        ),
+      );
     listPathEnrollments(pathId)
       .then((r) => setEnrollments(r.enrollments))
-      .catch(() => setEnrollments([]));
+      .catch((err) =>
+        setEnrollmentsError(
+          err instanceof ApiError ? err.message : 'Failed to load enrollments.',
+        ),
+      );
+  };
+  const loadCourses = () => {
+    setCourses(null);
+    setCoursesError(null);
+    listCourses('PUBLISHED')
+      .then((r) => setCourses(r.courses))
+      .catch((err) =>
+        setCoursesError(
+          err instanceof ApiError ? err.message : 'Failed to load courses.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
-    // Lazy-load picker sources only for managers.
-    if (canManage && courses === null) {
-      listCourses('PUBLISHED')
-        .then((r) => setCourses(r.courses))
-        .catch(() => setCourses([]));
-    }
-    if (canManage && associates === null) {
-      listOrgAssociates()
-        .then((r) => setAssociates(r.associates))
-        .catch(() => setAssociates([]));
-    }
+    // Lazy-load the step-picker source only for managers.
+    if (canManage) loadCourses();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathId]);
 
@@ -327,7 +436,7 @@ function PathDetailDrawer({
       await reorderLearningPathSteps(pathId, ids);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not reorder the steps.');
     }
   };
 
@@ -337,54 +446,92 @@ function PathDetailDrawer({
     (c) => !usedCourseIds.has(c.id),
   );
 
-  // Hide associates already enrolled (not WITHDRAWN) so HR can see who's left.
+  // Associates already enrolled (not WITHDRAWN) — the picker skips these
+  // so HR can't double-enroll someone by accident.
   const enrolledAssociateIds = new Set(
     (enrollments ?? []).map((e) => e.associateId),
   );
-  const availableAssociates = (associates ?? []).filter(
-    (a) => !enrolledAssociateIds.has(a.id),
-  );
+
+  const enrollPicked = async () => {
+    if (picked.length === 0) return;
+    setEnrolling(true);
+    try {
+      const results = await Promise.allSettled(
+        picked.map((p) => enrollInLearningPath({ pathId, associateId: p.id })),
+      );
+      const failedNames = picked.filter((_, i) => results[i].status === 'rejected');
+      const ok = results.length - failedNames.length;
+      if (failedNames.length === 0) {
+        toast.success(`Enrolled ${ok} associate${ok === 1 ? '' : 's'}.`);
+      } else if (ok === 0) {
+        toast.error(
+          `Enrollment failed for ${failedNames.map((p) => p.name).join(', ')}.`,
+        );
+      } else {
+        toast.error(
+          `Enrolled ${ok}; failed for ${failedNames.map((p) => p.name).join(', ')}.`,
+        );
+      }
+      // Keep the failures in the chip list so HR can retry just those.
+      setPicked(failedNames);
+      refresh();
+    } finally {
+      setEnrolling(false);
+    }
+  };
 
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-2xl">
       <DrawerHeader>
-        <DrawerTitle>{data?.title ?? 'Loading…'}</DrawerTitle>
+        <DrawerTitle>{data?.title ?? 'Path details'}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
-        {!data ? (
+        {detailError ? (
+          <LoadError message={detailError} onRetry={refresh} />
+        ) : !data ? (
           <SkeletonRows count={3} />
         ) : (
           <>
             <div className="flex items-center gap-2">
-              <Badge
-                variant={
-                  data.status === 'PUBLISHED'
-                    ? 'success'
-                    : data.status === 'DRAFT'
-                      ? 'pending'
-                      : 'outline'
-                }
-              >
-                {data.status}
+              <Badge variant={PATH_STATUS_VARIANT[data.status]}>
+                {PATH_STATUS_LABELS[data.status]}
               </Badge>
               {canManage && (
                 <Select
                   size="sm"
                   value={data.status}
+                  aria-label="Path status"
                   onChange={async (e) => {
+                    const next = e.target.value as LearningPathDetail['status'];
+                    const el = e.target;
+                    if (
+                      next === 'ARCHIVED' &&
+                      !(await confirm({
+                        title: 'Archive this path?',
+                        description:
+                          'Archived paths are hidden from new enrollment. Existing enrollments are kept.',
+                        confirmLabel: 'Archive',
+                        destructive: true,
+                      }))
+                    ) {
+                      el.value = data.status;
+                      return;
+                    }
                     try {
-                      await updateLearningPath(pathId, {
-                        status: e.target.value as LearningPathDetail['status'],
-                      });
+                      await updateLearningPath(pathId, { status: next });
+                      toast.success(`Status set to ${PATH_STATUS_LABELS[next].toLowerCase()}.`);
                       refresh();
                     } catch (err) {
-                      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                      toast.error(
+                        err instanceof ApiError ? err.message : 'Could not update the status.',
+                      );
+                      el.value = data.status;
                     }
                   }}
                 >
-                  <option value="DRAFT">DRAFT</option>
-                  <option value="PUBLISHED">PUBLISHED</option>
-                  <option value="ARCHIVED">ARCHIVED</option>
+                  <option value="DRAFT">Draft</option>
+                  <option value="PUBLISHED">Published</option>
+                  <option value="ARCHIVED">Archived</option>
                 </Select>
               )}
             </div>
@@ -407,7 +554,7 @@ function PathDetailDrawer({
                       <div className="flex-1 text-sm text-white">
                         {s.courseTitle}
                         {s.courseIsRequired && (
-                          <Badge variant="accent" className="ml-2">required</Badge>
+                          <Badge variant="accent" className="ml-2">Required</Badge>
                         )}
                       </div>
                       {canManage && (
@@ -430,15 +577,30 @@ function PathDetailDrawer({
                           </button>
                           <button
                             onClick={async () => {
+                              if (
+                                !(await confirm({
+                                  title: 'Remove this step?',
+                                  description: `Remove "${s.courseTitle}" from this path? Existing course enrollments are not affected.`,
+                                  confirmLabel: 'Remove',
+                                  destructive: true,
+                                }))
+                              )
+                                return;
                               try {
                                 await removeLearningPathStep(s.id);
+                                toast.success('Step removed.');
                                 refresh();
                               } catch (err) {
-                                toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                toast.error(
+                                  err instanceof ApiError
+                                    ? err.message
+                                    : 'Could not remove the step.',
+                                );
                               }
                             }}
                             className="text-silver hover:text-alert"
                             title="Remove step"
+                            aria-label={`Remove step ${s.courseTitle}`}
                           >
                             <Trash2 className="h-3 w-3" />
                           </button>
@@ -448,7 +610,19 @@ function PathDetailDrawer({
                   ))}
                 </div>
               )}
-              {canManage && (
+              {canManage && coursesError && (
+                <ErrorBanner
+                  className="mt-2"
+                  action={
+                    <Button size="sm" variant="secondary" onClick={loadCourses}>
+                      Retry
+                    </Button>
+                  }
+                >
+                  {coursesError}
+                </ErrorBanner>
+              )}
+              {canManage && !coursesError && (
                 <div className="flex gap-2 pt-2">
                   <div className="flex-1">
                     <Select
@@ -456,6 +630,7 @@ function PathDetailDrawer({
                       value={courseId}
                       onChange={(e) => setCourseId(e.target.value)}
                       disabled={courses === null}
+                      aria-label="Course to add as a step"
                     >
                       <option value="">
                         {courses === null
@@ -480,7 +655,9 @@ function PathDetailDrawer({
                         setCourseId('');
                         refresh();
                       } catch (err) {
-                        toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                        toast.error(
+                          err instanceof ApiError ? err.message : 'Could not add the step.',
+                        );
                       }
                     }}
                   >
@@ -494,7 +671,17 @@ function PathDetailDrawer({
               <div className="text-sm uppercase tracking-wider text-silver">
                 Enrollments ({enrollments?.length ?? '…'})
               </div>
-              {enrollments === null ? (
+              {enrollmentsError ? (
+                <ErrorBanner
+                  action={
+                    <Button size="sm" variant="secondary" onClick={refresh}>
+                      Retry
+                    </Button>
+                  }
+                >
+                  {enrollmentsError}
+                </ErrorBanner>
+              ) : enrollments === null ? (
                 <SkeletonRows count={2} />
               ) : enrollments.length === 0 ? (
                 <div className="text-sm text-silver italic">
@@ -521,7 +708,7 @@ function PathDetailDrawer({
                             <div className="text-xs text-silver">
                               {e.associateEmail}
                             </div>
-                            <div className="md:hidden text-[11px] text-silver/70 truncate">
+                            <div className="md:hidden text-xs2 text-silver/70 truncate">
                               Assigned {fmtDate(e.assignedAt)}
                             </div>
                           </TableCell>
@@ -532,10 +719,12 @@ function PathDetailDrawer({
                                   ? 'success'
                                   : e.status === 'IN_PROGRESS'
                                     ? 'accent'
-                                    : 'pending'
+                                    : e.status === 'WITHDRAWN'
+                                      ? 'default'
+                                      : 'pending'
                               }
                             >
-                              {e.status}
+                              {PATH_ENROLL_STATUS_LABELS[e.status]}
                             </Badge>
                           </TableCell>
                           <TableCell className="text-xs text-silver hidden md:table-cell">
@@ -545,19 +734,30 @@ function PathDetailDrawer({
                             <TableCell className="text-right">
                               <button
                                 onClick={async () => {
+                                  if (
+                                    !(await confirm({
+                                      title: 'Withdraw enrollment?',
+                                      description: `Withdraw ${e.associateName} from this path? Their course enrollments are not affected.`,
+                                      confirmLabel: 'Withdraw',
+                                      destructive: true,
+                                    }))
+                                  )
+                                    return;
                                   try {
                                     await withdrawLearningPathEnrollment(e.id);
+                                    toast.success(`Withdrew ${e.associateName}.`);
                                     refresh();
                                   } catch (err) {
                                     toast.error(
                                       err instanceof ApiError
                                         ? err.message
-                                        : 'Failed.',
+                                        : 'Could not withdraw the enrollment.',
                                     );
                                   }
                                 }}
                                 className="text-silver hover:text-alert text-xs"
                                 title="Withdraw"
+                                aria-label={`Withdraw ${e.associateName}`}
                               >
                                 <Trash2 className="h-3 w-3" />
                               </button>
@@ -570,43 +770,57 @@ function PathDetailDrawer({
                 </div>
               )}
               {canManage && (
-                <div className="flex gap-2 pt-2">
-                  <div className="flex-1">
-                    <Select
-                      size="sm"
-                      value={associateId}
-                      onChange={(e) => setAssociateId(e.target.value)}
-                      disabled={associates === null}
-                    >
-                      <option value="">
-                        {associates === null
-                          ? 'Loading associates…'
-                          : availableAssociates.length === 0
-                            ? 'Everyone is already enrolled'
-                            : 'Select an associate…'}
-                      </option>
-                      {availableAssociates.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.firstName} {a.lastName}
-                        </option>
+                <div className="pt-2 space-y-2">
+                  {/* Multi-pick built on the single-value AssociatePicker: the
+                      picker's own value stays null so it never collapses into
+                      its "selected" chip; each onChange appends to the picked
+                      list (deduped, already-enrolled skipped) and selections
+                      render as removable chips below. */}
+                  <AssociatePicker
+                    value={null}
+                    onChange={(a) => {
+                      if (!a) return;
+                      if (enrolledAssociateIds.has(a.id)) {
+                        toast.error(`${a.name} is already enrolled.`);
+                        return;
+                      }
+                      setPicked((prev) =>
+                        prev.some((p) => p.id === a.id) ? prev : [...prev, a],
+                      );
+                    }}
+                    placeholder="Search to add an associate…"
+                  />
+                  {picked.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {picked.map((p) => (
+                        <span
+                          key={p.id}
+                          className="inline-flex items-center gap-1 rounded-full border border-navy-secondary bg-navy px-2.5 py-1 text-xs text-white"
+                        >
+                          {p.name}
+                          <button
+                            type="button"
+                            aria-label={`Remove ${p.name}`}
+                            className="text-silver/60 hover:text-white"
+                            onClick={() =>
+                              setPicked((prev) => prev.filter((x) => x.id !== p.id))
+                            }
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
                       ))}
-                    </Select>
-                  </div>
+                    </div>
+                  )}
                   <Button
                     size="sm"
-                    disabled={!associateId}
-                    onClick={async () => {
-                      try {
-                        await enrollInLearningPath({ pathId, associateId });
-                        toast.success('Enrolled.');
-                        setAssociateId('');
-                        refresh();
-                      } catch (err) {
-                        toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                      }
-                    }}
+                    disabled={picked.length === 0 || enrolling}
+                    onClick={() => void enrollPicked()}
                   >
-                    <Plus className="mr-1 h-3 w-3" /> Enroll
+                    <Plus className="mr-1 h-3 w-3" />
+                    {enrolling
+                      ? 'Enrolling…'
+                      : `Enroll${picked.length > 0 ? ` ${picked.length}` : ''}`}
                   </Button>
                 </div>
               )}

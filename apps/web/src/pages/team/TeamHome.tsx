@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CalendarOff, Clock, Inbox, Receipt, Target, Users } from 'lucide-react';
+import { AlertTriangle, CalendarOff, Clock, Download, Inbox, Receipt, Target, Users } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   approveTeamTimeOff,
@@ -17,7 +17,10 @@ import {
   rejectTeamTimesheet,
   type DirectReport,
   type InboxItem,
+  type TeamTimeEntry,
 } from '@/lib/teamApi';
+import { fmtDate, fmtDateTime, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
 import {
   Avatar,
   Badge,
@@ -25,7 +28,10 @@ import {
   Card,
   CardContent,
   EmptyState,
+  ErrorBanner,
   PageHeader,
+  SearchInput,
+  SegmentedControl,
   SkeletonRows,
   Table,
   TableBody,
@@ -117,9 +123,22 @@ export function TeamHome() {
       )}
 
       {error && (
-        <p role="alert" className="text-sm text-alert">
+        <ErrorBanner
+          action={
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                dashboardQ.refetch();
+                reportsQ.refetch();
+              }}
+            >
+              Retry
+            </Button>
+          }
+        >
           {error instanceof ApiError ? error.message : 'Failed to load team.'}
-        </p>
+        </ErrorBanner>
       )}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
@@ -196,7 +215,7 @@ function KpiTile({
     <Card>
       <CardContent className="p-4">
         <div className="flex items-center justify-between">
-          <div className="text-[10px] uppercase tracking-widest text-silver/80">
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
             {label}
           </div>
           <Icon className={`h-4 w-4 ${highlight ? 'text-gold' : 'text-silver/70'}`} />
@@ -222,16 +241,104 @@ const KIND_META: Record<
 };
 
 function InboxTab() {
+  const qc = useQueryClient();
+  const prompt = usePrompt();
   const q = useQuery({
     queryKey: teamKeys.inbox(),
     queryFn: getTeamInbox,
   });
 
+  const invalidateTeam = () => qc.invalidateQueries({ queryKey: teamKeys.all });
+
+  // Same API mutations as the Timesheets/Time off queue tabs, so a
+  // decision made from the inbox behaves identically (invalidates the
+  // whole team namespace → counts, queues, and this list all refresh).
+  const approveTsM = useMutation({
+    mutationFn: approveTeamTimesheet,
+    onSuccess: () => {
+      toast.success('Timesheet approved.');
+      invalidateTeam();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Approve failed.'),
+  });
+  const rejectTsM = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      rejectTeamTimesheet(id, reason),
+    onSuccess: () => {
+      toast.success('Timesheet rejected.');
+      invalidateTeam();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Reject failed.'),
+  });
+  const approvePtoM = useMutation({
+    mutationFn: (id: string) => approveTeamTimeOff(id),
+    onSuccess: () => {
+      toast.success('Time off approved.');
+      invalidateTeam();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Approve failed.'),
+  });
+  const denyPtoM = useMutation({
+    mutationFn: ({ id, note }: { id: string; note: string }) =>
+      denyTeamTimeOff(id, note),
+    onSuccess: () => {
+      toast.success('Time off denied.');
+      invalidateTeam();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Deny failed.'),
+  });
+
+  const rejectTs = async (id: string) => {
+    const reason = (
+      await prompt({
+        title: 'Reject timesheet',
+        reasonLabel: 'Reason for rejection',
+        confirmLabel: 'Reject',
+        destructive: true,
+      })
+    )?.trim();
+    if (!reason) return;
+    rejectTsM.mutate({ id, reason });
+  };
+  const denyPto = async (id: string) => {
+    const note = (
+      await prompt({
+        title: 'Deny time-off request',
+        reasonLabel: 'Reason for denial',
+        confirmLabel: 'Deny',
+        destructive: true,
+      })
+    )?.trim();
+    if (!note) return;
+    denyPtoM.mutate({ id, note });
+  };
+
+  const pendingId =
+    approveTsM.isPending && typeof approveTsM.variables === 'string'
+      ? approveTsM.variables
+      : approvePtoM.isPending && typeof approvePtoM.variables === 'string'
+      ? approvePtoM.variables
+      : rejectTsM.isPending
+      ? rejectTsM.variables?.id ?? null
+      : denyPtoM.isPending
+      ? denyPtoM.variables?.id ?? null
+      : null;
+
   if (q.error) {
     return (
-      <p role="alert" className="text-sm text-alert">
+      <ErrorBanner
+        action={
+          <Button size="sm" variant="secondary" onClick={() => q.refetch()}>
+            Retry
+          </Button>
+        }
+      >
         {q.error instanceof ApiError ? q.error.message : 'Failed to load.'}
-      </p>
+      </ErrorBanner>
     );
   }
   if (!q.data) return <SkeletonRows count={4} rowHeight="h-14" />;
@@ -274,7 +381,7 @@ function InboxTab() {
                   <Avatar name={item.associateName} size="sm" />
                   <div className="min-w-0">
                     <div className="truncate">{item.associateName}</div>
-                    <div className="md:hidden text-[11px] text-silver/70 truncate">
+                    <div className="md:hidden text-xs2 text-silver/70 truncate">
                       {meta.label}{item.summary ? ` · ${item.summary}` : ''}
                     </div>
                   </div>
@@ -285,9 +392,49 @@ function InboxTab() {
                 {item.ageDays === 0 ? 'today' : `${item.ageDays}d`}
               </TableCell>
               <TableCell className="text-right">
-                <Button size="sm" variant="outline" asChild>
-                  <Link to={item.link}>Open</Link>
-                </Button>
+                <div className="flex justify-end gap-2">
+                  <Button size="sm" variant="ghost" asChild>
+                    <Link to={item.link}>Open</Link>
+                  </Button>
+                  {item.kind === 'TIMESHEET' && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => rejectTs(item.id)}
+                        disabled={pendingId === item.id}
+                      >
+                        Reject
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => approveTsM.mutate(item.id)}
+                        loading={pendingId === item.id}
+                      >
+                        Approve
+                      </Button>
+                    </>
+                  )}
+                  {item.kind === 'TIME_OFF' && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => denyPto(item.id)}
+                        disabled={pendingId === item.id}
+                      >
+                        Deny
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => approvePtoM.mutate(item.id)}
+                        loading={pendingId === item.id}
+                      >
+                        Approve
+                      </Button>
+                    </>
+                  )}
+                </div>
               </TableCell>
             </TableRow>
           );
@@ -298,7 +445,26 @@ function InboxTab() {
 }
 
 function ReportsList({ reports }: { reports: DirectReport[] | null }) {
-  if (!reports) return <SkeletonRows count={4} rowHeight="h-14" />;
+  const [search, setSearch] = useState('');
+
+  const filtered = useMemo(() => {
+    if (!reports) return null;
+    const needle = search.trim().toLowerCase();
+    if (!needle) return reports;
+    return reports.filter((r) =>
+      [
+        `${r.firstName} ${r.lastName}`,
+        r.email,
+        r.jobTitle ?? '',
+        r.departmentName ?? '',
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(needle),
+    );
+  }, [reports, search]);
+
+  if (!reports || !filtered) return <SkeletonRows count={4} rowHeight="h-14" />;
   if (reports.length === 0) {
     return (
       <EmptyState
@@ -309,49 +475,104 @@ function ReportsList({ reports }: { reports: DirectReport[] | null }) {
     );
   }
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Associate</TableHead>
-          <TableHead className="hidden md:table-cell">Email</TableHead>
-          <TableHead>Title</TableHead>
-          <TableHead className="hidden md:table-cell">Department</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {reports.map((r) => (
-          <TableRow key={r.id}>
-            <TableCell className="font-medium">
-              <div className="flex items-center gap-2.5">
-                <Avatar
-                  name={`${r.firstName} ${r.lastName}`}
-                  email={r.email}
-                  size="sm"
-                />
-                <div className="min-w-0">
-                  <div className="truncate">{r.firstName} {r.lastName}</div>
-                  <div className="md:hidden text-[11px] text-silver/70 truncate">
-                    {r.email}{r.departmentName ? ` · ${r.departmentName}` : ''}
-                  </div>
-                </div>
-              </div>
-            </TableCell>
-            <TableCell className="hidden md:table-cell text-silver">{r.email}</TableCell>
-            <TableCell className="text-silver">{r.jobTitle ?? '—'}</TableCell>
-            <TableCell className="hidden md:table-cell text-silver">{r.departmentName ?? '—'}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <div className="space-y-3">
+      <SearchInput
+        value={search}
+        onChange={(ev) => setSearch(ev.target.value)}
+        placeholder="Search by name, email, title, or department…"
+        aria-label="Search direct reports"
+        wrapperClassName="max-w-sm"
+      />
+      {filtered.length === 0 ? (
+        <p className="text-sm text-silver">
+          No reports match “{search.trim()}”.
+        </p>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Associate</TableHead>
+              <TableHead className="hidden md:table-cell">Email</TableHead>
+              <TableHead>Title</TableHead>
+              <TableHead className="hidden md:table-cell">Department</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filtered.map((r) => (
+              <TableRow key={r.id}>
+                <TableCell className="font-medium">
+                  <Link
+                    to={`/people?associateId=${r.id}`}
+                    className="flex items-center gap-2.5 group focus:outline-none focus-visible:ring-2 focus-visible:ring-gold/40 rounded"
+                  >
+                    <Avatar
+                      name={`${r.firstName} ${r.lastName}`}
+                      email={r.email}
+                      size="sm"
+                    />
+                    <div className="min-w-0">
+                      <div className="truncate group-hover:text-gold-bright transition-colors">
+                        {r.firstName} {r.lastName}
+                      </div>
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
+                        {r.email}{r.departmentName ? ` · ${r.departmentName}` : ''}
+                      </div>
+                    </div>
+                  </Link>
+                </TableCell>
+                <TableCell className="hidden md:table-cell text-silver">{r.email}</TableCell>
+                <TableCell className="text-silver">{r.jobTitle ?? '—'}</TableCell>
+                <TableCell className="hidden md:table-cell text-silver">{r.departmentName ?? '—'}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </div>
   );
 }
+
+/** Worked hours of a completed entry; 0 while still clocked in. */
+function entryHours(e: TeamTimeEntry): number {
+  if (!e.clockOutAt) return 0;
+  return (
+    (new Date(e.clockOutAt).getTime() - new Date(e.clockInAt).getTime()) /
+    3_600_000
+  );
+}
+
+const TS_STATUS_OPTIONS: { value: TeamTimeEntry['status']; label: string }[] = [
+  { value: 'COMPLETED', label: 'Pending review' },
+  { value: 'APPROVED', label: 'Approved' },
+  { value: 'REJECTED', label: 'Rejected' },
+];
+
+const TS_STATUS_BADGE: Record<
+  TeamTimeEntry['status'],
+  'default' | 'success' | 'destructive'
+> = {
+  ACTIVE: 'default',
+  COMPLETED: 'default',
+  APPROVED: 'success',
+  REJECTED: 'destructive',
+};
+
+// Human-readable labels — raw enum values never reach the user's eyes.
+const TS_STATUS_LABELS: Record<TeamTimeEntry['status'], string> = {
+  ACTIVE: 'Active',
+  COMPLETED: 'Completed',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+};
 
 function TimesheetsTab() {
   const qc = useQueryClient();
   const prompt = usePrompt();
+  const [status, setStatus] = useState<TeamTimeEntry['status']>('COMPLETED');
+  const isQueue = status === 'COMPLETED';
   const q = useQuery({
-    queryKey: teamKeys.timesheets('COMPLETED'),
-    queryFn: async () => (await listTeamTimesheets('COMPLETED')).entries,
+    queryKey: teamKeys.timesheets(status),
+    queryFn: async () => (await listTeamTimesheets(status)).entries,
   });
 
   // Invalidate the entire team namespace on any approve/reject so the
@@ -363,22 +584,22 @@ function TimesheetsTab() {
   const approveM = useMutation({
     mutationFn: approveTeamTimesheet,
     onSuccess: () => {
-      toast.success('Approved');
+      toast.success('Approved.');
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Approve failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Approve failed.'),
   });
 
   const rejectM = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       rejectTeamTimesheet(id, reason),
     onSuccess: () => {
-      toast.success('Rejected');
+      toast.success('Rejected.');
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Reject failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Reject failed.'),
   });
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -386,13 +607,38 @@ function TimesheetsTab() {
     mutationFn: (ids: string[]) => bulkApproveTeamTimesheets(ids),
     onSuccess: (r) => {
       toast.success(
-        `Approved ${r.approved}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ''}`,
+        `Approved ${r.approved}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ''}.`,
       );
       setSelected(new Set());
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Bulk approve failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Bulk approve failed.'),
+  });
+  // No bulk-reject endpoint exists, so mirror the bulk approve by looping
+  // the single reject with one shared reason. allSettled: one bad row
+  // (e.g. raced to APPROVED elsewhere) shouldn't sink the batch.
+  const bulkRejectM = useMutation({
+    mutationFn: async ({ ids, reason }: { ids: string[]; reason: string }) => {
+      const results = await Promise.allSettled(
+        ids.map((id) => rejectTeamTimesheet(id, reason)),
+      );
+      return {
+        rejected: results.filter((r) => r.status === 'fulfilled').length,
+        failed: results.filter((r) => r.status === 'rejected').length,
+      };
+    },
+    onSuccess: (r) => {
+      if (r.failed > 0) {
+        toast.error(`Rejected ${r.rejected} · ${r.failed} failed.`);
+      } else {
+        toast.success(`Rejected ${r.rejected}.`);
+      }
+      setSelected(new Set());
+      invalidateTeam();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Bulk reject failed.'),
   });
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -415,6 +661,56 @@ function TimesheetsTab() {
     rejectM.mutate({ id, reason });
   };
 
+  const bulkReject = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    const reason = (
+      await prompt({
+        title: `Reject ${ids.length} ${ids.length === 1 ? 'timesheet' : 'timesheets'}`,
+        reasonLabel: 'Shared reason for rejection',
+        confirmLabel: 'Reject all',
+        destructive: true,
+      })
+    )?.trim();
+    if (!reason) return;
+    bulkRejectM.mutate({ ids, reason });
+  };
+
+  const exportCsv = () => {
+    const entries = q.data ?? [];
+    downloadCsv(`team-timesheets-${status.toLowerCase()}-${ymdLocal()}.csv`, [
+      [
+        'Associate',
+        'Client',
+        'Clock in',
+        'Clock out',
+        'Hours',
+        'Pay rate',
+        'Est. cost',
+        'Status',
+        'Notes',
+        'Rejection reason',
+      ],
+      ...entries.map((e) => {
+        const hours = entryHours(e);
+        return [
+          e.associateName,
+          e.clientName ?? '',
+          e.clockInAt,
+          e.clockOutAt ?? '',
+          e.clockOutAt ? hours.toFixed(2) : '',
+          e.payRate ?? '',
+          e.payRate && e.clockOutAt
+            ? (hours * Number(e.payRate)).toFixed(2)
+            : '',
+          e.status,
+          e.notes ?? '',
+          e.rejectionReason ?? '',
+        ];
+      }),
+    ]);
+  };
+
   const pendingId =
     approveM.isPending && typeof approveM.variables === 'string'
       ? approveM.variables
@@ -422,48 +718,115 @@ function TimesheetsTab() {
       ? rejectM.variables?.id ?? null
       : null;
 
+  const entries = q.data ?? null;
+  const selectedEntries = (entries ?? []).filter((e) => selected.has(e.id));
+  const selHours = selectedEntries.reduce((sum, e) => sum + entryHours(e), 0);
+  const selCost = selectedEntries.reduce(
+    (sum, e) => sum + (e.payRate ? entryHours(e) * Number(e.payRate) : 0),
+    0,
+  );
+
+  const allIds = (entries ?? []).map((e) => e.id);
+  const allSelected =
+    allIds.length > 0 && allIds.every((id) => selected.has(id));
+
+  const toolbar = (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <SegmentedControl
+        ariaLabel="Timesheet status"
+        options={TS_STATUS_OPTIONS}
+        value={status}
+        onChange={(v) => {
+          setStatus(v);
+          setSelected(new Set());
+        }}
+      />
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={exportCsv}
+        disabled={!entries || entries.length === 0}
+      >
+        <Download className="h-3.5 w-3.5" />
+        Export CSV
+      </Button>
+    </div>
+  );
+
   if (q.error) {
     return (
-      <p role="alert" className="text-sm text-alert">
-        {q.error instanceof ApiError ? q.error.message : 'Failed to load.'}
-      </p>
+      <div className="space-y-3">
+        {toolbar}
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={() => q.refetch()}>
+              Retry
+            </Button>
+          }
+        >
+          {q.error instanceof ApiError ? q.error.message : 'Failed to load.'}
+        </ErrorBanner>
+      </div>
     );
   }
-  if (!q.data) return <SkeletonRows count={4} rowHeight="h-14" />;
-  if (q.data.length === 0) {
+  if (!entries) {
     return (
-      <EmptyState
-        icon={Clock}
-        title="Nothing to review"
-        description="When your direct reports clock out, their entries appear here for review."
-      />
+      <div className="space-y-3">
+        {toolbar}
+        <SkeletonRows count={4} rowHeight="h-14" />
+      </div>
     );
   }
-
-  const allIds = q.data.map((e) => e.id);
-  const allSelected = allIds.length > 0 && allIds.every((id) => selected.has(id));
+  if (entries.length === 0) {
+    return (
+      <div className="space-y-3">
+        {toolbar}
+        <EmptyState
+          icon={Clock}
+          title={isQueue ? 'Nothing to review' : `No ${status.toLowerCase()} entries`}
+          description={
+            isQueue
+              ? 'When your direct reports clock out, their entries appear here for review.'
+              : 'Decisions you make on the pending queue will show up here.'
+          }
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">
-      {selected.size > 0 && (
+      {toolbar}
+      {isQueue && selected.size > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-gold/40 bg-gold/10 px-3 py-2">
-          <div className="text-sm text-gold">
-            <span className="font-medium tabular-nums">{selected.size}</span>{' '}
-            selected
+          <div className="text-sm text-gold tabular-nums">
+            <span className="font-medium">{selected.size}</span> selected ·{' '}
+            {selHours.toFixed(1)}h
+            {selCost > 0 ? ` · ${fmtMoney(selCost)}` : ''}
           </div>
           <div className="flex gap-2">
             <Button
               size="sm"
               variant="ghost"
               onClick={() => setSelected(new Set())}
-              disabled={bulkM.isPending}
+              disabled={bulkM.isPending || bulkRejectM.isPending}
             >
               Clear
             </Button>
             <Button
               size="sm"
+              variant="outline"
+              onClick={bulkReject}
+              loading={bulkRejectM.isPending}
+              disabled={bulkM.isPending}
+            >
+              Reject {selected.size}
+            </Button>
+            <Button
+              size="sm"
               onClick={() => bulkM.mutate(Array.from(selected))}
               loading={bulkM.isPending}
+              disabled={bulkRejectM.isPending}
             >
               Approve {selected.size}
             </Button>
@@ -473,81 +836,128 @@ function TimesheetsTab() {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="w-8">
-              <input
-                type="checkbox"
-                className="accent-gold"
-                checked={allSelected}
-                aria-label="Select all"
-                onChange={(ev) =>
-                  setSelected(ev.target.checked ? new Set(allIds) : new Set())
-                }
-              />
-            </TableHead>
+            {isQueue && (
+              <TableHead className="w-8">
+                <input
+                  type="checkbox"
+                  className="accent-gold"
+                  checked={allSelected}
+                  aria-label="Select all"
+                  onChange={(ev) =>
+                    setSelected(ev.target.checked ? new Set(allIds) : new Set())
+                  }
+                />
+              </TableHead>
+            )}
             <TableHead>Associate</TableHead>
             <TableHead className="hidden lg:table-cell">Client</TableHead>
             <TableHead className="hidden md:table-cell">Clock in</TableHead>
             <TableHead>Clock out</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
+            <TableHead className="text-right tabular-nums">Hours</TableHead>
+            <TableHead className="hidden lg:table-cell text-right tabular-nums">
+              Est. cost
+            </TableHead>
+            <TableHead className="hidden xl:table-cell">Notes</TableHead>
+            <TableHead className="text-right">
+              {isQueue ? 'Actions' : 'Status'}
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {q.data.map((e) => (
-            <TableRow
-              key={e.id}
-              data-state={selected.has(e.id) ? 'selected' : undefined}
-            >
-              <TableCell>
-                <input
-                  type="checkbox"
-                  className="accent-gold"
-                  checked={selected.has(e.id)}
-                  aria-label={`Select ${e.associateName}`}
-                  onChange={() => toggle(e.id)}
-                />
-              </TableCell>
-              <TableCell className="font-medium">
-                <div className="flex items-center gap-2.5">
-                  <Avatar name={e.associateName} size="sm" />
-                  <div className="min-w-0">
-                    <div className="truncate">{e.associateName}</div>
-                    <div className="md:hidden text-[11px] text-silver/70 truncate">
-                      <span className="tabular-nums">
-                        In {new Date(e.clockInAt).toLocaleString()}
-                      </span>
-                      {e.clientName ? ` · ${e.clientName}` : ''}
+          {entries.map((e) => {
+            const hours = entryHours(e);
+            return (
+              <TableRow
+                key={e.id}
+                data-state={selected.has(e.id) ? 'selected' : undefined}
+              >
+                {isQueue && (
+                  <TableCell>
+                    <input
+                      type="checkbox"
+                      className="accent-gold"
+                      checked={selected.has(e.id)}
+                      aria-label={`Select ${e.associateName}`}
+                      onChange={() => toggle(e.id)}
+                    />
+                  </TableCell>
+                )}
+                <TableCell className="font-medium">
+                  <div className="flex items-center gap-2.5">
+                    <Avatar name={e.associateName} size="sm" />
+                    <div className="min-w-0">
+                      <div className="truncate">{e.associateName}</div>
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
+                        <span className="tabular-nums">
+                          In {fmtDateTime(e.clockInAt)}
+                        </span>
+                        {e.clientName ? ` · ${e.clientName}` : ''}
+                      </div>
                     </div>
                   </div>
-                </div>
-              </TableCell>
-              <TableCell className="hidden lg:table-cell text-silver">{e.clientName ?? '—'}</TableCell>
-              <TableCell className="hidden md:table-cell text-silver tabular-nums">
-                {new Date(e.clockInAt).toLocaleString()}
-              </TableCell>
-              <TableCell className="text-silver tabular-nums">
-                {e.clockOutAt ? new Date(e.clockOutAt).toLocaleString() : '—'}
-              </TableCell>
-              <TableCell className="text-right">
-                <div className="flex justify-end gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => reject(e.id)}
-                    disabled={pendingId === e.id}
-                  >
-                    Reject
-                  </Button>
-                  <Button
-                    size="sm"
-                    onClick={() => approveM.mutate(e.id)}
-                    loading={pendingId === e.id}
-                  >
-                    Approve
-                  </Button>
-                </div>
-              </TableCell>
-            </TableRow>
-          ))}
+                </TableCell>
+                <TableCell className="hidden lg:table-cell text-silver">{e.clientName ?? '—'}</TableCell>
+                <TableCell className="hidden md:table-cell text-silver tabular-nums">
+                  {fmtDateTime(e.clockInAt)}
+                </TableCell>
+                <TableCell className="text-silver tabular-nums">
+                  {e.clockOutAt ? fmtDateTime(e.clockOutAt) : '—'}
+                </TableCell>
+                <TableCell className="text-right tabular-nums">
+                  {e.clockOutAt ? hours.toFixed(2) : '—'}
+                </TableCell>
+                <TableCell className="hidden lg:table-cell text-right text-silver tabular-nums">
+                  {e.payRate && e.clockOutAt
+                    ? fmtMoney(hours * Number(e.payRate))
+                    : '—'}
+                </TableCell>
+                <TableCell className="hidden xl:table-cell text-silver">
+                  {e.notes ? (
+                    <span
+                      className="block max-w-[16rem] truncate"
+                      title={e.notes}
+                    >
+                      {e.notes}
+                    </span>
+                  ) : e.status === 'REJECTED' && e.rejectionReason ? (
+                    <span
+                      className="block max-w-[16rem] truncate text-alert/80"
+                      title={`Rejected: ${e.rejectionReason}`}
+                    >
+                      Rejected: {e.rejectionReason}
+                    </span>
+                  ) : (
+                    '—'
+                  )}
+                </TableCell>
+                <TableCell className="text-right">
+                  {isQueue ? (
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => reject(e.id)}
+                        disabled={pendingId === e.id}
+                      >
+                        Reject
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => approveM.mutate(e.id)}
+                        loading={pendingId === e.id}
+                      >
+                        Approve
+                      </Button>
+                    </div>
+                  ) : (
+                    <Badge variant={TS_STATUS_BADGE[e.status]}>
+                      {TS_STATUS_LABELS[e.status] ?? e.status}
+                    </Badge>
+                  )}
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
     </div>
@@ -567,22 +977,22 @@ function TimeOffTab() {
   const approveM = useMutation({
     mutationFn: (id: string) => approveTeamTimeOff(id),
     onSuccess: () => {
-      toast.success('Approved');
+      toast.success('Approved.');
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Approve failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Approve failed.'),
   });
 
   const denyM = useMutation({
     mutationFn: ({ id, note }: { id: string; note: string }) =>
       denyTeamTimeOff(id, note),
     onSuccess: () => {
-      toast.success('Denied');
+      toast.success('Denied.');
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Deny failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Deny failed.'),
   });
 
   const deny = async (id: string) => {
@@ -603,14 +1013,52 @@ function TimeOffTab() {
     mutationFn: (ids: string[]) => bulkApproveTeamTimeOff(ids),
     onSuccess: (r) => {
       toast.success(
-        `Approved ${r.approved}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ''}`,
+        `Approved ${r.approved}${r.skipped.length ? ` · ${r.skipped.length} skipped` : ''}.`,
       );
       setSelected(new Set());
       invalidateTeam();
     },
     onError: (err) =>
-      toast.error(err instanceof ApiError ? err.message : 'Bulk approve failed'),
+      toast.error(err instanceof ApiError ? err.message : 'Bulk approve failed.'),
   });
+  // No bulk-deny endpoint — loop the single deny with one shared note,
+  // allSettled so one already-decided row doesn't sink the batch.
+  const bulkDenyM = useMutation({
+    mutationFn: async ({ ids, note }: { ids: string[]; note: string }) => {
+      const results = await Promise.allSettled(
+        ids.map((id) => denyTeamTimeOff(id, note)),
+      );
+      return {
+        denied: results.filter((r) => r.status === 'fulfilled').length,
+        failed: results.filter((r) => r.status === 'rejected').length,
+      };
+    },
+    onSuccess: (r) => {
+      if (r.failed > 0) {
+        toast.error(`Denied ${r.denied} · ${r.failed} failed.`);
+      } else {
+        toast.success(`Denied ${r.denied}.`);
+      }
+      setSelected(new Set());
+      invalidateTeam();
+    },
+    onError: (err) =>
+      toast.error(err instanceof ApiError ? err.message : 'Bulk deny failed.'),
+  });
+  const bulkDeny = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    const note = (
+      await prompt({
+        title: `Deny ${ids.length} time-off ${ids.length === 1 ? 'request' : 'requests'}`,
+        reasonLabel: 'Shared reason for denial',
+        confirmLabel: 'Deny all',
+        destructive: true,
+      })
+    )?.trim();
+    if (!note) return;
+    bulkDenyM.mutate({ ids, note });
+  };
   const toggle = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -628,9 +1076,15 @@ function TimeOffTab() {
 
   if (q.error) {
     return (
-      <p role="alert" className="text-sm text-alert">
+      <ErrorBanner
+        action={
+          <Button size="sm" variant="secondary" onClick={() => q.refetch()}>
+            Retry
+          </Button>
+        }
+      >
         {q.error instanceof ApiError ? q.error.message : 'Failed to load.'}
-      </p>
+      </ErrorBanner>
     );
   }
   if (!q.data) return <SkeletonRows count={4} rowHeight="h-14" />;
@@ -660,14 +1114,24 @@ function TimeOffTab() {
               size="sm"
               variant="ghost"
               onClick={() => setSelected(new Set())}
-              disabled={bulkM.isPending}
+              disabled={bulkM.isPending || bulkDenyM.isPending}
             >
               Clear
             </Button>
             <Button
               size="sm"
+              variant="outline"
+              onClick={bulkDeny}
+              loading={bulkDenyM.isPending}
+              disabled={bulkM.isPending}
+            >
+              Deny {selected.size}
+            </Button>
+            <Button
+              size="sm"
               onClick={() => bulkM.mutate(Array.from(selected))}
               loading={bulkM.isPending}
+              disabled={bulkDenyM.isPending}
             >
               Approve {selected.size}
             </Button>
@@ -715,7 +1179,7 @@ function TimeOffTab() {
                   <Avatar name={r.associateName} size="sm" />
                   <div className="min-w-0">
                     <div className="truncate">{r.associateName}</div>
-                    <div className="md:hidden text-[11px] text-silver/70 truncate">
+                    <div className="md:hidden text-xs2 text-silver/70 truncate">
                       {r.category}
                       <span className="sm:hidden tabular-nums">
                         {' · '}
@@ -727,7 +1191,7 @@ function TimeOffTab() {
               </TableCell>
               <TableCell className="hidden md:table-cell text-silver">{r.category}</TableCell>
               <TableCell className="text-silver tabular-nums">
-                {r.startDate} → {r.endDate}
+                {fmtDate(parseYmd(r.startDate))} → {fmtDate(parseYmd(r.endDate))}
               </TableCell>
               <TableCell className="hidden sm:table-cell tabular-nums">
                 {(r.requestedMinutes / 60).toFixed(1)}h

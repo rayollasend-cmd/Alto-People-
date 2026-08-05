@@ -1,8 +1,14 @@
 import { Router } from 'express';
+import { httpUrl } from '@alto-people/shared';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
+import {
+  notifyAllAdmins,
+  notifyAssociate,
+  notifyManager,
+} from '../lib/notify.js';
 
 /**
  * Phase 120 — Internal mobility.
@@ -119,7 +125,7 @@ internalMobility120Router.get(
 
 const ApplyInputSchema = z.object({
   coverLetter: z.string().max(8000).optional().nullable(),
-  resumeUrl: z.string().url().max(500).optional().nullable(),
+  resumeUrl: httpUrl(500).optional().nullable(),
 });
 
 internalMobility120Router.post(
@@ -140,14 +146,39 @@ internalMobility120Router.post(
       throw new HttpError(404, 'not_found', 'Job not found.');
     }
     try {
+      const applicantAssociateId = req.user!.associateId;
       const created = await prisma.internalJobApplication.create({
         data: {
           postingId: id,
-          associateId: req.user!.associateId,
+          associateId: applicantAssociateId,
           coverLetter: input.coverLetter ?? null,
           resumeUrl: input.resumeUrl ?? null,
         },
       });
+
+      // Fire-and-forget after the write: the recruiting admins and the
+      // applicant's direct manager both want to know about the application.
+      const applicant = await prisma.associate.findUnique({
+        where: { id: applicantAssociateId },
+        select: { firstName: true, lastName: true },
+      });
+      const applicantName = applicant
+        ? `${applicant.firstName} ${applicant.lastName}`
+        : 'An associate';
+      void notifyAllAdmins({
+        subject: `Internal application: ${posting.title}`,
+        body: `${applicantName} applied to the internal posting "${posting.title}".`,
+        category: 'internal-jobs',
+        linkUrl: '/internal-jobs',
+        excludeUserId: req.user!.id,
+      });
+      void notifyManager(applicantAssociateId, {
+        subject: `Internal application: ${posting.title}`,
+        body: `${applicantName} applied to the internal posting "${posting.title}".`,
+        category: 'internal-jobs',
+        linkUrl: '/internal-jobs',
+      });
+
       res.status(201).json({ id: created.id });
     } catch (err: unknown) {
       if (
@@ -192,6 +223,12 @@ internalMobility120Router.get(
         status: a.status,
         coverLetter: a.coverLetter,
         createdAt: a.createdAt.toISOString(),
+        // Last status-change stamp (set by the manager decision route) so
+        // the associate's "My applications" list can show when it moved.
+        reviewedAt: a.reviewedAt?.toISOString() ?? null,
+        // The decision note — a REJECTED badge with no reason is a dead
+        // end; the reviewer wrote one, the applicant gets to read it.
+        reviewerNotes: a.reviewerNotes,
         posting: a.posting,
       })),
     });
@@ -286,10 +323,14 @@ internalMobility120Router.patch(
   async (req, res) => {
     const id = z.string().uuid().parse(req.params.id);
     const input = DecisionInputSchema.parse(req.body);
-    const app = await prisma.internalJobApplication.findUnique({ where: { id } });
+    const app = await prisma.internalJobApplication.findUnique({
+      where: { id },
+      include: { posting: { select: { title: true } } },
+    });
     if (!app) {
       throw new HttpError(404, 'not_found', 'Application not found.');
     }
+    const statusChanged = app.status !== input.status;
     await prisma.internalJobApplication.update({
       where: { id },
       data: {
@@ -299,6 +340,20 @@ internalMobility120Router.patch(
         reviewedAt: new Date(),
       },
     });
+
+    // Fire-and-forget after the write: tell the applicant their status
+    // moved. emailFallback so it reaches associates without a User account.
+    if (statusChanged) {
+      const statusLabel = input.status.replace(/_/g, ' ').toLowerCase();
+      void notifyAssociate(app.associateId, {
+        subject: 'Update on your internal application',
+        body: `Your application for "${app.posting.title}" is now ${statusLabel}.`,
+        category: 'internal-jobs',
+        linkUrl: '/internal-jobs',
+        emailFallback: true,
+      });
+    }
+
     res.json({ ok: true });
   },
 );

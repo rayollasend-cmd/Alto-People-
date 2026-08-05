@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
   AlertTriangle,
   CalendarClock,
@@ -8,6 +9,7 @@ import {
   FileSpreadsheet,
   Lock,
   RefreshCw,
+  Search,
   CheckCircle2,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -17,17 +19,20 @@ import type {
   TimesheetIssueKind,
   ClientListItem,
 } from '@alto-people/shared';
-import { listClients } from '@/lib/clientsApi';
+import { useClients } from '@/lib/useClients';
 import {
   getTimesheetWeek,
   exportTimesheetXlsx,
   getAssociateTimesheetDetail,
   fileTimesheetWeek,
 } from '@/lib/timeApi';
+import { onTimeEntriesChanged } from '@/lib/timeEntriesChannel';
 import { upsertAttestation } from '@/lib/complianceScorecardApi';
 import { useAuth } from '@/lib/auth';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { fmtDate, fmtDateTime } from '@/lib/format';
+import { useConfirm } from '@/lib/confirm';
 import {
   Badge,
   Button,
@@ -39,6 +44,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  Input,
   PageHeader,
   Select,
   Skeleton,
@@ -80,10 +86,17 @@ function mondayOfIsoWeek(fridayIso: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-const fmtDay = (d: Date) =>
-  d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
 const hoursCell = (n: number) => (n === 0 ? '0.00' : n.toFixed(2));
+
+/**
+ * "7h 30m" alongside decimal hours. The approval queue speaks h:mm while
+ * Fieldglass speaks decimals — users read "7.50" vs "7h 30m" as different
+ * numbers, so the drawer shows both.
+ */
+const hoursHM = (n: number) => {
+  const mins = Math.round(n * 60);
+  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`;
+};
 
 const ISSUE_LABEL: Record<TimesheetIssueKind, string> = {
   MISSING_CLOCKOUT: 'Missing clock-out',
@@ -92,9 +105,19 @@ const ISSUE_LABEL: Record<TimesheetIssueKind, string> = {
 };
 
 export function TimesheetsView() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const canAttest = can('manage:compliance');
+  // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
+  // 403s for them. Pin the client filter to their one client instead.
+  const boundedClient = useMemo(
+    () =>
+      user?.clientId
+        ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+        : null,
+    [user?.clientId, user?.clientName],
+  );
 
   const [weekStart, setWeekStart] = useState<Date>(() => lastCompletedWeekStart(new Date()));
   const [data, setData] = useState<TimesheetWeekResponse | null>(null);
@@ -106,24 +129,22 @@ export function TimesheetsView() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [detail, setDetail] = useState<TimesheetAssociateDetailResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  // Whose drawer is open — so a live refresh can re-pull it in place.
+  const detailAssociateRef = useRef<string | null>(null);
 
   const [showSchedule, setShowSchedule] = useState(false);
+  const [search, setSearch] = useState('');
 
   // Per-client filter — file one Fieldglass SOW at a time. '' = all clients.
-  const [clientId, setClientId] = useState('');
-  const [clients, setClients] = useState<ClientListItem[]>([]);
-
-  useEffect(() => {
-    let live = true;
-    listClients({ status: 'ACTIVE' })
-      .then((r) => live && setClients(r.clients))
-      .catch(() => {
-        /* dropdown just stays at "All clients" */
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
+  // Bounded viewers start (and stay) pinned to their client.
+  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
+  // Shared react-query cache; the fetch is skipped entirely for bounded
+  // roles (a failure just leaves the dropdown at "All clients").
+  const { clients: fetchedClients } = useClients({ enabled: !boundedClient });
+  const clients = useMemo<Array<Pick<ClientListItem, 'id' | 'name'>>>(
+    () => (boundedClient ? [boundedClient] : fetchedClients),
+    [boundedClient, fetchedClients],
+  );
 
   const clientArg = clientId || undefined;
 
@@ -140,6 +161,7 @@ export function TimesheetsView() {
 
   const openDetail = useCallback(
     async (associateId: string) => {
+      detailAssociateRef.current = associateId;
       setDetailOpen(true);
       setDetail(null);
       setDetailLoading(true);
@@ -153,6 +175,7 @@ export function TimesheetsView() {
       } catch (err) {
         toast.error(err instanceof ApiError ? err.message : 'Could not load the timesheet.');
         setDetailOpen(false);
+        detailAssociateRef.current = null;
       } finally {
         setDetailLoading(false);
       }
@@ -160,22 +183,77 @@ export function TimesheetsView() {
     [weekStart, clientArg],
   );
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /** Re-pull the open drawer in place — no loading flash, keep it on failure. */
+  const refreshDetail = useCallback(async () => {
+    const associateId = detailAssociateRef.current;
+    if (!associateId) return;
     try {
-      const res = await getTimesheetWeek({ weekStart: weekStart.toISOString(), clientId: clientArg });
-      setData(res);
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not load timesheets.');
-      setData(null);
-    } finally {
-      setLoading(false);
+      const res = await getAssociateTimesheetDetail({
+        associateId,
+        weekStart: weekStart.toISOString(),
+        clientId: clientArg,
+      });
+      setDetail(res);
+    } catch {
+      // Silent refresh — leave the drawer showing what it had.
     }
   }, [weekStart, clientArg]);
+
+  const load = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!opts?.silent) setLoading(true);
+      try {
+        const res = await getTimesheetWeek({ weekStart: weekStart.toISOString(), clientId: clientArg });
+        setData(res);
+      } catch (err) {
+        // A failed background refresh keeps the last good data — the next
+        // announcement or focus retries; only a foreground load may toast.
+        if (opts?.silent) return;
+        toast.error(err instanceof ApiError ? err.message : 'Could not load timesheets.');
+        setData(null);
+      } finally {
+        if (!opts?.silent) setLoading(false);
+      }
+    },
+    [weekStart, clientArg],
+  );
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Live refresh. The approval queue announces every successful mutation on
+  // a BroadcastChannel (reaches every tab of this browser) — debounced so a
+  // burst of row-by-row approvals coalesces into one reload. Refetch on
+  // focus/visibility covers edits made from OTHER machines, throttled so
+  // alt-tabbing doesn't hammer the week recompute.
+  useEffect(() => {
+    let debounce: ReturnType<typeof setTimeout> | undefined;
+    let lastFocus = 0;
+    const refresh = () => {
+      void load({ silent: true });
+      void refreshDetail();
+    };
+    const offChanged = onTimeEntriesChanged(() => {
+      clearTimeout(debounce);
+      debounce = setTimeout(refresh, 400);
+    });
+    const onFocus = () => {
+      if (document.hidden) return;
+      const now = Date.now();
+      if (now - lastFocus < 5_000) return;
+      lastFocus = now;
+      refresh();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      clearTimeout(debounce);
+      offChanged();
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, [load, refreshDetail]);
 
   const onDownload = async () => {
     if (downloading) return;
@@ -206,21 +284,27 @@ export function TimesheetsView() {
       await navigator.clipboard.writeText(lines.join('\n'));
       toast.success(`Copied ${data.rows.length} rows to the clipboard.`);
     } catch {
-      toast.error('Clipboard blocked — use Download instead.');
+      toast.error('Clipboard blocked — use Export .xlsx instead.');
     }
   };
 
   const onMarkFiled = async () => {
     if (!data || filingBusy) return;
     const already = !!data.filing;
-    if (
-      !window.confirm(
-        already
-          ? `Re-file the week ending ${data.weekEnding}? This updates the recorded snapshot to the current hours.`
-          : `Mark the Fieldglass timesheet for the week ending ${data.weekEnding} as filed? This records a snapshot of the current hours${canAttest ? ' and ticks the weekly compliance attestation' : ''}.`,
-      )
-    )
-      return;
+    const ok = await confirm(
+      already
+        ? {
+            title: `Re-file the week ending ${data.weekEnding}?`,
+            description: 'This updates the recorded snapshot to the current hours.',
+            confirmLabel: 'Re-file',
+          }
+        : {
+            title: `Mark the week ending ${data.weekEnding} as filed?`,
+            description: `This records a snapshot of the current hours${canAttest ? ' and ticks the weekly compliance attestation' : ''}.`,
+            confirmLabel: 'Mark filed',
+          },
+    );
+    if (!ok) return;
     setFilingBusy(true);
     try {
       const updated = await fileTimesheetWeek({ weekStart: weekStart.toISOString(), clientId: clientArg });
@@ -249,7 +333,19 @@ export function TimesheetsView() {
     }
   };
 
-  const rows = data?.rows ?? [];
+  const allRows = data?.rows ?? [];
+  // Client-side name/site filter — the week's rows are already all loaded.
+  // Token match ("aaliyah nelson" finds "Nelson, Aaliyah") since Fieldglass
+  // names are Last, First. Copy/Export/filing stay on the FULL week: those
+  // produce the Fieldglass artifact, not the current view.
+  const rows = useMemo(() => {
+    const tokens = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return allRows;
+    return allRows.filter((r) => {
+      const hay = `${r.worker} ${r.site}`.toLowerCase();
+      return tokens.every((t) => hay.includes(t));
+    });
+  }, [allRows, search]);
 
   return (
     <div className="space-y-6">
@@ -271,7 +367,16 @@ export function TimesheetsView() {
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <span className="px-3 text-sm text-white tabular-nums whitespace-nowrap">
-            {fmtDay(weekStart)} – {fmtDay(weekEnd)}
+            {/* Prefer the SERVER's week bounds once loaded. The rows are
+                bucketed in the store timezone (America/New_York) server-side,
+                while weekStart/weekEnd here are browser-local — for a viewer
+                east of US Eastern, the browser's Saturday can fall in the
+                PREVIOUS store-local week, and this header used to claim a
+                different week than the data below it. The browser dates
+                remain only as a pre-load placeholder and for navigation. */}
+            {data
+              ? `${fmtDate(`${data.weekStart}T12:00:00Z`)} – ${fmtDate(`${data.weekEndIso}T12:00:00Z`)}`
+              : `${fmtDate(weekStart)} – ${fmtDate(weekEnd)}`}
           </span>
           <Button
             variant="ghost"
@@ -291,20 +396,39 @@ export function TimesheetsView() {
         >
           Last completed week
         </Button>
-        <Select
-          value={clientId}
-          onChange={(e) => setClientId(e.target.value)}
-          className="h-8 w-auto text-sm"
-          title="File one Fieldglass client/SOW at a time"
-          aria-label="Client filter"
-        >
-          <option value="">All clients</option>
-          {clients.map((c) => (
-            <option key={c.id} value={c.id}>
-              {c.name}
-            </option>
-          ))}
-        </Select>
+        {boundedClient ? (
+          <div
+            className="inline-flex h-8 items-center rounded-md border border-navy-secondary bg-navy-secondary/30 px-2.5 text-sm text-white"
+            title="Your account is scoped to this client"
+          >
+            {boundedClient.name}
+          </div>
+        ) : (
+          <Select
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            className="h-8 w-auto text-sm"
+            title="File one Fieldglass client/SOW at a time"
+            aria-label="Client filter"
+          >
+            <option value="">All clients</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
+        )}
+        <div className="relative w-56">
+          <Search className="absolute left-2.5 top-2 h-4 w-4 text-silver/70 pointer-events-none" />
+          <Input
+            placeholder="Search associate or site…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8 h-8 text-sm"
+            aria-label="Search associates"
+          />
+        </div>
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button
@@ -317,7 +441,7 @@ export function TimesheetsView() {
             <CalendarClock className="h-3.5 w-3.5" />
             Scheduled vs actual
             {scheduleFlags.length > 0 && (
-              <span className="ml-1 rounded-full bg-gold/20 px-1.5 text-[11px] text-gold">
+              <span className="ml-1 rounded-full bg-gold/20 px-1.5 text-xs2 text-gold">
                 {scheduleFlags.length}
               </span>
             )}
@@ -330,7 +454,7 @@ export function TimesheetsView() {
             variant="ghost"
             size="sm"
             onClick={onCopy}
-            disabled={rows.length === 0}
+            disabled={allRows.length === 0}
             title="Copy the grid (tab-separated) for pasting into Fieldglass"
           >
             <ClipboardCopy className="h-3.5 w-3.5" />
@@ -341,17 +465,17 @@ export function TimesheetsView() {
             size="sm"
             onClick={onDownload}
             loading={downloading}
-            disabled={rows.length === 0}
+            disabled={allRows.length === 0}
           >
             <FileSpreadsheet className="h-3.5 w-3.5" />
-            Download .xlsx
+            Export .xlsx
           </Button>
           <Button
             variant="primary"
             size="sm"
             onClick={onMarkFiled}
             loading={filingBusy}
-            disabled={!data || rows.length === 0}
+            disabled={!data || allRows.length === 0}
             title="Record a snapshot of this week's hours as filed into Fieldglass"
           >
             {data?.filing ? <RefreshCw className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
@@ -366,8 +490,8 @@ export function TimesheetsView() {
             <div className="mb-2 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-sm font-medium text-gold">
                 <AlertTriangle className="h-4 w-4 shrink-0" />
-                Filed {new Date(data.filing.filedAt).toLocaleDateString()} — {data.filing.drift.length}{' '}
-                worker{data.filing.drift.length === 1 ? '' : 's'} changed since. Re-file to match
+                Filed {fmtDate(data.filing.filedAt)} — {data.filing.drift.length}{' '}
+                associate{data.filing.drift.length === 1 ? '' : 's'} changed since. Re-file to match
                 Fieldglass.
               </div>
               <Button variant="secondary" size="sm" onClick={onMarkFiled} loading={filingBusy}>
@@ -392,7 +516,7 @@ export function TimesheetsView() {
           <div className="flex items-center gap-2 rounded-md border border-navy-secondary bg-navy/40 p-2.5 text-sm text-silver">
             <Lock className="h-4 w-4 text-gold" />
             Filed{data.filing.filedBy ? ` by ${data.filing.filedBy}` : ''} ·{' '}
-            {new Date(data.filing.filedAt).toLocaleString()} ·{' '}
+            {fmtDateTime(data.filing.filedAt)} ·{' '}
             {data.filing.filedTotalHours.toFixed(2)}h — in sync.
           </div>
         ))}
@@ -421,7 +545,7 @@ export function TimesheetsView() {
             ))}
           </ul>
         </div>
-      ) : data && rows.length > 0 ? (
+      ) : data && allRows.length > 0 ? (
         <div className="flex items-center gap-2 rounded-md border border-navy-secondary bg-navy/40 p-2.5 text-sm text-silver">
           <CheckCircle2 className="h-4 w-4 text-gold" />
           No issues — this week looks ready to file.
@@ -432,18 +556,22 @@ export function TimesheetsView() {
         <CardContent className="p-0">
           <Table>
             <TableHeader>
+              {/* Responsive column budget: a phone keeps Status / Associate /
+                  Site / Total (the "is this ready and how much" read); the
+                  ST/OT/DT breakdown returns at md and the Fieldglass
+                  bookkeeping columns (ID / Revision / week-End) at lg. */}
               <TableRow>
                 <TableHead>Status</TableHead>
-                <TableHead>ID</TableHead>
-                <TableHead className="text-right">Revision</TableHead>
-                <TableHead>Worker</TableHead>
-                <TableHead>Site</TableHead>
-                <TableHead>End</TableHead>
-                <TableHead className="text-right">ST</TableHead>
-                <TableHead className="text-right">OT</TableHead>
-                <TableHead className="text-right">DT</TableHead>
-                <TableHead className="text-right">Others</TableHead>
-                <TableHead className="text-right">NB</TableHead>
+                <TableHead className="hidden lg:table-cell">ID</TableHead>
+                <TableHead className="hidden lg:table-cell text-right">Revision</TableHead>
+                <TableHead>Associate</TableHead>
+                <TableHead className="hidden sm:table-cell">Site</TableHead>
+                <TableHead className="hidden lg:table-cell">End</TableHead>
+                <TableHead className="hidden md:table-cell text-right">ST</TableHead>
+                <TableHead className="hidden md:table-cell text-right">OT</TableHead>
+                <TableHead className="hidden md:table-cell text-right">DT</TableHead>
+                <TableHead className="hidden md:table-cell text-right">Others</TableHead>
+                <TableHead className="hidden md:table-cell text-right">NB</TableHead>
                 <TableHead className="text-right">Total</TableHead>
               </TableRow>
             </TableHeader>
@@ -457,10 +585,17 @@ export function TimesheetsView() {
               ) : rows.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={12}>
-                    <EmptyState
-                      title="No approved hours this week"
-                      description="Nothing to report to Fieldglass for the selected week. Approve time in the queue, then refresh."
-                    />
+                    {allRows.length > 0 ? (
+                      <EmptyState
+                        title="No associate matches"
+                        description={`Nobody in this week's timesheet matches "${search.trim()}". Clear the search to see all ${allRows.length} associates.`}
+                      />
+                    ) : (
+                      <EmptyState
+                        title="No approved hours this week"
+                        description="Nothing to report to Fieldglass for the selected week. Approve time in the queue, then refresh."
+                      />
+                    )}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -473,25 +608,25 @@ export function TimesheetsView() {
                     </TableCell>
                     {/* ID + Revision are Fieldglass-assigned on entry — shown to keep
                         the columns aligned with the Fieldglass list for eyeballing. */}
-                    <TableCell className="text-silver/50">—</TableCell>
-                    <TableCell className="text-right tabular-nums text-silver/60">0</TableCell>
+                    <TableCell className="hidden lg:table-cell text-silver/50">—</TableCell>
+                    <TableCell className="hidden lg:table-cell text-right tabular-nums text-silver/60">0</TableCell>
                     <TableCell className="font-medium">
                       <button
                         type="button"
                         onClick={() => void openDetail(r.associateId)}
                         className="text-left text-gold hover:underline focus:underline focus:outline-none"
-                        title="Open this worker's daily timesheet"
+                        title="Open this associate's daily timesheet"
                       >
                         {r.worker}
                       </button>
                     </TableCell>
-                    <TableCell className="text-silver">{r.site}</TableCell>
-                    <TableCell className="tabular-nums text-silver">{data?.weekEnding}</TableCell>
-                    <TableCell className="text-right tabular-nums text-silver">{hoursCell(r.st)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-silver">{hoursCell(r.ot)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-silver">{hoursCell(r.dt)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-white">{hoursCell(r.others)}</TableCell>
-                    <TableCell className="text-right tabular-nums text-silver">{hoursCell(r.nb)}</TableCell>
+                    <TableCell className="hidden sm:table-cell text-silver">{r.site}</TableCell>
+                    <TableCell className="hidden lg:table-cell tabular-nums text-silver">{data?.weekEnding}</TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.st)}</TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.ot)}</TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.dt)}</TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums text-white">{hoursCell(r.others)}</TableCell>
+                    <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">{hoursCell(r.nb)}</TableCell>
                     <TableCell className="text-right tabular-nums font-semibold text-white">{hoursCell(r.total)}</TableCell>
                   </TableRow>
                 ))
@@ -515,7 +650,7 @@ export function TimesheetsView() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Worker</TableHead>
+                    <TableHead>Associate</TableHead>
                     <TableHead className="text-right">Scheduled</TableHead>
                     <TableHead className="text-right">Actual</TableHead>
                     <TableHead className="text-right">Δ</TableHead>
@@ -562,22 +697,33 @@ export function TimesheetsView() {
         </Card>
       )}
 
-      {data && rows.length > 0 && (
+      {data && allRows.length > 0 && (
         <p className="text-xs text-silver/70">
-          {rows.length} worker{rows.length === 1 ? '' : 's'} · {data.totalHours.toFixed(2)} total
-          hours · week ending {data.weekEnding}. Hours are net of unpaid breaks, billed flat under
-          &ldquo;Others&rdquo; per the SOW.
+          {rows.length !== allRows.length
+            ? `${rows.length} of ${allRows.length} associates shown`
+            : `${allRows.length} associate${allRows.length === 1 ? '' : 's'}`}{' '}
+          · {data.totalHours.toFixed(2)} total hours · week ending {data.weekEnding}. Hours are net
+          of unpaid breaks, billed flat under &ldquo;Others&rdquo; per the SOW.
         </p>
       )}
 
       {/* Fieldglass individual-timesheet drill-down */}
       <Drawer
         open={detailOpen}
-        onOpenChange={(o) => !o && setDetailOpen(false)}
+        onOpenChange={(o) => {
+          if (!o) {
+            setDetailOpen(false);
+            detailAssociateRef.current = null;
+          }
+        }}
         width="max-w-3xl"
       >
         <DrawerHeader>
-          <DrawerTitle>{detail?.worker ?? 'Timesheet'}</DrawerTitle>
+          <DrawerTitle>
+            <AssociateLink associateId={detailAssociateRef.current}>
+              {detail?.worker ?? 'Timesheet'}
+            </AssociateLink>
+          </DrawerTitle>
           <DrawerDescription>
             {detail ? `Period ${detail.periodLabel} · ${detail.site}` : 'Loading…'}
           </DrawerDescription>
@@ -601,6 +747,9 @@ export function TimesheetsView() {
                   <span className="text-silver/60">Total worked: </span>
                   <span className="font-semibold text-white tabular-nums">
                     {detail.totalHours.toFixed(2)}h
+                  </span>{' '}
+                  <span className="text-xs2 tabular-nums text-silver/60">
+                    ({hoursHM(detail.totalHours)})
                   </span>
                 </span>
               </div>
@@ -626,7 +775,7 @@ export function TimesheetsView() {
                       {detail.days.map((d) => (
                         <th key={d.date} className="p-2 text-center whitespace-nowrap">
                           <div className="font-semibold text-white">{d.weekday}</div>
-                          <div className="text-[11px] tabular-nums text-silver/60">{d.monthDay}</div>
+                          <div className="text-xs2 tabular-nums text-silver/60">{d.monthDay}</div>
                         </th>
                       ))}
                       <th className="p-2 text-center font-semibold text-white">Total</th>
@@ -645,7 +794,7 @@ export function TimesheetsView() {
                     <tr className="border-t border-navy-secondary">
                       <td className="p-2 text-silver/70">Meal Break</td>
                       {detail.days.map((d) => (
-                        <td key={d.date} className="p-2 text-center text-[11px] text-silver/80 whitespace-nowrap">
+                        <td key={d.date} className="p-2 text-center text-xs2 text-silver/80 whitespace-nowrap">
                           {d.breaks.length > 0
                             ? d.breaks.map((b, i) => <div key={i}>{b}</div>)
                             : '—'}
@@ -676,6 +825,11 @@ export function TimesheetsView() {
                   </tbody>
                 </table>
               </div>
+              {/* Punches are formatted server-side on each SITE's wall clock —
+                  the same clock the associate punched on — not the viewer's. */}
+              <p className="text-xs2 text-silver/60">
+                Times shown in each work site's local time.
+              </p>
 
               <div className="space-y-2">
                 <h3 className="text-sm font-semibold text-white">Accounting (USD)</h3>
@@ -695,7 +849,10 @@ export function TimesheetsView() {
                       <tr className="border-t border-navy-secondary">
                         <td className="p-2 text-silver whitespace-nowrap">{detail.rateLabel}</td>
                         <td className="p-2 text-right tabular-nums text-silver">
-                          {detail.payRate.toFixed(2)}
+                          {/* Null = no comp record on file. A dash, not a
+                              default — the old $15 fallback put a fabricated
+                              rate on a billing-adjacent sheet. */}
+                          {detail.payRate != null ? detail.payRate.toFixed(2) : '—'}
                         </td>
                         <td className="p-2 text-right tabular-nums text-silver">
                           {detail.billRate != null ? detail.billRate.toFixed(2) : '—'}

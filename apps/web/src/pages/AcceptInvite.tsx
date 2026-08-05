@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { safeNextPath } from '@/lib/safeNextPath';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Lock } from 'lucide-react';
+import { Eye, EyeOff, Lock } from 'lucide-react';
 import type {
   AcceptInviteResponse,
   InviteSummary,
@@ -13,6 +14,43 @@ import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Logo } from '@/components/Logo';
+import { fmtDateTime } from '@/lib/format';
+
+/**
+ * "ok" once the 12-char floor is met; "strong" when it also mixes upper +
+ * lower case and a digit. Deliberately simple — the server only enforces
+ * length, this is a nudge, not a gate.
+ */
+function passwordStrength(pw: string): 'ok' | 'strong' | null {
+  if (pw.length < 12) return null;
+  return /[a-z]/.test(pw) && /[A-Z]/.test(pw) && /\d/.test(pw)
+    ? 'strong'
+    : 'ok';
+}
+
+/** Eye toggle rendered inside a password field's right edge. */
+function ShowPasswordToggle({
+  shown,
+  onToggle,
+}: {
+  shown: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={shown ? 'Hide password' : 'Show password'}
+      className="absolute right-2.5 coarse:right-1 top-1/2 -translate-y-1/2 p-1 coarse:p-2.5 rounded text-silver/70 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+    >
+      {shown ? (
+        <EyeOff className="h-4 w-4" aria-hidden="true" />
+      ) : (
+        <Eye className="h-4 w-4" aria-hidden="true" />
+      )}
+    </button>
+  );
+}
 
 export function AcceptInvite() {
   const { token } = useParams<{ token: string }>();
@@ -26,7 +64,14 @@ export function AcceptInvite() {
 
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // Self-service renewal shown in the invalid/expired state.
+  const [renewEmail, setRenewEmail] = useState('');
+  const [renewSubmitting, setRenewSubmitting] = useState(false);
+  const [renewSent, setRenewSent] = useState(false);
 
   useEffect(() => {
     if (!token) {
@@ -57,6 +102,25 @@ export function AcceptInvite() {
   }, [token]);
 
   const passwordOk = password.length >= 12 && password === confirm;
+  const strength = passwordStrength(password);
+
+  const handleRenew = async (e: FormEvent) => {
+    e.preventDefault();
+    if (renewSubmitting || !renewEmail.trim()) return;
+    setRenewSubmitting(true);
+    try {
+      await apiFetch<{ ok: boolean }>('/auth/invite/renew', {
+        method: 'POST',
+        body: { email: renewEmail.trim() },
+      });
+    } catch {
+      // Deliberately swallowed — the confirmation below is neutral by design
+      // (the server never reveals whether the email has a pending invite).
+    } finally {
+      setRenewSubmitting(false);
+      setRenewSent(true);
+    }
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -72,8 +136,10 @@ export function AcceptInvite() {
       // AuthProvider re-runs /auth/me and picks up the new session cleanly.
       // The server tells us where to land — usually the new associate's
       // onboarding checklist; falls back to / for HR-created users.
-      const dest = res?.nextPath && res.nextPath.startsWith('/') ? res.nextPath : '/';
-      window.location.assign(dest);
+      // Same guard as the login page's ?next=: a bare startsWith('/')
+      // still admits "//evil.com", which is protocol-relative and
+      // navigates off-origin.
+      window.location.assign(safeNextPath(res?.nextPath));
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setError('This account is already active. Try signing in instead.');
@@ -87,7 +153,7 @@ export function AcceptInvite() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-gradient-to-br from-midnight via-navy to-navy-secondary">
+    <div className="min-h-screen flex items-center justify-center px-4 py-12 bg-login-aurora">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
           <Logo size="xl" className="mx-auto mb-4 rounded-xl" alt="Alto HR" />
@@ -99,7 +165,7 @@ export function AcceptInvite() {
           </p>
         </div>
 
-        <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 shadow-2xl">
+        <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3">
           {loading && (
             <div>
               <Skeleton className="h-7 w-2/3 mb-3" />
@@ -116,6 +182,41 @@ export function AcceptInvite() {
                 Invitation problem
               </h2>
               <ErrorBanner className="mb-4">{error}</ErrorBanner>
+
+              {renewSent ? (
+                <p className="text-silver text-sm mb-4">
+                  If that email has a pending invitation, a fresh link is on
+                  its way.
+                </p>
+              ) : (
+                <form onSubmit={handleRenew} noValidate className="mb-4">
+                  <p className="text-silver text-sm mb-3">
+                    Enter your email and we'll send you a fresh invitation
+                    link.
+                  </p>
+                  <Field label="Email" required className="mb-3">
+                    {(p) => (
+                      <Input
+                        type="email"
+                        autoComplete="email"
+                        inputMode="email"
+                        value={renewEmail}
+                        onChange={(e) => setRenewEmail(e.target.value)}
+                        {...p}
+                      />
+                    )}
+                  </Field>
+                  <Button
+                    type="submit"
+                    loading={renewSubmitting}
+                    disabled={renewSubmitting || !renewEmail.trim()}
+                    className="w-full"
+                  >
+                    {renewSubmitting ? 'Sending…' : 'Send me a new link'}
+                  </Button>
+                </form>
+              )}
+
               <Button variant="ghost" onClick={() => navigate('/login')}>
                 Go to sign in
               </Button>
@@ -135,7 +236,13 @@ export function AcceptInvite() {
               <Field
                 label="Password"
                 required
-                hint="Minimum 12 characters."
+                hint={
+                  strength === 'strong'
+                    ? 'Strength: strong.'
+                    : strength === 'ok'
+                      ? 'Strength: ok — mix upper and lower case with a number to make it strong.'
+                      : 'Minimum 12 characters.'
+                }
                 className="mb-4"
               >
                 {(p) => (
@@ -145,13 +252,17 @@ export function AcceptInvite() {
                       aria-hidden="true"
                     />
                     <Input
-                      type="password"
+                      type={showPassword ? 'text' : 'password'}
                       autoComplete="new-password"
                       minLength={12}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="pl-9"
+                      className="pl-9 pr-10"
                       {...p}
+                    />
+                    <ShowPasswordToggle
+                      shown={showPassword}
+                      onToggle={() => setShowPassword((v) => !v)}
                     />
                   </div>
                 )}
@@ -174,13 +285,17 @@ export function AcceptInvite() {
                       aria-hidden="true"
                     />
                     <Input
-                      type="password"
+                      type={showConfirm ? 'text' : 'password'}
                       autoComplete="new-password"
                       minLength={12}
                       value={confirm}
                       onChange={(e) => setConfirm(e.target.value)}
-                      className="pl-9"
+                      className="pl-9 pr-10"
                       {...p}
+                    />
+                    <ShowPasswordToggle
+                      shown={showConfirm}
+                      onToggle={() => setShowConfirm((v) => !v)}
                     />
                   </div>
                 )}
@@ -197,8 +312,8 @@ export function AcceptInvite() {
               >
                 {submitting ? 'Setting up…' : 'Set password & sign in'}
               </Button>
-              <p className="text-[10px] text-silver/70 text-center mt-4">
-                This link expires {new Date(invite.expiresAt).toLocaleString()}.
+              <p className="text-2xs text-silver/70 text-center mt-4">
+                This link expires {fmtDateTime(invite.expiresAt)}.
               </p>
             </form>
           )}

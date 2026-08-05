@@ -17,9 +17,9 @@ import {
 } from '@/components/ui/Table';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { fmtMoney } from '@/lib/format';
 
-const fmt = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+const fmt = fmtMoney;
 
 export function PayrollYtd() {
   const currentYear = new Date().getUTCFullYear();
@@ -152,7 +152,7 @@ export function PayrollYtd() {
                           {r.firstName} {r.lastName}
                         </Link>
                         <div className="text-xs text-silver/70">{r.email}</div>
-                        <div className="md:hidden text-[11px] text-silver/70 tabular-nums truncate">
+                        <div className="md:hidden text-xs2 text-silver/70 tabular-nums truncate">
                           {r.paystubCount} paystub{r.paystubCount === 1 ? '' : 's'}
                         </div>
                       </TableCell>
@@ -186,7 +186,7 @@ export function PayrollYtd() {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-widest text-silver/70">{label}</div>
+      <div className="text-2xs uppercase tracking-widest text-silver/70">{label}</div>
       <div className="text-sm text-silver tabular-nums">{value}</div>
     </div>
   );

@@ -17,7 +17,7 @@ import { cn } from '@/lib/cn';
 export type AvatarSize = 'xs' | 'sm' | 'md' | 'lg';
 
 const SIZE_CLASS: Record<AvatarSize, string> = {
-  xs: 'h-6 w-6 text-[9px]',
+  xs: 'h-6 w-6 text-3xs',
   sm: 'h-8 w-8 text-xs',
   md: 'h-10 w-10 text-sm',
   lg: 'h-12 w-12 text-base',
@@ -83,6 +83,11 @@ export function Avatar({
         <img
           src={src}
           alt=""
+          // Avatars render in every directory/queue row — lazy + async so a
+          // 500-row list doesn't fire 500 eager photo fetches on mount. The
+          // wrapper's fixed size classes already prevent layout shift.
+          loading="lazy"
+          decoding="async"
           className="h-full w-full object-cover"
           onError={() => setBroken(true)}
           draggable={false}

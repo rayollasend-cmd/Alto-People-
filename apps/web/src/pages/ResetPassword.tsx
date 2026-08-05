@@ -1,12 +1,48 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ChevronLeft, Lock, ShieldCheck } from 'lucide-react';
+import { ChevronLeft, Eye, EyeOff, Lock, ShieldCheck } from 'lucide-react';
 import { ApiError, NetworkError, apiFetch } from '@/lib/api';
 import { useFocusFirstError } from '@/lib/useFocusFirstError';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
+
+/**
+ * "ok" once the 12-char floor is met; "strong" when it also mixes upper +
+ * lower case and a digit. Deliberately simple — the server only enforces
+ * length, this is a nudge, not a gate.
+ */
+function passwordStrength(pw: string): 'ok' | 'strong' | null {
+  if (pw.length < 12) return null;
+  return /[a-z]/.test(pw) && /[A-Z]/.test(pw) && /\d/.test(pw)
+    ? 'strong'
+    : 'ok';
+}
+
+/** Eye toggle rendered inside a password field's right edge. */
+function ShowPasswordToggle({
+  shown,
+  onToggle,
+}: {
+  shown: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-label={shown ? 'Hide password' : 'Show password'}
+      className="absolute right-2.5 coarse:right-1 top-1/2 -translate-y-1/2 p-1 coarse:p-2.5 rounded text-silver/70 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+    >
+      {shown ? (
+        <EyeOff className="h-4 w-4" aria-hidden="true" />
+      ) : (
+        <Eye className="h-4 w-4" aria-hidden="true" />
+      )}
+    </button>
+  );
+}
 
 /**
  * Public — finishes the password-reset flow. The token comes from the URL
@@ -21,6 +57,8 @@ export function ResetPassword() {
   const navigate = useNavigate();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
@@ -28,6 +66,7 @@ export function ResetPassword() {
 
   const tooShort = password.length > 0 && password.length < 12;
   const mismatch = confirm.length > 0 && password !== confirm;
+  const strength = passwordStrength(password);
   const canSubmit =
     password.length >= 12 && password === confirm && !submitting && !!token;
 
@@ -76,7 +115,7 @@ export function ResetPassword() {
         </div>
 
         {done ? (
-          <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 shadow-2xl animate-zoom-in text-center">
+          <div className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in text-center">
             <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
             <h2 className="font-display text-xl md:text-2xl text-white mb-2">
               Password updated
@@ -89,7 +128,7 @@ export function ResetPassword() {
           <form
             ref={formRef}
             onSubmit={handleSubmit}
-            className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 shadow-2xl animate-zoom-in"
+            className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 animate-zoom-in"
             noValidate
           >
             <h2 className="font-display text-2xl md:text-3xl text-white mb-1">
@@ -107,7 +146,11 @@ export function ResetPassword() {
                 hint={
                   tooShort
                     ? `Need ${12 - password.length} more character${12 - password.length === 1 ? '' : 's'}.`
-                    : 'Minimum 12 characters.'
+                    : strength === 'strong'
+                      ? 'Strength: strong.'
+                      : strength === 'ok'
+                        ? 'Strength: ok — mix upper and lower case with a number to make it strong.'
+                        : 'Minimum 12 characters.'
                 }
               >
                 {(p) => (
@@ -117,14 +160,18 @@ export function ResetPassword() {
                       aria-hidden="true"
                     />
                     <Input
-                      type="password"
+                      type={showPassword ? 'text' : 'password'}
                       autoComplete="new-password"
                       minLength={12}
                       autoFocus
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="pl-9"
+                      className="pl-9 pr-10"
                       {...p}
+                    />
+                    <ShowPasswordToggle
+                      shown={showPassword}
+                      onToggle={() => setShowPassword((v) => !v)}
                     />
                   </div>
                 )}
@@ -142,13 +189,17 @@ export function ResetPassword() {
                       aria-hidden="true"
                     />
                     <Input
-                      type="password"
+                      type={showConfirm ? 'text' : 'password'}
                       autoComplete="new-password"
                       minLength={12}
                       value={confirm}
                       onChange={(e) => setConfirm(e.target.value)}
-                      className="pl-9"
+                      className="pl-9 pr-10"
                       {...p}
+                    />
+                    <ShowPasswordToggle
+                      shown={showConfirm}
+                      onToggle={() => setShowConfirm((v) => !v)}
                     />
                   </div>
                 )}

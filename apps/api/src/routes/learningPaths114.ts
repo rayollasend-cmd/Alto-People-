@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { notifyAssociate } from '../lib/notify.js';
 
 /**
  * Phase 114 — Learning paths.
@@ -195,19 +196,21 @@ learningPaths114Router.post(
   MANAGE,
   async (req, res) => {
     const input = ReorderSchema.parse({ ...req.body, pathId: req.params.id });
-    await prisma.$transaction(async (tx) => {
+    // Array-form transaction pipelines the whole rewrite in one round of
+    // statements instead of an awaited round trip per step.
+    await prisma.$transaction([
       // Push everyone to negative orders first to dodge the unique index.
-      await tx.learningPathStep.updateMany({
+      prisma.learningPathStep.updateMany({
         where: { pathId: input.pathId },
         data: { order: -1 },
-      });
-      for (let i = 0; i < input.stepIds.length; i++) {
-        await tx.learningPathStep.update({
-          where: { id: input.stepIds[i] },
+      }),
+      ...input.stepIds.map((stepId, i) =>
+        prisma.learningPathStep.update({
+          where: { id: stepId },
           data: { order: i },
-        });
-      }
-    });
+        }),
+      ),
+    ]);
     res.json({ ok: true });
   },
 );
@@ -224,6 +227,13 @@ learningPaths114Router.post(
   MANAGE,
   async (req, res) => {
     const input = EnrollSchema.parse(req.body);
+    const path = await prisma.learningPath.findUnique({
+      where: { id: input.pathId },
+      select: { title: true, deletedAt: true },
+    });
+    if (!path || path.deletedAt) {
+      throw new HttpError(404, 'not_found', 'Learning path not found.');
+    }
     // Upsert so re-assigning the same path is a no-op (or revives WITHDRAWN).
     const enrollment = await prisma.learningPathEnrollment.upsert({
       where: {
@@ -258,6 +268,17 @@ learningPaths114Router.post(
         skipDuplicates: true,
       });
     }
+    // Fire-and-forget, after the writes have landed.
+    void notifyAssociate(input.associateId, {
+      subject: `You've been assigned a learning path: ${path.title}`,
+      body:
+        `You have been assigned the "${path.title}" learning path` +
+        ` (${steps.length} course${steps.length === 1 ? '' : 's'}).` +
+        ' Work through the steps in order from the Learning page.',
+      category: 'learning',
+      linkUrl: '/learning',
+      emailFallback: true,
+    });
     res.status(201).json({ id: enrollment.id });
   },
 );

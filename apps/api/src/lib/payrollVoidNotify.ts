@@ -47,7 +47,7 @@ export async function notifyAssociatesOfRunVoid(
     ` Reason: ${input.reason}.` +
     ` Your HR contact will reach out to resolve any over- or underpayment` +
     ` — Alto will not automatically pull or send funds related to this void.`;
-  const linkUrl = '/me/paystubs';
+  const linkUrl = '/payroll';
 
   const sentAt = new Date();
   await prisma.notification.createMany({

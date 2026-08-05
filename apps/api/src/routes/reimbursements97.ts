@@ -4,8 +4,9 @@ import { Prisma } from '@prisma/client';
 import { hasCapability } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { recordReimbursementEvent } from '../lib/audit.js';
+import { notifyAllAdmins, notifyAssociate, notifyManager } from '../lib/notify.js';
 
 /**
  * Gap 10 — Reimbursement two-step approval + payroll-fold integration.
@@ -60,12 +61,13 @@ const LineInputSchema = z.object({
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 async function recomputeTotal(reimbursementId: string): Promise<number> {
-  const lines = await prisma.expenseLine.findMany({
-    take: 100,
+  // SUM in SQL — a take-capped findMany here once paid reports with >100
+  // lines at a silently wrong total.
+  const agg = await prisma.expenseLine.aggregate({
     where: { reimbursementId },
-    select: { amount: true },
+    _sum: { amount: true },
   });
-  const total = round2(lines.reduce((sum, l) => sum + Number(l.amount), 0));
+  const total = round2(Number(agg._sum.amount ?? 0));
   await prisma.reimbursement.update({
     where: { id: reimbursementId },
     data: { totalAmount: new Prisma.Decimal(total) },
@@ -327,6 +329,23 @@ reimbursements97Router.post('/reimbursements/:id/submit', SUBMIT, async (req, re
     metadata: { totalAmount: updated.totalAmount.toString() },
     req,
   });
+  // Route the "awaiting approval" ping: direct manager when one is on file,
+  // otherwise fan out to admins so the report never sits unseen.
+  const submitOpts = {
+    subject: 'Expense report awaiting your approval',
+    body: `"${updated.title}" — $${Number(updated.totalAmount).toFixed(2)} — was submitted and is awaiting your approval.`,
+    category: 'reimbursements',
+    linkUrl: '/reimbursements',
+  };
+  const assoc = await prisma.associate.findUnique({
+    where: { id: r.associateId },
+    select: { managerId: true },
+  });
+  if (assoc?.managerId) {
+    void notifyManager(r.associateId, submitOpts);
+  } else {
+    void notifyAllAdmins({ ...submitOpts, excludeUserId: req.user!.id });
+  }
   res.json({ ok: true });
 });
 
@@ -366,6 +385,15 @@ reimbursements97Router.post(
       associateId: r.associateId,
       metadata: { note: input.note ?? null },
       req,
+    });
+    void notifyAssociate(r.associateId, {
+      subject: 'Expense report approved by your manager',
+      body:
+        `"${r.title}" ($${Number(r.totalAmount).toFixed(2)}) was approved by your manager and sent to HR/Finance for settlement.` +
+        (input.note?.length ? ` Reviewer note: ${input.note}` : ''),
+      category: 'reimbursements',
+      linkUrl: '/reimbursements',
+      emailFallback: true,
     });
     res.json({ ok: true });
   },
@@ -439,6 +467,15 @@ reimbursements97Router.post(
       },
       req,
     });
+    void notifyAssociate(r.associateId, {
+      subject: 'Expense report settled — queued for payroll',
+      body:
+        `"${r.title}" ($${Number(r.totalAmount).toFixed(2)}) was settled and will be added to your next regular payroll run.` +
+        (input.note?.length ? ` Reviewer note: ${input.note}` : ''),
+      category: 'reimbursements',
+      linkUrl: '/reimbursements',
+      emailFallback: true,
+    });
     res.json({ ok: true });
   },
 );
@@ -453,7 +490,8 @@ const RejectBodySchema = z.object({
  * accepts either capability so a single endpoint serves both points in
  * the flow. Reason required.
  */
-reimbursements97Router.post('/reimbursements/:id/reject', async (req, res) => {
+// Explicit requireAuth — bare-mounted router, handler reads req.user!.
+reimbursements97Router.post('/reimbursements/:id/reject', requireAuth, async (req, res) => {
   const user = req.user!;
   const hasApprove = hasCapability(user.role, 'approve:reimbursement');
   const hasSettle = hasCapability(user.role, 'settle:reimbursement');
@@ -490,6 +528,13 @@ reimbursements97Router.post('/reimbursements/:id/reject', async (req, res) => {
     associateId: r.associateId,
     metadata: { reason: input.reason, fromStatus: r.status },
     req,
+  });
+  void notifyAssociate(r.associateId, {
+    subject: 'Expense report rejected',
+    body: `"${r.title}" ($${Number(r.totalAmount).toFixed(2)}) was rejected. Reviewer note: ${input.reason}. You can edit the report and resubmit.`,
+    category: 'reimbursements',
+    linkUrl: '/reimbursements',
+    emailFallback: true,
   });
   res.json({ ok: true });
 });

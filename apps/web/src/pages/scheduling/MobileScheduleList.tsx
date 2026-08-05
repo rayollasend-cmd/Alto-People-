@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import type { AssociateLite, Shift, ShiftStatus } from '@alto-people/shared';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -42,6 +42,15 @@ const STATUS_VARIANT: Record<
   DRAFT: 'default',
   COMPLETED: 'success',
   CANCELLED: 'destructive',
+};
+
+// Human-readable labels — raw enum values never reach the user's eyes.
+const STATUS_LABELS: Record<ShiftStatus, string> = {
+  OPEN: 'Open',
+  ASSIGNED: 'Assigned',
+  DRAFT: 'Draft',
+  COMPLETED: 'Completed',
+  CANCELLED: 'Cancelled',
 };
 
 interface Props {
@@ -100,8 +109,44 @@ export function MobileScheduleList({
 
   const openCount = todayShifts.filter((s) => s.status === 'OPEN').length;
 
+  // Swipe between days — the native calendar idiom. Direction-locked so
+  // vertical scrolling through the shift list is untouched; a clearly
+  // horizontal drag past 60px steps the day (left = forward in time,
+  // matching how paging feels on every phone calendar).
+  const swipe = useRef({ x: 0, y: 0, lock: '' as '' | 'h' | 'v' });
+  const onTouchStart = (e: React.TouchEvent) => {
+    swipe.current = {
+      x: e.touches[0]?.clientX ?? 0,
+      y: e.touches[0]?.clientY ?? 0,
+      lock: '',
+    };
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    const s = swipe.current;
+    if (s.lock !== '') return;
+    const dx = (e.touches[0]?.clientX ?? 0) - s.x;
+    const dy = (e.touches[0]?.clientY ?? 0) - s.y;
+    if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return;
+    s.lock = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const s = swipe.current;
+    const dx = (e.changedTouches[0]?.clientX ?? 0) - s.x;
+    swipe.current = { x: 0, y: 0, lock: '' };
+    if (s.lock !== 'h' || Math.abs(dx) < 60) return;
+    if (dx < 0) onNextDay();
+    else onPrevDay();
+  };
+
+  // Visibility is the PARENT's job (lg:hidden fine:md:hidden in
+  // AdminSchedulingView) — a second gate here blanked coarse-pointer
+  // iPads at md width, where the parent showed us but we hid ourselves.
   return (
-    <div className="md:hidden">
+    <div
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+    >
       {/* Day stepper / context bar — sticky so it doesn't scroll out of
           reach when the list is long. */}
       <div className="sticky top-0 z-10 -mx-4 px-4 py-2 bg-navy/95 backdrop-blur border-b border-navy-secondary flex items-center gap-2">
@@ -117,12 +162,12 @@ export function MobileScheduleList({
           <div className="text-sm font-medium text-white truncate">
             {fmtDateHeader(dayAnchor)}
           </div>
-          <div className="text-[11px] text-silver tabular-nums">
+          <div className="text-xs2 text-silver tabular-nums">
             {todayShifts.length} shift{todayShifts.length === 1 ? '' : 's'}
             {openCount > 0 && (
               <>
                 {' · '}
-                <span className="text-warning">{openCount} OPEN</span>
+                <span className="text-warning">{openCount} open</span>
               </>
             )}
           </div>
@@ -171,7 +216,7 @@ export function MobileScheduleList({
                   type="button"
                   onClick={() => onShiftClick(s)}
                   className={cn(
-                    'w-full text-left rounded-md border bg-navy-secondary/40 hover:bg-navy-secondary/70 transition-colors p-3',
+                    'w-full text-left rounded-md border bg-navy-secondary/40 hover:bg-navy-secondary/70 active:bg-navy-secondary transition-colors p-3',
                     'border-navy-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
                     s.status === 'CANCELLED' && 'opacity-60',
                   )}
@@ -188,7 +233,7 @@ export function MobileScheduleList({
                           {fmtTime(start, s.timezone)} – {fmtTime(end, s.timezone)}
                         </div>
                         <Badge variant={STATUS_VARIANT[s.status]}>
-                          {s.status}
+                          {STATUS_LABELS[s.status] ?? s.status}
                         </Badge>
                       </div>
                       <div className="text-sm text-white mt-0.5 truncate">

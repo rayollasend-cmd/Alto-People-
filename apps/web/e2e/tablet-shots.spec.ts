@@ -16,7 +16,7 @@ test.use({
 test('associate on iPad: dashboard + schedule', async ({ page }) => {
   await page.goto('/login');
   await page.getByLabel(/email/i).fill('maria.lopez@example.com');
-  await page.getByLabel(/password/i).fill('maria-dev-2026!');
+  await page.getByLabel(/^password/i).fill('maria-dev-2026!');
   await page.getByRole('button', { name: /sign in/i }).click();
   // The greeting renders twice — the large-title hero (h1) and the sticky
   // app-shell header (h2). Target the hero so the match is unambiguous.
@@ -32,7 +32,7 @@ test('associate on iPad: dashboard + schedule', async ({ page }) => {
 test('admin on iPad: scheduling grid', async ({ page }) => {
   await page.goto('/login');
   await page.getByLabel(/email/i).fill('admin@altohr.com');
-  await page.getByLabel(/password/i).fill('alto-admin-dev');
+  await page.getByLabel(/^password/i).fill('alto-admin-dev');
   await page.getByRole('button', { name: /sign in/i }).click();
   await page.waitForURL(/\/(dashboard)?$/, { timeout: 20_000 }).catch(() => {});
   await page.goto('/scheduling');

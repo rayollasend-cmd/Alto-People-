@@ -5,7 +5,7 @@
 // page is the only place a garnishment can be created without hitting
 // the API directly.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pause, Play, Plus, Square } from 'lucide-react';
 import {
   createGarnishment,
@@ -15,8 +15,8 @@ import {
   listGarnishments,
   setGarnishmentStatus,
 } from '@/lib/payrollTax91Api';
-import { listOrgAssociates } from '@/lib/orgApi';
 import { ApiError } from '@/lib/api';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import {
@@ -31,7 +31,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
-import { Label } from '@/components/ui/Label';
+import { FormHint, Label } from '@/components/ui/Label';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/Tooltip';
@@ -45,11 +45,10 @@ import {
 } from '@/components/ui/Table';
 import { Badge } from '@/components/ui/Badge';
 import { toast } from '@/components/ui/Toaster';
-import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
-
-const fmtMoney = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+import { fmtMoney, ymdLocal } from '@/lib/format';
+import { FilterChip } from '@/components/ui/FilterBar';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 
 const KIND_LABEL: Record<GarnishmentKind, string> = {
   CHILD_SUPPORT: 'Child support',
@@ -77,6 +76,13 @@ const STATUS_VARIANT: Record<
   SUSPENDED: 'pending',
   COMPLETED: 'default',
   TERMINATED: 'destructive',
+};
+
+const STATUS_LABELS: Record<GarnishmentStatus, string> = {
+  ACTIVE: 'Active',
+  SUSPENDED: 'Suspended',
+  COMPLETED: 'Completed',
+  TERMINATED: 'Terminated',
 };
 
 const STATUS_FILTERS: Array<{ value: GarnishmentStatus | 'ALL'; label: string }> = [
@@ -136,20 +142,13 @@ export function GarnishmentsView({ canProcess }: Props) {
       <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
         <div className="flex flex-wrap gap-2">
           {STATUS_FILTERS.map((f) => (
-            <Button
+            <FilterChip
               key={f.value}
-              type="button"
-              size="sm"
-              variant="outline"
+              active={filter === f.value}
               onClick={() => setFilter(f.value)}
-              className={cn(
-                'text-sm',
-                filter === f.value &&
-                  'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
-              )}
             >
               {f.label}
-            </Button>
+            </FilterChip>
           ))}
         </div>
         {canProcess && (
@@ -304,7 +303,7 @@ function GarnishmentRow({
         {g.caseNumber && (
           <div className="text-xs text-silver/70">Case #{g.caseNumber}</div>
         )}
-        <div className="md:hidden text-[11px] text-silver/70 truncate">
+        <div className="md:hidden text-xs2 text-silver/70 truncate">
           {KIND_LABEL[g.kind]}
           {perPeriod !== '—' ? ` · ${perPeriod}` : ''}
         </div>
@@ -318,19 +317,19 @@ function GarnishmentRow({
       <TableCell className="text-silver hidden md:table-cell">{perPeriod}</TableCell>
       <TableCell className="text-right tabular-nums text-white">
         {fmtMoney(withheld)}
-        <div className="text-[10px] text-silver/70">{g.deductionCount} run{g.deductionCount === 1 ? '' : 's'}</div>
+        <div className="text-2xs text-silver/70">{g.deductionCount} run{g.deductionCount === 1 ? '' : 's'}</div>
       </TableCell>
       <TableCell className="text-right tabular-nums text-silver hidden lg:table-cell">
         {cap !== null ? fmtMoney(cap) : '—'}
         {cap !== null && (
-          <div className="text-[10px] text-silver/70">
+          <div className="text-2xs text-silver/70">
             {Math.min(100, Math.round((withheld / cap) * 100))}% complete
           </div>
         )}
       </TableCell>
       <TableCell className="text-center text-silver hidden lg:table-cell">{g.priority}</TableCell>
       <TableCell>
-        <Badge variant={STATUS_VARIANT[g.status]}>{g.status}</Badge>
+        <Badge variant={STATUS_VARIANT[g.status]}>{STATUS_LABELS[g.status]}</Badge>
       </TableCell>
       {canProcess && (
         <TableCell className="text-right">
@@ -381,8 +380,8 @@ function CreateGarnishmentDialog({
   onOpenChange: (v: boolean) => void;
   onCreated: () => void;
 }) {
-  const [associates, setAssociates] = useState<Array<{ id: string; firstName: string; lastName: string }> | null>(null);
-  const [associateId, setAssociateId] = useState('');
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
+  const [associateError, setAssociateError] = useState<string | null>(null);
   const [kind, setKind] = useState<GarnishmentKind>('CREDITOR');
   const [amountMode, setAmountMode] = useState<'flat' | 'percent'>('flat');
   const [amountPerRun, setAmountPerRun] = useState('');
@@ -400,7 +399,8 @@ function CreateGarnishmentDialog({
 
   useEffect(() => {
     if (!open) return;
-    setAssociateId('');
+    setAssociate(null);
+    setAssociateError(null);
     setKind('CREDITOR');
     setAmountMode('flat');
     setAmountPerRun('');
@@ -410,35 +410,36 @@ function CreateGarnishmentDialog({
     setTotalCap('');
     setRemitTo('');
     setRemitAddress('');
-    setStartDate(new Date().toISOString().slice(0, 10));
+    setStartDate(ymdLocal());
     setEndDate('');
     setPriority('100');
     setNotes('');
     setSubmitting(false);
-    listOrgAssociates()
-      .then((res) =>
-        setAssociates(
-          res.associates.map((a) => ({ id: a.id, firstName: a.firstName, lastName: a.lastName }))
-        )
-      )
-      .catch(() => setAssociates([]));
   }, [open]);
 
-  const sortedAssociates = useMemo(
-    () =>
-      [...(associates ?? [])].sort((a, b) =>
-        `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`)
-      ),
-    [associates]
-  );
+  // Live preview of the configured deduction. Purely presentational — the
+  // real cap math (CCPA %, Pub 1494) happens server-side at run creation.
+  const previewFlat = amountMode === 'flat' ? Number(amountPerRun) : NaN;
+  const previewPct = amountMode === 'percent' ? Number(percentOfDisp) : NaN;
+  const previewCap = totalCap === '' ? null : Number(totalCap);
+  const previewText =
+    amountMode === 'flat' && amountPerRun !== '' && Number.isFinite(previewFlat) && previewFlat > 0
+      ? `${fmtMoney(previewFlat)} withheld per pay run`
+      : amountMode === 'percent' && percentOfDisp !== '' && Number.isFinite(previewPct) && previewPct > 0 && previewPct <= 100
+      ? `${previewPct}% of disposable pay each run`
+      : null;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
+    if (!associate) {
+      setAssociateError('Pick an associate.');
+      return;
+    }
     setSubmitting(true);
     try {
       await createGarnishment({
-        associateId,
+        associateId: associate.id,
         kind,
         caseNumber: caseNumber || null,
         agencyName: agencyName || null,
@@ -472,22 +473,23 @@ function CreateGarnishmentDialog({
         </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label="Associate" required>
-              {(p) => (
-                <Select
-                  value={associateId}
-                  onChange={(e) => setAssociateId(e.target.value)}
-                  {...p}
-                >
-                  <option value="">— Select —</option>
-                  {sortedAssociates.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.lastName}, {a.firstName}
-                    </option>
-                  ))}
-                </Select>
+            <div>
+              <Label required>Associate</Label>
+              <div className="mt-1">
+                <AssociatePicker
+                  value={associate}
+                  onChange={(v) => {
+                    setAssociate(v);
+                    if (v) setAssociateError(null);
+                  }}
+                />
+              </div>
+              {associateError && (
+                <FormHint id="garnishment-associate-error" variant="error">
+                  {associateError}
+                </FormHint>
               )}
-            </Field>
+            </div>
             <Field label="Kind" required hint={KIND_HINT[kind]}>
               {(p) => (
                 <Select
@@ -505,31 +507,16 @@ function CreateGarnishmentDialog({
 
           <div>
             <Label>Deduction amount</Label>
-            <div className="flex flex-wrap gap-2 mt-1">
-              <Button
-                type="button"
-                size="xs"
-                variant="outline"
-                onClick={() => setAmountMode('flat')}
-                className={cn(
-                  amountMode === 'flat' &&
-                    'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
-                )}
-              >
-                Flat amount
-              </Button>
-              <Button
-                type="button"
-                size="xs"
-                variant="outline"
-                onClick={() => setAmountMode('percent')}
-                className={cn(
-                  amountMode === 'percent' &&
-                    'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
-                )}
-              >
-                % of disposable
-              </Button>
+            <div className="mt-1">
+              <SegmentedControl
+                ariaLabel="Deduction amount mode"
+                value={amountMode}
+                onChange={(v) => setAmountMode(v)}
+                options={[
+                  { value: 'flat', label: 'Flat amount' },
+                  { value: 'percent', label: '% of disposable' },
+                ]}
+              />
             </div>
             <div className="mt-2">
               {amountMode === 'flat' ? (
@@ -555,6 +542,14 @@ function CreateGarnishmentDialog({
                 />
               )}
             </div>
+            {previewText && (
+              <p className="mt-1.5 text-xs text-silver/70">
+                {previewText}
+                {previewCap !== null && Number.isFinite(previewCap) && previewCap > 0 &&
+                  ` — stops once ${fmtMoney(previewCap)} total is withheld`}
+                {` · ${KIND_HINT[kind]}`}
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">

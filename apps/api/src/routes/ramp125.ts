@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { notifyAssociate, notifyManager } from '../lib/notify.js';
 
 /**
  * Phase 125 — New-hire ramp plans (30/60/90).
@@ -32,7 +33,13 @@ ramp125Router.get(
     const plan = await prisma.rampPlan.findFirst({
       where: { associateId, archivedAt: null },
       include: {
-        manager: { select: { email: true } },
+        manager: {
+          select: {
+            email: true,
+            // User has no name columns; the linked Associate carries them.
+            associate: { select: { firstName: true, lastName: true } },
+          },
+        },
         milestones: { orderBy: { dayCheckpoint: 'asc' } },
         associate: {
           select: { firstName: true, lastName: true, email: true },
@@ -49,6 +56,9 @@ ramp125Router.get(
         associateName: `${plan.associate.firstName} ${plan.associate.lastName}`,
         startDate: plan.startDate.toISOString().slice(0, 10),
         managerEmail: plan.manager?.email ?? null,
+        managerName: plan.manager?.associate
+          ? `${plan.manager.associate.firstName} ${plan.manager.associate.lastName}`
+          : null,
         notes: plan.notes,
         milestones: plan.milestones.map((m) => ({
           id: m.id,
@@ -74,7 +84,13 @@ ramp125Router.get('/ramp-plans', VIEW, async (_req, res) => {
       associate: {
         select: { id: true, firstName: true, lastName: true, email: true },
       },
-      manager: { select: { email: true } },
+      manager: {
+        select: {
+          email: true,
+          // User has no name columns; the linked Associate carries them.
+          associate: { select: { firstName: true, lastName: true } },
+        },
+      },
       milestones: {
         orderBy: { dayCheckpoint: 'asc' },
         select: {
@@ -97,6 +113,9 @@ ramp125Router.get('/ramp-plans', VIEW, async (_req, res) => {
         associateEmail: p.associate.email,
         startDate: p.startDate.toISOString().slice(0, 10),
         managerEmail: p.manager?.email ?? null,
+        managerName: p.manager?.associate
+          ? `${p.manager.associate.firstName} ${p.manager.associate.lastName}`
+          : null,
         total,
         achieved,
         missed,
@@ -221,7 +240,17 @@ ramp125Router.patch(
   async (req, res) => {
     const id = z.string().uuid().parse(req.params.id);
     const input = MilestoneUpdateSchema.parse(req.body);
-    const m = await prisma.rampMilestone.findUnique({ where: { id } });
+    const m = await prisma.rampMilestone.findUnique({
+      where: { id },
+      include: {
+        plan: {
+          select: {
+            associateId: true,
+            associate: { select: { firstName: true, lastName: true } },
+          },
+        },
+      },
+    });
     if (!m) {
       throw new HttpError(404, 'not_found', 'Milestone not found.');
     }
@@ -242,6 +271,24 @@ ramp125Router.patch(
           : {}),
       },
     });
+    // Fire once on the transition INTO missed, not on every re-save of an
+    // already-missed milestone.
+    if (input.status === 'MISSED' && m.status !== 'MISSED') {
+      const associateName = `${m.plan.associate.firstName} ${m.plan.associate.lastName}`;
+      const milestoneLabel = `"${m.title}" (Day ${m.dayCheckpoint})`;
+      void notifyAssociate(m.plan.associateId, {
+        subject: 'Ramp milestone missed',
+        body: `Milestone ${milestoneLabel} on your ramp plan was marked missed. Talk to your manager about a catch-up plan.`,
+        category: 'ramp',
+        linkUrl: '/ramp',
+      });
+      void notifyManager(m.plan.associateId, {
+        subject: 'Ramp milestone missed',
+        body: `${associateName} missed ramp milestone ${milestoneLabel}. Review their plan and adjust the timeline if needed.`,
+        category: 'ramp',
+        linkUrl: '/ramp',
+      });
+    }
     res.json({ ok: true });
   },
 );

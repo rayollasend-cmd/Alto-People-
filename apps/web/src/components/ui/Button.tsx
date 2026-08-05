@@ -16,7 +16,7 @@ const buttonVariants = cva(
         // rather than Tailwind utilities so the gradient + multi-shadow
         // can layer cleanly across hover/active/disabled states.
         primary:
-          'btn-gold text-navy',
+          'btn-gold text-on-accent',
         // Secondary — subtle border, used for "Cancel", "Edit", row
         // actions. Lifts to elev-1 + translates 2px up on hover so the
         // affordance reads alongside the rest of the system (Card
@@ -32,7 +32,7 @@ const buttonVariants = cva(
           'text-silver hover:text-white hover:bg-navy-secondary/60',
         // Destructive — irreversible actions (Delete, Cancel run, Reject).
         destructive:
-          'bg-alert text-white hover:bg-alert/90 shadow-[0_1px_0_rgba(255,255,255,0.15)_inset,0_4px_12px_rgba(233,98,85,0.25)]',
+          'bg-alert text-on-solid hover:bg-alert/90 shadow-[0_1px_0_rgba(255,255,255,0.15)_inset,0_4px_12px_rgba(233,98,85,0.25)]',
         // Link-styled (rare — use only for inline navigation in copy).
         link: 'text-gold underline-offset-4 hover:underline p-0 h-auto active:scale-100',
       },
@@ -47,7 +47,7 @@ const buttonVariants = cva(
         xs: 'h-7 px-2.5 text-xs coarse:h-9 coarse:px-3',
         // sm — secondary actions, Cancel/Edit/row chrome.
         sm: 'h-8 px-3 text-xs coarse:h-10',
-        md: 'h-10 px-4',
+        md: 'h-10 px-4 coarse:h-11',
         lg: 'h-11 px-6 text-base',
         // Icon-only — square; intended for IconButton use.
         icon: 'h-10 w-10',

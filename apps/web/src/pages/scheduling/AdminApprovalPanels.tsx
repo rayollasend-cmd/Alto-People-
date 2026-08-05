@@ -41,6 +41,16 @@ const SWAP_STATUS_VARIANT: Record<
   CANCELLED: 'default',
 };
 
+// Human-readable labels — raw enum values never reach the user's eyes.
+const SWAP_STATUS_LABELS: Record<ShiftSwapRequest['status'], string> = {
+  PENDING_PEER: 'Awaiting peer',
+  PEER_ACCEPTED: 'Peer accepted',
+  PEER_DECLINED: 'Peer declined',
+  MANAGER_APPROVED: 'Approved',
+  MANAGER_REJECTED: 'Rejected',
+  CANCELLED: 'Cancelled',
+};
+
 const SWAPS_KEY = ['approvals', 'swaps'] as const;
 
 export function AdminSwapsPanel() {
@@ -128,7 +138,7 @@ export function AdminSwapsPanel() {
                     <Badge variant="destructive">Over 40h</Badge>
                   )}
                   <Badge variant={SWAP_STATUS_VARIANT[s.status]}>
-                    {s.status.replace(/_/g, ' ')}
+                    {SWAP_STATUS_LABELS[s.status] ?? s.status}
                   </Badge>
                   <Button
                     size="sm"

@@ -1,8 +1,20 @@
 import { useState } from 'react';
-import { CheckCircle2, Copy as CopyIcon, Send, Trash, Trash2, X } from 'lucide-react';
+import {
+  CalendarRange,
+  CheckCircle2,
+  Copy as CopyIcon,
+  Send,
+  Trash,
+  Trash2,
+  UserPlus,
+  X,
+} from 'lucide-react';
 import type { Shift } from '@alto-people/shared';
 import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import {
+  assignShift,
   cancelShift,
   createShift,
   deleteShift,
@@ -12,6 +24,13 @@ import {
 import { ApiError } from '@/lib/api';
 import { toast } from '@/components/ui/Toaster';
 import { useConfirm } from '@/lib/confirm';
+
+/** Same instant N calendar days later — setDate keeps wall-clock across DST. */
+function plusDaysIso(iso: string, days: number): string {
+  const d = new Date(iso);
+  d.setDate(d.getDate() + days);
+  return d.toISOString();
+}
 
 /**
  * Floating action bar that appears when one or more chips are selected.
@@ -34,8 +53,12 @@ interface Props {
 export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
   const confirm = useConfirm();
   const [busy, setBusy] = useState<
-    null | 'publish' | 'cancel' | 'unassign' | 'duplicate' | 'delete'
+    null | 'publish' | 'cancel' | 'unassign' | 'duplicate' | 'delete' | 'reassign' | 'move'
   >(null);
+  // Small popover panels above the bar.
+  const [panel, setPanel] = useState<null | 'reassign' | 'move'>(null);
+  const [reassignTo, setReassignTo] = useState<PickedAssociate | null>(null);
+  const [moveDays, setMoveDays] = useState('7');
 
   if (selected.length === 0) return null;
 
@@ -52,17 +75,35 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
     let ok = 0;
     let fail = 0;
     const failures: string[] = [];
-    for (const s of selected) {
-      try {
-        await action(s);
-        ok += 1;
-      } catch (err) {
-        fail += 1;
-        if (failures.length < 3) {
-          failures.push(err instanceof ApiError ? err.message : 'Unknown error');
+    // Bounded-concurrency runner: up to 6 requests in flight so a 50-shift
+    // publish isn't 50 sequential round-trips. Each item keeps
+    // Promise.allSettled semantics — one failure never tanks the batch, it
+    // just counts toward the same success/failure tally the old serial
+    // loop kept. Workers pull the next index from a shared cursor; the
+    // cursor read+bump is synchronous, so two workers can't claim one item.
+    const CONCURRENCY = 6;
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < selected.length) {
+        const s = selected[cursor];
+        cursor += 1;
+        try {
+          await action(s);
+          ok += 1;
+        } catch (err) {
+          fail += 1;
+          if (failures.length < 3) {
+            failures.push(err instanceof ApiError ? err.message : 'Unknown error');
+          }
         }
       }
-    }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(CONCURRENCY, selected.length) },
+        () => worker(),
+      ),
+    );
     if (ok > 0 && fail === 0) {
       toast.success(`${label} ${ok} shift${ok === 1 ? '' : 's'}.`);
     } else if (ok > 0 && fail > 0) {
@@ -157,26 +198,117 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
   const onDuplicate = async () => {
     setBusy('duplicate');
     try {
+      // Copies land ONE WEEK LATER — an exact same-time twin on the same
+      // day is almost never the intent and just double-books the slot.
+      // locationId carries over so copies keep their geofence + filters.
       await runBatch<Shift>(async (s) => {
         return createShift({
           clientId: s.clientId,
           position: s.position,
-          startsAt: s.startsAt,
-          endsAt: s.endsAt,
+          startsAt: plusDaysIso(s.startsAt, 7),
+          endsAt: plusDaysIso(s.endsAt, 7),
+          ...(s.locationId ? { locationId: s.locationId } : {}),
           ...(s.location ? { location: s.location } : {}),
           ...(s.hourlyRate != null ? { hourlyRate: s.hourlyRate } : {}),
           ...(s.payRate != null ? { payRate: s.payRate } : {}),
           ...(s.notes ? { notes: s.notes } : {}),
         });
-      }, 'Duplicated');
+      }, 'Duplicated into next week:');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onReassign = async () => {
+    if (!reassignTo) return;
+    setBusy('reassign');
+    try {
+      await runBatch<Shift>(async (s) => {
+        if (s.status === 'CANCELLED' || s.status === 'COMPLETED') return s;
+        return assignShift(s.id, { associateId: reassignTo.id });
+      }, `Assigned to ${reassignTo.name}:`);
+      setPanel(null);
+      setReassignTo(null);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onMove = async () => {
+    const days = Math.trunc(Number(moveDays));
+    if (!Number.isFinite(days) || days === 0 || Math.abs(days) > 90) {
+      toast.error('Enter a day offset between -90 and 90 (not 0).');
+      return;
+    }
+    setBusy('move');
+    try {
+      await runBatch<Shift>(async (s) => {
+        if (s.status === 'CANCELLED' || s.status === 'COMPLETED') return s;
+        return updateShift(s.id, {
+          startsAt: plusDaysIso(s.startsAt, days),
+          endsAt: plusDaysIso(s.endsAt, days),
+        });
+      }, `Moved ${days > 0 ? '+' : ''}${days} day${Math.abs(days) === 1 ? '' : 's'}:`);
+      setPanel(null);
     } finally {
       setBusy(null);
     }
   };
 
   return (
-    <div className="fixed left-1/2 -translate-x-1/2 z-40 no-print bottom-[max(1.5rem,calc(env(safe-area-inset-bottom)+0.5rem))]">
-      <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-navy border border-gold/40 elev-3">
+    <div className="fixed left-1/2 -translate-x-1/2 z-40 no-print bottom-[max(1.5rem,calc(env(safe-area-inset-bottom)+0.5rem))] max-w-[calc(100vw-1rem)]">
+      {panel === 'reassign' && (
+        <div className="mb-2 rounded-lg bg-navy border border-navy-secondary elev-3 p-3 w-80">
+          <div className="mb-1 text-2xs uppercase tracking-widest text-silver">
+            Assign all {selected.length} to
+          </div>
+          <AssociatePicker value={reassignTo} onChange={setReassignTo} />
+          <div className="mt-2 flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setPanel(null)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={onReassign}
+              loading={busy === 'reassign'}
+              disabled={!reassignTo || busy !== null}
+            >
+              Assign
+            </Button>
+          </div>
+        </div>
+      )}
+      {panel === 'move' && (
+        <div className="mb-2 rounded-lg bg-navy border border-navy-secondary elev-3 p-3 w-72">
+          <div className="mb-1 text-2xs uppercase tracking-widest text-silver">
+            Move all {selected.length} by (days)
+          </div>
+          <Input
+            type="number"
+            min={-90}
+            max={90}
+            step={1}
+            value={moveDays}
+            onChange={(e) => setMoveDays(e.target.value)}
+            aria-label="Days to move by (negative = earlier)"
+          />
+          <p className="mt-1 text-2xs text-silver/60">
+            7 = one week later, -1 = a day earlier. Times stay the same.
+          </p>
+          <div className="mt-2 flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setPanel(null)}>
+              Cancel
+            </Button>
+            <Button size="sm" onClick={onMove} loading={busy === 'move'} disabled={busy !== null}>
+              Move
+            </Button>
+          </div>
+        </div>
+      )}
+      {/* flex-wrap + viewport ceiling: seven actions previously formed a
+          fixed ~900px row that clipped off both edges of anything narrower
+          than a desktop monitor. */}
+      <div className="flex flex-wrap items-center justify-center gap-2 px-4 py-2 rounded-lg bg-navy border border-gold/40 elev-3 max-h-[40vh] overflow-y-auto">
         <CheckCircle2 className="h-4 w-4 text-gold" />
         <span className="text-sm text-white tabular-nums">
           {selected.length} selected
@@ -203,12 +335,31 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
         </Button>
         <Button
           variant="ghost"
+          onClick={() => setPanel(panel === 'reassign' ? null : 'reassign')}
+          disabled={busy !== null}
+          title="Assign every selected shift to one associate"
+        >
+          <UserPlus className="h-3.5 w-3.5" />
+          Assign to…
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={() => setPanel(panel === 'move' ? null : 'move')}
+          disabled={busy !== null}
+          title="Move every selected shift by N days"
+        >
+          <CalendarRange className="h-3.5 w-3.5" />
+          Move…
+        </Button>
+        <Button
+          variant="ghost"
           onClick={onDuplicate}
           loading={busy === 'duplicate'}
           disabled={busy !== null}
+          title="Copy every selected shift to the same time next week"
         >
           <CopyIcon className="h-3.5 w-3.5" />
-          Duplicate
+          Duplicate →1wk
         </Button>
         <Button
           variant="ghost"
@@ -236,7 +387,7 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
         <button
           type="button"
           onClick={onClear}
-          className="text-silver/70 hover:text-silver p-1"
+          className="text-silver/70 hover:text-silver p-1 coarse:p-2.5"
           aria-label="Clear selection"
         >
           <X className="h-4 w-4" />

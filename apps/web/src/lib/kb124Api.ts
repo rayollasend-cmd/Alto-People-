@@ -67,6 +67,26 @@ export const adminListKb = (status?: KbStatus) =>
     `/kb/admin/articles${status ? `?status=${status}` : ''}`,
   );
 
+export interface KbAdminArticleDetail {
+  id: string;
+  slug: string;
+  title: string;
+  category: string;
+  status: KbStatus;
+  tags: string[];
+  body: string;
+  clientId: string | null;
+  updatedAt: string;
+}
+
+/**
+ * Admin fetch by id — works for ALL statuses (the public slug endpoint
+ * only serves PUBLISHED articles, which silently blanked draft bodies in
+ * the editor).
+ */
+export const adminGetKbArticle = (id: string) =>
+  apiFetch<{ article: KbAdminArticleDetail }>(`/kb/admin/articles/${id}`);
+
 export const createKbArticle = (input: {
   clientId?: string | null;
   title: string;

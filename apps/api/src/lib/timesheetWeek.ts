@@ -15,7 +15,7 @@
  *     unit-testable with fixed dates and no database.
  * `buildTimesheetWeek` glues them to Prisma.
  */
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import type {
   TimesheetAssociateDetailResponse,
   TimesheetDay,
@@ -49,6 +49,16 @@ export interface TimesheetSourceEntry {
   /** APPROVED | COMPLETED | … — only APPROVED contributes hours. */
   status: string;
   breaks: BreakFacts[];
+  /**
+   * The IANA timezone of the SITE where this entry was punched
+   * (Location.timezone, falling back to DEFAULT_TIMEZONE). Bucketing and
+   * time display use this per entry — the sheet used to run everything
+   * through a hardcoded America/New_York, so a Chicago site's Friday
+   * 11:30pm clock-in read as Saturday 12:30am ET and migrated into the
+   * NEXT Sat–Fri week. Reviewers approved a shift in one week; the
+   * timesheet totalled it in another.
+   */
+  timeZone: string;
 }
 
 export interface SaturdayWeek {
@@ -104,13 +114,13 @@ interface RowAccumulator {
 export function aggregateTimesheetRows(
   entries: TimesheetSourceEntry[],
   weekDateKeys: Set<string>,
-  timeZone: string,
 ): { rows: TimesheetRow[]; totalHours: number; pendingCount: number } {
   const groups = new Map<string, RowAccumulator>();
   let pendingCount = 0;
 
   for (const e of entries) {
-    const dayKey = localDateKey(e.clockInAt, timeZone);
+    // Per-entry site clock — see TimesheetSourceEntry.timeZone.
+    const dayKey = localDateKey(e.clockInAt, e.timeZone);
     if (!weekDateKeys.has(dayKey)) continue;
 
     const gkey = `${e.associateId}|${e.clientId ?? ''}`;
@@ -212,7 +222,7 @@ export async function buildTimesheetWeek(
       clockOutAt: true,
       status: true,
       associate: { select: { firstName: true, lastName: true } },
-      location: { select: { name: true } },
+      location: { select: { name: true, timezone: true } },
       breaks: { select: { type: true, startedAt: true, endedAt: true } },
     },
   });
@@ -251,16 +261,18 @@ export async function buildTimesheetWeek(
         startedAt: b.startedAt,
         endedAt: b.endedAt,
       })),
+      // The site's own clock, not the sheet-wide default — see
+      // TimesheetSourceEntry.timeZone.
+      timeZone: e.location?.timezone ?? timeZone,
     };
   });
 
   const { rows, totalHours, pendingCount } = aggregateTimesheetRows(
     entries,
     dateKeySet,
-    timeZone,
   );
 
-  const issues = computeTimesheetIssues(entries, rows, dateKeySet, timeZone);
+  const issues = computeTimesheetIssues(entries, rows, dateKeySet);
 
   // Scheduled-vs-actual — published assigned shifts (ASSIGNED/COMPLETED, not
   // DRAFT scratch) starting in the week, by local day, summed per associate.
@@ -277,12 +289,15 @@ export async function buildTimesheetWeek(
       startsAt: true,
       endsAt: true,
       assignedAssociate: { select: { firstName: true, lastName: true } },
+      // locationRel, not location — Shift.location is the LEGACY free-text
+      // sub-zone string; the site relation (and its timezone) is locationRel.
+      locationRel: { select: { timezone: true } },
     },
   });
   const scheduled = new Map<string, { hours: number; worker: string }>();
   for (const s of shifts) {
     if (!s.assignedAssociateId) continue;
-    if (!dateKeySet.has(localDateKey(s.startsAt, timeZone))) continue;
+    if (!dateKeySet.has(localDateKey(s.startsAt, s.locationRel?.timezone ?? timeZone))) continue;
     const mins = Math.max(0, (s.endsAt.getTime() - s.startsAt.getTime()) / 60000);
     const worker = s.assignedAssociate
       ? `${s.assignedAssociate.lastName}, ${s.assignedAssociate.firstName}`.trim()
@@ -298,8 +313,16 @@ export async function buildTimesheetWeek(
   // Lock/drift — if this week (and client scope) was filed, surface the
   // filing plus any drift between the snapshot and the current hours.
   const weekStartDate = new Date(`${week.weekStart}T00:00:00Z`);
+  // orderBy filedAt desc: the schema's @@unique([weekStart, clientId])
+  // does NOT constrain clientId=null rows (Postgres treats NULLs as
+  // distinct), so historical duplicates of the org-wide filing are
+  // possible. An unordered findFirst returned whichever the planner felt
+  // like, and drift was computed against an arbitrary snapshot. The
+  // partial unique index added in 20260730* stops NEW duplicates; the
+  // ordering makes reads deterministic regardless.
   const filingRow = await db.timesheetFiling.findFirst({
     where: { weekStart: weekStartDate, clientId: input.clientId ?? null },
+    orderBy: { filedAt: 'desc' },
   });
   let filing: TimesheetFilingInfo | null = null;
   if (filingRow) {
@@ -392,28 +415,52 @@ export async function fileTimesheetWeek(
 
   const weekStartDate = new Date(`${response.weekStart}T00:00:00Z`);
   const clientId = input.clientId ?? null;
+  const filingData = {
+    filedById,
+    filedAt: new Date(),
+    totalHours: response.totalHours,
+    snapshot,
+  };
+  // findFirst→create is racy: two admins filing the same week concurrently
+  // both saw "no existing" and both created. For client-scoped filings the
+  // compound unique made the loser 500; for the org-wide (clientId=null)
+  // filing Postgres's NULLs-are-distinct semantics let BOTH rows land. Now
+  // the partial unique index rejects the loser, and we catch the unique
+  // violation and convert it into the update it was always meant to be.
   const existing = await db.timesheetFiling.findFirst({
     where: { weekStart: weekStartDate, clientId },
+    orderBy: { filedAt: 'desc' },
   });
-  const row = existing
-    ? await db.timesheetFiling.update({
-        where: { id: existing.id },
-        data: {
-          filedById,
-          filedAt: new Date(),
-          totalHours: response.totalHours,
-          snapshot,
-        },
-      })
-    : await db.timesheetFiling.create({
-        data: {
-          weekStart: weekStartDate,
-          clientId,
-          filedById,
-          totalHours: response.totalHours,
-          snapshot,
-        },
+  let row;
+  if (existing) {
+    row = await db.timesheetFiling.update({
+      where: { id: existing.id },
+      data: filingData,
+    });
+  } else {
+    try {
+      row = await db.timesheetFiling.create({
+        data: { weekStart: weekStartDate, clientId, ...filingData },
       });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        const winner = await db.timesheetFiling.findFirst({
+          where: { weekStart: weekStartDate, clientId },
+          orderBy: { filedAt: 'desc' },
+        });
+        if (!winner) throw err; // constraint fired but row vanished — surface it
+        row = await db.timesheetFiling.update({
+          where: { id: winner.id },
+          data: filingData,
+        });
+      } else {
+        throw err;
+      }
+    }
+  }
 
   const u = await db.user.findUnique({
     where: { id: filedById },
@@ -477,14 +524,13 @@ export function computeTimesheetIssues(
   entries: TimesheetSourceEntry[],
   rows: TimesheetRow[],
   weekDateKeys: Set<string>,
-  timeZone: string,
 ): TimesheetIssue[] {
   const nameById = new Map<string, string>();
   const missingClockout = new Set<string>();
   const pendingByAssoc = new Map<string, number>();
 
   for (const e of entries) {
-    if (!weekDateKeys.has(localDateKey(e.clockInAt, timeZone))) continue;
+    if (!weekDateKeys.has(localDateKey(e.clockInAt, e.timeZone))) continue;
     const id = e.associateId;
     nameById.set(id, `${e.lastName}, ${e.firstName}`.trim());
     if (!e.clockOutAt) missingClockout.add(id);
@@ -545,12 +591,11 @@ function formatDuration(totalMinutes: number): string {
 export function buildAssociateDays(
   entries: TimesheetSourceEntry[],
   dateKeys: string[],
-  timeZone: string,
 ): { days: TimesheetDay[]; totalHours: number } {
   const byDay = new Map<string, TimesheetSourceEntry[]>();
   for (const e of entries) {
     if (e.status !== 'APPROVED' || !e.clockOutAt) continue;
-    const key = localDateKey(e.clockInAt, timeZone);
+    const key = localDateKey(e.clockInAt, e.timeZone);
     const arr = byDay.get(key) ?? [];
     arr.push(e);
     byDay.set(key, arr);
@@ -566,21 +611,29 @@ export function buildAssociateDays(
     let netMin = 0;
     let timeInAt: Date | null = null;
     let timeOutAt: Date | null = null;
+    // Times render in the zone of the entry that produced them — the site's
+    // wall clock, which is what the associate and their supervisor saw.
+    let timeInZone = DEFAULT_TIMEZONE;
+    let timeOutZone = DEFAULT_TIMEZONE;
     const breaks: string[] = [];
     for (const e of dayEntries) {
       netMin += netWorkedMinutes(
         { clockInAt: e.clockInAt, clockOutAt: e.clockOutAt },
         e.breaks,
       );
-      if (!timeInAt || e.clockInAt < timeInAt) timeInAt = e.clockInAt;
+      if (!timeInAt || e.clockInAt < timeInAt) {
+        timeInAt = e.clockInAt;
+        timeInZone = e.timeZone;
+      }
       if (e.clockOutAt && (!timeOutAt || e.clockOutAt > timeOutAt)) {
         timeOutAt = e.clockOutAt;
+        timeOutZone = e.timeZone;
       }
       for (const b of e.breaks) {
-        const start = formatTimeInZone(b.startedAt, timeZone);
+        const start = formatTimeInZone(b.startedAt, e.timeZone);
         if (b.endedAt) {
           const mins = Math.round((b.endedAt.getTime() - b.startedAt.getTime()) / 60000);
-          breaks.push(`${start} – ${formatTimeInZone(b.endedAt, timeZone)} (${formatDuration(mins)})`);
+          breaks.push(`${start} – ${formatTimeInZone(b.endedAt, e.timeZone)} (${formatDuration(mins)})`);
         } else {
           breaks.push(`${start} – open`);
         }
@@ -593,8 +646,8 @@ export function buildAssociateDays(
       date: key,
       weekday,
       monthDay,
-      timeIn: timeInAt ? formatTimeInZone(timeInAt, timeZone) : null,
-      timeOut: timeOutAt ? formatTimeInZone(timeOutAt, timeZone) : null,
+      timeIn: timeInAt ? formatTimeInZone(timeInAt, timeInZone) : null,
+      timeOut: timeOutAt ? formatTimeInZone(timeOutAt, timeOutZone) : null,
       breaks,
       netHours,
     };
@@ -608,8 +661,11 @@ export function buildAssociateDays(
  * a worker row on the Timesheets grid. Mirrors the Fieldglass individual sheet
  * header (Worker / Period / Site) plus the day-by-day punch grid.
  */
-/** Default hourly pay rate when an associate has no open HOURLY comp record. */
-const DEFAULT_HOURLY_RATE = 15;
+// There is deliberately NO default pay rate. An earlier version substituted
+// a flat $15/hr when the associate had no open HOURLY comp record — a
+// fabricated number rendered on a billing-adjacent document with nothing
+// marking it as fake. A missing rate now surfaces as null and the sheet
+// shows a dash: "we don't know" beats "here's a plausible lie".
 
 export async function buildAssociateTimesheetDetail(
   db: Pick<
@@ -640,6 +696,13 @@ export async function buildAssociateTimesheetDetail(
       clockInAt: { gte: windowStart, lt: windowEnd },
       ...(input.clientId ? { clientId: input.clientId } : {}),
     },
+    // Deterministic order is load-bearing: entries[0] below supplies the
+    // Site label AND the billRate that prices the whole week's Amount.
+    // Unordered, an associate who worked two clients in one week got an
+    // Amount computed against whichever client the planner returned first
+    // — two runs of the same sheet could disagree. Earliest in-week entry
+    // is the rule now.
+    orderBy: { clockInAt: 'asc' },
     select: {
       associateId: true,
       clientId: true,
@@ -647,7 +710,7 @@ export async function buildAssociateTimesheetDetail(
       clockOutAt: true,
       status: true,
       associate: { select: { firstName: true, lastName: true } },
-      location: { select: { name: true } },
+      location: { select: { name: true, timezone: true } },
       breaks: { select: { type: true, startedAt: true, endedAt: true } },
     },
   });
@@ -679,7 +742,7 @@ export async function buildAssociateTimesheetDetail(
   }
 
   const entries: TimesheetSourceEntry[] = raw
-    .filter((e) => dateKeySet.has(localDateKey(e.clockInAt, timeZone)))
+    .filter((e) => dateKeySet.has(localDateKey(e.clockInAt, e.location?.timezone ?? timeZone)))
     .map((e) => {
       const client = e.clientId ? clientById.get(e.clientId) : undefined;
       return {
@@ -696,6 +759,7 @@ export async function buildAssociateTimesheetDetail(
           startedAt: b.startedAt,
           endedAt: b.endedAt,
         })),
+        timeZone: e.location?.timezone ?? timeZone,
       };
     });
 
@@ -715,7 +779,7 @@ export async function buildAssociateTimesheetDetail(
     if (a) worker = `${a.lastName}, ${a.firstName}`.trim();
   }
 
-  const { days, totalHours } = buildAssociateDays(entries, week.dateKeys, timeZone);
+  const { days, totalHours } = buildAssociateDays(entries, week.dateKeys);
   const pendingCount = entries.filter((e) => e.status === 'COMPLETED').length;
 
   // Accounting block — the associate's pay rate (their open HOURLY comp
@@ -725,7 +789,7 @@ export async function buildAssociateTimesheetDetail(
     orderBy: { effectiveFrom: 'desc' },
     select: { amount: true },
   });
-  const payRate = comp ? Number(comp.amount) : DEFAULT_HOURLY_RATE;
+  const payRate = comp ? Number(comp.amount) : null;
   const billRate = first?.clientId
     ? clientById.get(first.clientId)?.billRate ?? null
     : null;
@@ -744,7 +808,7 @@ export async function buildAssociateTimesheetDetail(
     status: pendingCount > 0 ? 'PENDING' : 'READY',
     pendingCount,
     rateLabel: 'Standard Hourly Rate /Hr',
-    payRate: round2(payRate),
+    payRate: payRate != null ? round2(payRate) : null,
     billRate: billRate != null ? round2(billRate) : null,
     amount,
     timeZone,

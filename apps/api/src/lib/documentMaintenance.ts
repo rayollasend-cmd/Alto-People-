@@ -1,7 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
-import { unlink } from 'node:fs/promises';
 import { prisma as defaultPrisma } from '../db.js';
-import { resolveStoragePath } from './storage.js';
+import { getBlobStore } from './blobStore.js';
 import { env } from '../config/env.js';
 
 /**
@@ -45,7 +44,7 @@ export function isRejectedDocPastRetention(
 }
 
 /**
- * Unlink the blob for one specific DocumentRecord and null its s3Key.
+ * Delete the blob for one specific DocumentRecord and null its s3Key.
  * Inline equivalent of one iteration of `purgeRejectedDocs`. Safe to
  * call repeatedly — second call is a no-op once s3Key is already null.
  */
@@ -55,10 +54,10 @@ export async function purgeOneRejectedDoc(
   s3Key: string,
 ): Promise<void> {
   try {
-    await unlink(resolveStoragePath(s3Key));
+    await getBlobStore().delete(s3Key);
   } catch {
-    // File already gone — proceed to null s3Key so the row stops
-    // being re-picked by the cron and lazy paths.
+    // Blob already gone (or transient store error) — proceed to null
+    // s3Key so the row stops being re-picked by the cron and lazy paths.
   }
   await prisma.documentRecord.update({
     where: { id: docId },
@@ -103,24 +102,83 @@ export async function purgeRejectedDocs(
   return { purged, errors };
 }
 
+/**
+ * Flip lapsed documents to EXPIRED and tell the associate to renew.
+ * `expiresAt` is captured at verification (the reviewer reads it off the
+ * ID/visa); before this sweep existed the column was write-never and the
+ * Expired chips/KPIs/Renew flow in the UI were permanently zero.
+ */
+export async function expireLapsedDocs(
+  prisma: PrismaClient = defaultPrisma,
+  now: Date = new Date(),
+): Promise<{ expired: number }> {
+  const lapsed = await prisma.documentRecord.findMany({
+    where: {
+      deletedAt: null,
+      status: { in: ['UPLOADED', 'VERIFIED'] },
+      expiresAt: { lt: now },
+    },
+    select: {
+      id: true,
+      kind: true,
+      filename: true,
+      associateId: true,
+      expiresAt: true,
+    },
+    take: PURGE_BATCH,
+  });
+  if (lapsed.length === 0) return { expired: 0 };
+  // PERF: one set-based flip instead of a round-trip per doc, and the
+  // notify import hoisted out of the loop.
+  await prisma.documentRecord.updateMany({
+    where: { id: { in: lapsed.map((d) => d.id) } },
+    data: { status: 'EXPIRED' },
+  });
+  const { notifyAssociate } = await import('./notify.js');
+  const { emitWebhookEvent } = await import('./webhookDispatch.js');
+  for (const doc of lapsed) {
+    // Outbound webhooks — one compliance event per lapsed document.
+    // Ids + kind + date only; the filename stays internal.
+    void emitWebhookEvent('compliance.expiring', {
+      documentId: doc.id,
+      associateId: doc.associateId,
+      kind: doc.kind,
+      expiresAt: doc.expiresAt!.toISOString().slice(0, 10),
+    });
+    void notifyAssociate(doc.associateId, {
+      subject: `Your ${doc.kind.replace(/_/g, ' ').toLowerCase()} on file has expired`,
+      body:
+        `The ${doc.kind.replace(/_/g, ' ').toLowerCase()} you provided (${doc.filename}) ` +
+        `expired on ${doc.expiresAt!.toISOString().slice(0, 10)}. ` +
+        `Please upload a current copy from Documents so your records stay compliant.`,
+      category: 'documents.expired',
+      linkUrl: '/documents',
+      emailFallback: true,
+    });
+  }
+  return { expired: lapsed.length };
+}
+
 let timer: NodeJS.Timeout | null = null;
 
 export function startDocumentMaintenanceCron(): void {
   if (timer) return;
   const seconds = env.DOCUMENT_MAINTENANCE_INTERVAL_SECONDS;
   if (seconds <= 0) return;
-  void purgeRejectedDocs().catch((err) => {
-    console.error('[alto-people/api] document maintenance failed:', err);
-  });
-  timer = setInterval(() => {
+  const tick = () => {
     void purgeRejectedDocs().catch((err) => {
       console.error('[alto-people/api] document maintenance failed:', err);
     });
-  }, seconds * 1000);
+    void expireLapsedDocs().catch((err) => {
+      console.error('[alto-people/api] document expiry sweep failed:', err);
+    });
+  };
+  tick();
+  timer = setInterval(tick, seconds * 1000);
   timer.unref();
   console.log(
     `[alto-people/api] document maintenance cron armed (every ${seconds}s; ` +
-      `rejected-doc retention ${REJECTED_DOC_RETENTION_DAYS}d)`,
+      `rejected-doc retention ${REJECTED_DOC_RETENTION_DAYS}d; expiry sweep on)`,
   );
 }
 

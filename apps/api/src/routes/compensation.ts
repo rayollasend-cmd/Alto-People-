@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
+import { toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { notifyAssociate, notifyManager } from '../lib/notify.js';
 
 /**
  * Phase 83 — Compensation: history + bands + merit cycles.
@@ -47,7 +49,7 @@ function shapeRecord(r: {
   return {
     id: r.id,
     associateId: r.associateId,
-    effectiveFrom: r.effectiveFrom.toISOString(),
+    effectiveFrom: toDateOnly(r.effectiveFrom),
     effectiveTo: r.effectiveTo?.toISOString() ?? null,
     payType: r.payType,
     amount: r.amount.toFixed(2),
@@ -85,7 +87,7 @@ function shapeBand(b: {
     midAmount: b.midAmount.toFixed(2),
     maxAmount: b.maxAmount.toFixed(2),
     currency: b.currency,
-    effectiveFrom: b.effectiveFrom.toISOString(),
+    effectiveFrom: toDateOnly(b.effectiveFrom),
     effectiveTo: b.effectiveTo?.toISOString() ?? null,
   };
 }
@@ -166,6 +168,21 @@ compensationRouter.post(
           actorUserId: req.user!.id,
         },
       });
+    });
+    // Fire-and-forget, after the transaction commits. emailFallback so a
+    // pay change reaches the person even without an active account.
+    const effectiveDate = effectiveFrom.toISOString().slice(0, 10);
+    void notifyAssociate(associateId, {
+      subject: 'Your pay rate was updated',
+      body: `New rate effective ${effectiveDate}. Open your profile for details.`,
+      category: 'compensation',
+      linkUrl: '/me',
+      emailFallback: true,
+    });
+    void notifyManager(associateId, {
+      subject: 'Pay rate updated on your team',
+      body: `${associate.firstName} ${associate.lastName} has a new rate effective ${effectiveDate}.`,
+      category: 'compensation',
     });
     res.status(201).json({ ok: true });
   },
@@ -412,25 +429,37 @@ compensationRouter.post(
     });
     const existingIds = new Set(existing.map((p) => p.associateId));
 
-    let created = 0;
-    for (const a of associates) {
-      if (existingIds.has(a.id)) continue;
-      const cur = await prisma.compensationRecord.findFirst({
-        where: { associateId: a.id, effectiveTo: null },
-      });
-      if (!cur) continue;
-      await prisma.meritProposal.create({
-        data: {
-          cycleId,
-          associateId: a.id,
-          currentAmount: cur.amount,
-          currentPayType: cur.payType,
-          proposedAmount: cur.amount, // default = no change; reviewer edits up
-          proposedById: req.user!.id,
-        },
-      });
-      created++;
+    // One query for every associate's current comp record instead of a
+    // findFirst per associate. Keep the first row seen per associate,
+    // mirroring the old unordered findFirst.
+    const seedIds = associates.map((a) => a.id).filter((id) => !existingIds.has(id));
+    const currentRecords = await prisma.compensationRecord.findMany({
+      where: { associateId: { in: seedIds }, effectiveTo: null },
+    });
+    const currentByAssociate = new Map<string, (typeof currentRecords)[number]>();
+    for (const cur of currentRecords) {
+      if (!currentByAssociate.has(cur.associateId)) {
+        currentByAssociate.set(cur.associateId, cur);
+      }
     }
+
+    const proposalData: Prisma.MeritProposalCreateManyInput[] = [];
+    for (const id of seedIds) {
+      const cur = currentByAssociate.get(id);
+      if (!cur) continue;
+      proposalData.push({
+        cycleId,
+        associateId: id,
+        currentAmount: cur.amount,
+        currentPayType: cur.payType,
+        proposedAmount: cur.amount, // default = no change; reviewer edits up
+        proposedById: req.user!.id,
+      });
+    }
+    const created =
+      proposalData.length === 0
+        ? 0
+        : (await prisma.meritProposal.createMany({ data: proposalData })).count;
 
     if (cycle.status === 'DRAFT') {
       await prisma.meritCycle.update({
@@ -498,50 +527,79 @@ compensationRouter.post(
       take: 500,
       where: { cycleId, status: 'APPROVED' },
     });
-    let applied = 0;
-    let stale = 0;
     const effectiveFrom = cycle.effectiveDate;
-    await prisma.$transaction(async (tx) => {
-      for (const p of approved) {
-        const cur = await tx.compensationRecord.findFirst({
-          where: { associateId: p.associateId, effectiveTo: null },
-        });
-        if (!cur || !cur.amount.equals(p.currentAmount) || cur.payType !== p.currentPayType) {
-          // Snapshot diverged — bounce back for re-review.
-          await tx.meritProposal.update({
-            where: { id: p.id },
-            data: { status: 'DRAFT', decisionNote: 'Stale snapshot; re-review required.' },
-          });
-          stale++;
-          continue;
-        }
-        await tx.compensationRecord.updateMany({
-          where: { associateId: p.associateId, effectiveTo: null },
-          data: { effectiveTo: effectiveFrom },
-        });
-        await tx.compensationRecord.create({
-          data: {
-            associateId: p.associateId,
-            effectiveFrom,
-            payType: p.currentPayType,
-            amount: p.proposedAmount,
-            reason: 'MERIT',
-            notes: p.proposedNotes ?? null,
-            actorUserId: req.user!.id,
-            meritProposalId: p.id,
-          },
-        });
-        await tx.meritProposal.update({
-          where: { id: p.id },
-          data: { status: 'APPLIED' },
-        });
-        applied++;
+
+    // Pre-load every current comp record in one query (was a findFirst per
+    // proposal inside an interactive transaction). Keep the first row per
+    // associate, mirroring the old unordered findFirst.
+    const currentRecords = await prisma.compensationRecord.findMany({
+      where: {
+        associateId: { in: approved.map((p) => p.associateId) },
+        effectiveTo: null,
+      },
+    });
+    const currentByAssociate = new Map<string, (typeof currentRecords)[number]>();
+    for (const cur of currentRecords) {
+      if (!currentByAssociate.has(cur.associateId)) {
+        currentByAssociate.set(cur.associateId, cur);
       }
-      await tx.meritCycle.update({
+    }
+
+    const staleProposalIds: string[] = [];
+    const applyProposals: typeof approved = [];
+    for (const p of approved) {
+      const cur = currentByAssociate.get(p.associateId);
+      if (!cur || !cur.amount.equals(p.currentAmount) || cur.payType !== p.currentPayType) {
+        // Snapshot diverged — bounce back for re-review.
+        staleProposalIds.push(p.id);
+      } else {
+        applyProposals.push(p);
+      }
+    }
+
+    // Short batched transaction: identical-payload writes consolidated into
+    // updateMany/createMany, everything pipelined in one round of statements.
+    await prisma.$transaction([
+      ...(staleProposalIds.length > 0
+        ? [
+            prisma.meritProposal.updateMany({
+              where: { id: { in: staleProposalIds } },
+              data: { status: 'DRAFT', decisionNote: 'Stale snapshot; re-review required.' },
+            }),
+          ]
+        : []),
+      ...(applyProposals.length > 0
+        ? [
+            prisma.compensationRecord.updateMany({
+              where: {
+                associateId: { in: applyProposals.map((p) => p.associateId) },
+                effectiveTo: null,
+              },
+              data: { effectiveTo: effectiveFrom },
+            }),
+            prisma.compensationRecord.createMany({
+              data: applyProposals.map((p) => ({
+                associateId: p.associateId,
+                effectiveFrom,
+                payType: p.currentPayType,
+                amount: p.proposedAmount,
+                reason: 'MERIT' as const,
+                notes: p.proposedNotes ?? null,
+                actorUserId: req.user!.id,
+                meritProposalId: p.id,
+              })),
+            }),
+            prisma.meritProposal.updateMany({
+              where: { id: { in: applyProposals.map((p) => p.id) } },
+              data: { status: 'APPLIED' },
+            }),
+          ]
+        : []),
+      prisma.meritCycle.update({
         where: { id: cycleId },
         data: { status: 'APPLIED', appliedAt: new Date() },
-      });
-    });
-    res.json({ applied, stale });
+      }),
+    ]);
+    res.json({ applied: applyProposals.length, stale: staleProposalIds.length });
   },
 );

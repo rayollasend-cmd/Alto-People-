@@ -28,10 +28,11 @@ import {
 
 /**
  * Remediation roster for the 2026-06-11 key-rotation incident: every
- * associate whose stored W-4 SSN no longer decrypts, with a bulk
- * "please re-enter it" email action. Rows disappear on their own the
- * moment an associate resubmits — the list draining to zero is the
- * campaign finishing.
+ * associate the campaign still needs something from — an unreadable
+ * stored W-4 SSN, a missing SSN-card photo (once contacted), or both —
+ * with a bulk request-email action. Rows disappear on their own the
+ * moment both the number decrypts and a card image is on file — the
+ * list draining to zero is the campaign finishing.
  */
 export function W4SsnRecollection() {
   const queryClient = useQueryClient();
@@ -89,11 +90,17 @@ export function W4SsnRecollection() {
     <div className="space-y-6">
       <PageHeader
         title="W-4 SSN re-collection"
-        subtitle="Stored Social Security numbers that no longer decrypt after the June 11 encryption-key incident. Each associate must re-enter their SSN on the W-4 step — email them the request from here."
+        subtitle="Remediation for the June 11 encryption-key incident. Each associate must re-enter their SSN on the W-4 step and upload a photo of their Social Security card — email them the request from here."
       />
 
       {query.error && (
-        <ErrorBanner>
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
+              Retry
+            </Button>
+          }
+        >
           {query.error instanceof ApiError
             ? query.error.message
             : 'Failed to load the re-collection roster.'}
@@ -125,10 +132,10 @@ export function W4SsnRecollection() {
           <CardContent className="py-5 flex items-center gap-3">
             <FileCheck2 className="h-5 w-5 text-success shrink-0" aria-hidden="true" />
             <div>
-              <div className="text-white font-medium">All SSNs are readable again</div>
+              <div className="text-white font-medium">All SSNs and card photos are in</div>
               <div className="text-sm text-silver">
-                Every stored W-4 Social Security number decrypts under the current key. The
-                campaign is complete.
+                Every stored W-4 Social Security number decrypts under the current key and
+                every contacted associate has a card image on file. The campaign is complete.
               </div>
             </div>
           </CardContent>
@@ -159,7 +166,7 @@ export function W4SsnRecollection() {
               </div>
             </div>
 
-            <Table caption="Associates whose stored W-4 SSN cannot be decrypted">
+            <Table caption="Associates still owing an SSN re-entry, a card photo, or both">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">
@@ -171,10 +178,11 @@ export function W4SsnRecollection() {
                     />
                   </TableHead>
                   <TableHead>Associate</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>W-4 submitted</TableHead>
+                  <TableHead className="hidden md:table-cell">Email</TableHead>
+                  <TableHead>Still needed</TableHead>
+                  <TableHead className="hidden lg:table-cell">W-4 submitted</TableHead>
                   <TableHead>Shortcut</TableHead>
-                  <TableHead>Last emailed</TableHead>
+                  <TableHead className="hidden md:table-cell">Last emailed</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -209,7 +217,9 @@ function SummaryCard({
   return (
     <Card>
       <CardContent className="pt-5">
-        <div className="text-[10px] uppercase tracking-widest text-silver">{label}</div>
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
+          {label}
+        </div>
         <div className={`font-display text-3xl tabular-nums mt-1 ${color}`}>{value}</div>
       </CardContent>
     </Card>
@@ -252,7 +262,7 @@ function RosterRow({
           <span className="ml-2 font-mono text-xs text-silver">•••-••-{row.ssnLast4}</span>
         )}
       </TableCell>
-      <TableCell>
+      <TableCell className="hidden md:table-cell">
         {row.hasAccount ? (
           <span className="text-silver">{row.email ?? '—'}</span>
         ) : (
@@ -262,7 +272,13 @@ function RosterRow({
           </span>
         )}
       </TableCell>
-      <TableCell className="text-silver">{fmtDate(row.w4SubmittedAt)}</TableCell>
+      <TableCell>
+        <div className="flex flex-wrap gap-1">
+          {row.needsNumber && <Badge variant="pending">Number</Badge>}
+          {row.needsCard && <Badge variant="pending">Card photo</Badge>}
+        </div>
+      </TableCell>
+      <TableCell className="hidden lg:table-cell text-silver">{fmtDate(row.w4SubmittedAt)}</TableCell>
       <TableCell>
         {row.hasSsnDocument ? (
           <Badge
@@ -276,7 +292,7 @@ function RosterRow({
           <span className="text-silver text-xs">—</span>
         )}
       </TableCell>
-      <TableCell className="text-silver text-xs">
+      <TableCell className="hidden md:table-cell text-silver text-xs">
         {row.lastEmailedAt ? (
           <>
             {fmtDate(row.lastEmailedAt)}

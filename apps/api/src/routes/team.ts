@@ -11,6 +11,9 @@ import {
 } from '../lib/timeOffRequests.js';
 import { recordTimeEvent } from '../lib/audit.js';
 import { accrueSickLeaveForEntry } from '../lib/timeOffAccrual.js';
+import { notifyAssociate } from '../lib/notify.js';
+import { runWithConcurrency } from '../lib/concurrency.js';
+import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 
 /**
  * Phase 79 — Manager-scoped routes.
@@ -403,7 +406,10 @@ teamRouter.get('/timesheets', VIEW, async (req: Request, res: Response) => {
       status: r.status,
       notes: r.notes,
       rejectionReason: r.rejectionReason,
-      payRate: r.payRate?.toString() ?? null,
+      // Number, matching TimeEntrySchema.payRate and /time/admin/entries.
+      // This route emitted a STRING for the same column, so any shared
+      // formatter silently switched between arithmetic and lexicographic.
+      payRate: r.payRate ? Number(r.payRate) : null,
     })),
   });
 });
@@ -450,6 +456,13 @@ teamRouter.post(
         ? { sickAccrualMinutes: accrual.earnedMinutes, state: accrual.state }
         : {},
       req,
+    });
+    void notifyAssociate(updated.associateId, {
+      subject: 'Your timesheet was approved',
+      body: `Your time entry for ${updated.clockInAt.toISOString().slice(0, 10)} was approved by your manager.`,
+      category: 'team',
+      linkUrl: '/me',
+      emailFallback: true,
     });
     res.json({ ok: true });
   },
@@ -499,6 +512,13 @@ teamRouter.post(
       metadata: { reason },
       req,
     });
+    void notifyAssociate(entry.associateId, {
+      subject: 'Your timesheet was rejected',
+      body: `Your time entry for ${entry.clockInAt.toISOString().slice(0, 10)} was rejected. Reason: ${reason}`,
+      category: 'team',
+      linkUrl: '/me',
+      emailFallback: true,
+    });
     res.json({ ok: true });
   },
 );
@@ -513,21 +533,42 @@ teamRouter.post(
     const ids = z.array(z.string().uuid()).min(1).max(200).parse(req.body?.ids);
     let approved = 0;
     const skipped: { id: string; reason: string }[] = [];
-    for (const id of ids) {
+    // PERF: batch the entry load + the direct-report authorization set
+    // up front (was ~6 serial queries per id); the per-id remainder runs
+    // with bounded parallelism.
+    const entries = await prisma.timeEntry.findMany({
+      where: { id: { in: ids } },
+    });
+    const teamEntryById = new Map(entries.map((e) => [e.id, e]));
+    const bulkReportSet = new Set(
+      (
+        await prisma.associate.findMany({
+          where: {
+            id: { in: [...new Set(entries.map((e) => e.associateId))] },
+            ...managerScope(user),
+          },
+          select: { id: true },
+        })
+      ).map((a) => a.id),
+    );
+    await runWithConcurrency(ids, 6, async (id) => {
       try {
-        const entry = await prisma.timeEntry.findUnique({ where: { id } });
+        const entry = teamEntryById.get(id);
         if (!entry) {
           skipped.push({ id, reason: 'not_found' });
-          continue;
+          return;
         }
-        await requireDirectReportAssociate(user.associateId, entry.associateId);
+        if (!bulkReportSet.has(entry.associateId)) {
+          skipped.push({ id, reason: 'not_your_report' });
+          return;
+        }
         if (entry.status === 'ACTIVE') {
           skipped.push({ id, reason: 'still_active' });
-          continue;
+          return;
         }
         if (entry.status === 'APPROVED') {
           skipped.push({ id, reason: 'already_approved' });
-          continue;
+          return;
         }
         const updated = await prisma.timeEntry.update({
           where: { id },
@@ -553,11 +594,18 @@ teamRouter.post(
           },
           req,
         });
+        void notifyAssociate(updated.associateId, {
+          subject: 'Your timesheet was approved',
+          body: `Your time entry for ${updated.clockInAt.toISOString().slice(0, 10)} was approved by your manager.`,
+          category: 'team',
+          linkUrl: '/me',
+          emailFallback: true,
+        });
         approved++;
       } catch (err) {
         skipped.push({ id, reason: err instanceof HttpError ? err.code : 'error' });
       }
-    }
+    });
     res.json({ approved, skipped });
   },
 );
@@ -633,6 +681,17 @@ teamRouter.post(
       }
       throw err;
     }
+    const note = (req.body?.note ?? '').toString().trim();
+    void notifyAssociate(reqRow.associateId, {
+      subject: 'Your time off was approved',
+      body:
+        `Your ${reqRow.category} request (${reqRow.startDate.toISOString().slice(0, 10)} → ` +
+        `${reqRow.endDate.toISOString().slice(0, 10)}) was approved.` +
+        (note ? ` Note: ${note}` : ''),
+      category: 'team',
+      linkUrl: '/time-off',
+      emailFallback: true,
+    });
     res.json({ ok: true });
   },
 );
@@ -647,24 +706,53 @@ teamRouter.post(
     const ids = z.array(z.string().uuid()).min(1).max(200).parse(req.body?.ids);
     let approved = 0;
     const skipped: { id: string; reason: string }[] = [];
-    for (const id of ids) {
+    // PERF: batch the request load + authorization set up front; only
+    // approveRequest's balance CAS stays per-id (bounded-parallel).
+    const reqRows = await prisma.timeOffRequest.findMany({
+      where: { id: { in: ids } },
+    });
+    const ptoById = new Map(reqRows.map((r) => [r.id, r]));
+    const ptoReportSet = new Set(
+      (
+        await prisma.associate.findMany({
+          where: {
+            id: { in: [...new Set(reqRows.map((r) => r.associateId))] },
+            ...managerScope(user),
+          },
+          select: { id: true },
+        })
+      ).map((a) => a.id),
+    );
+    await runWithConcurrency(ids, 6, async (id) => {
       try {
-        const reqRow = await prisma.timeOffRequest.findUnique({ where: { id } });
+        const reqRow = ptoById.get(id);
         if (!reqRow) {
           skipped.push({ id, reason: 'not_found' });
-          continue;
+          return;
         }
-        await requireDirectReportAssociate(user.associateId, reqRow.associateId);
+        if (!ptoReportSet.has(reqRow.associateId)) {
+          skipped.push({ id, reason: 'not_your_report' });
+          return;
+        }
         await approveRequest(prisma, id, user.id, null);
+        void notifyAssociate(reqRow.associateId, {
+          subject: 'Your time off was approved',
+          body:
+            `Your ${reqRow.category} request (${reqRow.startDate.toISOString().slice(0, 10)} → ` +
+            `${reqRow.endDate.toISOString().slice(0, 10)}) was approved.`,
+          category: 'team',
+          linkUrl: '/time-off',
+          emailFallback: true,
+        });
         approved++;
       } catch (err) {
         if (err instanceof IllegalStateError) {
           skipped.push({ id, reason: 'illegal_state' });
-          continue;
+          return;
         }
         skipped.push({ id, reason: err instanceof HttpError ? err.code : 'error' });
       }
-    }
+    });
     res.json({ approved, skipped });
   },
 );
@@ -703,6 +791,22 @@ teamRouter.post(
         reviewerNote: note,
         decidedAt: new Date(),
       },
+    });
+    void emitWebhookEvent('time_off.denied', {
+      requestId: id,
+      associateId: reqRow.associateId,
+      category: reqRow.category,
+      startDate: reqRow.startDate.toISOString().slice(0, 10),
+      endDate: reqRow.endDate.toISOString().slice(0, 10),
+    });
+    void notifyAssociate(reqRow.associateId, {
+      subject: 'Your time off was denied',
+      body:
+        `Your ${reqRow.category} request (${reqRow.startDate.toISOString().slice(0, 10)} → ` +
+        `${reqRow.endDate.toISOString().slice(0, 10)}) was denied. Reason: ${note}`,
+      category: 'team',
+      linkUrl: '/time-off',
+      emailFallback: true,
     });
     res.json({ ok: true });
   },

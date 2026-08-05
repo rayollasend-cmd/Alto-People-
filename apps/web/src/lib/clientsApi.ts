@@ -13,11 +13,19 @@ import type {
 import { apiFetch } from './api';
 
 export function listClients(
-  filters: { status?: ClientStatus; q?: string } = {}
+  filters: {
+    status?: ClientStatus;
+    q?: string;
+    /** Id of the last client of the previous page (ClientListResponse.nextCursor). */
+    cursor?: string;
+    limit?: number;
+  } = {}
 ): Promise<ClientListResponse> {
   const sp = new URLSearchParams();
   if (filters.status) sp.set('status', filters.status);
   if (filters.q && filters.q.trim()) sp.set('q', filters.q.trim());
+  if (filters.cursor) sp.set('cursor', filters.cursor);
+  if (filters.limit != null) sp.set('limit', String(filters.limit));
   const qs = sp.toString();
   return apiFetch<ClientListResponse>(`/clients${qs ? `?${qs}` : ''}`);
 }

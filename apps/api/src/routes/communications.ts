@@ -1,9 +1,12 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import {
+  EmailSuppressionListResponseSchema,
   NotificationBroadcastInputSchema,
+  NotificationChannelSchema,
   NotificationListResponseSchema,
   NotificationSendInputSchema,
+  NotificationStatusSchema,
   PushPublicKeyResponseSchema,
   PushSubscribeInputSchema,
   PushUnsubscribeInputSchema,
@@ -13,9 +16,11 @@ import {
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
+import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
-import { sendStubbed } from '../lib/notifications.js';
+import { EmailSuppressedError, sendStubbed } from '../lib/notifications.js';
 import { pushConfigured } from '../lib/webPush.js';
+import { enqueueAudit } from '../lib/audit.js';
 
 export const communicationsRouter = Router();
 
@@ -37,6 +42,7 @@ function toNotif(row: RawNotif): Notification {
     body: row.body,
     category: row.category,
     externalRef: row.externalRef,
+    providerMessageId: row.providerMessageId,
     failureReason: row.failureReason,
     sentAt: row.sentAt ? row.sentAt.toISOString() : null,
     readAt: row.readAt ? row.readAt.toISOString() : null,
@@ -77,8 +83,8 @@ communicationsRouter.post('/me/push/subscriptions', async (req, res, next) => {
     }
     const user = req.user!;
     // Upsert on the endpoint (globally unique per browser subscription).
-    // If the endpoint was registered under ANOTHER account — shared device,
-    // logout/login — it moves to the caller: pushes must follow the person
+    // If the endpoint was registered under ANOTHER account â€” shared device,
+    // logout/login â€” it moves to the caller: pushes must follow the person
     // signed in on that browser, never a previous occupant.
     await prisma.pushSubscription.upsert({
       where: { endpoint: parsed.data.endpoint },
@@ -108,7 +114,7 @@ communicationsRouter.delete('/me/push/subscriptions', async (req, res, next) => 
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request', parsed.error.flatten());
     }
-    // Scoped to the caller — you can't unsubscribe someone else's device
+    // Scoped to the caller â€” you can't unsubscribe someone else's device
     // by knowing its endpoint.
     await prisma.pushSubscription.deleteMany({
       where: { endpoint: parsed.data.endpoint, userId: req.user!.id },
@@ -124,14 +130,19 @@ communicationsRouter.delete('/me/push/subscriptions', async (req, res, next) => 
 communicationsRouter.get('/me/inbox', async (req, res, next) => {
   try {
     const user = req.user!;
-    const rows = await prisma.notification.findMany({
-      where: { recipientUserId: user.id, channel: 'IN_APP' },
-      orderBy: { createdAt: 'desc' },
-      take: 100,
-      include: NOTIF_INCLUDE,
-    });
+    const where = { recipientUserId: user.id, channel: 'IN_APP' as const };
+    const [total, rows] = await Promise.all([
+      prisma.notification.count({ where }),
+      prisma.notification.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+        include: NOTIF_INCLUDE,
+      }),
+    ]);
     const payload: NotificationListResponse = NotificationListResponseSchema.parse({
       notifications: rows.map(toNotif),
+      total,
     });
     res.json(payload);
   } catch (err) {
@@ -169,13 +180,18 @@ communicationsRouter.post('/me/inbox/:id/read', async (req, res, next) => {
 
 communicationsRouter.get('/admin', MANAGE, async (req, res, next) => {
   try {
-    const channel = req.query.channel?.toString();
-    const status = req.query.status?.toString();
+    // Optional ?channel= and ?status= filters. Validated against the shared
+    // enums so a garbage value is ignored (unfiltered) instead of bubbling a
+    // Prisma enum error out of the list endpoint.
+    const channelParsed = NotificationChannelSchema.safeParse(
+      req.query.channel?.toString(),
+    );
+    const statusParsed = NotificationStatusSchema.safeParse(
+      req.query.status?.toString(),
+    );
     const where: Prisma.NotificationWhereInput = {
-      ...(channel
-        ? { channel: channel as Prisma.NotificationWhereInput['channel'] }
-        : {}),
-      ...(status ? { status: status as Prisma.NotificationWhereInput['status'] } : {}),
+      ...(channelParsed.success ? { channel: channelParsed.data } : {}),
+      ...(statusParsed.success ? { status: statusParsed.data } : {}),
     };
     const rows = await prisma.notification.findMany({
       where,
@@ -191,7 +207,7 @@ communicationsRouter.get('/admin', MANAGE, async (req, res, next) => {
   }
 });
 
-communicationsRouter.post('/admin/send', MANAGE, async (req, res, next) => {
+communicationsRouter.post('/admin/send', MANAGE, idempotent, async (req, res, next) => {
   try {
     const parsed = NotificationSendInputSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -229,9 +245,13 @@ communicationsRouter.post('/admin/send', MANAGE, async (req, res, next) => {
       res.status(201).json(toNotif(sent));
     } catch (sendErr) {
       const reason = sendErr instanceof Error ? sendErr.message : 'unknown error';
+      // A suppressed address is not a provider failure — surface it as its
+      // own status so the admin sees WHY nothing went out (and where to
+      // fix it: the Suppressed emails list below).
+      const status = sendErr instanceof EmailSuppressedError ? 'SUPPRESSED' : 'FAILED';
       const failed = await prisma.notification.update({
         where: { id: created.id },
-        data: { status: 'FAILED', failureReason: reason },
+        data: { status, failureReason: reason },
         include: NOTIF_INCLUDE,
       });
       res.status(202).json(toNotif(failed));
@@ -241,7 +261,73 @@ communicationsRouter.post('/admin/send', MANAGE, async (req, res, next) => {
   }
 });
 
-communicationsRouter.post('/admin/broadcast', MANAGE, async (req, res, next) => {
+/* ===== Email suppression list (do-not-email) =========================== */
+
+/**
+ * GET /communications/admin/suppressions
+ *
+ * Addresses the system refuses to email — populated automatically by the
+ * Resend webhook on hard bounce / spam complaint. Same manage gate as the
+ * other admin actions on this router.
+ */
+communicationsRouter.get('/admin/suppressions', MANAGE, async (_req, res, next) => {
+  try {
+    const rows = await prisma.emailSuppression.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    });
+    res.json(
+      EmailSuppressionListResponseSchema.parse({
+        suppressions: rows.map((r) => ({
+          id: r.id,
+          email: r.email,
+          reason: r.reason,
+          notes: r.notes,
+          createdAt: r.createdAt.toISOString(),
+        })),
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /communications/admin/suppressions/:email  (un-suppress, audited)
+ *
+ * Removing an address resumes delivery on the next send. Keyed by email
+ * (URL-encoded) rather than row id so the admin UI can delete straight
+ * off the listed address.
+ */
+communicationsRouter.delete(
+  '/admin/suppressions/:email',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const email = req.params.email.trim().toLowerCase();
+      const existing = await prisma.emailSuppression.findUnique({ where: { email } });
+      if (!existing) {
+        throw new HttpError(404, 'suppression_not_found', 'Address is not suppressed.');
+      }
+      await prisma.emailSuppression.delete({ where: { email } });
+      enqueueAudit(
+        {
+          actorUserId: req.user!.id,
+          action: 'email.unsuppressed',
+          entityType: 'EmailSuppression',
+          entityId: email,
+          metadata: { reason: existing.reason, notes: existing.notes },
+        },
+        'communications.unsuppress',
+      );
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+communicationsRouter.post('/admin/broadcast', MANAGE, idempotent, async (req, res, next) => {
   try {
     const parsed = NotificationBroadcastInputSchema.safeParse(req.body);
     if (!parsed.success) {

@@ -4,6 +4,7 @@ import type {
   DocumentRecord,
   DocumentRejectInput,
   DocumentStatus,
+  DocumentVaultResponse,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 
@@ -24,13 +25,26 @@ export function listAdminDocuments(filters: {
   return apiFetch<DocumentListResponse>(`/documents/admin${qs ? `?${qs}` : ''}`);
 }
 
+/** Vault: every document + a compliance summary from each domain's ledger. */
+export function getDocumentVault(associateId: string): Promise<DocumentVaultResponse> {
+  return apiFetch<DocumentVaultResponse>(`/documents/admin/vault/${associateId}`);
+}
+
 export async function uploadMyDocument(
   file: File,
-  kind: DocumentKind
+  kind: DocumentKind,
+  opts?: {
+    /** Federal catalog title ("U.S. Passport…") — the server derives the
+     *  A/B/C list from it. Omit for legacy-style unclassified uploads. */
+    i9DocTitle?: string;
+    side?: 'FRONT' | 'BACK';
+  },
 ): Promise<DocumentRecord> {
   const fd = new FormData();
   fd.append('file', file);
   fd.append('kind', kind);
+  if (opts?.i9DocTitle) fd.append('i9DocTitle', opts.i9DocTitle);
+  if (opts?.side) fd.append('side', opts.side);
   // apiFetch JSON-encodes; for multipart we hit fetch directly.
   const res = await fetch('/api/documents/me/upload', {
     method: 'POST',
@@ -72,6 +86,33 @@ export function downloadDocumentUrl(id: string): string {
   return `/api/documents/${id}/download`;
 }
 
+// Streams a zip of every available document for one associate. Plain URL —
+// consumed via an <a href> just like the per-document download route.
+export function downloadAllDocumentsUrl(
+  associateId: string,
+  /**
+   * Restrict the archive to these document kinds. Omit for the associate's
+   * whole file. A reviewer working an I-9 or E-Verify case wants the identity
+   * documents, not the offer letter and every signed policy — exporting more
+   * PII than the task needs is worth designing out, and the archive is
+   * audited either way.
+   */
+  kinds?: readonly string[],
+): string {
+  const params = new URLSearchParams({ associateId });
+  if (kinds && kinds.length > 0) params.set('kinds', kinds.join(','));
+  return `/api/documents/admin/all.zip?${params.toString()}`;
+}
+
+/** The kinds that make up an identity check — I-9 Section 2 and E-Verify. */
+export const IDENTITY_DOC_KINDS = [
+  'I9_SUPPORTING',
+  'ID',
+  'SSN_CARD',
+  'J1_VISA',
+  'J1_DS2019',
+] as const;
+
 // Same endpoint, but the API responds with `Content-Disposition: inline` so
 // browsers render PDFs / images in an iframe or <img> instead of downloading.
 // Only safe MIME types are allowed inline by the API.
@@ -88,8 +129,16 @@ export function deleteMyDocument(id: string): Promise<void> {
   return apiFetch<void>(`/documents/me/${id}`, { method: 'DELETE' });
 }
 
-export function verifyDocument(id: string): Promise<DocumentRecord> {
-  return apiFetch<DocumentRecord>(`/documents/admin/${id}/verify`, { method: 'POST' });
+// `expiresAt` ('YYYY-MM-DD', optional) is captured at verification time and
+// drives the daily expiry sweep that flips lapsed docs to EXPIRED.
+export function verifyDocument(
+  id: string,
+  opts: { expiresAt?: string } = {}
+): Promise<DocumentRecord> {
+  return apiFetch<DocumentRecord>(`/documents/admin/${id}/verify`, {
+    method: 'POST',
+    ...(opts.expiresAt ? { body: { expiresAt: opts.expiresAt } } : {}),
+  });
 }
 
 export interface BulkVerifyResult {

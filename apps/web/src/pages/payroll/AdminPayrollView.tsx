@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -38,6 +38,7 @@ import {
   disbursePayrollRun,
   downloadCheckRegister,
   finalizePayrollRun,
+  getPayrollConfig,
   getPayrollRun,
   getPayrollUpcoming,
   getWcPremium,
@@ -50,7 +51,8 @@ import {
   type WcPremiumReport,
 } from '@/lib/payrollApi';
 import { syncRun as syncRunToQbo } from '@/lib/quickbooksApi';
-import { AssociatePicker } from '@/components/ui/AssociatePicker';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
+import { useConfirm, usePrompt } from '@/lib/confirm';
 import { Select } from '@/components/ui/Select';
 import { AmendPayrollWizard } from './AmendPayrollWizard';
 import { BranchEnrollmentDialog } from './BranchEnrollmentDialog';
@@ -95,9 +97,12 @@ import {
 } from '@/components/ui/Table';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
+import { fmtDate, fmtDateTime, fmtMoney, parseYmd } from '@/lib/format';
+import { FilterChip } from '@/components/ui/FilterBar';
 
-const fmtMoney = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+/** "May 13, 2026 → May 26, 2026" — the run period, parsed as local days. */
+const fmtPeriod = (startYmd: string, endYmd: string) =>
+  `${fmtDate(parseYmd(startYmd))} → ${fmtDate(parseYmd(endYmd))}`;
 
 const STATUS_FILTERS: Array<{ value: PayrollRunStatus | 'ALL'; label: string }> = [
   { value: 'DRAFT', label: 'Draft' },
@@ -117,6 +122,13 @@ const RUN_STATUS_VARIANT: Record<
   CANCELLED: 'destructive',
 };
 
+const RUN_STATUS_LABELS: Record<PayrollRunStatus, string> = {
+  DRAFT: 'Draft',
+  FINALIZED: 'Finalized',
+  DISBURSED: 'Disbursed',
+  CANCELLED: 'Cancelled',
+};
+
 interface AdminPayrollViewProps {
   canProcess: boolean;
   /** Gap 3 — void:payroll. HR Admin only; gates void + amend buttons. */
@@ -130,6 +142,42 @@ type SortDir = 'asc' | 'desc';
 // Mirrors the server-side guard in POST /payroll/runs/:id/void; UI hides
 // the affordance instead of letting the user click and 409.
 const VOID_WINDOW_DAYS = 30;
+
+// Run-detail drawer renders this many paystub cards up front; a "Show
+// all N" button opts into the rest. A 1,000-item run otherwise mounts
+// 1,000 expandable cards the moment the drawer opens.
+const PAYSTUB_PAGE = 100;
+
+/**
+ * Run `task` over `items` with at most `limit` requests in flight,
+ * Promise.allSettled-style: never throws, every item gets a settled
+ * result in input order. Used by the bulk run actions so a 30-run
+ * finalize isn't 30 sequential round-trips (each run is independent —
+ * per-run server work doesn't race across different run ids).
+ */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T) => Promise<R>,
+): Promise<PromiseSettledResult<R>[]> {
+  const results = new Array<PromiseSettledResult<R>>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const i = nextIndex++;
+        try {
+          results[i] = { status: 'fulfilled', value: await task(items[i]!) };
+        } catch (reason) {
+          results[i] = { status: 'rejected', reason };
+        }
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
 
 /**
  * The typed-confirmation string the HR Admin must enter to void a run —
@@ -164,12 +212,39 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   const [wcReport, setWcReport] = useState<WcPremiumReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [enrollFor, setEnrollFor] = useState<{ id: string; name: string | null } | null>(null);
+  // Stable identity so the memoized PaystubAdminCards don't all re-render
+  // whenever the drawer's parent state changes.
+  const openEnrollBranch = useCallback(
+    (associateId: string, associateName: string | null) =>
+      setEnrollFor({ id: associateId, name: associateName }),
+    [],
+  );
+  // Paystub list pagination — show the first PAYSTUB_PAGE cards, with an
+  // explicit opt-in to mount the rest. Reset per run.
+  const [showAllPaystubs, setShowAllPaystubs] = useState(false);
   // Wave 8 — hero summary card. One fetch, hydrates from /payroll/upcoming.
   const [upcoming, setUpcoming] = useState<PayrollUpcomingSummary | null>(null);
   const [upcomingLoading, setUpcomingLoading] = useState(true);
   // Wave 9 — sortable runs table.
   const [sortKey, setSortKey] = useState<SortKey>('periodEnd');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+  // Four-eyes config flag — when true, Disburse is gated on approvedAt.
+  // Fetched once; a fetch failure just leaves the gate off (server still
+  // enforces it with a 409).
+  const [requireSecondApproval, setRequireSecondApproval] = useState(false);
+  // Bulk actions over the runs table.
+  const [bulkSelected, setBulkSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const confirm = useConfirm();
+  const prompt = usePrompt();
+
+  useEffect(() => {
+    getPayrollConfig()
+      .then((cfg) => setRequireSecondApproval(!!cfg.requireSecondApproval))
+      .catch(() => {
+        // Non-fatal — the UI gate stays off; the server still refuses.
+      });
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -214,6 +289,83 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
       setSortKey(key);
       setSortDir(key === 'periodEnd' || key === 'totalGross' || key === 'totalNet' || key === 'itemCount' ? 'desc' : 'asc');
     }
+  };
+
+  // Bulk selection — clear when the status filter changes so the action
+  // bar never advertises runs that are no longer visible.
+  useEffect(() => {
+    setBulkSelected(new Set());
+  }, [filter]);
+
+  const toggleBulk = (id: string) =>
+    setBulkSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  // Eligibility mirrors the drawer's footer buttons: Finalize on DRAFT,
+  // Approve on FINALIZED (not yet approved), Disburse on FINALIZED. The
+  // second-approval gate is applied at execution time so skipped runs can
+  // be counted honestly in the toast.
+  const bulkEligible = useMemo(() => {
+    const sel = (runs ?? []).filter((r) => bulkSelected.has(r.id));
+    return {
+      finalize: sel.filter((r) => r.status === 'DRAFT'),
+      approve: sel.filter((r) => r.status === 'FINALIZED' && !r.approvedAt),
+      disburse: sel.filter((r) => r.status === 'FINALIZED'),
+    };
+  }, [runs, bulkSelected]);
+
+  const runBulk = async (action: 'finalize' | 'approve' | 'disburse') => {
+    if (bulkBusy) return;
+    const label =
+      action === 'finalize' ? 'Finalize' : action === 'approve' ? 'Approve' : 'Disburse';
+    let targets = bulkEligible[action];
+    let skippedApproval = 0;
+    if (action === 'disburse' && requireSecondApproval) {
+      skippedApproval = targets.filter((r) => !r.approvedAt).length;
+      targets = targets.filter((r) => !!r.approvedAt);
+    }
+    if (targets.length === 0) {
+      toast.error(
+        skippedApproval > 0
+          ? `All ${skippedApproval} eligible run${skippedApproval === 1 ? '' : 's'} need a second approval before disbursing.`
+          : `No selected runs are eligible to ${action}.`,
+      );
+      return;
+    }
+    const ok = await confirm({
+      title: `${label} ${targets.length} run${targets.length === 1 ? '' : 's'}?`,
+      description:
+        `${targets.length} of ${bulkSelected.size} selected run${bulkSelected.size === 1 ? ' is' : 's are'} eligible and will be processed a few at a time.` +
+        (skippedApproval > 0
+          ? ` ${skippedApproval} will be skipped — ${skippedApproval === 1 ? 'it needs' : 'they need'} a second approval first.`
+          : ''),
+      confirmLabel: `${label} (${targets.length})`,
+      destructive: action === 'disburse',
+    });
+    if (!ok) return;
+    setBulkBusy(true);
+    // Bounded concurrency (4 in flight) — each target is a distinct run,
+    // so the requests are independent; allSettled semantics keep the
+    // succeeded/failed tallies identical to the old sequential loop.
+    const results = await mapWithConcurrency(targets, 4, (r) => {
+      if (action === 'finalize') return finalizePayrollRun(r.id);
+      if (action === 'approve') return approvePayrollRun(r.id);
+      return disbursePayrollRun(r.id);
+    });
+    const succeeded = results.filter((r) => r.status === 'fulfilled').length;
+    const failed = results.length - succeeded;
+    setBulkBusy(false);
+    setBulkSelected(new Set());
+    refresh();
+    const parts = [`${succeeded} succeeded`];
+    if (failed > 0) parts.push(`${failed} failed`);
+    if (skippedApproval > 0)
+      parts.push(`${skippedApproval} skipped (needs second approval)`);
+    (failed > 0 ? toast.error : toast.success)(`${label}: ${parts.join(' · ')}.`);
   };
 
   const refreshUpcoming = useCallback(async () => {
@@ -287,18 +439,22 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
 
   const onDeleteRun = async () => {
     if (!selected || busy) return;
-    if (
-      !window.confirm(
-        `Delete this ${selected.status.toLowerCase()} run for ${selected.periodStart} → ${selected.periodEnd}? ` +
-          `Its ${selected.itemCount} paystub(s) will be removed. This can't be undone — but nothing has been ` +
-          `paid out, so you can re-run payroll for the correct period.`,
-      )
-    ) {
-      return;
-    }
+    const reason = await prompt({
+      title: `Delete this ${selected.status.toLowerCase()} run?`,
+      description:
+        `${fmtPeriod(selected.periodStart, selected.periodEnd)} — its ${selected.itemCount} ` +
+        `paystub${selected.itemCount === 1 ? '' : 's'} will be removed. This can't be undone — but nothing ` +
+        `has been paid out, so you can re-run payroll for the correct period.`,
+      confirmLabel: 'Delete run',
+      destructive: true,
+      reasonLabel: 'Reason (optional)',
+      reasonPlaceholder: 'e.g. Created against the wrong pay period.',
+      required: false,
+    });
+    if (reason === null) return;
     setBusy(true);
     try {
-      await deletePayrollRun(selected.id);
+      await deletePayrollRun(selected.id, reason.trim() || undefined);
       toast.success('Run deleted.');
       setSelected(null);
       refresh();
@@ -357,11 +513,14 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     }
   };
 
-  const onRetryFailures = async () => {
+  // Retries all failed/held items when itemIds is omitted, or just the
+  // given items (single-item and per-reason-group retries in the failed
+  // payments card).
+  const onRetryFailures = async (itemIds?: string[]) => {
     if (!selected || busy) return;
     setBusy(true);
     try {
-      const result = await retryRunFailures(selected.id);
+      const result = await retryRunFailures(selected.id, itemIds);
       const updated = await getPayrollRun(selected.id);
       setSelected(updated);
       refresh();
@@ -431,6 +590,24 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     selected.disbursedAt !== null &&
     Date.now() - new Date(selected.disbursedAt).getTime() <
       VOID_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+  useEffect(() => {
+    setShowAllPaystubs(false);
+  }, [selected?.id]);
+
+  // One pass over the run's items for everything the drawer needs from
+  // them (held count + the visible page) — previously three inline
+  // filter/some passes per render over a possibly 1,000+ item array.
+  const paystubView = useMemo(() => {
+    const items = selected?.items ?? [];
+    let heldCount = 0;
+    for (const it of items) if (it.status === 'HELD') heldCount += 1;
+    const visible =
+      showAllPaystubs || items.length <= PAYSTUB_PAGE
+        ? items
+        : items.slice(0, PAYSTUB_PAGE);
+    return { heldCount, visible };
+  }, [selected?.items, showAllPaystubs]);
 
   // Amendments are allowed against any non-CANCELLED run that has items.
   // Server enforces the same; UI gates on canVoid because amend lives on
@@ -545,22 +722,62 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
           edge — feels like a deliberate rail instead of a free scroller. */}
       <div className="-mx-2 mb-5 flex gap-2 overflow-x-auto snap-x snap-mandatory px-2 pb-1 sm:mx-0 sm:flex-wrap sm:px-0 sm:pb-0 sm:snap-none">
         {STATUS_FILTERS.map((f) => (
-          <Button
+          <FilterChip
             key={f.value}
-            type="button"
-            size="xs"
-            variant="outline"
+            active={filter === f.value}
             onClick={() => setFilter(f.value)}
-            className={cn(
-              'shrink-0 snap-start sm:px-3 sm:text-sm',
-              filter === f.value &&
-                'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
-            )}
+            className="shrink-0 snap-start sm:px-3 sm:text-sm"
           >
             {f.label}
-          </Button>
+          </FilterChip>
         ))}
       </div>
+
+      {/* Bulk action bar — appears once any run is checked. Counts on the
+          buttons are the ELIGIBLE subset of the selection, mirroring the
+          drawer's per-run affordances. */}
+      {canProcess && bulkSelected.size > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-gold/30 bg-gold/5 px-3 py-2">
+          <span className="text-xs text-silver">
+            {bulkSelected.size} selected
+          </span>
+          <Button
+            size="xs"
+            variant="secondary"
+            onClick={() => runBulk('finalize')}
+            disabled={bulkBusy || bulkEligible.finalize.length === 0}
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Finalize ({bulkEligible.finalize.length})
+          </Button>
+          <Button
+            size="xs"
+            variant="secondary"
+            onClick={() => runBulk('approve')}
+            disabled={bulkBusy || bulkEligible.approve.length === 0}
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />
+            Approve ({bulkEligible.approve.length})
+          </Button>
+          <Button
+            size="xs"
+            variant="secondary"
+            onClick={() => runBulk('disburse')}
+            disabled={bulkBusy || bulkEligible.disburse.length === 0}
+          >
+            <Send className="h-3.5 w-3.5" />
+            Disburse ({bulkEligible.disburse.length})
+          </Button>
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => setBulkSelected(new Set())}
+            disabled={bulkBusy}
+          >
+            Clear
+          </Button>
+        </div>
+      )}
 
       {/* Wave 9 — runs presented as a sortable table. Clicking a row
           opens the detail drawer; columns mirror QBO's Run history list. */}
@@ -614,6 +831,26 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
+                      {canProcess && (
+                        <TableHead className="w-8">
+                          <input
+                            type="checkbox"
+                            aria-label="Select all runs"
+                            className="h-4 w-4 cursor-pointer accent-gold"
+                            checked={
+                              sortedRuns.length > 0 &&
+                              sortedRuns.every((r) => bulkSelected.has(r.id))
+                            }
+                            onChange={(e) =>
+                              setBulkSelected(
+                                e.target.checked
+                                  ? new Set(sortedRuns.map((r) => r.id))
+                                  : new Set(),
+                              )
+                            }
+                          />
+                        </TableHead>
+                      )}
                       <SortableTh
                         label="Period"
                         sortKey="periodEnd"
@@ -672,19 +909,36 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                           selected?.id === r.id && 'bg-gold/5'
                         )}
                       >
+                        {canProcess && (
+                          <TableCell
+                            className="w-8"
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
+                          >
+                            <input
+                              type="checkbox"
+                              aria-label={`Select run ${fmtPeriod(r.periodStart, r.periodEnd)}`}
+                              className="h-4 w-4 cursor-pointer accent-gold"
+                              checked={bulkSelected.has(r.id)}
+                              onChange={() => toggleBulk(r.id)}
+                            />
+                          </TableCell>
+                        )}
                         <TableCell>
                           <div className="text-white tabular-nums">
-                            {r.periodStart} → {r.periodEnd}
+                            {fmtPeriod(r.periodStart, r.periodEnd)}
                           </div>
                           {r.clientName && (
-                            <div className="text-[11px] text-silver/70 mt-0.5">
+                            <div className="text-xs2 text-silver/70 mt-0.5">
                               {r.clientName}
                             </div>
                           )}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <Badge variant={RUN_STATUS_VARIANT[r.status]}>{r.status}</Badge>
+                            <Badge variant={RUN_STATUS_VARIANT[r.status]}>
+                              {RUN_STATUS_LABELS[r.status]}
+                            </Badge>
                             {r.kind !== 'REGULAR' && <RunKindBadge kind={r.kind} />}
                           </div>
                         </TableCell>
@@ -723,10 +977,10 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0 flex-1">
                           <div className="text-sm text-white tabular-nums">
-                            {r.periodStart} → {r.periodEnd}
+                            {fmtPeriod(r.periodStart, r.periodEnd)}
                           </div>
                           {r.clientName && (
-                            <div className="text-[11px] text-silver/70 mt-0.5 truncate">
+                            <div className="text-xs2 text-silver/70 mt-0.5 truncate">
                               {r.clientName}
                             </div>
                           )}
@@ -734,19 +988,19 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                         <div className="flex items-center gap-1 shrink-0">
                           {r.kind !== 'REGULAR' && <RunKindBadge kind={r.kind} />}
                           <Badge variant={RUN_STATUS_VARIANT[r.status]}>
-                            {r.status}
+                            {RUN_STATUS_LABELS[r.status]}
                           </Badge>
                         </div>
                       </div>
                       <div className="mt-2 flex items-end justify-between gap-3">
-                        <div className="text-[11px] text-silver/70">
+                        <div className="text-xs2 text-silver/70">
                           {r.itemCount} paystub{r.itemCount === 1 ? '' : 's'} · gross{' '}
                           <span className="tabular-nums text-silver">
                             {fmtMoney(r.totalGross)}
                           </span>
                         </div>
                         <div className="text-right">
-                          <div className="text-[10px] uppercase tracking-widest text-silver/70">
+                          <div className="text-2xs uppercase tracking-widest text-silver/70">
                             Net
                           </div>
                           <div className="tabular-nums text-gold text-base">
@@ -774,11 +1028,11 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
           <>
             <DrawerHeader>
               <DrawerTitle>
-                {selected.periodStart} → {selected.periodEnd}
+                {fmtPeriod(selected.periodStart, selected.periodEnd)}
               </DrawerTitle>
               <DrawerDescription>
                 <Badge variant={RUN_STATUS_VARIANT[selected.status]}>
-                  {selected.status}
+                  {RUN_STATUS_LABELS[selected.status]}
                 </Badge>
                 <span className="ml-2 text-xs">
                   {selected.items.length} paystub{selected.items.length === 1 ? '' : 's'}
@@ -796,7 +1050,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     Run voided
                     {selected.cancelledAt && (
                       <span className="text-silver/70 font-normal">
-                        — {new Date(selected.cancelledAt).toLocaleString()}
+                        — {fmtDateTime(selected.cancelledAt)}
                       </span>
                     )}
                   </div>
@@ -854,7 +1108,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               {selected.approvedAt && (
                 <div className="mb-4 flex items-center gap-2 rounded border border-success/30 bg-success/5 p-2.5 text-xs text-success">
                   <ShieldCheck className="h-4 w-4" />
-                  Approved {new Date(selected.approvedAt).toLocaleString()}
+                  Approved {fmtDateTime(selected.approvedAt)}
                   {selected.approverEmail ? ` by ${selected.approverEmail}` : ''}
                 </div>
               )}
@@ -871,6 +1125,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               {selected.status === 'DRAFT' && canProcess && (
                 <DraftAddOnsSection
                   runId={selected.id}
+                  runItems={selected.items}
                   onChanged={async () => {
                     const updated = await getPayrollRun(selected.id);
                     setSelected(updated);
@@ -941,36 +1196,42 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               {selected.items.length > 0 && (
                 <div>
                   <div className="flex items-center justify-between mb-2">
-                    <div className="text-[10px] uppercase tracking-widest text-silver/70">
+                    <div className="text-2xs uppercase tracking-widest text-silver/70">
                       Paystubs ({selected.items.length})
                     </div>
-                    {selected.items.some((it) => it.status === 'HELD') && (
-                      <Badge variant="destructive" className="text-[10px]">
-                        {selected.items.filter((it) => it.status === 'HELD').length} held
+                    {paystubView.heldCount > 0 && (
+                      <Badge variant="destructive" className="text-2xs">
+                        {paystubView.heldCount} held
                       </Badge>
                     )}
                   </div>
                   <ul className="space-y-1.5">
-                    {selected.items.map((it) => (
+                    {paystubView.visible.map((it) => (
                       <PaystubAdminCard
                         key={it.id}
                         item={it}
                         canProcess={canProcess}
-                        onEnrollBranch={() =>
-                          setEnrollFor({
-                            id: it.associateId,
-                            name: it.associateName,
-                          })
-                        }
+                        onEnrollBranch={openEnrollBranch}
                       />
                     ))}
                   </ul>
+                  {paystubView.visible.length < selected.items.length && (
+                    <div className="mt-2 flex justify-center">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setShowAllPaystubs(true)}
+                      >
+                        Show all {selected.items.length}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
 
               {(selected.qboJournalEntryId || selected.qboSyncError) && (
                 <div className="mt-5 rounded border border-silver/15 bg-black/30 p-3 text-xs">
-                  <div className="flex items-center gap-2 text-[10px] uppercase tracking-widest text-silver/70 mb-1.5">
+                  <div className="flex items-center gap-2 text-2xs uppercase tracking-widest text-silver/70 mb-1.5">
                     <LinkIcon className="h-3 w-3" />
                     QuickBooks sync
                   </div>
@@ -981,7 +1242,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                         {selected.qboJournalEntryId}
                       </span>
                       {selected.qboSyncedAt && (
-                        <> — synced {new Date(selected.qboSyncedAt).toLocaleString()}</>
+                        <> — synced {fmtDateTime(selected.qboSyncedAt)}</>
                       )}
                     </div>
                   )}
@@ -1007,16 +1268,29 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     Approve
                   </Button>
                 )}
-                {selected.status === 'FINALIZED' && (
-                  <Button
-                    variant="primary"
-                    onClick={() => setConfirmDisburse(true)}
-                    disabled={busy}
-                  >
-                    <Send className="h-4 w-4" />
-                    Disburse
-                  </Button>
-                )}
+                {selected.status === 'FINALIZED' &&
+                  (requireSecondApproval && !selected.approvedAt ? (
+                    // Honesty gate — the server would 409 the disbursement
+                    // anyway; don't let the admin walk the whole ceremony
+                    // into it. The Approve button renders right beside this.
+                    <Button
+                      variant="primary"
+                      disabled
+                      title="Needs a second approval first"
+                    >
+                      <Send className="h-4 w-4" />
+                      Needs a second approval first
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="primary"
+                      onClick={() => setConfirmDisburse(true)}
+                      disabled={busy}
+                    >
+                      <Send className="h-4 w-4" />
+                      Disburse
+                    </Button>
+                  ))}
                 {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
                   selected.items.length > 0 && (
                     <Button asChild variant="secondary">
@@ -1044,8 +1318,8 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   </Button>
                 )}
                 {(selected.status === 'FINALIZED' || selected.status === 'DISBURSED') &&
-                  selected.items.some((it) => it.status === 'HELD') && (
-                    <Button variant="secondary" onClick={onRetryFailures} loading={busy}>
+                  paystubView.heldCount > 0 && (
+                    <Button variant="secondary" onClick={() => onRetryFailures()} loading={busy}>
                       <RotateCw className="h-4 w-4" />
                       Retry failed disbursements
                     </Button>
@@ -1114,17 +1388,17 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   numbers anchor the ceremony. */}
               <div className="bg-navy-secondary/30 border-r border-navy-secondary border-l-2 border-l-gold/60 p-6 md:p-8 flex flex-col gap-6">
                 <div>
-                  <div className="text-[10px] uppercase tracking-widest text-gold inline-flex items-center gap-1.5">
+                  <div className="text-2xs uppercase tracking-widest text-gold inline-flex items-center gap-1.5">
                     <Send className="h-3 w-3" aria-hidden="true" />
                     {busy ? 'Processing payouts' : 'Ready to disburse'}
                   </div>
-                  <div className="text-[11px] text-silver tabular-nums mt-2">
-                    {selected.periodStart} → {selected.periodEnd}
+                  <div className="text-xs2 text-silver tabular-nums mt-2">
+                    {fmtPeriod(selected.periodStart, selected.periodEnd)}
                   </div>
                 </div>
 
                 <div>
-                  <div className="text-[10px] uppercase tracking-widest text-silver">
+                  <div className="text-2xs uppercase tracking-widest text-silver">
                     Net to associates
                   </div>
                   <div className="font-display text-4xl md:text-5xl text-gold-bright leading-none tabular-nums mt-2">
@@ -1141,7 +1415,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
 
                 <div className="grid grid-cols-2 gap-3 text-sm pt-2 mt-auto border-t border-navy-secondary">
                   <div className="pt-3">
-                    <div className="text-[10px] uppercase tracking-widest text-silver">
+                    <div className="text-2xs uppercase tracking-widest text-silver">
                       Gross
                     </div>
                     <div className="font-display text-xl text-white tabular-nums mt-1">
@@ -1149,7 +1423,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                     </div>
                   </div>
                   <div className="pt-3">
-                    <div className="text-[10px] uppercase tracking-widest text-silver">
+                    <div className="text-2xs uppercase tracking-widest text-silver">
                       Tax withheld
                     </div>
                     <div className="font-display text-xl text-white tabular-nums mt-1">
@@ -1215,7 +1489,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
               <p>
                 Finalizing locks the projection for{' '}
                 <span className="text-white">
-                  {selected.periodStart} → {selected.periodEnd}
+                  {fmtPeriod(selected.periodStart, selected.periodEnd)}
                 </span>{' '}
                 — {selected.itemCount} paystub{selected.itemCount === 1 ? '' : 's'},{' '}
                 {fmtMoney(selected.totalNet)} net. You can still disburse, approve, or
@@ -1407,19 +1681,19 @@ function PayrollHero({
         {nr ? (
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-gold mb-1.5">
+              <div className="flex items-center gap-2 text-xs2 uppercase tracking-widest text-gold mb-1.5">
                 <CalendarDays className="h-3.5 w-3.5" />
                 {isResume ? 'Resume in-progress run' : 'Next pay date'}
               </div>
               <div className="text-2xl text-white font-medium tabular-nums">
-                {fmtPayDate(nr.payDate)}
+                {fmtDate(parseYmd(nr.payDate))}
               </div>
               <div className="text-xs text-silver/70 mt-1">
                 {nr.scheduleName} · {nr.frequency.toLowerCase()} ·{' '}
-                {nr.periodStart} → {nr.periodEnd}
+                {fmtPeriod(nr.periodStart, nr.periodEnd)}
                 {nr.clientName ? ` · ${nr.clientName}` : ''}
               </div>
-              <div className="mt-4 grid grid-cols-3 gap-2 sm:gap-3 text-xs">
+              <div className="mt-4 grid grid-cols-1 min-[420px]:grid-cols-3 gap-2 sm:gap-3 text-xs">
                 <HeroStat
                   icon={<Users className="h-3.5 w-3.5" />}
                   label="Paystubs"
@@ -1438,7 +1712,7 @@ function PayrollHero({
               {nr.totalExceptions > 0 && (
                 <div
                   className={cn(
-                    'mt-3 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]',
+                    'mt-3 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs2',
                     nr.blockingExceptions > 0
                       ? 'border-alert/40 bg-alert/5 text-alert'
                       : 'border-warning/30 bg-warning/5 text-warning'
@@ -1471,7 +1745,7 @@ function PayrollHero({
 
       {/* Last run snapshot. */}
       <div className="rounded-lg border border-silver/15 bg-black/30 p-5">
-        <div className="flex items-center gap-2 text-[11px] uppercase tracking-widest text-silver/70 mb-1.5">
+        <div className="flex items-center gap-2 text-xs2 uppercase tracking-widest text-silver/70 mb-1.5">
           <FileText className="h-3.5 w-3.5" />
           Last run
         </div>
@@ -1482,16 +1756,18 @@ function PayrollHero({
             className="block text-left w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
           >
             <div className="text-base text-white tabular-nums">
-              {lr.periodStart} → {lr.periodEnd}
+              {fmtPeriod(lr.periodStart, lr.periodEnd)}
             </div>
             <div className="mt-1.5 flex items-center gap-2">
-              <Badge variant={RUN_STATUS_VARIANT[lr.status]}>{lr.status}</Badge>
+              <Badge variant={RUN_STATUS_VARIANT[lr.status]}>
+                {RUN_STATUS_LABELS[lr.status]}
+              </Badge>
               <span className="text-xs text-silver/70">
                 {lr.itemCount} paystub{lr.itemCount === 1 ? '' : 's'}
               </span>
             </div>
             <div className="mt-3">
-              <div className="text-[11px] uppercase tracking-widest text-silver/70">Net paid</div>
+              <div className="text-xs2 uppercase tracking-widest text-silver/70">Net paid</div>
               <div className="tabular-nums text-gold mt-0.5">{fmtMoney(lr.totalNet)}</div>
             </div>
           </button>
@@ -1561,7 +1837,7 @@ function SortableTh({
         type="button"
         onClick={() => onClick(sortKey)}
         className={cn(
-          'inline-flex items-center gap-1 text-[10px] uppercase tracking-widest transition-colors',
+          'inline-flex items-center gap-1 text-2xs uppercase tracking-widest transition-colors',
           'focus:outline-none focus-visible:text-gold',
           isActive ? 'text-gold' : 'text-silver/70 hover:text-silver'
         )}
@@ -1630,7 +1906,7 @@ function RunStatusStepper({
             <div className="flex flex-col items-center min-w-0">
               <span
                 className={cn(
-                  'inline-flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-medium transition-colors',
+                  'inline-flex h-6 w-6 items-center justify-center rounded-full text-2xs font-medium transition-colors',
                   reached ? 'bg-gold text-navy' : 'bg-silver/10 text-silver/70',
                   current && 'ring-2 ring-gold/30 ring-offset-2 ring-offset-navy'
                 )}
@@ -1639,7 +1915,7 @@ function RunStatusStepper({
               </span>
               <span
                 className={cn(
-                  'mt-1 text-[10px] uppercase tracking-widest text-center truncate max-w-[80px]',
+                  'mt-1 text-2xs uppercase tracking-widest text-center truncate max-w-[80px]',
                   reached ? 'text-silver' : 'text-silver/70'
                 )}
               >
@@ -1704,7 +1980,7 @@ function DrawerStat({
     <div className={cn('rounded border px-3 py-2', highlight ? 'border-gold/40 bg-gold/5' : 'border-silver/15 bg-black/30')}>
       <div
         className={cn(
-          'text-[10px] uppercase tracking-widest',
+          'text-2xs uppercase tracking-widest',
           highlight ? 'text-gold' : 'text-silver/70'
         )}
         title={hint}
@@ -1737,18 +2013,38 @@ const ADD_ON_KINDS: { value: RunAddOnKind; label: string }[] = [
 
 function DraftAddOnsSection({
   runId,
+  runItems,
   onChanged,
 }: {
   runId: string;
+  runItems: import('@alto-people/shared').PayrollItem[];
   onChanged: () => Promise<void> | void;
 }) {
   const [addOns, setAddOns] = useState<RunAddOn[] | null>(null);
   const [open, setOpen] = useState(false);
-  const [assoc, setAssoc] = useState<{ id: string; name: string } | null>(null);
+  // Multi-associate: chips accumulate via repeated pick-and-add; the
+  // "everyone" toggle instead targets every associate in the run.
+  const [assocs, setAssocs] = useState<PickedAssociate[]>([]);
+  const [everyone, setEveryone] = useState(false);
   const [kind, setKind] = useState<RunAddOnKind>('BONUS');
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // Unique associates in this run (a run has one item per associate, but
+  // dedupe defensively for amendment edge cases).
+  const runAssociates = useMemo(() => {
+    const seen = new Map<string, PickedAssociate>();
+    for (const it of runItems) {
+      if (!seen.has(it.associateId)) {
+        seen.set(it.associateId, {
+          id: it.associateId,
+          name: it.associateName ?? 'Unnamed associate',
+        });
+      }
+    }
+    return [...seen.values()];
+  }, [runItems]);
 
   const load = useCallback(() => {
     listRunAddOns(runId)
@@ -1759,24 +2055,50 @@ function DraftAddOnsSection({
 
   const submit = async () => {
     const amt = Number(amount);
-    if (!assoc || !Number.isFinite(amt) || amt <= 0) {
-      toast.error('Pick an associate and a positive amount.');
+    const targets = everyone ? runAssociates : assocs;
+    if (targets.length === 0 || !Number.isFinite(amt) || amt <= 0) {
+      toast.error('Pick at least one associate and a positive amount.');
       return;
     }
     setBusy(true);
-    try {
-      await addRunAddOn(runId, { associateId: assoc.id, kind, amount: amt, note: note.trim() || null });
-      toast.success('Earning line added.');
-      setAssoc(null);
+    // Sequential on purpose — each add re-aggregates the run server-side;
+    // parallel writes would race. One refresh at the end, not per line.
+    let added = 0;
+    const failures: string[] = [];
+    for (const a of targets) {
+      try {
+        await addRunAddOn(runId, {
+          associateId: a.id,
+          kind,
+          amount: amt,
+          note: note.trim() || null,
+        });
+        added += 1;
+      } catch {
+        failures.push(a.name);
+      }
+    }
+    load();
+    await onChanged();
+    setBusy(false);
+    const kindLabel =
+      ADD_ON_KINDS.find((k) => k.value === kind)?.label.toLowerCase() ?? kind.toLowerCase();
+    if (failures.length === 0) {
+      toast.success(
+        `Added ${kindLabel} for ${added} associate${added === 1 ? '' : 's'}.`,
+      );
+      setAssocs([]);
+      setEveryone(false);
       setAmount('');
       setNote('');
       setOpen(false);
-      load();
-      await onChanged();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to add earning line.');
-    } finally {
-      setBusy(false);
+    } else {
+      // Keep the form open so HR can retry the stragglers.
+      toast.error(
+        `Added for ${added} of ${targets.length} — failed: ${failures.slice(0, 3).join(', ')}` +
+          (failures.length > 3 ? ` +${failures.length - 3} more` : '') +
+          '.',
+      );
     }
   };
 
@@ -1835,7 +2157,61 @@ function DraftAddOnsSection({
 
       {open && (
         <div className="space-y-2 border-t border-navy-secondary pt-2">
-          <AssociatePicker value={assoc} onChange={setAssoc} />
+          <label className="flex items-center gap-2 text-sm text-silver cursor-pointer">
+            <input
+              type="checkbox"
+              className="h-4 w-4 cursor-pointer accent-gold"
+              checked={everyone}
+              onChange={(e) => setEveryone(e.target.checked)}
+              disabled={busy}
+            />
+            Everyone in this run ({runAssociates.length})
+          </label>
+          {!everyone && (
+            <>
+              {assocs.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {assocs.map((a) => (
+                    <span
+                      key={a.id}
+                      className="inline-flex items-center gap-1 rounded-full border border-gold/30 bg-gold/10 px-2 py-0.5 text-xs text-white"
+                    >
+                      {a.name}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setAssocs((prev) => prev.filter((x) => x.id !== a.id))
+                        }
+                        disabled={busy}
+                        className="text-silver/60 hover:text-alert"
+                        aria-label={`Remove ${a.name}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {/* key remounts the picker after each add so its search term
+                  clears and the next pick starts fresh. */}
+              <AssociatePicker
+                key={assocs.length}
+                value={null}
+                onChange={(v) => {
+                  if (v) {
+                    setAssocs((prev) =>
+                      prev.some((x) => x.id === v.id) ? prev : [...prev, v],
+                    );
+                  }
+                }}
+                placeholder={
+                  assocs.length === 0
+                    ? 'Search associate…'
+                    : 'Add another associate…'
+                }
+              />
+            </>
+          )}
           <div className="flex gap-2">
             <Select
               className="flex-1"
@@ -1859,23 +2235,26 @@ function DraftAddOnsSection({
               className="w-32"
             />
           </div>
+          <p className="text-xs text-silver/70">
+            Bonuses and commissions are supplemental wages — federal income tax
+            withholds at the flat 22% supplemental rate.
+          </p>
           <Input
             placeholder="Note (optional) — e.g. Q3 performance bonus"
             value={note}
             onChange={(e) => setNote(e.target.value)}
             maxLength={200}
           />
-          {(kind === 'BONUS' || kind === 'COMMISSION') && (
-            <p className="text-xs text-silver/70">
-              Supplemental wages — federal income tax withholds at the flat 22% rate.
-            </p>
-          )}
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
               Cancel
             </Button>
             <Button size="sm" onClick={submit} loading={busy} disabled={busy}>
-              Add
+              {everyone
+                ? `Add for all (${runAssociates.length})`
+                : assocs.length > 1
+                  ? `Add (${assocs.length})`
+                  : 'Add'}
             </Button>
           </div>
         </div>
@@ -1901,11 +2280,29 @@ function FailedPaymentsSummary({
 }: {
   items: import('@alto-people/shared').PayrollItem[];
   canProcess: boolean;
-  onRetry: () => void;
+  /** Omit itemIds to retry everything failed/held in the run. */
+  onRetry: (itemIds?: string[]) => void | Promise<void>;
   busy: boolean;
 }) {
-  const failed = items.filter((it) => it.status === 'HELD' || it.status === 'FAILED');
+  // One memoized pass — on a 1,000+ item run these ran in the render
+  // body on every parent re-render (each keystroke/toggle in the drawer).
+  const { failed, groups } = useMemo(() => {
+    const failed = items.filter(
+      (it) => it.status === 'HELD' || it.status === 'FAILED',
+    );
+    // Group by failure reason so five identical "no_payout_rail" rows read
+    // as one problem, not five. Map preserves first-seen order.
+    const groups = new Map<string, typeof failed>();
+    for (const it of failed) {
+      const key = it.failureReason ?? 'Held by HR';
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(it);
+      else groups.set(key, [it]);
+    }
+    return { failed, groups };
+  }, [items]);
   if (failed.length === 0) return null;
+
   return (
     <Card className="mb-4 border-alert/40 bg-alert/5">
       <CardHeader className="pb-2">
@@ -1914,43 +2311,83 @@ function FailedPaymentsSummary({
           {failed.length} payment{failed.length === 1 ? '' : 's'} need attention
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-1.5">
-        <ul className="space-y-1">
-          {failed.map((it) => (
-            <li
-              key={it.id}
-              className="flex items-start justify-between gap-3 text-sm rounded border border-alert/20 bg-black/30 px-2.5 py-1.5"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="text-white truncate">
-                  {it.associateName ? (
-                    <Link
-                      to={`/people?associateId=${it.associateId}`}
-                      className="hover:text-gold-bright"
-                      title="Open this associate's record"
-                    >
-                      {it.associateName}
-                    </Link>
-                  ) : (
-                    '—'
-                  )}
-                </div>
-                <div className="text-[11px] text-silver/70">
-                  {it.failureReason ?? 'Held by HR'}
-                </div>
+      <CardContent className="space-y-3">
+        {[...groups.entries()].map(([reason, group]) => (
+          <div key={reason}>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <div className="min-w-0 flex items-center gap-1.5 text-xs2 text-silver">
+                <span className="truncate" title={reason}>
+                  {reason}
+                </span>
+                <Badge variant="destructive" className="text-2xs shrink-0">
+                  {group.length}
+                </Badge>
               </div>
-              <div className="text-right shrink-0">
-                <div className="tabular-nums text-gold">{fmtMoney(it.netPay)}</div>
-                <div className="text-[10px] uppercase tracking-widest text-alert/80">
-                  {it.status}
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
+              {canProcess && (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  onClick={() => onRetry(group.map((it) => it.id))}
+                  disabled={busy}
+                  className="shrink-0"
+                >
+                  <RotateCw className="h-3 w-3" />
+                  Retry these ({group.length})
+                </Button>
+              )}
+            </div>
+            {reason.startsWith('no_payout_rail') && (
+              <p className="mb-1 text-xs2 text-warning">
+                Retrying will fail again until a payout method exists — fix
+                enrollment/bank first.
+              </p>
+            )}
+            <ul className="space-y-1">
+              {group.map((it) => (
+                <li
+                  key={it.id}
+                  className="flex items-start justify-between gap-3 text-sm rounded border border-alert/20 bg-black/30 px-2.5 py-1.5"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="text-white truncate">
+                      {it.associateName ? (
+                        <Link
+                          to={`/people?associateId=${it.associateId}`}
+                          className="hover:text-gold-bright"
+                          title="Open this associate's record"
+                        >
+                          {it.associateName}
+                        </Link>
+                      ) : (
+                        '—'
+                      )}
+                    </div>
+                    <div className="text-2xs uppercase tracking-widest text-alert/80">
+                      {PAYSTUB_STATUS_LABELS[it.status] ?? it.status}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="tabular-nums text-gold">{fmtMoney(it.netPay)}</div>
+                    {canProcess && (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => onRetry([it.id])}
+                        disabled={busy}
+                      >
+                        <RotateCw className="h-3 w-3" />
+                        Retry
+                      </Button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
         {canProcess && (
           <div className="pt-1">
-            <Button variant="secondary" size="sm" onClick={onRetry} loading={busy}>
+            <Button variant="secondary" size="sm" onClick={() => onRetry()} loading={busy}>
               <RotateCw className="h-3.5 w-3.5" />
               Retry failed disbursements
             </Button>
@@ -1979,14 +2416,23 @@ const PAYSTUB_STATUS_VARIANT: Record<
   HELD: 'pending',
 };
 
-function PaystubAdminCard({
+const PAYSTUB_STATUS_LABELS: Record<string, string> = {
+  PENDING: 'Pending',
+  DISBURSED: 'Disbursed',
+  FAILED: 'Failed',
+  HELD: 'Held',
+  VOIDED: 'Voided',
+};
+
+const PaystubAdminCard = memo(function PaystubAdminCard({
   item,
   canProcess,
   onEnrollBranch,
 }: {
   item: import('@alto-people/shared').PayrollItem;
   canProcess: boolean;
-  onEnrollBranch: () => void;
+  /** Stable callback (item identity passed as args) so memo() holds. */
+  onEnrollBranch: (associateId: string, associateName: string | null) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const totalTax =
@@ -2017,25 +2463,25 @@ function PaystubAdminCard({
             <div className="text-sm text-white truncate">
               {item.associateName ?? '—'}
             </div>
-            <div className="text-[11px] text-silver/70 truncate">
+            <div className="text-xs2 text-silver/70 truncate">
               {item.hoursWorked.toFixed(2)} hrs · {fmtMoney(item.hourlyRate)}/hr
               {item.taxState ? ` · ${item.taxState}` : ''}
             </div>
           </div>
           <Badge
             variant={PAYSTUB_STATUS_VARIANT[item.status] ?? 'default'}
-            className="text-[10px] shrink-0"
+            className="text-2xs shrink-0"
           >
-            {item.status}
+            {PAYSTUB_STATUS_LABELS[item.status] ?? item.status}
           </Badge>
         </div>
         <div className="text-right shrink-0">
-          <div className="text-[10px] uppercase tracking-widest text-silver/70">Net</div>
+          <div className="text-2xs uppercase tracking-widest text-silver/70">Net</div>
           <div className="tabular-nums text-gold">{fmtMoney(item.netPay)}</div>
         </div>
       </button>
       {expanded && (
-        <div className="border-t border-silver/10 px-3 py-3 text-[11px] space-y-3">
+        <div className="border-t border-silver/10 px-3 py-3 text-xs2 space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
               <DrillRow label="Gross pay" value={fmtMoney(item.grossPay)} />
@@ -2067,7 +2513,7 @@ function PaystubAdminCard({
               <DrillRow label="Net pay" value={fmtMoney(item.netPay)} bold accent />
             </div>
             <div className="space-y-1">
-              <div className="text-[10px] uppercase tracking-widest text-silver/70 mb-1">
+              <div className="text-2xs uppercase tracking-widest text-silver/70 mb-1">
                 Employer cost
               </div>
               <DrillRow
@@ -2100,7 +2546,7 @@ function PaystubAdminCard({
                 )}
                 bold
               />
-              <div className="text-[10px] uppercase tracking-widest text-silver/70 mt-3 mb-1">
+              <div className="text-2xs uppercase tracking-widest text-silver/70 mt-3 mb-1">
                 YTD (before this run)
               </div>
               <DrillRow
@@ -2134,7 +2580,7 @@ function PaystubAdminCard({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onEnrollBranch();
+                  onEnrollBranch(item.associateId, item.associateName ?? null);
                 }}
                 className="inline-flex items-center gap-1.5 text-xs text-silver/70 hover:text-gold focus:outline-none focus-visible:text-gold"
               >
@@ -2147,7 +2593,7 @@ function PaystubAdminCard({
       )}
     </li>
   );
-}
+});
 
 function DrillRow({
   label,
@@ -2191,7 +2637,7 @@ function HeroStat({
 }) {
   return (
     <div>
-      <div className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-silver/70">
+      <div className="flex items-center gap-1 text-2xs uppercase tracking-widest text-silver/70">
         {icon}
         {label}
       </div>
@@ -2202,15 +2648,4 @@ function HeroStat({
   );
 }
 
-/** "2026-04-30" → "Thu, Apr 30". UTC parsing avoids tz drift. */
-function fmtPayDate(ymd: string): string {
-  const [y, m, d] = ymd.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  return dt.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-  });
-}
 

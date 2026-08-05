@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronDown, Download, FileText, Plus, Receipt, Scale } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   build940,
   build941,
+  bulkFileTaxForms,
+  bulkSendTaxFormCopies,
   createGarnishment,
   createTaxForm,
   createW2c,
@@ -43,7 +45,10 @@ import {
   type SubmitterProfileInput,
   type TaxForm,
   type TaxFormKind,
+  type TaxFormStatus,
 } from '@/lib/payrollTax91Api';
+import { useClients } from '@/lib/useClients';
+import type { ClientSummary } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
@@ -66,6 +71,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
@@ -83,7 +89,7 @@ import {
   Textarea,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtMoney } from '@/lib/format';
 import { toast } from 'sonner';
 
 type Tab = 'garnishments' | 'taxforms';
@@ -132,6 +138,13 @@ const GARN_BADGE: Record<GarnishmentStatus, 'success' | 'pending' | 'default' | 
   TERMINATED: 'destructive',
 };
 
+const GARN_STATUS_LABEL: Record<GarnishmentStatus, string> = {
+  ACTIVE: 'Active',
+  SUSPENDED: 'Suspended',
+  COMPLETED: 'Completed',
+  TERMINATED: 'Terminated',
+};
+
 const GARN_KIND_LABEL: Record<GarnishmentKind, string> = {
   CHILD_SUPPORT: 'Child support',
   TAX_LEVY: 'Tax levy',
@@ -142,27 +155,46 @@ const GARN_KIND_LABEL: Record<GarnishmentKind, string> = {
 };
 
 function GarnishmentsTab({ canManage }: { canManage: boolean }) {
+  const confirm = useConfirm();
   const [rows, setRows] = useState<Garnishment[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [historyTarget, setHistoryTarget] = useState<Garnishment | null>(null);
   const [deductTarget, setDeductTarget] = useState<Garnishment | null>(null);
 
   const refresh = () => {
     setRows(null);
+    setLoadError(null);
     listGarnishments()
       .then((r) => setRows(r.garnishments))
       .catch((err) => {
-        setRows([]);
-        toast.error(err instanceof ApiError ? err.message : "Couldn't load garnishments.");
+        setLoadError(
+          err instanceof ApiError ? err.message : "Couldn't load garnishments.",
+        );
       });
   };
   useEffect(() => {
     refresh();
   }, []);
 
-  const onStatus = async (id: string, status: GarnishmentStatus) => {
+  const onStatus = async (g: Garnishment, status: GarnishmentStatus) => {
+    if (status === g.status) return;
+    const nextLabel = GARN_STATUS_LABEL[status];
+    const ok = await confirm({
+      title: `Change status to ${nextLabel.toLowerCase()}?`,
+      description:
+        `${g.associateName}'s garnishment moves from ${GARN_STATUS_LABEL[g.status].toLowerCase()} to ${nextLabel.toLowerCase()}. ` +
+        'The change takes effect immediately and is recorded.' +
+        (status === 'TERMINATED'
+          ? ' Terminated garnishments stop withholding entirely.'
+          : ''),
+      confirmLabel: `Change to ${nextLabel.toLowerCase()}`,
+      destructive: status === 'TERMINATED',
+    });
+    if (!ok) return; // controlled select re-renders back to g.status
     try {
-      await setGarnishmentStatus(id, status);
+      await setGarnishmentStatus(g.id, status);
+      toast.success(`Garnishment status changed to ${nextLabel.toLowerCase()}.`);
       refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Couldn't update garnishment status. Try again.");
@@ -180,7 +212,19 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
       )}
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {loadError}
+              </ErrorBanner>
+            </div>
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -194,8 +238,8 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
                 <TableRow>
                   <TableHead>Associate</TableHead>
                   <TableHead className="hidden md:table-cell">Kind</TableHead>
-                  <TableHead className="hidden sm:table-cell">Withhold</TableHead>
-                  <TableHead className="hidden lg:table-cell">Cap / progress</TableHead>
+                  <TableHead className="hidden sm:table-cell text-right">Withhold</TableHead>
+                  <TableHead className="hidden lg:table-cell text-right">Cap / progress</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -206,11 +250,11 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
                         <div className="truncate">{g.associateName}</div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                        <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                           {GARN_KIND_LABEL[g.kind]}
                           <span className="sm:hidden">
                             {g.amountPerRun
-                              ? ` · $${g.amountPerRun}/run`
+                              ? ` · ${fmtMoney(g.amountPerRun)}/run`
                               : g.percentOfDisp
                                 ? ` · ${(Number(g.percentOfDisp) * 100).toFixed(2)}% of disp.`
                                 : ''}
@@ -219,20 +263,22 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{GARN_KIND_LABEL[g.kind]}</TableCell>
-                    <TableCell className="hidden sm:table-cell">
+                    <TableCell className="hidden sm:table-cell text-right tabular-nums">
                       {g.amountPerRun
-                        ? `$${g.amountPerRun}/run`
+                        ? `${fmtMoney(g.amountPerRun)}/run`
                         : g.percentOfDisp
                           ? `${(Number(g.percentOfDisp) * 100).toFixed(2)}% of disp.`
                           : '—'}
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell">
+                    <TableCell className="hidden lg:table-cell text-right tabular-nums">
                       {g.totalCap
-                        ? `$${g.amountWithheld} / $${g.totalCap}`
-                        : `$${g.amountWithheld}`}
+                        ? `${fmtMoney(g.amountWithheld)} / ${fmtMoney(g.totalCap)}`
+                        : fmtMoney(g.amountWithheld)}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={GARN_BADGE[g.status]}>{g.status}</Badge>
+                      <Badge variant={GARN_BADGE[g.status]}>
+                        {GARN_STATUS_LABEL[g.status]}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
@@ -267,11 +313,11 @@ function GarnishmentsTab({ canManage }: { canManage: boolean }) {
                           <Select
                             size="sm"
                             value={g.status}
-                            onChange={(e) => onStatus(g.id, e.target.value as GarnishmentStatus)}
+                            onChange={(e) => onStatus(g, e.target.value as GarnishmentStatus)}
                           >
-                            <option value="ACTIVE">ACTIVE</option>
-                            <option value="SUSPENDED">SUSPENDED</option>
-                            <option value="TERMINATED">TERMINATED</option>
+                            <option value="ACTIVE">{GARN_STATUS_LABEL.ACTIVE}</option>
+                            <option value="SUSPENDED">{GARN_STATUS_LABEL.SUSPENDED}</option>
+                            <option value="TERMINATED">{GARN_STATUS_LABEL.TERMINATED}</option>
                           </Select>
                         )}
                       </div>
@@ -530,10 +576,10 @@ function GarnishmentHistoryDrawer({
         <div className="space-y-3 text-sm">
           <div className="text-xs text-silver/70">
             {GARN_KIND_LABEL[garnishment.kind]} · case {garnishment.caseNumber ?? '—'} ·
-            withheld ${garnishment.amountWithheld}
-            {garnishment.totalCap && <> of ${garnishment.totalCap}</>}
+            withheld {fmtMoney(garnishment.amountWithheld)}
+            {garnishment.totalCap && <> of {fmtMoney(garnishment.totalCap)}</>}
           </div>
-          {error && <div className="text-alert">{error}</div>}
+          {error && <ErrorBanner>{error}</ErrorBanner>}
           {rows === null && !error && <SkeletonRows count={4} />}
           {rows && rows.length === 0 && (
             <EmptyState
@@ -554,11 +600,13 @@ function GarnishmentHistoryDrawer({
               <TableBody>
                 {rows.map((d) => (
                   <TableRow key={d.id}>
-                    <TableCell>{new Date(d.deductedOn).toLocaleString()}</TableCell>
+                    <TableCell>{fmtDateTime(d.deductedOn)}</TableCell>
                     <TableCell className="text-xs text-silver/70">
                       {d.payrollRunId ? d.payrollRunId.slice(0, 8) : 'Manual'}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">${d.amount}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {fmtMoney(d.amount)}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -598,7 +646,7 @@ function GarnishmentManualDeductDrawer({
       const r = await deductGarnishment(garnishment.id, n, null);
       toast.success(
         r.completed
-          ? 'Deduction recorded. Garnishment cap reached → status COMPLETED.'
+          ? 'Deduction recorded — the cap is reached, so the garnishment is now completed.'
           : 'Deduction recorded.',
       );
       onSaved();
@@ -617,8 +665,8 @@ function GarnishmentManualDeductDrawer({
         <div className="space-y-3 text-sm">
           <p className="text-xs text-silver/70">
             Use this when a deduction needs to be recorded outside a payroll run (e.g.
-            retroactive correction). The garnishment's amountWithheld is incremented and the
-            status flips to COMPLETED if the cap is reached.
+            retroactive correction). The amount withheld is incremented and the garnishment
+            is marked completed if the cap is reached.
           </p>
           <Label htmlFor="manual-deduct-amount">Amount</Label>
           <Input
@@ -662,6 +710,13 @@ const FORM_STATUS_BADGE: Record<TaxForm['status'], 'pending' | 'success' | 'defa
   VOIDED: 'destructive',
 };
 
+const FORM_STATUS_LABEL: Record<TaxForm['status'], string> = {
+  DRAFT: 'Draft',
+  FILED: 'Filed',
+  AMENDED: 'Amended',
+  VOIDED: 'Voided',
+};
+
 /**
  * Five-step pipeline header. Each step is "done" once any row in the
  * current list reaches that stage. Helps cold-start operators understand
@@ -691,7 +746,7 @@ function TaxFormsWorkflowSteps({ rows }: { rows: TaxForm[] | null }) {
       key: 'file',
       label: '4. File',
       done: !!rows && rows.some((r) => r.status === 'FILED'),
-      hint: 'Mark forms FILED. Filed forms are immutable; corrections require a W-2c or 1099-MISC amendment.',
+      hint: 'Mark forms filed. Filed forms are immutable; corrections require a W-2c or 1099-MISC amendment.',
     },
     {
       key: 'distribute',
@@ -729,6 +784,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const prompt = usePrompt();
   const [rows, setRows] = useState<TaxForm[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [show941Builder, setShow941Builder] = useState(false);
   const [show940Builder, setShow940Builder] = useState(false);
@@ -736,19 +792,109 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   const [showF1099NecGenerate, setShowF1099NecGenerate] = useState(false);
   const [showF1099MiscGenerate, setShowF1099MiscGenerate] = useState(false);
   const [showSubmitter, setShowSubmitter] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [yearFilter, setYearFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | TaxFormStatus>('all');
+  const [kindFilter, setKindFilter] = useState<'all' | TaxFormKind>('all');
 
   const refresh = () => {
     setRows(null);
+    setLoadError(null);
+    setSelected(new Set());
     listTaxForms()
       .then((r) => setRows(r.forms))
       .catch((err) => {
-        setRows([]);
-        toast.error(err instanceof ApiError ? err.message : "Couldn't load tax forms.");
+        setLoadError(
+          err instanceof ApiError ? err.message : "Couldn't load tax forms.",
+        );
       });
   };
   useEffect(() => {
     refresh();
   }, []);
+
+  // Derived once per data load, not on every keystroke/filter re-render.
+  const years = useMemo(
+    () =>
+      rows
+        ? Array.from(new Set(rows.map((r) => r.taxYear))).sort((a, b) => b - a)
+        : [],
+    [rows],
+  );
+  const filtered = rows
+    ? rows.filter(
+        (f) =>
+          (yearFilter === 'all' || f.taxYear === Number(yearFilter)) &&
+          (statusFilter === 'all' || f.status === statusFilter) &&
+          (kindFilter === 'all' || f.kind === kindFilter),
+      )
+    : null;
+
+  const toggleRow = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const allVisibleSelected =
+    !!filtered && filtered.length > 0 && filtered.every((f) => selected.has(f.id));
+  const toggleAllVisible = () => {
+    if (!filtered) return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) filtered.forEach((f) => next.delete(f.id));
+      else filtered.forEach((f) => next.add(f.id));
+      return next;
+    });
+  };
+
+  /** "· 20 skipped (already filed)" — deduped reasons from the bulk endpoints. */
+  const skippedSummary = (skipped: { id: string; reason: string }[]) =>
+    skipped.length === 0
+      ? ''
+      : ` · ${skipped.length} skipped (${Array.from(new Set(skipped.map((s) => s.reason))).join('; ')})`;
+
+  const onBulkFile = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    const ok = await confirm({
+      title: `File ${ids.length} selected form${ids.length === 1 ? '' : 's'}?`,
+      description:
+        'Filing is recorded and filed forms are immutable. Forms that are already filed ' +
+        'or otherwise ineligible are skipped automatically — nothing is double-filed.',
+      confirmLabel: `File ${ids.length}`,
+    });
+    if (!ok) return;
+    setBulkBusy(true);
+    try {
+      const r = await bulkFileTaxForms(ids);
+      toast.success(`Filed ${r.filed}${skippedSummary(r.skipped)}.`);
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't file the selected forms. Try again.");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const onBulkSendCopies = async () => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    try {
+      const r = await bulkSendTaxFormCopies(ids);
+      toast.success(
+        `Sent ${r.sent} recipient cop${r.sent === 1 ? 'y' : 'ies'}${skippedSummary(r.skipped)}.`,
+      );
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't send the selected copies. Try again.");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   const onFile = async (id: string) => {
     if (!(await confirm({ title: 'File this form?', description: 'Filed forms are immutable.' }))) return;
@@ -825,7 +971,7 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
     <div className="space-y-4">
       <TaxFormsWorkflowSteps rows={rows} />
       {canManage && (
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <Button variant="ghost" onClick={() => setShowSubmitter(true)}>
             Submitter profile
           </Button>
@@ -854,9 +1000,103 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
           </Button>
         </div>
       )}
+      {rows !== null && rows.length > 0 && (
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <Label htmlFor="taxform-filter-year">Year</Label>
+            <Select
+              id="taxform-filter-year"
+              size="sm"
+              className="mt-1"
+              value={yearFilter}
+              onChange={(e) => setYearFilter(e.target.value)}
+            >
+              <option value="all">All years</option>
+              {years.map((y) => (
+                <option key={y} value={String(y)}>
+                  {y}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="taxform-filter-status">Status</Label>
+            <Select
+              id="taxform-filter-status"
+              size="sm"
+              className="mt-1"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as 'all' | TaxFormStatus)}
+            >
+              <option value="all">All statuses</option>
+              {(Object.keys(FORM_STATUS_LABEL) as TaxFormStatus[]).map((s) => (
+                <option key={s} value={s}>
+                  {FORM_STATUS_LABEL[s]}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="taxform-filter-kind">Kind</Label>
+            <Select
+              id="taxform-filter-kind"
+              size="sm"
+              className="mt-1"
+              value={kindFilter}
+              onChange={(e) => setKindFilter(e.target.value as 'all' | TaxFormKind)}
+            >
+              <option value="all">All kinds</option>
+              {(Object.keys(FORM_KIND_LABEL) as TaxFormKind[]).map((k) => (
+                <option key={k} value={k}>
+                  {FORM_KIND_LABEL[k]}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
+      )}
+      {canManage && selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-navy-secondary bg-navy-secondary/40 p-2">
+          <span className="text-sm text-white">
+            {selected.size} selected
+          </span>
+          <Button size="sm" onClick={onBulkFile} loading={bulkBusy} disabled={bulkBusy}>
+            File selected ({selected.size})
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={onBulkSendCopies}
+            loading={bulkBusy}
+            disabled={bulkBusy}
+          >
+            Send copies ({selected.size})
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setSelected(new Set())}
+            disabled={bulkBusy}
+          >
+            Clear selection
+          </Button>
+        </div>
+      )}
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <div className="p-6">
+              <ErrorBanner
+                action={
+                  <Button size="sm" variant="secondary" onClick={refresh}>
+                    Retry
+                  </Button>
+                }
+              >
+                {loadError}
+              </ErrorBanner>
+            </div>
+          ) : rows === null || filtered === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
@@ -864,10 +1104,25 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
               title="No tax forms"
               description="Drafted and filed federal tax forms appear here."
             />
+          ) : filtered.length === 0 ? (
+            <div className="p-6 text-sm text-silver">
+              No forms match the current filters.
+            </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
+                  {canManage && (
+                    <TableHead className="w-8">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 align-middle"
+                        aria-label="Select all visible forms"
+                        checked={allVisibleSelected}
+                        onChange={toggleAllVisible}
+                      />
+                    </TableHead>
+                  )}
                   <TableHead>Kind</TableHead>
                   <TableHead>Year / Q</TableHead>
                   <TableHead className="hidden md:table-cell">Recipient</TableHead>
@@ -877,12 +1132,23 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((f) => (
+                {filtered.map((f) => (
                   <TableRow key={f.id}>
+                    {canManage && (
+                      <TableCell className="w-8">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 align-middle"
+                          aria-label={`Select ${FORM_KIND_LABEL[f.kind]} ${f.taxYear}${f.quarter ? ` Q${f.quarter}` : ''} — ${f.associateName ?? 'Aggregate'}`}
+                          checked={selected.has(f.id)}
+                          onChange={() => toggleRow(f.id)}
+                        />
+                      </TableCell>
+                    )}
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
                         <div className="truncate">{FORM_KIND_LABEL[f.kind]}</div>
-                        <div className="md:hidden text-[11px] text-silver/70 truncate font-normal">
+                        <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                           {f.associateName ?? 'Aggregate'}
                         </div>
                       </div>
@@ -893,7 +1159,9 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{f.associateName ?? 'Aggregate'}</TableCell>
                     <TableCell>
-                      <Badge variant={FORM_STATUS_BADGE[f.status]}>{f.status}</Badge>
+                      <Badge variant={FORM_STATUS_BADGE[f.status]}>
+                        {FORM_STATUS_LABEL[f.status]}
+                      </Badge>
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
                       {fmtDate(f.filedAt)}
@@ -1010,10 +1278,10 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
         />
       )}
       {show941Builder && (
-        <Form941BuilderDrawer onClose={() => setShow941Builder(false)} />
+        <Form941BuilderDrawer onClose={() => setShow941Builder(false)} onCreated={refresh} />
       )}
       {show940Builder && (
-        <Form940BuilderDrawer onClose={() => setShow940Builder(false)} />
+        <Form940BuilderDrawer onClose={() => setShow940Builder(false)} onCreated={refresh} />
       )}
       {showW2Generate && (
         <W2GenerateDrawer
@@ -1049,6 +1317,16 @@ function TaxFormsTab({ canManage }: { canManage: boolean }) {
   );
 }
 
+/**
+ * Client list for the W-2 / 1099 generator drawers' scope select. Served
+ * from the app-wide react-query cache (5-minute staleTime) — no refetch
+ * per drawer open; a load failure just leaves "All clients" as the only
+ * option (the generators accept a null clientId anyway).
+ */
+function useClientOptions(): ClientSummary[] {
+  return useClients().clients;
+}
+
 function W2GenerateDrawer({
   onClose,
   onDone,
@@ -1058,6 +1336,7 @@ function W2GenerateDrawer({
 }) {
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [clientId, setClientId] = useState('');
+  const clients = useClientOptions();
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<Awaited<ReturnType<typeof generateW2s>> | null>(null);
 
@@ -1087,7 +1366,7 @@ function W2GenerateDrawer({
       <DrawerBody className="space-y-4">
         <div className="text-sm text-silver">
           Walks every associate with at least one disbursed paystub in the
-          year and creates a DRAFT W-2. Idempotent — already-generated forms
+          year and creates a draft W-2. Idempotent — already-generated forms
           are skipped. Void an existing W-2 first to force regeneration.
         </div>
         <div>
@@ -1100,13 +1379,19 @@ function W2GenerateDrawer({
           />
         </div>
         <div>
-          <Label>Client ID (optional — leave blank for all clients)</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
+          <Label>Client (optional — "All clients" runs org-wide)</Label>
+          <Select
+            className="mt-1"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
-            placeholder="UUID"
-          />
+          >
+            <option value="">All clients</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
         </div>
         <Button onClick={onGenerate} disabled={running}>
           {running ? 'Generating…' : 'Generate'}
@@ -1175,6 +1460,7 @@ function W2GenerateDrawer({
  * keeps us from clobbering a TIN already on file by accident.
  */
 function TinCaptureBlock() {
+  const confirm = useConfirm();
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const associateId = assoc?.id ?? '';
   const [tin, setTin] = useState('');
@@ -1222,13 +1508,14 @@ function TinCaptureBlock() {
   };
   const onClear = async () => {
     if (!associateId.trim()) return;
-    if (
-      !window.confirm(
-        'Remove the encrypted TIN from this associate? This is destructive — the next 1099-NEC generation will fail until a new TIN is captured. Continue?',
-      )
-    ) {
-      return;
-    }
+    const ok = await confirm({
+      title: 'Clear this TIN?',
+      description:
+        'Removes the encrypted TIN from this associate. This is destructive — the next 1099-NEC generation will fail until a new TIN is captured.',
+      confirmLabel: 'Clear TIN',
+      destructive: true,
+    });
+    if (!ok) return;
     setWorking(true);
     try {
       await clearAssociateTin(associateId.trim());
@@ -1330,6 +1617,7 @@ function F1099NecGenerateDrawer({
 }) {
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [clientId, setClientId] = useState('');
+  const clients = useClientOptions();
   const [cfsfStates, setCfsfStates] = useState('');
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<Awaited<ReturnType<typeof generate1099Necs>> | null>(null);
@@ -1381,13 +1669,19 @@ function F1099NecGenerateDrawer({
           />
         </div>
         <div>
-          <Label>Client ID (optional — leave blank for all clients)</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
+          <Label>Client (optional — "All clients" runs org-wide)</Label>
+          <Select
+            className="mt-1"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
-            placeholder="UUID"
-          />
+          >
+            <option value="">All clients</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
         </div>
         <div>
           <Label>
@@ -1445,8 +1739,8 @@ function F1099NecGenerateDrawer({
             )}
             {result.createdCount > 0 && !clientId.trim() && (
               <div className="text-xs text-silver">
-                IRS FIRE e-file requires a per-client scope. Re-open this
-                drawer with a single Client ID to generate that download.
+                IRS FIRE e-file requires a per-client scope. Pick a single
+                client above and re-generate to enable that download.
               </div>
             )}
           </div>
@@ -1471,6 +1765,7 @@ function F1099MiscGenerateDrawer({
 }) {
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [clientId, setClientId] = useState('');
+  const clients = useClientOptions();
   const [cfsfStates, setCfsfStates] = useState('');
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<Awaited<ReturnType<typeof generate1099Miscs>> | null>(
@@ -1523,13 +1818,19 @@ function F1099MiscGenerateDrawer({
           />
         </div>
         <div>
-          <Label>Client ID (optional — leave blank for all clients)</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
+          <Label>Client (optional — "All clients" runs org-wide)</Label>
+          <Select
+            className="mt-1"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
-            placeholder="UUID"
-          />
+          >
+            <option value="">All clients</option>
+            {clients.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
         </div>
         <div>
           <Label>
@@ -1585,8 +1886,8 @@ function F1099MiscGenerateDrawer({
             )}
             {result.createdCount > 0 && !clientId.trim() && (
               <div className="text-xs text-silver">
-                IRS FIRE e-file requires a per-client scope. Re-open this
-                drawer with a single Client ID to generate that download.
+                IRS FIRE e-file requires a per-client scope. Pick a single
+                client above and re-generate to enable that download.
               </div>
             )}
           </div>
@@ -1602,25 +1903,104 @@ function F1099MiscGenerateDrawer({
   );
 }
 
+/**
+ * Known amount keys per form kind, used to render labeled number fields in
+ * the New form drawer instead of a raw-JSON textarea (a silently typo'd key
+ * used to yield a federal filing missing a line). The keys mirror what the
+ * rest of the system reads/writes:
+ * - F941/F940 — the builders' suggestedAmounts objects (build941/build940);
+ * - W2 — the W2Boxes aggregate the W-2 generator persists (box1Wages…box6MedicareTax);
+ * - F1099_NEC / F1099_MISC — the 1099 aggregators' box fields.
+ * Anything else goes through the "Add custom line" escape hatch.
+ */
+const KNOWN_AMOUNT_FIELDS: Record<TaxFormKind, { key: string; label: string }[]> = {
+  F941: [
+    { key: 'employeeCount', label: 'Employee count' },
+    { key: 'totalWages', label: 'Total wages' },
+    { key: 'totalFederalWithheld', label: 'Total federal income tax withheld' },
+    { key: 'totalEmployerTax', label: 'Total employer tax' },
+    { key: 'ficaMedicareWages', label: 'FICA / Medicare wages' },
+  ],
+  F940: [
+    { key: 'employeeCount', label: 'Employee count' },
+    { key: 'totalPayments', label: 'Total payments to all employees' },
+    { key: 'exemptPayments', label: 'Exempt payments' },
+    { key: 'excessPayments', label: 'Payments exceeding $7,000' },
+    { key: 'futaTaxableWages', label: 'FUTA taxable wages' },
+    { key: 'futaTaxNet', label: 'FUTA tax (net 0.6%)' },
+    { key: 'futaTaxAccrued', label: 'FUTA tax accrued' },
+    { key: 'depositsMade', label: 'Deposits made' },
+    { key: 'balanceDue', label: 'Balance due' },
+  ],
+  W2: [
+    { key: 'box1Wages', label: 'Box 1 — Wages, tips, other compensation' },
+    { key: 'box2FitWithheld', label: 'Box 2 — Federal income tax withheld' },
+    { key: 'box3SsWages', label: 'Box 3 — Social Security wages' },
+    { key: 'box4SsTax', label: 'Box 4 — Social Security tax withheld' },
+    { key: 'box5MedicareWages', label: 'Box 5 — Medicare wages and tips' },
+    { key: 'box6MedicareTax', label: 'Box 6 — Medicare tax withheld' },
+  ],
+  // W-2c drafts are normally created via "Correct (W-2c)" on a filed W-2
+  // (which computes previous/corrected pairs); manual ones are custom lines.
+  W2C: [],
+  F1099_NEC: [
+    { key: 'box1NonemployeeCompensation', label: 'Box 1 — Nonemployee compensation' },
+    { key: 'box4FitWithheld', label: 'Box 4 — Federal income tax withheld' },
+  ],
+  F1099_MISC: [
+    { key: 'box1Rents', label: 'Box 1 — Rents' },
+    { key: 'box2Royalties', label: 'Box 2 — Royalties' },
+    { key: 'box3OtherIncome', label: 'Box 3 — Other income' },
+    { key: 'box4FitWithheld', label: 'Box 4 — Federal income tax withheld' },
+    { key: 'box5FishingBoatProceeds', label: 'Box 5 — Fishing boat proceeds' },
+    { key: 'box6MedicalHealthcarePayments', label: 'Box 6 — Medical and health care payments' },
+    { key: 'box8SubstitutePayments', label: 'Box 8 — Substitute payments' },
+    { key: 'box9CropInsuranceProceeds', label: 'Box 9 — Crop insurance proceeds' },
+    { key: 'box10GrossProceedsAttorney', label: 'Box 10 — Gross proceeds paid to an attorney' },
+    { key: 'box11FishForResale', label: 'Box 11 — Fish purchased for resale' },
+    { key: 'box12Section409ADeferrals', label: 'Box 12 — Section 409A deferrals' },
+    { key: 'box13ExcessGoldenParachute', label: 'Box 13 — Excess golden parachute payments' },
+    { key: 'box14NonqualifiedDeferred', label: 'Box 14 — Nonqualified deferred compensation' },
+  ],
+};
+
 function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [kind, setKind] = useState<TaxFormKind>('F941');
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [quarter, setQuarter] = useState('1');
   const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
-  const [amountsJson, setAmountsJson] = useState('{\n}');
+  const [amountValues, setAmountValues] = useState<Record<string, string>>({});
+  const [customLines, setCustomLines] = useState<{ key: string; value: string }[]>([]);
   const [ein, setEin] = useState('');
   const [saving, setSaving] = useState(false);
 
   const needsQuarter = kind === 'F941';
   const needsAssociate = kind === 'W2' || kind === 'F1099_NEC' || kind === 'F1099_MISC';
+  const knownFields = KNOWN_AMOUNT_FIELDS[kind];
 
   const onSubmit = async () => {
-    let amounts: Record<string, unknown>;
-    try {
-      amounts = JSON.parse(amountsJson);
-    } catch {
-      toast.error('Amounts must be valid JSON.');
-      return;
+    const amounts: Record<string, unknown> = {};
+    for (const f of knownFields) {
+      const raw = (amountValues[f.key] ?? '').trim();
+      if (!raw) continue; // blank = omit the line
+      const n = Number(raw);
+      if (!Number.isFinite(n)) {
+        toast.error(`"${f.label}" must be a number.`);
+        return;
+      }
+      amounts[f.key] = n;
+    }
+    for (const line of customLines) {
+      const key = line.key.trim();
+      if (!key) continue;
+      const raw = line.value.trim();
+      if (!raw) continue;
+      const n = Number(raw);
+      if (!Number.isFinite(n)) {
+        toast.error(`Custom line "${key}" must be a number.`);
+        return;
+      }
+      amounts[key] = n;
     }
     if (needsAssociate && !assoc) {
       toast.error('Pick an associate for W-2/1099.');
@@ -1656,7 +2036,13 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
           <Select
             className="mt-1"
             value={kind}
-            onChange={(e) => setKind(e.target.value as TaxFormKind)}
+            onChange={(e) => {
+              setKind(e.target.value as TaxFormKind);
+              // Known keys differ per kind — drop stale values so a W-2 box
+              // can't silently ride along into a 941 draft. Custom lines are
+              // kind-agnostic and kept.
+              setAmountValues({});
+            }}
           >
             {(Object.keys(FORM_KIND_LABEL) as TaxFormKind[]).map((k) => (
               <option key={k} value={k}>
@@ -1709,12 +2095,79 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
           />
         </div>
         <div>
-          <Label>Amounts (JSON)</Label>
-          <Textarea
-            className="mt-1 min-h-40 font-mono text-xs"
-            value={amountsJson}
-            onChange={(e) => setAmountsJson(e.target.value)}
-          />
+          <Label>Amounts</Label>
+          <p className="mt-1 text-xs text-silver">
+            Leave a line blank to omit it. Use "Add custom line" for anything
+            not listed.
+          </p>
+          <div className="mt-2 space-y-2">
+            {knownFields.map((f) => (
+              <div key={f.key} className="grid grid-cols-[1fr_10rem] items-center gap-2">
+                <Label
+                  htmlFor={`amount-${f.key}`}
+                  className="mb-0 normal-case tracking-normal"
+                >
+                  {f.label}
+                </Label>
+                <Input
+                  id={`amount-${f.key}`}
+                  type="number"
+                  step="0.01"
+                  className="text-right tabular-nums"
+                  value={amountValues[f.key] ?? ''}
+                  onChange={(e) =>
+                    setAmountValues((prev) => ({ ...prev, [f.key]: e.target.value }))
+                  }
+                />
+              </div>
+            ))}
+            {knownFields.length === 0 && customLines.length === 0 && (
+              <p className="text-xs text-silver">
+                No preset lines for this kind — add custom lines below.
+              </p>
+            )}
+            {customLines.map((line, i) => (
+              <div key={i} className="grid grid-cols-[1fr_10rem_auto] items-center gap-2">
+                <Input
+                  className="font-mono text-xs"
+                  placeholder="key (e.g. box8AllocatedTips)"
+                  aria-label={`Custom line ${i + 1} key`}
+                  value={line.key}
+                  onChange={(e) =>
+                    setCustomLines((prev) =>
+                      prev.map((l, j) => (j === i ? { ...l, key: e.target.value } : l)),
+                    )
+                  }
+                />
+                <Input
+                  type="number"
+                  step="0.01"
+                  className="text-right tabular-nums"
+                  aria-label={`Custom line ${i + 1} value`}
+                  value={line.value}
+                  onChange={(e) =>
+                    setCustomLines((prev) =>
+                      prev.map((l, j) => (j === i ? { ...l, value: e.target.value } : l)),
+                    )
+                  }
+                />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCustomLines((prev) => prev.filter((_, j) => j !== i))}
+                >
+                  Remove
+                </Button>
+              </div>
+            ))}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setCustomLines((prev) => [...prev, { key: '', value: '' }])}
+            >
+              <Plus className="mr-1 h-3 w-3" /> Add custom line
+            </Button>
+          </div>
         </div>
       </DrawerBody>
       <DrawerFooter>
@@ -1729,23 +2182,55 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
   );
 }
 
-function Form941BuilderDrawer({ onClose }: { onClose: () => void }) {
+function Form941BuilderDrawer({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+}) {
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [quarter, setQuarter] = useState('1');
-  const [result, setResult] = useState<Awaited<ReturnType<typeof build941>> | null>(
-    null,
-  );
+  // Snapshot of year/quarter at build time so a later input tweak can't
+  // mismatch the draft's period against the suggested amounts.
+  const [result, setResult] = useState<
+    (Awaited<ReturnType<typeof build941>> & { builtYear: number; builtQuarter: number }) | null
+  >(null);
   const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const onBuild = async () => {
     setLoading(true);
     try {
       const r = await build941(Number(taxYear), Number(quarter));
-      setResult(r);
+      setResult({ ...r, builtYear: Number(taxYear), builtQuarter: Number(quarter) });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Couldn't build the 941. Try again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onCreateDraft = async () => {
+    if (!result) return;
+    setCreating(true);
+    try {
+      await createTaxForm({
+        kind: 'F941',
+        taxYear: result.builtYear,
+        quarter: result.builtQuarter,
+        associateId: null,
+        amounts: result.suggestedAmounts,
+        ein: null,
+      });
+      toast.success(
+        `Draft 941 created for Q${result.builtQuarter} ${result.builtYear}. Review and edit it from the forms list before filing.`,
+      );
+      onCreated();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't create the draft 941. Try again.");
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -1787,10 +2272,15 @@ function Form941BuilderDrawer({ onClose }: { onClose: () => void }) {
           {loading ? 'Building…' : 'Build'}
         </Button>
         {result && (
-          <BuilderAmounts
-            amounts={result.suggestedAmounts}
-            caption={`Q${quarter} ${taxYear} · ${result.periodStart} – ${result.periodEnd}`}
-          />
+          <>
+            <BuilderAmounts
+              amounts={result.suggestedAmounts}
+              caption={`Q${result.builtQuarter} ${result.builtYear} · ${result.periodStart} – ${result.periodEnd}`}
+            />
+            <Button onClick={onCreateDraft} disabled={creating}>
+              {creating ? 'Creating…' : 'Create draft from these amounts'}
+            </Button>
+          </>
         )}
       </DrawerBody>
       <DrawerFooter>
@@ -1815,7 +2305,7 @@ function BuilderAmounts({
   const fmt = (v: string | number) => {
     const n = typeof v === 'number' ? v : Number(v);
     if (Number.isFinite(n) && String(v).match(/^-?\d*\.?\d+$/)) {
-      return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+      return fmtMoney(n);
     }
     return String(v);
   };
@@ -1833,16 +2323,25 @@ function BuilderAmounts({
         ))}
       </dl>
       <p className="mt-2 text-xs text-silver/60">
-        Transcribe these into a draft form (New form) or the official IRS form.
+        Use "Create draft from these amounts" to save these as a draft form —
+        you can still review and edit the draft before filing — or transcribe
+        them into the official IRS form.
       </p>
     </div>
   );
 }
 
-function Form940BuilderDrawer({ onClose }: { onClose: () => void }) {
+function Form940BuilderDrawer({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+}) {
   const [taxYear, setTaxYear] = useState(String(new Date().getFullYear() - 1));
   const [result, setResult] = useState<Awaited<ReturnType<typeof build940>> | null>(null);
   const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const onBuild = async () => {
     setLoading(true);
@@ -1852,6 +2351,31 @@ function Form940BuilderDrawer({ onClose }: { onClose: () => void }) {
       toast.error(err instanceof ApiError ? err.message : "Couldn't build the 940. Try again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const onCreateDraft = async () => {
+    if (!result) return;
+    setCreating(true);
+    try {
+      await createTaxForm({
+        kind: 'F940',
+        // result.taxYear is the year the amounts were built for, immune to
+        // the input being edited after Build.
+        taxYear: result.taxYear,
+        quarter: null,
+        associateId: null,
+        amounts: result.suggestedAmounts,
+        ein: null,
+      });
+      toast.success(
+        `Draft 940 created for ${result.taxYear}. Review and edit it from the forms list before filing.`,
+      );
+      onCreated();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Couldn't create the draft 940. Try again.");
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -1882,6 +2406,9 @@ function Form940BuilderDrawer({ onClose }: { onClose: () => void }) {
           <>
             <BuilderAmounts amounts={result.suggestedAmounts} caption={`Tax year ${result.taxYear}`} />
             <p className="text-xs text-silver/70">{result.note}</p>
+            <Button onClick={onCreateDraft} disabled={creating}>
+              {creating ? 'Creating…' : 'Create draft from these amounts'}
+            </Button>
           </>
         )}
       </DrawerBody>
@@ -2030,8 +2557,8 @@ function SubmitterProfileDrawer({ onClose }: { onClose: () => void }) {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-4 gap-3">
-              <div className="col-span-2">
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+              <div className="sm:col-span-2">
                 <Label>City</Label>
                 <Input className="mt-1" value={form.city} onChange={update('city')} />
               </div>
@@ -2054,7 +2581,7 @@ function SubmitterProfileDrawer({ onClose }: { onClose: () => void }) {
                 />
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <Label>Contact name</Label>
                 <Input
@@ -2083,7 +2610,7 @@ function SubmitterProfileDrawer({ onClose }: { onClose: () => void }) {
             </div>
             {profile && (
               <div className="text-xs text-silver">
-                Last updated: {new Date(profile.updatedAt).toLocaleString()}
+                Last updated: {fmtDateTime(profile.updatedAt)}
               </div>
             )}
           </>

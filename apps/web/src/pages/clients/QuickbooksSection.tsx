@@ -13,6 +13,8 @@ import {
 } from '@/lib/quickbooksApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
+import { fmtDateTime } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
@@ -24,6 +26,7 @@ import {
 } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
+import { FilterChip } from '@/components/ui/FilterBar';
 import { FormHint } from '@/components/ui/Label';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -56,6 +59,7 @@ const ACCOUNT_FIELDS: ReadonlyArray<{
 export function QuickbooksSection({ clientId }: Props) {
   const { can } = useAuth();
   const canManage = can('process:payroll');
+  const confirm = useConfirm();
 
   const [status, setStatus] = useState<QboStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -82,9 +86,9 @@ export function QuickbooksSection({ clientId }: Props) {
     const flag = searchParams.get('qbo');
     const errorCode = searchParams.get('qbo_error');
     if (flag === 'connected') {
-      toast.success('QuickBooks connected');
+      toast.success('QuickBooks connected.');
     } else if (errorCode) {
-      toast.error('QuickBooks connection failed', {
+      toast.error('QuickBooks connection failed.', {
         description: describeQboError(errorCode),
       });
     }
@@ -104,21 +108,31 @@ export function QuickbooksSection({ clientId }: Props) {
       window.location.href = authorizeUrl;
     } catch (err) {
       setConnecting(false);
-      toast.error('Could not start QuickBooks connect', {
+      toast.error('Could not start QuickBooks connect.', {
         description: err instanceof Error ? err.message : String(err),
       });
     }
   };
 
   const onDisconnect = async () => {
-    if (!confirm('Disconnect QuickBooks? Future payroll runs will not auto-sync until reconnected.')) return;
+    if (
+      !(await confirm({
+        title: 'Disconnect QuickBooks?',
+        description:
+          'Future payroll runs will not auto-sync until reconnected.',
+        confirmLabel: 'Disconnect',
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
     setDisconnecting(true);
     try {
       await disconnect(clientId);
-      toast.success('QuickBooks disconnected');
+      toast.success('QuickBooks disconnected.');
       await refresh();
     } catch (err) {
-      toast.error('Could not disconnect', {
+      toast.error('Could not disconnect.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -136,7 +150,21 @@ export function QuickbooksSection({ clientId }: Props) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <ErrorBanner>{error}</ErrorBanner>
+          <ErrorBanner>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>{error}</span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setError(null);
+                  refresh();
+                }}
+              >
+                Retry
+              </Button>
+            </div>
+          </ErrorBanner>
         </CardContent>
       </Card>
     );
@@ -164,11 +192,11 @@ export function QuickbooksSection({ clientId }: Props) {
           <LinkIcon className="h-4 w-4 text-gold" />
           QuickBooks
           {status.connected ? (
-            <Badge>Connected</Badge>
+            <Badge variant="success">Connected</Badge>
           ) : (
             <Badge variant="outline">Not connected</Badge>
           )}
-          {status.stubMode && <Badge variant="outline">Stub mode</Badge>}
+          {status.stubMode && <Badge variant="info">Stub mode</Badge>}
         </CardTitle>
         <CardDescription>
           When connected, finalized payroll runs auto-post a balanced
@@ -244,12 +272,12 @@ function JeModeToggle({
       await updateAccounts(clientId, { jeMode: mode });
       toast.success(
         mode === 'PER_EMPLOYEE'
-          ? 'Switched to per-employee JE posting'
-          : 'Switched to aggregate JE posting'
+          ? 'Switched to per-employee JE posting.'
+          : 'Switched to aggregate JE posting.'
       );
       await onSaved();
     } catch (err) {
-      toast.error('Could not change JE mode', {
+      toast.error('Could not change JE mode.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -262,56 +290,29 @@ function JeModeToggle({
       <div>
         <h3 className="text-sm font-medium text-white">Journal entry granularity</h3>
         <FormHint>
-          AGGREGATE posts one balanced JE per run (sum of every paystub).
-          PER_EMPLOYEE posts one JE per associate with EmployeeRef set —
+          Aggregate posts one balanced JE per run (sum of every paystub).
+          Per employee posts one JE per associate with EmployeeRef set —
           mirrors how QBO Payroll itself records payroll, but requires
           every associate has been synced to QuickBooks first.
         </FormHint>
       </div>
       <div className="flex flex-wrap gap-2">
-        <ModeButton
-          label="Aggregate (one JE per run)"
+        <FilterChip
           active={status.jeMode === 'AGGREGATE'}
           disabled={!canManage || saving}
           onClick={() => setMode('AGGREGATE')}
-        />
-        <ModeButton
-          label="Per employee (one JE per paystub)"
+        >
+          Aggregate (one JE per run)
+        </FilterChip>
+        <FilterChip
           active={status.jeMode === 'PER_EMPLOYEE'}
           disabled={!canManage || saving}
           onClick={() => setMode('PER_EMPLOYEE')}
-        />
+        >
+          Per employee (one JE per paystub)
+        </FilterChip>
       </div>
     </div>
-  );
-}
-
-function ModeButton({
-  label,
-  active,
-  disabled,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <Button
-      type="button"
-      size="sm"
-      variant="outline"
-      disabled={disabled}
-      onClick={onClick}
-      className={
-        active
-          ? 'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
-          : undefined
-      }
-    >
-      {label}
-    </Button>
   );
 }
 
@@ -330,12 +331,12 @@ function AssociateSyncSection({ clientId }: { clientId: string }) {
       const res = await syncAssociatesToQbo(clientId);
       setLastResult(res);
       if (res.failed === 0) {
-        toast.success(`${res.synced} associate(s) synced to QuickBooks`);
+        toast.success(`${res.synced} associate(s) synced to QuickBooks.`);
       } else {
-        toast.warning(`${res.synced} synced, ${res.failed} failed`);
+        toast.warning(`${res.synced} synced, ${res.failed} failed.`);
       }
     } catch (err) {
-      toast.error('Sync failed', {
+      toast.error('Sync failed.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -381,20 +382,16 @@ function ConnectionDetails({ status }: { status: QboStatus }) {
   return (
     <dl className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
       <div>
-        <dt className="text-silver text-xs uppercase tracking-wide">Realm ID</dt>
+        <dt className="text-2xs font-medium uppercase tracking-[0.14em] text-silver/70">Realm ID</dt>
         <dd className="text-white font-mono">{status.realmId ?? '—'}</dd>
       </div>
       <div>
-        <dt className="text-silver text-xs uppercase tracking-wide">Token expires</dt>
-        <dd className="text-white">
-          {status.expiresAt ? new Date(status.expiresAt).toLocaleString() : '—'}
-        </dd>
+        <dt className="text-2xs font-medium uppercase tracking-[0.14em] text-silver/70">Token expires</dt>
+        <dd className="text-white">{fmtDateTime(status.expiresAt)}</dd>
       </div>
       <div>
-        <dt className="text-silver text-xs uppercase tracking-wide">Last refreshed</dt>
-        <dd className="text-white">
-          {status.lastRefreshedAt ? new Date(status.lastRefreshedAt).toLocaleString() : '—'}
-        </dd>
+        <dt className="text-2xs font-medium uppercase tracking-[0.14em] text-silver/70">Last refreshed</dt>
+        <dd className="text-white">{fmtDateTime(status.lastRefreshedAt)}</dd>
       </div>
     </dl>
   );
@@ -422,6 +419,8 @@ function AccountMappingForm({
   // either `[]` (failed/empty — fall back to text input) or the loaded list.
   const [accounts, setAccounts] = useState<QboAccount[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Bumped by the Retry button to re-run the chart-of-accounts load.
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   useEffect(() => {
     setValues(
@@ -446,7 +445,7 @@ function AccountMappingForm({
     return () => {
       alive = false;
     };
-  }, [clientId]);
+  }, [clientId, loadAttempt]);
 
   const submit = async () => {
     setSaving(true);
@@ -455,10 +454,10 @@ function AccountMappingForm({
         ACCOUNT_FIELDS.map((f) => [f.key, values[f.key]?.trim() ? values[f.key].trim() : null])
       );
       await updateAccounts(clientId, body);
-      toast.success('Account mapping saved');
+      toast.success('Account mapping saved.');
       await onSaved();
     } catch (err) {
-      toast.error('Could not save account mapping', {
+      toast.error('Could not save account mapping.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -476,7 +475,22 @@ function AccountMappingForm({
           back to placeholder names and QBO will reject the post.
         </FormHint>
         {loadError && (
-          <ErrorBanner className="mt-1">{loadError}</ErrorBanner>
+          <ErrorBanner className="mt-1">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span>{loadError}</span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setLoadError(null);
+                  setAccounts(null);
+                  setLoadAttempt((n) => n + 1);
+                }}
+              >
+                Retry
+              </Button>
+            </div>
+          </ErrorBanner>
         )}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

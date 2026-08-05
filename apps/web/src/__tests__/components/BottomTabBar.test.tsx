@@ -37,11 +37,11 @@ describe('<BottomTabBar>', () => {
     renderBar(['view:scheduling', 'view:time', 'view:payroll'] as Capability[]);
     expect(screen.getByRole('link', { name: /home/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /schedule/i })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /clock/i })).toBeInTheDocument();
+    // Associates get Pay as a first-class tab; the old "Clock" tab is gone
+    // (it dead-ended at the kiosk-only page for them).
+    expect(screen.getByRole('link', { name: /^pay$/i })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /time off/i })).toBeInTheDocument();
-    // Capped at 4 destinations — Pay lives behind More when everything
-    // else is visible.
-    expect(screen.queryByRole('link', { name: /^pay$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /clock/i })).not.toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: /more/i }),
     ).toBeInTheDocument();

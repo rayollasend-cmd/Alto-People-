@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import type { AuditLogEntry } from '@alto-people/shared';
+import { fmtDateTime } from '@/lib/format';
 
 interface AuditTimelineProps {
   entries: AuditLogEntry[];
@@ -41,7 +42,6 @@ export function AuditTimeline({ entries, previewLimit = 5 }: AuditTimelineProps)
     <>
       <ol className="space-y-3 border-l border-navy-secondary pl-4">
         {visible.map((e) => {
-          const ts = new Date(e.createdAt);
           const label = ACTION_LABELS[e.action] ?? e.action;
           return (
             <li key={e.id} className="relative">
@@ -51,7 +51,7 @@ export function AuditTimeline({ entries, previewLimit = 5 }: AuditTimelineProps)
               />
               <div className="text-sm text-white">{label}</div>
               <div className="text-xs text-silver mt-0.5">
-                {ts.toLocaleString()}{' '}
+                {fmtDateTime(e.createdAt)}{' '}
                 {e.actorEmail && (
                   <span className="text-silver/70"> · {e.actorEmail}</span>
                 )}

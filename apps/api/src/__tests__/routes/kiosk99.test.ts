@@ -386,3 +386,125 @@ describe('admin face-consent + enrollment-rejection cleanup', () => {
     ).toBeNull();
   });
 });
+
+describe('POST /kiosk/punch — out-of-window replays leave a trace', () => {
+  // The offline queue treats 4xx as permanent and drops the item, so this
+  // REJECTED row is the ONLY record that someone stood at a kiosk and
+  // punched. It used to not exist: the validation ran before the device
+  // was even resolved, and hours someone worked vanished with no trace on
+  // either side for HR to act on.
+  it('records a REJECTED punch for a too-old queued replay', async () => {
+    const { deviceToken, pin } = await setupKiosk();
+    const eightDaysAgo = new Date(
+      Date.now() - 8 * 24 * 3600 * 1000,
+    ).toISOString();
+
+    const res = await request(app()).post('/kiosk/punch').send({
+      deviceToken,
+      pin,
+      selfie: null,
+      idempotencyKey: '11111111-1111-4111-8111-111111111111',
+      clientPunchedAt: eightDaysAgo,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('punch_too_old');
+
+    const rejected = await prisma.kioskPunch.findFirst({
+      where: { action: 'REJECTED', rejectReason: 'punch_too_old' },
+    });
+    expect(rejected).toBeTruthy();
+    expect(rejected!.idempotencyKey).toBe(
+      '11111111-1111-4111-8111-111111111111',
+    );
+
+    // The replay of the same item now short-circuits on the idempotency
+    // key as previously_rejected — exactly one rejection row, and the
+    // queue can drop the item knowing the server has the record.
+    const replay = await request(app()).post('/kiosk/punch').send({
+      deviceToken,
+      pin,
+      selfie: null,
+      idempotencyKey: '11111111-1111-4111-8111-111111111111',
+      clientPunchedAt: eightDaysAgo,
+    });
+    expect(replay.status).toBe(409);
+    expect(replay.body.error.code).toBe('previously_rejected');
+    expect(
+      await prisma.kioskPunch.count({ where: { action: 'REJECTED' } }),
+    ).toBe(1);
+  });
+
+  it('records a REJECTED punch for a future-dated clock-skew replay', async () => {
+    const { deviceToken, pin } = await setupKiosk();
+
+    const res = await request(app()).post('/kiosk/punch').send({
+      deviceToken,
+      pin,
+      selfie: null,
+      clientPunchedAt: new Date(Date.now() + 3600_000).toISOString(),
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('clock_skew');
+    expect(
+      await prisma.kioskPunch.findFirst({
+        where: { action: 'REJECTED', rejectReason: 'clock_skew' },
+      }),
+    ).toBeTruthy();
+  });
+});
+
+describe('POST /kiosk/punch — selfie storage requires recorded consent', () => {
+  // decodeSelfie rejects anything under 500 decoded bytes as junk
+  // (selfie_too_small), so the fixture must be a plausible size — a JPEG
+  // SOI header padded past the floor. (The first version of this test used
+  // a ~50-byte snippet and got 400 before the consent logic ever ran.)
+  const JPEG =
+    'data:image/jpeg;base64,' +
+    Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+      Buffer.alloc(600, 1),
+    ]).toString('base64');
+
+  // The gate used to be `DECLINED ? null : selfie`, which stored photos
+  // for the never-asked (null) state — reachable offline, where the tablet
+  // can't show the consent screen before queueing a selfie. The consent
+  // copy promises photos are part of what's consented to, so null must
+  // behave like DECLINED.
+  it('does NOT store a selfie when consent was never asked', async () => {
+    const { deviceToken, pin } = await setupKiosk();
+
+    const res = await request(app()).post('/kiosk/punch').send({
+      deviceToken,
+      pin,
+      selfie: JPEG,
+    });
+    expect(res.status).toBe(200);
+
+    const punch = await prisma.kioskPunch.findFirst({
+      where: { action: 'CLOCK_IN' },
+      select: { selfie: true },
+    });
+    expect(punch!.selfie).toBeNull();
+  });
+
+  it('stores the selfie once consent is GRANTED', async () => {
+    const { deviceToken, pin, associate } = await setupKiosk();
+    await prisma.associate.update({
+      where: { id: associate.id },
+      data: { faceConsentStatus: 'GRANTED' },
+    });
+
+    const res = await request(app()).post('/kiosk/punch').send({
+      deviceToken,
+      pin,
+      selfie: JPEG,
+    });
+    expect(res.status).toBe(200);
+
+    const punch = await prisma.kioskPunch.findFirst({
+      where: { action: 'CLOCK_IN' },
+      select: { selfie: true },
+    });
+    expect(punch!.selfie).not.toBeNull();
+  });
+});

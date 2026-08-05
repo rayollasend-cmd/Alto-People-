@@ -86,14 +86,14 @@ export function TemplatesList() {
     setDeletingId(deleteTarget.id);
     try {
       await deleteTemplate(deleteTarget.id);
-      toast.success(`Deleted "${deleteTarget.name}"`);
+      toast.success(`Deleted "${deleteTarget.name}".`);
       setDeleteTarget(null);
       await refresh();
     } catch (err) {
       if (err instanceof ApiError && err.code === 'template_in_use') {
-        toast.error('Template in use', { description: err.message });
+        toast.error('Template is in use.', { description: err.message });
       } else {
-        toast.error(err instanceof ApiError ? err.message : 'Delete failed');
+        toast.error(err instanceof ApiError ? err.message : 'Delete failed.');
       }
     } finally {
       setDeletingId(null);

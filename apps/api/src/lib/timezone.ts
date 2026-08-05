@@ -83,6 +83,53 @@ export function zonedDayOfWeek(date: Date, timeZone: string): number {
   return zonedWallClock(date, timeZone).dayOfWeek;
 }
 
+/**
+ * The UTC instant at which the store's wall clock reads `minute` past
+ * midnight on calendar day y-m-d. Inverse of zonedWallClock: start from a
+ * UTC guess and correct until the zone renders the requested wall time
+ * (converges in two passes; a time inside the nonexistent spring-forward
+ * hour settles on the closest real instant).
+ */
+export function zonedWallTimeToUtcInstant(
+  y: number,
+  m: number,
+  d: number,
+  minute: number,
+  timeZone: string,
+): Date {
+  let t = Date.UTC(y, m - 1, d, 0, 0) + minute * 60_000;
+  for (let i = 0; i < 2; i++) {
+    const at = new Date(t);
+    const key = localDateKey(at, timeZone);
+    const [yy, mm, dd] = key.split('-').map(Number);
+    const dayDelta =
+      (Date.UTC(y, m - 1, d) - Date.UTC(yy!, (mm ?? 1) - 1, dd ?? 1)) /
+      86_400_000;
+    const minDelta = minute - zonedMinutes(at, timeZone);
+    if (dayDelta === 0 && minDelta === 0) break;
+    t += dayDelta * 86_400_000 + minDelta * 60_000;
+  }
+  return new Date(t);
+}
+
+/**
+ * Shift an instant by N calendar days PRESERVING its wall-clock time at the
+ * store — a 9am shift copied across a DST boundary must still start at 9am
+ * local, not 8am/10am. Adds N×24h, then corrects by however far the
+ * wall-clock drifted (±1h across a US transition). A start inside the
+ * nonexistent spring-forward hour lands on the closest real instant.
+ */
+export function addDaysInZone(date: Date, days: number, timeZone: string): Date {
+  const naive = new Date(date.getTime() + days * 86_400_000);
+  let drift =
+    zonedMinutes(naive, timeZone) - zonedMinutes(date, timeZone);
+  // A drift can only be a small DST delta; wrap the midnight rollover
+  // (e.g. 23:30 → 00:30 reads as -1380, really +60).
+  if (drift > 720) drift -= 1440;
+  if (drift < -720) drift += 1440;
+  return new Date(naive.getTime() - drift * 60_000);
+}
+
 /** Minutes since local midnight of a UTC instant at the store. */
 export function zonedMinutes(date: Date, timeZone: string): number {
   return zonedWallClock(date, timeZone).minutes;

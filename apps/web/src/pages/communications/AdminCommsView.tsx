@@ -1,18 +1,27 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronRight, Inbox, Megaphone, Send } from 'lucide-react';
+import { ChevronRight, Download, Inbox, Megaphone, RotateCw, Send } from 'lucide-react';
 import { dayHeading, fmtTimeOnly, groupByDay } from '@/lib/dayGroup';
 import { toast } from 'sonner';
 import type {
+  EmailSuppression,
   Notification,
   NotificationChannel,
+  NotificationStatus,
 } from '@alto-people/shared';
 import {
   broadcast,
+  deleteSuppression,
   listAdmin,
+  listSuppressions,
   sendNotification,
 } from '@/lib/communicationsApi';
+import { listDirectory } from '@/lib/directoryApi';
+import { listAdminUsers } from '@/lib/usersAdminApi';
 import { ApiError } from '@/lib/api';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDateTime, ymdLocal } from '@/lib/format';
 import {
+  AssociatePicker,
   Avatar,
   Badge,
   Button,
@@ -32,6 +41,8 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  Field,
   Input,
   PageHeader,
   Select,
@@ -43,22 +54,43 @@ import {
   TableHeader,
   TableRow,
   Textarea,
+  type PickedAssociate,
 } from '@/components/ui';
 
 function statusVariant(
   s: Notification['status'],
-): 'default' | 'success' | 'destructive' | 'accent' {
+): 'pending' | 'success' | 'destructive' | 'info' {
   switch (s) {
     case 'SENT':
       return 'success';
     case 'FAILED':
+    case 'BOUNCED':
+    case 'COMPLAINED':
       return 'destructive';
     case 'READ':
-      return 'accent';
+      return 'info';
     case 'QUEUED':
-      return 'default';
+    case 'SUPPRESSED':
+      return 'pending';
   }
 }
+
+const STATUS_LABELS: Record<NotificationStatus, string> = {
+  QUEUED: 'Queued',
+  SENT: 'Sent',
+  READ: 'Read',
+  FAILED: 'Failed',
+  BOUNCED: 'Bounced',
+  COMPLAINED: 'Marked as spam',
+  SUPPRESSED: 'Suppressed',
+};
+
+const CHANNEL_LABELS: Record<NotificationChannel, string> = {
+  IN_APP: 'In-app',
+  EMAIL: 'Email',
+  SMS: 'SMS',
+  PUSH: 'Push',
+};
 
 interface AdminCommsViewProps {
   canManage: boolean;
@@ -70,20 +102,79 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
   const [showCompose, setShowCompose] = useState(false);
   const [showBroadcast, setShowBroadcast] = useState(false);
   const [drawerTarget, setDrawerTarget] = useState<Notification | null>(null);
+  const [channelFilter, setChannelFilter] = useState<NotificationChannel | ''>('');
+  const [statusFilter, setStatusFilter] = useState<NotificationStatus | ''>('');
+  const [resendingId, setResendingId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       setError(null);
-      const res = await listAdmin();
+      setItems(null);
+      const res = await listAdmin({
+        channel: channelFilter || undefined,
+        status: statusFilter || undefined,
+      });
       setItems(res.notifications);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
-  }, []);
+  }, [channelFilter, statusFilter]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  const exportCsv = () => {
+    if (!items || items.length === 0) return;
+    downloadCsv(`communications-${ymdLocal()}.csv`, [
+      [
+        'Created',
+        'Channel',
+        'Status',
+        'Recipient',
+        'Subject',
+        'Body',
+        'Sender',
+        'Failure reason',
+      ],
+      ...items.map((n) => [
+        fmtDateTime(n.createdAt),
+        n.channel,
+        n.status,
+        n.recipientEmail ?? n.recipientPhone ?? n.recipientUserId ?? '',
+        n.subject ?? '',
+        n.body,
+        n.senderEmail ?? 'system',
+        n.failureReason ?? '',
+      ]),
+    ]);
+  };
+
+  /** Re-post the exact payload of a FAILED row through the send endpoint. */
+  const resend = async (n: Notification) => {
+    setResendingId(n.id);
+    try {
+      const sent = await sendNotification({
+        channel: n.channel,
+        recipientUserId: n.recipientUserId ?? undefined,
+        recipientEmail: n.recipientEmail ?? undefined,
+        recipientPhone: n.recipientPhone ?? undefined,
+        subject: n.subject ?? undefined,
+        body: n.body,
+        category: n.category ?? undefined,
+      });
+      if (sent.status === 'FAILED') {
+        toast.error(`Resend failed: ${sent.failureReason ?? 'unknown error'}`);
+      } else {
+        toast.success('Resent.');
+      }
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Resend failed.');
+    } finally {
+      setResendingId(null);
+    }
+  };
 
   return (
     <div className="mx-auto">
@@ -114,15 +205,65 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Sent log</CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <CardTitle className="text-base">Sent log</CardTitle>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <Select
+                size="sm"
+                aria-label="Filter by channel"
+                value={channelFilter}
+                onChange={(e) =>
+                  setChannelFilter(e.target.value as NotificationChannel | '')
+                }
+              >
+                <option value="">All channels</option>
+                <option value="IN_APP">In-app</option>
+                <option value="EMAIL">Email</option>
+                <option value="SMS">SMS</option>
+                <option value="PUSH">Push</option>
+              </Select>
+              <Select
+                size="sm"
+                aria-label="Filter by status"
+                value={statusFilter}
+                onChange={(e) =>
+                  setStatusFilter(e.target.value as NotificationStatus | '')
+                }
+              >
+                <option value="">All statuses</option>
+                <option value="QUEUED">Queued</option>
+                <option value="SENT">Sent</option>
+                <option value="READ">Read</option>
+                <option value="FAILED">Failed</option>
+                <option value="BOUNCED">Bounced</option>
+                <option value="COMPLAINED">Marked as spam</option>
+                <option value="SUPPRESSED">Suppressed</option>
+              </Select>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={exportCsv}
+                disabled={!items || items.length === 0}
+              >
+                <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
+              </Button>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="pt-0">
           {error && (
-            <p role="alert" className="text-sm text-alert mb-3">
+            <ErrorBanner
+              className="mb-3"
+              action={
+                <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+                  Retry
+                </Button>
+              }
+            >
               {error}
-            </p>
+            </ErrorBanner>
           )}
-          {!items && <SkeletonRows count={5} rowHeight="h-12" />}
+          {!items && !error && <SkeletonRows count={5} rowHeight="h-12" />}
           {items && items.length === 0 && (
             <EmptyState
               icon={Inbox}
@@ -194,12 +335,12 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
                         >
                           <TableCell
                             className="hidden md:table-cell text-silver tabular-nums whitespace-nowrap"
-                            title={new Date(n.createdAt).toLocaleString()}
+                            title={fmtDateTime(n.createdAt)}
                           >
                             {fmtTimeOnly(n.createdAt)}
                           </TableCell>
                           <TableCell className="hidden sm:table-cell">
-                            <Badge variant="outline">{n.channel}</Badge>
+                            <Badge variant="outline">{CHANNEL_LABELS[n.channel]}</Badge>
                           </TableCell>
                           <TableCell className="text-silver">
                             <div className="flex items-center gap-2.5 min-w-0">
@@ -223,7 +364,7 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
                             <div className="lg:hidden mt-1 text-xs text-silver truncate max-w-[60vw]">
                               {n.subject ?? '(no subject)'}
                             </div>
-                            <div className="md:hidden text-[10px] text-silver/70 tabular-nums">
+                            <div className="md:hidden text-2xs text-silver/70 tabular-nums">
                               {fmtTimeOnly(n.createdAt)}
                             </div>
                           </TableCell>
@@ -236,10 +377,25 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
                             </div>
                           </TableCell>
                           <TableCell>
-                            <Badge variant={statusVariant(n.status)}>{n.status}</Badge>
+                            <Badge variant={statusVariant(n.status)}>
+                              {STATUS_LABELS[n.status]}
+                            </Badge>
                             {n.failureReason && (
-                              <div className="text-[10px] mt-1 text-alert">
+                              <div className="text-2xs mt-1 text-alert">
                                 {n.failureReason}
+                              </div>
+                            )}
+                            {canManage && n.status === 'FAILED' && (
+                              <div className="mt-1">
+                                <Button
+                                  size="xs"
+                                  variant="outline"
+                                  disabled={resendingId === n.id}
+                                  onClick={() => void resend(n)}
+                                >
+                                  <RotateCw className="mr-1 h-3 w-3" />
+                                  {resendingId === n.id ? 'Resending…' : 'Resend'}
+                                </Button>
                               </div>
                             )}
                           </TableCell>
@@ -253,6 +409,8 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
           )}
         </CardContent>
       </Card>
+
+      {canManage && <SuppressionListCard />}
 
       <ComposeDialog
         open={showCompose}
@@ -282,6 +440,124 @@ export function AdminCommsView({ canManage }: AdminCommsViewProps) {
   );
 }
 
+const SUPPRESSION_REASON_LABELS: Record<EmailSuppression['reason'], string> = {
+  BOUNCED: 'Hard bounce',
+  COMPLAINED: 'Spam complaint',
+  MANUAL: 'Added manually',
+};
+
+/**
+ * Do-not-email list. Populated automatically by the Resend webhook on hard
+ * bounce / spam complaint; sends to these addresses short-circuit to a
+ * Suppressed status. Removing an address resumes delivery.
+ */
+function SuppressionListCard() {
+  const [rows, setRows] = useState<EmailSuppression[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [removingEmail, setRemovingEmail] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setError(null);
+      const res = await listSuppressions();
+      setRows(res.suppressions);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const remove = async (email: string) => {
+    setRemovingEmail(email);
+    try {
+      await deleteSuppression(email);
+      toast.success(`${email} can receive email again.`);
+      refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Remove failed.');
+    } finally {
+      setRemovingEmail(null);
+    }
+  };
+
+  return (
+    <Card className="mt-6">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Suppressed emails</CardTitle>
+        <p className="text-sm text-silver">
+          Addresses that hard-bounced or reported us as spam. Sends to them are
+          blocked until removed here.
+        </p>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {error && (
+          <ErrorBanner
+            className="mb-3"
+            action={
+              <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+                Retry
+              </Button>
+            }
+          >
+            {error}
+          </ErrorBanner>
+        )}
+        {!rows && !error && <SkeletonRows count={2} rowHeight="h-10" />}
+        {rows && rows.length === 0 && (
+          <p className="text-sm text-silver">
+            No suppressed addresses — every mailbox is deliverable.
+          </p>
+        )}
+        {rows && rows.length > 0 && (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Email</TableHead>
+                <TableHead>Reason</TableHead>
+                <TableHead className="hidden md:table-cell">Since</TableHead>
+                <TableHead className="w-24" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((s) => (
+                <TableRow key={s.id}>
+                  <TableCell className="text-white break-all">{s.email}</TableCell>
+                  <TableCell>
+                    <Badge variant="destructive">
+                      {SUPPRESSION_REASON_LABELS[s.reason]}
+                    </Badge>
+                    {s.notes && (
+                      <div className="text-2xs mt-1 text-silver truncate max-w-xs">
+                        {s.notes}
+                      </div>
+                    )}
+                  </TableCell>
+                  <TableCell className="hidden md:table-cell text-silver whitespace-nowrap">
+                    {fmtDateTime(s.createdAt)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={removingEmail === s.email}
+                      onClick={() => void remove(s.email)}
+                    >
+                      {removingEmail === s.email ? 'Removing…' : 'Remove'}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function NotificationDetailPanel({ n }: { n: Notification }) {
   const recipient =
     n.recipientEmail ?? n.recipientPhone ?? n.recipientUserId ?? 'Unknown';
@@ -299,16 +575,16 @@ function NotificationDetailPanel({ n }: { n: Notification }) {
               {n.subject ?? '(no subject)'}
             </DrawerTitle>
             <DrawerDescription>
-              {recipient} · {n.channel}
+              {recipient} · {CHANNEL_LABELS[n.channel]}
             </DrawerDescription>
           </div>
         </div>
       </DrawerHeader>
       <DrawerBody>
         <div className="flex items-center gap-2 mb-4">
-          <Badge variant={statusVariant(n.status)}>{n.status}</Badge>
+          <Badge variant={statusVariant(n.status)}>{STATUS_LABELS[n.status]}</Badge>
           {n.category && (
-            <Badge variant="outline" className="text-[10px]">
+            <Badge variant="outline" className="text-2xs">
               {n.category}
             </Badge>
           )}
@@ -329,8 +605,8 @@ function NotificationDetailPanel({ n }: { n: Notification }) {
         )}
 
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm">
-          <DetailRow label="Channel">{n.channel}</DetailRow>
-          <DetailRow label="Status">{n.status}</DetailRow>
+          <DetailRow label="Channel">{CHANNEL_LABELS[n.channel]}</DetailRow>
+          <DetailRow label="Status">{STATUS_LABELS[n.status]}</DetailRow>
           <DetailRow label="Recipient email">
             {n.recipientEmail ?? <Mute>—</Mute>}
           </DetailRow>
@@ -343,12 +619,12 @@ function NotificationDetailPanel({ n }: { n: Notification }) {
           <DetailRow label="Category">
             {n.category ?? <Mute>—</Mute>}
           </DetailRow>
-          <DetailRow label="Created">{fmtTs(n.createdAt)}</DetailRow>
+          <DetailRow label="Created">{fmtDateTime(n.createdAt)}</DetailRow>
           <DetailRow label="Sent">
-            {n.sentAt ? fmtTs(n.sentAt) : <Mute>not sent</Mute>}
+            {n.sentAt ? fmtDateTime(n.sentAt) : <Mute>not sent</Mute>}
           </DetailRow>
           <DetailRow label="Read">
-            {n.readAt ? fmtTs(n.readAt) : <Mute>unread</Mute>}
+            {n.readAt ? fmtDateTime(n.readAt) : <Mute>unread</Mute>}
           </DetailRow>
           <DetailRow label="External ref">
             {n.externalRef ? (
@@ -366,7 +642,7 @@ function NotificationDetailPanel({ n }: { n: Notification }) {
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[10px] uppercase tracking-widest text-silver/80">
+      <dt className="text-2xs uppercase tracking-widest text-silver/80">
         {label}
       </dt>
       <dd className="text-white text-sm mt-0.5 break-words">{children}</dd>
@@ -378,10 +654,6 @@ function Mute({ children }: { children: React.ReactNode }) {
   return <span className="text-silver/80">{children}</span>;
 }
 
-function fmtTs(iso: string): string {
-  return new Date(iso).toLocaleString();
-}
-
 interface ComposeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -390,9 +662,11 @@ interface ComposeDialogProps {
 
 function ComposeDialog({ open, onOpenChange, onSent }: ComposeDialogProps) {
   const [channel, setChannel] = useState<NotificationChannel>('IN_APP');
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [recipientUserId, setRecipientUserId] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
   const [recipientPhone, setRecipientPhone] = useState('');
+  const [resolveNote, setResolveNote] = useState<string | null>(null);
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -401,19 +675,71 @@ function ComposeDialog({ open, onOpenChange, onSent }: ComposeDialogProps) {
   useEffect(() => {
     if (open) {
       setChannel('IN_APP');
+      setAssociate(null);
       setRecipientUserId('');
       setRecipientEmail('');
       setRecipientPhone('');
+      setResolveNote(null);
       setSubject('');
       setBody('');
       setError(null);
     }
   }, [open]);
 
+  /**
+   * A picked associate resolves in two steps: the directory row carries
+   * email/phone (auto-filled into the external fields when they're empty),
+   * and the admin user list maps associate → linked User id, which is what
+   * IN_APP / PUSH delivery actually targets.
+   */
+  const onPickAssociate = async (picked: PickedAssociate | null) => {
+    setAssociate(picked);
+    setRecipientUserId('');
+    setResolveNote(null);
+    if (!picked) return;
+    // Search by first name token — the directory matches on individual
+    // name fields, not the concatenated display name.
+    const nameToken = picked.name.split(/\s+/)[0] ?? picked.name;
+    let email: string | null = null;
+    try {
+      const dir = await listDirectory({ q: nameToken });
+      const entry = dir.associates.find((a) => a.id === picked.id) ?? null;
+      if (entry) {
+        email = entry.email;
+        const entryEmail = entry.email;
+        const entryPhone = entry.phone;
+        setRecipientEmail((cur) => cur || entryEmail);
+        if (entryPhone) setRecipientPhone((cur) => cur || entryPhone);
+      }
+    } catch {
+      // Directory lookup is best-effort; the manual fields still work.
+    }
+    try {
+      const res = await listAdminUsers({ q: email ?? nameToken });
+      const u = res.users.find((x) => x.associateId === picked.id);
+      if (u) {
+        setRecipientUserId(u.id);
+        setRecipientEmail((cur) => cur || u.email);
+      } else {
+        setResolveNote(
+          'No linked user account found — in-app/push needs one. Email or SMS will still work.',
+        );
+      }
+    } catch {
+      setResolveNote(
+        'Could not resolve a user account for in-app delivery. Email or SMS will still work.',
+      );
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
     setError(null);
+    if (!recipientUserId && !recipientEmail && !recipientPhone) {
+      setError('Pick an associate or fill in an email/phone.');
+      return;
+    }
     setSubmitting(true);
     try {
       await sendNotification({
@@ -455,20 +781,23 @@ function ComposeDialog({ open, onOpenChange, onSent }: ComposeDialogProps) {
                 <option value="PUSH">Push (stub)</option>
               </Select>
             </Field>
-            <Field label="Recipient User ID (in-app / push)">
-              <Input
-                value={recipientUserId}
-                onChange={(e) => setRecipientUserId(e.target.value)}
+            <Field label="Recipient (associate)">
+              <AssociatePicker
+                value={associate}
+                onChange={(v) => void onPickAssociate(v)}
               />
             </Field>
-            <Field label="Recipient email (for EMAIL)">
+            {resolveNote && (
+              <p className="text-xs2 text-warning mt-1">{resolveNote}</p>
+            )}
+            <Field label="Recipient email (for EMAIL / external)">
               <Input
                 type="email"
                 value={recipientEmail}
                 onChange={(e) => setRecipientEmail(e.target.value)}
               />
             </Field>
-            <Field label="Recipient phone (for SMS)">
+            <Field label="Recipient phone (for SMS / external)">
               <Input
                 type="tel"
                 inputMode="tel"
@@ -489,11 +818,7 @@ function ComposeDialog({ open, onOpenChange, onSent }: ComposeDialogProps) {
               onChange={(e) => setBody(e.target.value)}
             />
           </Field>
-          {error && (
-            <p role="alert" className="text-sm text-alert">
-              {error}
-            </p>
-          )}
+          {error && <ErrorBanner>{error}</ErrorBanner>}
           <DialogFooter>
             <Button
               type="button"
@@ -596,11 +921,7 @@ function BroadcastDialog({
               onChange={(e) => setBody(e.target.value)}
             />
           </Field>
-          {error && (
-            <p role="alert" className="text-sm text-alert">
-              {error}
-            </p>
-          )}
+          {error && <ErrorBanner>{error}</ErrorBanner>}
           <DialogFooter>
             <Button
               type="button"
@@ -617,25 +938,5 @@ function BroadcastDialog({
         </form>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function Field({
-  label,
-  required,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="block text-[11px] uppercase tracking-wider text-silver mb-1">
-        {label}
-        {required && <span className="text-alert"> *</span>}
-      </span>
-      {children}
-    </label>
   );
 }

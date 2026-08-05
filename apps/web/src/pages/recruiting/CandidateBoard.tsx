@@ -10,6 +10,7 @@ import {
 } from '@dnd-kit/core';
 import { FileText, Link2 } from 'lucide-react';
 import type { Candidate, CandidateStage } from '@alto-people/shared';
+import { safeHref } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
@@ -32,6 +33,18 @@ const STAGE_LABEL: Record<CandidateStage, string> = {
   HIRED: 'Hired',
   WITHDRAWN: 'Withdrawn',
   REJECTED: 'Rejected',
+};
+
+/** Human labels for the stored source slugs — mirrors RecruitingHome. */
+const SOURCE_LABEL: Record<string, string> = {
+  referral: 'Referral',
+  'careers-page': 'Careers page',
+  indeed: 'Indeed',
+  linkedin: 'LinkedIn',
+  'walk-in': 'Walk-in',
+  agency: 'Agency',
+  other: 'Other',
+  manual: 'Manual',
 };
 
 const STAGE_COL_TONE: Record<CandidateStage, string> = {
@@ -58,6 +71,8 @@ interface CandidateBoardProps {
   onRequestReject: (c: Candidate) => void;
   onRequestWithdraw: (c: Candidate) => void;
   onRequestHire: (c: Candidate) => void;
+  /** Open the full detail drawer. Cards were drag-only before this. */
+  onOpen: (c: Candidate) => void;
 }
 
 export function CandidateBoard({
@@ -67,6 +82,7 @@ export function CandidateBoard({
   onRequestReject,
   onRequestWithdraw,
   onRequestHire,
+  onOpen,
 }: CandidateBoardProps) {
   const grouped = useMemo(() => {
     const out: Record<CandidateStage, Candidate[]> = {
@@ -115,6 +131,7 @@ export function CandidateBoard({
               stage={stage}
               candidates={grouped[stage]}
               pendingId={pendingId}
+              onOpen={onOpen}
             />
           </div>
         ))}
@@ -127,10 +144,12 @@ function Column({
   stage,
   candidates,
   pendingId,
+  onOpen,
 }: {
   stage: CandidateStage;
   candidates: Candidate[];
   pendingId: string | null;
+  onOpen: (c: Candidate) => void;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: stage });
   return (
@@ -143,7 +162,7 @@ function Column({
       )}
     >
       <div className="px-3 py-2 flex items-center justify-between border-b border-navy-secondary">
-        <span className="text-[11px] uppercase tracking-widest text-silver">
+        <span className="text-xs2 uppercase tracking-widest text-silver">
           {STAGE_LABEL[stage]}
         </span>
         <Badge variant="outline" className="tabular-nums">
@@ -152,7 +171,7 @@ function Column({
       </div>
       <div className="p-2 min-h-[120px] max-h-[calc(100vh-22rem)] overflow-y-auto space-y-2">
         {candidates.length === 0 ? (
-          <div className="text-[11px] text-silver/70 text-center py-6 select-none">
+          <div className="text-xs2 text-silver/70 text-center py-6 select-none">
             Drop here
           </div>
         ) : (
@@ -161,6 +180,7 @@ function Column({
               key={c.id}
               candidate={c}
               pending={pendingId === c.id}
+              onOpen={onOpen}
             />
           ))
         )}
@@ -172,9 +192,11 @@ function Column({
 function CandidateCard({
   candidate,
   pending,
+  onOpen,
 }: {
   candidate: Candidate;
   pending: boolean;
+  onOpen: (c: Candidate) => void;
 }) {
   const locked = TERMINAL_STAGES.has(candidate.stage);
   const { attributes, listeners, setNodeRef, transform, isDragging } =
@@ -189,16 +211,33 @@ function CandidateCard({
 
   const fullName = `${candidate.firstName} ${candidate.lastName}`;
 
+  // Click-to-open layers on top of dragging: the PointerSensor activates only
+  // past 6px of travel, so a stationary press stays a click. Terminal cards
+  // can't be dragged but must still open — a hired candidate's record is
+  // exactly the one you want to read back. Only the PointerSensor is
+  // registered, so dnd-kit claims no keyboard handler and Enter/Space are
+  // ours to bind.
   return (
     <div
       ref={setNodeRef}
       style={style}
       {...(locked ? {} : attributes)}
       {...(locked ? {} : listeners)}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open ${fullName}'s details`}
+      onClick={() => onOpen(candidate)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpen(candidate);
+        }
+      }}
       className={cn(
-        'rounded-md border border-navy-secondary bg-navy p-3 text-sm shadow-sm transition-all',
+        'rounded-md border border-navy-secondary bg-navy p-3 text-sm elev-1 transition-all',
+        'text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
         !locked && 'cursor-grab active:cursor-grabbing hover:border-silver/40',
-        locked && 'opacity-80',
+        locked && 'opacity-80 cursor-pointer hover:border-silver/40',
         isDragging && 'opacity-60 ring-1 ring-gold/60',
         pending && 'opacity-60',
       )}
@@ -208,28 +247,29 @@ function CandidateCard({
         <div className="min-w-0 flex-1">
           <div className="font-medium text-white truncate">{fullName}</div>
           {candidate.position && (
-            <div className="text-[11px] text-gold/90 truncate">
+            <div className="text-xs2 text-gold/90 truncate">
               {candidate.position}
             </div>
           )}
-          <div className="text-[11px] text-silver/70 truncate">
+          <div className="text-xs2 text-silver/70 truncate">
             {candidate.email}
           </div>
         </div>
       </div>
       <div className="mt-2 flex items-center justify-between gap-2">
-        <span className="text-[10px] uppercase tracking-wider text-silver/70 truncate">
-          {candidate.source ?? 'manual'}
+        <span className="text-2xs uppercase tracking-wider text-silver/70 truncate">
+          {SOURCE_LABEL[candidate.source ?? 'manual'] ?? candidate.source}
         </span>
         <div className="flex items-center gap-1.5 shrink-0">
           {candidate.resumeUrl && (
             <a
-              href={candidate.resumeUrl}
+              href={safeHref(candidate.resumeUrl)}
               target="_blank"
               rel="noopener noreferrer"
               title="Resume"
               aria-label="Open resume in a new tab"
               onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
               className="text-silver/70 hover:text-gold transition-colors"
             >
               <FileText className="h-3.5 w-3.5" />
@@ -237,12 +277,13 @@ function CandidateCard({
           )}
           {candidate.linkedinUrl && (
             <a
-              href={candidate.linkedinUrl}
+              href={safeHref(candidate.linkedinUrl)}
               target="_blank"
               rel="noopener noreferrer"
               title="LinkedIn"
               aria-label="Open LinkedIn profile in a new tab"
               onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
               className="text-silver/70 hover:text-gold transition-colors"
             >
               <Link2 className="h-3.5 w-3.5" />
@@ -251,12 +292,12 @@ function CandidateCard({
         </div>
       </div>
       {candidate.rejectedReason && (
-        <div className="mt-2 text-[10px] text-alert/90 line-clamp-2">
+        <div className="mt-2 text-2xs text-alert/90 line-clamp-2">
           {candidate.rejectedReason}
         </div>
       )}
       {candidate.withdrawnReason && (
-        <div className="mt-2 text-[10px] text-silver/70 line-clamp-2">
+        <div className="mt-2 text-2xs text-silver/70 line-clamp-2">
           {candidate.withdrawnReason}
         </div>
       )}

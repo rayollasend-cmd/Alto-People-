@@ -1,10 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
 import { Command } from 'cmdk';
 import {
   Banknote,
-  Briefcase,
   Building2,
   CalendarPlus,
   ClipboardCheck,
@@ -19,7 +17,8 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { DASHBOARD_NAV, MODULES } from '@/lib/modules';
-import { listClients } from '@/lib/clientsApi';
+import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
+import { useClients } from '@/lib/useClients';
 import { usePeopleSearch } from '@/lib/usePaletteSearch';
 import { cn } from '@/lib/cn';
 import {
@@ -32,6 +31,12 @@ import {
 interface CommandPaletteProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * Opens the KeyboardShortcutsDialog mounted alongside the palette (in
+   * Layout). Lifted in as a prop so the "Keyboard shortcuts" item can
+   * actually show the overlay rather than just closing the palette.
+   */
+  onShowKeyboardShortcuts?: () => void;
 }
 
 interface PaletteItem {
@@ -53,11 +58,26 @@ interface PerformCtx {
 /** Shared row styling so entity rows look identical to static rows. */
 const ITEM_CLASS = cn(
   'flex items-center gap-3 px-2.5 py-2 rounded-md text-sm cursor-pointer text-white',
-  'data-[selected=true]:bg-navy-secondary data-[selected=true]:text-gold'
+  // Gold left rail marks the active row — reads at a glance even when the
+  // background tint is subtle.
+  'border-l-2 border-transparent',
+  'data-[selected=true]:bg-navy-secondary data-[selected=true]:text-gold data-[selected=true]:border-gold'
 );
 
-const GROUP_CLASS =
-  'text-[10px] uppercase tracking-widest text-silver/80 px-2 pt-2 pb-1';
+const GROUP_CLASS = cn(
+  'text-2xs uppercase tracking-widest text-silver/80 px-2 pt-2 pb-1',
+  // Hairline between groups so Pages / People / Actions scan as sections.
+  '[&:not(:first-of-type)]:mt-1 [&:not(:first-of-type)]:border-t [&:not(:first-of-type)]:border-navy-secondary/60'
+);
+
+/** Chromed key hint used in the palette footer. */
+function Kbd({ children }: { children: ReactNode }) {
+  return (
+    <kbd className="inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 rounded border border-navy-secondary bg-navy-secondary/40 font-mono text-3xs text-silver">
+      {children}
+    </kbd>
+  );
+}
 
 /**
  * App-wide command palette. Open with Cmd/Ctrl+K. Searches across module
@@ -66,7 +86,11 @@ const GROUP_CLASS =
  * because People results come from the server and must not be re-filtered
  * by cmdk's fuzzy matcher (a hit on email would otherwise be hidden).
  */
-export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
+export function CommandPalette({
+  open,
+  onOpenChange,
+  onShowKeyboardShortcuts,
+}: CommandPaletteProps) {
   const navigate = useNavigate();
   const { signOut, can, user } = useAuth();
   const [search, setSearch] = useState('');
@@ -93,10 +117,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   // Clients page / directory facet) and filter client-side. Only fetched
   // once the user actually types an entity-length query.
   const canSearchClients = can('view:clients');
-  const { data: allClients = [] } = useQuery({
-    queryKey: ['clients', 'list'],
-    queryFn: async () => (await listClients()).clients,
-    staleTime: 5 * 60_000,
+  const { clients: allClients } = useClients({
     enabled: open && entityQueryActive && canSearchClients,
   });
   const clientMatches =
@@ -110,11 +131,15 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
           .slice(0, 5)
       : [];
 
-  const items: PaletteItem[] = [
+  // Static portion of the palette. The 60+ item objects (and the
+  // MODULES.filter().map() behind them) only depend on the signed-in
+  // user's capability set — memoize so they aren't rebuilt on every
+  // keystroke. Search-dependent results (people/clients) stay outside.
+  const items: PaletteItem[] = useMemo(() => [
     {
       id: 'nav-dashboard',
       label: DASHBOARD_NAV.label,
-      icon: DASHBOARD_NAV.icon,
+      icon: DASHBOARD_ICON,
       group: 'Navigation',
       perform: ({ navigate, close }) => {
         navigate(DASHBOARD_NAV.path);
@@ -125,7 +150,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       id: `nav-${m.key}`,
       label: m.label,
       hint: m.description,
-      icon: m.icon,
+      icon: MODULE_ICONS[m.key],
       keywords: m.description,
       group: 'Navigation',
       perform: ({ navigate, close }) => {
@@ -199,7 +224,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
           } satisfies PaletteItem,
         ]
       : []),
-    ...(can('manage:onboarding')
+    ...(can('invite:onboarding')
       ? [
           {
             id: 'action-invite-associate',
@@ -241,12 +266,15 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     {
       id: 'help-shortcuts',
       label: 'Keyboard shortcuts',
-      hint: 'Open this palette with ⌘K / Ctrl+K',
+      hint: 'See every shortcut (also: press ?)',
       icon: HelpCircle,
       group: 'Help',
-      perform: ({ close }) => close(),
+      perform: ({ close }) => {
+        close();
+        onShowKeyboardShortcuts?.();
+      },
     },
-  ];
+  ], [can, user, onShowKeyboardShortcuts]);
 
   // Manual filtering (cmdk shouldFilter is off). Same fields the old
   // cmdk value string covered: label + keywords.
@@ -276,7 +304,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
             <div className="flex-1 min-w-0">
               <div className="truncate">{item.label}</div>
               {item.hint && (
-                <div className="text-[11px] text-silver/70 truncate">{item.hint}</div>
+                <div className="text-xs2 text-silver/70 truncate">{item.hint}</div>
               )}
             </div>
           </Command.Item>
@@ -287,7 +315,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl p-0 overflow-hidden gap-0">
+      <DialogContent className="max-w-xl p-0 overflow-hidden gap-0 rounded-xl elev-3 ring-1 ring-white/[0.06]">
         <DialogTitle className="sr-only">Command palette</DialogTitle>
         <DialogDescription className="sr-only">
           Search to navigate, find people and clients, run quick actions, or
@@ -306,9 +334,6 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                 'outline-none border-0 focus:ring-0'
               )}
             />
-            <span className="ml-2 hidden sm:inline-flex items-center gap-1 text-[10px] text-silver/70 border border-navy-secondary rounded px-1.5 py-0.5 font-mono">
-              ESC
-            </span>
           </div>
           <Command.List className="max-h-[60vh] overflow-y-auto p-1">
             {/* Suppress "No results." while a people search is pending so
@@ -333,7 +358,10 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                       key={p.id}
                       value={`person-${p.id}`}
                       onSelect={() => {
-                        navigate(`/people?q=${encodeURIComponent(fullName)}`);
+                        // Straight to their profile drawer — landing on a
+                        // name-filtered list was one click short, and wrong
+                        // for duplicate names.
+                        navigate(`/people?associateId=${p.id}`);
                         close();
                       }}
                       className={ITEM_CLASS}
@@ -342,7 +370,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                       <div className="flex-1 min-w-0">
                         <div className="truncate">{fullName}</div>
                         {hint && (
-                          <div className="text-[11px] text-silver/70 truncate">
+                          <div className="text-xs2 text-silver/70 truncate">
                             {hint}
                           </div>
                         )}
@@ -381,7 +409,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
                     <div className="flex-1 min-w-0">
                       <div className="truncate">{c.name}</div>
                       {c.industry && (
-                        <div className="text-[11px] text-silver/70 truncate">
+                        <div className="text-xs2 text-silver/70 truncate">
                           {c.industry}
                         </div>
                       )}
@@ -395,14 +423,22 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
             {renderStaticGroup('Account', 'Account')}
             {renderStaticGroup('Help', 'Help')}
           </Command.List>
-          <div className="flex items-center justify-between border-t border-navy-secondary px-3 py-2 text-[10px] text-silver/80">
-            <div className="inline-flex items-center gap-1.5">
-              <Briefcase className="h-3 w-3" aria-hidden="true" />
-              Alto People
-            </div>
+          <div className="flex items-center justify-between border-t border-navy-secondary px-3 py-2 text-2xs text-silver/80">
             <div className="inline-flex items-center gap-1.5">
               <Sparkles className="h-3 w-3 text-gold" aria-hidden="true" />
-              Cmd+K from anywhere
+              Alto People
+            </div>
+            <div className="hidden sm:inline-flex items-center gap-3">
+              <span className="inline-flex items-center gap-1">
+                <Kbd>↑</Kbd>
+                <Kbd>↓</Kbd> navigate
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <Kbd>↵</Kbd> select
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <Kbd>esc</Kbd> close
+              </span>
             </div>
           </div>
         </Command>

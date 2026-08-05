@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
+import { Download, Plus, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { listClients } from '@/lib/clientsApi';
-import { fmtDate, fmtMoney } from '@/lib/format';
-import type { ClientListItem } from '@alto-people/shared';
+import { useClients } from '@/lib/useClients';
+import { downloadCsv } from '@/lib/csv';
+import {
+  fmtDate,
+  fmtMoney,
+  fmtPayRate,
+  fmtPercent,
+  parseYmd,
+  ymdLocal,
+} from '@/lib/format';
 import {
   applyCycle,
   createBand,
@@ -17,6 +25,7 @@ import {
   updateProposal,
   type CompBand,
   type MeritCycle,
+  type MeritCycleStatus,
   type MeritProposal,
   type MeritProposalStatus,
   type PayType,
@@ -35,6 +44,8 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  FilterChip,
   Input,
   PageHeader,
   Select,
@@ -55,24 +66,64 @@ import { toast } from 'sonner';
 
 type Tab = 'bands' | 'cycles';
 
+/** Date-only "YYYY-MM-DD" → "May 13, 2026" without the UTC-midnight shift. */
+const fmtYmd = (s: string | null | undefined) => fmtDate(parseYmd(s));
+
+const PAY_TYPE_LABELS: Record<PayType, string> = {
+  HOURLY: 'Hourly',
+  SALARY: 'Salary',
+};
+
+const CYCLE_STATUS_LABELS: Record<MeritCycleStatus, string> = {
+  DRAFT: 'Draft',
+  OPEN: 'Open',
+  APPLIED: 'Applied',
+  CLOSED: 'Closed',
+};
+
+const PROPOSAL_STATUS_LABELS: Record<MeritProposalStatus, string> = {
+  DRAFT: 'Draft',
+  SUBMITTED: 'Submitted',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+  APPLIED: 'Applied',
+};
+
+/** Shared "section failed to load" body with a Retry affordance. */
+function LoadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="p-6">
+      <ErrorBanner
+        action={
+          <Button size="sm" variant="secondary" onClick={onRetry}>
+            Retry
+          </Button>
+        }
+      >
+        {message}
+      </ErrorBanner>
+    </div>
+  );
+}
+
 export function CompensationHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:comp') : false;
 
-  const [clients, setClients] = useState<ClientListItem[]>([]);
+  // Shared react-query cache — fetched at most once per 5 minutes app-wide.
+  const {
+    clients,
+    isError: clientsError,
+    refetch: refetchClients,
+  } = useClients();
   const [clientId, setClientId] = useState<string>('');
   const [tab, setTab] = useState<Tab>('bands');
 
   useEffect(() => {
-    listClients()
-      .then((res) => {
-        setClients(res.clients);
-        if (!clientId && res.clients.length > 0) {
-          setClientId(res.clients[0].id);
-        }
-      })
-      .catch(() => {});
-  }, [clientId]);
+    if (clients.length > 0) {
+      setClientId((prev) => prev || clients[0].id);
+    }
+  }, [clients]);
 
   return (
     <div className="space-y-5">
@@ -86,7 +137,7 @@ export function CompensationHome() {
         <CardContent className="p-4 flex items-center gap-3 flex-wrap">
           <label
             htmlFor="comp-client"
-            className="text-[11px] uppercase tracking-wider text-silver"
+            className="text-xs2 uppercase tracking-wider text-silver"
           >
             Client
           </label>
@@ -103,6 +154,22 @@ export function CompensationHome() {
               </option>
             ))}
           </Select>
+          {clientsError && (
+            <ErrorBanner
+              className="flex-1 min-w-[16rem]"
+              action={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void refetchClients()}
+                >
+                  Retry
+                </Button>
+              }
+            >
+              Could not load the client list.
+            </ErrorBanner>
+          )}
         </CardContent>
       </Card>
 
@@ -155,20 +222,47 @@ type BandDraft = {
 function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolean }) {
   const confirm = useConfirm();
   const [rows, setRows] = useState<CompBand[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
   const [draft, setDraft] = useState<BandDraft | null>(null);
 
   const refresh = async () => {
     setRows(null);
+    setError(null);
     try {
       const r = await listBands(clientId);
       setRows(r.bands);
-    } catch {
-      setRows([]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load pay bands.');
     }
   };
   useEffect(() => {
     refresh();
   }, [clientId]);
+
+  const q = search.trim().toLowerCase();
+  const filtered = (rows ?? []).filter(
+    (b) =>
+      q === '' ||
+      b.name.toLowerCase().includes(q) ||
+      (b.level ?? '').toLowerCase().includes(q) ||
+      (b.jobProfileTitle ?? '').toLowerCase().includes(q),
+  );
+
+  const exportCsv = () => {
+    downloadCsv(`pay-bands-${ymdLocal()}.csv`, [
+      ['Name', 'Job profile', 'Level', 'Pay type', 'Min', 'Mid', 'Max'],
+      ...filtered.map((b) => [
+        b.name,
+        b.jobProfileTitle ?? '',
+        b.level ?? '',
+        PAY_TYPE_LABELS[b.payType],
+        b.minAmount,
+        b.midAmount,
+        b.maxAmount,
+      ]),
+    ]);
+  };
 
   const onDelete = async (id: string) => {
     if (!(await confirm({ title: 'Delete this pay band?', destructive: true }))) return;
@@ -177,38 +271,68 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
       toast.success('Band deleted.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not delete the band.');
     }
   };
 
   return (
     <div className="space-y-4">
-      {canManage && (
-        <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <Input
+          className="h-8 w-56 text-sm"
+          placeholder="Search bands…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search pay bands"
+        />
+        <div className="flex gap-2">
           <Button
-            onClick={() =>
-              setDraft({
-                name: '',
-                level: '',
-                payType: 'HOURLY',
-                minAmount: '',
-                midAmount: '',
-                maxAmount: '',
-              })
-            }
+            size="sm"
+            variant="secondary"
+            onClick={exportCsv}
+            disabled={filtered.length === 0}
           >
-            <Plus className="mr-2 h-4 w-4" /> New band
+            <Download className="mr-2 h-4 w-4" /> Export CSV
           </Button>
+          {canManage && (
+            <Button
+              size="sm"
+              onClick={() =>
+                setDraft({
+                  name: '',
+                  level: '',
+                  payType: 'HOURLY',
+                  minAmount: '',
+                  midAmount: '',
+                  maxAmount: '',
+                })
+              }
+            >
+              <Plus className="mr-2 h-4 w-4" /> New band
+            </Button>
+          )}
         </div>
-      )}
+      </div>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {error !== null ? (
+            <LoadError message={error} onRetry={refresh} />
+          ) : rows === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : rows.length === 0 ? (
             <EmptyState
               title="No pay bands"
               description="Define minimum / midpoint / maximum pay for each role so HR can see where in band each associate sits."
+            />
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              title="No bands match"
+              description="No pay bands match your search."
+              action={
+                <Button size="sm" variant="secondary" onClick={() => setSearch('')}>
+                  Clear search
+                </Button>
+              }
             />
           ) : (
             <Table>
@@ -223,7 +347,7 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((b) => (
+                {filtered.map((b) => (
                   <TableRow
                     key={b.id}
                     className="group cursor-pointer"
@@ -242,13 +366,13 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
                   >
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{b.name}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {b.jobProfileTitle ?? '—'}{b.level ? ` · ${b.level}` : ''}
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{b.jobProfileTitle ?? '—'}</TableCell>
                     <TableCell className="hidden md:table-cell">{b.level ?? '—'}</TableCell>
-                    <TableCell className="hidden lg:table-cell">{b.payType}</TableCell>
+                    <TableCell className="hidden lg:table-cell">{PAY_TYPE_LABELS[b.payType]}</TableCell>
                     <TableCell className="tabular-nums">
                       {fmtMoney(b.minAmount)} · {fmtMoney(b.midAmount)} · {fmtMoney(b.maxAmount)}
                     </TableCell>
@@ -260,7 +384,7 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
                             e.stopPropagation();
                             onDelete(b.id);
                           }}
-                          className="opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition"
+                          className="can-hover:opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition"
                         >
                           <Trash2 className="h-4 w-4 inline" />
                         </button>
@@ -305,6 +429,32 @@ function BandDrawer({
   onSaved: () => void;
 }) {
   const [saving, setSaving] = useState(false);
+  // Mid auto-fills to (min+max)/2 until the user edits it themselves.
+  // Editing an existing band counts as "touched" — never clobber saved mids.
+  const [midTouched, setMidTouched] = useState(Boolean(draft.id));
+
+  const autoMid = (next: BandDraft): BandDraft => {
+    if (midTouched) return next;
+    const min = Number(next.minAmount);
+    const max = Number(next.maxAmount);
+    if (next.minAmount !== '' && next.maxAmount !== '' && Number.isFinite(min) && Number.isFinite(max)) {
+      return { ...next, midAmount: String((min + max) / 2) };
+    }
+    return next;
+  };
+
+  // Live band stats — range spread ((max−min)/min) and the midpoint.
+  const liveMin = Number(draft.minAmount);
+  const liveMid = Number(draft.midAmount);
+  const liveMax = Number(draft.maxAmount);
+  const statsValid =
+    draft.minAmount !== '' &&
+    draft.midAmount !== '' &&
+    draft.maxAmount !== '' &&
+    liveMin > 0 &&
+    liveMid > 0 &&
+    liveMax > 0;
+
   const onSubmit = async () => {
     if (!draft.name.trim()) {
       toast.error('Name required.');
@@ -337,7 +487,7 @@ function BandDrawer({
       toast.success(draft.id ? 'Band updated.' : 'Band created.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not save the band.');
     } finally {
       setSaving(false);
     }
@@ -386,7 +536,7 @@ function BandDrawer({
               className="mt-1"
               type="number"
               value={draft.minAmount}
-              onChange={(e) => setDraft({ ...draft, minAmount: e.target.value })}
+              onChange={(e) => setDraft(autoMid({ ...draft, minAmount: e.target.value }))}
             />
           </div>
           <div>
@@ -395,7 +545,10 @@ function BandDrawer({
               className="mt-1"
               type="number"
               value={draft.midAmount}
-              onChange={(e) => setDraft({ ...draft, midAmount: e.target.value })}
+              onChange={(e) => {
+                setMidTouched(true);
+                setDraft({ ...draft, midAmount: e.target.value });
+              }}
             />
           </div>
           <div>
@@ -404,10 +557,17 @@ function BandDrawer({
               className="mt-1"
               type="number"
               value={draft.maxAmount}
-              onChange={(e) => setDraft({ ...draft, maxAmount: e.target.value })}
+              onChange={(e) => setDraft(autoMid({ ...draft, maxAmount: e.target.value }))}
             />
           </div>
         </div>
+        {statsValid && (
+          <p className="text-xs text-silver">
+            Spread {fmtPercent(((liveMax - liveMin) / liveMin) * 100)} · midpoint{' '}
+            {fmtMoney(liveMid)}
+            {!midTouched && ' (auto-filled — edit to override)'}
+          </p>
+        )}
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
@@ -425,16 +585,18 @@ function BandDrawer({
 
 function CyclesTab({ clientId, canManage }: { clientId: string; canManage: boolean }) {
   const [cycles, setCycles] = useState<MeritCycle[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [active, setActive] = useState<MeritCycle | null>(null);
 
   const refresh = async () => {
     setCycles(null);
+    setError(null);
     try {
       const r = await listCycles(clientId);
       setCycles(r.cycles);
-    } catch {
-      setCycles([]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load merit cycles.');
     }
   };
   useEffect(() => {
@@ -452,7 +614,9 @@ function CyclesTab({ clientId, canManage }: { clientId: string; canManage: boole
       )}
       <Card>
         <CardContent className="p-0">
-          {cycles === null ? (
+          {error !== null ? (
+            <LoadError message={error} onRetry={refresh} />
+          ) : cycles === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : cycles.length === 0 ? (
             <EmptyState
@@ -479,8 +643,8 @@ function CyclesTab({ clientId, canManage }: { clientId: string; canManage: boole
                   >
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{c.name}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
-                        {fmtDate(c.reviewPeriodStart)} – {fmtDate(c.reviewPeriodEnd)}
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
+                        {fmtYmd(c.reviewPeriodStart)} – {fmtYmd(c.reviewPeriodEnd)}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -493,13 +657,13 @@ function CyclesTab({ clientId, canManage }: { clientId: string; canManage: boole
                               : 'default'
                         }
                       >
-                        {c.status}
+                        {CYCLE_STATUS_LABELS[c.status]}
                       </Badge>
                     </TableCell>
                     <TableCell className="whitespace-nowrap hidden md:table-cell">
-                      {fmtDate(c.reviewPeriodStart)} – {fmtDate(c.reviewPeriodEnd)}
+                      {fmtYmd(c.reviewPeriodStart)} – {fmtYmd(c.reviewPeriodEnd)}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap">{fmtDate(c.effectiveDate)}</TableCell>
+                    <TableCell className="whitespace-nowrap">{fmtYmd(c.effectiveDate)}</TableCell>
                     <TableCell className="tabular-nums hidden md:table-cell">{fmtMoney(c.budget)}</TableCell>
                   </TableRow>
                 ))}
@@ -539,10 +703,12 @@ function NewCycleDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const thisYear = new Date().getFullYear();
   const [name, setName] = useState('');
-  const [start, setStart] = useState('');
-  const [end, setEnd] = useState('');
-  const [eff, setEff] = useState('');
+  // Defaults: review the current calendar year, raises effective next Jan 1.
+  const [start, setStart] = useState(`${thisYear}-01-01`);
+  const [end, setEnd] = useState(`${thisYear}-12-31`);
+  const [eff, setEff] = useState(`${thisYear + 1}-01-01`);
   const [budget, setBudget] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -551,8 +717,8 @@ function NewCycleDrawer({
       toast.error('Name required.');
       return;
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || !/^\d{4}-\d{2}-\d{2}$/.test(eff)) {
-      toast.error('Dates must be YYYY-MM-DD.');
+    if (!start || !end || !eff) {
+      toast.error('All three dates are required.');
       return;
     }
     setSaving(true);
@@ -568,7 +734,7 @@ function NewCycleDrawer({
       toast.success('Cycle created.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the cycle.');
     } finally {
       setSaving(false);
     }
@@ -588,29 +754,29 @@ function NewCycleDrawer({
           <div>
             <Label>Period start</Label>
             <Input
+              type="date"
               className="mt-1"
               value={start}
               onChange={(e) => setStart(e.target.value)}
-              placeholder="2026-01-01"
             />
           </div>
           <div>
             <Label>Period end</Label>
             <Input
+              type="date"
               className="mt-1"
               value={end}
               onChange={(e) => setEnd(e.target.value)}
-              placeholder="2026-12-31"
             />
           </div>
         </div>
         <div>
           <Label>Effective date</Label>
           <Input
+            type="date"
             className="mt-1"
             value={eff}
             onChange={(e) => setEff(e.target.value)}
-            placeholder="2027-01-01"
           />
         </div>
         <div>
@@ -648,15 +814,30 @@ function CycleDetailDrawer({
 }) {
   const confirm = useConfirm();
   const [proposals, setProposals] = useState<MeritProposal[] | null>(null);
+  const [proposalsError, setProposalsError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState('');
+  const [statusChip, setStatusChip] = useState<MeritProposalStatus | 'ALL'>('ALL');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // In-progress proposed-amount edits, keyed by proposal id — lets us show
+  // the live delta and an inline validation message instead of silently
+  // discarding bad input on blur.
+  const [edits, setEdits] = useState<Record<string, string>>({});
+  const [editErrors, setEditErrors] = useState<Record<string, string>>({});
 
   const refresh = async () => {
     setProposals(null);
+    setProposalsError(null);
+    setSelected(new Set());
+    setEdits({});
+    setEditErrors({});
     try {
       const r = await listProposals(cycle.id);
       setProposals(r.proposals);
-    } catch {
-      setProposals([]);
+    } catch (err) {
+      setProposalsError(
+        err instanceof ApiError ? err.message : 'Could not load proposals.',
+      );
     }
   };
   useEffect(() => {
@@ -673,6 +854,37 @@ function CycleDetailDrawer({
       );
   }, [proposals]);
 
+  // Budget meter math. `budget` is the total spend allowed for the cycle;
+  // totalProposed is the approved delta so far.
+  const budget = cycle.budget !== null ? Number(cycle.budget) : null;
+  const remaining = budget !== null ? budget - totalProposed : null;
+  const pctUsed =
+    budget !== null && budget > 0 ? (totalProposed / budget) * 100 : null;
+
+  const q = search.trim().toLowerCase();
+  const filtered = (proposals ?? []).filter(
+    (p) =>
+      (q === '' || p.associateName.toLowerCase().includes(q)) &&
+      (statusChip === 'ALL' || p.status === statusChip),
+  );
+
+  const decidable = (p: MeritProposal) =>
+    canManage && cycle.status === 'OPEN' && p.status !== 'APPLIED';
+
+  const exportCsv = () => {
+    downloadCsv(`merit-proposals-${ymdLocal()}.csv`, [
+      ['Associate', 'Pay type', 'Current', 'Proposed', 'Delta', 'Status'],
+      ...filtered.map((p) => [
+        p.associateName,
+        PAY_TYPE_LABELS[p.currentPayType],
+        p.currentAmount,
+        p.proposedAmount,
+        (Number(p.proposedAmount) - Number(p.currentAmount)).toFixed(2),
+        PROPOSAL_STATUS_LABELS[p.status],
+      ]),
+    ]);
+  };
+
   const onSeed = async () => {
     setBusy(true);
     try {
@@ -681,14 +893,14 @@ function CycleDetailDrawer({
       onChanged();
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not seed proposals.');
     } finally {
       setBusy(false);
     }
   };
 
   const onApply = async () => {
-    if (!(await confirm({ title: `Apply ${cycle.name}?`, description: `Approved proposals become effective ${cycle.effectiveDate}.` }))) {
+    if (!(await confirm({ title: `Apply ${cycle.name}?`, description: `Approved proposals become effective ${fmtYmd(cycle.effectiveDate)}.` }))) {
       return;
     }
     setBusy(true);
@@ -698,7 +910,7 @@ function CycleDetailDrawer({
       onChanged();
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not apply the cycle.');
     } finally {
       setBusy(false);
     }
@@ -708,20 +920,69 @@ function CycleDetailDrawer({
     if (status !== 'APPROVED' && status !== 'REJECTED') return;
     try {
       await updateProposal(cycle.id, p.id, { status });
+      toast.success(
+        status === 'APPROVED'
+          ? `${p.associateName}'s proposal approved.`
+          : `${p.associateName}'s proposal rejected.`,
+      );
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not save the decision.');
     }
+  };
+
+  const onApproveSelected = async () => {
+    const ids = (proposals ?? [])
+      .filter((p) => selected.has(p.id) && decidable(p))
+      .map((p) => p.id);
+    if (ids.length === 0) return;
+    setBusy(true);
+    const results = await Promise.allSettled(
+      ids.map((id) => updateProposal(cycle.id, id, { status: 'APPROVED' })),
+    );
+    setBusy(false);
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    if (failed === 0) {
+      toast.success(`Approved ${ids.length} proposal${ids.length === 1 ? '' : 's'}.`);
+    } else {
+      toast.error(
+        `Approved ${ids.length - failed} of ${ids.length} — ${failed} failed. Reload and retry the rest.`,
+      );
+    }
+    refresh();
+  };
+
+  const toggleSelected = (id: string, checked: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
   };
 
   const onEditProposed = async (p: MeritProposal, value: string) => {
     const n = Number(value);
-    if (!Number.isFinite(n) || n <= 0) return;
+    if (value.trim() === '' || !Number.isFinite(n) || n <= 0) {
+      setEditErrors((prev) => ({
+        ...prev,
+        [p.id]: 'Enter an amount greater than 0.',
+      }));
+      return;
+    }
+    setEditErrors((prev) => {
+      if (!(p.id in prev)) return prev;
+      const rest = { ...prev };
+      delete rest[p.id];
+      return rest;
+    });
+    if (n === Number(p.proposedAmount)) return; // unchanged — nothing to save
     try {
       await updateProposal(cycle.id, p.id, { proposedAmount: n });
+      toast.success(`${p.associateName}'s proposed amount updated.`);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : 'Could not update the amount.');
     }
   };
 
@@ -732,22 +993,50 @@ function CycleDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="text-sm text-silver flex flex-wrap gap-4">
-          <span>Status: <span className="text-white">{cycle.status}</span></span>
-          <span>Effective: <span className="text-white">{cycle.effectiveDate}</span></span>
-          {cycle.budget && (
+          <span>Status: <span className="text-white">{CYCLE_STATUS_LABELS[cycle.status]}</span></span>
+          <span>Effective: <span className="text-white">{fmtYmd(cycle.effectiveDate)}</span></span>
+          {budget !== null && (
             <span>
-              Budget: <span className="text-white">${cycle.budget}</span>
+              Budget: <span className="text-white">{fmtMoney(budget)}</span>
             </span>
           )}
           <span>
             Approved Δ:{' '}
             <span className={totalProposed >= 0 ? 'text-success' : 'text-alert'}>
-              ${totalProposed.toFixed(2)}
+              {fmtMoney(totalProposed)}
             </span>
           </span>
         </div>
+
+        {budget !== null && remaining !== null && (
+          <div className="space-y-1">
+            <div className="flex justify-between text-xs text-silver">
+              <span>Budget used</span>
+              <span className={remaining < 0 ? 'text-alert font-medium' : ''}>
+                {remaining < 0
+                  ? `${fmtMoney(Math.abs(remaining))} over budget`
+                  : `${fmtMoney(remaining)} remaining`}
+              </span>
+            </div>
+            <div className="w-full bg-navy-secondary rounded-full h-2 overflow-hidden">
+              <div
+                className={`h-full transition-all ${pctUsed !== null && pctUsed > 100 ? 'bg-alert' : 'bg-success'}`}
+                style={{
+                  width: `${Math.min(100, Math.max(0, pctUsed ?? 0))}%`,
+                }}
+              />
+            </div>
+            {pctUsed !== null && pctUsed > 100 && (
+              <p className="text-xs text-alert">
+                Approved increases exceed this cycle’s budget — reduce or
+                reject proposals before applying.
+              </p>
+            )}
+          </div>
+        )}
+
         {canManage && (cycle.status === 'DRAFT' || cycle.status === 'OPEN') && (
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button variant="secondary" onClick={onSeed} disabled={busy}>
               Seed proposals
             </Button>
@@ -756,20 +1045,78 @@ function CycleDetailDrawer({
                 Apply cycle
               </Button>
             )}
+            {cycle.status === 'OPEN' && selected.size > 0 && (
+              <Button variant="secondary" onClick={onApproveSelected} disabled={busy}>
+                Approve selected ({selected.size})
+              </Button>
+            )}
           </div>
         )}
 
-        {proposals === null ? (
+        {proposals !== null && proposals.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <Input
+              className="h-8 w-48 text-sm"
+              placeholder="Search associate…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search proposals by associate"
+            />
+            {(['ALL', 'DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED', 'APPLIED'] as const).map(
+              (s) => (
+                <FilterChip
+                  key={s}
+                  active={statusChip === s}
+                  onClick={() => setStatusChip(s)}
+                >
+                  {s === 'ALL' ? 'All' : PROPOSAL_STATUS_LABELS[s]}
+                </FilterChip>
+              ),
+            )}
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={exportCsv}
+              disabled={filtered.length === 0}
+            >
+              <Download className="mr-2 h-4 w-4" /> Export CSV
+            </Button>
+          </div>
+        )}
+
+        {proposalsError !== null ? (
+          <LoadError message={proposalsError} onRetry={refresh} />
+        ) : proposals === null ? (
           <SkeletonRows count={4} />
         ) : proposals.length === 0 ? (
           <EmptyState
             title="No proposals yet"
             description="Click “Seed proposals” to auto-create a row for every active associate."
           />
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            title="No proposals match"
+            description="No proposals match your search or status filter."
+            action={
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => {
+                  setSearch('');
+                  setStatusChip('ALL');
+                }}
+              >
+                Clear filters
+              </Button>
+            }
+          />
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
+                {canManage && cycle.status === 'OPEN' && (
+                  <TableHead className="w-8" aria-label="Select" />
+                )}
                 <TableHead>Associate</TableHead>
                 <TableHead className="hidden md:table-cell">Current</TableHead>
                 <TableHead>Proposed</TableHead>
@@ -778,64 +1125,120 @@ function CycleDetailDrawer({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {proposals.map((p) => (
-                <TableRow key={p.id}>
-                  <TableCell className="font-medium text-white">
-                    <div className="truncate">{p.associateName}</div>
-                    <div className="md:hidden text-[11px] text-silver/70 truncate tabular-nums">
-                      ${p.currentAmount} {p.currentPayType}
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell">
-                    ${p.currentAmount} <span className="text-silver text-xs">{p.currentPayType}</span>
-                  </TableCell>
-                  <TableCell>
-                    {canManage && cycle.status === 'OPEN' && p.status !== 'APPLIED' ? (
-                      <Input
-                        className="w-28"
-                        type="number"
-                        defaultValue={p.proposedAmount}
-                        onBlur={(e) => onEditProposed(p, e.target.value)}
-                      />
-                    ) : (
-                      <>${p.proposedAmount}</>
+              {filtered.map((p) => {
+                const editValue = edits[p.id] ?? p.proposedAmount;
+                const editError = editErrors[p.id];
+                const cur = Number(p.currentAmount);
+                const proposedNum = Number(editValue);
+                const delta =
+                  Number.isFinite(proposedNum) && Number.isFinite(cur)
+                    ? proposedNum - cur
+                    : null;
+                const deltaPct =
+                  delta !== null && cur > 0 ? (delta / cur) * 100 : null;
+                return (
+                  <TableRow key={p.id}>
+                    {canManage && cycle.status === 'OPEN' && (
+                      <TableCell className="w-8">
+                        {decidable(p) && (
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${p.associateName}`}
+                            checked={selected.has(p.id)}
+                            onChange={(e) => toggleSelected(p.id, e.target.checked)}
+                          />
+                        )}
+                      </TableCell>
                     )}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        p.status === 'APPROVED' || p.status === 'APPLIED'
-                          ? 'success'
-                          : p.status === 'REJECTED'
-                            ? 'destructive'
-                            : 'pending'
-                      }
-                    >
-                      {p.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {canManage && cycle.status === 'OPEN' && p.status !== 'APPLIED' && (
-                      <div className="inline-flex gap-1">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => onDecide(p, 'APPROVED')}
-                        >
-                          Approve
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => onDecide(p, 'REJECTED')}
-                        >
-                          Reject
-                        </Button>
+                    <TableCell className="font-medium text-white">
+                      <div className="truncate">
+                        <AssociateLink associateId={p.associateId}>{p.associateName}</AssociateLink>
                       </div>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
+                      <div className="md:hidden text-xs2 text-silver/70 truncate tabular-nums">
+                        {fmtPayRate(p.currentAmount, p.currentPayType)}
+                      </div>
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell tabular-nums">
+                      {fmtPayRate(p.currentAmount, p.currentPayType)}
+                    </TableCell>
+                    <TableCell>
+                      {decidable(p) ? (
+                        <div className="space-y-1">
+                          <Input
+                            className="w-28"
+                            type="number"
+                            value={editValue}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setEdits((prev) => ({ ...prev, [p.id]: v }));
+                              setEditErrors((prev) => {
+                                if (!(p.id in prev)) return prev;
+                                const rest = { ...prev };
+                                delete rest[p.id];
+                                return rest;
+                              });
+                            }}
+                            onBlur={(e) => onEditProposed(p, e.target.value)}
+                            invalid={Boolean(editError)}
+                          />
+                          {editError ? (
+                            <p className="text-xs2 text-alert">{editError}</p>
+                          ) : (
+                            delta !== null &&
+                            delta !== 0 && (
+                              <p
+                                className={`text-xs2 tabular-nums ${delta > 0 ? 'text-success' : 'text-alert'}`}
+                              >
+                                {delta > 0 ? '+' : '−'}
+                                {deltaPct !== null
+                                  ? `${fmtPercent(Math.abs(deltaPct))} · `
+                                  : ''}
+                                {delta > 0 ? '+' : '−'}
+                                {fmtMoney(Math.abs(delta))}
+                              </p>
+                            )
+                          )}
+                        </div>
+                      ) : (
+                        <span className="tabular-nums">{fmtMoney(p.proposedAmount)}</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={
+                          p.status === 'APPROVED' || p.status === 'APPLIED'
+                            ? 'success'
+                            : p.status === 'REJECTED'
+                              ? 'destructive'
+                              : 'pending'
+                        }
+                      >
+                        {PROPOSAL_STATUS_LABELS[p.status]}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {decidable(p) && (
+                        <div className="inline-flex gap-1">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => onDecide(p, 'APPROVED')}
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => onDecide(p, 'REJECTED')}
+                          >
+                            Reject
+                          </Button>
+                        </div>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         )}

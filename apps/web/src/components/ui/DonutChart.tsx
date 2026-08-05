@@ -122,7 +122,7 @@ export function DonutChart({
             {centerLabel ?? total.toLocaleString()}
           </div>
           {centerSublabel && (
-            <div className="text-[10px] uppercase tracking-widest text-silver/70 mt-1">
+            <div className="text-2xs uppercase tracking-widest text-silver/70 mt-1">
               {centerSublabel}
             </div>
           )}

@@ -6,6 +6,7 @@ import {
   AutoFillResponseSchema,
   AutoScheduleWeekInputSchema,
   AutoScheduleWeekResponseSchema,
+  AvailabilityOverviewResponseSchema,
   AvailabilityExceptionCreateInputSchema,
   AvailabilityExceptionListResponseSchema,
   AvailabilityListResponseSchema,
@@ -27,6 +28,12 @@ import {
   ShiftCreateInputSchema,
   ShiftListResponseSchema,
   ShiftSwapListResponseSchema,
+  ShiftTeamCreateInputSchema,
+  ShiftTeamAssignHereResponseSchema,
+  ShiftTeamDetailResponseSchema,
+  ShiftTeamListResponseSchema,
+  ShiftTeamMemberInputSchema,
+  ShiftTeamUpdateInputSchema,
   ShiftTemplateApplyInputSchema,
   ShiftTemplateCreateInputSchema,
   ShiftTemplateListResponseSchema,
@@ -47,22 +54,29 @@ import {
   type ShiftConflict,
   type ShiftListResponse,
   type ShiftSwapRequest as ShiftSwapRequestDTO,
+  type ShiftTeam as ShiftTeamDTO,
   type ShiftTemplate as ShiftTemplateDTO,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
+import { associatesOfClient, scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
+
+// Impossible id used to fail a mis-provisioned client-bounded caller CLOSED.
+const NO_MATCH_ID = '00000000-0000-0000-0000-000000000000';
 import { firstLocationForClient } from '../lib/firstLocationForClient.js';
 import { enqueueAudit, recordShiftEvent } from '../lib/audit.js';
 import { formatShiftLine, notifyShift } from '../lib/notifyShift.js';
-import { notifyAllAdmins, notifyManager } from '../lib/notify.js';
+import { notifyAllAdmins, notifyClientSupervisors, notifyManager } from '../lib/notify.js';
 import { shiftSwapManagerTemplate } from '../lib/emailTemplates.js';
 import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from '../lib/timeAnomalies.js';
 import {
   DEFAULT_TIMEZONE,
+  addDaysInZone,
+  localDateKey,
   zonedDayOfWeek,
   zonedMinutes,
+  zonedWallTimeToUtcInstant,
 } from '../lib/timezone.js';
 import {
   evaluateShiftNotice,
@@ -91,9 +105,27 @@ const MANAGE = requireCapability('manage:scheduling');
 // The latter catches any future case where placement diverges from
 // the original application (e.g. cross-client transfer that opens an
 // Assignment without re-onboarding).
+//
+// Schedulability comes from EMPLOYMENT, not portal-login state. This used
+// to require user.status === ACTIVE, which silently hid working associates
+// from every roster, grid row, and shift picker whenever their account was
+// INVITED — including fully-approved people who never set a password, whom
+// the resend-invite flow demotes from ACTIVE back to INVITED (reported
+// 2026-07-31: a team member vanished from the week grid). Whether someone
+// can LOG IN says nothing about whether they work Tuesday's shift. Only a
+// deliberately DISABLED account (offboarding) hides someone; associates
+// linked to management-role accounts stay out of associate rosters as
+// before, and an associate with no portal account at all is schedulable.
+const SCHEDULABLE_USER_FILTER: Prisma.AssociateWhereInput = {
+  OR: [
+    { user: null },
+    { user: { is: { role: 'ASSOCIATE', status: { not: 'DISABLED' } } } },
+  ],
+};
+
 const ACTIVE_ASSOCIATE_FILTER: Prisma.AssociateWhereInput = {
   deletedAt: null,
-  user: { is: { status: 'ACTIVE', role: 'ASSOCIATE' } },
+  AND: [SCHEDULABLE_USER_FILTER],
   OR: [
     { applications: { some: { status: 'APPROVED' } } },
     { assignments: { some: { endedAt: null } } },
@@ -344,7 +376,9 @@ schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
 
     // Fetch one past the cap so we can tell the client the list was truncated
     // (more shifts match than we returned) without an extra count query.
-    const SHIFT_PAGE_CAP = 200;
+    // 500 comfortably covers a large site's week (40 people × 7 shifts);
+    // the calendar views render a warning banner when even this trips.
+    const SHIFT_PAGE_CAP = 500;
     const rows = await prisma.shift.findMany({
       where,
       orderBy: { startsAt: 'asc' },
@@ -390,56 +424,61 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
     const from = parseDateParam(fromParam, 'from') ?? defaultFrom;
     const to = parseDateParam(toParam, 'to') ?? defaultTo;
 
+    // Tenant clamp FIRST — the old spread let a bounded caller's clientId
+    // query param override scopeShifts' clamp (cross-tenant KPI read).
+    const kpiClientId = effectiveClientIdFilter(req.user!, clientId);
+    const effectiveKpiClient = kpiClientId === null ? NO_MATCH_ID : kpiClientId;
+    const scope = scopeShifts(req.user!);
     const where: Prisma.ShiftWhereInput = {
-      ...scopeShifts(req.user!),
-      ...(clientId ? { clientId } : {}),
+      ...scope,
+      ...(effectiveKpiClient ? { clientId: effectiveKpiClient } : {}),
       startsAt: { gte: from, lt: to },
       status: { not: 'CANCELLED' },
     };
 
-    const grouped = await prisma.shift.groupBy({
-      by: ['status'],
-      where,
-      _count: { _all: true },
-    });
-
-    // For total scheduled minutes + projected labor cost we need the rows
-    // (no SQL helper for computed durations in Prisma). Pull duration + the
-    // two rate columns and roll up. Page through ALL matching rows in batches
-    // — the old `take: 100` silently UNDER-reported minutes/cost for any week
-    // with >100 shifts. Bounded by a batch backstop so a pathologically wide
-    // window can't run unbounded.
-    const ROLLUP_BATCH = 1000;
-    const ROLLUP_MAX_BATCHES = 50; // 50k shifts — far beyond a real window
-    let totalScheduledMinutes = 0;
-    let projectedLaborCost = 0;
-    let shiftsWithoutRate = 0;
-    let cursor: string | undefined;
-    for (let batchNo = 0; batchNo < ROLLUP_MAX_BATCHES; batchNo++) {
-      const rows = await prisma.shift.findMany({
-        where,
-        select: { id: true, startsAt: true, endsAt: true, payRate: true },
-        orderBy: { id: 'asc' },
-        take: ROLLUP_BATCH,
-        ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
-      });
-      for (const r of rows) {
-        const minutes = Math.max(
-          0,
-          Math.round((r.endsAt.getTime() - r.startsAt.getTime()) / 60_000),
-        );
-        totalScheduledMinutes += minutes;
-        if (r.payRate === null) {
-          shiftsWithoutRate += 1;
-        } else {
-          projectedLaborCost += (Number(r.payRate) * minutes) / 60;
-        }
-      }
-      if (rows.length < ROLLUP_BATCH) break;
-      cursor = rows[rows.length - 1]!.id;
+    // PERF: minutes + labor cost summed in SQL. The old rollup paged up to
+    // 50k rows through the app (5–50 sequential batch queries per KPI-strip
+    // render) to compute three numbers. Conditions mirror `where` exactly.
+    const conds: Prisma.Sql[] = [
+      Prisma.sql`"startsAt" >= ${from}`,
+      Prisma.sql`"startsAt" < ${to}`,
+      Prisma.sql`"status" <> 'CANCELLED'::"ShiftStatus"`,
+    ];
+    if (effectiveKpiClient) {
+      conds.push(Prisma.sql`"clientId" = ${effectiveKpiClient}::uuid`);
     }
+    // ASSOCIATE scope (published + own shifts) — mirrors scopeShifts.
+    const assocScope = scope as { assignedAssociateId?: string; publishedAt?: unknown };
+    if (assocScope.assignedAssociateId) {
+      conds.push(Prisma.sql`"assignedAssociateId" = ${assocScope.assignedAssociateId}::uuid`);
+      conds.push(Prisma.sql`"publishedAt" IS NOT NULL`);
+    }
+
+    const [grouped, [rollup]] = await Promise.all([
+      prisma.shift.groupBy({
+        by: ['status'],
+        where,
+        _count: { _all: true },
+      }),
+      prisma.$queryRaw<
+        [{ minutes: bigint | null; cost: number | null; norate: bigint | null }]
+      >(Prisma.sql`
+        SELECT
+          COALESCE(SUM(GREATEST(0, ROUND(EXTRACT(EPOCH FROM ("endsAt" - "startsAt")) / 60))), 0)::bigint AS minutes,
+          COALESCE(SUM(
+            CASE WHEN "payRate" IS NOT NULL
+              THEN "payRate" * GREATEST(0, ROUND(EXTRACT(EPOCH FROM ("endsAt" - "startsAt")) / 60)) / 60
+              ELSE 0 END
+          ), 0)::float8 AS cost,
+          COUNT(*) FILTER (WHERE "payRate" IS NULL)::bigint AS norate
+        FROM "Shift"
+        WHERE ${Prisma.join(conds, ' AND ')}
+      `),
+    ]);
+    const totalScheduledMinutes = Number(rollup?.minutes ?? 0);
+    const shiftsWithoutRate = Number(rollup?.norate ?? 0);
     // Round to cents — JSON floats survive 2dp safely; the UI formats as $.
-    projectedLaborCost = Math.round(projectedLaborCost * 100) / 100;
+    const projectedLaborCost = Math.round(Number(rollup?.cost ?? 0) * 100) / 100;
 
     let openShifts = 0;
     let assignedShifts = 0;
@@ -484,6 +523,7 @@ schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
   try {
     let clientId = req.query.clientId?.toString();
     let locationId = req.query.locationId?.toString();
+    const teamId = req.query.teamId?.toString();
 
     // Client-bounded roles (SHIFT_SUPERVISOR) can only ever see their own
     // client's roster: clamp clientId to theirs and drop any location filter
@@ -502,13 +542,34 @@ schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
     // create-dialog picker show only people who actually work there. An
     // associate "belongs" to a client/location via an APPROVED application
     // or an open assignment there. Falls back to the org-wide schedulable
-    // set when nothing is selected.
-    const userActive = { is: { status: 'ACTIVE', role: 'ASSOCIATE' } } as const;
+    // set when nothing is selected. Login status deliberately does NOT
+    // gate any branch — see SCHEDULABLE_USER_FILTER.
     let where: Prisma.AssociateWhereInput;
-    if (locationId) {
+    if (teamId) {
+      // Tightest scope: a standing shift crew. Membership already implies
+      // the client/location, but the team must sit inside the caller's
+      // client boundary.
+      const team = await prisma.shiftTeam.findFirst({
+        where: {
+          id: teamId,
+          deletedAt: null,
+          ...(bounded ? { clientId: bounded } : {}),
+        },
+        select: { id: true },
+      });
+      if (!team) {
+        res.json(AssociateListResponseSchema.parse({ associates: [] }));
+        return;
+      }
       where = {
         deletedAt: null,
-        user: userActive,
+        AND: [SCHEDULABLE_USER_FILTER],
+        teamMemberships: { some: { teamId } },
+      };
+    } else if (locationId) {
+      where = {
+        deletedAt: null,
+        AND: [SCHEDULABLE_USER_FILTER],
         OR: [
           { applications: { some: { status: 'APPROVED', locationId } } },
           { assignments: { some: { endedAt: null, locationId } } },
@@ -517,7 +578,7 @@ schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
     } else if (clientId) {
       where = {
         deletedAt: null,
-        user: userActive,
+        AND: [SCHEDULABLE_USER_FILTER],
         OR: [
           { applications: { some: { status: 'APPROVED', clientId } } },
           { assignments: { some: { endedAt: null, location: { clientId } } } },
@@ -527,13 +588,23 @@ schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
       where = ACTIVE_ASSOCIATE_FILTER;
     }
 
+    // Over-fetch by one so a full page can be reported as truncated rather
+    // than silently cut. This list is the grid's row axis — dropping people
+    // without saying so makes an incomplete schedule look complete.
+    const ROSTER_PAGE = 500;
     const rows = await prisma.associate.findMany({
       where,
       orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
       select: { id: true, firstName: true, lastName: true, email: true },
-      take: 500,
+      take: ROSTER_PAGE + 1,
     });
-    res.json(AssociateListResponseSchema.parse({ associates: rows }));
+    const truncated = rows.length > ROSTER_PAGE;
+    res.json(
+      AssociateListResponseSchema.parse({
+        associates: truncated ? rows.slice(0, ROSTER_PAGE) : rows,
+        truncated,
+      }),
+    );
   } catch (err) {
     next(err);
   }
@@ -855,7 +926,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
         timezone: location.timezone,
       });
       for (const associateId of toAssign) {
-        await notifyShift(prisma, {
+        void notifyShift(prisma, {
           associateId,
           subject: 'New shift',
           body: `You've been assigned: ${line}`,
@@ -1019,7 +1090,7 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
     // We don't notify on every PATCH — that would spam associates with
     // "your shift was edited" for trivial location/notes tweaks.
     if (data.publishedAt && updated.assignedAssociateId) {
-      await notifyShift(prisma, {
+      void notifyShift(prisma, {
         associateId: updated.assignedAssociateId,
         subject: 'Shift published',
         body: `Now on your schedule: ${formatShiftLine({
@@ -1177,7 +1248,7 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
     // to see yet. The publish PATCH route will fire its own notification
     // when the schedule actually goes out.
     if (updated.publishedAt) {
-      await notifyShift(prisma, {
+      void notifyShift(prisma, {
         associateId: associate.id,
         subject: 'New shift assigned',
         body: `You've been assigned: ${formatShiftLine({
@@ -1232,7 +1303,7 @@ schedulingRouter.post('/shifts/:id/unassign', MANAGE, async (req, res, next) => 
     // someone from a draft shift is invisible — they never knew they were
     // on it.
     if (shift.publishedAt) {
-      await notifyShift(prisma, {
+      void notifyShift(prisma, {
         associateId: previousAssociateId,
         subject: 'Shift removed from your schedule',
         body: `Removed: ${formatShiftLine({
@@ -1317,7 +1388,7 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
         for (const aid of [sw.requesterAssociateId, sw.counterpartyAssociateId]) {
           if (aid && !notified.has(aid)) {
             notified.add(aid);
-            await notifyShift(prisma, {
+            void notifyShift(prisma, {
               associateId: aid,
               subject: 'Swap cancelled',
               body: `A swap you were part of is off — the shift was cancelled. ${swapLine}`,
@@ -1332,7 +1403,7 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
     // Same draft rule as unassign — cancelling a never-published shift
     // is invisible to the associate, so no notification.
     if (shift.assignedAssociateId && shift.publishedAt) {
-      await notifyShift(prisma, {
+      void notifyShift(prisma, {
         associateId: shift.assignedAssociateId,
         subject: 'Shift cancelled',
         body: `Cancelled: ${formatShiftLine({
@@ -1966,7 +2037,7 @@ schedulingRouter.post('/me/open-shifts/:id/claim', async (req, res, next) => {
       where: { id: user.associateId },
       select: { firstName: true, lastName: true },
     });
-    void notifyAllAdmins({
+    const pickupNotice = {
       subject: 'Open-shift pickup request',
       body: `${me?.firstName ?? 'An associate'} ${me?.lastName ?? ''} wants to pick up: ${formatShiftLine({
         position: shift.position,
@@ -1976,8 +2047,13 @@ schedulingRouter.post('/me/open-shifts/:id/claim', async (req, res, next) => {
         timezone: tz,
       })}\nApprove or reject it from the Scheduling page.`,
       category: 'scheduling',
+      linkUrl: '/approvals',
       excludeUserId: user.id,
-    });
+    };
+    void notifyAllAdmins(pickupNotice);
+    // The supervisor whose floor this shift is on hears about it too —
+    // they hold the approve capability but no admin role.
+    void notifyClientSupervisors(shift.clientId, pickupNotice);
 
     res.status(201).json(
       OpenShiftClaimSchema.parse({
@@ -2150,7 +2226,7 @@ schedulingRouter.post('/open-shift-claims/:id/approve', MANAGE, async (req, res,
       endsAt: claim.shift.endsAt,
       timezone: claim.shift.locationRel?.timezone ?? null,
     });
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: claim.associateId,
       subject: 'Pickup approved — shift is yours',
       body: `You're on: ${line}`,
@@ -2170,7 +2246,7 @@ schedulingRouter.post('/open-shift-claims/:id/approve', MANAGE, async (req, res,
       distinct: ['associateId'],
     });
     for (const l of losers) {
-      await notifyShift(prisma, {
+      void notifyShift(prisma, {
         associateId: l.associateId,
         subject: 'Open shift filled',
         body: `That open shift went to someone else: ${line}`,
@@ -2200,7 +2276,7 @@ schedulingRouter.post('/open-shift-claims/:id/reject', MANAGE, async (req, res, 
     if (cas.count === 0) {
       throw new HttpError(409, 'not_pending', `Request is ${claim.status}`);
     }
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: claim.associateId,
       subject: 'Pickup request declined',
       body: `Your pickup request wasn't approved: ${formatShiftLine({
@@ -2720,7 +2796,7 @@ schedulingRouter.post('/swap-requests', async (req, res, next) => {
       include: SWAP_INCLUDE,
     });
 
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: counterpartyAssociateId,
       subject: 'New swap request',
       body: `${created.requester.firstName} ${created.requester.lastName} is asking you to take their shift: ${formatShiftLine(
@@ -2750,6 +2826,15 @@ schedulingRouter.post('/swap-requests', async (req, res, next) => {
       body: mgrSwapTpl.text,
       html: mgrSwapTpl.html,
       category: 'scheduling',
+    });
+    // The site's shift supervisor approves swaps but is rarely anyone's
+    // managerId — route them a copy keyed on the shift's client.
+    void notifyClientSupervisors(created.shift.clientId, {
+      subject: mgrSwapTpl.subject,
+      body: mgrSwapTpl.text,
+      html: mgrSwapTpl.html,
+      category: 'scheduling',
+      linkUrl: '/approvals',
     });
 
     res.status(201).json(toSwap(created));
@@ -2877,7 +2962,7 @@ schedulingRouter.post('/swap-requests/:id/peer-accept', async (req, res, next) =
       include: SWAP_INCLUDE,
     });
 
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: updated.requesterAssociateId,
       subject: 'Swap accepted — pending HR approval',
       body: `${updated.counterparty.firstName} ${updated.counterparty.lastName} accepted your swap request. Waiting on HR sign-off: ${formatShiftLine(
@@ -2926,7 +3011,7 @@ schedulingRouter.post('/swap-requests/:id/peer-decline', async (req, res, next) 
       include: SWAP_INCLUDE,
     });
 
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: updated.requesterAssociateId,
       subject: 'Swap declined',
       body: `${updated.counterparty.firstName} ${updated.counterparty.lastName} declined your swap request for ${formatShiftLine(
@@ -3224,7 +3309,7 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
           timezone: updated.counterpartShift.locationRel?.timezone ?? null,
         })
       : null;
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: updated.counterpartyAssociateId,
       subject: 'Swap approved — shift is yours',
       body:
@@ -3233,7 +3318,7 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
       category: 'swap_manager_approved',
       senderUserId: req.user!.id,
     });
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: updated.requesterAssociateId,
       subject: 'Swap approved — shift handed off',
       body:
@@ -3289,14 +3374,14 @@ schedulingRouter.post('/swap-requests/:id/manager-reject', MANAGE, async (req, r
       endsAt: updated.shift.endsAt,
       timezone: updated.shift.locationRel?.timezone ?? null,
     });
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: updated.requesterAssociateId,
       subject: 'Swap rejected by HR',
       body: `HR did not approve your swap for: ${shiftLine}`,
       category: 'swap_manager_rejected',
       senderUserId: req.user!.id,
     });
-    await notifyShift(prisma, {
+    void notifyShift(prisma, {
       associateId: updated.counterpartyAssociateId,
       subject: 'Swap rejected by HR',
       body: `HR did not approve the swap you accepted for: ${shiftLine}`,
@@ -3309,6 +3394,453 @@ schedulingRouter.post('/swap-requests/:id/manager-reject', MANAGE, async (req, r
     next(err);
   }
 });
+
+/**
+ * GET /scheduling/availability-overview?from=&to=
+ * Fit data for the visible scheduling range: every ACTIVE associate's
+ * weekly availability windows plus the calendar days blocked by approved
+ * time off or one-off exceptions. The grid uses it to shade cells before
+ * a shift is dropped on someone who can't work it.
+ */
+schedulingRouter.get('/availability-overview', MANAGE, async (req, res, next) => {
+  try {
+    const from = parseDateParam(req.query.from?.toString(), 'from');
+    const to = parseDateParam(req.query.to?.toString(), 'to');
+    if (!from || !to) {
+      throw new HttpError(400, 'range_required', '`from` and `to` are required');
+    }
+    const spanDays = Math.ceil((to.getTime() - from.getTime()) / 86_400_000);
+    if (spanDays <= 0 || spanDays > 62) {
+      throw new HttpError(400, 'range_too_wide', 'Range must be 1–62 days');
+    }
+
+    // Bounded roles (SHIFT_SUPERVISOR) only see their own client's people
+    // in the availability heatmap.
+    const availBounded = effectiveClientIdFilter(req.user!, undefined);
+    const [associates, ptoRows, exceptionRows] = await Promise.all([
+      prisma.associate.findMany({
+        where: {
+          AND: [
+            ACTIVE_ASSOCIATE_FILTER,
+            ...(availBounded !== undefined
+              ? [availBounded ? associatesOfClient(availBounded) : { id: NO_MATCH_ID }]
+              : []),
+          ],
+        },
+        select: {
+          id: true,
+          availability: {
+            select: { dayOfWeek: true, startMinute: true, endMinute: true },
+          },
+        },
+        take: 1000,
+      }),
+      prisma.timeOffRequest.findMany({
+        take: 2000,
+        where: { status: 'APPROVED', startDate: { lte: to }, endDate: { gte: from } },
+        select: { associateId: true, startDate: true, endDate: true },
+      }),
+      prisma.availabilityException.findMany({
+        take: 2000,
+        where: { date: { gte: from, lte: to } },
+        select: { associateId: true, date: true },
+      }),
+    ]);
+
+    const dayKey = (d: Date): string => d.toISOString().slice(0, 10);
+    const blocked = new Map<string, Set<string>>();
+    const block = (associateId: string, key: string) => {
+      const set = blocked.get(associateId) ?? new Set<string>();
+      set.add(key);
+      blocked.set(associateId, set);
+    };
+    for (const r of ptoRows) {
+      // Expand the (date-only) PTO range into day keys, clamped to the
+      // requested window so a 3-month leave doesn't explode the payload.
+      const start = r.startDate < from ? from : r.startDate;
+      const end = r.endDate > to ? to : r.endDate;
+      for (
+        let t = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
+        t <= end.getTime();
+        t += 86_400_000
+      ) {
+        block(r.associateId, dayKey(new Date(t)));
+      }
+    }
+    for (const x of exceptionRows) block(x.associateId, dayKey(x.date));
+
+    res.json(
+      AvailabilityOverviewResponseSchema.parse({
+        associates: associates.map((a) => ({
+          associateId: a.id,
+          windows: a.availability,
+          blockedDays: [...(blocked.get(a.id) ?? [])],
+        })),
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Shift teams ======================================================= */
+
+type RawTeam = Prisma.ShiftTeamGetPayload<{
+  include: {
+    location: { select: { name: true } };
+    _count: { select: { members: true } };
+  };
+}>;
+
+const TEAM_INCLUDE = {
+  location: { select: { name: true } },
+  _count: { select: { members: true } },
+} as const;
+
+function toShiftTeam(row: RawTeam): ShiftTeamDTO {
+  return {
+    id: row.id,
+    clientId: row.clientId,
+    locationId: row.locationId,
+    locationName: row.location?.name ?? null,
+    name: row.name,
+    startMinute: row.startMinute,
+    endMinute: row.endMinute,
+    memberCount: row._count.members,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/** Load a team the caller may act on, or throw 404 (client-bounded). */
+async function teamInScope(
+  user: Parameters<typeof effectiveClientIdFilter>[0],
+  id: string,
+) {
+  const bounded = effectiveClientIdFilter(user, undefined);
+  // Client-bounded caller with no client → fail closed.
+  if (bounded === null) {
+    throw new HttpError(404, 'team_not_found', 'Shift team not found');
+  }
+  const team = await prisma.shiftTeam.findFirst({
+    where: {
+      id,
+      deletedAt: null,
+      ...(bounded ? { clientId: bounded } : {}),
+    },
+    include: TEAM_INCLUDE,
+  });
+  if (!team) throw new HttpError(404, 'team_not_found', 'Shift team not found');
+  return team;
+}
+
+// GET /scheduling/teams?clientId=&locationId= — list standing crews.
+schedulingRouter.get('/teams', MANAGE, async (req, res, next) => {
+  try {
+    let clientId = req.query.clientId?.toString();
+    const locationId = req.query.locationId?.toString();
+    const bounded = effectiveClientIdFilter(req.user!, undefined);
+    if (bounded !== undefined) {
+      if (!bounded) {
+        res.json(ShiftTeamListResponseSchema.parse({ teams: [] }));
+        return;
+      }
+      clientId = bounded;
+    }
+    const rows = await prisma.shiftTeam.findMany({
+      where: {
+        deletedAt: null,
+        ...(clientId ? { clientId } : {}),
+        ...(locationId ? { locationId } : {}),
+      },
+      orderBy: [{ name: 'asc' }],
+      include: TEAM_INCLUDE,
+      take: 500,
+    });
+    res.json(
+      ShiftTeamListResponseSchema.parse({ teams: rows.map(toShiftTeam) }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.post('/teams', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = ShiftTeamCreateInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const i = parsed.data;
+    const bounded = effectiveClientIdFilter(req.user!, undefined);
+    if (bounded !== undefined && i.clientId !== bounded) {
+      throw new HttpError(403, 'client_forbidden', 'Cannot create a team for another client');
+    }
+    const location = await prisma.location.findFirst({
+      where: { id: i.locationId, clientId: i.clientId, deletedAt: null },
+    });
+    if (!location) {
+      throw new HttpError(404, 'location_not_found', 'Location not found under this client');
+    }
+    const created = await prisma.shiftTeam.create({
+      data: {
+        clientId: i.clientId,
+        locationId: i.locationId,
+        name: i.name.trim(),
+        startMinute: i.startMinute ?? null,
+        endMinute: i.endMinute ?? null,
+      },
+      include: TEAM_INCLUDE,
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'scheduling.team_created',
+        entityType: 'ShiftTeam',
+        entityId: created.id,
+        metadata: { name: created.name, clientId: created.clientId, locationId: created.locationId },
+      },
+      'scheduling.team_created',
+    );
+    res.status(201).json(toShiftTeam(created));
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.patch('/teams/:id', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = ShiftTeamUpdateInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const team = await teamInScope(req.user!, req.params.id);
+    const updated = await prisma.shiftTeam.update({
+      where: { id: team.id },
+      data: {
+        ...(parsed.data.name !== undefined ? { name: parsed.data.name.trim() } : {}),
+        ...(parsed.data.startMinute !== undefined ? { startMinute: parsed.data.startMinute } : {}),
+        ...(parsed.data.endMinute !== undefined ? { endMinute: parsed.data.endMinute } : {}),
+      },
+      include: TEAM_INCLUDE,
+    });
+    res.json(toShiftTeam(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.delete('/teams/:id', MANAGE, async (req, res, next) => {
+  try {
+    const team = await teamInScope(req.user!, req.params.id);
+    await prisma.shiftTeam.update({
+      where: { id: team.id },
+      data: { deletedAt: new Date() },
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'scheduling.team_deleted',
+        entityType: 'ShiftTeam',
+        entityId: team.id,
+        metadata: { name: team.name },
+      },
+      'scheduling.team_deleted',
+    );
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /scheduling/teams/:id — team + members, flagging any member who no
+// longer works at the team's location (stale membership).
+schedulingRouter.get('/teams/:id', MANAGE, async (req, res, next) => {
+  try {
+    const team = await teamInScope(req.user!, req.params.id);
+    const members = await prisma.shiftTeamMember.findMany({
+      where: { teamId: team.id },
+      include: {
+        associate: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            user: { select: { status: true } },
+            applications: {
+              where: { status: 'APPROVED', locationId: team.locationId, deletedAt: null },
+              take: 1,
+              select: { id: true },
+            },
+            assignments: {
+              where: { endedAt: null, locationId: team.locationId },
+              take: 1,
+              select: { id: true },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    res.json(
+      ShiftTeamDetailResponseSchema.parse({
+        team: toShiftTeam(team),
+        members: members.map((m) => ({
+          associateId: m.associate.id,
+          firstName: m.associate.firstName,
+          lastName: m.associate.lastName,
+          email: m.associate.email,
+          atLocation:
+            m.associate.applications.length > 0 ||
+            m.associate.assignments.length > 0,
+          // Informational: login state never gates scheduling.
+          portalActive: m.associate.user?.status === 'ACTIVE',
+        })),
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /scheduling/teams/:id/members/:associateId/assign-here
+ *
+ * The one-click cure for "not at this site". A whole class of legitimately
+ * onboarded associates has locationId=NULL on their approved application
+ * (the invite's location field is optional, and approval only opens an
+ * AssociateAssignment when it's set) — nothing in the product recorded
+ * their site, so the badge fired and location-filtered rosters dropped
+ * them. This opens an assignment at the TEAM's location, the same
+ * close-then-open pattern as onboarding approval and the org transfer.
+ */
+schedulingRouter.post(
+  '/teams/:id/members/:associateId/assign-here',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const team = await teamInScope(req.user!, req.params.id);
+      const membership = await prisma.shiftTeamMember.findFirst({
+        where: { teamId: team.id, associateId: req.params.associateId },
+        select: {
+          associate: { select: { id: true, deletedAt: true } },
+        },
+      });
+      if (!membership || membership.associate.deletedAt) {
+        throw new HttpError(404, 'member_not_found', 'Not a member of this team');
+      }
+      const associateId = membership.associate.id;
+
+      // Same cross-client fence as the org transfer: if their employment
+      // record points at a different client, this quick action must not
+      // quietly move them — that's a real transfer with its own flow.
+      const openAssignment = await prisma.associateAssignment.findFirst({
+        where: { associateId, endedAt: null },
+        select: { id: true, location: { select: { clientId: true } } },
+      });
+      let expectedClientId = openAssignment?.location.clientId ?? null;
+      if (expectedClientId === null) {
+        const latestApproved = await prisma.application.findFirst({
+          where: { associateId, status: 'APPROVED', deletedAt: null },
+          orderBy: { invitedAt: 'desc' },
+          select: { clientId: true },
+        });
+        expectedClientId = latestApproved?.clientId ?? null;
+      }
+      if (expectedClientId !== null && expectedClientId !== team.clientId) {
+        throw new HttpError(
+          400,
+          'cross_client_transfer',
+          'They currently work for a different client — use the org transfer flow instead.',
+        );
+      }
+
+      const startedAt = new Date();
+      const created = await prisma.$transaction(async (tx) => {
+        if (openAssignment) {
+          await tx.associateAssignment.update({
+            where: { id: openAssignment.id },
+            data: { endedAt: startedAt },
+          });
+        }
+        return tx.associateAssignment.create({
+          data: {
+            associateId,
+            locationId: team.locationId,
+            startedAt,
+            reason: `Assigned from shift team "${team.name}"`,
+            notedById: req.user!.id,
+          },
+          select: { id: true },
+        });
+      });
+
+      enqueueAudit(
+        {
+          actorUserId: req.user!.id,
+          action: 'scheduling.team_member_assigned',
+          entityType: 'Associate',
+          entityId: associateId,
+          metadata: {
+            teamId: team.id,
+            locationId: team.locationId,
+            closedAssignmentId: openAssignment?.id ?? null,
+            assignmentId: created.id,
+          },
+        },
+        'scheduling.team_member_assigned',
+      );
+
+      res.json(ShiftTeamAssignHereResponseSchema.parse({ assignmentId: created.id }));
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+schedulingRouter.post('/teams/:id/members', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = ShiftTeamMemberInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const team = await teamInScope(req.user!, req.params.id);
+    const associate = await prisma.associate.findFirst({
+      where: { id: parsed.data.associateId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!associate) {
+      throw new HttpError(404, 'associate_not_found', 'Associate not found');
+    }
+    // Idempotent: re-adding an existing member is a no-op, not an error.
+    await prisma.shiftTeamMember.upsert({
+      where: {
+        teamId_associateId: { teamId: team.id, associateId: associate.id },
+      },
+      create: { teamId: team.id, associateId: associate.id },
+      update: {},
+    });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+schedulingRouter.delete(
+  '/teams/:id/members/:associateId',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const team = await teamInScope(req.user!, req.params.id);
+      await prisma.shiftTeamMember.deleteMany({
+        where: { teamId: team.id, associateId: req.params.associateId },
+      });
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 /* ===== Phase 51 — shift templates + copy-week ============================ */
 
@@ -3346,7 +3878,13 @@ const TEMPLATE_INCLUDE = {
  */
 schedulingRouter.get('/templates', MANAGE, async (req, res, next) => {
   try {
-    const clientId = req.query.clientId?.toString();
+    // Bounded roles are clamped to their own client (+ globals) no matter
+    // what they request; admins keep the org-wide overview when omitted.
+    const tplBounded = effectiveClientIdFilter(
+      req.user!,
+      req.query.clientId?.toString(),
+    );
+    const clientId = tplBounded === null ? NO_MATCH_ID : tplBounded;
     const where: Prisma.ShiftTemplateWhereInput = {
       deletedAt: null,
       ...(clientId ? { OR: [{ clientId }, { clientId: null }] } : {}),
@@ -3372,6 +3910,12 @@ schedulingRouter.post('/templates', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const i = parsed.data;
+    // Bounded roles can only create templates pinned to their own client
+    // (a global template would leak into every other client's schedule).
+    const createBounded = effectiveClientIdFilter(req.user!, undefined);
+    if (createBounded !== undefined && i.clientId !== createBounded) {
+      throw new HttpError(403, 'forbidden', 'You can only manage templates for your assigned client.');
+    }
     if (i.clientId) {
       const c = await prisma.client.findFirst({ where: { id: i.clientId, deletedAt: null } });
       if (!c) throw new HttpError(404, 'client_not_found', 'Client not found');
@@ -3403,6 +3947,12 @@ schedulingRouter.delete('/templates/:id', MANAGE, async (req, res, next) => {
       where: { id: req.params.id, deletedAt: null },
     });
     if (!existing) throw new HttpError(404, 'template_not_found', 'Template not found');
+    // Bounded roles can only delete their own client's templates (404, not
+    // 403, so existence isn't leaked across tenants).
+    const delBounded = effectiveClientIdFilter(req.user!, undefined);
+    if (delBounded !== undefined && existing.clientId !== delBounded) {
+      throw new HttpError(404, 'template_not_found', 'Template not found');
+    }
     await prisma.shiftTemplate.update({
       where: { id: existing.id },
       data: { deletedAt: new Date() },
@@ -3438,24 +3988,48 @@ schedulingRouter.post('/templates/:id/apply', MANAGE, async (req, res, next) => 
         'Global templates require a clientId at apply time'
       );
     }
+    // Same guard as POST /shifts — apply creates a Shift, so a bounded
+    // role must not be able to smuggle one into another client via a
+    // template. Without this, template-apply bypassed the create guard.
+    const applyBounded = effectiveClientIdFilter(req.user!, undefined);
+    if (applyBounded !== undefined && clientId !== applyBounded) {
+      throw new HttpError(403, 'forbidden', 'You can only manage shifts for your assigned client.');
+    }
     // Phase 131 — derive locationId from the resolved client.
     const location = await firstLocationForClient(prisma, clientId);
 
-    // Snap the supplied weekStart to local Sunday at 00:00, then advance
-    // by `dayOfWeek` days. Local time keeps templates intuitive — "9am
-    // Friday" is whatever 9am means in the user's timezone.
-    const anchor = new Date(parsed.data.weekStart);
-    anchor.setHours(0, 0, 0, 0);
-    anchor.setDate(anchor.getDate() - anchor.getDay());
-    const target = new Date(anchor);
-    target.setDate(target.getDate() + tpl.dayOfWeek);
-    const startsAt = new Date(target);
-    startsAt.setHours(0, tpl.startMinute, 0, 0);
-    const endsAt = new Date(target);
-    endsAt.setHours(0, tpl.endMinute, 0, 0);
-    // Overnight templates: endMinute <= startMinute means roll endsAt to
-    // the next day so duration is positive.
-    if (endsAt <= startsAt) endsAt.setDate(endsAt.getDate() + 1);
+    // Template minutes are wall-clock AT THE WORK SITE (same rule as the
+    // drag-drop apply path in the UI). The old server-local setHours() put
+    // shifts at the wrong wall time whenever the server's zone differed
+    // from the site's. Find the site-local Sunday of the week containing
+    // weekStart, advance to the template's dayOfWeek, then build the UTC
+    // instants from site-local wall time.
+    const siteTz = location.timezone ?? DEFAULT_TIMEZONE;
+    const anchorKey = localDateKey(new Date(parsed.data.weekStart), siteTz);
+    const [ay, am, ad] = anchorKey.split('-').map(Number);
+    const anchorUtcMidnight = Date.UTC(ay!, (am ?? 1) - 1, ad ?? 1);
+    // Calendar weekday of a plain date is timezone-independent.
+    const anchorDow = new Date(anchorUtcMidnight).getUTCDay();
+    const targetMs =
+      anchorUtcMidnight + (tpl.dayOfWeek - anchorDow) * 86_400_000;
+    const t = new Date(targetMs);
+    const ty = t.getUTCFullYear();
+    const tm = t.getUTCMonth() + 1;
+    const td = t.getUTCDate();
+    const startsAt = zonedWallTimeToUtcInstant(ty, tm, td, tpl.startMinute, siteTz);
+    let endsAt = zonedWallTimeToUtcInstant(ty, tm, td, tpl.endMinute, siteTz);
+    // Overnight templates: endMinute <= startMinute means the shift ends
+    // the next site-local day.
+    if (endsAt <= startsAt) {
+      const n = new Date(targetMs + 86_400_000);
+      endsAt = zonedWallTimeToUtcInstant(
+        n.getUTCFullYear(),
+        n.getUTCMonth() + 1,
+        n.getUTCDate(),
+        tpl.endMinute,
+        siteTz,
+      );
+    }
 
     const created = await prisma.shift.create({
       data: {
@@ -3507,16 +4081,25 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const snap = (iso: string): Date => {
-      const d = new Date(iso);
-      d.setHours(0, 0, 0, 0);
-      d.setDate(d.getDate() - d.getDay());
-      return d;
-    };
-    const source = snap(parsed.data.sourceWeekStart);
-    const target = snap(parsed.data.targetWeekStart);
-    const sourceEnd = new Date(source);
-    sourceEnd.setDate(sourceEnd.getDate() + 7);
+    // Use the client's window VERBATIM. The UI sends local midnight of the
+    // first day it is showing — its week can be anchored on any weekday
+    // (the range picker allows it). The old server-side "snap to Sunday in
+    // server-local time" re-alignment shifted the window by up to a day
+    // against what the manager was looking at: their week's tail never
+    // copied, and the previous week's tail copied INTO the visible week.
+    const source = new Date(parsed.data.sourceWeekStart);
+    const target = new Date(parsed.data.targetWeekStart);
+    const dayOffset = Math.round(
+      (target.getTime() - source.getTime()) / 86_400_000,
+    );
+    if (dayOffset === 0) {
+      throw new HttpError(
+        400,
+        'same_week',
+        'Target week must differ from the source week.',
+      );
+    }
+    const sourceEnd = new Date(source.getTime() + 7 * 86_400_000);
 
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
@@ -3524,14 +4107,25 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
       status: { not: 'CANCELLED' },
       ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
     };
-    const sourceShifts = await prisma.shift.findMany({ take: 100, where });
+    // Cap the batch but SAY so — the old take:100 silently dropped the rest
+    // of a big week while reporting skipped: 0.
+    const COPY_CAP = 1000;
+    const [sourceShifts, totalMatching] = await Promise.all([
+      prisma.shift.findMany({
+        take: COPY_CAP,
+        where,
+        orderBy: { startsAt: 'asc' },
+        include: { locationRel: { select: { timezone: true } } },
+      }),
+      prisma.shift.count({ where }),
+    ]);
+    const skipped = Math.max(0, totalMatching - sourceShifts.length);
     if (sourceShifts.length === 0) {
       const empty: CopyWeekResponse = { created: 0, skipped: 0, assigned: 0 };
       res.json(empty);
       return;
     }
 
-    const offsetMs = target.getTime() - source.getTime();
     // Default to carrying each shift's assignee into the target week so HR
     // copies the whole roster in one click instead of re-assigning every
     // shift by hand. Copies stay DRAFT (assigned-but-unpublished), so
@@ -3546,12 +4140,15 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
     const data = sourceShifts.map((s) => {
       const carry = preserveAssignments && s.assignedAssociateId != null;
       if (carry) assigned += 1;
+      // Calendar-day shift in the WORK SITE's zone so a copy across a DST
+      // boundary keeps its wall-clock time (9am stays 9am).
+      const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
       return {
         clientId: s.clientId,
         locationId: s.locationId,
         position: s.position,
-        startsAt: new Date(s.startsAt.getTime() + offsetMs),
-        endsAt: new Date(s.endsAt.getTime() + offsetMs),
+        startsAt: addDaysInZone(s.startsAt, dayOffset, tz),
+        endsAt: addDaysInZone(s.endsAt, dayOffset, tz),
         location: s.location,
         hourlyRate: s.hourlyRate,
         payRate: s.payRate,
@@ -3578,6 +4175,7 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
           target: target.toISOString(),
           createdCount: result.count,
           assignedCount: assigned,
+          skippedCount: skipped,
           preserveAssignments,
         },
       },
@@ -3586,7 +4184,7 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
 
     const body: CopyWeekResponse = {
       created: result.count,
-      skipped: 0,
+      skipped,
       assigned,
     };
     res.json(body);
@@ -3614,13 +4212,20 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    // Snap to local Monday 00:00 — matches the week the UI is showing.
+    // Trust the client's window verbatim. This used to re-snap to
+    // SERVER-local Monday midnight — UTC in production — so an ET admin's
+    // "publish this week" acted on the UTC week instead of the one on
+    // screen: Sunday-evening drafts (Monday UTC) silently stayed DRAFT and
+    // the previous week's tail snuck in. The UI computes the exact boundary
+    // of the week it displays (zone-aware when the grid renders a store
+    // zone); the server's job is just [weekStart, weekEnd).
     const start = new Date(parsed.data.weekStart);
-    start.setHours(0, 0, 0, 0);
-    const dow = (start.getDay() + 6) % 7; // Mon=0..Sun=6
-    start.setDate(start.getDate() - dow);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 7);
+    const end = parsed.data.weekEnd
+      ? new Date(parsed.data.weekEnd)
+      : new Date(start.getTime() + 7 * 86_400_000);
+    if (end <= start) {
+      throw new HttpError(400, 'invalid_window', 'weekEnd must be after weekStart.');
+    }
 
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
@@ -3628,15 +4233,23 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
       startsAt: { gte: start, lt: end },
       ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
     };
-    const drafts = await prisma.shift.findMany({
-      take: 100,
+    // Cap+1 so a giant week can be REPORTED as truncated instead of
+    // silently publishing the first N and leaving the rest DRAFT with no
+    // signal (the old take:100 did exactly that). Deterministic order so
+    // "run again" continues where this run stopped.
+    const PUBLISH_CAP = 500;
+    const draftRows = await prisma.shift.findMany({
+      take: PUBLISH_CAP + 1,
       where,
+      orderBy: { startsAt: 'asc' },
       include: {
         client: { select: { state: true, name: true } },
         assignedAssociate: { select: { firstName: true, lastName: true } },
         locationRel: { select: { timezone: true } },
       },
     });
+    const truncated = draftRows.length > PUBLISH_CAP;
+    const drafts = truncated ? draftRows.slice(0, PUBLISH_CAP) : draftRows;
 
     const now = new Date();
     const skipped: PublishWeekSkip[] = [];
@@ -3795,7 +4408,7 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
         shifts.length === 1
           ? `Now on your schedule: ${lines[0]}`
           : `Now on your schedule:\n${lines.map((l) => `• ${l}`).join('\n')}`;
-      await notifyShift(prisma, {
+      void notifyShift(prisma, {
         associateId,
         subject,
         body,
@@ -3804,7 +4417,11 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
       });
     }
 
-    const body: PublishWeekResponse = { published: publishedCount, skipped };
+    const body: PublishWeekResponse = {
+      published: publishedCount,
+      skipped,
+      ...(truncated ? { truncated: true } : {}),
+    };
     res.json(PublishWeekResponseSchema.parse(body));
   } catch (err) {
     next(err);
@@ -3836,17 +4453,24 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    // Snap to local Monday 00:00 — matches the week the UI is showing.
+    // Same no-resnap contract as /publish-week: server-local Monday
+    // snapping on a UTC box acted on the UTC week, not the one on screen.
     const start = new Date(parsed.data.weekStart);
-    start.setHours(0, 0, 0, 0);
-    const dow = (start.getDay() + 6) % 7; // Mon=0..Sun=6
-    start.setDate(start.getDate() - dow);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 7);
+    const end = parsed.data.weekEnd
+      ? new Date(parsed.data.weekEnd)
+      : new Date(start.getTime() + 7 * 86_400_000);
+    if (end <= start) {
+      throw new HttpError(400, 'invalid_window', 'weekEnd must be after weekStart.');
+    }
 
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
-      status: 'OPEN',
+      // Unassigned DRAFTs are the normal state of a week being built (the
+      // create dialog, copy-week, and template-apply all produce drafts) —
+      // auto-schedule must see them or the build→auto-fill→publish flow
+      // never has an auto-fill step. Assigned drafts stay private until
+      // publish-week, which remains the double-booking gate.
+      status: { in: ['OPEN', 'DRAFT'] },
       assignedAssociateId: null,
       startsAt: { gte: start, lt: end },
       ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
@@ -3895,8 +4519,12 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
         },
         take: 1000,
       }),
+      // SAFETY list, not a display list: any approved PTO past the cap was
+      // silently ignored, and the scheduler could assign someone on leave.
+      // These are 3-column selects over a one-week window — cap generously
+      // at the same scale as the roster itself.
       prisma.timeOffRequest.findMany({
-        take: 100,
+        take: 2000,
         where: {
           status: 'APPROVED',
           startDate: { lte: end },
@@ -3907,7 +4535,7 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       // One-off "can't work this day" exceptions — same veto as PTO, so
       // they merge into the pto ranges below as single-day blocks.
       prisma.availabilityException.findMany({
-        take: 500,
+        take: 2000,
         where: { date: { gte: start, lte: end } },
         select: { associateId: true, date: true },
       }),
@@ -4050,13 +4678,15 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       scored.sort((a, b) => b.score - a.score);
       const winner = scored[0].state;
 
-      // Guarded claim: only assign if the shift is STILL open + unassigned.
-      // A concurrent manual assign/cancel between the initial fetch and now
-      // would otherwise be silently overwritten (TOCTOU).
+      // Guarded claim: only assign if the shift is STILL unassigned in its
+      // original status. A concurrent manual assign/cancel between the
+      // initial fetch and now would otherwise be silently overwritten
+      // (TOCTOU). A DRAFT stays DRAFT (assigned-but-unpublished); an OPEN
+      // shift flips to ASSIGNED as before.
       const claim = await prisma.shift.updateMany({
-        where: { id: shift.id, status: 'OPEN', assignedAssociateId: null },
+        where: { id: shift.id, status: shift.status, assignedAssociateId: null },
         data: {
-          status: 'ASSIGNED',
+          status: shift.status === 'DRAFT' ? 'DRAFT' : 'ASSIGNED',
           assignedAssociateId: winner.id,
           assignedAt: new Date(),
         },

@@ -29,6 +29,56 @@ interface DrawerProps {
 }
 
 export function Drawer({ open, onOpenChange, width = 'max-w-md', children }: DrawerProps) {
+  // Swipe-right-to-close — the native side-panel dismissal gesture.
+  // Direction-locked: the gesture only claims the touch once it's clearly
+  // horizontal, so vertical scrolling inside DrawerBody is untouched.
+  const contentRef = React.useRef<HTMLDivElement | null>(null);
+  const swipe = React.useRef({ x: 0, y: 0, dx: 0, lock: '' as '' | 'h' | 'v' });
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    swipe.current = {
+      x: e.touches[0]?.clientX ?? 0,
+      y: e.touches[0]?.clientY ?? 0,
+      dx: 0,
+      lock: '',
+    };
+    const el = contentRef.current;
+    if (el) el.style.transition = 'none';
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    const s = swipe.current;
+    const dx = (e.touches[0]?.clientX ?? 0) - s.x;
+    const dy = (e.touches[0]?.clientY ?? 0) - s.y;
+    if (s.lock === '') {
+      if (Math.abs(dx) < 12 && Math.abs(dy) < 12) return;
+      s.lock = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+    }
+    if (s.lock !== 'h') return;
+    s.dx = Math.max(0, dx); // rightward only — matches the exit direction
+    const el = contentRef.current;
+    if (el) el.style.transform = `translateX(${s.dx}px)`;
+  };
+  const onTouchEnd = () => {
+    const s = swipe.current;
+    const el = contentRef.current;
+    const wasHorizontal = s.lock === 'h';
+    const dx = s.dx;
+    swipe.current = { x: 0, y: 0, dx: 0, lock: '' };
+    if (!el || !wasHorizontal) return;
+    if (dx > 110) {
+      el.style.transform = '';
+      el.style.transition = '';
+      onOpenChange(false);
+    } else {
+      el.style.transition = 'transform 150ms ease-out';
+      el.style.transform = 'translateX(0px)';
+      window.setTimeout(() => {
+        el.style.transform = '';
+        el.style.transition = '';
+      }, 160);
+    }
+  };
+
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
@@ -39,6 +89,11 @@ export function Drawer({ open, onOpenChange, width = 'max-w-md', children }: Dra
           )}
         />
         <DialogPrimitive.Content
+          ref={contentRef}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+          onTouchCancel={onTouchEnd}
           className={cn(
             'fixed right-0 top-0 bottom-0 z-50 w-full',
             width,

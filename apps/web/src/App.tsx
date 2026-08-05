@@ -1,6 +1,12 @@
 import { lazy, Suspense, type ComponentType } from 'react';
 import { createBrowserRouter } from 'react-router-dom';
-import { Layout } from '@/components/Layout';
+// PERF: the Layout is authenticated-only chrome — Sidebar, Topbar, MobileNav,
+// BottomTabBar, CommandPalette (and cmdk with it), WhatsNew, InstallPrompt,
+// the SSE live-events client. Importing it eagerly put all of that in the
+// blocking `main` chunk, so someone sitting on /login downloaded the entire
+// signed-in shell before they could type a password. It sits behind
+// RequireAuth, which already renders a splash while /auth/me resolves, so
+// there is a natural loading window to stream it in.
 import { Login } from '@/pages/Login';
 import { NotFound } from '@/pages/NotFound';
 import { ForgotPassword } from '@/pages/ForgotPassword';
@@ -43,6 +49,8 @@ function lazyNamed<T extends ComponentType<any>>(
     loader().then((mod) => ({ default: mod[exportName] as T }))
   );
 }
+
+const Layout = lazyNamed(() => import('@/components/Layout'), 'Layout');
 
 // Onboarding cluster
 const OnboardingHome = lazyNamed(() => import('@/pages/onboarding/OnboardingHome'), 'OnboardingHome');
@@ -218,14 +226,18 @@ registerDataPrefetch('/people', () => {
   });
   void queryClient.prefetchQuery({
     queryKey: ['clients', 'list'],
-    queryFn: async () => (await listClients()).clients,
+    // Full response object — must match useClients()'s cache shape, or a
+    // prefetch here poisons the shared key with a bare array.
+    queryFn: () => listClients({ status: 'ACTIVE' }),
     staleTime: 5 * 60_000,
   });
 });
 registerDataPrefetch('/clients', () => {
   void queryClient.prefetchQuery({
     queryKey: ['clients', 'list'],
-    queryFn: async () => (await listClients()).clients,
+    // Full response object — must match useClients()'s cache shape, or a
+    // prefetch here poisons the shared key with a bare array.
+    queryFn: () => listClients({ status: 'ACTIVE' }),
     staleTime: 5 * 60_000,
   });
 });
@@ -322,17 +334,21 @@ const LAYOUT_ROUTES = [
   { index: true, element: <Dashboard /> },
   { path: 'time-attendance', element: <TimeHome /> },
   { path: 'time-off', element: <TimeOffHome /> },
-  { path: 'clients', element: <ClientsHome /> },
-  { path: 'clients/:id', element: <ClientDetail /> },
+  // Route-level capability gates below mirror the sidebar's module gating
+  // (lib/modules.ts) so a bounded role (SHIFT_SUPERVISOR, CLIENT_PORTAL,
+  // FINANCE_ACCOUNTANT…) deep-linking into a module it can't see gets the
+  // styled "no access" screen instead of a broken page of 403s.
+  { path: 'clients', element: <RequireCapability cap="view:clients"><ClientsHome /></RequireCapability> },
+  { path: 'clients/:id', element: <RequireCapability cap="view:clients"><ClientDetail /></RequireCapability> },
   { path: 'scheduling', element: <SchedulingHome /> },
   { path: 'approvals', element: <RequireCapability cap="manage:scheduling"><ApprovalsHome /></RequireCapability> },
-  { path: 'payroll', element: <PayrollHome /> },
-  { path: 'documents', element: <DocumentsHome /> },
-  { path: 'compliance', element: <ComplianceHome /> },
+  { path: 'payroll', element: <RequireCapability cap="view:payroll"><PayrollHome /></RequireCapability> },
+  { path: 'documents', element: <RequireCapability cap="view:documents"><DocumentsHome /></RequireCapability> },
+  { path: 'compliance', element: <RequireCapability cap="view:compliance"><ComplianceHome /></RequireCapability> },
   { path: 'communications', element: <CommunicationsHome /> },
-  { path: 'performance', element: <PerformanceHome /> },
+  { path: 'performance', element: <RequireCapability cap="view:performance"><PerformanceHome /></RequireCapability> },
   { path: 'recruiting', element: <RecruitingHome /> },
-  { path: 'analytics', element: <AnalyticsHome /> },
+  { path: 'analytics', element: <RequireCapability cap="view:analytics"><AnalyticsHome /></RequireCapability> },
   // `settings` is universal — every authenticated user manages their own
   // profile / password / preferences here. RequireAuth above is enough.
   { path: 'settings', element: <Settings /> },
@@ -340,10 +356,13 @@ const LAYOUT_ROUTES = [
   { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },
   { path: 'admin/billing', element: <RequireCapability cap="view:hr-admin"><BillingHome /></RequireCapability> },
   { path: 'audit', element: <RequireCapability cap="view:audit"><AuditHome /></RequireCapability> },
-  { path: 'benefits', element: <BenefitsHome /> },
-  { path: 'people', element: <PeopleDirectory /> },
-  { path: 'org', element: <OrgHome /> },
-  { path: 'org/chart', element: <OrgChart /> },
+  // No dedicated view:benefits capability exists — benefits elections are
+  // paycheck deductions, so the module (see lib/modules.ts) is gated on
+  // view:payroll; the route matches it.
+  { path: 'benefits', element: <RequireCapability cap="view:payroll"><BenefitsHome /></RequireCapability> },
+  { path: 'people', element: <RequireCapability cap="view:org"><PeopleDirectory /></RequireCapability> },
+  { path: 'org', element: <RequireCapability cap="view:org"><OrgHome /></RequireCapability> },
+  { path: 'org/chart', element: <RequireCapability cap="view:org"><OrgChart /></RequireCapability> },
   { path: 'celebrations', element: <CelebrationsHome /> },
   { path: 'assets', element: <AssetsHome /> },
   { path: 'pulse', element: <PulseHome /> },
@@ -459,7 +478,12 @@ export const router = createBrowserRouter([
     path: '/',
     element: (
       <RequireAuth>
-        <Layout />
+        {/* Layout is lazy now, so it needs a boundary. Same full-screen
+            spinner the auth splash uses, so the /auth/me wait and the chunk
+            fetch read as one continuous load, not two loading states. */}
+        <Suspense fallback={<PublicRouteFallback />}>
+          <Layout />
+        </Suspense>
       </RequireAuth>
     ),
     errorElement: <RouterErrorPage />,
@@ -489,7 +513,12 @@ export const router = createBrowserRouter([
     path: '*',
     element: (
       <RequireAuth>
-        <Layout />
+        {/* Layout is lazy now, so it needs a boundary. Same full-screen
+            spinner the auth splash uses, so the /auth/me wait and the chunk
+            fetch read as one continuous load, not two loading states. */}
+        <Suspense fallback={<PublicRouteFallback />}>
+          <Layout />
+        </Suspense>
       </RequireAuth>
     ),
     errorElement: <RouterErrorPage />,

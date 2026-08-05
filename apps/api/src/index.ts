@@ -11,12 +11,16 @@ import { logger } from './lib/logger.js';
 import { startKeepAlive } from './lib/keepalive.js';
 import { startInviteReminderCron } from './lib/inviteReminder.js';
 import { startAttestationReminderCron } from './lib/attestationReminder.js';
+import { startExpirationDigestCron } from './lib/expirationDigest.js';
 import { startKioskMaintenanceCron } from './lib/kioskMaintenance.js';
 import { startDocumentMaintenanceCron } from './lib/documentMaintenance.js';
+import { startReportScheduleCron } from './lib/reportScheduleRunner.js';
 import { startUploadsBackupCron } from './lib/uploadsBackup.js';
 import { startShiftReminderCron } from './lib/shiftReminder.js';
 import { startScheduleDigestCron } from './lib/scheduleDigest.js';
 import { startWeekAheadCron } from './lib/weekAheadDigest.js';
+import { startWebhookDeliveryCron } from './lib/webhookDispatch.js';
+import { startIdempotencyCleanupCron } from './middleware/idempotency.js';
 import { ensureBrandingLoaded } from './lib/branding.js';
 import { preloadPayrollTaxConfig } from './lib/payrollTax.js';
 import { flushPendingAudits } from './lib/audit.js';
@@ -50,12 +54,20 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
 
   startInviteReminderCron();
   startAttestationReminderCron();
+  startExpirationDigestCron();
   startKioskMaintenanceCron();
   startDocumentMaintenanceCron();
+  startReportScheduleCron();
   startUploadsBackupCron();
   startShiftReminderCron();
   startScheduleDigestCron();
   startWeekAheadCron();
+  // Outbound webhook deliveries — safe under MULTI_REPLICA without a
+  // shared backend: each row is claimed via a guarded attemptCount
+  // update, so two replicas can't double-POST the same delivery.
+  startWebhookDeliveryCron();
+  // Hourly sweep of expired Idempotency-Key rows (24h TTL, 2× slack).
+  startIdempotencyCleanupCron();
 
   // Multi-replica safety check. Three independent per-process subsystems
   // assume a single container today: the kiosk PIN rate limiter (brute-

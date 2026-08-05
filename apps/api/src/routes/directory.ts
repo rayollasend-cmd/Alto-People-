@@ -28,13 +28,12 @@ export const directoryRouter = Router();
 
 const VIEW = requireCapability('view:org');
 
-// Default page size when no explicit ?limit is provided. The pre-cursor
-// behaviour fetched up to 1000 rows in one call; we keep that as the
-// default so callers that haven't opted into pagination continue to
-// work, but cap explicit limits at 500 so a malicious caller can't
-// force a huge query.
-const DEFAULT_PAGE_SIZE = 1000;
+// One page size, and the default may not exceed the maximum — it did
+// (1000 vs 500), so the 'cap' applied only to callers who passed an
+// explicit ?limit, and the default path quietly fetched double it. The
+// endpoint returns nextCursor for callers that need more.
 const MAX_PAGE_SIZE = 500;
+const DEFAULT_PAGE_SIZE = MAX_PAGE_SIZE;
 
 const QuerySchema = z.object({
   q: z.string().trim().max(120).optional(),

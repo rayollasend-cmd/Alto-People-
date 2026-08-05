@@ -13,16 +13,28 @@ import {
 import { ApiError } from '@/lib/api';
 import { fmtDateTz, fmtWeekdayTz } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 interface DraftWindow {
+  /**
+   * Stable React key. Rows were keyed by array index, so removing a window
+   * made React reuse the deleted row's DOM for its successor — focus stayed
+   * on a field that now belonged to a different day, and any future
+   * uncontrolled input in this row would keep the wrong value outright.
+   * The id is client-only and never sent to the API.
+   */
+  uid: string;
   dayOfWeek: number;
   start: string;     // "HH:MM"
   end: string;
 }
+
+let draftUidSeq = 0;
+const nextDraftUid = () => `w${(draftUidSeq += 1)}`;
 
 const minutesToHHMM = (m: number) => {
   const h = Math.floor(m / 60);
@@ -37,11 +49,15 @@ const hhmmToMinutes = (s: string) => {
 
 function fromAPI(windows: AvailabilityWindow[]): DraftWindow[] {
   return windows.map((w) => ({
+    uid: nextDraftUid(),
     dayOfWeek: w.dayOfWeek,
     start: minutesToHHMM(w.startMinute),
     end: minutesToHHMM(w.endMinute),
   }));
 }
+
+const isInvalidRange = (w: DraftWindow) =>
+  hhmmToMinutes(w.end) <= hhmmToMinutes(w.start);
 
 export function AvailabilityEditor() {
   const [drafts, setDrafts] = useState<DraftWindow[]>([]);
@@ -66,8 +82,19 @@ export function AvailabilityEditor() {
     refresh();
   }, [refresh]);
 
+  // "Saved." goes stale fast — clear it after a few seconds so a
+  // later edit doesn't sit next to an old success message.
+  useEffect(() => {
+    if (!info) return;
+    const timer = window.setTimeout(() => setInfo(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [info]);
+
   const addWindow = () => {
-    setDrafts([...drafts, { dayOfWeek: 1, start: '09:00', end: '17:00' }]);
+    setDrafts([
+      ...drafts,
+      { uid: nextDraftUid(), dayOfWeek: 1, start: '09:00', end: '17:00' },
+    ]);
   };
 
   const removeWindow = (idx: number) => {
@@ -82,6 +109,13 @@ export function AvailabilityEditor() {
     if (submitting) return;
     setError(null);
     setInfo(null);
+    // Client-side guard: the API would reject end <= start anyway, but
+    // fail inline with the offending rows highlighted instead of a
+    // round-trip error.
+    if (drafts.some(isInvalidRange)) {
+      setError('End time must be after start time.');
+      return;
+    }
     setSubmitting(true);
     try {
       const payload = drafts.map((w) => ({
@@ -132,7 +166,7 @@ export function AvailabilityEditor() {
             <ul className="space-y-2 mb-3">
               {drafts.map((w, idx) => (
                 <li
-                  key={idx}
+                  key={w.uid}
                   // Phones: day+Remove on one row, the time range on the
                   // next — the desktop single-line 12-col layout crammed
                   // four controls into ~328px. sm+ restores one line.
@@ -175,8 +209,16 @@ export function AvailabilityEditor() {
                     type="time"
                     value={w.end}
                     onChange={(e) => updateWindow(idx, { end: e.target.value })}
-                    className="col-span-5 sm:col-span-3 px-2 py-1.5 coarse:min-h-11 rounded bg-navy-secondary/60 border border-navy-secondary text-white text-sm coarse:text-base"
+                    aria-invalid={isInvalidRange(w)}
+                    className={`col-span-5 sm:col-span-3 px-2 py-1.5 coarse:min-h-11 rounded bg-navy-secondary/60 border text-white text-sm coarse:text-base ${
+                      isInvalidRange(w) ? 'border-alert' : 'border-navy-secondary'
+                    }`}
                   />
+                  {isInvalidRange(w) && (
+                    <p className="col-span-12 text-xs text-alert" role="alert">
+                      End time must be after start time.
+                    </p>
+                  )}
                 </li>
               ))}
             </ul>
@@ -199,9 +241,20 @@ export function AvailabilityEditor() {
             >
               {submitting ? 'Saving…' : 'Save'}
             </Button>
-            {error && <span className="text-sm text-alert ml-2">{error}</span>}
             {info && <span className="text-sm text-success ml-2">{info}</span>}
           </div>
+          {error && (
+            <ErrorBanner
+              className="mt-2"
+              action={
+                <Button size="sm" variant="secondary" onClick={refresh}>
+                  Retry
+                </Button>
+              }
+            >
+              {error}
+            </ErrorBanner>
+          )}
 
           <DaysOffEditor />
         </>
@@ -284,7 +337,7 @@ function DaysOffEditor() {
 
   return (
     <div className="mt-5 pt-4 border-t border-navy-secondary">
-      <h3 className="text-[11px] uppercase tracking-wider text-silver/80 mb-2">
+      <h3 className="text-xs2 uppercase tracking-wider text-silver/80 mb-2">
         Days off (one-time)
       </h3>
       {exceptions && exceptions.length > 0 && (
@@ -337,8 +390,10 @@ function DaysOffEditor() {
         <Button type="button" variant="outline" size="sm" onClick={add} disabled={!date || saving}>
           Add day off
         </Button>
-        {error && <span className="text-xs text-alert">{error}</span>}
       </div>
+      {error && (
+        <ErrorBanner className="mt-2 text-xs">{error}</ErrorBanner>
+      )}
     </div>
   );
 }

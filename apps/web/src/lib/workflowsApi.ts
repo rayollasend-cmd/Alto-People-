@@ -106,6 +106,37 @@ export function listRuns(filters: {
   return apiFetch(`/workflows/runs${qs ? `?${qs}` : ''}`);
 }
 
+export interface WorkflowRunStep {
+  id: string;
+  ordinal: number;
+  kind: WorkflowActionKind;
+  params: Record<string, unknown>;
+  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  result: unknown;
+  failureReason: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface WorkflowRunDetail {
+  id: string;
+  definition: { id: string; name: string; trigger: WorkflowTrigger };
+  trigger: WorkflowTrigger;
+  entityType: string;
+  entityId: string;
+  context: Record<string, unknown>;
+  status: WorkflowRunSummary['status'];
+  startedAt: string | null;
+  completedAt: string | null;
+  failureReason: string | null;
+  steps: WorkflowRunStep[];
+}
+
+/** Full run detail incl. per-step params/result/failureReason (GET /workflows/runs/:id). */
+export function getRun(id: string): Promise<{ run: WorkflowRunDetail }> {
+  return apiFetch(`/workflows/runs/${id}`);
+}
+
 export function testWorkflow(
   id: string,
   context: Record<string, unknown>,

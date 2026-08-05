@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { notifyAssociate } from '../lib/notify.js';
 
 /**
  * Phase 108 — Asset tracking endpoints.
@@ -143,12 +144,12 @@ const AssignSchema = z.object({
 
 assetsRouter.post('/asset-assignments', MANAGE, async (req, res) => {
   const input = AssignSchema.parse(req.body);
-  await prisma.$transaction(async (tx) => {
+  const assigned = await prisma.$transaction(async (tx) => {
     // Asset must be AVAILABLE — block double-assigning even if the
     // partial unique would also catch it.
     const asset = await tx.asset.findUnique({
       where: { id: input.assetId },
-      select: { status: true },
+      select: { status: true, kind: true, label: true, serial: true },
     });
     if (!asset) throw new HttpError(404, 'not_found', 'Asset not found.');
     if (asset.status !== 'AVAILABLE') {
@@ -169,6 +170,14 @@ assetsRouter.post('/asset-assignments', MANAGE, async (req, res) => {
       where: { id: input.assetId },
       data: { status: 'ASSIGNED' },
     });
+    return asset;
+  });
+  void notifyAssociate(input.associateId, {
+    subject: 'An asset was assigned to you',
+    body: `${assigned.label} (${assigned.kind}${assigned.serial ? `, serial ${assigned.serial}` : ''}). Please confirm receipt with your manager.`,
+    category: 'assets',
+    linkUrl: '/me',
+    emailFallback: true,
   });
   res.status(201).json({ ok: true });
 });

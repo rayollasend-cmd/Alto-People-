@@ -1,6 +1,11 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
+import {
+  scopeShifts,
+  scopeTimeEntries,
+  scopeTimeOffRequests,
+} from '../lib/scope.js';
 
 /**
  * One cheap COUNT per manager decision queue, powering the badge on the
@@ -8,19 +13,39 @@ import { requireCapability } from '../middleware/auth.js';
  * page itself renders them via their own routers — this endpoint exists
  * only so navigation can say "7 things are waiting" without loading any
  * of them.
+ *
+ * Every count is scoped with the SAME helpers the queue pages use, so a
+ * client-bounded SHIFT_SUPERVISOR's badge matches what their page shows
+ * (it used to count the whole org).
  */
 export const approvalsRouter = Router();
 
 approvalsRouter.get(
   '/count',
   requireCapability('manage:scheduling'),
-  async (_req, res, next) => {
+  async (req, res, next) => {
     try {
+      const user = req.user!;
       const [swaps, pickups, timeOff, timesheets] = await Promise.all([
-        prisma.shiftSwapRequest.count({ where: { status: 'PEER_ACCEPTED' } }),
-        prisma.openShiftClaim.count({ where: { status: 'PENDING' } }),
-        prisma.timeOffRequest.count({ where: { status: 'PENDING' } }),
-        prisma.timeEntry.count({ where: { status: 'COMPLETED' } }),
+        prisma.shiftSwapRequest.count({
+          where: { status: 'PEER_ACCEPTED', shift: { is: scopeShifts(user) } },
+        }),
+        prisma.openShiftClaim.count({
+          where: { status: 'PENDING', shift: { is: scopeShifts(user) } },
+        }),
+        prisma.timeOffRequest.count({
+          where: { status: 'PENDING', ...scopeTimeOffRequests(user) },
+        }),
+        // Bounded to a 90-day window: COMPLETED is a state entries can sit
+        // in forever, so an all-time count both grows unboundedly and
+        // stops matching what the queue page (recent-first, capped) shows.
+        prisma.timeEntry.count({
+          where: {
+            status: 'COMPLETED',
+            clockInAt: { gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) },
+            ...scopeTimeEntries(user),
+          },
+        }),
       ]);
       res.json({
         swaps,

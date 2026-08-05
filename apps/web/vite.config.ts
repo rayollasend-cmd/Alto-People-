@@ -18,15 +18,82 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
  * naturally bumps the SHELL hash, which causes the SW's `activate` step
  * to evict the prior cache and re-precache the new set.
  */
+/**
+ * Preload the Latin font subsets.
+ *
+ * Fonts are self-hosted via @fontsource-variable/*, so the browser only
+ * discovers them after it has fetched and parsed the CSS — an extra round
+ * trip before any text renders in the real face. It shows up most on /login,
+ * where the logo uses the display font.
+ *
+ * Only the `latin` subsets are preloaded. Each @font-face carries a
+ * unicode-range, so latin-ext / cyrillic / vietnamese are fetched only if a
+ * character in those ranges is actually rendered — preloading them would
+ * download ~130 KB that almost no session uses.
+ *
+ * Filenames are content-hashed per build, so the hrefs are read out of the
+ * bundle at emit time rather than hardcoded in index.html.
+ */
+function preloadLatinFonts(): Plugin {
+  const LATIN_SUBSET = /(geist|cormorant-garamond)-latin-wght-normal-[^/]*\.woff2$/;
+  return {
+    name: 'alto-preload-latin-fonts',
+    apply: 'build',
+    enforce: 'post',
+    transformIndexHtml(html, ctx) {
+      if (!ctx.bundle) return html;
+      const fonts = Object.keys(ctx.bundle).filter((f) => LATIN_SUBSET.test(f));
+      return {
+        html,
+        tags: fonts.map((fileName) => ({
+          tag: 'link',
+          attrs: {
+            rel: 'preload',
+            as: 'font',
+            type: 'font/woff2',
+            href: `/${fileName}`,
+            // Required even same-origin: fonts are always fetched in CORS
+            // mode, and without it the preload is discarded and refetched.
+            crossorigin: '',
+          },
+          injectTo: 'head-prepend' as const,
+        })),
+      };
+    },
+  };
+}
+
 function emitAssetManifest(): Plugin {
   return {
     name: 'alto-asset-manifest',
     apply: 'build',
     writeBundle(options, bundle) {
       const outDir = options.dir ?? path.resolve(__dirname, 'dist');
+      // PERF: allowlist, not "everything". The SW used to precache all
+      // ~166 chunks (~4 MB — face-api, every admin route, both chart
+      // bundles) on every visitor's FIRST load. Precache only the shell +
+      // the highest-traffic route chunks; everything else loads (and then
+      // SW-caches) on demand.
+      const PRECACHE_PATTERNS = [
+        /^assets\/main-/,
+        /^assets\/react-vendor-/,
+        /^assets\/radix-/,
+        /^assets\/style-utils-/,
+        // Highest-traffic role surfaces.
+        /^assets\/AssociateScheduleView-/,
+        /^assets\/AssociateTimeOffView-/,
+        /^assets\/AssociatePayrollView-/,
+        /^assets\/MyTimesheet-/,
+        /^assets\/TimeHome-/,
+        /^assets\/MeHome-/,
+        /^assets\/AssociateInboxView-/,
+        /^assets\/SupervisorDashboard-/,
+      ];
       const chunks: string[] = [];
       for (const fileName of Object.keys(bundle)) {
-        if (fileName.endsWith('.js') || fileName.endsWith('.css')) {
+        const isAsset = fileName.endsWith('.js') || fileName.endsWith('.css');
+        if (!isAsset) continue;
+        if (fileName.endsWith('.css') || PRECACHE_PATTERNS.some((re) => re.test(fileName))) {
           chunks.push('/' + fileName);
         }
       }
@@ -46,7 +113,7 @@ function emitAssetManifest(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [react(), emitAssetManifest()],
+  plugins: [react(), emitAssetManifest(), preloadLatinFonts()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
@@ -65,6 +132,11 @@ export default defineConfig({
     },
   },
   build: {
+    // Explicit support floor instead of Vite's implicit default, so the
+    // emitted JS matches the browserslist in package.json (which drives
+    // autoprefixer). Slightly wider than the browserslist floor: store
+    // kiosk tablets skew old, and es2020/safari14 costs little.
+    target: ['es2020', 'safari14'],
     // Route-level lazy loading (see App.tsx) splits each page into its own
     // chunk. The chunks below pull shared vendor code into stable buckets so
     // it's downloaded once and cached across navigations.
@@ -85,8 +157,15 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined;
+          // PERF: tiny styling utils get their own named bucket FIRST.
+          // Without this, Rollup's min-chunk-size merging folded clsx
+          // (imported by every component via lib/cn.ts) into the recharts
+          // chunk — making 321 KB of charting code a blocking dependency
+          // of first paint for every visitor.
+          if (/\/node_modules\/(clsx|tailwind-merge|class-variance-authority)\//.test(id)) {
+            return 'style-utils';
+          }
           if (id.includes('@radix-ui')) return 'radix';
-          if (id.includes('framer-motion')) return 'motion';
           // face-api.js is a 600+ KB ML library used only by the kiosk
           // punch flow. Naming the chunk so the build output isn't a
           // confusing second `index.js`.
@@ -97,8 +176,11 @@ export default defineConfig({
           if (id.includes('/recharts/') || id.includes('/d3-')) {
             return 'recharts';
           }
+          // NOTE '/node_modules/react/' (not '/react/') — the loose test
+          // used to also match @sentry/react, shipping the whole Sentry
+          // SDK in the blocking react-vendor chunk even with no DSN set.
           if (
-            id.includes('/react/') ||
+            id.includes('/node_modules/react/') ||
             id.includes('/react-dom/') ||
             id.includes('/react-router') ||
             id.includes('/scheduler/')
@@ -108,9 +190,9 @@ export default defineConfig({
         },
       },
     },
-    // Bumped from default 500 KB. The kiosk chunk legitimately exceeds it
-    // because of face-api.js — gating it behind a separate route chunk is
-    // already the win we wanted; warning at every build adds noise.
-    chunkSizeWarningLimit: 1000,
+    // face-api's chunk legitimately exceeds any sane limit (it's gated
+    // behind the kiosk route); everything else should stay under ~600 KB
+    // raw so a regression like clsx-in-recharts warns at build time.
+    chunkSizeWarningLimit: 700,
   },
 });

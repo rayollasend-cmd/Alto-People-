@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { verifyPassword } from '../lib/passwords.js';
+import { verifyFileMagic } from '../lib/uploads.js';
 import {
   distanceMeters,
   generateDeviceToken,
@@ -15,13 +16,38 @@ import {
   tokenLookupPrefix,
   verifyDeviceTokenHash,
 } from '../lib/kioskAuth.js';
-import { enforcePunchRateLimit } from '../lib/kioskRateLimit.js';
+import {
+  clearPinFailures,
+  enforcePinBackoff,
+  enforcePunchRateLimit,
+  recordPinFailure,
+} from '../lib/kioskRateLimit.js';
 import { matchShiftForPunch } from '../lib/matchShiftForPunch.js';
 import { recomputeEntryAnomalies } from '../lib/recomputeEntryAnomalies.js';
 import { encryptString, decryptString } from '../lib/crypto.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { send } from '../lib/notifications.js';
+import { associatesOfClient, effectiveClientIdFilter } from '../lib/scope.js';
+
+/**
+ * Tenant clamp for kiosk admin surfaces. Client-bounded roles
+ * (SHIFT_SUPERVISOR) get their own clientId regardless of what was
+ * requested; an unassigned bounded caller fails CLOSED via an impossible
+ * id. Admin callers pass their requested filter through (may be
+ * undefined = org-wide).
+ */
+function kioskClientClamp(
+  user: { role: string; clientId: string | null },
+  requested?: string,
+): string | undefined {
+  const bounded = effectiveClientIdFilter(
+    user as Parameters<typeof effectiveClientIdFilter>[0],
+    requested,
+  );
+  if (bounded === null) return '00000000-0000-0000-0000-000000000000';
+  return bounded;
+}
 
 /**
  * Phase 99 — Kiosk-mode clock in/out: 4-digit PIN + selfie.
@@ -81,7 +107,8 @@ function nextTokenExpiry(now: Date = new Date()): Date {
 }
 
 kiosk99Router.get('/kiosk-devices', MANAGE, async (req, res) => {
-  const clientId = z.string().uuid().optional().parse(req.query.clientId);
+  const requested = z.string().uuid().optional().parse(req.query.clientId);
+  const clientId = kioskClientClamp(req.user!, requested);
   const rows = await prisma.kioskDevice.findMany({
     take: 500,
     where: { ...(clientId ? { clientId } : {}) },
@@ -153,6 +180,12 @@ kiosk99Router.post('/kiosk-devices', MANAGE, async (req, res) => {
     throw new HttpError(400, 'invalid_body', 'clientId or locationId is required.');
   }
 
+  // Client-bounded roles can only register devices for their own client.
+  const bounded = effectiveClientIdFilter(req.user!, undefined);
+  if (bounded !== undefined && resolvedClientId !== bounded) {
+    throw new HttpError(403, 'forbidden', 'You can only manage kiosks for your assigned client.');
+  }
+
   const { plaintext, prefix } = generateDeviceToken();
   const tokenHash = hashDeviceToken(plaintext);
   const created = await prisma.kioskDevice.create({
@@ -182,8 +215,9 @@ kiosk99Router.post('/kiosk-devices', MANAGE, async (req, res) => {
 //     red and HR wants to keep the kiosk working.
 // The old token stops working the moment this returns.
 kiosk99Router.post('/kiosk-devices/:id/rotate', MANAGE, async (req, res) => {
-  const existing = await prisma.kioskDevice.findUnique({
-    where: { id: req.params.id },
+  const deviceClamp = kioskClientClamp(req.user!);
+  const existing = await prisma.kioskDevice.findFirst({
+    where: { id: req.params.id, ...(deviceClamp ? { clientId: deviceClamp } : {}) },
     select: { id: true, isActive: true },
   });
   if (!existing) {
@@ -210,15 +244,27 @@ kiosk99Router.post('/kiosk-devices/:id/rotate', MANAGE, async (req, res) => {
 });
 
 kiosk99Router.post('/kiosk-devices/:id/revoke', MANAGE, async (req, res) => {
+  const revokeClamp = kioskClientClamp(req.user!);
+  const target = await prisma.kioskDevice.findFirst({
+    where: { id: req.params.id, ...(revokeClamp ? { clientId: revokeClamp } : {}) },
+    select: { id: true },
+  });
+  if (!target) throw new HttpError(404, 'device_not_found', 'Device not found.');
   await prisma.kioskDevice.update({
-    where: { id: req.params.id },
+    where: { id: target.id },
     data: { isActive: false },
   });
   res.json({ ok: true });
 });
 
 kiosk99Router.delete('/kiosk-devices/:id', MANAGE, async (req, res) => {
-  await prisma.kioskDevice.delete({ where: { id: req.params.id } });
+  const deleteClamp = kioskClientClamp(req.user!);
+  const target = await prisma.kioskDevice.findFirst({
+    where: { id: req.params.id, ...(deleteClamp ? { clientId: deleteClamp } : {}) },
+    select: { id: true },
+  });
+  if (!target) throw new HttpError(404, 'device_not_found', 'Device not found.');
+  await prisma.kioskDevice.delete({ where: { id: target.id } });
   res.status(204).end();
 });
 
@@ -254,7 +300,10 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
   // Scoped per-client it sorts newest-first (matches issuing order); the
   // all-clients view groups by client then name so the flat list stays
   // scannable.
-  const clientId = z.string().uuid().optional().parse(req.query.clientId);
+  const requested = z.string().uuid().optional().parse(req.query.clientId);
+  // Decrypted PINs + employee numbers are tenant-sensitive: bounded roles
+  // are clamped to their own client no matter what they request.
+  const clientId = kioskClientClamp(req.user!, requested);
   const rows = await prisma.kioskPin.findMany({
     take: 1000,
     where: { ...(clientId ? { clientId } : {}) },
@@ -337,8 +386,12 @@ const FaceConsentAdminSchema = z.object({
 
 kiosk99Router.post('/kiosk-pins/:id/face-consent', MANAGE, async (req, res) => {
   const { action } = FaceConsentAdminSchema.parse(req.body);
-  const pin = await prisma.kioskPin.findUnique({
-    where: { id: req.params.id },
+  const consentClamp = kioskClientClamp(req.user!);
+  const pin = await prisma.kioskPin.findFirst({
+    where: {
+      id: req.params.id,
+      ...(consentClamp ? { clientId: consentClamp } : {}),
+    },
     select: { id: true, clientId: true, associateId: true },
   });
   if (!pin) {
@@ -386,7 +439,8 @@ kiosk99Router.post('/kiosk-pins/:id/face-consent', MANAGE, async (req, res) => {
 // means that code will fail clock-in (the secret changed). Codes we can't
 // decrypt at all flag the encryption key drifting. Either way → rotate.
 kiosk99Router.get('/kiosk-pins/health', MANAGE, async (req, res) => {
-  const clientId = z.string().uuid().optional().parse(req.query.clientId);
+  const requestedHealth = z.string().uuid().optional().parse(req.query.clientId);
+  const clientId = kioskClientClamp(req.user!, requestedHealth);
   const pins = await prisma.kioskPin.findMany({
     where: { ...(clientId ? { clientId } : {}) },
     select: { pinEncrypted: true, pinHmac: true },
@@ -425,6 +479,12 @@ kiosk99Router.get('/kiosk-pins/health', MANAGE, async (req, res) => {
 
 kiosk99Router.post('/kiosk-pins', MANAGE, async (req, res) => {
   const input = PinInputSchema.parse(req.body);
+
+  // Client-bounded roles can only issue employee numbers for their client.
+  const boundedPin = effectiveClientIdFilter(req.user!, undefined);
+  if (boundedPin !== undefined && input.clientId !== boundedPin) {
+    throw new HttpError(403, 'forbidden', 'You can only manage employee numbers for your assigned client.');
+  }
 
   // The employee number is issued AFTER onboarding completes — i.e.
   // the associate has at least one APPROVED application. HR shouldn't
@@ -491,7 +551,13 @@ kiosk99Router.post('/kiosk-pins', MANAGE, async (req, res) => {
 });
 
 kiosk99Router.delete('/kiosk-pins/:id', MANAGE, async (req, res) => {
-  await prisma.kioskPin.delete({ where: { id: req.params.id } });
+  const pinDeleteClamp = kioskClientClamp(req.user!);
+  const target = await prisma.kioskPin.findFirst({
+    where: { id: req.params.id, ...(pinDeleteClamp ? { clientId: pinDeleteClamp } : {}) },
+    select: { id: true },
+  });
+  if (!target) throw new HttpError(404, 'not_found', 'Employee number not found.');
+  await prisma.kioskPin.delete({ where: { id: target.id } });
   res.status(204).end();
 });
 
@@ -526,8 +592,9 @@ function pinEmailContent(
 // My Profile page — this is just a convenience push to their inbox.
 kiosk99Router.post('/kiosk-pins/:id/email', MANAGE, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
-  const pin = await prisma.kioskPin.findUnique({
-    where: { id },
+  const emailClamp = kioskClientClamp(req.user!);
+  const pin = await prisma.kioskPin.findFirst({
+    where: { id, ...(emailClamp ? { clientId: emailClamp } : {}) },
     include: {
       associate: { select: { firstName: true, email: true } },
       client: { select: { name: true } },
@@ -605,8 +672,12 @@ const BulkEmailSchema = z.object({
 
 kiosk99Router.post('/kiosk-pins/email', MANAGE, async (req, res) => {
   const { ids } = BulkEmailSchema.parse(req.body);
+  const bulkEmailClamp = kioskClientClamp(req.user!);
   const pins = await prisma.kioskPin.findMany({
-    where: { id: { in: ids } },
+    where: {
+      id: { in: ids },
+      ...(bulkEmailClamp ? { clientId: bulkEmailClamp } : {}),
+    },
     include: {
       associate: { select: { firstName: true, email: true } },
       client: { select: { name: true } },
@@ -720,12 +791,20 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
       select: { id: true, clientId: true, associateId: true, pinEncrypted: true },
     });
   } else if (associateQuery) {
+    // Bounded roles only search their own client's people — this endpoint
+    // returns names/emails and, below, decrypted numbers.
+    const diagnoseSearchClamp = kioskClientClamp(req.user!);
     const associates = await prisma.associate.findMany({
       where: {
-        OR: [
-          { firstName: { contains: associateQuery, mode: 'insensitive' } },
-          { lastName: { contains: associateQuery, mode: 'insensitive' } },
-          { email: { contains: associateQuery, mode: 'insensitive' } },
+        AND: [
+          {
+            OR: [
+              { firstName: { contains: associateQuery, mode: 'insensitive' } },
+              { lastName: { contains: associateQuery, mode: 'insensitive' } },
+              { email: { contains: associateQuery, mode: 'insensitive' } },
+            ],
+          },
+          ...(diagnoseSearchClamp ? [associatesOfClient(diagnoseSearchClamp)] : []),
         ],
       },
       select: { id: true, firstName: true, lastName: true, email: true },
@@ -773,6 +852,13 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
       });
       return;
     }
+  }
+
+  // Tenant boundary: a bounded caller diagnosing a number that belongs to
+  // another client gets "not found", never the other tenant's identity.
+  const diagnoseClamp = kioskClientClamp(req.user!);
+  if (pin && diagnoseClamp && pin.clientId !== diagnoseClamp) {
+    pin = null;
   }
 
   if (!pin) {
@@ -930,7 +1016,10 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
   );
 
   const dir: Prisma.SortOrder = sort === 'oldest' ? 'asc' : 'desc';
+  // Bounded roles only see punches from their own client's devices.
+  const punchClamp = kioskClientClamp(req.user!);
   const where: Prisma.KioskPunchWhereInput = {
+    ...(punchClamp ? { device: { is: { clientId: punchClamp } } } : {}),
     ...(associateId ? { associateId } : {}),
     ...(deviceId ? { kioskDeviceId: deviceId } : {}),
     ...(reviewStatus ? { reviewStatus } : {}),
@@ -949,9 +1038,29 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
   // Peek one row past the page to learn whether there's a next cursor.
   // (createdAt, id) ordering keeps pagination stable across same-timestamp
   // punches.
+  //
+  // PERF: explicit `select` — never `include` — on this table. `include`
+  // pulls every scalar including `selfie Bytes?` (≤1 MB/row), which at the
+  // 500-row page size meant up to ~500 MB detoasted per HR page load just
+  // to compute a boolean. hasSelfie comes from a second, byte-free id query.
   const rows = await prisma.kioskPunch.findMany({
     where,
-    include: {
+    select: {
+      id: true,
+      kioskDeviceId: true,
+      associateId: true,
+      timeEntryId: true,
+      action: true,
+      rejectReason: true,
+      distanceMeters: true,
+      faceDistance: true,
+      faceMismatch: true,
+      anomalyKind: true,
+      anomalyDetail: true,
+      reviewStatus: true,
+      reviewedAt: true,
+      reviewNotes: true,
+      createdAt: true,
       device: { select: { name: true, clientId: true } },
       associate: { select: { firstName: true, lastName: true } },
       reviewedBy: { select: { email: true } },
@@ -963,6 +1072,15 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
   const hasMore = rows.length > limit;
   const page = hasMore ? rows.slice(0, limit) : rows;
   const nextCursor = hasMore ? page[page.length - 1]!.id : null;
+
+  const withSelfie = new Set(
+    (
+      await prisma.kioskPunch.findMany({
+        where: { id: { in: page.map((p) => p.id) }, selfie: { not: null } },
+        select: { id: true },
+      })
+    ).map((r) => r.id),
+  );
 
   res.json({
     nextCursor,
@@ -976,7 +1094,7 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
         : null,
       timeEntryId: p.timeEntryId,
       action: p.action,
-      hasSelfie: p.selfie != null,
+      hasSelfie: withSelfie.has(p.id),
       rejectReason: p.rejectReason,
       distanceMeters: p.distanceMeters,
       faceDistance: p.faceDistance,
@@ -1014,8 +1132,14 @@ const BulkReviewSchema = z.object({
 
 kiosk99Router.post('/kiosk-punches/review', MANAGE, async (req, res) => {
   const { ids, decision, notes } = BulkReviewSchema.parse(req.body);
+  // Bounded roles can only review punches from their own client's devices;
+  // out-of-tenant ids fall out here and report as not_found.
+  const bulkReviewClamp = kioskClientClamp(req.user!);
   const punches = await prisma.kioskPunch.findMany({
-    where: { id: { in: ids } },
+    where: {
+      id: { in: ids },
+      ...(bulkReviewClamp ? { device: { is: { clientId: bulkReviewClamp } } } : {}),
+    },
     select: { id: true, timeEntryId: true, reviewStatus: true },
   });
   const byId = new Map(punches.map((p) => [p.id, p]));
@@ -1023,8 +1147,8 @@ kiosk99Router.post('/kiosk-punches/review', MANAGE, async (req, res) => {
   const reviewedById = req.user!.id;
   const reviewNotes = notes ?? null;
 
-  let reviewed = 0;
   const skipped: { id: string; reason: 'not_found' | 'not_pending' }[] = [];
+  const actionable: { id: string; timeEntryId: string | null }[] = [];
   for (const id of ids) {
     const punch = byId.get(id);
     if (!punch) {
@@ -1035,12 +1159,17 @@ kiosk99Router.post('/kiosk-punches/review', MANAGE, async (req, res) => {
       skipped.push({ id, reason: 'not_pending' });
       continue;
     }
-    // Loop one txn per punch — keeps the failure radius small and lets
-    // the bulk request succeed-partial. 50 punches × ~30ms ≈ 1.5s, fine
-    // for an HR batch action.
+    actionable.push({ id: punch.id, timeEntryId: punch.timeEntryId });
+  }
+
+  // PERF: the decision payload is identical for every row, so the whole
+  // batch is three set-based statements instead of one transaction per
+  // punch (50 punches used to be ~150 round-trips).
+  if (actionable.length > 0) {
+    const punchIds = actionable.map((p) => p.id);
     await prisma.$transaction(async (tx) => {
-      await tx.kioskPunch.update({
-        where: { id: punch.id },
+      await tx.kioskPunch.updateMany({
+        where: { id: { in: punchIds }, reviewStatus: 'PENDING' },
         data: {
           reviewStatus: decision,
           reviewedById,
@@ -1049,9 +1178,12 @@ kiosk99Router.post('/kiosk-punches/review', MANAGE, async (req, res) => {
         },
       });
       if (decision === 'REJECTED') {
-        if (punch.timeEntryId) {
-          await tx.timeEntry.update({
-            where: { id: punch.timeEntryId },
+        const entryIds = actionable
+          .map((p) => p.timeEntryId)
+          .filter((x): x is string => x != null);
+        if (entryIds.length > 0) {
+          await tx.timeEntry.updateMany({
+            where: { id: { in: entryIds } },
             data: {
               status: 'REJECTED',
               notes: notes
@@ -1060,25 +1192,27 @@ kiosk99Router.post('/kiosk-punches/review', MANAGE, async (req, res) => {
             },
           });
         }
-        // If THIS punch is the one that enrolled the associate's face
-        // reference (FACE_ENROLLMENT review), rejecting it means the
-        // reviewer believes the enrollment selfie wasn't the associate —
-        // so the template must die with the punch, or the imposter's
-        // face stays "correct" forever. No-op for ordinary punches.
+        // If any of these punches enrolled the associate's face reference
+        // (FACE_ENROLLMENT review), rejecting means the reviewer believes
+        // the enrollment selfie wasn't the associate — the template dies
+        // with the punch. No-op for ordinary punches.
         await tx.kioskFaceReference.deleteMany({
-          where: { enrolledByPunchId: punch.id },
+          where: { enrolledByPunchId: { in: punchIds } },
         });
       }
     });
-    reviewed++;
   }
-  res.json({ reviewed, skipped });
+  res.json({ reviewed: actionable.length, skipped });
 });
 
 kiosk99Router.post('/kiosk-punches/:id/review', MANAGE, async (req, res) => {
   const { decision, notes } = ReviewDecisionSchema.parse(req.body);
-  const punch = await prisma.kioskPunch.findUnique({
-    where: { id: req.params.id },
+  const reviewClamp = kioskClientClamp(req.user!);
+  const punch = await prisma.kioskPunch.findFirst({
+    where: {
+      id: req.params.id,
+      ...(reviewClamp ? { device: { is: { clientId: reviewClamp } } } : {}),
+    },
     select: { id: true, timeEntryId: true, reviewStatus: true },
   });
   if (!punch) {
@@ -1129,9 +1263,12 @@ kiosk99Router.post('/kiosk-punches/:id/review', MANAGE, async (req, res) => {
 
 // ----- Face references (Phase 101) ---------------------------------------
 
-kiosk99Router.get('/kiosk-face-references', MANAGE, async (_req, res) => {
+kiosk99Router.get('/kiosk-face-references', MANAGE, async (req, res) => {
+  // Bounded roles only see face enrollments for their own client's people.
+  const faceClamp = kioskClientClamp(req.user!);
   const rows = await prisma.kioskFaceReference.findMany({
     take: 500,
+    where: faceClamp ? { associate: { is: associatesOfClient(faceClamp) } } : {},
     include: {
       associate: { select: { firstName: true, lastName: true, email: true } },
     },
@@ -1158,6 +1295,15 @@ kiosk99Router.delete(
   MANAGE,
   async (req, res) => {
     const associateId = z.string().uuid().parse(req.params.associateId);
+    // Bounded roles can only clear enrollments for their own client's people.
+    const faceDeleteClamp = kioskClientClamp(req.user!);
+    if (faceDeleteClamp) {
+      const inScope = await prisma.associate.findFirst({
+        where: { id: associateId, ...associatesOfClient(faceDeleteClamp) },
+        select: { id: true },
+      });
+      if (!inScope) throw new HttpError(404, 'not_found', 'Associate not found.');
+    }
     await prisma.kioskFaceReference.deleteMany({
       where: { associateId },
     });
@@ -1170,8 +1316,14 @@ kiosk99Router.delete(
 // with manage:time can pull them and we want a paper trail of who
 // looked at what, when, and from where.
 kiosk99Router.get('/kiosk-punches/:id/selfie', MANAGE, async (req, res) => {
-  const p = await prisma.kioskPunch.findUnique({
-    where: { id: req.params.id },
+  // Tenant boundary FIRST: a bounded caller can only stream selfies from
+  // their own client's devices — biometric images never cross tenants.
+  const selfieClamp = kioskClientClamp(req.user!);
+  const p = await prisma.kioskPunch.findFirst({
+    where: {
+      id: req.params.id,
+      ...(selfieClamp ? { device: { is: { clientId: selfieClamp } } } : {}),
+    },
     select: { selfie: true, associateId: true, kioskDeviceId: true },
   });
   if (!p || !p.selfie) {
@@ -1195,7 +1347,11 @@ kiosk99Router.get('/kiosk-punches/:id/selfie', MANAGE, async (req, res) => {
     'kiosk.selfie_viewed',
   );
   res.setHeader('Content-Type', 'image/jpeg');
-  res.setHeader('Cache-Control', 'private, max-age=300');
+  // Never let a browser sniff this into something scriptable, and keep it
+  // out of shared caches — it's a photograph of a person.
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.setHeader('Cache-Control', 'private, no-store');
   res.send(p.selfie);
 });
 
@@ -1283,6 +1439,14 @@ function decodeSelfie(s: string | null | undefined): Buffer | null {
   // (or a transparent pixel attack) — reject.
   if (buf.length < 500) {
     throw new HttpError(400, 'selfie_too_small', 'Selfie image is invalid.');
+  }
+  // Content must actually BE a JPEG. Every other upload path verifies
+  // magic bytes; this one trusted the data: prefix, so an HTML or SVG
+  // payload could be stored and later streamed back with an
+  // image/jpeg content type.
+  const magicError = verifyFileMagic(buf, 'image/jpeg');
+  if (magicError) {
+    throw new HttpError(400, 'selfie_invalid_contents', magicError);
   }
   return buf;
 }
@@ -1427,6 +1591,27 @@ async function matchDeviceToken(
   return verifyDeviceTokenHash(d.tokenHash, plaintext);
 }
 
+// PERF: the legacy fallback (pre-prefix devices) used to scan + hash-verify
+// up to 500 rows on EVERY unknown/expired token — including scripted probes.
+// Cache "do any legacy devices exist at all?" for a minute; once every
+// device has a prefix (the steady state) the fallback costs one cached
+// boolean instead of 500 argon2 verifies.
+let legacyDevicesExist: { value: boolean; checkedAt: number } | null = null;
+const LEGACY_CHECK_TTL_MS = 60_000;
+
+async function anyLegacyDevices(): Promise<boolean> {
+  const now = Date.now();
+  if (legacyDevicesExist && now - legacyDevicesExist.checkedAt < LEGACY_CHECK_TTL_MS) {
+    return legacyDevicesExist.value;
+  }
+  const one = await prisma.kioskDevice.findFirst({
+    where: { isActive: true, tokenPrefix: null },
+    select: { id: true },
+  });
+  legacyDevicesExist = { value: one != null, checkedAt: now };
+  return legacyDevicesExist.value;
+}
+
 async function findDeviceByPlaintextToken(plaintext: string) {
   const prefix = tokenLookupPrefix(plaintext);
   const fast = await prisma.kioskDevice.findMany({
@@ -1437,6 +1622,7 @@ async function findDeviceByPlaintextToken(plaintext: string) {
   for (const d of fast) {
     if (await matchDeviceToken(d, plaintext)) return d;
   }
+  if (!(await anyLegacyDevices())) return null;
   const legacy = await prisma.kioskDevice.findMany({
     where: { isActive: true, tokenPrefix: null },
     select: DEVICE_SCAN_FIELDS,
@@ -1494,6 +1680,9 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
   // preflight and the punch it precedes are one clock-in, ~1s apart;
   // sharing a bucket would false-429 the punch.
   enforcePunchRateLimit(device.id, 'preflight');
+  // Escalating wait after consecutive wrong PINs — the 1/sec throttle
+  // alone swept the (globally unique, 4-digit) keyspace in hours.
+  enforcePinBackoff(device.id);
 
   // No geofence gate here. Geofence is advisory: the punch itself
   // records distance and flags out-of-fence as an anomaly (kind
@@ -1539,14 +1728,16 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
       where: { id: device.id },
       data: { lastSeenAt: new Date() },
     });
-    if (wrongSite) {
-      throw new HttpError(
-        403,
-        'wrong_site',
-        'This number is registered to a different site. Ask your manager to set up your kiosk site.',
-      );
-    }
-    throw new HttpError(401, 'invalid_pin', 'Wrong PIN.');
+    recordPinFailure(device.id);
+    // ONE response for both cases. Distinguishing 'wrong site' from
+    // 'unknown PIN' confirmed to an attacker that a guessed PIN is valid
+    // SOMEWHERE — a cross-tenant enumeration oracle. The punch log above
+    // still records which it was, so diagnosis is unaffected.
+    throw new HttpError(
+      401,
+      'invalid_pin',
+      'That PIN was not recognized at this kiosk. If you are at a new site, ask your manager to set up your kiosk site.',
+    );
   }
 
   // Predict what the punch will do so the camera screen can say
@@ -1554,6 +1745,10 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
   // until the result screen. A null prediction means the punch would
   // 409 (break toggle while not clocked in) — surface that NOW, at the
   // keypad, instead of after a selfie.
+  // Correct PIN — clear the failure streak so a busy kiosk with real
+  // traffic never accumulates a backoff.
+  clearPinFailures(device.id);
+
   const predictedAction = await predictPunchAction(
     pinRow.associateId,
     input.intent ?? null,
@@ -1604,13 +1799,23 @@ kiosk99Router.post('/kiosk/face-consent', async (req, res) => {
       'This kiosk\'s device token expired. Re-pair from the admin page.',
     );
   }
+  // This endpoint takes a PIN and, on a correct guess, WRITES consent —
+  // and on consent:false purges that associate's biometrics. Unthrottled
+  // it was a full-speed oracle over the whole 4-digit keyspace whose
+  // payoff was destroying face enrollments. Same throttle + escalating
+  // backoff as every other PIN surface.
+  enforcePunchRateLimit(device.id, 'preflight');
+  enforcePinBackoff(device.id);
+
   const pinRow = await prisma.kioskPin.findUnique({
     where: { pinHmac: hmacPin(input.pin) },
     select: { id: true, clientId: true, associateId: true },
   });
   if (!pinRow || pinRow.clientId !== device.clientId) {
-    throw new HttpError(401, 'invalid_pin', 'Wrong PIN.');
+    recordPinFailure(device.id);
+    throw new HttpError(401, 'invalid_pin', 'That PIN was not recognized at this kiosk.');
   }
+  clearPinFailures(device.id);
 
   const status = input.consent ? 'GRANTED' : 'DECLINED';
   await prisma.associate.update({
@@ -1646,9 +1851,15 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   // sent before (e.g., the previous response timed out), we don't want
   // to double-clock. Look up the original by idempotencyKey.
   if (input.idempotencyKey) {
+    // PERF: select — include would pull the stored selfie bytes on every
+    // offline-queue replay.
     const prior = await prisma.kioskPunch.findUnique({
       where: { idempotencyKey: input.idempotencyKey },
-      include: {
+      select: {
+        id: true,
+        action: true,
+        rejectReason: true,
+        createdAt: true,
         timeEntry: { select: { id: true, updatedAt: true } },
         associate: { select: { firstName: true, lastName: true } },
       },
@@ -1673,27 +1884,16 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     }
   }
 
-  // Validate clientPunchedAt: not future, not absurdly old.
-  let clientPunchedAt: Date | null = null;
-  if (input.clientPunchedAt) {
-    const d = new Date(input.clientPunchedAt);
-    const now = Date.now();
-    if (d.getTime() > now + 60_000) {
-      throw new HttpError(
-        400,
-        'clock_skew',
-        'Kiosk clock is set to the future. Sync the device clock.',
-      );
-    }
-    if (now - d.getTime() > MAX_PUNCH_BACKDATE_MS) {
-      throw new HttpError(
-        400,
-        'punch_too_old',
-        'This punch is older than the offline-queue limit. HR must enter it manually.',
-      );
-    }
-    clientPunchedAt = d;
-  }
+  // clientPunchedAt is validated AFTER device resolution (step 1b2 below)
+  // so a rejection can be recorded against the device. It used to be
+  // checked here — before we knew which device was calling — which meant a
+  // too-old queued punch was refused with NO KioskPunch row on either side:
+  // the offline queue dropped it as a permanent 4xx and the server had no
+  // trace. Hours someone actually worked vanished without a record for HR
+  // to act on.
+  let clientPunchedAt: Date | null = input.clientPunchedAt
+    ? new Date(input.clientPunchedAt)
+    : null;
 
   // 1. Resolve device token. Two-stage lookup via the tokenPrefix
   // index — see findDeviceByPlaintextToken above for the rationale.
@@ -1721,11 +1921,53 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     );
   }
 
-  // 1b. Rate limit + brute-force lockout. Throws 429 if the device has
-  // punched in the last second, or is in a 5-minute lockout from 3 failed
-  // PIN attempts. Runs AFTER device verification (so an attacker can't
-  // burn cycles with garbage tokens) but before any DB writes.
+  // 1b. Rate limit. Throws 429 if the device has punched in the last
+  // second. Runs AFTER device verification (so an attacker can't burn
+  // cycles with garbage tokens) but before any DB writes. NOTE: there is
+  // deliberately NO brute-force PIN lockout — an earlier 3-strikes/5-min
+  // version locked whole sites out over fat-fingered PINs; see the
+  // rationale in lib/kioskRateLimit.ts.
   enforcePunchRateLimit(device.id);
+  enforcePinBackoff(device.id);
+
+  // 1b2. Validate clientPunchedAt now that we know the device. A punch
+  // outside the accepted window is REFUSED, but it leaves a REJECTED row
+  // first — this is an offline-queue replay of a moment someone stood at
+  // this kiosk, and HR can only re-enter the time manually if a record of
+  // the rejection exists. (The queue drops 4xx as permanent, so this row
+  // is the only trace that survives.)
+  if (clientPunchedAt) {
+    const now = Date.now();
+    const skewedFuture = clientPunchedAt.getTime() > now + 60_000;
+    const tooOld = now - clientPunchedAt.getTime() > MAX_PUNCH_BACKDATE_MS;
+    if (skewedFuture || tooOld) {
+      await prisma.kioskPunch.create({
+        data: {
+          kioskDeviceId: device.id,
+          action: 'REJECTED',
+          rejectReason: skewedFuture ? 'clock_skew' : 'punch_too_old',
+          idempotencyKey: input.idempotencyKey ?? null,
+          clientPunchedAt,
+        },
+      });
+      await prisma.kioskDevice.update({
+        where: { id: device.id },
+        data: { lastSeenAt: new Date() },
+      });
+      if (skewedFuture) {
+        throw new HttpError(
+          400,
+          'clock_skew',
+          'Kiosk clock is set to the future. Sync the device clock.',
+        );
+      }
+      throw new HttpError(
+        400,
+        'punch_too_old',
+        'This punch is older than the offline-queue limit. HR must enter it manually.',
+      );
+    }
+  }
 
   // 2. Geofence — ADVISORY. Record whatever coordinates the tablet sent
   // and, when the device's Location has a fence configured, the distance
@@ -1808,21 +2050,29 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
       where: { id: device.id },
       data: { lastSeenAt: new Date() },
     });
-    if (wrongSite) {
-      throw new HttpError(
-        403,
-        'wrong_site',
-        'This number is registered to a different site. Ask your manager to set up your kiosk site.',
-      );
-    }
-    throw new HttpError(401, 'invalid_pin', 'Wrong PIN.');
+    recordPinFailure(device.id);
+    // Single response for both cases — see the preflight handler. The
+    // punch log above still distinguishes them for diagnosis.
+    throw new HttpError(
+      401,
+      'invalid_pin',
+      'That PIN was not recognized at this kiosk. If you are at a new site, ask your manager to set up your kiosk site.',
+    );
   }
 
-  // DECLINED associates punch PIN-only — no photo stored either. (The
-  // rejected-PIN path above still keeps its selfie: identity unknown
-  // there, and the image is the fraud evidence.)
+  // Correct PIN — clear the failure streak (see the preflight handler).
+  clearPinFailures(device.id);
+
+  // Photos are stored ONLY with recorded consent. This used to be
+  // `DECLINED ? null : selfie`, which quietly stored photos for the
+  // never-asked (null) state too — reachable via the offline path, where
+  // the tablet can't run the consent screen and queues a selfie for an
+  // associate who was never shown the question. The consent copy promises
+  // photos are part of what's consented to, so null must behave like
+  // DECLINED here. (The rejected-PIN path above still keeps its selfie:
+  // identity unknown there, and the image is the fraud evidence.)
   const storedSelfie =
-    pinRow.associate.faceConsentStatus === 'DECLINED' ? null : selfie;
+    pinRow.associate.faceConsentStatus === 'GRANTED' ? selfie : null;
 
   // 5 + 5b — the Phase 101 face-reference lookup and the Phase 104
   // impossible-travel lookback both key off this associateId and are
@@ -1856,6 +2106,9 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
           select: { descriptor: true },
         })
       : Promise.resolve(null),
+    // PERF: `select`, never `include` — this runs on EVERY punch, inside
+    // the latency-critical path; `include` dragged the previous punch's
+    // selfie bytes (≤1 MB) across the wire to read two coordinates.
     prisma.kioskPunch.findFirst({
       where: {
         associateId: pinRow.associateId,
@@ -1864,7 +2117,10 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
         createdAt: { gte: lookbackSince },
       },
       orderBy: { createdAt: 'desc' },
-      include: {
+      select: {
+        createdAt: true,
+        punchLat: true,
+        punchLng: true,
         device: {
           select: {
             location: {

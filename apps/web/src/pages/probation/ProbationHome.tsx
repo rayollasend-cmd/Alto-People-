@@ -13,8 +13,11 @@ import {
   type ProbationSummary,
 } from '@/lib/probation116Api';
 import { useAuth } from '@/lib/auth';
+import { fmtDate } from '@/lib/format';
 import { hasCapability } from '@/lib/roles';
 import {
+  AssociatePicker,
+  type PickedAssociate,
   Badge,
   Button,
   Card,
@@ -25,8 +28,10 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
+  SegmentedControl,
   SkeletonRows,
   Table,
   TableBody,
@@ -48,21 +53,44 @@ const STATUS_VARIANT: Record<
   FAILED: 'destructive',
 };
 
+const STATUS_LABELS: Record<ProbationStatus, string> = {
+  ACTIVE: 'Active',
+  PASSED: 'Passed',
+  EXTENDED: 'Extended',
+  FAILED: 'Failed',
+};
+
+/** Parse a YYYY-MM-DD string as a local date (no timezone shift). */
+function parseLocalDate(s: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
 export function ProbationHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
   const [summary, setSummary] = useState<ProbationSummary | null>(null);
   const [rows, setRows] = useState<ProbationRow[] | null>(null);
   const [filter, setFilter] = useState<ProbationStatus | 'ALL'>('ACTIVE');
+  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [decideRow, setDecideRow] = useState<ProbationRow | null>(null);
   const [extendRow, setExtendRow] = useState<ProbationRow | null>(null);
 
   const refresh = () => {
+    setError(null);
     setRows(null);
     listProbations(filter === 'ALL' ? undefined : filter)
       .then((r) => setRows(r.probations))
-      .catch(() => setRows([]));
+      .catch((err) => {
+        setRows([]);
+        setError(
+          err instanceof ApiError ? err.message : 'Failed to load probations.',
+        );
+      });
     getProbationSummary()
       .then(setSummary)
       .catch(() => setSummary(null));
@@ -107,27 +135,37 @@ export function ProbationHome() {
         </div>
       )}
 
-      <div className="flex items-center justify-between">
-        <div className="flex gap-1">
-          {(['ACTIVE', 'PASSED', 'EXTENDED', 'FAILED', 'ALL'] as const).map(
-            (s) => (
-              <Button
-                key={s}
-                size="sm"
-                variant={filter === s ? 'primary' : 'ghost'}
-                onClick={() => setFilter(s)}
-              >
-                {s}
-              </Button>
-            ),
-          )}
-        </div>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <SegmentedControl
+          ariaLabel="Filter by probation status"
+          options={[
+            { value: 'ACTIVE', label: 'Active' },
+            { value: 'PASSED', label: 'Passed' },
+            { value: 'EXTENDED', label: 'Extended' },
+            { value: 'FAILED', label: 'Failed' },
+            { value: 'ALL', label: 'All' },
+          ]}
+          value={filter}
+          onChange={setFilter}
+        />
         {canManage && (
           <Button onClick={() => setShowNew(true)}>
             <Plus className="mr-2 h-4 w-4" /> Start probation
           </Button>
         )}
       </div>
+
+      {error && (
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              Retry
+            </Button>
+          }
+        >
+          {error}
+        </ErrorBanner>
+      )}
 
       <Card>
         <CardContent className="p-0">
@@ -169,13 +207,15 @@ export function ProbationHome() {
                         <div className="text-xs text-silver">
                           {p.currentTitle ?? p.associateEmail}
                         </div>
-                        <div className="text-[11px] text-silver/70 md:hidden">
-                          {p.startDate} → {p.endDate}
+                        <div className="text-xs2 text-silver/70 md:hidden">
+                          {fmtDate(parseLocalDate(p.startDate))} →{' '}
+                          {fmtDate(parseLocalDate(p.endDate))}
                           {overdue && ' · Overdue'}
                         </div>
                       </TableCell>
                       <TableCell className="hidden md:table-cell text-sm text-silver">
-                        {p.startDate} → {p.endDate}
+                        {fmtDate(parseLocalDate(p.startDate))} →{' '}
+                        {fmtDate(parseLocalDate(p.endDate))}
                         {overdue && (
                           <Badge variant="destructive" className="ml-2">
                             Overdue
@@ -184,7 +224,7 @@ export function ProbationHome() {
                       </TableCell>
                       <TableCell>
                         <Badge variant={STATUS_VARIANT[p.status]}>
-                          {p.status}
+                          {STATUS_LABELS[p.status]}
                         </Badge>
                       </TableCell>
                       <TableCell className="hidden lg:table-cell text-xs text-silver max-w-xs truncate">
@@ -275,7 +315,7 @@ function KpiCard({
       <CardContent className="p-4 flex items-center gap-3">
         <Icon className={`h-5 w-5 ${toneClass}`} />
         <div>
-          <div className="text-xs uppercase tracking-wider text-silver">
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
             {label}
           </div>
           <div className={`text-2xl font-semibold mt-0.5 ${toneClass}`}>
@@ -294,7 +334,7 @@ function NewProbationDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
   const [startDate, setStartDate] = useState(
     new Date().toISOString().slice(0, 10),
   );
@@ -303,22 +343,31 @@ function NewProbationDrawer({
   );
   const [saving, setSaving] = useState(false);
 
+  const start = parseLocalDate(startDate);
+  const end = parseLocalDate(endDate);
+  const durationDays =
+    start && end
+      ? Math.round((end.getTime() - start.getTime()) / MS_PER_DAY)
+      : null;
+
   const submit = async () => {
-    if (!associateId.trim()) {
-      toast.error('Associate ID required.');
+    if (!assoc) {
+      toast.error('Pick an associate.');
       return;
     }
     setSaving(true);
     try {
       await startProbation({
-        associateId: associateId.trim(),
+        associateId: assoc.id,
         startDate,
         endDate,
       });
       toast.success('Probation started.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not start probation.',
+      );
     } finally {
       setSaving(false);
     }
@@ -331,12 +380,10 @@ function NewProbationDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Associate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={assoc} onChange={setAssoc} />
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -358,6 +405,11 @@ function NewProbationDrawer({
             />
           </div>
         </div>
+        {end && durationDays !== null && durationDays > 0 && (
+          <div className="text-xs text-silver">
+            {durationDays} days, ends {fmtDate(end)}
+          </div>
+        )}
         <div className="text-xs text-silver">
           Default is 90 days. Adjust to your company's policy.
         </div>
@@ -394,7 +446,9 @@ function DecideDrawer({
       toast.success(decision === 'PASSED' ? 'Probation passed.' : 'Probation failed.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not save the decision.',
+      );
     } finally {
       setSaving(false);
     }
@@ -407,7 +461,8 @@ function DecideDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="text-sm text-silver">
-          Period: {row.startDate} → {row.endDate}
+          Period: {fmtDate(parseLocalDate(row.startDate))} →{' '}
+          {fmtDate(parseLocalDate(row.endDate))}
         </div>
         <div>
           <Label>Decision</Label>
@@ -465,6 +520,13 @@ function ExtendDrawer({
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const origEnd = parseLocalDate(row.endDate);
+  const newEnd = parseLocalDate(newEndDate);
+  const deltaDays =
+    origEnd && newEnd
+      ? Math.round((newEnd.getTime() - origEnd.getTime()) / MS_PER_DAY)
+      : null;
+
   const submit = async () => {
     setSaving(true);
     try {
@@ -472,7 +534,9 @@ function ExtendDrawer({
       toast.success('Probation extended.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not extend probation.',
+      );
     } finally {
       setSaving(false);
     }
@@ -485,7 +549,8 @@ function ExtendDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="text-sm text-silver">
-          Current period: {row.startDate} → {row.endDate}
+          Current period: {fmtDate(parseLocalDate(row.startDate))} →{' '}
+          {fmtDate(parseLocalDate(row.endDate))}
         </div>
         <div>
           <Label>New end date</Label>
@@ -495,6 +560,11 @@ function ExtendDrawer({
             value={newEndDate}
             onChange={(e) => setNewEndDate(e.target.value)}
           />
+          {deltaDays !== null && deltaDays !== 0 && (
+            <div className="mt-1 text-xs text-silver">
+              {deltaDays > 0 ? `+${deltaDays}` : deltaDays} days vs. original end
+            </div>
+          )}
         </div>
         <div>
           <Label>Reason</Label>

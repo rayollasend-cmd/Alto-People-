@@ -25,6 +25,7 @@ const ALL_VIEWS: Capability[] = [
 
 const ALL_MANAGE: Capability[] = [
   'manage:onboarding',
+  'invite:onboarding',
   'manage:time',
   'manage:scheduling',
   'process:payroll',
@@ -113,6 +114,69 @@ describe('hasCapability', () => {
     expect(hasCapability('FINANCE_ACCOUNTANT', 'manage:onboarding')).toBe(false);
     expect(hasCapability('FINANCE_ACCOUNTANT', 'manage:scheduling')).toBe(false);
     expect(hasCapability('FINANCE_ACCOUNTANT', 'manage:comp')).toBe(false);
+  });
+
+  it('SHIFT_SUPERVISOR can invite + monitor onboarding but not review it', () => {
+    // Sends the invite and watches checklist progress for their own client.
+    expect(hasCapability('SHIFT_SUPERVISOR', 'view:onboarding')).toBe(true);
+    expect(hasCapability('SHIFT_SUPERVISOR', 'invite:onboarding')).toBe(true);
+    // But never the HR review surface: approve/reject an application,
+    // complete I-9 Section 2, or edit onboarding templates all ride on
+    // manage:onboarding. Applicant PII is gated on the same capability in
+    // the API's assertCanModifyApplication.
+    expect(hasCapability('SHIFT_SUPERVISOR', 'manage:onboarding')).toBe(false);
+    // Unchanged surface — scheduling + time for one client, nothing else.
+    expect(hasCapability('SHIFT_SUPERVISOR', 'manage:time')).toBe(true);
+    expect(hasCapability('SHIFT_SUPERVISOR', 'manage:scheduling')).toBe(true);
+    expect(hasCapability('SHIFT_SUPERVISOR', 'view:payroll')).toBe(false);
+    expect(hasCapability('SHIFT_SUPERVISOR', 'view:hr-admin')).toBe(false);
+    expect(hasCapability('SHIFT_SUPERVISOR', 'view:clients')).toBe(false);
+    expect(hasCapability('SHIFT_SUPERVISOR', 'view:analytics')).toBe(false);
+    expect(hasCapability('SHIFT_SUPERVISOR', 'manage:documents')).toBe(false);
+  });
+
+  // The external payroll sheet pairs a full SSN with a full bank account and
+  // routing number for every worker in a range. It is deliberately NOT part
+  // of FULL_ADMIN — same call as void:payroll. The trap it guards against is
+  // specific: the Time router's usual guard is manage:time, which
+  // SHIFT_SUPERVISOR holds, so reusing that would have handed floor
+  // supervisors their client's identity documents.
+  it('export:payroll-pii is held by HR_ADMINISTRATOR alone', () => {
+    const holders = HUMAN_ROLES.filter((r) =>
+      hasCapability(r, 'export:payroll-pii'),
+    );
+    expect(holders).toEqual(['HR_ADMINISTRATOR']);
+  });
+
+  it('no role can reach the PII export via manage:time', () => {
+    for (const role of HUMAN_ROLES) {
+      if (
+        hasCapability(role, 'manage:time') &&
+        !hasCapability(role, 'export:payroll-pii')
+      ) {
+        // This is the expected state for every role except HR_ADMINISTRATOR;
+        // the assertion documents that manage:time is NOT sufficient.
+        expect(hasCapability(role, 'export:payroll-pii')).toBe(false);
+      }
+    }
+    expect(hasCapability('SHIFT_SUPERVISOR', 'manage:time')).toBe(true);
+    expect(hasCapability('SHIFT_SUPERVISOR', 'export:payroll-pii')).toBe(false);
+    expect(hasCapability('OPERATIONS_MANAGER', 'export:payroll-pii')).toBe(false);
+    expect(hasCapability('MARKETING_MANAGER', 'export:payroll-pii')).toBe(false);
+    expect(hasCapability('FINANCE_ACCOUNTANT', 'export:payroll-pii')).toBe(false);
+  });
+
+  // The web UI gates invite-shaped affordances (bulk invite, nudge, resend,
+  // the progress KPI strip) on invite:onboarding ALONE, on the assumption
+  // that it is a strict superset of manage:onboarding. If someone ever adds
+  // manage:onboarding to a role without invite:onboarding, that role would
+  // silently lose those buttons — fail here instead.
+  it('every manage:onboarding holder also holds invite:onboarding', () => {
+    for (const role of HUMAN_ROLES) {
+      if (hasCapability(role, 'manage:onboarding')) {
+        expect(hasCapability(role, 'invite:onboarding')).toBe(true);
+      }
+    }
   });
 });
 

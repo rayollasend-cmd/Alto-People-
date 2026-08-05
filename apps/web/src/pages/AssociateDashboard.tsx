@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  AlertCircle,
   ArrowRight,
+  CalendarCheck,
   CalendarOff,
   Clock,
   DollarSign,
+  FileSignature,
   FileText,
+  FileWarning,
+  Inbox,
   MapPin,
   Timer,
 } from 'lucide-react';
@@ -21,8 +26,11 @@ import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { ApiError } from '@/lib/api';
 import { getActiveTimeEntry } from '@/lib/timeApi';
-import { listMyShifts } from '@/lib/schedulingApi';
-import { fmtDate, fmtRelativeDayTz, fmtShiftRangeTz, fmtTime } from '@/lib/format';
+import { acknowledgeMyShift, listMyShifts } from '@/lib/schedulingApi';
+import { listMyAgreements } from '@/lib/agreements122Api';
+import { listMyDocuments } from '@/lib/documentsApi';
+import { listMyInbox } from '@/lib/communicationsApi';
+import { fmtDate, fmtMoney, fmtRelativeDayTz, fmtShiftRangeTz, fmtTime } from '@/lib/format';
 import { listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { Button } from '@/components/ui/Button';
@@ -37,9 +45,6 @@ import { getPushStatus, subscribeToPush } from '@/lib/push';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { OnboardingBanner } from '@/components/OnboardingBanner';
 import { cn } from '@/lib/cn';
-
-const fmtMoney = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
 
 /**
  * 403/404 are fully expected for accounts without the linked records
@@ -65,7 +70,10 @@ export function AssociateDashboard() {
   const navigate = useNavigate();
 
   const greetingName =
-    user?.email ? user.email.split('@')[0].split('.')[0].replace(/^\w/, (c) => c.toUpperCase()) : 'there';
+    user?.firstName?.trim() ||
+    (user?.email
+      ? user.email.split('@')[0].split('.')[0].replace(/^\w/, (c) => c.toUpperCase())
+      : 'there');
 
   // Each fetch is an independent query; one failing shouldn't blank out
   // the others. Cached results render instantly on revisit and refresh
@@ -134,6 +142,15 @@ export function AssociateDashboard() {
 
       <OnboardingBanner />
       <EnablePushCard />
+      <ActionNeededCard
+        shifts={
+          shiftsQuery.isError
+            ? null
+            : shiftsQuery.data === undefined
+              ? undefined
+              : (shiftsQuery.data?.shifts ?? [])
+        }
+      />
 
       {/* Top row — clock-in and next shift get the spotlight. */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 mb-4">
@@ -244,6 +261,156 @@ function EnablePushCard() {
   );
 }
 
+/**
+ * Aggregates every pending action across the app into one above-the-fold
+ * card: unsigned agreements, expired/rejected documents, unconfirmed
+ * upcoming shifts, and unread inbox messages. Each row deep-links to the
+ * page where the action is resolved.
+ *
+ * Every fetch is best-effort — a failed source silently omits its row
+ * (`.catch(() => null)`) rather than blocking or erroring the card. When
+ * everything has settled and there's nothing to do, a subtle "all caught
+ * up" line renders instead of the card.
+ */
+function ActionNeededCard({ shifts }: { shifts: Shift[] | null | undefined }) {
+  const { t } = useI18n();
+
+  const agreementsQuery = useQuery({
+    queryKey: ['me', 'agreements'],
+    queryFn: () => listMyAgreements().catch(() => null),
+  });
+  const documentsQuery = useQuery({
+    queryKey: ['me', 'documents'],
+    queryFn: () => listMyDocuments().catch(() => null),
+  });
+  const inboxQuery = useQuery({
+    queryKey: ['me', 'inboxUnread'],
+    queryFn: () => listMyInbox().catch(() => null),
+  });
+
+  const pendingAgreements = (agreementsQuery.data?.agreements ?? []).filter(
+    (a) => a.status === 'PENDING_SIGNATURE'
+  ).length;
+  const docsNeedingAttention = (documentsQuery.data?.documents ?? []).filter(
+    (d) => d.status === 'EXPIRED' || d.status === 'REJECTED'
+  ).length;
+  const now = Date.now();
+  const unconfirmedShifts = (shifts ?? []).filter(
+    (s) =>
+      s.status === 'ASSIGNED' &&
+      new Date(s.startsAt).getTime() > now &&
+      !s.acknowledgedAt
+  ).length;
+  const unreadInbox = (inboxQuery.data?.notifications ?? []).filter(
+    (n) => !n.readAt
+  ).length;
+
+  const rows: {
+    to: string;
+    icon: typeof Clock;
+    label: string;
+  }[] = [];
+  if (pendingAgreements > 0) {
+    rows.push({
+      to: '/agreements',
+      icon: FileSignature,
+      label: t(
+        pendingAgreements === 1
+          ? 'dash.actionAgreements'
+          : 'dash.actionAgreementsPlural',
+        { count: pendingAgreements }
+      ),
+    });
+  }
+  if (docsNeedingAttention > 0) {
+    rows.push({
+      to: '/documents',
+      icon: FileWarning,
+      label: t(
+        docsNeedingAttention === 1 ? 'dash.actionDocs' : 'dash.actionDocsPlural',
+        { count: docsNeedingAttention }
+      ),
+    });
+  }
+  if (unconfirmedShifts > 0) {
+    rows.push({
+      to: '/scheduling',
+      icon: CalendarCheck,
+      label: t(
+        unconfirmedShifts === 1 ? 'dash.actionShifts' : 'dash.actionShiftsPlural',
+        { count: unconfirmedShifts }
+      ),
+    });
+  }
+  if (unreadInbox > 0) {
+    rows.push({
+      to: '/communications',
+      icon: Inbox,
+      label: t(
+        unreadInbox === 1 ? 'dash.actionInbox' : 'dash.actionInboxPlural',
+        { count: unreadInbox }
+      ),
+    });
+  }
+
+  // "Settled" = every source has either loaded or given up. Failed/denied
+  // shifts arrive as null; the three fetches resolve to null on error.
+  const settled =
+    !agreementsQuery.isPending &&
+    !documentsQuery.isPending &&
+    !inboxQuery.isPending &&
+    shifts !== undefined;
+
+  // A source that failed resolved to null, which is indistinguishable from
+  // "nothing pending" once its row is omitted. Claiming "all caught up" off
+  // that is a false all-clear on unsigned agreements and expired documents —
+  // exactly what this card exists to catch. Stay silent instead: the card
+  // under-reporting is survivable, telling someone they're clear is not.
+  const anySourceFailed =
+    agreementsQuery.data === null ||
+    documentsQuery.data === null ||
+    inboxQuery.data === null ||
+    shifts === null;
+
+  if (rows.length === 0) {
+    if (!settled || anySourceFailed) return null;
+    return (
+      <p className="mb-4 text-xs text-silver/70">{t('dash.allCaughtUp')}</p>
+    );
+  }
+
+  return (
+    <Card className="mb-4 border-gold/40">
+      <CardContent className="pt-5 pb-3">
+        <div className="text-xs2 uppercase tracking-widest text-gold flex items-center gap-1.5">
+          <AlertCircle className="h-3 w-3" aria-hidden="true" />
+          {t('dash.actionNeeded')}
+        </div>
+        <ul className="mt-1 divide-y divide-navy-secondary">
+          {rows.map(({ to, icon: Icon, label }) => (
+            <li key={to}>
+              <Link
+                to={to}
+                className="group flex items-center gap-2.5 py-2.5 coarse:min-h-11 text-sm text-white hover:text-gold-bright active:text-gold-bright focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+              >
+                <Icon
+                  className="h-4 w-4 text-silver group-hover:text-gold transition-colors shrink-0"
+                  aria-hidden="true"
+                />
+                <span className="flex-1 min-w-0">{label}</span>
+                <ArrowRight
+                  className="h-3.5 w-3.5 text-silver/70 group-hover:text-gold transition-colors shrink-0"
+                  aria-hidden="true"
+                />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
 // Same definition of "next" as the My Schedule page (endsAt >= now): an
 // in-progress shift IS the next shift until it ends. The old startsAt-based
 // window made this card skip ahead to the following shift an hour into the
@@ -286,7 +453,7 @@ function LoadFailedCard({
   return (
     <Card className={className}>
       <CardContent className="pt-5">
-        <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
           <Icon className="h-3 w-3" aria-hidden="true" />
           {label}
         </div>
@@ -335,7 +502,7 @@ function ClockCard({ active, isClockedIn }: ClockCardProps) {
       )}
     >
       <CardContent className="pt-5">
-        <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
           <Clock className="h-3 w-3" aria-hidden="true" />
           {t('dash.clock')}
         </div>
@@ -359,6 +526,28 @@ function ClockCard({ active, isClockedIn }: ClockCardProps) {
 
 function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
   const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [acking, setAcking] = useState(false);
+
+  // Same acknowledge mutation the schedule page's ShiftCard uses —
+  // idempotent POST, then refetch so the card flips to confirmed.
+  const acknowledge = async () => {
+    if (!nextShift || acking) return;
+    setAcking(true);
+    try {
+      await acknowledgeMyShift(nextShift.id);
+      hapticConfirm();
+      toast.success(t('shift.confirmedToast'));
+      await queryClient.invalidateQueries({ queryKey: ['me', 'shifts'] });
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not confirm the shift.'
+      );
+    } finally {
+      setAcking(false);
+    }
+  };
+
   if (nextShift === undefined) {
     return (
       <Card className="md:col-span-2">
@@ -374,7 +563,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
     return (
       <Card className="md:col-span-2">
         <CardContent className="pt-5">
-          <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
             <Timer className="h-3 w-3" aria-hidden="true" />
             {t('dash.nextShift')}
           </div>
@@ -396,7 +585,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
   return (
     <Card className="md:col-span-2">
       <CardContent className="pt-5">
-        <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
           <Timer className="h-3 w-3" aria-hidden="true" />
           {t('dash.nextShift')}
         </div>
@@ -421,13 +610,22 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
             {nextShift.location}
           </div>
         )}
-        <Link
-          to="/scheduling"
-          className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
-        >
-          {t('dash.seeFullSchedule')}
-          <ArrowRight className="h-3.5 w-3.5" />
-        </Link>
+        <div className="mt-3 flex items-center gap-3 flex-wrap">
+          {nextShift.status === 'ASSIGNED' &&
+            !nextShift.acknowledgedAt &&
+            new Date(nextShift.startsAt).getTime() > Date.now() && (
+              <Button size="sm" onClick={acknowledge} loading={acking}>
+                {t('shift.illBeThere')}
+              </Button>
+            )}
+          <Link
+            to="/scheduling"
+            className="text-sm text-gold hover:text-gold-bright active:text-gold-bright inline-flex items-center gap-1 coarse:min-h-11"
+          >
+            {t('dash.seeFullSchedule')}
+            <ArrowRight className="h-3.5 w-3.5" />
+          </Link>
+        </div>
       </CardContent>
     </Card>
   );
@@ -456,12 +654,20 @@ function PaystubCard({
     return (
       <Card>
         <CardContent className="pt-5">
-          <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
             <DollarSign className="h-3 w-3" aria-hidden="true" />
             {t('dash.lastPaystub')}
           </div>
           <div className="font-display text-xl text-white mt-2">{t('dash.noPaystubs')}</div>
           <p className="text-sm text-silver mt-1">{t('dash.firstPaystub')}</p>
+          <button
+            type="button"
+            onClick={onView}
+            className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
+          >
+            {t('dash.viewPayHistory')}
+            <ArrowRight className="h-3.5 w-3.5" />
+          </button>
         </CardContent>
       </Card>
     );
@@ -470,7 +676,7 @@ function PaystubCard({
   return (
     <Card>
       <CardContent className="pt-5">
-        <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
           <DollarSign className="h-3 w-3" aria-hidden="true" />
           {t('dash.lastPaystub')}
         </div>
@@ -528,7 +734,7 @@ function TimeOffCard({
     return (
       <Card>
         <CardContent className="pt-5">
-          <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
             <CalendarOff className="h-3 w-3" aria-hidden="true" />
             {t('dash.timeOff')}
           </div>
@@ -553,7 +759,7 @@ function TimeOffCard({
   return (
     <Card>
       <CardContent className="pt-5">
-        <div className="text-[11px] uppercase tracking-widest text-silver flex items-center gap-1.5">
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
           <CalendarOff className="h-3 w-3" aria-hidden="true" />
           {t('dash.timeOff')}
         </div>

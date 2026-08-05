@@ -137,7 +137,7 @@ describe('POST /payroll/runs/:id/void — Gap 3', () => {
       expect(n.status).toBe('SENT');
       expect(n.subject).toContain('voided');
       expect(n.body).toContain(reason);
-      expect(n.linkUrl).toBe('/me/paystubs');
+      expect(n.linkUrl).toBe('/payroll');
     }
 
     // Audit row at the run scope.

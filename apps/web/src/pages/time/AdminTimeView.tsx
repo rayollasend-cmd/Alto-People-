@@ -1,12 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router-dom';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
   Activity,
   AlertTriangle,
+  CalendarClock,
   CheckCircle2,
   Coffee,
   Download,
+  ExternalLink,
   FileSpreadsheet,
+  ShieldAlert,
   FileText,
   ListChecks,
   MapPinOff,
@@ -19,6 +23,7 @@ import {
 import type {
   ActiveDashboardEntry,
   PayPeriod,
+  Shift,
   TimeEntry,
   TimeEntryStatus,
 } from '@alto-people/shared';
@@ -33,6 +38,7 @@ import {
   bulkApproveTimeEntries,
   bulkRejectTimeEntries,
   countAdminTimeEntries,
+  exportExternalPayrollSheet,
   exportPayrollSheet,
   exportTimeEntries,
   exportTimeSummary,
@@ -41,15 +47,35 @@ import {
   listPayPeriods,
   rejectTimeEntry,
 } from '@/lib/timeApi';
-import { listDirectory } from '@/lib/directoryApi';
-import { listClients, listClientLocations } from '@/lib/clientsApi';
+import { listClientLocations } from '@/lib/clientsApi';
+import { useClients } from '@/lib/useClients';
+import { listShifts, listSchedulingAssociates } from '@/lib/schedulingApi';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
-import { fmtDateTime, fmtDateTz, fmtTime } from '@/lib/format';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
+import { ShiftTimeline } from './ShiftTimeline';
+import { TimesheetWeeks } from './TimesheetWeeks';
+import { fmtPunchDateTime, fmtPunchTime, formatHM, punchDayOffset } from './punchFormat';
 import {
+  browserTimeZone,
+  fmtDateTime,
+  fmtDateTz,
+  fmtPayRate,
+  fmtTime,
+  tzAbbrev,
+  ymdLocal,
+  ymdToIsoEndExclusive,
+  ymdToIsoStart,
+  zonedDayKey,
+  zonedMinutesOfDay,
+  zonedWallTimeToUtc,
+} from '@/lib/format';
+import {
+  AssociatePicker,
   Avatar,
   Badge,
   Button,
@@ -70,6 +96,8 @@ import {
   DialogHeader,
   DialogTitle,
   EmptyState,
+  ErrorBanner,
+  FilterChip,
   Input,
   PageHeader,
   Select,
@@ -82,6 +110,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Tabs,
+  TabsList,
+  TabsTrigger,
   Textarea,
   useTableSort,
 } from '@/components/ui';
@@ -94,11 +125,32 @@ const STATUS_FILTERS: Array<{ value: TimeEntryStatus | 'ALL'; label: string }> =
   { value: 'ALL', label: 'All' },
 ];
 
-function formatHM(mins: number): string {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  if (h === 0) return `${m}m`;
-  return `${h}h ${m.toString().padStart(2, '0')}m`;
+// Punch formatters live in ./punchFormat so the ShiftTimeline and every
+// other single-entry surface renders identically to the queue.
+
+// PERF: the desktop table and the phone card stack used to BOTH mount — CSS
+// (`hidden md:block` / `md:hidden`) hid one, but React still committed up to
+// 500 dead heavy rows for the hidden list. This matchMedia hook lets us
+// mount only the list the viewport can show, and re-render on breakpoint
+// crossings (resize / rotation).
+//
+// Cutover matches the scheduling module's rule: mouse-class devices get
+// the table from md (768px); TOUCH devices keep the card stack until lg —
+// an iPad portrait is 768px total, and after the sidebar it was cramming
+// the desktop table into ~half a screen.
+const DESKTOP_TABLE_QUERY =
+  '(min-width: 1024px), ((pointer: fine) and (min-width: 768px))';
+function useIsDesktop(): boolean {
+  const [isDesktop, setIsDesktop] = useState(
+    () => window.matchMedia(DESKTOP_TABLE_QUERY).matches,
+  );
+  useEffect(() => {
+    const mql = window.matchMedia(DESKTOP_TABLE_QUERY);
+    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+  return isDesktop;
 }
 
 function statusVariant(s: TimeEntryStatus): 'success' | 'pending' | 'destructive' | 'accent' | 'default' {
@@ -111,23 +163,42 @@ function statusVariant(s: TimeEntryStatus): 'success' | 'pending' | 'destructive
   }
 }
 
+// Human labels for the raw status enum — chips never show "COMPLETED".
+const STATUS_LABELS: Record<TimeEntryStatus, string> = {
+  ACTIVE: 'Active',
+  COMPLETED: 'Pending review',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+};
+
 // Net-first duration. The headline figure is worked-time NET of breaks —
-// what payroll actually pays — with the gross span and break time as a
-// subline whenever they differ. Showing only gross made approvals
-// disagree with every money surface (summary export, OT, accrual).
+// what payroll actually pays. The subline used to be a bare equation
+// fragment ("9h 00m gross − 0h 30m break") that users had to decode; it
+// now reads as facts: the on-site span and how many breaks were taken.
 function DurationCell({ entry }: { entry: TimeEntry }) {
   const net = entry.netMinutes ?? entry.minutesElapsed;
   const breakMin = Math.max(0, entry.minutesElapsed - net);
+  const breakCount = entry.breaks?.length ?? (breakMin > 0 ? 1 : 0);
   return (
     <div className="tabular-nums">
       {formatHM(net)}
       {breakMin > 0 && (
-        <div className="text-[10px] text-silver/70">
-          {formatHM(entry.minutesElapsed)} gross − {formatHM(breakMin)} break
+        <div className="text-2xs text-silver/70 whitespace-nowrap">
+          {formatHM(entry.minutesElapsed)} on site ·{' '}
+          {breakCount > 1 ? `${breakCount} breaks` : '1 break'} ({formatHM(breakMin)})
         </div>
       )}
     </div>
   );
+}
+
+/** "+1d" tag for punches landing a site-local day after the clock-in, so an
+ *  overnight shift's "Out" column stops reading as the same afternoon. */
+function DayOffsetTag({ entry }: { entry: TimeEntry }) {
+  if (!entry.clockOutAt) return null;
+  const off = punchDayOffset(entry.clockInAt, entry.clockOutAt, entry.locationTimezone);
+  if (off <= 0) return null;
+  return <span className="ml-1 text-2xs text-warning align-super">+{off}d</span>;
 }
 
 // Punch↔shift comparison chip. Entries auto-link to the scheduled shift
@@ -143,7 +214,7 @@ function LateChip({ entry }: { entry: TimeEntry }) {
   if (lateMin <= LATE_GRACE_MINUTES) return null;
   return (
     <span
-      className="text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert whitespace-nowrap"
+      className="text-2xs uppercase tracking-widest px-1.5 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert whitespace-nowrap"
       title={`Scheduled ${fmtTime(entry.shiftStartsAt)}${entry.shiftPosition ? ` · ${entry.shiftPosition}` : ''}`}
     >
       Late {lateMin >= 60 ? `${Math.floor(lateMin / 60)}h ${lateMin % 60}m` : `${lateMin}m`}
@@ -192,7 +263,7 @@ function FocusBanner({
       <Avatar name={name} size="sm" />
       <div className="min-w-0">
         <div className="text-sm text-white font-medium truncate">{name}</div>
-        <div className="text-[11px] text-silver/70">
+        <div className="text-xs2 text-silver/70">
           Individual timesheet — date range and status filters still apply
         </div>
       </div>
@@ -236,22 +307,13 @@ function AnomalyChips({ anomalies }: { anomalies?: string[] | null }) {
       {anomalies.map((a) => (
         <span
           key={a}
-          className="text-[10px] uppercase tracking-widest px-1.5 py-0.5 rounded border border-warning/40 bg-warning/10 text-warning whitespace-nowrap"
+          className="text-2xs uppercase tracking-widest px-1.5 py-0.5 rounded border border-warning/40 bg-warning/10 text-warning whitespace-nowrap"
         >
           {timeAnomalyLabel(a)}
         </span>
       ))}
     </div>
   );
-}
-
-// YYYY-MM-DD in local time. Inputs and the API both treat dates as days,
-// so we convert to ISO at the boundary, not in state.
-function ymdLocal(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
 }
 
 function defaultFromYmd(): string {
@@ -264,20 +326,21 @@ function defaultToYmd(): string {
   return ymdLocal(new Date());
 }
 
-function ymdToIsoStart(ymd: string): string {
-  return new Date(`${ymd}T00:00:00`).toISOString();
-}
-
 // "Jun 22 – Jul 5" — compact label for a pay-period option. Bare YYYY-MM-DD
 // parses as UTC midnight, so format in UTC or the day shifts west of GMT.
 function periodLabel(p: PayPeriod): string {
   return `${fmtDateTz(p.start, 'UTC')} – ${fmtDateTz(p.end, 'UTC')}`;
 }
 
-function ymdToIsoEndExclusive(ymd: string): string {
-  const d = new Date(`${ymd}T00:00:00`);
-  d.setDate(d.getDate() + 1);
-  return d.toISOString();
+// Pay periods are static config for the tenant — cache them at module level
+// so remounting this view (tab hops, route changes) doesn't refetch.
+// Failures are NOT cached, so the next mount retries.
+let payPeriodsCache: PayPeriod[] | null = null;
+
+/** Tests mock listPayPeriods per-case; the module cache would otherwise
+ *  leak the first case's periods into the rest of the file's tests. */
+export function __resetPayPeriodsCacheForTests(): void {
+  payPeriodsCache = null;
 }
 
 interface AdminTimeViewProps {
@@ -316,9 +379,85 @@ function liveEntryToTimeEntry(e: ActiveDashboardEntry): TimeEntry {
   };
 }
 
+/**
+ * Client → site cascading scope, rendered on BOTH the live board and the
+ * approval queue. Bounded viewers see their pinned client as a static chip
+ * (the server clamps them anyway); admins default to all clients.
+ */
+function ClientSiteSelects({
+  boundedClient,
+  clients,
+  clientFilter,
+  onClientChange,
+  locationFilter,
+  onLocationChange,
+  locationOptions,
+}: {
+  boundedClient: { id: string; name: string } | null;
+  clients: Array<{ id: string; name: string }>;
+  clientFilter: string;
+  onClientChange: (id: string) => void;
+  locationFilter: string;
+  onLocationChange: (id: string) => void;
+  locationOptions: Array<{ id: string; name: string }>;
+}) {
+  return (
+    <>
+      {boundedClient ? (
+        <div
+          className="inline-flex h-9 items-center rounded-md border border-navy-secondary bg-navy-secondary/30 px-2.5 text-sm text-white"
+          title="Your account is scoped to this client"
+        >
+          {boundedClient.name}
+        </div>
+      ) : (
+        <Select
+          value={clientFilter}
+          onChange={(e) => onClientChange(e.target.value)}
+          className="h-9 w-auto max-w-48 text-sm"
+          aria-label="Client filter"
+        >
+          <option value="">All clients</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
+      )}
+      {clientFilter && locationOptions.length > 0 && (
+        <Select
+          value={locationFilter}
+          onChange={(e) => onLocationChange(e.target.value)}
+          className="h-9 w-auto max-w-48 text-sm"
+          aria-label="Location filter"
+        >
+          <option value="">All locations</option>
+          {locationOptions.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}
+            </option>
+          ))}
+        </Select>
+      )}
+    </>
+  );
+}
+
 export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<Tab>('live');
+  const isDesktop = useIsDesktop();
+  // Active tab lives in ?tab= — shareable ("send me the queue"), and Back
+  // retraces the live↔queue switch instead of leaving the page.
+  const [tabParams, setTabParams] = useSearchParams();
+  const tabParam = tabParams.get('tab');
+  const tab: Tab = tabParam === 'queue' ? 'queue' : 'live';
+  const setTab = (next: Tab) => {
+    const params = new URLSearchParams(tabParams);
+    if (next === 'live') params.delete('tab');
+    else params.set('tab', next);
+    setTabParams(params);
+  };
   // Persisted list filter — a reviewer who works the Approved slice gets it
   // back next visit. A stored value no longer in STATUS_FILTERS falls back
   // to the default instead of silently rendering an empty queue.
@@ -356,6 +495,47 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const [exportBusy, setExportBusy] = useState<null | 'csv' | 'pdf'>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [payrollOpen, setPayrollOpen] = useState(false);
+  const [externalOpen, setExternalOpen] = useState(false);
+  // Distinct from canManage (manage:time). The external sheet carries full
+  // SSNs and bank accounts, so it sits behind its own capability held by
+  // HR_ADMINISTRATOR alone — manage:time reaches down to SHIFT_SUPERVISOR.
+  const { can: canCap, user } = useAuth();
+  const canExportPayrollPii = canCap('export:payroll-pii');
+
+  // Client/site scope — shared by BOTH tabs so switching keeps context.
+  // Every client's live board and approval queue used to pool into one
+  // list: the server accepted clientId all along but the page never sent
+  // it, so bulk select-all spanned clients while timesheets file per
+  // client. Bounded roles (SHIFT_SUPERVISOR) are clamped server-side
+  // regardless; the pin below just makes the UI say so.
+  const boundedClient = user?.clientId
+    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+    : null;
+  const { clients } = useClients({ enabled: !boundedClient });
+  const [clientFilter, setClientFilter] = useState(boundedClient?.id ?? '');
+  const [locationFilter, setLocationFilter] = useState('');
+  const [locationOptions, setLocationOptions] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    setLocationFilter('');
+    if (!clientFilter) {
+      setLocationOptions([]);
+      return;
+    }
+    let cancelled = false;
+    // Bounded roles lack view:clients — the fetch 403s, the catch leaves
+    // the site list empty, and the Location select stays disabled. Same
+    // graceful degradation as the export dialogs below.
+    listClientLocations(clientFilter)
+      .then((r) => {
+        if (!cancelled) setLocationOptions(r.locations.map((l) => ({ id: l.id, name: l.name })));
+      })
+      .catch(() => {
+        if (!cancelled) setLocationOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientFilter]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState<null | { mode: 'one'; id: string } | { mode: 'bulk' }>(null);
@@ -373,13 +553,24 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     name: string;
   } | null>(null);
 
-  const focusOn = (e: TimeEntry) => {
-    setFocusAssociate({ id: e.associateId, name: e.associateName ?? '—' });
-    // Their full timesheet, not just the current status slice.
-    setFilter('ALL');
-  };
+  // Stable (useCallback, empty-ish deps) so the memoised queue rows don't
+  // re-render when unrelated parent state changes.
+  const focusOn = useCallback(
+    (e: TimeEntry) => {
+      setFocusAssociate({ id: e.associateId, name: e.associateName ?? '—' });
+      // Their full timesheet, not just the current status slice.
+      setFilter('ALL');
+    },
+    [setFilter],
+  );
 
+  // Sequence-guarded like the scheduling grid's refresh: filters, dates,
+  // and the search debounce all re-fire this, and without the guard a slow
+  // earlier response could land LAST and repaint stale rows (plus the wrong
+  // truncated flag) over the fresher result.
+  const queueReqSeq = useRef(0);
   const refresh = useCallback(async () => {
+    const seq = ++queueReqSeq.current;
     try {
       setError(null);
       const res = await listAdminTimeEntries({
@@ -388,34 +579,49 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         to: ymdToIsoEndExclusive(toYmd),
         ...(appliedSearch ? { search: appliedSearch } : {}),
         ...(focusAssociate ? { associateId: focusAssociate.id } : {}),
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+        ...(locationFilter ? { locationId: locationFilter } : {}),
       });
+      if (seq !== queueReqSeq.current) return; // newer request in flight
       setEntries(res.entries);
       setTruncated(Boolean(res.truncated));
       // Selection only valid on the COMPLETED filter; clear when refreshing.
       setSelected(new Set());
     } catch (err) {
+      if (seq !== queueReqSeq.current) return;
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
-  }, [filter, fromYmd, toYmd, appliedSearch, focusAssociate]);
+  }, [filter, fromYmd, toYmd, appliedSearch, focusAssociate, clientFilter, locationFilter]);
 
   const refreshActive = useCallback(async () => {
     try {
       setError(null);
-      const res = await getActiveDashboard();
+      const res = await getActiveDashboard({
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+        ...(locationFilter ? { locationId: locationFilter } : {}),
+      });
       setActive(res.entries);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load active dashboard.');
     }
-  }, []);
+  }, [clientFilter, locationFilter]);
+
+  // Pull down at the top = re-fetch both the live board and the queue.
+  const pullState = usePullToRefresh(() => Promise.all([refresh(), refreshActive()]));
 
   const refreshPendingCount = useCallback(async () => {
     try {
-      const res = await countAdminTimeEntries('COMPLETED');
+      // Follows the client/site filter so the badge and the queue agree;
+      // still all-time — it's the total backlog, not the date window.
+      const res = await countAdminTimeEntries('COMPLETED', {
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+        ...(locationFilter ? { locationId: locationFilter } : {}),
+      });
       setPendingCount(res.count);
     } catch {
       // KPI is best-effort; leave previous value.
     }
-  }, []);
+  }, [clientFilter, locationFilter]);
 
   // Refresh after an admin create/edit/clock-out — only the visible tab's
   // data plus the pending-review KPI. The other tab refetches on switch.
@@ -426,10 +632,17 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     ]);
   }, [tab, refresh, refreshActive, refreshPendingCount]);
 
+  // Two effects, one per tab, each depending only on its own tab's inputs.
+  // A single combined effect used to re-run refreshActive() whenever a
+  // queue-only filter changed `refresh`'s identity while the live tab was
+  // open — a pointless dashboard refetch per keystroke/date change.
   useEffect(() => {
     if (tab === 'queue') refresh();
-    else refreshActive();
-  }, [tab, refresh, refreshActive]);
+  }, [tab, refresh]);
+
+  useEffect(() => {
+    if (tab === 'live') refreshActive();
+  }, [tab, refreshActive]);
 
   // KPI: pending count loads independent of which tab is open.
   useEffect(() => {
@@ -442,11 +655,19 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     return () => clearTimeout(id);
   }, [queueSearch]);
 
-  // Pay-period options load once; on failure the picker simply stays hidden
-  // and the manual From/To range keeps working.
+  // Pay-period options load once per app session (module-level cache — they
+  // are static config); on failure the picker simply stays hidden and the
+  // manual From/To range keeps working.
   useEffect(() => {
+    if (payPeriodsCache) {
+      setPayPeriods(payPeriodsCache);
+      return;
+    }
     listPayPeriods()
-      .then((r) => setPayPeriods(r.periods))
+      .then((r) => {
+        payPeriodsCache = r.periods;
+        setPayPeriods(r.periods);
+      })
       .catch(() => setPayPeriods([]));
   }, []);
 
@@ -459,30 +680,63 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     setToYmd(p.end);
   };
 
-  // Auto-refresh the live tab every 30s while it's open.
+  // Auto-refresh the live tab every 30s while it's open — paused while the
+  // browser tab is hidden (mirrors NotificationsBell): no point polling a
+  // dashboard nobody can see, and no backlog of throttled fires dumping at
+  // once on return. Coming back refetches immediately and restarts the timer.
   useEffect(() => {
     if (tab !== 'live') return;
-    const id = setInterval(refreshActive, 30_000);
-    return () => clearInterval(id);
+    let id = window.setInterval(refreshActive, 30_000);
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        window.clearInterval(id);
+        refreshActive();
+        id = window.setInterval(refreshActive, 30_000);
+      } else {
+        window.clearInterval(id);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, [tab, refreshActive]);
 
-  const onApprove = async (id: string) => {
-    if (pendingId) return;
-    setPendingId(id);
-    try {
-      await approveTimeEntry(id);
-      await Promise.all([refresh(), refreshPendingCount()]);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Approve failed.');
-    } finally {
-      setPendingId(null);
-    }
-  };
+  // Ref-mirrored guard so this callback stays identity-stable across
+  // pendingId flips — a stable handler is what lets the memoised queue rows
+  // skip re-rendering 500 rows on one Approve click.
+  const pendingIdRef = useRef<string | null>(null);
+  const onApprove = useCallback(
+    async (id: string) => {
+      if (pendingIdRef.current) return;
+      pendingIdRef.current = id;
+      setPendingId(id);
+      try {
+        await approveTimeEntry(id);
+        await Promise.all([refresh(), refreshPendingCount()]);
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Approve failed.');
+      } finally {
+        pendingIdRef.current = null;
+        setPendingId(null);
+      }
+    },
+    [refresh, refreshPendingCount],
+  );
+
+  // Stable id-taking openers for the memoised queue rows.
+  const openRejectOne = useCallback(
+    (id: string) => setRejectOpen({ mode: 'one', id }),
+    [],
+  );
+  const openDrawer = useCallback((e: TimeEntry) => setDrawerTarget(e), []);
 
   const onSubmitReject = async (reason: string) => {
     if (!rejectOpen) return;
     if (rejectOpen.mode === 'one') {
       const id = rejectOpen.id;
+      pendingIdRef.current = id;
       setPendingId(id);
       try {
         await rejectTimeEntry(id, { reason });
@@ -491,6 +745,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
       } catch (err) {
         setError(err instanceof ApiError ? err.message : 'Reject failed.');
       } finally {
+        pendingIdRef.current = null;
         setPendingId(null);
       }
       return;
@@ -564,10 +819,18 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     if (exportBusy) return;
     setExportBusy(format);
     try {
+      // Mirror the queue's filters exactly — a download that quietly ignored
+      // the associate/search/anomaly narrowing handed back every associate in
+      // the range and read as if it were the filtered list. anomaliesOnly is
+      // applied server-side, so the file covers the whole range rather than
+      // just the page the screen had fetched.
       await exportTimeEntries(format, {
         from: ymdToIsoStart(fromYmd),
         to: ymdToIsoEndExclusive(toYmd),
         ...(filter !== 'ALL' ? { status: filter } : {}),
+        ...(focusAssociate ? { associateId: focusAssociate.id } : {}),
+        ...(appliedSearch ? { search: appliedSearch } : {}),
+        ...(anomaliesOnly ? { anomaliesOnly: true } : {}),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Export failed.');
@@ -594,6 +857,22 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         (e.jobName ?? '').toLowerCase().includes(q)
     );
   }, [active, liveSearch]);
+
+  // Group the live board by client when viewing all clients — the one big
+  // pile reads as organized places, each with a headcount. A single client
+  // (filtered, or naturally) skips the subheaders.
+  const liveGroups = useMemo(() => {
+    if (!filteredActive) return null;
+    const map = new Map<string, ActiveDashboardEntry[]>();
+    for (const e of filteredActive) {
+      const key = e.clientName ?? 'No client';
+      const arr = map.get(key);
+      if (arr) arr.push(e);
+      else map.set(key, [e]);
+    }
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [filteredActive]);
+  const showLiveGroups = !clientFilter && (liveGroups?.length ?? 0) > 1;
 
   // What the queue actually renders — the anomalies-only lens applies here
   // so select-all and the empty state follow what's on screen.
@@ -634,17 +913,31 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     else setSelected(new Set(selectableIds));
   };
 
-  const toggleOne = (id: string) => {
+  const toggleOne = useCallback((id: string) => {
     setSelected((s) => {
       const next = new Set(s);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  };
+  }, []);
+
+  // Day-header checkbox in the individual timesheet: select/clear a whole
+  // day's pending entries in one click.
+  const toggleMany = useCallback((ids: string[], select: boolean) => {
+    setSelected((s) => {
+      const next = new Set(s);
+      for (const id of ids) {
+        if (select) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }, []);
 
   return (
     <div className="mx-auto">
+      <PullToRefreshIndicator state={pullState} />
       <PageHeader
         title="Time & Attendance"
         subtitle={
@@ -706,56 +999,52 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         />
       </div>
 
-      <div role="tablist" className="flex gap-2 mb-5 border-b border-navy-secondary">
-        {(['live', 'queue'] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            role="tab"
-            aria-selected={tab === t}
-            onClick={() => setTab(t)}
-            className={cn(
-              'px-3 py-2 text-sm border-b-2 -mb-px transition capitalize',
-              tab === t
-                ? 'border-gold text-gold'
-                : 'border-transparent text-silver hover:text-white'
-            )}
-          >
-            {t === 'live' ? 'Live (clocked in)' : 'Approval queue'}
-          </button>
-        ))}
-      </div>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="mb-5">
+        <TabsList>
+          <TabsTrigger value="live">Live (clocked in)</TabsTrigger>
+          <TabsTrigger value="queue">Approval queue</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {error && (
-        <div
-          role="alert"
-          className="flex items-start gap-2 mb-4 px-3 py-2 rounded-md border border-alert/40 bg-alert/10 text-alert text-sm"
-        >
-          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-          <span className="flex-1">{error}</span>
-          <button
-            type="button"
-            onClick={() => setError(null)}
-            className="text-alert/60 hover:text-alert"
-            aria-label="Dismiss"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+        <ErrorBanner className="mb-4">
+          <div className="flex items-start gap-2">
+            <span className="flex-1">{error}</span>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="text-alert/60 hover:text-alert"
+              aria-label="Dismiss"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </ErrorBanner>
       )}
 
       {tab === 'live' && (
         <Card>
-          <CardHeader className="flex-row items-center justify-between">
+          <CardHeader className="flex-row flex-wrap items-center justify-between gap-2">
             <CardTitle className="text-base">Currently clocked in</CardTitle>
-            <div className="relative w-64">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-silver/70 pointer-events-none" />
-              <Input
-                placeholder="Search associate, client, job…"
-                value={liveSearch}
-                onChange={(e) => setLiveSearch(e.target.value)}
-                className="pl-8 h-9 text-sm"
+            <div className="flex flex-wrap items-center gap-2">
+              <ClientSiteSelects
+                boundedClient={boundedClient}
+                clients={clients}
+                clientFilter={clientFilter}
+                onClientChange={setClientFilter}
+                locationFilter={locationFilter}
+                onLocationChange={setLocationFilter}
+                locationOptions={locationOptions}
               />
+              <div className="relative w-64">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-silver/70 pointer-events-none" />
+                <Input
+                  placeholder="Search associate, client, job…"
+                  value={liveSearch}
+                  onChange={(e) => setLiveSearch(e.target.value)}
+                  className="pl-8 h-9 text-sm"
+                />
+              </div>
             </div>
           </CardHeader>
           <CardContent className="pt-0">
@@ -768,8 +1057,11 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
             )}
             {active && active.length > 0 && filteredActive && (
               <>
-                {/* md+ : full columnar table. */}
-                <div className="hidden md:block">
+                {/* md+ : full columnar table. Only the breakpoint-active
+                    list mounts (useIsDesktop) — the hidden twin used to
+                    double the DOM for nothing. */}
+                {isDesktop && (
+                <div>
                   <Table caption="Currently clocked in">
                     <TableHeader>
                       <TableRow>
@@ -786,18 +1078,35 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {filteredActive.map((e) => (
+                      {(liveGroups ?? []).map(([groupName, groupRows]) => (
+                        <Fragment key={groupName}>
+                          {showLiveGroups && (
+                            <TableRow className="bg-navy-secondary/20 hover:bg-navy-secondary/20">
+                              <TableCell
+                                colSpan={canManage ? 8 : 7}
+                                className="py-1.5 text-xs font-medium text-silver"
+                              >
+                                {groupName}
+                                <span className="ml-2 tabular-nums text-silver/60">
+                                  {groupRows.length} clocked in
+                                </span>
+                              </TableCell>
+                            </TableRow>
+                          )}
+                          {groupRows.map((e) => (
                         <TableRow key={e.id} className="group">
                           <TableCell className="font-medium">
                             <div className="flex items-center gap-2.5">
                               <Avatar name={e.associateName} size="sm" />
-                              <span>{e.associateName}</span>
+                              <AssociateLink associateId={e.associateId}>
+                                {e.associateName}
+                              </AssociateLink>
                             </div>
                           </TableCell>
                           <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
                           <TableCell className="text-silver">{e.jobName ?? '—'}</TableCell>
                           <TableCell className="tabular-nums text-silver">
-                            {fmtTime(e.clockInAt)}
+                            {fmtPunchTime(e.clockInAt, e.locationTimezone)}
                           </TableCell>
                           <TableCell className="tabular-nums">
                             {formatHM(e.minutesElapsed)}
@@ -830,15 +1139,19 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                             </TableCell>
                           )}
                         </TableRow>
+                          ))}
+                        </Fragment>
                       ))}
                     </TableBody>
                   </Table>
                 </div>
+                )}
 
                 {/* Phone: card stack. Manager scans for "who's on shift" /
                     "is anyone off-site"; the elapsed counter and break
                     state are the load-bearing bits. */}
-                <ul className="md:hidden space-y-2">
+                {!isDesktop && (
+                <ul className="space-y-2">
                   {filteredActive.map((e) => (
                     <li
                       key={e.id}
@@ -851,7 +1164,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                             <div className="font-medium text-white truncate">
                               {e.associateName}
                             </div>
-                            <div className="text-[11px] text-silver/70 truncate">
+                            <div className="text-xs2 text-silver/70 truncate">
                               {e.clientName ?? '—'}
                               {e.jobName ? ` · ${e.jobName}` : ''}
                             </div>
@@ -864,15 +1177,15 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                             <Badge variant="success">Working</Badge>
                           )}
                           {e.geofenceOk === false && (
-                            <Badge variant="destructive" className="text-[10px]">
+                            <Badge variant="destructive" className="text-2xs">
                               Off-site
                             </Badge>
                           )}
                         </div>
                       </div>
-                      <div className="mt-2 flex items-end justify-between gap-3 text-[11px] text-silver">
+                      <div className="mt-2 flex items-end justify-between gap-3 text-xs2 text-silver">
                         <span className="tabular-nums">
-                          Since {fmtTime(e.clockInAt)}
+                          Since {fmtPunchTime(e.clockInAt, e.locationTimezone)}
                         </span>
                         <span className="tabular-nums text-white">
                           {formatHM(e.minutesElapsed)}
@@ -892,12 +1205,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     </li>
                   ))}
                 </ul>
+                )}
                 {filteredActive.length === 0 && (
                   <p className="text-sm text-silver mt-3">
                     No matches for &ldquo;{liveSearch}&rdquo;.
                   </p>
                 )}
-                <div className="mt-3 text-[10px] uppercase tracking-widest text-silver/70">
+                <div className="mt-3 text-2xs uppercase tracking-widest text-silver/70">
                   Auto-refreshes every 30s
                 </div>
               </>
@@ -922,32 +1236,40 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
               </CardTitle>
               <div className="flex flex-wrap gap-2">
                 {STATUS_FILTERS.map((f) => (
-                  <Button
+                  <FilterChip
                     key={f.value}
-                    type="button"
-                    variant="outline"
-                    size="sm"
+                    active={filter === f.value}
                     onClick={() => setFilter(f.value)}
-                    className={cn(
-                      'uppercase tracking-wider font-normal',
-                      filter === f.value
-                        ? 'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
-                        : 'border-navy-secondary'
-                    )}
                   >
                     {f.label}
-                  </Button>
+                  </FilterChip>
                 ))}
               </div>
             </div>
 
             {/* Phase 65 — date range + free-text search + export buttons. */}
             <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
+                  Client / site
+                </label>
+                <div className="flex items-center gap-2">
+                  <ClientSiteSelects
+                    boundedClient={boundedClient}
+                    clients={clients}
+                    clientFilter={clientFilter}
+                    onClientChange={setClientFilter}
+                    locationFilter={locationFilter}
+                    onLocationChange={setLocationFilter}
+                    locationOptions={locationOptions}
+                  />
+                </div>
+              </div>
               {payPeriods !== null && payPeriods.length > 0 && (
                 <div>
                   <label
                     htmlFor="pay-period-picker"
-                    className="block text-[10px] uppercase tracking-wider text-silver mb-1"
+                    className="block text-2xs uppercase tracking-wider text-silver mb-1"
                   >
                     Pay period
                   </label>
@@ -969,7 +1291,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
               )}
               <div className="flex items-end gap-2">
                 <div>
-                  <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
+                  <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
                     From
                   </label>
                   <Input
@@ -984,7 +1306,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
+                  <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
                     To
                   </label>
                   <Input
@@ -1000,8 +1322,22 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 </div>
               </div>
 
+              {/* Pick a person directly instead of having to find one of their
+                  rows and click it. Scopes the queue AND the download. */}
+              <div className="w-full sm:w-56">
+                <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
+                  Associate
+                </label>
+                <AssociatePicker
+                  value={focusAssociate}
+                  onChange={setFocusAssociate}
+                  placeholder="All associates…"
+                  className="h-9 text-sm"
+                />
+              </div>
+
               <div className="relative flex-1 w-full sm:min-w-[200px]">
-                <label className="block text-[10px] uppercase tracking-wider text-silver mb-1">
+                <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
                   Search
                 </label>
                 <Search className="absolute left-2.5 top-[2.1rem] h-4 w-4 text-silver/70 pointer-events-none" />
@@ -1070,8 +1406,26 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     <FileSpreadsheet className="h-4 w-4" />
                     Payroll sheet
                   </Button>
+                  {/* HR Administrator only — export:payroll-pii. Hidden rather
+                      than disabled for everyone else: a greyed-out "External
+                      payroll" button just advertises that the SSN + bank
+                      export exists to roles who can't and shouldn't use it. */}
+                  {canExportPayrollPii && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setExternalOpen(true)}
+                      disabled={exportBusy !== null}
+                      className="border-warning/50 text-warning hover:text-warning"
+                    >
+                      <ShieldAlert className="h-4 w-4" />
+                      External payroll
+                    </Button>
+                  )}
                 </div>
               )}
+
             </div>
           </CardHeader>
 
@@ -1141,10 +1495,30 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 }
               />
             )}
-            {visibleEntries && visibleEntries.length > 0 && (
+            {/* One associate in focus → a real timesheet: day groups inside
+                week sections with subtotals, instead of the flat triage
+                table where two same-day clock-ins read as a data error. */}
+            {visibleEntries && visibleEntries.length > 0 && focusAssociate && (
+              <FocusTimesheet
+                entries={visibleEntries}
+                canManage={canManage}
+                showSelect={canManage && filter === 'COMPLETED'}
+                selected={selected}
+                pendingId={pendingId}
+                bulkBusy={bulkBusy}
+                onToggleSelect={toggleOne}
+                onToggleMany={toggleMany}
+                onOpen={openDrawer}
+                onApprove={onApprove}
+                onReject={openRejectOne}
+              />
+            )}
+            {visibleEntries && visibleEntries.length > 0 && !focusAssociate && (
               <>
-                {/* md+ : full sortable table. */}
-                <div className="hidden md:block">
+                {/* md+ : full sortable table. Only the breakpoint-active
+                    list mounts (useIsDesktop). */}
+                {isDesktop && (
+                <div>
                   <Table caption="Time entries">
                     <TableHeader>
                       <TableRow>
@@ -1184,109 +1558,34 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {sortedEntries.map((e) => {
-                        const isSelectable = canManage && filter === 'COMPLETED' && e.status === 'COMPLETED';
-                        return (
-                          <TableRow
-                            key={e.id}
-                            className="group cursor-pointer"
-                            data-state={selected.has(e.id) ? 'selected' : undefined}
-                            onClick={(ev) => {
-                              const target = ev.target as HTMLElement;
-                              if (target.closest('button, a, input, [data-no-row-click]')) return;
-                              if (window.getSelection()?.toString()) return;
-                              setDrawerTarget(e);
-                            }}
-                          >
-                            {canManage && filter === 'COMPLETED' && (
-                              <TableCell className="w-8">
-                                {isSelectable && (
-                                  <input
-                                    type="checkbox"
-                                    aria-label={`Select entry for ${e.associateName ?? 'associate'}`}
-                                    checked={selected.has(e.id)}
-                                    onChange={() => toggleOne(e.id)}
-                                    className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
-                                  />
-                                )}
-                              </TableCell>
-                            )}
-                            <TableCell className="font-medium">
-                              <button
-                                type="button"
-                                onClick={() => focusOn(e)}
-                                title="View individual timesheet"
-                                className="flex items-center gap-2.5 rounded text-left hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-                              >
-                                <Avatar name={e.associateName ?? '—'} size="sm" />
-                                <span className="underline-offset-2 hover:underline">
-                                  {e.associateName ?? '—'}
-                                </span>
-                              </button>
-                            </TableCell>
-                            <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
-                            <TableCell className="tabular-nums">
-                              {fmtDateTime(e.clockInAt)}
-                            </TableCell>
-                            <TableCell className="tabular-nums">
-                              {e.clockOutAt ? fmtTime(e.clockOutAt) : '—'}
-                            </TableCell>
-                            <TableCell>
-                              <DurationCell entry={e} />
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <Badge variant={statusVariant(e.status)}>{e.status}</Badge>
-                                <LateChip entry={e} />
-                              </div>
-                              <AnomalyChips anomalies={e.anomalies} />
-                              {e.rejectionReason && (
-                                <div className="text-alert text-[10px] mt-1">
-                                  {e.rejectionReason}
-                                </div>
-                              )}
-                            </TableCell>
-                            {canManage && (
-                              <TableCell className="text-right whitespace-nowrap">
-                                <div className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex items-center gap-1">
-                                  {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => onApprove(e.id)}
-                                      loading={pendingId === e.id}
-                                      disabled={pendingId === e.id || bulkBusy}
-                                    >
-                                      Approve
-                                    </Button>
-                                  )}
-                                  {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      className="text-alert hover:text-alert hover:bg-alert/10"
-                                      onClick={() => setRejectOpen({ mode: 'one', id: e.id })}
-                                      disabled={pendingId === e.id || bulkBusy}
-                                    >
-                                      Reject
-                                    </Button>
-                                  )}
-                                </div>
-                              </TableCell>
-                            )}
-                          </TableRow>
-                        );
-                      })}
+                      {sortedEntries.map((e) => (
+                        <QueueEntryRow
+                          key={e.id}
+                          entry={e}
+                          canManage={canManage}
+                          showSelect={canManage && filter === 'COMPLETED'}
+                          isSelected={selected.has(e.id)}
+                          isPending={pendingId === e.id}
+                          bulkBusy={bulkBusy}
+                          onToggleSelect={toggleOne}
+                          onFocus={focusOn}
+                          onOpen={openDrawer}
+                          onApprove={onApprove}
+                          onReject={openRejectOne}
+                        />
+                      ))}
                     </TableBody>
                   </Table>
                 </div>
+                )}
 
                 {/* Phone: card stack. Approve/Reject are inline on each
                     card instead of hover-revealed; the row is also tap-to-
                     open the detail drawer (managers reach the audit trail
                     + edits there). Selection checkbox top-left when
                     bulk-eligible. */}
-                <ul className="md:hidden space-y-2">
+                {!isDesktop && (
+                <ul className="space-y-2">
                   {visibleEntries.map((e) => {
                     const isSelectable = canManage && filter === 'COMPLETED' && e.status === 'COMPLETED';
                     const showCheckbox = canManage && filter === 'COMPLETED';
@@ -1303,7 +1602,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                           <button
                             type="button"
                             onClick={() => setDrawerTarget(e)}
-                            className="w-full text-left p-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-md"
+                            className="w-full text-left p-3 active:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-md"
                           >
                             <div className="flex items-start gap-2.5">
                               {showCheckbox && (
@@ -1330,29 +1629,48 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                                     {e.associateName ?? '—'}
                                   </div>
                                   <Badge variant={statusVariant(e.status)} className="shrink-0">
-                                    {e.status}
+                                    {STATUS_LABELS[e.status]}
                                   </Badge>
                                 </div>
-                                <div className="text-[11px] text-silver/70 truncate">
+                                <div className="text-xs2 text-silver/70 truncate">
                                   {e.clientName ?? '—'}
                                 </div>
-                                <div className="mt-1.5 flex items-end justify-between gap-3 text-[11px] text-silver">
+                                <div className="mt-1.5 flex items-end justify-between gap-3 text-xs2 text-silver">
                                   <span className="tabular-nums">
-                                    {fmtDateTime(e.clockInAt)}
-                                    {e.clockOutAt
-                                      ? ` → ${fmtTime(e.clockOutAt)}`
-                                      : ' → —'}
+                                    {fmtPunchDateTime(e.clockInAt, e.locationTimezone)}
+                                    {e.clockOutAt ? (
+                                      <>
+                                        {` → ${fmtPunchTime(e.clockOutAt, e.locationTimezone)}`}
+                                        <DayOffsetTag entry={e} />
+                                      </>
+                                    ) : (
+                                      ' → —'
+                                    )}
                                   </span>
                                   <span className="tabular-nums text-white">
                                     {formatHM(e.netMinutes ?? e.minutesElapsed)}
                                   </span>
                                 </div>
+                                {(() => {
+                                  const breakMin = Math.max(
+                                    0,
+                                    e.minutesElapsed - (e.netMinutes ?? e.minutesElapsed),
+                                  );
+                                  if (breakMin === 0) return null;
+                                  const n = e.breaks?.length ?? 1;
+                                  return (
+                                    <div className="text-2xs text-silver/70 tabular-nums">
+                                      {formatHM(e.minutesElapsed)} on site ·{' '}
+                                      {n > 1 ? `${n} breaks` : '1 break'} ({formatHM(breakMin)})
+                                    </div>
+                                  );
+                                })()}
                                 <div className="mt-1 empty:hidden">
                                   <LateChip entry={e} />
                                 </div>
                                 <AnomalyChips anomalies={e.anomalies} />
                                 {e.rejectionReason && (
-                                  <div className="text-alert text-[10px] mt-1">
+                                  <div className="text-alert text-2xs mt-1">
                                     {e.rejectionReason}
                                   </div>
                                 )}
@@ -1405,6 +1723,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     );
                   })}
                 </ul>
+                )}
               </>
             )}
           </CardContent>
@@ -1466,6 +1785,15 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         defaultToYmd={toYmd}
       />
 
+      {canExportPayrollPii && (
+        <ExternalPayrollSheetDialog
+          open={externalOpen}
+          onOpenChange={setExternalOpen}
+          defaultFromYmd={fromYmd}
+          defaultToYmd={toYmd}
+        />
+      )}
+
       {createOpen && (
         <TimeEntryFormDrawer
           mode="create"
@@ -1490,6 +1818,327 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     </div>
   );
 }
+
+// One desktop queue row, memoised on the entry object + the few bits of
+// parent state that actually concern it (selection, its own pending flag,
+// bulk busy). With stable id-taking handlers, approving one entry no longer
+// re-renders the other ~499 rows.
+/* ---- Individual timesheet (focus mode) --------------------------------- *
+ * The flat queue table is built for triage across MANY associates; for ONE
+ * associate it reads as a wall of undifferentiated rows. Focus mode renders
+ * the shared TimesheetWeeks shell (week/day grouping, subtotals, gap and
+ * overlap notes) with admin rows: selection, Approve/Reject, drawer open.  */
+
+function FocusTimesheet({
+  entries,
+  canManage,
+  showSelect,
+  selected,
+  pendingId,
+  bulkBusy,
+  onToggleSelect,
+  onToggleMany,
+  onOpen,
+  onApprove,
+  onReject,
+}: {
+  entries: TimeEntry[];
+  canManage: boolean;
+  showSelect: boolean;
+  selected: Set<string>;
+  pendingId: string | null;
+  bulkBusy: boolean;
+  onToggleSelect: (id: string) => void;
+  onToggleMany: (ids: string[], select: boolean) => void;
+  onOpen: (entry: TimeEntry) => void;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+}) {
+  return (
+    <TimesheetWeeks
+      entries={entries}
+      dayHeaderExtra={(day) => {
+        const selectableIds = day.entries
+          .filter((e) => e.status === 'COMPLETED')
+          .map((e) => e.id);
+        if (!showSelect || selectableIds.length === 0) return null;
+        const allDaySelected = selectableIds.every((id) => selected.has(id));
+        return (
+          <input
+            type="checkbox"
+            aria-label={`Select all entries on ${day.key}`}
+            checked={allDaySelected}
+            onChange={() => onToggleMany(selectableIds, !allDaySelected)}
+            className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
+          />
+        );
+      }}
+      renderEntry={(e) => (
+        <FocusEntryRow
+          entry={e}
+          canManage={canManage}
+          showSelect={showSelect}
+          isSelected={selected.has(e.id)}
+          isPending={pendingId === e.id}
+          bulkBusy={bulkBusy}
+          onToggleSelect={onToggleSelect}
+          onOpen={onOpen}
+          onApprove={onApprove}
+          onReject={onReject}
+        />
+      )}
+    />
+  );
+}
+
+function FocusEntryRow({
+  entry: e,
+  canManage,
+  showSelect,
+  isSelected,
+  isPending,
+  bulkBusy,
+  onToggleSelect,
+  onOpen,
+  onApprove,
+  onReject,
+}: {
+  entry: TimeEntry;
+  canManage: boolean;
+  showSelect: boolean;
+  isSelected: boolean;
+  isPending: boolean;
+  bulkBusy: boolean;
+  onToggleSelect: (id: string) => void;
+  onOpen: (entry: TimeEntry) => void;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+}) {
+  const isSelectable = showSelect && e.status === 'COMPLETED';
+  const net = e.netMinutes ?? e.minutesElapsed;
+  const breakMin = Math.max(0, e.minutesElapsed - net);
+  const breakCount = e.breaks?.length ?? (breakMin > 0 ? 1 : 0);
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={(ev) => {
+        const target = ev.target as HTMLElement;
+        if (target.closest('button, a, input, [data-no-row-click]')) return;
+        if (window.getSelection()?.toString()) return;
+        onOpen(e);
+      }}
+      onKeyDown={(ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          onOpen(e);
+        }
+      }}
+      className={cn(
+        'group flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 cursor-pointer transition-colors hover:bg-navy-secondary/30 active:bg-navy-secondary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+        isSelected && 'bg-gold/5',
+      )}
+    >
+      {showSelect && (
+        <span className="w-4 flex-none" data-no-row-click>
+          {isSelectable && (
+            <input
+              type="checkbox"
+              aria-label={`Select entry starting ${fmtPunchTime(e.clockInAt, e.locationTimezone)}`}
+              checked={isSelected}
+              onChange={() => onToggleSelect(e.id)}
+              className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
+            />
+          )}
+        </span>
+      )}
+      <span className="tabular-nums text-sm text-white">
+        {fmtPunchTime(e.clockInAt, e.locationTimezone)}
+        {' → '}
+        {e.clockOutAt ? (
+          <>
+            {fmtPunchTime(e.clockOutAt, e.locationTimezone)}
+            <DayOffsetTag entry={e} />
+          </>
+        ) : (
+          <span className="text-silver">on the clock</span>
+        )}
+      </span>
+      {breakMin > 0 && (
+        <span className="text-2xs tabular-nums text-silver/70 whitespace-nowrap">
+          {breakCount > 1 ? `${breakCount} breaks` : '1 break'} ({formatHM(breakMin)})
+        </span>
+      )}
+      {e.jobName && (
+        <span className="text-2xs text-silver/70 truncate max-w-[10rem]">{e.jobName}</span>
+      )}
+      <span className="ml-auto flex items-center gap-2">
+        <span className="tabular-nums text-sm font-medium text-white">
+          {formatHM(net)}
+        </span>
+        <Badge size="sm" variant={statusVariant(e.status)}>
+          {STATUS_LABELS[e.status]}
+        </Badge>
+        {canManage && (
+          <span className="inline-flex items-center gap-1 can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+            {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onApprove(e.id)}
+                loading={isPending}
+                disabled={isPending || bulkBusy}
+              >
+                Approve
+              </Button>
+            )}
+            {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-alert hover:text-alert hover:bg-alert/10"
+                onClick={() => onReject(e.id)}
+                disabled={isPending || bulkBusy}
+              >
+                Reject
+              </Button>
+            )}
+          </span>
+        )}
+      </span>
+      <div className="w-full empty:hidden">
+        <AnomalyChips anomalies={e.anomalies} />
+        {e.rejectionReason && (
+          <div className="text-alert text-2xs mt-1">{e.rejectionReason}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const QueueEntryRow = memo(function QueueEntryRow({
+  entry: e,
+  canManage,
+  showSelect,
+  isSelected,
+  isPending,
+  bulkBusy,
+  onToggleSelect,
+  onFocus,
+  onOpen,
+  onApprove,
+  onReject,
+}: {
+  entry: TimeEntry;
+  canManage: boolean;
+  showSelect: boolean;
+  isSelected: boolean;
+  isPending: boolean;
+  bulkBusy: boolean;
+  onToggleSelect: (id: string) => void;
+  onFocus: (entry: TimeEntry) => void;
+  onOpen: (entry: TimeEntry) => void;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+}) {
+  const isSelectable = showSelect && e.status === 'COMPLETED';
+  return (
+    <TableRow
+      className="group cursor-pointer"
+      data-state={isSelected ? 'selected' : undefined}
+      onClick={(ev) => {
+        const target = ev.target as HTMLElement;
+        if (target.closest('button, a, input, [data-no-row-click]')) return;
+        if (window.getSelection()?.toString()) return;
+        onOpen(e);
+      }}
+    >
+      {showSelect && (
+        <TableCell className="w-8">
+          {isSelectable && (
+            <input
+              type="checkbox"
+              aria-label={`Select entry for ${e.associateName ?? 'associate'}`}
+              checked={isSelected}
+              onChange={() => onToggleSelect(e.id)}
+              className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
+            />
+          )}
+        </TableCell>
+      )}
+      <TableCell className="font-medium">
+        <button
+          type="button"
+          onClick={() => onFocus(e)}
+          title="View individual timesheet"
+          className="flex items-center gap-2.5 rounded text-left hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        >
+          <Avatar name={e.associateName ?? '—'} size="sm" />
+          <span className="underline-offset-2 hover:underline">
+            {e.associateName ?? '—'}
+          </span>
+        </button>
+      </TableCell>
+      <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
+      <TableCell className="tabular-nums">
+        {fmtPunchDateTime(e.clockInAt, e.locationTimezone)}
+      </TableCell>
+      <TableCell className="tabular-nums">
+        {e.clockOutAt ? (
+          <>
+            {fmtPunchTime(e.clockOutAt, e.locationTimezone)}
+            <DayOffsetTag entry={e} />
+          </>
+        ) : (
+          '—'
+        )}
+      </TableCell>
+      <TableCell>
+        <DurationCell entry={e} />
+      </TableCell>
+      <TableCell>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Badge variant={statusVariant(e.status)}>{STATUS_LABELS[e.status]}</Badge>
+          <LateChip entry={e} />
+        </div>
+        <AnomalyChips anomalies={e.anomalies} />
+        {e.rejectionReason && (
+          <div className="text-alert text-2xs mt-1">
+            {e.rejectionReason}
+          </div>
+        )}
+      </TableCell>
+      {canManage && (
+        <TableCell className="text-right whitespace-nowrap">
+          <div className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex items-center gap-1">
+            {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onApprove(e.id)}
+                loading={isPending}
+                disabled={isPending || bulkBusy}
+              >
+                Approve
+              </Button>
+            )}
+            {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-alert hover:text-alert hover:bg-alert/10"
+                onClick={() => onReject(e.id)}
+                disabled={isPending || bulkBusy}
+              >
+                Reject
+              </Button>
+            )}
+          </div>
+        </TableCell>
+      )}
+    </TableRow>
+  );
+});
 
 function TimeEntryDetailPanel({
   entry,
@@ -1529,11 +2178,18 @@ function TimeEntryDetailPanel({
               {entry.jobName ? ` · ${entry.jobName}` : ''}
             </DrawerDescription>
           </div>
+          <RouterLink
+            to={`/people?associateId=${entry.associateId}`}
+            className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"
+          >
+            View profile
+            <ExternalLink className="h-3 w-3" />
+          </RouterLink>
         </div>
       </DrawerHeader>
       <DrawerBody>
         <div className="flex flex-wrap items-center gap-2 mb-4">
-          <Badge variant={statusVariant(entry.status)}>{entry.status}</Badge>
+          <Badge variant={statusVariant(entry.status)}>{STATUS_LABELS[entry.status]}</Badge>
           {entry.anomalies && entry.anomalies.length > 0 && (
             <Badge variant="destructive">
               {entry.anomalies.length} anomal{entry.anomalies.length === 1 ? 'y' : 'ies'}
@@ -1541,28 +2197,24 @@ function TimeEntryDetailPanel({
           )}
         </div>
 
+        {/* The shift as it happened — bar, punch sequence, totals in one
+            card. Replaces the old scattered layout (clock-in top-left,
+            clock-out top-right, breaks in a separate box below the pay
+            rate) that reviewers had to reassemble mentally. */}
+        <div className="mb-5">
+          <ShiftTimeline entry={entry} />
+        </div>
+
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm mb-5">
-          <DetailRow label="Clock in">
-            {new Date(entry.clockInAt).toLocaleString()}
-          </DetailRow>
-          <DetailRow label="Clock out">
-            {entry.clockOutAt
-              ? new Date(entry.clockOutAt).toLocaleString()
-              : 'Still on the clock'}
-          </DetailRow>
-          <DetailRow label="Worked (net of breaks)">
-            {formatHM(entry.netMinutes ?? entry.minutesElapsed)}
-          </DetailRow>
-          <DetailRow label="Gross span">{formatHM(entry.minutesElapsed)}</DetailRow>
           <DetailRow label="Pay rate">
             {entry.payRate != null
-              ? `$${entry.payRate.toFixed(2)}/hr`
+              ? fmtPayRate(entry.payRate, 'HOURLY')
               : <span className="text-silver/80">—</span>}
           </DetailRow>
           {entry.shiftStartsAt && (
             <DetailRow label="Scheduled shift">
               <span className="tabular-nums">
-                {new Date(entry.shiftStartsAt).toLocaleString()}
+                {fmtDateTime(entry.shiftStartsAt)}
               </span>
               {entry.shiftPosition && (
                 <span className="text-silver/80"> · {entry.shiftPosition}</span>
@@ -1593,31 +2245,9 @@ function TimeEntryDetailPanel({
           )}
         </dl>
 
-        {entry.breaks && entry.breaks.length > 0 && (
-          <div className="mb-5 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-sm">
-            <div className="text-[10px] uppercase tracking-widest text-silver mb-1.5">
-              Breaks
-            </div>
-            <ul className="space-y-1 text-silver">
-              {entry.breaks.map((b) => (
-                <li key={b.id} className="flex items-center justify-between gap-3">
-                  <span>
-                    {b.type === 'MEAL' ? 'Meal' : 'Rest'}{' '}
-                    <span className="tabular-nums">
-                      {fmtTime(b.startedAt)} –{' '}
-                      {b.endedAt ? fmtTime(b.endedAt) : 'still open'}
-                    </span>
-                  </span>
-                  <span className="tabular-nums text-white">{formatHM(b.minutes)}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
         {entry.anomalies && entry.anomalies.length > 0 && (
           <div className="mb-5 rounded-md border border-warning/40 bg-warning/[0.07] p-3 text-sm">
-            <div className="text-[10px] uppercase tracking-widest text-warning mb-1.5">
+            <div className="text-2xs uppercase tracking-widest text-warning mb-1.5">
               Anomalies
             </div>
             <ul className="list-disc list-inside text-warning/90 space-y-0.5">
@@ -1677,28 +2307,33 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0');
 }
 
-// ISO → value for <input type="datetime-local"> (local wall-clock).
-function isoToLocalInput(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(
-    d.getHours(),
-  )}:${pad2(d.getMinutes())}`;
-}
+// The drawer edits ONE calendar date plus separate wall-clock times, so the
+// admin never types the same date twice. The wall-clock helpers
+// (dateOfWall/timeOfWall/combineWall/wallDayDiff) live INSIDE
+// TimeEntryFormDrawer — they close over the entry's site zone. The old
+// module-level browser-local copies are gone: they were the bug (a CT
+// admin typing "9:00" for an ET entry stored 9:00 CT).
 
-function localInputToIso(local: string): string {
-  return new Date(local).toISOString();
+function fmtDurMin(min: number): string {
+  const whole = Math.round(min);
+  const h = Math.floor(whole / 60);
+  const m = whole % 60;
+  return h > 0 ? `${h}h ${pad2(m)}m` : `${m}m`;
 }
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mb-1 text-[11px] uppercase tracking-widest text-silver">
+    <div className="mb-1 text-xs2 uppercase tracking-widest text-silver">
       {children}
     </div>
   );
 }
 
-// Debounced directory typeahead → resolves to an associate id.
+// Associate typeahead → resolves to an associate id. Sourced from the
+// scheduling roster (listSchedulingAssociates), which the server clamps to
+// the viewer's scope — a client-bound SHIFT_SUPERVISOR gets their client's
+// people. The old listDirectory() source 403'd for that role and silently
+// returned no matches.
 function AssociateSearchField({
   value,
   onChange,
@@ -1708,35 +2343,36 @@ function AssociateSearchField({
 }) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
-  const [results, setResults] = useState<
-    Array<{ id: string; name: string; email: string }>
-  >([]);
+  const [all, setAll] = useState<
+    Array<{ id: string; name: string; email: string }> | null
+  >(null);
   useEffect(() => {
-    const term = q.trim();
-    if (term.length < 2) {
-      setResults([]);
-      return;
-    }
     let cancelled = false;
-    const t = setTimeout(() => {
-      listDirectory({ q: term })
-        .then((r) => {
-          if (cancelled) return;
-          setResults(
-            r.associates.slice(0, 8).map((a) => ({
-              id: a.id,
-              name: `${a.firstName} ${a.lastName}`,
-              email: a.email,
-            })),
-          );
-        })
-        .catch(() => !cancelled && setResults([]));
-    }, 250);
+    listSchedulingAssociates()
+      .then((r) => {
+        if (cancelled) return;
+        setAll(
+          r.associates.map((a) => ({
+            id: a.id,
+            name: `${a.firstName} ${a.lastName}`,
+            email: a.email,
+          })),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setAll([]);
+      });
     return () => {
       cancelled = true;
-      clearTimeout(t);
     };
-  }, [q]);
+  }, []);
+  const results = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    if (term.length < 2 || !all) return [];
+    return all
+      .filter((a) => `${a.name} ${a.email}`.toLowerCase().includes(term))
+      .slice(0, 8);
+  }, [q, all]);
 
   if (value) {
     return (
@@ -1773,7 +2409,7 @@ function AssociateSearchField({
           className="pl-9"
         />
         {open && results.length > 0 && (
-          <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-navy-secondary bg-midnight shadow-xl">
+          <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border border-navy-secondary bg-midnight elev-2">
             {results.map((a) => (
               <button
                 key={a.id}
@@ -1812,11 +2448,40 @@ function TimeEntryFormDrawer({
       ? { id: entry.associateId, name: entry.associateName ?? '—' }
       : null,
   );
-  const [clockInLocal, setClockInLocal] = useState(
-    mode === 'edit' && entry ? isoToLocalInput(entry.clockInAt) : '',
-  );
-  const [clockOutLocal, setClockOutLocal] = useState(
-    mode === 'edit' && entry ? isoToLocalInput(entry.clockOutAt) : '',
+  // Every wall-clock string in this form speaks the SITE's clock when the
+  // entry has one. The queue and drawer render punches in the site zone,
+  // but this form used to parse typed times browser-locally — a CT admin
+  // typing "9:00" for an ET entry stored 9:00 CT (= 10:00 ET). Null zone
+  // (create mode, or a legacy entry with no location) = browser-local,
+  // exactly the old behavior.
+  const tz = mode === 'edit' ? entry?.locationTimezone ?? null : null;
+  const dateOfWall = (d: Date) => zonedDayKey(d, tz);
+  const timeOfWall = (d: Date) => {
+    const mins = zonedMinutesOfDay(d, tz);
+    return `${pad2(Math.floor(mins / 60))}:${pad2(mins % 60)}`;
+  };
+  const combineWall = (ds: string, ts: string, dayOffset = 0): Date => {
+    const [y, m, dd] = ds.split('-').map(Number);
+    const [hh, mm] = ts.split(':').map(Number);
+    return zonedWallTimeToUtc(y, m, dd + dayOffset, hh, mm, tz);
+  };
+  const wallDayDiff = (a: Date, b: Date) =>
+    Math.round(
+      (Date.parse(`${zonedDayKey(b, tz)}T00:00:00Z`) -
+        Date.parse(`${zonedDayKey(a, tz)}T00:00:00Z`)) /
+        86_400_000,
+    );
+  const editIn = mode === 'edit' && entry ? new Date(entry.clockInAt) : null;
+  const editOut =
+    mode === 'edit' && entry?.clockOutAt ? new Date(entry.clockOutAt) : null;
+  const [dateStr, setDateStr] = useState(dateOfWall(editIn ?? new Date()));
+  const [startTime, setStartTime] = useState(editIn ? timeOfWall(editIn) : '');
+  const [endTime, setEndTime] = useState(editOut ? timeOfWall(editOut) : '');
+  // Calendar days between clock-in and clock-out. The common overnight case
+  // (end < start) is derived automatically; this only preserves rarer spans
+  // loaded from an existing entry.
+  const [extraDays, setExtraDays] = useState(
+    editIn && editOut ? wallDayDiff(editIn, editOut) : 0,
   );
   const [notes, setNotes] = useState(
     mode === 'edit' && entry ? entry.notes ?? '' : '',
@@ -1824,18 +2489,18 @@ function TimeEntryFormDrawer({
   const [payRate, setPayRate] = useState(
     mode === 'edit' && entry?.payRate != null ? String(entry.payRate) : '',
   );
-  // Breaks, editable inline like the clock times. Rows with an id mirror
-  // existing BreakEntry rows; id=null rows are new and created on save.
-  // An empty end is only legal on a pre-existing open break (associate
-  // is on it right now).
+  // Breaks, editable inline as wall-clock times on the shift's timeline.
+  // Rows with an id mirror existing BreakEntry rows; id=null rows are new
+  // and created on save. An empty end is only legal on a pre-existing open
+  // break (associate is on it right now).
   const [breakRows, setBreakRows] = useState<
-    Array<{ id: string | null; startLocal: string; endLocal: string }>
+    Array<{ id: string | null; startTime: string; endTime: string }>
   >(
     mode === 'edit' && entry?.breaks
       ? entry.breaks.map((b) => ({
           id: b.id,
-          startLocal: isoToLocalInput(b.startedAt),
-          endLocal: b.endedAt ? isoToLocalInput(b.endedAt) : '',
+          startTime: timeOfWall(new Date(b.startedAt)),
+          endTime: b.endedAt ? timeOfWall(new Date(b.endedAt)) : '',
         }))
       : [],
   );
@@ -1845,17 +2510,123 @@ function TimeEntryFormDrawer({
   const isActive = mode === 'edit' && entry?.status === 'ACTIVE';
   const clockOutOptional = mode === 'create' || isActive;
 
+  // End earlier than start means the shift runs past midnight — "+1 day" is
+  // implied, never asked for as a second date.
+  const overnight = !!startTime && !!endTime && endTime < startTime;
+  const endOffset = overnight ? Math.max(1, extraDays) : extraDays;
+  const startDate =
+    dateStr && startTime ? combineWall(dateStr, startTime) : null;
+  const endDate =
+    dateStr && startTime && endTime
+      ? combineWall(dateStr, endTime, endOffset)
+      : null;
+
+  // A break time earlier than clock-in belongs to the next calendar day
+  // (overnight shifts).
+  const breakDate = (t: string): Date =>
+    combineWall(dateStr, t, startTime && t < startTime ? 1 : 0);
+
+  // The associate's rostered shift for the picked day — one click prefills
+  // the times instead of retyping what scheduling already knows.
+  const [schedShift, setSchedShift] = useState<Shift | null>(null);
+  useEffect(() => {
+    if (mode !== 'create' || !assoc || !dateStr) {
+      setSchedShift(null);
+      return;
+    }
+    let cancelled = false;
+    listShifts({
+      from: combineWall(dateStr, '00:00').toISOString(),
+      to: combineWall(dateStr, '00:00', 1).toISOString(),
+    })
+      .then((r) => {
+        if (cancelled) return;
+        setSchedShift(
+          r.shifts.find(
+            (s) =>
+              s.assignedAssociateId === assoc.id &&
+              s.status !== 'CANCELLED' &&
+              s.status !== 'DRAFT',
+          ) ?? null,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setSchedShift(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, assoc, dateStr]);
+
+  const applySchedule = () => {
+    if (!schedShift) return;
+    const s = new Date(schedShift.startsAt);
+    const e = new Date(schedShift.endsAt);
+    setDateStr(dateOfWall(s));
+    setStartTime(timeOfWall(s));
+    setEndTime(timeOfWall(e));
+    setExtraDays(wallDayDiff(s, e));
+  };
+
+  const setEndNow = () => {
+    const now = new Date();
+    setEndTime(timeOfWall(now));
+    if (dateStr) {
+      setExtraDays(
+        Math.max(0, wallDayDiff(combineWall(dateStr, '00:00'), now)),
+      );
+    }
+  };
+
+  // Drop a break of the given length into the middle of the shift (about
+  // 4 hours in while the associate is still on the clock), snapped to 5
+  // minutes — the admin only adjusts the times if the guess is off.
+  const addQuickBreak = (minutes: number) => {
+    if (!startDate) return;
+    const dur = minutes * 60_000;
+    const s = startDate.getTime();
+    let bs = endDate ? (s + endDate.getTime() - dur) / 2 : s + 4 * 3_600_000;
+    bs = Math.round(bs / 300_000) * 300_000;
+    if (endDate) bs = Math.min(bs, endDate.getTime() - dur);
+    bs = Math.max(bs, s);
+    setBreakRows((rows) => [
+      ...rows,
+      {
+        id: null,
+        startTime: timeOfWall(new Date(bs)),
+        endTime: timeOfWall(new Date(bs + dur)),
+      },
+    ]);
+  };
+
+  const totalMin =
+    startDate && endDate
+      ? (endDate.getTime() - startDate.getTime()) / 60_000
+      : null;
+  const breakMin = breakRows.reduce((acc, r) => {
+    if (!r.startTime || !r.endTime || !dateStr || !startTime) return acc;
+    const bs = breakDate(r.startTime).getTime();
+    const be = breakDate(r.endTime).getTime();
+    return be > bs ? acc + (be - bs) / 60_000 : acc;
+  }, 0);
+
   const submit = async () => {
     setErr(null);
     if (mode === 'create' && !assoc) {
       setErr('Pick an associate.');
       return;
     }
-    if (!clockInLocal) {
+    if (!dateStr) {
+      setErr('Date is required.');
+      return;
+    }
+    if (!startTime) {
       setErr('Clock-in time is required.');
       return;
     }
-    if (clockOutLocal && new Date(clockOutLocal) <= new Date(clockInLocal)) {
+    const inDate = combineWall(dateStr, startTime);
+    const outDate = endTime ? combineWall(dateStr, endTime, endOffset) : null;
+    if (outDate && outDate.getTime() <= inDate.getTime()) {
       setErr('Clock-out must be after clock-in.');
       return;
     }
@@ -1870,17 +2641,17 @@ function TimeEntryFormDrawer({
     }
     // Validate breaks up front — the entry itself saves first, so a break
     // the server would reject must be caught before anything is written.
-    const inMs = new Date(clockInLocal).getTime();
-    const outMs = clockOutLocal ? new Date(clockOutLocal).getTime() : Date.now();
+    const inMs = inDate.getTime();
+    const outMs = outDate ? outDate.getTime() : Date.now();
     for (const [i, r] of breakRows.entries()) {
       const orig = r.id ? entry?.breaks?.find((b) => b.id === r.id) : undefined;
-      const openBreak = !!orig && orig.endedAt === null && r.endLocal === '';
-      if (!r.startLocal || (!r.endLocal && !openBreak)) {
+      const openBreak = !!orig && orig.endedAt === null && r.endTime === '';
+      if (!r.startTime || (!r.endTime && !openBreak)) {
         setErr(`Break ${i + 1} needs both a start and an end time.`);
         return;
       }
-      const s = new Date(r.startLocal).getTime();
-      const e = r.endLocal ? new Date(r.endLocal).getTime() : outMs;
+      const s = breakDate(r.startTime).getTime();
+      const e = r.endTime ? breakDate(r.endTime).getTime() : outMs;
       if (e <= s) {
         setErr(`Break ${i + 1} must end after it starts.`);
         return;
@@ -1890,9 +2661,9 @@ function TimeEntryFormDrawer({
         return;
       }
       for (const [j, other] of breakRows.entries()) {
-        if (j >= i || !other.startLocal) continue;
-        const os = new Date(other.startLocal).getTime();
-        const oe = other.endLocal ? new Date(other.endLocal).getTime() : outMs;
+        if (j >= i || !other.startTime) continue;
+        const os = breakDate(other.startTime).getTime();
+        const oe = other.endTime ? breakDate(other.endTime).getTime() : outMs;
         if (s < oe && e > os) {
           setErr(`Breaks ${j + 1} and ${i + 1} overlap.`);
           return;
@@ -1905,8 +2676,8 @@ function TimeEntryFormDrawer({
       if (mode === 'create') {
         const created = await adminCreateTimeEntry({
           associateId: assoc!.id,
-          clockInAt: localInputToIso(clockInLocal),
-          clockOutAt: clockOutLocal ? localInputToIso(clockOutLocal) : null,
+          clockInAt: inDate.toISOString(),
+          clockOutAt: outDate ? outDate.toISOString() : null,
           payRate: payRateVal,
           notes: notes.trim() || null,
         });
@@ -1921,19 +2692,19 @@ function TimeEntryFormDrawer({
           );
         } else {
           toast.success(
-            clockOutLocal ? 'Shift logged.' : `Clocked in ${assoc!.name}.`,
+            outDate ? 'Shift logged.' : `Clocked in ${assoc!.name}.`,
           );
         }
       } else {
         entryId = entry!.id;
         await adminEditTimeEntry(entry!.id, {
-          clockInAt: localInputToIso(clockInLocal),
-          clockOutAt: clockOutLocal ? localInputToIso(clockOutLocal) : null,
+          clockInAt: inDate.toISOString(),
+          clockOutAt: outDate ? outDate.toISOString() : null,
           payRate: payRateVal,
           notes: notes.trim() || null,
         });
         toast.success(
-          isActive && clockOutLocal
+          isActive && outDate
             ? `Clocked out ${entry!.associateName ?? 'associate'}.`
             : 'Entry updated.',
         );
@@ -1951,21 +2722,26 @@ function TimeEntryFormDrawer({
         for (const r of breakRows) {
           if (!r.id) {
             await addTimeEntryBreak(entryId, {
-              startedAt: localInputToIso(r.startLocal),
-              endedAt: localInputToIso(r.endLocal),
+              startedAt: breakDate(r.startTime).toISOString(),
+              endedAt: breakDate(r.endTime).toISOString(),
             });
             continue;
           }
           const orig = origBreaks.find((b) => b.id === r.id);
           if (!orig) continue;
-          const startChanged = isoToLocalInput(orig.startedAt) !== r.startLocal;
-          const origEndLocal = orig.endedAt ? isoToLocalInput(orig.endedAt) : '';
-          const endChanged = origEndLocal !== r.endLocal;
+          const startChanged =
+            new Date(orig.startedAt).getTime() !==
+            breakDate(r.startTime).getTime();
+          const endChanged =
+            (orig.endedAt ? new Date(orig.endedAt).getTime() : null) !==
+            (r.endTime ? breakDate(r.endTime).getTime() : null);
           if (!startChanged && !endChanged) continue;
           await updateTimeEntryBreak(r.id, {
-            ...(startChanged ? { startedAt: localInputToIso(r.startLocal) } : {}),
-            ...(endChanged && r.endLocal
-              ? { endedAt: localInputToIso(r.endLocal) }
+            ...(startChanged
+              ? { startedAt: breakDate(r.startTime).toISOString() }
+              : {}),
+            ...(endChanged && r.endTime
+              ? { endedAt: breakDate(r.endTime).toISOString() }
               : {}),
           });
         }
@@ -2000,11 +2776,7 @@ function TimeEntryFormDrawer({
         </DrawerDescription>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
-        {err && (
-          <div className="rounded-md border border-alert/40 bg-alert/10 p-2 text-sm text-alert">
-            {err}
-          </div>
-        )}
+        {err && <ErrorBanner>{err}</ErrorBanner>}
         {mode === 'create' ? (
           <AssociateSearchField value={assoc} onChange={setAssoc} />
         ) : (
@@ -2013,41 +2785,81 @@ function TimeEntryFormDrawer({
             <div className="text-white">{entry?.associateName ?? '—'}</div>
           </div>
         )}
+        {tz && tz !== browserTimeZone() && (
+          <p className="text-xs2 text-gold">
+            Times are entered in {tzAbbrev(tz)} — the work site&apos;s clock,
+            matching the queue and drawer.
+          </p>
+        )}
         <div>
-          <FieldLabel>Clock in</FieldLabel>
+          <FieldLabel>Date</FieldLabel>
           <Input
-            type="datetime-local"
-            value={clockInLocal}
-            onChange={(e) => setClockInLocal(e.target.value)}
+            type="date"
+            aria-label="Shift date"
+            value={dateStr}
+            onChange={(e) => setDateStr(e.target.value)}
           />
         </div>
-        <div>
-          <FieldLabel>Clock out{clockOutOptional ? ' (optional)' : ''}</FieldLabel>
-          <div className="flex gap-2">
+        {schedShift && (
+          <button
+            type="button"
+            onClick={applySchedule}
+            className="inline-flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold/10 px-3 py-1.5 text-xs text-gold hover:bg-gold/20"
+          >
+            <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
+            Use scheduled shift {fmtTime(schedShift.startsAt)} –{' '}
+            {fmtTime(schedShift.endsAt)}
+          </button>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <FieldLabel>Clock in</FieldLabel>
             <Input
-              type="datetime-local"
-              value={clockOutLocal}
-              onChange={(e) => setClockOutLocal(e.target.value)}
-              className="flex-1"
+              type="time"
+              aria-label="Clock-in time"
+              value={startTime}
+              onChange={(e) => setStartTime(e.target.value)}
             />
-            {clockOutOptional && (
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() =>
-                  setClockOutLocal(isoToLocalInput(new Date().toISOString()))
-                }
-              >
-                Now
-              </Button>
-            )}
           </div>
-          {isActive && (
-            <p className="mt-1 text-xs text-silver">
-              Setting a clock-out clocks this associate out.
-            </p>
-          )}
+          <div>
+            <FieldLabel>
+              Clock out{clockOutOptional ? ' (optional)' : ''}
+            </FieldLabel>
+            <div className="flex items-center gap-2">
+              <Input
+                type="time"
+                aria-label="Clock-out time"
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+                className="flex-1"
+              />
+              {clockOutOptional && (
+                <Button type="button" variant="ghost" onClick={setEndNow}>
+                  Now
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
+        {endTime && endOffset > 0 && (
+          <p className="-mt-2 text-xs text-gold">
+            Ends the next day (+{endOffset === 1 ? '1 day' : `${endOffset} days`})
+            {!overnight && extraDays > 0 && (
+              <button
+                type="button"
+                onClick={() => setExtraDays(0)}
+                className="ml-2 underline hover:text-gold-bright"
+              >
+                make it same-day
+              </button>
+            )}
+          </p>
+        )}
+        {isActive && (
+          <p className="-mt-2 text-xs text-silver">
+            Setting a clock-out clocks this associate out.
+          </p>
+        )}
         <div>
           <FieldLabel>Breaks (unpaid)</FieldLabel>
           {breakRows.length === 0 && (
@@ -2057,13 +2869,13 @@ function TimeEntryFormDrawer({
             {breakRows.map((r, i) => (
               <div key={r.id ?? `new-${i}`} className="flex items-center gap-2">
                 <Input
-                  type="datetime-local"
+                  type="time"
                   aria-label={`Break ${i + 1} start`}
-                  value={r.startLocal}
+                  value={r.startTime}
                   onChange={(e) =>
                     setBreakRows((rows) =>
                       rows.map((row, j) =>
-                        j === i ? { ...row, startLocal: e.target.value } : row,
+                        j === i ? { ...row, startTime: e.target.value } : row,
                       ),
                     )
                   }
@@ -2071,13 +2883,13 @@ function TimeEntryFormDrawer({
                 />
                 <span className="text-silver" aria-hidden="true">–</span>
                 <Input
-                  type="datetime-local"
+                  type="time"
                   aria-label={`Break ${i + 1} end`}
-                  value={r.endLocal}
+                  value={r.endTime}
                   onChange={(e) =>
                     setBreakRows((rows) =>
                       rows.map((row, j) =>
-                        j === i ? { ...row, endLocal: e.target.value } : row,
+                        j === i ? { ...row, endTime: e.target.value } : row,
                       ),
                     )
                   }
@@ -2097,25 +2909,54 @@ function TimeEntryFormDrawer({
               </div>
             ))}
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="mt-2"
-            onClick={() =>
-              setBreakRows((rows) => [
-                ...rows,
-                { id: null, startLocal: '', endLocal: '' },
-              ])
-            }
-          >
-            <Plus className="h-4 w-4" />
-            Add break
-          </Button>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {[15, 30, 60].map((min) => (
+              <Button
+                key={min}
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={!startTime}
+                title={
+                  startTime
+                    ? `Add a ${min}-minute break in the middle of the shift`
+                    : 'Set the clock-in time first'
+                }
+                onClick={() => addQuickBreak(min)}
+              >
+                <Coffee className="h-3.5 w-3.5" />
+                {min === 60 ? '1h' : `${min}m`}
+              </Button>
+            ))}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                setBreakRows((rows) => [
+                  ...rows,
+                  { id: null, startTime: '', endTime: '' },
+                ])
+              }
+            >
+              <Plus className="h-4 w-4" />
+              Add break
+            </Button>
+          </div>
           <p className="mt-1 text-xs text-silver">
             Unpaid time inside the shift — subtracted from paid hours.
           </p>
         </div>
+        {totalMin !== null && totalMin > 0 && (
+          <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 px-3 py-2 text-sm text-silver">
+            Total {fmtDurMin(totalMin)}
+            {breakMin > 0 && <> · Breaks {fmtDurMin(breakMin)}</>}
+            {' · '}
+            <span className="text-gold">
+              Paid {fmtDurMin(Math.max(0, totalMin - breakMin))}
+            </span>
+          </div>
+        )}
         <div>
           <FieldLabel>Pay rate ($/hr)</FieldLabel>
           <Input
@@ -2168,19 +3009,21 @@ function SummaryExportDialog({
   fromIso: string;
   toIso: string;
 }) {
-  const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
-  const [clientId, setClientId] = useState('');
+  const { user } = useAuth();
+  // Client-bound roles can't list clients (403) — pin the dropdown to
+  // their one client instead of fetching.
+  const boundedClient = user?.clientId
+    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+    : null;
+  // Shared 5-min-cached client list; only fetched while the dialog is open
+  // and the viewer isn't pinned to a single client.
+  const { clients } = useClients({ enabled: open && !boundedClient });
+  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
   const [locations, setLocations] = useState<Array<{ id: string; name: string }>>([]);
   const [locationId, setLocationId] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    listClients()
-      .then((r) => setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))))
-      .catch(() => setClients([]));
-  }, [open]);
   useEffect(() => {
     setLocationId('');
     if (!clientId) {
@@ -2221,25 +3064,27 @@ function SummaryExportDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          {err && (
-            <div className="rounded-md border border-alert/40 bg-alert/10 p-2 text-sm text-alert">
-              {err}
-            </div>
-          )}
+          {err && <ErrorBanner>{err}</ErrorBanner>}
           <div>
             <FieldLabel>Client</FieldLabel>
-            <Select
-              className="mt-1"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-            >
-              <option value="">All clients</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
+            {boundedClient ? (
+              <div className="mt-1 flex h-10 items-center rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 text-sm text-white">
+                {boundedClient.name}
+              </div>
+            ) : (
+              <Select
+                className="mt-1"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+              >
+                <option value="">All clients</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            )}
           </div>
           <div>
             <FieldLabel>Facility (location)</FieldLabel>
@@ -2269,7 +3114,224 @@ function SummaryExportDialog({
           </Button>
           <Button onClick={download} loading={busy} disabled={busy}>
             <Download className="mr-2 h-4 w-4" />
-            Download CSV
+            Export CSV
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * External payroll sheet — the handoff file for an outside payroll bureau.
+ *
+ * Separate dialog from PayrollSheetDialog rather than a checkbox on it,
+ * deliberately. The two files look similar but are not interchangeable: this
+ * one puts a full SSN next to a full bank account and routing number for
+ * every worker in the range. Making it a distinct, differently-styled action
+ * behind its own confirmation means nobody produces it by reflex while
+ * reaching for the ordinary payroll sheet.
+ */
+function ExternalPayrollSheetDialog({
+  open,
+  onOpenChange,
+  defaultFromYmd,
+  defaultToYmd,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  defaultFromYmd: string;
+  defaultToYmd: string;
+}) {
+  const { user } = useAuth();
+  const boundedClient = user?.clientId
+    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+    : null;
+  const { clients } = useClients({ enabled: open && !boundedClient });
+  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
+  const [fromYmd, setFromYmd] = useState(defaultFromYmd);
+  const [toYmd, setToYmd] = useState(defaultToYmd);
+  const [busy, setBusy] = useState<'pdf' | 'xlsx' | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setFromYmd(defaultFromYmd);
+    setToYmd(defaultToYmd);
+    setErr(null);
+    // Re-arm every time. A sticky acknowledgement would defeat the point.
+    setAcknowledged(false);
+  }, [open, defaultFromYmd, defaultToYmd]);
+
+  const download = async (format: 'pdf' | 'xlsx') => {
+    if (!fromYmd || !toYmd || toYmd < fromYmd) {
+      setErr('Pick a valid pay period (end on or after start).');
+      return;
+    }
+    setBusy(format);
+    setErr(null);
+    try {
+      const { employeeCount, gaps, truncated } = await exportExternalPayrollSheet(
+        format,
+        {
+          from: ymdToIsoStart(fromYmd),
+          to: ymdToIsoEndExclusive(toYmd),
+          ...(clientId ? { clientId } : {}),
+        },
+      );
+      // Blank cells in a bureau file are rejected submissions or unpaid
+      // workers, and they're invisible in a 300-row spreadsheet. Say it out
+      // loud rather than letting the download read as a clean success.
+      const problems: string[] = [];
+      if (gaps.missingW4 > 0) problems.push(`${gaps.missingW4} with no W-4`);
+      if (gaps.unreadableSsn > 0)
+        problems.push(`${gaps.unreadableSsn} with no readable SSN`);
+      if (gaps.missingBankDetails > 0)
+        problems.push(`${gaps.missingBankDetails} missing bank details`);
+      if (gaps.missingPayRate > 0)
+        problems.push(`${gaps.missingPayRate} with no pay rate`);
+
+      if (truncated) {
+        toast.error(
+          'The sheet is incomplete — the time-entry scan hit its cap. Narrow the range or filter by client and regenerate before sending.',
+          { duration: 15000 },
+        );
+      } else if (problems.length > 0) {
+        toast.warning(
+          `${employeeCount} employee${employeeCount === 1 ? '' : 's'} exported, but ${problems.join(', ')}. Those rows will be rejected or unpaid — fix them before sending.`,
+          { duration: 15000 },
+        );
+      } else {
+        toast.success(
+          `${employeeCount} employee${employeeCount === 1 ? '' : 's'} exported with complete details.`,
+        );
+      }
+      onOpenChange(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Export failed.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>External payroll sheet</DialogTitle>
+          <DialogDescription>
+            The handoff file for an outside payroll provider. APPROVED time
+            only.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {err && <ErrorBanner>{err}</ErrorBanner>}
+
+          <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/[0.07] p-3">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <div className="min-w-0 text-xs">
+              <div className="font-medium text-white">
+                This file contains full Social Security numbers and bank
+                account details
+              </div>
+              <div className="mt-0.5 text-silver">
+                One row per employee, each with SSN, routing and account
+                number, date of birth and home address. Send it only to your
+                designated payroll provider over an encrypted channel. Every
+                download is recorded against your account.
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <FieldLabel>Client</FieldLabel>
+            {boundedClient ? (
+              <div className="mt-1 flex h-10 items-center rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 text-sm text-white">
+                {boundedClient.name}
+              </div>
+            ) : (
+              <Select
+                className="mt-1"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+              >
+                <option value="">All clients</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <FieldLabel>Pay period start</FieldLabel>
+              <Input
+                type="date"
+                value={fromYmd}
+                max={toYmd}
+                onChange={(e) => setFromYmd(e.target.value)}
+                className="mt-1 h-10 text-sm"
+              />
+            </div>
+            <div>
+              <FieldLabel>Pay period end</FieldLabel>
+              <Input
+                type="date"
+                value={toYmd}
+                min={fromYmd}
+                onChange={(e) => setToYmd(e.target.value)}
+                className="mt-1 h-10 text-sm"
+              />
+            </div>
+          </div>
+
+          <label className="flex items-start gap-2 text-xs text-silver cursor-pointer">
+            <input
+              type="checkbox"
+              checked={acknowledged}
+              onChange={(e) => setAcknowledged(e.target.checked)}
+              className="mt-0.5 h-3.5 w-3.5 rounded border-navy-secondary bg-navy text-gold focus:ring-gold focus:ring-offset-0"
+            />
+            <span>
+              I&apos;m authorised to share this data with our payroll provider
+              and will transmit it securely.
+            </span>
+          </label>
+
+          <p className="text-xs text-silver">
+            Overtime = hours over 40 per week (federal), matching payroll. Bank
+            name comes from each associate&apos;s direct-deposit setup and is
+            blank on records saved before that field existed.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+            disabled={busy !== null}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => download('pdf')}
+            loading={busy === 'pdf'}
+            disabled={busy !== null || !acknowledged}
+          >
+            <FileText className="mr-2 h-4 w-4" />
+            PDF
+          </Button>
+          <Button
+            onClick={() => download('xlsx')}
+            loading={busy === 'xlsx'}
+            disabled={busy !== null || !acknowledged}
+          >
+            <FileSpreadsheet className="mr-2 h-4 w-4" />
+            Excel
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -2291,8 +3353,16 @@ function PayrollSheetDialog({
   defaultFromYmd: string;
   defaultToYmd: string;
 }) {
-  const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
-  const [clientId, setClientId] = useState('');
+  const { user } = useAuth();
+  // Client-bound roles can't list clients (403) — pin the required client
+  // to theirs so the export isn't hard-blocked by an empty dropdown.
+  const boundedClient = user?.clientId
+    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
+    : null;
+  // Shared 5-min-cached client list; only fetched while the dialog is open
+  // and the viewer isn't pinned to a single client.
+  const { clients } = useClients({ enabled: open && !boundedClient });
+  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
   const [fromYmd, setFromYmd] = useState(defaultFromYmd);
   const [toYmd, setToYmd] = useState(defaultToYmd);
   const [busy, setBusy] = useState<'pdf' | 'xlsx' | null>(null);
@@ -2303,9 +3373,6 @@ function PayrollSheetDialog({
     setFromYmd(defaultFromYmd);
     setToYmd(defaultToYmd);
     setErr(null);
-    listClients()
-      .then((r) => setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))))
-      .catch(() => setClients([]));
   }, [open, defaultFromYmd, defaultToYmd]);
 
   const download = async (format: 'pdf' | 'xlsx') => {
@@ -2351,25 +3418,27 @@ function PayrollSheetDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          {err && (
-            <div className="rounded-md border border-alert/40 bg-alert/10 p-2 text-sm text-alert">
-              {err}
-            </div>
-          )}
+          {err && <ErrorBanner>{err}</ErrorBanner>}
           <div>
             <FieldLabel>Client</FieldLabel>
-            <Select
-              className="mt-1"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
-            >
-              <option value="">Select a client…</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </Select>
+            {boundedClient ? (
+              <div className="mt-1 flex h-10 items-center rounded-md border border-navy-secondary bg-navy-secondary/20 px-3 text-sm text-white">
+                {boundedClient.name}
+              </div>
+            ) : (
+              <Select
+                className="mt-1"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+              >
+                <option value="">Select a client…</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -2427,7 +3496,7 @@ function PayrollSheetDialog({
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="text-[10px] uppercase tracking-widest text-silver/80">{label}</dt>
+      <dt className="text-2xs uppercase tracking-widest text-silver/80">{label}</dt>
       <dd className="text-white text-sm mt-0.5 break-words tabular-nums">{children}</dd>
     </div>
   );
@@ -2436,7 +3505,7 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 function DetailSection({ label, body }: { label: string; body: string }) {
   return (
     <div className="mb-4">
-      <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-1">
+      <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1">
         {label}
       </div>
       <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-sm text-white whitespace-pre-wrap">
@@ -2466,7 +3535,7 @@ function KpiCard({ icon: Icon, label, value, tone }: KpiCardProps) {
     return (
       <Card className="p-4">
         <div className="flex items-start justify-between mb-1">
-          <div className="text-[10px] uppercase tracking-wider text-silver">
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
             {label}
           </div>
           <Icon className="h-3.5 w-3.5 text-silver/70" />
@@ -2478,7 +3547,7 @@ function KpiCard({ icon: Icon, label, value, tone }: KpiCardProps) {
   return (
     <Card className="p-4">
       <div className="flex items-start justify-between mb-1">
-        <div className="text-[10px] uppercase tracking-wider text-silver">
+        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
           {label}
         </div>
         <Icon className="h-3.5 w-3.5 text-silver/70" />

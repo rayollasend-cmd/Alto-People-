@@ -39,12 +39,23 @@ function pathLookup(data: unknown, path: string): unknown {
   return cur;
 }
 
-function render(template: string, data: unknown): string {
-  return template.replace(TOKEN_RE, (_full, path: string) => {
+function render(
+  template: string,
+  data: unknown,
+): { text: string; unresolvedTokens: string[] } {
+  // Track every token that resolved to nothing — a typo'd
+  // {{associate.firstname}} used to silently produce an offer letter
+  // with a blank name.
+  const unresolved = new Set<string>();
+  const text = template.replace(TOKEN_RE, (_full, path: string) => {
     const v = pathLookup(data, path);
-    if (v == null) return '';
+    if (v == null) {
+      unresolved.add(path.trim());
+      return '';
+    }
     return String(v);
   });
+  return { text, unresolvedTokens: [...unresolved] };
 }
 
 // ----- Templates ---------------------------------------------------------
@@ -267,8 +278,16 @@ docTemplatesRouter.post(
       };
     }
     const ctx = { associate, ...(input.data ?? {}) };
-    const renderedBody = render(v.body, ctx);
-    const renderedSubject = v.subject ? render(v.subject, ctx) : null;
+    const bodyResult = render(v.body, ctx);
+    const subjectResult = v.subject ? render(v.subject, ctx) : null;
+    const renderedBody = bodyResult.text;
+    const renderedSubject = subjectResult?.text ?? null;
+    const unresolvedTokens = [
+      ...new Set([
+        ...bodyResult.unresolvedTokens,
+        ...(subjectResult?.unresolvedTokens ?? []),
+      ]),
+    ];
 
     const created = await prisma.documentRender.create({
       data: {
@@ -285,6 +304,9 @@ docTemplatesRouter.post(
       id: created.id,
       renderedSubject,
       renderedBody,
+      // Tokens that resolved to NOTHING — the UI must show these so a
+      // typo'd path can't silently blank a field in an offer letter.
+      unresolvedTokens,
     });
   },
 );

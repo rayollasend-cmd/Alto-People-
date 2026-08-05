@@ -5,6 +5,7 @@ import {
   Ban,
   BarChart3,
   ClipboardList,
+  FileUp,
   LayoutGrid,
   LayoutTemplate,
   List,
@@ -28,9 +29,11 @@ import {
   bulkResendInvite,
   getApplicationStats,
   listApplications,
+  nudgeApplicant,
   resendInvite,
 } from '@/lib/onboardingApi';
-import { usePrompt } from '@/lib/confirm';
+import { useConfirm, usePrompt } from '@/lib/confirm';
+import { fmtDate } from '@/lib/format';
 import { listClients } from '@/lib/clientsApi';
 import type { ClientSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -49,6 +52,7 @@ import {
 } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { FilterChip } from '@/components/ui/FilterBar';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
@@ -65,6 +69,7 @@ import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { toast } from 'sonner';
 import { ApplicationDetailBody } from './ApplicationDetail';
 import { BulkInviteDialog } from './BulkInviteDialog';
+import { CsvImportDialog } from './CsvImportDialog';
 import { NewApplicationDialog } from './NewApplicationDialog';
 import { NudgeDialog } from './NudgeDialog';
 import { cn } from '@/lib/cn';
@@ -221,10 +226,71 @@ function daysSince(iso: string, now: number): number {
   return Math.floor((now - new Date(iso).getTime()) / ONE_DAY_MS);
 }
 
+function isTerminal(a: ApplicationSummary): boolean {
+  return a.status === 'APPROVED' || a.status === 'REJECTED';
+}
+
+/** Last movement on the application: latest task completion, else the invite. */
+function lastActivityIso(a: ApplicationSummary): string {
+  return a.lastActivityAt ?? a.invitedAt;
+}
+
+// Bulk-nudge staleness is deliberately more aggressive than the 7-day
+// "stuck" banner — 3 idle days is when a gentle poke still lands well.
+const NUDGE_STALE_DAYS = 3;
+
+function isNudgeStale(a: ApplicationSummary, now: number): boolean {
+  if (isTerminal(a)) return false;
+  if (a.percentComplete >= 100) return false;
+  return now - new Date(lastActivityIso(a)).getTime() > NUDGE_STALE_DAYS * ONE_DAY_MS;
+}
+
+/** Idle-days tone for the "Blocked on" column. */
+function idleTone(days: number): string {
+  if (days >= 7) return 'text-alert';
+  if (days >= 3) return 'text-warning';
+  return 'text-silver/60';
+}
+
+/** Start-date risk chip: unfinished checklist vs. an imminent/past start. */
+function startRisk(a: ApplicationSummary, now: number): 'past' | 'at-risk' | null {
+  if (!a.startDate || a.percentComplete >= 100 || isTerminal(a)) return null;
+  const startMs = new Date(a.startDate).getTime();
+  if (startMs < now) return 'past';
+  if (startMs - now <= 7 * ONE_DAY_MS) return 'at-risk';
+  return null;
+}
+
+/** Personalized nudge subject/body — used both by the single-row dialog
+ *  prefill and the bulk "Nudge all stale" loop. The server appends the
+ *  portal link, so the body doesn't need one. */
+function nudgeContentFor(a: ApplicationSummary): { subject: string; body: string } {
+  const firstName = a.associateName.trim().split(/\s+/)[0] || 'there';
+  const subject = a.blockedOnTitle
+    ? `Quick nudge: ${a.blockedOnTitle}`
+    : 'Quick check-in on your onboarding';
+  const body = [
+    `Hi ${firstName},`,
+    '',
+    a.blockedOnTitle
+      ? `Your onboarding is ${a.percentComplete}% done — the next step is '${a.blockedOnTitle}'. It only takes a few minutes.`
+      : `Your onboarding is ${a.percentComplete}% done — just a few tasks left, and each only takes a few minutes.`,
+    '',
+    "Let us know if you're stuck.",
+  ].join('\n');
+  return { subject, body };
+}
+
 export function ApplicationsList() {
   const { can } = useAuth();
   const canManage = can('manage:onboarding');
+  // Superset of canManage (every manage:onboarding role also holds
+  // invite:onboarding). Gates the send-and-monitor surface — bulk invite,
+  // the progress KPIs, and the per-row nudge/resend actions — so a
+  // SHIFT_SUPERVISOR gets those without the HR review affordances.
+  const canInvite = can('invite:onboarding');
   const prompt = usePrompt();
+  const confirm = useConfirm();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Default lands on ACTIVE so terminal applications (Approved/Rejected)
@@ -296,17 +362,19 @@ export function ApplicationsList() {
   const [error, setError] = useState<string | null>(null);
   const [openCreate, setOpenCreate] = useState(false);
   const [openBulkInvite, setOpenBulkInvite] = useState(false);
+  const [openCsvImport, setOpenCsvImport] = useState(false);
   const [resendingIds, setResendingIds] = useState<Set<string>>(new Set());
   const [bulkResending, setBulkResending] = useState(false);
   const [bulkRejecting, setBulkRejecting] = useState(false);
+  const [bulkNudging, setBulkNudging] = useState(false);
 
   // Bulk-select state. The set holds applicationIds; "select all" applies
   // to the *currently visible* (filtered) rows so it never spans pages
   // worth of work the user can't see.
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // Single-row nudge dialog (one applicant at a time — bulk nudge is
-  // intentionally not a thing because the body is per-recipient).
+  // Single-row nudge dialog. Bulk nudge exists too ("Nudge all stale") —
+  // bodies are personalized per recipient via nudgeContentFor.
   const [nudgeTarget, setNudgeTarget] = useState<ApplicationSummary | null>(null);
 
   // Phase 72 — slide-over detail drawer. Click a row → keep the list mounted
@@ -384,31 +452,41 @@ export function ApplicationsList() {
   const now = Date.now();
   const stats = statsData ?? EMPTY_STATS;
 
+  // Visible rows that qualify for a bulk nudge: unfinished, non-terminal,
+  // and no movement (task completion, else invite) for > 3 days.
+  const staleNudgeTargets = (items ?? []).filter((a) => isNudgeStale(a, now));
+
   const onResend = async (a: ApplicationSummary) => {
     if (resendingIds.has(a.id)) return;
-    const next = new Set(resendingIds);
-    next.add(a.id);
-    setResendingIds(next);
+    // Functional updates — a plain `new Set(resendingIds)` here would close
+    // over a stale set and concurrent resends would clear each other.
+    setResendingIds((prev) => {
+      const n = new Set(prev);
+      n.add(a.id);
+      return n;
+    });
     try {
       const res = await resendInvite(a.id);
       if (res.inviteUrl) {
         await navigator.clipboard.writeText(res.inviteUrl).catch(() => {});
-        toast.success('Fresh invite link copied');
+        toast.success('Fresh invite link copied.');
       } else {
-        toast.success('Invite re-sent');
+        toast.success('Invite re-sent.');
       }
     } catch (err) {
       if (err instanceof ApiError && err.code === 'user_already_active') {
-        toast.message('Already accepted', {
+        toast.message('Invite already accepted.', {
           description: `${a.associateName} has already set their password.`,
         });
       } else {
-        toast.error('Resend failed');
+        toast.error('Resend failed.');
       }
     } finally {
-      const after = new Set(resendingIds);
-      after.delete(a.id);
-      setResendingIds(after);
+      setResendingIds((prev) => {
+        const n = new Set(prev);
+        n.delete(a.id);
+        return n;
+      });
     }
   };
 
@@ -462,13 +540,13 @@ export function ApplicationsList() {
     try {
       const res = await bulkResendInvite({ applicationIds: ids });
       if (res.failed === 0) {
-        toast.success(`Re-sent ${res.succeeded} invite${res.succeeded === 1 ? '' : 's'}`);
+        toast.success(`Re-sent ${res.succeeded} invite${res.succeeded === 1 ? '' : 's'}.`);
       } else if (res.succeeded === 0) {
-        toast.error(`All ${res.failed} resends failed`);
+        toast.error(`All ${res.failed} resends failed.`);
       } else {
         // Pull the first failure as the description so HR sees actionable info.
         const firstFail = res.results.find((r) => !r.ok);
-        toast.message(`Re-sent ${res.succeeded}, ${res.failed} failed`, {
+        toast.message(`Re-sent ${res.succeeded}, ${res.failed} failed.`, {
           description: firstFail
             ? `e.g. ${firstFail.errorCode}: ${firstFail.errorMessage}`
             : undefined,
@@ -479,8 +557,8 @@ export function ApplicationsList() {
       refreshStats();
     } catch (err) {
       const msg =
-        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Bulk resend failed';
-      toast.error('Could not bulk resend', { description: msg });
+        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Bulk resend failed.';
+      toast.error('Could not bulk resend.', { description: msg });
     } finally {
       setBulkResending(false);
     }
@@ -507,18 +585,69 @@ export function ApplicationsList() {
         reason,
       });
       toast.success(
-        `Rejected ${res.rejected}${res.skipped.length ? ` · ${res.skipped.length} skipped` : ''}`,
+        `Rejected ${res.rejected}${res.skipped.length ? ` · ${res.skipped.length} skipped` : ''}.`,
       );
       setSelected(new Set());
       refresh();
       refreshStats();
     } catch (err) {
-      toast.error('Could not bulk reject', {
+      toast.error('Could not bulk reject.', {
         description: err instanceof ApiError ? err.message : undefined,
       });
     } finally {
       setBulkRejecting(false);
     }
+  };
+
+  // Bulk nudge — sequential (one email API call at a time, no thundering
+  // herd), each with a body personalized via nudgeContentFor.
+  const onBulkNudge = async () => {
+    if (bulkNudging) return;
+    const targets = staleNudgeTargets;
+    if (targets.length === 0) return;
+    const n = targets.length;
+    const ok = await confirm({
+      title: `Nudge ${n} stale applicant${n === 1 ? '' : 's'}?`,
+      description:
+        `Sends ${n} personalized email${n === 1 ? '' : 's'} — each mentions the recipient's progress and the task they're stuck on. Doesn't rotate invite tokens.`,
+      confirmLabel: `Send ${n} nudge${n === 1 ? '' : 's'}`,
+    });
+    if (!ok) return;
+    setBulkNudging(true);
+    let sent = 0;
+    const failures: string[] = [];
+    try {
+      for (const a of targets) {
+        const { subject, body } = nudgeContentFor(a);
+        try {
+          const res = await nudgeApplicant(a.id, { subject, body });
+          if (res.emailSent) {
+            sent += 1;
+          } else {
+            failures.push(`${a.associateName}: email delivery failed`);
+          }
+        } catch (err) {
+          failures.push(
+            `${a.associateName}: ${err instanceof ApiError ? err.message : 'request failed'}`,
+          );
+        }
+      }
+    } finally {
+      setBulkNudging(false);
+    }
+    if (failures.length === 0) {
+      toast.success(`Nudged ${sent} applicant${sent === 1 ? '' : 's'}.`);
+    } else if (sent === 0) {
+      toast.error(`All ${failures.length} nudges failed.`, {
+        description: failures[0],
+      });
+    } else {
+      toast.message(`Nudged ${sent}, ${failures.length} failed.`, {
+        description: failures[0],
+      });
+    }
+    refresh();
+    refreshStats();
   };
 
   return (
@@ -527,20 +656,28 @@ export function ApplicationsList() {
         title="Onboarding"
         subtitle="Active applications and their checklist progress."
         secondaryActions={
-          canManage ? (
+          canInvite ? (
             <>
-              <Link to="/onboarding/analytics">
-                <Button variant="ghost">
-                  <BarChart3 className="h-4 w-4" />
-                  Analytics
-                </Button>
-              </Link>
-              <Link to="/onboarding/templates">
-                <Button variant="ghost">
-                  <LayoutTemplate className="h-4 w-4" />
-                  Templates
-                </Button>
-              </Link>
+              {canManage && (
+                <>
+                  <Link to="/onboarding/analytics">
+                    <Button variant="ghost">
+                      <BarChart3 className="h-4 w-4" />
+                      Analytics
+                    </Button>
+                  </Link>
+                  <Link to="/onboarding/templates">
+                    <Button variant="ghost">
+                      <LayoutTemplate className="h-4 w-4" />
+                      Templates
+                    </Button>
+                  </Link>
+                </>
+              )}
+              <Button variant="secondary" onClick={() => setOpenCsvImport(true)}>
+                <FileUp className="h-4 w-4" />
+                Import CSV
+              </Button>
               <Button variant="secondary" onClick={() => setOpenBulkInvite(true)}>
                 <Users className="h-4 w-4" />
                 Bulk invite
@@ -559,7 +696,7 @@ export function ApplicationsList() {
       />
 
       {/* KPI strip — always visible (empty-zero state is fine). */}
-      {canManage && statsData && statsData.total > 0 && (
+      {canInvite && statsData && statsData.total > 0 && (
         <div className="mb-5 flex flex-wrap gap-x-6 gap-y-2 px-4 py-3 rounded-md border border-navy-secondary bg-navy-secondary/30">
           <Kpi label="Total" value={String(stats.total)} />
           <Kpi label="In flight" value={String(stats.inFlight)} />
@@ -602,7 +739,7 @@ export function ApplicationsList() {
       {/* Email-bounce banner — fires when at least one in-flight invite/nudge
           came back FAILED from the provider. Distinct from the stale banner
           (which is just "old"); a bounce is *actionable* (fix the email). */}
-      {canManage && stats.bounced > 0 && (
+      {canInvite && stats.bounced > 0 && (
         <div className="mb-4 flex items-start gap-2 p-3 rounded-md border border-alert/40 bg-alert/[0.07] text-sm">
           <MailWarning className="h-4 w-4 text-alert mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
@@ -637,7 +774,7 @@ export function ApplicationsList() {
       )}
 
       {/* Stale-application banner — only when there's something to nudge about. */}
-      {canManage && stats.stale > 0 && (
+      {canInvite && stats.stale > 0 && (
         <div className="mb-4 flex items-start gap-2 p-3 rounded-md border border-alert/40 bg-alert/[0.07] text-sm">
           <AlertTriangle className="h-4 w-4 text-alert mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
@@ -679,7 +816,7 @@ export function ApplicationsList() {
       )}
 
       {/* Filter row: search input + status pills */}
-      {canManage && (
+      {canInvite && (
         <div className="mb-4 flex flex-wrap items-center gap-3">
           <div className="relative flex-1 w-full sm:min-w-[200px] max-w-xs">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-silver/70 pointer-events-none" />
@@ -732,25 +869,18 @@ export function ApplicationsList() {
                       : (stats.byStatus[f.value] ?? 0);
               const active = status === f.value;
               return (
-                <button
+                <FilterChip
                   key={f.value}
-                  type="button"
+                  active={active}
                   onClick={() => setStatus(f.value)}
-                  className={cn(
-                    'px-2.5 py-1 rounded-md text-xs border transition-colors inline-flex items-center gap-1.5',
-                    'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-                    active
-                      ? 'border-gold text-gold bg-gold/10'
-                      : 'border-navy-secondary text-silver hover:text-white hover:border-silver/40'
-                  )}
                 >
                   {f.label}
                   {statsData && (
-                    <span className="text-[10px] tabular-nums text-silver/70">
+                    <span className="text-2xs tabular-nums text-silver/70">
                       {count}
                     </span>
                   )}
-                </button>
+                </FilterChip>
               );
             })}
           </div>
@@ -759,29 +889,32 @@ export function ApplicationsList() {
             role="group"
             aria-label="Filter by invite date"
           >
-            <span className="text-[10px] uppercase tracking-widest text-silver/70">
+            <span className="text-2xs uppercase tracking-widest text-silver/70">
               Invited
             </span>
-            {INVITED_WINDOWS.map((w) => {
-              const active = invitedWindow === w.value;
-              return (
-                <Button
-                  key={w.value}
-                  size="xs"
-                  variant="outline"
-                  onClick={() => setInvitedWindow(w.value)}
-                  aria-pressed={active}
-                  className={cn(
-                    active &&
-                      'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
-                  )}
-                >
-                  {w.label}
-                </Button>
-              );
-            })}
+            {INVITED_WINDOWS.map((w) => (
+              <FilterChip
+                key={w.value}
+                active={invitedWindow === w.value}
+                onClick={() => setInvitedWindow(w.value)}
+              >
+                {w.label}
+              </FilterChip>
+            ))}
           </div>
-          <span className="ml-auto text-[10px] text-silver/80 tabular-nums">
+          {staleNudgeTargets.length > 0 && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={onBulkNudge}
+              loading={bulkNudging}
+              title={`Send a personalized nudge to every visible applicant idle for more than ${NUDGE_STALE_DAYS} days`}
+            >
+              <MessageCircle className="h-4 w-4" />
+              Nudge all stale ({staleNudgeTargets.length})
+            </Button>
+          )}
+          <span className="ml-auto text-2xs text-silver/80 tabular-nums">
             {items ? `${items.length} shown` : ''}
           </span>
           <ViewToggle<ApplicationsView>
@@ -818,7 +951,9 @@ export function ApplicationsList() {
               ? 'Clear the filter to see all applications.'
               : canManage
                 ? 'Click "New application" to invite the first associate.'
-                : "When HR creates an onboarding application, it'll show up here with live checklist progress."
+                : canInvite
+                  ? 'Click "Bulk invite" to send the first onboarding invitation.'
+                  : "When HR creates an onboarding application, it'll show up here with live checklist progress."
           }
           action={
             urlQ || status !== 'ALL' ? (
@@ -835,6 +970,11 @@ export function ApplicationsList() {
               <Button onClick={() => setOpenCreate(true)}>
                 <Plus className="h-4 w-4" />
                 New application
+              </Button>
+            ) : canInvite ? (
+              <Button onClick={() => setOpenBulkInvite(true)}>
+                <Users className="h-4 w-4" />
+                Bulk invite
               </Button>
             ) : undefined
           }
@@ -859,16 +999,31 @@ export function ApplicationsList() {
         }}
       />
 
+      <CsvImportDialog
+        open={openCsvImport}
+        onOpenChange={setOpenCsvImport}
+        onImported={() => {
+          refresh();
+          refreshStats();
+        }}
+      />
+
       <NudgeDialog
         open={!!nudgeTarget}
         onOpenChange={(v) => !v && setNudgeTarget(null)}
         applicationId={nudgeTarget?.id ?? null}
         associateName={nudgeTarget?.associateName ?? ''}
+        suggestedSubject={
+          nudgeTarget?.blockedOnTitle
+            ? `Quick nudge: ${nudgeTarget.blockedOnTitle}`
+            : undefined
+        }
+        suggestedBody={nudgeTarget ? nudgeContentFor(nudgeTarget).body : undefined}
       />
 
       {/* Bulk-actions toolbar — only visible when at least one row is selected.
           Sits above the table so it doesn't shift row layout when it appears. */}
-      {canManage && selected.size > 0 && (
+      {canInvite && selected.size > 0 && (
         <div className="mb-3 flex items-center gap-3 px-3 py-2 rounded-md border border-gold/40 bg-gold/[0.06] text-sm">
           <span className="text-white font-medium">
             {selected.size} selected
@@ -884,17 +1039,19 @@ export function ApplicationsList() {
             <MailPlus className="h-4 w-4" />
             Resend invite
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={onBulkReject}
-            loading={bulkRejecting}
-            disabled={bulkResending}
-            className="text-alert hover:text-alert"
-          >
-            <Ban className="h-4 w-4" />
-            Reject
-          </Button>
+          {canManage && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={onBulkReject}
+              loading={bulkRejecting}
+              disabled={bulkResending}
+              className="text-alert hover:text-alert"
+            >
+              <Ban className="h-4 w-4" />
+              Reject
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"
@@ -911,7 +1068,7 @@ export function ApplicationsList() {
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                {canManage && (
+                {canInvite && (
                   <TableHead className="w-8 px-3 no-print">
                     <input
                       type="checkbox"
@@ -930,13 +1087,17 @@ export function ApplicationsList() {
                 <TableHead className="hidden md:table-cell">Invited</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="w-56">Progress</TableHead>
-                {canManage && <TableHead className="w-24" aria-label="Actions" />}
+                <TableHead className="hidden lg:table-cell">Blocked on</TableHead>
+                <TableHead className="hidden md:table-cell">Start</TableHead>
+                {canInvite && <TableHead className="w-24" aria-label="Actions" />}
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.map((a) => {
                 const stale = isStale(a, now);
                 const isSelected = selected.has(a.id);
+                const idleDays = daysSince(lastActivityIso(a), now);
+                const risk = startRisk(a, now);
                 return (
                   <TableRow
                     key={a.id}
@@ -953,7 +1114,7 @@ export function ApplicationsList() {
                       isSelected && 'bg-gold/[0.04]'
                     )}
                   >
-                    {canManage && (
+                    {canInvite && (
                       <TableCell className="px-3 no-print">
                         <input
                           type="checkbox"
@@ -1053,13 +1214,42 @@ export function ApplicationsList() {
                         </span>
                       </div>
                     </TableCell>
-                    {canManage && (
+                    <TableCell className="hidden lg:table-cell text-xs">
+                      {isTerminal(a) ||
+                      a.percentComplete === 100 ||
+                      !a.blockedOnTitle ? (
+                        <span className="text-silver/50">—</span>
+                      ) : (
+                        <span className="text-silver">
+                          {a.blockedOnTitle}
+                          <span className={cn('tabular-nums', idleTone(idleDays))}>
+                            {' '}· {idleDays}d idle
+                          </span>
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-xs whitespace-nowrap">
+                      <span className="text-silver tabular-nums">
+                        {fmtDate(a.startDate)}
+                      </span>
+                      {risk === 'past' && (
+                        <Badge variant="destructive" className="ml-1.5">
+                          past start
+                        </Badge>
+                      )}
+                      {risk === 'at-risk' && (
+                        <Badge variant="pending" className="ml-1.5">
+                          at risk
+                        </Badge>
+                      )}
+                    </TableCell>
+                    {canInvite && (
                       <TableCell className="text-right whitespace-nowrap no-print">
                         <div
-                          className="flex items-center justify-end gap-0.5 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
+                          className="flex items-center justify-end gap-0.5 can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
                           data-no-row-click
                         >
-                          {a.status !== 'APPROVED' && a.status !== 'REJECTED' && (
+                          {canManage && a.status !== 'APPROVED' && a.status !== 'REJECTED' && (
                             <Button
                               asChild
                               variant="ghost"
@@ -1121,6 +1311,7 @@ export function ApplicationsList() {
                 stale={stale}
                 isSelected={isSelected}
                 canManage={canManage}
+                canInvite={canInvite}
                 onOpen={() => setDrawerTarget(a)}
                 onToggleSelect={() => toggleOne(a.id)}
                 onNudge={() => setNudgeTarget(a)}
@@ -1204,7 +1395,10 @@ interface ApplicationCardProps {
   a: ApplicationSummary;
   stale: boolean;
   isSelected: boolean;
+  /** HR review powers — gates the in-person onboarding workspace link. */
   canManage: boolean;
+  /** Send/monitor powers — gates selection and the nudge/resend strip. */
+  canInvite: boolean;
   onOpen: () => void;
   onToggleSelect: () => void;
   onNudge: () => void;
@@ -1217,6 +1411,7 @@ function ApplicationCard({
   stale,
   isSelected,
   canManage,
+  canInvite,
   onOpen,
   onToggleSelect,
   onNudge,
@@ -1247,7 +1442,7 @@ function ApplicationCard({
       )}
     >
       <div className="flex items-start gap-3">
-        {canManage && (
+        {canInvite && (
           <input
             type="checkbox"
             checked={isSelected}
@@ -1293,7 +1488,7 @@ function ApplicationCard({
       </div>
 
       <div>
-        <div className="flex items-center justify-between text-[10px] uppercase tracking-widest text-silver/80 mb-1">
+        <div className="flex items-center justify-between text-2xs uppercase tracking-widest text-silver/80 mb-1">
           <span>Progress</span>
           <span
             className={cn(
@@ -1311,19 +1506,19 @@ function ApplicationCard({
         <ProgressBar percent={a.percentComplete} hideLabel />
       </div>
 
-      <div className="flex items-center justify-between text-[10px] text-silver/80">
+      <div className="flex items-center justify-between text-2xs text-silver/80">
         <span>{TRACK_LABEL[a.onboardingTrack] ?? a.onboardingTrack} track</span>
         <span className="tabular-nums">
           Invited {daysSince(a.invitedAt, Date.now())}d ago
         </span>
       </div>
 
-      {canManage && (
+      {canInvite && (
         <div
-          className="flex items-center gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
+          className="flex items-center gap-1 can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
           data-no-row-click
         >
-          {a.status !== 'APPROVED' && a.status !== 'REJECTED' && (
+          {canManage && a.status !== 'APPROVED' && a.status !== 'REJECTED' && (
             <Button
               asChild
               variant="ghost"
@@ -1386,7 +1581,9 @@ function Kpi({
 }) {
   const body = (
     <>
-      <div className="text-[10px] uppercase tracking-wider text-silver">{label}</div>
+      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
+        {label}
+      </div>
       <div className={cn('text-xl font-semibold tabular-nums', tone)}>{value}</div>
     </>
   );

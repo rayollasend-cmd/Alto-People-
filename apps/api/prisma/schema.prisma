@@ -60,6 +60,16 @@ enum ClientStatus {
   PROSPECT
 }
 
+// Org-enforced MFA policy (OrgSetting.mfaRequirement). OFF = opt-in only,
+// ADMINS = every admin-class role (see isMfaAdminRole in packages/shared)
+// must have TOTP enrolled to sign in with a password, ALL = every human
+// role. Passkey sign-in counts as strong auth and is exempt.
+enum MfaRequirement {
+  OFF
+  ADMINS
+  ALL
+}
+
 enum OnboardingTrack {
   STANDARD
   J1
@@ -116,6 +126,24 @@ enum DocumentKind {
   OTHER
 }
 
+// Which federal I-9 list a document satisfies. A = identity AND work
+// authorization (sufficient alone); B = identity only; C = work
+// authorization only (B must pair with C). NULL on non-I-9 documents and
+// on everything uploaded before the catalog existed — legacy uploads are
+// never reclassified or invalidated.
+enum I9DocList {
+  A
+  B
+  C
+}
+
+// Which face of a card a file shows. NULL = single-sided/unknown (legacy
+// uploads keep the old filename-based inference as a fallback).
+enum DocSide {
+  FRONT
+  BACK
+}
+
 enum DocumentStatus {
   UPLOADED
   VERIFIED
@@ -124,6 +152,16 @@ enum DocumentStatus {
 }
 
 enum BgCheckStatus {
+  INITIATED
+  IN_PROGRESS
+  PASSED
+  FAILED
+  NEEDS_REVIEW
+}
+
+// Same lifecycle as BgCheckStatus, separate type: the two ledgers evolve
+// independently (e.g. MRO-review states are drug-specific).
+enum DrugTestStatus {
   INITIATED
   IN_PROGRESS
   PASSED
@@ -270,6 +308,9 @@ enum NotificationStatus {
   SENT // delivered to provider (or in-app written)
   FAILED // provider returned an error
   READ // IN_APP only — recipient opened it
+  BOUNCED // EMAIL only — provider reported a bounce (async via Resend webhook)
+  COMPLAINED // EMAIL only — recipient marked it as spam (async via Resend webhook)
+  SUPPRESSED // EMAIL only — send short-circuited because the address is on the suppression list
 }
 
 enum PerformanceReviewStatus {
@@ -324,6 +365,18 @@ model User {
   role               Role
   status             UserStatus @default(INVITED)
   tokenVersion       Int        @default(0)
+  // SCIM 2.0 externalId passthrough — the identity provider's (Entra ID /
+  // Okta) own identifier for this account. Opaque to us; stored so we can
+  // echo it back on every SCIM read and the IdP can correlate resources.
+  scimExternalId     String?    @db.VarChar(255)
+  // Account lockout — persistent brute-force defense (complements the
+  // in-memory per-email rate limiter, which resets on deploy).
+  // failedLoginCount increments on every wrong-password attempt; when it
+  // reaches 10 the account locks for 15 minutes via lockedUntil. Both are
+  // reset on a successful password verification. Passkey (WebAuthn)
+  // sign-in ignores both fields — see /auth/webauthn/login/verify.
+  failedLoginCount   Int        @default(0)
+  lockedUntil        DateTime?  @db.Timestamptz(6)
   // IANA timezone preference for date display in /settings, login history,
   // and (later) email templates. Nullable — when null, the UI falls back
   // to the browser's locale, the email layer falls back to UTC.
@@ -358,6 +411,7 @@ model User {
   inviteTokens                      InviteToken[]
   passwordResetTokens               PasswordResetToken[]
   mfaRecoveryCodes                  MfaRecoveryCode[]
+  webauthnCredentials               WebAuthnCredential[]
   pushSubscriptions                 PushSubscription[]
   notificationPreferences           NotificationPreference[]
   emailChangeRequests               EmailChangeRequest[]
@@ -463,6 +517,8 @@ model User {
   // Phase 131 — assignment-row authorship (audit of who moved an
   // associate to which location, and why).
   associateAssignmentsNoted         AssociateAssignment[]         @relation("AssociateAssignmentNoter")
+  // Privacy erasures this admin performed (Associate.erasedById).
+  associatesErased                  Associate[]                   @relation("AssociateEraser")
 
   @@index([role])
   @@index([clientId])
@@ -588,6 +644,7 @@ model Client {
   // Phase 131 — physical sites under this client (one Client can have
   // many Locations, e.g. Walmart → Destin / Front Beach / PCB).
   locations              Location[]
+  shiftTeams             ShiftTeam[]
 
   @@index([status])
   @@index([deletedAt])
@@ -628,9 +685,48 @@ model Location {
   shifts       Shift[]
   kioskDevices KioskDevice[]
   timeEntries  TimeEntry[]
+  shiftTeams   ShiftTeam[]
 
   @@index([clientId, isActive])
   @@index([deletedAt])
+}
+
+// A standing crew at a work site — "Front Beach Morning", "Overnight team".
+// Scheduling filters its roster to a team's members so a manager building
+// the week sees only the people who actually work that shift, not the whole
+// client roster. Optional default start/end minutes prefill the create-shift
+// dialog when the team is selected.
+model ShiftTeam {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String    @db.Uuid
+  locationId  String    @db.Uuid
+  name        String    @db.VarChar(80)
+  /// Wall-clock minutes since local midnight at the site; null = no default.
+  startMinute Int?
+  endMinute   Int?
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime? @db.Timestamptz(6)
+
+  client   Client            @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  location Location          @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  members  ShiftTeamMember[]
+
+  @@index([clientId, deletedAt])
+  @@index([locationId, deletedAt])
+}
+
+model ShiftTeamMember {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId      String   @db.Uuid
+  associateId String   @db.Uuid
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+
+  team      ShiftTeam @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, associateId])
+  @@index([associateId])
 }
 
 // Phase 131 — effective-dated record of which Location an associate is
@@ -654,12 +750,20 @@ model AssociateAssignment {
 
   @@index([associateId, endedAt])
   @@index([locationId, startedAt])
+  @@index([locationId, endedAt])
 }
 
 model Associate {
   id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   firstName         String
   lastName          String
+  // E-Verify / Form I-9 Section 1 identity fields. Both are optional on the
+  // federal form but asked for, and without them the verifier hand-types
+  // them into the portal every time. otherLastNames is a Postgres text
+  // array — E-Verify collects prior surnames as a repeatable list, and an
+  // array matches that without a join table for what is usually 0-2 values.
+  middleInitial     String?        @db.VarChar(1)
+  otherLastNames    String[]       @default([])
   dob               DateTime?      @db.Date
   email             String         @unique
   phone             String?
@@ -736,6 +840,14 @@ model Associate {
   // 1 = the original pre-version token format, so URLs minted before
   // this column existed keep verifying.
   calendarFeedVersion Int          @default(1)
+  // Privacy erasure (admin-initiated, lib/erasure.ts). Set exactly once —
+  // identity fields are anonymized in place while payroll/tax history rows
+  // stay untouched (IRS 4-year / FLSA 3-year retention). erasedById is the
+  // admin who ran it; the written reason + per-category scrub counts live
+  // on the privacy.associate_erased AuditLog row.
+  erasedAt          DateTime?      @db.Timestamptz(6)
+  erasedById        String?        @db.Uuid
+  erasedBy          User?          @relation("AssociateEraser", fields: [erasedById], references: [id], onDelete: SetNull)
   createdAt         DateTime       @default(now()) @db.Timestamptz(6)
   updatedAt         DateTime       @updatedAt @db.Timestamptz(6)
   deletedAt         DateTime?      @db.Timestamptz(6)
@@ -746,6 +858,7 @@ model Associate {
   documents                DocumentRecord[]
   signatures               Signature[]               @relation("AssociateSignatures")
   backgroundChecks         BackgroundCheck[]
+  drugTests                DrugTest[]
   policyAcks               PolicyAcknowledgment[]
   i9Verification           I9Verification?
   w4Submission             W4Submission?
@@ -856,6 +969,8 @@ model Associate {
   // Phase 131 — location-assignment history. The open row (endedAt IS
   // NULL) is the associate's current work site.
   assignments              AssociateAssignment[]
+  // Standing shift-crew memberships (scheduling roster filter).
+  teamMemberships          ShiftTeamMember[]
   // Tier-2 — manual earning lines attached to draft runs.
   payrollRunAddOns         PayrollRunAddOn[]
 
@@ -904,6 +1019,11 @@ model Application {
   approvedAt      DateTime?            @db.Timestamptz(6)
   rejectedAt      DateTime?            @db.Timestamptz(6)
   rejectionReason String?
+  // Progress-reminder sweep bookkeeping: when the associate was last
+  // nagged about incomplete tasks and how many times (2nd+ escalates
+  // to HR).
+  progressRemindedAt DateTime?         @db.Timestamptz(6)
+  progressRemindCount Int              @default(0)
   associate       Associate            @relation(fields: [associateId], references: [id], onDelete: Restrict)
   client          Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
   location        Location?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
@@ -914,7 +1034,7 @@ model Application {
   deletedAt       DateTime?            @db.Timestamptz(6)
 
   @@index([associateId])
-  @@index([clientId, status])
+  @@index([clientId, status, associateId])
   @@index([locationId])
   @@index([status])
   @@index([invitedAt])
@@ -938,6 +1058,9 @@ model OnboardingTask {
   title           String
   description     String?
   order           Int
+  /// Days before the application's start date this task is due (null =
+  /// no deadline). Snapshot from the template at instantiation.
+  dueOffsetDays   Int?
   documentId      String?             @db.Uuid
   completedAt     DateTime?           @db.Timestamptz(6)
   checklist       OnboardingChecklist @relation(fields: [checklistId], references: [id], onDelete: Cascade)
@@ -971,6 +1094,10 @@ model OnboardingTemplateTask {
   title       String
   description String?
   order       Int
+  /// Days BEFORE the application's start date this task should be done
+  /// (0 = by the start date; null = no deadline). Copied onto each
+  /// instantiated OnboardingTask; drives the at-risk math.
+  dueOffsetDays Int?
   template    OnboardingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
   @@index([templateId])
@@ -1028,6 +1155,14 @@ model DocumentRecord {
   mimeType            String
   size                Int
   status              DocumentStatus                @default(UPLOADED)
+  // I-9 document catalog (2026-08). The specific federal document this file
+  // is ("U.S. Passport", "Driver's license", …) and the list it satisfies —
+  // the associate declares it at upload, so HR verification stops guessing
+  // from image.jpg thumbnails. All three NULLABLE by design: legacy uploads
+  // and non-I-9 documents carry NULLs and are never reclassified.
+  i9DocTitle          String?                       @db.VarChar(80)
+  i9List              I9DocList?
+  side                DocSide?
   expiresAt           DateTime?                     @db.Timestamptz(6)
   rejectionReason     String?
   verifiedById        String?                       @db.Uuid
@@ -1042,7 +1177,7 @@ model DocumentRecord {
   deletedAt           DateTime?                     @db.Timestamptz(6)
 
   @@index([associateId, kind])
-  @@index([status])
+  @@index([status, createdAt(sort: Desc)])
   @@index([expiresAt])
   @@index([clientId])
   @@index([deletedAt])
@@ -1128,6 +1263,27 @@ model BackgroundCheck {
   @@index([clientId])
 }
 
+// Drug-screen ledger — mirrors BackgroundCheck. The key difference lives
+// OUTSIDE this table: the Walmart SOW requires a result within 60 DAYS, so
+// drug testing recurs — the "needs a test" roster is driven by the recency
+// of DRUG_TEST_RESULT documents (which the scorecard signal also reads),
+// not by whether a row ever existed here. Rows record orders and outcomes.
+model DrugTest {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String         @db.Uuid
+  clientId    String?        @db.Uuid
+  provider    String
+  externalId  String?
+  status      DrugTestStatus @default(INITIATED)
+  initiatedAt DateTime       @default(now()) @db.Timestamptz(6)
+  completedAt DateTime?      @db.Timestamptz(6)
+  associate   Associate      @relation(fields: [associateId], references: [id], onDelete: Restrict)
+
+  @@index([associateId])
+  @@index([status])
+  @@index([clientId])
+}
+
 model I9Verification {
   id                         String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId                String               @unique @db.Uuid
@@ -1161,6 +1317,11 @@ model I9Verification {
   // as fully E-Verified only when status = EMPLOYMENT_AUTHORIZED.
   eVerifyCaseNumber          String?
   eVerifyStatus              EVerifyStatus?
+  // When the case was created in the federal portal. E-Verify must be run
+  // within 3 business days of the employee's first day worked, so without
+  // an opened-at stamp the queue can't say what's overdue — which is most
+  // of the point of having a queue.
+  eVerifyCaseOpenedAt        DateTime?            @db.Timestamptz(6)
   eVerifyClosedAt            DateTime?            @db.Timestamptz(6)
   associate                  Associate            @relation(fields: [associateId], references: [id], onDelete: Cascade)
   section2Verifier           User?                @relation("I9Verifier", fields: [section2VerifierUserId], references: [id], onDelete: SetNull)
@@ -1189,9 +1350,19 @@ model PayoutMethod {
   id               String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId      String     @db.Uuid
   type             PayoutType
+  // Despite the name, routingNumberEnc holds PLAIN UTF-8 bytes — routing
+  // numbers are public (printed on every cheque) so they're stored
+  // unencrypted. Only accountNumberEnc is real ciphertext. Read routing
+  // with toString('utf8'), not decryptString.
   routingNumberEnc Bytes?
   accountNumberEnc Bytes?
   accountType      String?
+  // Free-text institution name ("Chase", "Bank of America"). Collected at
+  // direct-deposit setup because nothing derives it: there's no ABA routing
+  // directory in the product, and external payroll providers expect the
+  // column on their intake file. Nullable — every row predating this and
+  // every Branch-card method leaves it empty.
+  bankName         String?
   branchCardId     String?
   isPrimary        Boolean    @default(false)
   verifiedAt       DateTime?  @db.Timestamptz(6)
@@ -1260,9 +1431,9 @@ model TimeEntry {
   // At most one ACTIVE row per associate at any time. Postgres treats this
   // as a partial unique via the where clause below.
   @@index([associateId, clockInAt])
-  @@index([clientId, status])
+  @@index([clientId, status, clockInAt])
   @@index([locationId, status])
-  @@index([status])
+  @@index([status, clockInAt])
   @@index([jobId])
   @@index([projectId])
   @@index([shiftId])
@@ -1595,6 +1766,7 @@ model ShiftSwapRequest {
   updatedAt               DateTime        @updatedAt @db.Timestamptz(6)
 
   @@index([shiftId])
+  @@index([status, createdAt(sort: Desc)])
   @@index([counterpartyAssociateId, status])
   @@index([requesterAssociateId, status])
 }
@@ -1669,7 +1841,7 @@ model PayrollRun {
   updatedAt                DateTime                  @updatedAt @db.Timestamptz(6)
 
   @@index([clientId, periodStart])
-  @@index([status])
+  @@index([status, disbursedAt])
   @@index([kind])
   @@index([amendsRunId])
 }
@@ -2059,6 +2231,44 @@ model MfaRecoveryCode {
   @@index([userId, usedAt])
 }
 
+// A registered passkey (WebAuthn credential). Face ID / Touch ID /
+// Windows Hello sign-in without a password. Passkeys count as
+// possession + biometric, so a passkey login bypasses the TOTP step.
+model WebAuthnCredential {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @db.Uuid
+  // base64url credential ID from the authenticator — the lookup key
+  // during authentication.
+  credentialId String    @unique @db.VarChar(512)
+  publicKey    Bytes     @db.ByteA
+  // Signature counter — SimpleWebAuthn flags clones when it regresses.
+  counter      BigInt    @default(0)
+  transports   String[]  @default([])
+  // User-facing label ("iPhone", "MacBook") so the settings list is
+  // tellable-apart when someone registers several.
+  deviceName   String?   @db.VarChar(80)
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+  lastUsedAt   DateTime? @db.Timestamptz(6)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// Short-lived WebAuthn ceremony challenges. A row is minted when options
+// are generated, consumed (deleted) on verify, and swept by expiry — the
+// server never trusts a challenge echoed back by the client.
+model WebAuthnChallenge {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  challenge String   @db.VarChar(512)
+  // Null for authentication ceremonies started by email (no session).
+  userId    String?  @db.Uuid
+  type      String   @db.VarChar(16) // 'registration' | 'authentication'
+  expiresAt DateTime @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([expiresAt])
+}
+
 // Per-user opt-out for transactional EMAIL by category bucket. Default
 // is "send" — a row exists only when the user has actively muted (or
 // re-enabled) something. IN_APP delivery is unaffected; the bell is the
@@ -2143,6 +2353,12 @@ model Notification {
   category        String?
   // Provider's id for the sent message (Twilio SID, FCM message id).
   externalRef     String?
+  // Resend's message id for real EMAIL sends. Kept as its own (indexed)
+  // column — externalRef also carries STUB-* refs and other providers' ids
+  // — so the /resend/webhook handler can match async delivery events
+  // (delivered / bounced / complained) back to this row. Nullable: stub
+  // sends, non-EMAIL channels, and rows created before this column.
+  providerMessageId String?
   failureReason   String?
   sentAt          DateTime?           @db.Timestamptz(6)
   readAt          DateTime?           @db.Timestamptz(6)
@@ -2160,8 +2376,16 @@ model Notification {
   // ORDER BY createdAt DESC. Matching index order lets the planner do an
   // in-order index scan instead of reverse-scanning.
   @@index([recipientUserId, createdAt(sort: Desc)])
-  @@index([status])
-  @@index([category])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([category, createdAt(sort: Desc)])
+  @@index([channel, createdAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+  // Webhook-event matching. providerMessageId is the primary key for the
+  // lookup; externalRef is the fallback for rows written by send paths
+  // that only stored the Resend id there (it equals the Resend id for
+  // every real send made before providerMessageId existed).
+  @@index([providerMessageId])
+  @@index([externalRef])
 }
 
 model AuditLog {
@@ -2180,9 +2404,10 @@ model AuditLog {
   // Drops the previously-separate (entityType, entityId) index since this
   // composite is a strict superset.
   @@index([entityType, entityId, createdAt(sort: Desc)])
-  @@index([actorUserId])
-  @@index([clientId])
+  @@index([actorUserId, createdAt(sort: Desc)])
+  @@index([clientId, createdAt(sort: Desc)])
   @@index([createdAt])
+  @@index([action, createdAt(sort: Desc)])
 }
 
 // ===== Phase 42 — Benefits enrollment =====================================
@@ -3983,6 +4208,7 @@ model AcaMonth {
 
 enum WebhookDeliveryStatus {
   PENDING
+  RETRYING
   DELIVERED
   FAILED
 }
@@ -4036,6 +4262,9 @@ model WebhookDelivery {
   status         WebhookDeliveryStatus @default(PENDING)
   attemptCount   Int                   @default(0)
   lastAttemptAt  DateTime?             @db.Timestamptz(6)
+  // When the worker may (re)attempt this row. NULL = due immediately
+  // (also covers rows enqueued before this column existed).
+  nextAttemptAt  DateTime?             @db.Timestamptz(6)
   responseStatus Int?
   responseBody   String?
   deliveredAt    DateTime?             @db.Timestamptz(6)
@@ -4045,6 +4274,7 @@ model WebhookDelivery {
 
   @@index([webhookId])
   @@index([status])
+  @@index([status, nextAttemptAt])
 }
 
 // Phase 94 — LMS: courses, modules, enrollments, certifications.
@@ -4232,6 +4462,9 @@ model ReportSchedule {
   recipients String
   isActive   Boolean               @default(true)
   lastRunAt  DateTime?             @db.Timestamptz(6)
+  // Outcome of the most recent delivery attempt: "SUCCESS", "PARTIAL (n/m
+  // delivered)", or "FAILED: <reason>". Null until the first run.
+  lastStatus String?
   nextRunAt  DateTime              @db.Timestamptz(6)
   createdAt  DateTime              @default(now()) @db.Timestamptz(6)
   updatedAt  DateTime              @updatedAt @db.Timestamptz(6)
@@ -4317,7 +4550,7 @@ model Reimbursement {
   lines             ExpenseLine[]
 
   @@index([associateId, status])
-  @@index([status])
+  @@index([status, createdAt(sort: Desc)])
 }
 
 model ExpenseLine {
@@ -4499,7 +4732,7 @@ model KioskPunch {
   enrolledFaceRefs KioskFaceReference[] @relation("KioskFaceEnrolledByPunch")
 
   @@index([kioskDeviceId])
-  @@index([associateId])
+  @@index([associateId, createdAt(sort: Desc)])
   @@index([createdAt])
   // Phase 131 hardening — the HR review queue lists PENDING punches
   // ordered by recency. Without this composite, Postgres scans every
@@ -5121,8 +5354,12 @@ model Agreement {
   supersedesId  String?         @db.Uuid
   notes         String?
   issuedById    String?         @db.Uuid
+  /// Last unsigned-agreement reminder sent by the daily sweep.
+  reminderSentAt DateTime?      @db.Timestamptz(6)
   createdAt     DateTime        @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime        @updatedAt @db.Timestamptz(6)
+  /// Soft delete — a legal record is never hard-deleted.
+  deletedAt     DateTime?       @db.Timestamptz(6)
 
   associate    Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
   supersedes   Agreement?  @relation("AgreementSupersedes", fields: [supersedesId], references: [id], onDelete: SetNull)
@@ -5594,6 +5831,11 @@ model OrgSetting {
   // re-price already-approved rows. IRS announces the next-year rate in
   // December; HR updates this column at year start.
   mileageRatePerMile Decimal   @default(0.6700) @db.Decimal(8, 4)
+  // Org-enforced MFA policy. OFF = opt-in only. ADMINS = admin-class roles
+  // (derived from capabilities — see isMfaAdminRole in packages/shared)
+  // must enroll in TOTP before a password sign-in completes. ALL = every
+  // human role. Passkey sign-in is exempt (it is already strong auth).
+  mfaRequirement     MfaRequirement @default(OFF)
   updatedAt          DateTime  @updatedAt @db.Timestamptz(6)
 }
 
@@ -5762,6 +6004,55 @@ model BranchWebhookEvent {
   @@index([status, receivedAt])
 }
 
+enum ResendWebhookStatus {
+  PROCESSED // matched a Notification row and applied the status change
+  IGNORED // valid signature but unhandled event type / unknown message id
+  ERROR // exception during processing; admin needs to investigate
+}
+
+// Audit log of every inbound Resend email-event webhook delivery + the
+// idempotency mechanism (mirrors BranchWebhookEvent). svixId — Svix's
+// per-delivery message id — is UNIQUE so a duplicate POST collapses at
+// INSERT and the handler skips reprocessing.
+model ResendWebhookEvent {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  svixId         String              @unique
+  // email.delivered, email.bounced, email.complained, etc.
+  eventType      String
+  payload        Json
+  status         ResendWebhookStatus @default(PROCESSED)
+  // Matched Notification when applicable; null for IGNORED rows.
+  notificationId String?             @db.Uuid
+  // Free-text "why" for non-PROCESSED rows (unknown message id, parse error).
+  notes          String?
+  receivedAt     DateTime            @default(now()) @db.Timestamptz(6)
+  processedAt    DateTime?           @db.Timestamptz(6)
+
+  @@index([eventType, receivedAt])
+  @@index([status, receivedAt])
+}
+
+enum EmailSuppressionReason {
+  BOUNCED // hard bounce reported by the provider
+  COMPLAINED // recipient marked a message as spam
+  MANUAL // admin added the address by hand
+}
+
+// Do-not-email list. Before any real EMAIL send, lib/notifications.ts
+// checks this table and short-circuits to a SUPPRESSED delivery status —
+// continuing to mail hard-bounced or complaining addresses tanks sender
+// reputation for everyone. Rows are upserted by the /resend/webhook
+// handler on hard bounce / complaint and removable by admins (audited)
+// via /communications/admin/suppressions.
+model EmailSuppression {
+  id        String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Always stored lowercased; lookups lowercase the candidate first.
+  email     String                 @unique
+  reason    EmailSuppressionReason
+  notes     String?
+  createdAt DateTime               @default(now()) @db.Timestamptz(6)
+}
+
 // Manual compliance attestation — used for billing/invoicing scorecard
 // signals where the actual action happens outside Alto (Fieldglass,
 // Walmart vendor portal, QBO) and the only thing we track is "did HR
@@ -5820,6 +6111,33 @@ model TimesheetFiling {
   createdAt  DateTime @default(now()) @db.Timestamptz(6)
   updatedAt  DateTime @updatedAt @db.Timestamptz(6)
 
+  // NOTE: this compound unique does NOT constrain clientId=NULL rows —
+  // Postgres treats NULLs as distinct. The org-wide filing's uniqueness is
+  // enforced by a hand-managed partial index (migration 20260730180000):
+  //   CREATE UNIQUE INDEX ... ON "TimesheetFiling"("weekStart")
+  //     WHERE "clientId" IS NULL;
+  // Same pattern as TimeEntry's one-ACTIVE-per-associate partial unique.
   @@unique([weekStart, clientId])
   @@index([weekStart])
+}
+
+/// One remembered response per (user, method, path, Idempotency-Key).
+/// Backs the optional Idempotency-Key request header on money-moving /
+/// bulk-send POST endpoints: a network-level retry with the same key
+/// replays the stored response instead of re-executing the mutation.
+/// responseStatus NULL marks an in-flight original (claims the key);
+/// rows expire after 24h and are swept hourly.
+model IdempotencyRecord {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String   @db.Uuid
+  method         String   @db.VarChar(10)
+  path           String   @db.VarChar(512)
+  key            String   @db.VarChar(200)
+  requestHash    String   @db.VarChar(64)
+  responseStatus Int?
+  responseBody   Json?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([userId, method, path, key])
+  @@index([createdAt])
 }

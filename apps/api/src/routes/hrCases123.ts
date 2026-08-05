@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { hasCapability } from '@alto-people/shared';
+import { notifyAllAdmins, notifyAssociate } from '../lib/notify.js';
 
 /**
  * Phase 123 — HR cases (ticketing).
@@ -65,6 +66,14 @@ hrCases123Router.post('/hr-cases', requireAuth, async (req, res) => {
       description: input.description,
       priority: input.priority,
     },
+  });
+  // Fire-and-forget after the write — never inside a transaction.
+  void notifyAllAdmins({
+    subject: `New HR case: ${input.subject}`,
+    body: `A new HR case was filed (category ${input.category}, priority ${input.priority}): "${input.subject}".`,
+    category: 'hr-cases',
+    linkUrl: '/hr-cases',
+    excludeUserId: req.user!.id,
   });
   res.status(201).json({ id: created.id });
 });
@@ -253,6 +262,21 @@ hrCases123Router.post(
       where: { id },
       data: { updatedAt: new Date() },
     });
+    // HR replied (not an internal note) → tell the associate. Skip when the
+    // commenter is the case's own associate (they don't need an echo).
+    if (
+      canManage &&
+      !input.internalNote &&
+      req.user!.associateId !== c.associateId
+    ) {
+      void notifyAssociate(c.associateId, {
+        subject: 'New reply on your HR case',
+        body: `HR replied on your case "${c.subject}". Open HR cases to read and respond.`,
+        category: 'hr-cases',
+        linkUrl: '/hr-cases',
+        emailFallback: true,
+      });
+    }
     res.status(201).json({ id: created.id });
   },
 );
@@ -286,6 +310,19 @@ hrCases123Router.patch('/hr-cases/:id', MANAGE, async (req, res) => {
       ...(willResolve ? { resolvedAt: new Date() } : {}),
     },
   });
+  if (willResolve) {
+    const resolution =
+      input.resolution !== undefined ? input.resolution : c.resolution;
+    void notifyAssociate(c.associateId, {
+      subject: 'Your HR case was resolved',
+      body:
+        `Your case "${c.subject}" has been marked resolved.` +
+        (resolution ? ` Resolution: ${resolution}` : ''),
+      category: 'hr-cases',
+      linkUrl: '/hr-cases',
+      emailFallback: true,
+    });
+  }
   res.json({ ok: true });
 });
 

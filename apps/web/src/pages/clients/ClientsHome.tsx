@@ -9,7 +9,6 @@ import {
   List,
   MapPin,
   Plus,
-  Search,
   Users,
   type LucideIcon,
 } from 'lucide-react';
@@ -24,7 +23,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
-import { Input } from '@/components/ui/Input';
+import { FilterBar, FilterChip, SearchInput } from '@/components/ui/FilterBar';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import {
@@ -44,7 +43,7 @@ const STATUS_VARIANT: Record<
 > = {
   ACTIVE: 'success',
   PROSPECT: 'pending',
-  INACTIVE: 'default',
+  INACTIVE: 'destructive',
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -79,6 +78,8 @@ export function ClientsHome() {
   const canManage = can('manage:clients');
 
   const [items, setItems] = useState<ClientListItem[] | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [statusFilter, setStatusFilter] = useState<ClientStatus | 'ALL'>('ALL');
@@ -97,10 +98,33 @@ export function ClientsHome() {
         q: appliedQuery,
       });
       setItems(res.clients);
+      setNextCursor(res.nextCursor ?? null);
+      setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
   }, [statusFilter, appliedQuery]);
+
+  const loadMore = async () => {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await listClients({
+        status: statusFilter === 'ALL' ? undefined : statusFilter,
+        q: appliedQuery,
+        cursor: nextCursor,
+      });
+      setItems((prev) => [...(prev ?? []), ...res.clients]);
+      setNextCursor(res.nextCursor ?? null);
+    } catch (err) {
+      // The "Load more" button stays visible, so pressing it again retries.
+      toast.error('Could not load more clients.', {
+        description: err instanceof ApiError ? err.message : String(err),
+      });
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   useEffect(() => {
     refresh();
@@ -113,7 +137,7 @@ export function ClientsHome() {
   useEffect(() => {
     const code = searchParams.get('qbo_error');
     if (!code) return;
-    toast.error('QuickBooks connection failed', {
+    toast.error('QuickBooks connection failed.', {
       description:
         code === 'invalid_state'
           ? 'Connection request expired or was tampered with. Try connecting again from the client page.'
@@ -140,34 +164,43 @@ export function ClientsHome() {
         }
       />
 
-      {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
-
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-1 rounded-md border border-navy-secondary p-0.5 bg-navy-secondary/30">
-          {STATUS_FILTERS.map((f) => (
-            <Button
-              key={f.value}
-              size="sm"
-              variant={statusFilter === f.value ? 'primary' : 'ghost'}
-              onClick={() => setStatusFilter(f.value)}
-              className="h-9 uppercase tracking-wider rounded-sm"
-            >
-              {f.label}
+      {error && (
+        <ErrorBanner className="mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => refresh()}>
+              Retry
             </Button>
-          ))}
-        </div>
-        <div className="relative flex-1 min-w-[14rem] max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver" />
-          <Input
+          </div>
+        </ErrorBanner>
+      )}
+
+      <FilterBar className="mb-4">
+        {STATUS_FILTERS.map((f) => (
+          <FilterChip
+            key={f.value}
+            active={statusFilter === f.value}
+            onClick={() => setStatusFilter(f.value)}
+          >
+            {f.label}
+          </FilterChip>
+        ))}
+        <div className="flex-1 min-w-[14rem] max-w-md">
+          <SearchInput
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by name…"
-            className="pl-9"
             aria-label="Search clients"
           />
         </div>
-        <span className="ml-auto text-[10px] text-silver/80 tabular-nums">
-          {items ? `${items.length} client${items.length === 1 ? '' : 's'}` : ''}
+        <span className="ml-auto text-2xs text-silver/80 tabular-nums">
+          {items
+            ? nextCursor
+              ? // More pages exist server-side — don't present the page
+                // length as the total.
+                `${items.length} shown`
+              : `${items.length} client${items.length === 1 ? '' : 's'}`
+            : ''}
         </span>
         <ViewToggle<ClientsView>
           value={view}
@@ -177,7 +210,7 @@ export function ClientsHome() {
             { value: 'table', label: 'Table', icon: List },
           ]}
         />
-      </div>
+      </FilterBar>
 
       {!items && !error && view === 'cards' && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -293,6 +326,14 @@ export function ClientsHome() {
         </Card>
       )}
 
+      {items && nextCursor && (
+        <div className="mt-4 flex justify-center">
+          <Button variant="outline" onClick={loadMore} loading={loadingMore}>
+            Load more
+          </Button>
+        </div>
+      )}
+
       <NewClientDialog
         open={showNew}
         onOpenChange={setShowNew}
@@ -381,7 +422,7 @@ function KpiTile({
           : 'text-silver/70';
   return (
     <div className="min-w-0">
-      <div className="text-[10px] uppercase tracking-widest text-silver/80 flex items-center gap-1">
+      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1">
         <Icon className="h-3 w-3" aria-hidden="true" />
         <span className="truncate">{label}</span>
       </div>

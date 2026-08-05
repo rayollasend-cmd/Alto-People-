@@ -65,6 +65,7 @@ const blankTask = (): DraftTask => ({
   kind: 'PROFILE_INFO',
   title: 'Profile information',
   description: '',
+  dueOffsetDays: null,
 });
 
 // Stable stringification for dirty-tracking. Ignores `_key` (local
@@ -84,6 +85,7 @@ function serialiseForm(
       kind: t.kind,
       title: t.title.trim(),
       description: (t.description ?? '').trim(),
+      dueOffsetDays: t.dueOffsetDays ?? null,
     })),
   });
 }
@@ -121,7 +123,13 @@ export function TemplateEditor() {
     let cancelled = false;
     listClients()
       .then((r) => !cancelled && setClients(r.clients))
-      .catch(() => !cancelled && setClients([]));
+      .catch(() => {
+        // Keep the form usable (global templates need no client) but say
+        // why the client picker is empty instead of failing silently.
+        if (cancelled) return;
+        setClients([]);
+        setError('Could not load the client list — client-specific templates are unavailable until you reload.');
+      });
     if (!isNew && id) {
       // No GET /templates/:id endpoint — list and pick. Cheap; only HR
       // hits this and templates are tens, not thousands.
@@ -130,7 +138,7 @@ export function TemplateEditor() {
           if (cancelled) return;
           const t = r.templates.find((x) => x.id === id);
           if (!t) {
-            setError('Template not found');
+            setError('Template not found.');
             return;
           }
           setLoadedTemplate(t);
@@ -143,6 +151,7 @@ export function TemplateEditor() {
             title: tk.title,
             description: tk.description ?? '',
             order: tk.order,
+            dueOffsetDays: tk.dueOffsetDays ?? null,
           }));
           setTasks(loadedTasks);
           setPristine(serialiseForm(t.name, t.track, t.clientId ?? '', loadedTasks));
@@ -189,19 +198,19 @@ export function TemplateEditor() {
 
   const submit = async () => {
     if (!name.trim()) {
-      toast.error('Template name is required');
+      toast.error('Template name is required.');
       return;
     }
     if (track === 'CLIENT_SPECIFIC' && !clientId) {
-      toast.error('Client-specific templates need a client');
+      toast.error('Client-specific templates need a client.');
       return;
     }
     if (tasks.length === 0) {
-      toast.error('At least one task is required');
+      toast.error('At least one task is required.');
       return;
     }
     if (tasks.some((t) => !t.title.trim())) {
-      toast.error('Every task needs a title');
+      toast.error('Every task needs a title.');
       return;
     }
     setSaving(true);
@@ -215,27 +224,28 @@ export function TemplateEditor() {
           title: t.title.trim(),
           description: t.description?.trim() || null,
           order: i,
+          dueOffsetDays: t.dueOffsetDays ?? null,
         })),
       };
       if (isNew) {
         const created = await createTemplate(body);
-        toast.success(`Created "${created.name}"`);
+        toast.success(`Created "${created.name}".`);
         justSavedRef.current = true;
         navigate('/onboarding/templates');
       } else if (id) {
         await updateTemplate(id, body);
-        toast.success(`Saved "${body.name}"`);
+        toast.success(`Saved "${body.name}".`);
         justSavedRef.current = true;
         navigate('/onboarding/templates');
       }
     } catch (err) {
       const msg =
-        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Save failed';
+        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Save failed.';
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'template_track_taken') {
-        toast.error('Track already used', { description: msg });
+        toast.error('That track is already used.', { description: msg });
       } else {
-        toast.error('Could not save', { description: msg });
+        toast.error('Could not save the template.', { description: msg });
       }
     } finally {
       setSaving(false);
@@ -294,7 +304,7 @@ export function TemplateEditor() {
           <Field
             label="Track"
             required
-            hint="One template per (client, track) pair. STANDARD/J-1 are usually global; CLIENT_SPECIFIC always needs a client."
+            hint="One template per client-and-track pair. Standard and J-1 are usually global; client-specific always needs a client."
           >
             {(p) => (
               <Select
@@ -345,6 +355,10 @@ export function TemplateEditor() {
           Add task
         </Button>
       </div>
+      <p className="mb-3 -mt-1 text-xs text-silver/70">
+        Deadlines (&ldquo;due N days before start&rdquo;, 0 = by the start date)
+        drive the at-risk indicators on the applications list.
+      </p>
 
       <div className="space-y-2.5 mb-6">
         {tasks.map((t, i) => (
@@ -407,6 +421,32 @@ export function TemplateEditor() {
                       rows={2}
                       maxLength={500}
                       placeholder="What the associate should know about this step (optional)"
+                      {...p}
+                    />
+                  )}
+                </Field>
+                <Field label="Due (days before start)">
+                  {(p) => (
+                    <Input
+                      type="number"
+                      min={0}
+                      max={365}
+                      step={1}
+                      value={t.dueOffsetDays ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === '') {
+                          updateTask(i, { dueOffsetDays: null });
+                          return;
+                        }
+                        const n = Number(v);
+                        if (!Number.isFinite(n)) return;
+                        updateTask(i, {
+                          dueOffsetDays: Math.min(365, Math.max(0, Math.floor(n))),
+                        });
+                      }}
+                      placeholder="No deadline"
+                      className="max-w-[10rem]"
                       {...p}
                     />
                   )}

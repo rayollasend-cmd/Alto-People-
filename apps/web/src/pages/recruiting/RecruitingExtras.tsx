@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
-import { Briefcase, ClipboardList, Gift, Plus, Send } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Briefcase, ClipboardList, Download, Gift, Plus, Send, UserPlus, X } from 'lucide-react';
+import type { Candidate } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import {
   closeJobPosting,
+  convertReferral,
   createInterviewKit,
   createJobPosting,
   createOffer,
@@ -26,6 +28,9 @@ import {
   type ReferralRecord,
   type ReferralStatus,
 } from '@/lib/recruiting90Api';
+import { listCandidates } from '@/lib/recruitingApi';
+import { listClients } from '@/lib/clientsApi';
+import { downloadCsv } from '@/lib/csv';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
@@ -40,6 +45,7 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
   Select,
@@ -56,11 +62,182 @@ import {
   TabsTrigger,
   Textarea,
 } from '@/components/ui';
+import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { toast } from 'sonner';
 
 type Tab = 'kits' | 'offers' | 'referrals' | 'postings';
+
+// ----- Shared bits -------------------------------------------------------
+
+/** Inline load-failure affordance: real error + Retry, never a fake empty. */
+function LoadErrorState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="p-6">
+      <ErrorBanner
+        action={
+          <Button size="sm" variant="secondary" onClick={onRetry}>
+            Retry
+          </Button>
+        }
+      >
+        {message}
+      </ErrorBanner>
+    </div>
+  );
+}
+
+function errMessage(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
+}
+
+/** Client list for the offer/posting drawers' <Select>. */
+function useClients() {
+  const [clients, setClients] = useState<Array<{ id: string; name: string }> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(() => {
+    setError(null);
+    listClients()
+      .then((r) => setClients(r.clients.map((c) => ({ id: c.id, name: c.name }))))
+      .catch((err) => setError(errMessage(err, 'Failed to load clients.')));
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  return { clients, error, reload: load };
+}
+
+interface PickedCandidate {
+  id: string;
+  name: string;
+}
+
+/**
+ * Candidate typeahead that resolves to {id, name} — same UX as
+ * AssociatePicker, but over the recruiting candidate list (loaded once,
+ * filtered client-side by name/email with a small debounce). Replaces the
+ * raw-UUID input on the offer drawer.
+ */
+function CandidatePicker({
+  value,
+  onChange,
+  placeholder = 'Search candidate by name or email…',
+}: {
+  value: PickedCandidate | null;
+  onChange: (v: PickedCandidate | null) => void;
+  placeholder?: string;
+}) {
+  const [term, setTerm] = useState('');
+  const [all, setAll] = useState<Candidate[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [results, setResults] = useState<Array<PickedCandidate & { email: string }>>([]);
+  const [open, setOpen] = useState(false);
+
+  const load = useCallback(() => {
+    setLoadError(null);
+    listCandidates()
+      .then((r) => setAll(r.candidates))
+      .catch((err) => setLoadError(errMessage(err, 'Failed to load candidates.')));
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    if (value || !all || term.trim().length < 2) {
+      setResults([]);
+      return;
+    }
+    const t = setTimeout(() => {
+      const q = term.trim().toLowerCase();
+      setResults(
+        all
+          .filter(
+            (c) =>
+              `${c.firstName} ${c.lastName}`.toLowerCase().includes(q) ||
+              c.email.toLowerCase().includes(q),
+          )
+          .slice(0, 8)
+          .map((c) => ({
+            id: c.id,
+            name: `${c.firstName} ${c.lastName}`.trim(),
+            email: c.email,
+          })),
+      );
+      setOpen(true);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [term, value, all]);
+
+  if (value) {
+    return (
+      <div className="flex items-center justify-between rounded-md border border-navy-secondary bg-navy px-3 py-2 text-sm">
+        <span className="text-white">{value.name}</span>
+        <button
+          type="button"
+          onClick={() => {
+            onChange(null);
+            setTerm('');
+          }}
+          className="text-silver/60 hover:text-white"
+          aria-label="Clear candidate"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <ErrorBanner
+        action={
+          <Button size="sm" variant="secondary" onClick={load}>
+            Retry
+          </Button>
+        }
+      >
+        {loadError}
+      </ErrorBanner>
+    );
+  }
+
+  return (
+    <div className="relative">
+      <Input
+        placeholder={placeholder}
+        value={term}
+        onChange={(e) => setTerm(e.target.value)}
+        onFocus={() => results.length > 0 && setOpen(true)}
+      />
+      {open && results.length > 0 && (
+        <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-navy-secondary bg-navy elev-2">
+          {results.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              className="block w-full px-3 py-2 text-left text-sm text-silver hover:bg-navy-secondary hover:text-white"
+              onClick={() => {
+                onChange({ id: r.id, name: r.name });
+                setOpen(false);
+              }}
+            >
+              <span className="block text-white">{r.name}</span>
+              <span className="block text-xs text-silver/70">{r.email}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function RecruitingExtras() {
   const { user } = useAuth();
@@ -103,14 +280,16 @@ export function RecruitingExtras() {
 function KitsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [kits, setKits] = useState<InterviewKit[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [editTarget, setEditTarget] = useState<InterviewKit | null>(null);
 
   const refresh = () => {
     setKits(null);
+    setError(null);
     listInterviewKits()
       .then((r) => setKits(r.kits))
-      .catch(() => setKits([]));
+      .catch((err) => setError(errMessage(err, 'Failed to load interview kits.')));
   };
   useEffect(() => {
     refresh();
@@ -122,7 +301,7 @@ function KitsTab({ canManage }: { canManage: boolean }) {
       await deleteInterviewKit(id);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errMessage(err, 'Could not delete the kit.'));
     }
   };
 
@@ -137,13 +316,22 @@ function KitsTab({ canManage }: { canManage: boolean }) {
       )}
       <Card>
         <CardContent className="p-0">
-          {kits === null ? (
+          {error ? (
+            <LoadErrorState message={error} onRetry={refresh} />
+          ) : kits === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : kits.length === 0 ? (
             <EmptyState
               icon={ClipboardList}
               title="No kits"
               description="Build interview kits with structured questions to keep panels consistent."
+              action={
+                canManage ? (
+                  <Button onClick={() => setShowNew(true)}>
+                    <Plus className="mr-2 h-4 w-4" /> New kit
+                  </Button>
+                ) : undefined
+              }
             />
           ) : (
             <Table>
@@ -160,7 +348,7 @@ function KitsTab({ canManage }: { canManage: boolean }) {
                   <TableRow key={k.id} className="group">
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{k.name}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {fmtDate(k.updatedAt)}
                       </div>
                     </TableCell>
@@ -170,7 +358,7 @@ function KitsTab({ canManage }: { canManage: boolean }) {
                       {canManage && (
                         <button
                           onClick={() => setEditTarget(k)}
-                          className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-white transition text-xs"
+                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-white transition text-xs"
                         >
                           Edit
                         </button>
@@ -178,7 +366,7 @@ function KitsTab({ canManage }: { canManage: boolean }) {
                       {canManage && (
                         <button
                           onClick={() => onDelete(k.id)}
-                          className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
+                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
                         >
                           Delete
                         </button>
@@ -232,7 +420,7 @@ function EditKitDrawer({
 
   const onSubmit = async () => {
     if (!name.trim()) {
-      toast.error('Name required.');
+      toast.error('Name is required.');
       return;
     }
     // Preserve `kind` and `hint` for prompts that already exist; default to
@@ -255,7 +443,7 @@ function EditKitDrawer({
       toast.success('Kit updated.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errMessage(err, 'Could not update the kit.'));
     } finally {
       setSaving(false);
     }
@@ -308,7 +496,7 @@ function NewKitDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
   const [saving, setSaving] = useState(false);
   const onSubmit = async () => {
     if (!name.trim()) {
-      toast.error('Name required.');
+      toast.error('Name is required.');
       return;
     }
     const questions = questionsText
@@ -326,7 +514,7 @@ function NewKitDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
       toast.success('Kit created.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errMessage(err, 'Could not create the kit.'));
     } finally {
       setSaving(false);
     }
@@ -374,66 +562,139 @@ function NewKitDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
 // ----- Offers -----------------------------------------------------------
 
 const OFFER_BADGE: Record<OfferRecord['status'], 'default' | 'success' | 'pending' | 'destructive' | 'accent'> = {
-  DRAFT: 'pending',
+  DRAFT: 'default',
   SENT: 'accent',
   ACCEPTED: 'success',
   DECLINED: 'destructive',
-  EXPIRED: 'default',
-  WITHDRAWN: 'default',
+  EXPIRED: 'destructive',
+  WITHDRAWN: 'destructive',
+};
+
+const OFFER_STATUS_LABELS: Record<OfferRecord['status'], string> = {
+  DRAFT: 'Draft',
+  SENT: 'Sent',
+  ACCEPTED: 'Accepted',
+  DECLINED: 'Declined',
+  EXPIRED: 'Expired',
+  WITHDRAWN: 'Withdrawn',
 };
 
 function OffersTab({ canManage }: { canManage: boolean }) {
   const [offers, setOffers] = useState<OfferRecord[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
 
   const refresh = () => {
     setOffers(null);
+    setError(null);
     listOffers()
       .then((r) => setOffers(r.offers))
-      .catch(() => setOffers([]));
+      .catch((err) => setError(errMessage(err, 'Failed to load offers.')));
   };
   useEffect(() => {
     refresh();
   }, []);
 
+  const filtered = useMemo(() => {
+    if (!offers) return null;
+    const q = search.trim().toLowerCase();
+    if (!q) return offers;
+    return offers.filter((o) => o.candidateName.toLowerCase().includes(q));
+  }, [offers, search]);
+
+  const onExport = () => {
+    if (!filtered || filtered.length === 0) return;
+    downloadCsv(`offers-${ymdLocal()}.csv`, [
+      ['Candidate', 'Client', 'Job title', 'Start date', 'Salary', 'Hourly rate', 'Currency', 'Status', 'Sent at', 'Decided at'],
+      ...filtered.map((o) => [
+        o.candidateName,
+        o.clientName,
+        o.jobTitle,
+        fmtDate(parseYmd(o.startDate)),
+        o.salary ?? '',
+        o.hourlyRate ?? '',
+        o.currency,
+        OFFER_STATUS_LABELS[o.status],
+        o.sentAt ? fmtDateTime(o.sentAt) : '',
+        o.decidedAt ? fmtDateTime(o.decidedAt) : '',
+      ]),
+    ]);
+  };
+
   const onSend = async (id: string) => {
     try {
-      await sendOffer(id);
-      toast.success('Offer sent.');
+      const r = await sendOffer(id);
+      if (r.emailed === false) {
+        toast.warning('Marked sent — no candidate email on file.');
+      } else {
+        toast.success('Offer sent.');
+      }
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errMessage(err, 'Could not send the offer.'));
     }
   };
 
   const onDecide = async (id: string, decision: 'ACCEPTED' | 'DECLINED' | 'WITHDRAWN') => {
     try {
       await decideOffer(id, decision);
-      toast.success(`Offer ${decision.toLowerCase()}.`);
+      toast.success(`Offer ${OFFER_STATUS_LABELS[decision].toLowerCase()}.`);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errMessage(err, 'Could not record the decision.'));
     }
   };
 
   return (
     <div className="space-y-4">
-      {canManage && (
-        <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <SearchInput
+          wrapperClassName="w-full sm:w-64"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by candidate name…"
+          aria-label="Search offers by candidate name"
+        />
+        <Button
+          variant="secondary"
+          onClick={onExport}
+          disabled={!filtered || filtered.length === 0}
+        >
+          <Download className="mr-2 h-4 w-4" /> Export CSV
+        </Button>
+        {canManage && (
           <Button onClick={() => setShowNew(true)}>
             <Plus className="mr-2 h-4 w-4" /> New offer
           </Button>
-        </div>
-      )}
+        )}
+      </div>
       <Card>
         <CardContent className="p-0">
-          {offers === null ? (
+          {error ? (
+            <LoadErrorState message={error} onRetry={refresh} />
+          ) : filtered === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
-          ) : offers.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <EmptyState
               icon={Send}
-              title="No offers"
-              description="Create offer letters once a candidate has been interviewed and approved."
+              title={search.trim() ? 'No offers match your search' : 'No offers'}
+              description={
+                search.trim()
+                  ? 'Try a different candidate name.'
+                  : 'Create offer letters once a candidate has been interviewed and approved.'
+              }
+              action={
+                search.trim() ? (
+                  <Button variant="secondary" onClick={() => setSearch('')}>
+                    Clear search
+                  </Button>
+                ) : canManage ? (
+                  <Button onClick={() => setShowNew(true)}>
+                    <Plus className="mr-2 h-4 w-4" /> New offer
+                  </Button>
+                ) : undefined
+              }
             />
           ) : (
             <Table>
@@ -442,31 +703,35 @@ function OffersTab({ canManage }: { canManage: boolean }) {
                   <TableHead>Candidate</TableHead>
                   <TableHead className="hidden md:table-cell">Job title</TableHead>
                   <TableHead className="hidden lg:table-cell">Start</TableHead>
-                  <TableHead>Pay</TableHead>
+                  <TableHead className="text-right">Pay</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {offers.map((o) => (
+                {filtered.map((o) => (
                   <TableRow key={o.id}>
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{o.candidateName}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
-                        {o.jobTitle} · {o.startDate}
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
+                        {o.jobTitle} · {fmtDate(parseYmd(o.startDate))}
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{o.jobTitle}</TableCell>
-                    <TableCell className="hidden lg:table-cell">{o.startDate}</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden lg:table-cell">
+                      {fmtDate(parseYmd(o.startDate))}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums whitespace-nowrap">
                       {o.salary
-                        ? `${o.currency} ${Number(o.salary).toLocaleString()}/yr`
+                        ? `${fmtMoney(o.salary, { currency: o.currency })}/yr`
                         : o.hourlyRate
-                          ? `${o.currency} ${o.hourlyRate}/hr`
+                          ? `${fmtMoney(o.hourlyRate, { currency: o.currency })}/hr`
                           : '—'}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={OFFER_BADGE[o.status]}>{o.status}</Badge>
+                      <Badge variant={OFFER_BADGE[o.status]}>
+                        {OFFER_STATUS_LABELS[o.status]}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && o.status === 'DRAFT' && (
@@ -510,7 +775,7 @@ function OffersTab({ canManage }: { canManage: boolean }) {
 }
 
 function NewOfferDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [candidateId, setCandidateId] = useState('');
+  const [candidate, setCandidate] = useState<PickedCandidate | null>(null);
   const [clientId, setClientId] = useState('');
   const [jobTitle, setJobTitle] = useState('');
   const [startDate, setStartDate] = useState('');
@@ -518,21 +783,22 @@ function NewOfferDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: ()
   const [hourlyRate, setHourlyRate] = useState('');
   const [letterBody, setLetterBody] = useState('');
   const [saving, setSaving] = useState(false);
+  const { clients, error: clientsError, reload: reloadClients } = useClients();
 
   const onSubmit = async () => {
-    if (!candidateId || !clientId || !jobTitle || !startDate) {
+    if (!candidate || !clientId || !jobTitle || !startDate) {
       toast.error('Candidate, client, title, and start date are required.');
       return;
     }
     if (!salary && !hourlyRate) {
-      toast.error('Either salary or hourly rate required.');
+      toast.error('Either a salary or an hourly rate is required.');
       return;
     }
     setSaving(true);
     try {
       await createOffer({
-        candidateId: candidateId.trim(),
-        clientId: clientId.trim(),
+        candidateId: candidate.id,
+        clientId,
         jobTitle: jobTitle.trim(),
         startDate,
         salary: salary ? Number(salary) : null,
@@ -542,7 +808,7 @@ function NewOfferDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: ()
       toast.success('Offer drafted.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errMessage(err, 'Could not create the offer.'));
     } finally {
       setSaving(false);
     }
@@ -554,22 +820,41 @@ function NewOfferDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: ()
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Candidate ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={candidateId}
-            onChange={(e) => setCandidateId(e.target.value)}
-            placeholder="UUID"
-          />
+          <Label>Candidate</Label>
+          <div className="mt-1">
+            <CandidatePicker value={candidate} onChange={setCandidate} />
+          </div>
         </div>
         <div>
-          <Label>Client ID</Label>
-          <Input
-            className="mt-1 font-mono text-xs"
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
-            placeholder="UUID"
-          />
+          <Label>Client</Label>
+          {clientsError ? (
+            <ErrorBanner
+              className="mt-1"
+              action={
+                <Button size="sm" variant="secondary" onClick={reloadClients}>
+                  Retry
+                </Button>
+              }
+            >
+              {clientsError}
+            </ErrorBanner>
+          ) : (
+            <Select
+              className="mt-1"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              disabled={clients === null}
+            >
+              <option value="">
+                {clients === null ? 'Loading clients…' : 'Select a client…'}
+              </option>
+              {clients?.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          )}
         </div>
         <div>
           <Label>Job title</Label>
@@ -640,15 +925,25 @@ const REF_BADGE: Record<ReferralStatus, 'default' | 'success' | 'pending' | 'des
   REJECTED: 'destructive',
 };
 
+const REF_STATUS_LABELS: Record<ReferralStatus, string> = {
+  OPEN: 'Open',
+  INTERVIEWING: 'Interviewing',
+  HIRED: 'Hired',
+  REJECTED: 'Rejected',
+};
+
 function ReferralsTab({ canManage }: { canManage: boolean }) {
   const [referrals, setReferrals] = useState<ReferralRecord[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [convertingId, setConvertingId] = useState<string | null>(null);
 
   const refresh = () => {
     setReferrals(null);
+    setError(null);
     listReferrals()
       .then((r) => setReferrals(r.referrals))
-      .catch(() => setReferrals([]));
+      .catch((err) => setError(errMessage(err, 'Failed to load referrals.')));
   };
   useEffect(() => {
     refresh();
@@ -659,17 +954,30 @@ function ReferralsTab({ canManage }: { canManage: boolean }) {
       await setReferralStatus(id, status);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errMessage(err, 'Could not update the referral status.'));
     }
   };
 
   const onMarkPaid = async (id: string) => {
     try {
       await markReferralBonusPaid(id);
-      toast.success('Bonus marked paid.');
+      toast.success('Bonus marked as paid.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errMessage(err, 'Could not mark the bonus paid.'));
+    }
+  };
+
+  const onConvert = async (id: string) => {
+    setConvertingId(id);
+    try {
+      await convertReferral(id);
+      toast.success('Converted — candidate created in the funnel.');
+      refresh();
+    } catch (err) {
+      toast.error(errMessage(err, 'Could not convert the referral.'));
+    } finally {
+      setConvertingId(null);
     }
   };
 
@@ -682,13 +990,20 @@ function ReferralsTab({ canManage }: { canManage: boolean }) {
       </div>
       <Card>
         <CardContent className="p-0">
-          {referrals === null ? (
+          {error ? (
+            <LoadErrorState message={error} onRetry={refresh} />
+          ) : referrals === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : referrals.length === 0 ? (
             <EmptyState
               icon={Gift}
               title="No referrals yet"
               description="Refer a friend or colleague to earn the program bonus on hire."
+              action={
+                <Button onClick={() => setShowNew(true)}>
+                  <Plus className="mr-2 h-4 w-4" /> Refer someone
+                </Button>
+              }
             />
           ) : (
             <Table>
@@ -698,7 +1013,9 @@ function ReferralsTab({ canManage }: { canManage: boolean }) {
                   <TableHead className="hidden md:table-cell">Position</TableHead>
                   <TableHead className="hidden lg:table-cell">Referrer</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="hidden md:table-cell">Bonus</TableHead>
+                  <TableHead className="hidden md:table-cell text-right">
+                    Bonus
+                  </TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -708,19 +1025,23 @@ function ReferralsTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="font-medium text-white">
                       <div>{r.candidateName}</div>
                       <div className="text-xs text-silver">{r.candidateEmail}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {r.position ?? '—'}
-                        {r.bonusAmount ? ` · ${r.bonusCurrency} ${r.bonusAmount}${r.bonusPaidAt ? ' (paid)' : ''}` : ''}
+                        {r.bonusAmount
+                          ? ` · ${fmtMoney(r.bonusAmount, { currency: r.bonusCurrency })}${r.bonusPaidAt ? ' (paid)' : ''}`
+                          : ''}
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{r.position ?? '—'}</TableCell>
                     <TableCell className="text-xs hidden lg:table-cell">{r.referrerEmail}</TableCell>
                     <TableCell>
-                      <Badge variant={REF_BADGE[r.status]}>{r.status}</Badge>
+                      <Badge variant={REF_BADGE[r.status]}>
+                        {REF_STATUS_LABELS[r.status]}
+                      </Badge>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell">
+                    <TableCell className="hidden md:table-cell text-right tabular-nums whitespace-nowrap">
                       {r.bonusAmount
-                        ? `${r.bonusCurrency} ${r.bonusAmount}${r.bonusPaidAt ? ' (paid)' : ''}`
+                        ? `${fmtMoney(r.bonusAmount, { currency: r.bonusCurrency })}${r.bonusPaidAt ? ' (paid)' : ''}`
                         : '—'}
                     </TableCell>
                     <TableCell className="text-right space-x-2">
@@ -728,15 +1049,30 @@ function ReferralsTab({ canManage }: { canManage: boolean }) {
                         <div className="inline-block">
                           <Select
                             size="sm"
+                            aria-label={`Referral status for ${r.candidateName}`}
                             value={r.status}
                             onChange={(e) => onStatus(r.id, e.target.value as ReferralStatus)}
                           >
-                            <option value="OPEN">OPEN</option>
-                            <option value="INTERVIEWING">INTERVIEWING</option>
-                            <option value="HIRED">HIRED</option>
-                            <option value="REJECTED">REJECTED</option>
+                            {(
+                              Object.keys(REF_STATUS_LABELS) as ReferralStatus[]
+                            ).map((s) => (
+                              <option key={s} value={s}>
+                                {REF_STATUS_LABELS[s]}
+                              </option>
+                            ))}
                           </Select>
                         </div>
+                      )}
+                      {canManage && r.status === 'HIRED' && !r.candidateId && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => onConvert(r.id)}
+                          disabled={convertingId === r.id}
+                        >
+                          <UserPlus className="mr-1 h-3.5 w-3.5" />
+                          {convertingId === r.id ? 'Converting…' : 'Convert to candidate'}
+                        </Button>
                       )}
                       {canManage &&
                         r.status === 'HIRED' &&
@@ -778,12 +1114,13 @@ function NewReferralDrawer({
   const [candidateEmail, setCandidateEmail] = useState('');
   const [candidatePhone, setCandidatePhone] = useState('');
   const [position, setPosition] = useState('');
+  const [bonusAmount, setBonusAmount] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
   const onSubmit = async () => {
     if (!candidateName.trim() || !candidateEmail.trim()) {
-      toast.error('Name and email required.');
+      toast.error('Name and email are required.');
       return;
     }
     setSaving(true);
@@ -793,12 +1130,13 @@ function NewReferralDrawer({
         candidateEmail: candidateEmail.trim(),
         candidatePhone: candidatePhone.trim() || null,
         position: position.trim() || null,
+        bonusAmount: bonusAmount ? Number(bonusAmount) : null,
         notes: notes.trim() || null,
       });
       toast.success('Referral submitted.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errMessage(err, 'Could not submit the referral.'));
     } finally {
       setSaving(false);
     }
@@ -843,6 +1181,18 @@ function NewReferralDrawer({
           />
         </div>
         <div>
+          <Label>Bonus amount (USD, optional)</Label>
+          <Input
+            type="number"
+            min="0"
+            step="0.01"
+            className="mt-1"
+            value={bonusAmount}
+            onChange={(e) => setBonusAmount(e.target.value)}
+            placeholder="e.g. 500"
+          />
+        </div>
+        <div>
           <Label>Notes (why they'd be a good fit)</Label>
           <Textarea
             className="mt-1 min-h-24"
@@ -865,22 +1215,35 @@ function NewReferralDrawer({
 
 // ----- Postings ---------------------------------------------------------
 
-const POSTING_BADGE: Record<JobPostingRecord['status'], 'default' | 'success' | 'pending'> = {
-  DRAFT: 'pending',
+// DRAFT is the canonical "default" chip; CLOSED is a settled, de-emphasised
+// terminal state, so it reads as an outline rather than a warning.
+const POSTING_BADGE: Record<
+  JobPostingRecord['status'],
+  'default' | 'success' | 'outline'
+> = {
+  DRAFT: 'default',
   OPEN: 'success',
-  CLOSED: 'default',
+  CLOSED: 'outline',
+};
+
+const POSTING_STATUS_LABELS: Record<JobPostingRecord['status'], string> = {
+  DRAFT: 'Draft',
+  OPEN: 'Open',
+  CLOSED: 'Closed',
 };
 
 function PostingsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [postings, setPostings] = useState<JobPostingRecord[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
 
   const refresh = () => {
     setPostings(null);
+    setError(null);
     listJobPostings()
       .then((r) => setPostings(r.postings))
-      .catch(() => setPostings([]));
+      .catch((err) => setError(errMessage(err, 'Failed to load job postings.')));
   };
   useEffect(() => {
     refresh();
@@ -892,7 +1255,7 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
       toast.success('Posting opened.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errMessage(err, 'Could not open the posting.'));
     }
   };
 
@@ -902,7 +1265,7 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
       toast.success('Posting closed.');
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errMessage(err, 'Could not close the posting.'));
     }
   };
 
@@ -912,7 +1275,7 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
       await deleteJobPosting(id);
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errMessage(err, 'Could not delete the posting.'));
     }
   };
 
@@ -927,13 +1290,22 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
       )}
       <Card>
         <CardContent className="p-0">
-          {postings === null ? (
+          {error ? (
+            <LoadErrorState message={error} onRetry={refresh} />
+          ) : postings === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
           ) : postings.length === 0 ? (
             <EmptyState
               icon={Briefcase}
               title="No postings"
               description="Create a job posting to surface it on the public careers page."
+              action={
+                canManage ? (
+                  <Button onClick={() => setShowNew(true)}>
+                    <Plus className="mr-2 h-4 w-4" /> New posting
+                  </Button>
+                ) : undefined
+              }
             />
           ) : (
             <Table>
@@ -942,7 +1314,9 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
                   <TableHead>Title</TableHead>
                   <TableHead className="hidden lg:table-cell">Slug</TableHead>
                   <TableHead className="hidden md:table-cell">Location</TableHead>
-                  <TableHead className="hidden md:table-cell">Pay range</TableHead>
+                  <TableHead className="hidden md:table-cell text-right">
+                    Pay range
+                  </TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -952,22 +1326,24 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
                   <TableRow key={p.id} className="group">
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{p.title}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {p.location ?? '—'}
                         {p.minSalary && p.maxSalary
-                          ? ` · ${p.currency} ${p.minSalary}–${p.maxSalary}`
+                          ? ` · ${fmtMoney(p.minSalary, { currency: p.currency })}–${fmtMoney(p.maxSalary, { currency: p.currency })}`
                           : ''}
                       </div>
                     </TableCell>
                     <TableCell className="font-mono text-xs hidden lg:table-cell">/careers/{p.slug}</TableCell>
                     <TableCell className="hidden md:table-cell">{p.location ?? '—'}</TableCell>
-                    <TableCell className="hidden md:table-cell">
+                    <TableCell className="hidden md:table-cell text-right tabular-nums whitespace-nowrap">
                       {p.minSalary && p.maxSalary
-                        ? `${p.currency} ${p.minSalary}–${p.maxSalary}`
+                        ? `${fmtMoney(p.minSalary, { currency: p.currency })}–${fmtMoney(p.maxSalary, { currency: p.currency })}`
                         : '—'}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={POSTING_BADGE[p.status]}>{p.status}</Badge>
+                      <Badge variant={POSTING_BADGE[p.status]}>
+                        {POSTING_STATUS_LABELS[p.status]}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && p.status === 'DRAFT' && (
@@ -983,7 +1359,7 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
                       {canManage && (
                         <button
                           onClick={() => onDelete(p.id)}
-                          className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
+                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
                         >
                           Delete
                         </button>
@@ -1009,6 +1385,15 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
   );
 }
 
+/** "Senior Caregiver (NYC)" → "senior-caregiver-nyc". */
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 200);
+}
+
 function NewPostingDrawer({
   onClose,
   onSaved,
@@ -1018,15 +1403,20 @@ function NewPostingDrawer({
 }) {
   const [title, setTitle] = useState('');
   const [slug, setSlug] = useState('');
+  // Once the user types in the slug field themselves, blurring the title
+  // stops overwriting it — auto-fill must never clobber a manual edit.
+  const [slugEdited, setSlugEdited] = useState(false);
+  const [clientId, setClientId] = useState('');
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
   const [minSalary, setMinSalary] = useState('');
   const [maxSalary, setMaxSalary] = useState('');
   const [saving, setSaving] = useState(false);
+  const { clients, error: clientsError, reload: reloadClients } = useClients();
 
   const onSubmit = async () => {
     if (!title.trim() || !slug.trim() || !description.trim()) {
-      toast.error('Title, slug, and description required.');
+      toast.error('Title, slug, and description are required.');
       return;
     }
     if (!/^[a-z0-9-]+$/.test(slug)) {
@@ -1038,6 +1428,7 @@ function NewPostingDrawer({
       await createJobPosting({
         title: title.trim(),
         slug: slug.trim(),
+        clientId: clientId || null,
         description: description.trim(),
         location: location.trim() || null,
         minSalary: minSalary ? Number(minSalary) : null,
@@ -1046,7 +1437,7 @@ function NewPostingDrawer({
       toast.success('Posting drafted.');
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(errMessage(err, 'Could not create the posting.'));
     } finally {
       setSaving(false);
     }
@@ -1064,6 +1455,9 @@ function NewPostingDrawer({
             className="mt-1"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
+            onBlur={() => {
+              if (!slugEdited && title.trim()) setSlug(slugify(title));
+            }}
           />
         </div>
         <div>
@@ -1071,9 +1465,43 @@ function NewPostingDrawer({
           <Input
             className="mt-1 font-mono text-xs"
             value={slug}
-            onChange={(e) => setSlug(e.target.value)}
+            onChange={(e) => {
+              setSlugEdited(true);
+              setSlug(e.target.value);
+            }}
             placeholder="senior-caregiver-nyc"
           />
+        </div>
+        <div>
+          <Label>Client (optional)</Label>
+          {clientsError ? (
+            <ErrorBanner
+              className="mt-1"
+              action={
+                <Button size="sm" variant="secondary" onClick={reloadClients}>
+                  Retry
+                </Button>
+              }
+            >
+              {clientsError}
+            </ErrorBanner>
+          ) : (
+            <Select
+              className="mt-1"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              disabled={clients === null}
+            >
+              <option value="">
+                {clients === null ? 'Loading clients…' : 'No client (company-wide)'}
+              </option>
+              {clients?.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          )}
         </div>
         <div>
           <Label>Description (markdown OK)</Label>

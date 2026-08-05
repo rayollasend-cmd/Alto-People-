@@ -23,6 +23,8 @@ interface Props {
   associateName: string;
   /** Default subject line based on what's missing. Optional. */
   suggestedSubject?: string;
+  /** Personalized default body (progress %, blocked task). Optional. */
+  suggestedBody?: string;
 }
 
 const DEFAULT_SUBJECT = 'Quick check-in on your onboarding';
@@ -48,27 +50,28 @@ export function NudgeDialog({
   applicationId,
   associateName,
   suggestedSubject,
+  suggestedBody,
 }: Props) {
   const [subject, setSubject] = useState(suggestedSubject ?? DEFAULT_SUBJECT);
-  const [body, setBody] = useState(DEFAULT_BODY);
+  const [body, setBody] = useState(suggestedBody ?? DEFAULT_BODY);
   const [submitting, setSubmitting] = useState(false);
 
   // Reset to defaults whenever the dialog opens for a new applicant.
   useEffect(() => {
     if (open) {
       setSubject(suggestedSubject ?? DEFAULT_SUBJECT);
-      setBody(DEFAULT_BODY);
+      setBody(suggestedBody ?? DEFAULT_BODY);
     }
-  }, [open, suggestedSubject]);
+  }, [open, suggestedSubject, suggestedBody]);
 
   const submit = async () => {
     if (!applicationId) return;
     if (!subject.trim()) {
-      toast.error('Subject required');
+      toast.error('Subject is required.');
       return;
     }
     if (!body.trim()) {
-      toast.error('Body required');
+      toast.error('Body is required.');
       return;
     }
     setSubmitting(true);
@@ -78,9 +81,9 @@ export function NudgeDialog({
         body: body.trim(),
       });
       if (res.emailSent) {
-        toast.success(`Nudge sent to ${res.recipientEmail}`);
+        toast.success(`Nudge sent to ${res.recipientEmail}.`);
       } else {
-        toast.message('Nudge logged — email delivery failed', {
+        toast.message('Nudge logged — email delivery failed.', {
           description: 'The Notification row was created. Check email config.',
         });
       }
@@ -91,8 +94,8 @@ export function NudgeDialog({
           ? err.message
           : err instanceof Error
             ? err.message
-            : 'Could not send nudge';
-      toast.error('Could not send', { description: msg });
+            : 'Could not send the nudge.';
+      toast.error('Could not send the nudge.', { description: msg });
     } finally {
       setSubmitting(false);
     }

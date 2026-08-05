@@ -1,4 +1,10 @@
 import PDFDocument from 'pdfkit';
+import {
+  DEFAULT_TIMEZONE,
+  formatDateInZone,
+  formatDateTimeInZone,
+  formatTimeInZone,
+} from './timezone.js';
 
 /**
  * Phase 65 — time entry PDF renderer.
@@ -6,11 +12,17 @@ import PDFDocument from 'pdfkit';
  * Mirrors scheduleReport.ts: a chronological, page-broken table sized for
  * letter-landscape, with a status color bar on each row and a footer
  * summary. Uses pdfkit's built-in Helvetica family.
+ *
+ * Every timestamp renders in the entry's SITE zone (never the server's —
+ * this used to call toLocale* on a UTC box, so the PDF disagreed with the
+ * screen by the full zone offset).
  */
 
 export interface TimeReportEntry {
   clockInAt: Date;
   clockOutAt: Date | null;
+  /** IANA zone of the entry's work site — punches render on its wall clock. */
+  timezone: string;
   associateName: string;
   clientName: string | null;
   jobName: string | null;
@@ -76,7 +88,7 @@ export async function renderTimeReportPdf(data: TimeReportData): Promise<Buffer>
         .fontSize(8)
         .fillColor('#888')
         .text(
-          `Generated ${data.generatedAt.toLocaleString()} · Alto People`,
+          `Generated ${formatDateTimeInZone(data.generatedAt, DEFAULT_TIMEZONE)} · Alto People`,
           PAGE_MARGIN,
           y + 2
         );
@@ -139,7 +151,7 @@ export async function renderTimeReportPdf(data: TimeReportData): Promise<Buffer>
         doc.font('Helvetica').fontSize(ROW_PT).fillColor('#000');
       }
 
-      const dateStr = e.clockInAt.toLocaleDateString();
+      const dateStr = formatDateInZone(e.clockInAt, e.timezone);
       const showDate = dateStr !== prevDate;
       prevDate = dateStr;
 
@@ -154,8 +166,8 @@ export async function renderTimeReportPdf(data: TimeReportData): Promise<Buffer>
 
       const cells: Record<string, string> = {
         date: showDate ? dateStr : '',
-        in: fmtTime(e.clockInAt),
-        out: e.clockOutAt ? fmtTime(e.clockOutAt) : '—',
+        in: formatTimeInZone(e.clockInAt, e.timezone),
+        out: e.clockOutAt ? formatTimeInZone(e.clockOutAt, e.timezone) : '—',
         hrs: (e.minutes / 60).toFixed(2),
         assoc: e.associateName,
         client: e.clientName ?? '—',
@@ -230,25 +242,15 @@ export async function renderTimeReportPdf(data: TimeReportData): Promise<Buffer>
   });
 }
 
-function fmtTime(d: Date): string {
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-}
-
 function formatRange(from: Date, toExclusive: Date): string {
+  // The range came from the admin's browser-local pickers; label it in the
+  // org default zone (a range header, not a punch — per-entry rows carry
+  // their own site zone).
   const last = new Date(toExclusive.getTime() - 1);
-  if (
-    from.getFullYear() === last.getFullYear() &&
-    from.getMonth() === last.getMonth() &&
-    from.getDate() === last.getDate()
-  ) {
-    return from.toLocaleDateString([], {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-      year: 'numeric',
-    });
-  }
-  return `${from.toLocaleDateString()} – ${last.toLocaleDateString()}`;
+  const fromStr = formatDateInZone(from, DEFAULT_TIMEZONE);
+  const lastStr = formatDateInZone(last, DEFAULT_TIMEZONE);
+  if (fromStr === lastStr) return fromStr;
+  return `${fromStr} – ${lastStr}`;
 }
 
 function colorForStatus(status: string): string {

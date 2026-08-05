@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { effectiveClientIdFilter } from '../lib/scope.js';
 
 /**
  * Phase 86 — Projects, premium pay rules, tip pools.
@@ -48,7 +49,13 @@ const ProjectInputSchema = z.object({
 });
 
 projectsAndPayRouter.get('/projects', VIEW_TIME, async (req, res) => {
-  const clientId = z.string().uuid().optional().parse(req.query.clientId);
+  const requestedClient = z.string().uuid().optional().parse(req.query.clientId);
+  // Client-bounded roles only see their own client's project codes.
+  const boundedProjects = effectiveClientIdFilter(req.user!, requestedClient);
+  const clientId =
+    boundedProjects === null
+      ? '00000000-0000-0000-0000-000000000000'
+      : boundedProjects;
   const includeInactive = req.query.includeInactive === '1';
   const rows = await prisma.project.findMany({
     take: 1000,
@@ -364,8 +371,11 @@ projectsAndPayRouter.post(
     if (pool.status !== 'OPEN') {
       throw new HttpError(400, 'pool_locked', 'Pool is no longer open.');
     }
+    // No take cap — a capped read here once split tips across an arbitrary
+    // 100-entry subset of the crew on busy days. A single client-day window
+    // is bounded in practice; 10k is a runaway backstop, not a page size.
     const entries = await prisma.timeEntry.findMany({
-      take: 100,
+      take: 10_000,
       where: {
         clientId: pool.clientId,
         clockInAt: { gte: new Date(input.from), lt: new Date(input.to) },
@@ -390,28 +400,28 @@ projectsAndPayRouter.post(
     const totalCents = Math.round(Number(pool.totalAmount) * 100);
     const associates = Array.from(hoursMap.entries());
     let allocated = 0;
-    await prisma.$transaction(async (tx) => {
-      // Wipe any prior allocations on this pool — auto-allocate is idempotent.
-      await tx.tipPoolAllocation.deleteMany({ where: { tipPoolId } });
-      for (let i = 0; i < associates.length; i++) {
-        const [associateId, hrs] = associates[i];
-        const isLast = i === associates.length - 1;
-        const cents = isLast
-          ? totalCents - allocated
-          : Math.floor((hrs / totalHours) * totalCents);
-        allocated += cents;
-        const sharePct = (hrs / totalHours) * 100;
-        await tx.tipPoolAllocation.create({
-          data: {
-            tipPoolId,
-            associateId,
-            hoursWorked: new Prisma.Decimal(hrs.toFixed(2)),
-            sharePct: new Prisma.Decimal(sharePct.toFixed(3)),
-            amount: new Prisma.Decimal((cents / 100).toFixed(2)),
-          },
-        });
-      }
+    // Compute every row up front, then wipe + insert in one batched
+    // transaction (was one create round trip per associate inside the tx).
+    const allocationRows = associates.map(([associateId, hrs], i) => {
+      const isLast = i === associates.length - 1;
+      const cents = isLast
+        ? totalCents - allocated
+        : Math.floor((hrs / totalHours) * totalCents);
+      allocated += cents;
+      const sharePct = (hrs / totalHours) * 100;
+      return {
+        tipPoolId,
+        associateId,
+        hoursWorked: new Prisma.Decimal(hrs.toFixed(2)),
+        sharePct: new Prisma.Decimal(sharePct.toFixed(3)),
+        amount: new Prisma.Decimal((cents / 100).toFixed(2)),
+      };
     });
+    await prisma.$transaction([
+      // Wipe any prior allocations on this pool — auto-allocate is idempotent.
+      prisma.tipPoolAllocation.deleteMany({ where: { tipPoolId } }),
+      prisma.tipPoolAllocation.createMany({ data: allocationRows }),
+    ]);
     res.json({ allocated: associates.length, totalHours });
   },
 );

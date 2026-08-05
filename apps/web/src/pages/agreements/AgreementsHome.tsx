@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
+import { safeHref } from '@alto-people/shared';
 import { FileSignature, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, parseYmd } from '@/lib/format';
 import {
   deleteAgreement,
   expireAgreement,
@@ -31,8 +32,10 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
+  SegmentedControl,
   Select,
   SkeletonRows,
   Table,
@@ -43,6 +46,7 @@ import {
   TableRow,
   Textarea,
 } from '@/components/ui';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { FormHint, Label } from '@/components/ui/Label';
 
 const STATUS_VARIANT: Record<
@@ -54,6 +58,19 @@ const STATUS_VARIANT: Record<
   EXPIRED: 'destructive',
   SUPERSEDED: 'outline',
 };
+
+function daysSince(iso: string): number {
+  return Math.max(
+    0,
+    Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000),
+  );
+}
+
+/** Local-midnight comparison for the YYYY-MM-DD expiry date. */
+function isPastYmd(s: string): boolean {
+  const d = parseYmd(s);
+  return d !== null && d.getTime() < Date.now();
+}
 
 export function AgreementsHome() {
   const { user } = useAuth();
@@ -67,23 +84,33 @@ export function AgreementsHome() {
   );
   const [showNew, setShowNew] = useState(false);
   const [signRow, setSignRow] = useState<MyAgreement | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   // Track which row's action is in flight so each Button shows its own
   // spinner. Format: `expire:<id>` or `delete:<id>`.
   const [pendingKey, setPendingKey] = useState<string | null>(null);
 
   const refresh = () => {
+    setLoadError(null);
     if (tab === 'all') {
       setRows(null);
       listAgreements({
         status: statusFilter === 'ALL' ? undefined : statusFilter,
       })
         .then((r) => setRows(r.agreements))
-        .catch(() => setRows([]));
+        .catch((err) =>
+          setLoadError(
+            err instanceof ApiError ? err.message : 'Could not load agreements.',
+          ),
+        );
     } else {
       setMine(null);
       listMyAgreements()
         .then((r) => setMine(r.agreements))
-        .catch(() => setMine([]));
+        .catch((err) =>
+          setLoadError(
+            err instanceof ApiError ? err.message : 'Could not load agreements.',
+          ),
+        );
     }
   };
   useEffect(() => {
@@ -99,24 +126,15 @@ export function AgreementsHome() {
       />
 
       <div className="flex items-center justify-between">
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant={tab === 'mine' ? 'primary' : 'ghost'}
-            onClick={() => setTab('mine')}
-          >
-            Mine
-          </Button>
-          {canManage && (
-            <Button
-              size="sm"
-              variant={tab === 'all' ? 'primary' : 'ghost'}
-              onClick={() => setTab('all')}
-            >
-              All
-            </Button>
-          )}
-        </div>
+        <SegmentedControl
+          ariaLabel="Agreements view"
+          value={tab}
+          onChange={(v) => setTab(v)}
+          options={[
+            { value: 'mine' as const, label: 'Mine' },
+            ...(canManage ? [{ value: 'all' as const, label: 'All' }] : []),
+          ]}
+        />
         {canManage && tab === 'all' && (
           <div className="flex gap-2">
             <Select
@@ -143,7 +161,19 @@ export function AgreementsHome() {
       {tab === 'mine' ? (
         <Card>
           <CardContent className="p-0">
-            {mine === null ? (
+            {loadError ? (
+              <div className="p-6">
+                <ErrorBanner
+                  action={
+                    <Button size="sm" variant="secondary" onClick={refresh}>
+                      Retry
+                    </Button>
+                  }
+                >
+                  {loadError}
+                </ErrorBanner>
+              </div>
+            ) : mine === null ? (
               <div className="p-6">
                 <SkeletonRows count={3} />
               </div>
@@ -167,24 +197,34 @@ export function AgreementsHome() {
                         {a.signedAt
                           ? `Signed ${fmtDate(a.signedAt)}`
                           : 'Awaiting your signature'}
-                        {a.expiresOn && ` · expires ${a.expiresOn}`}
+                        {a.expiresOn && ` · expires ${fmtDate(parseYmd(a.expiresOn))}`}
                       </div>
                     </div>
                     <Badge variant={STATUS_VARIANT[a.status]}>
                       {STATUS_LABELS[a.status]}
                     </Badge>
                     {a.documentUrl && (
-                      <a
-                        href={a.documentUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-steel hover:underline"
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        asChild
+                        className="coarse:min-h-11"
                       >
-                        Read ↗
-                      </a>
+                        <a
+                          href={safeHref(a.documentUrl)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Read ↗
+                        </a>
+                      </Button>
                     )}
                     {a.status === 'PENDING_SIGNATURE' && (
-                      <Button size="sm" onClick={() => setSignRow(a)}>
+                      <Button
+                        size="sm"
+                        onClick={() => setSignRow(a)}
+                        className="coarse:min-h-11"
+                      >
                         Sign
                       </Button>
                     )}
@@ -197,7 +237,19 @@ export function AgreementsHome() {
       ) : (
         <Card>
           <CardContent className="p-0">
-            {rows === null ? (
+            {loadError ? (
+              <div className="p-6">
+                <ErrorBanner
+                  action={
+                    <Button size="sm" variant="secondary" onClick={refresh}>
+                      Retry
+                    </Button>
+                  }
+                >
+                  {loadError}
+                </ErrorBanner>
+              </div>
+            ) : rows === null ? (
               <div className="p-6">
                 <SkeletonRows count={4} />
               </div>
@@ -229,11 +281,11 @@ export function AgreementsHome() {
                         <div className="text-xs text-silver">
                           {a.associateEmail}
                         </div>
-                        <div className="text-[11px] text-silver/70 md:hidden">
+                        <div className="text-xs2 text-silver/70 md:hidden">
                           {a.signedAt
                             ? `Signed ${fmtDate(a.signedAt)}`
                             : 'Not signed'}
-                          {a.expiresOn && ` · expires ${a.expiresOn}`}
+                          {a.expiresOn && ` · expires ${fmtDate(parseYmd(a.expiresOn))}`}
                         </div>
                       </TableCell>
                       <TableCell className="text-sm">
@@ -247,18 +299,32 @@ export function AgreementsHome() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-sm text-silver hidden md:table-cell">
-                        {fmtDate(a.signedAt)}
+                        {a.signedAt ? (
+                          fmtDate(a.signedAt)
+                        ) : a.status === 'PENDING_SIGNATURE' ? (
+                          <span
+                            className={
+                              daysSince(a.createdAt) >= 7
+                                ? 'text-alert'
+                                : 'text-silver'
+                            }
+                          >
+                            Unsigned · {daysSince(a.createdAt)}d
+                          </span>
+                        ) : (
+                          fmtDate(a.signedAt)
+                        )}
                       </TableCell>
                       <TableCell className="text-sm hidden md:table-cell">
                         {a.expiresOn ? (
                           <span
                             className={
-                              new Date(a.expiresOn) < new Date()
+                              isPastYmd(a.expiresOn)
                                 ? 'text-alert'
                                 : 'text-silver'
                             }
                           >
-                            {a.expiresOn}
+                            {fmtDate(parseYmd(a.expiresOn))}
                           </span>
                         ) : (
                           <span className="text-silver">—</span>
@@ -273,7 +339,14 @@ export function AgreementsHome() {
                               size="xs"
                               loading={pendingKey === `expire:${a.id}`}
                               onClick={async () => {
-                                if (!(await confirm({ title: 'Mark this agreement expired?', destructive: true })))
+                                if (
+                                  !(await confirm({
+                                    title: 'Expire this agreement now?',
+                                    description:
+                                      'Agreements past their expiry date are expired automatically by a daily sweep — use this to expire one immediately.',
+                                    destructive: true,
+                                  }))
+                                )
                                   return;
                                 setPendingKey(`expire:${a.id}`);
                                 try {
@@ -289,7 +362,7 @@ export function AgreementsHome() {
                                   setPendingKey(null);
                                 }
                               }}
-                              className="text-silver hover:text-warning opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
+                              className="text-silver hover:text-warning can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
                             >
                               Expire
                             </Button>
@@ -301,7 +374,14 @@ export function AgreementsHome() {
                             loading={pendingKey === `delete:${a.id}`}
                             aria-label="Delete agreement"
                             onClick={async () => {
-                              if (!(await confirm({ title: 'Delete this agreement record?', destructive: true })))
+                              if (
+                                !(await confirm({
+                                  title: 'Delete this agreement record?',
+                                  description:
+                                    'The record is soft-deleted and the deletion is recorded in the audit trail.',
+                                  destructive: true,
+                                }))
+                              )
                                 return;
                               setPendingKey(`delete:${a.id}`);
                               try {
@@ -317,7 +397,7 @@ export function AgreementsHome() {
                                 setPendingKey(null);
                               }
                             }}
-                            className="text-silver hover:text-alert opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
+                            className="text-silver hover:text-alert can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -362,7 +442,7 @@ function NewAgreementDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [associateId, setAssociateId] = useState('');
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [kind, setKind] = useState<AgreementKind>('NDA');
   const [customLabel, setCustomLabel] = useState('');
   const [documentUrl, setDocumentUrl] = useState('');
@@ -372,8 +452,8 @@ function NewAgreementDrawer({
   const [saving, setSaving] = useState(false);
 
   const submit = async () => {
-    if (!associateId.trim()) {
-      toast.error('Associate ID required.');
+    if (!associate) {
+      toast.error('Pick an associate.');
       return;
     }
     if (kind === 'OTHER' && !customLabel.trim()) {
@@ -383,7 +463,7 @@ function NewAgreementDrawer({
     setSaving(true);
     try {
       await issueAgreement({
-        associateId: associateId.trim(),
+        associateId: associate.id,
         kind,
         customLabel: kind === 'OTHER' ? customLabel.trim() : null,
         documentUrl: documentUrl.trim() || null,
@@ -391,7 +471,7 @@ function NewAgreementDrawer({
         expiresOn: expiresOn || null,
         notes: notes.trim() || null,
       });
-      toast.success('Issued.');
+      toast.success('Issued — the associate has been notified.');
       onSaved();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -407,16 +487,12 @@ function NewAgreementDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label htmlFor="issue-agreement-associate">Associate ID</Label>
-          <Input
-            id="issue-agreement-associate"
-            className="mt-1 font-mono text-xs"
-            value={associateId}
-            onChange={(e) => setAssociateId(e.target.value)}
-            aria-describedby="issue-agreement-associate-hint"
-          />
+          <Label>Associate</Label>
+          <div className="mt-1">
+            <AssociatePicker value={associate} onChange={setAssociate} />
+          </div>
           <FormHint id="issue-agreement-associate-hint">
-            Paste the associate's UUID from the directory.
+            Search the directory by name.
           </FormHint>
         </div>
         <div>
@@ -482,7 +558,11 @@ function NewAgreementDrawer({
               className="mt-1"
               value={expiresOn}
               onChange={(e) => setExpiresOn(e.target.value)}
+              aria-describedby="issue-agreement-expires-hint"
             />
+            <FormHint id="issue-agreement-expires-hint">
+              Expires automatically on this date — no manual step needed.
+            </FormHint>
           </div>
         </div>
         <div>
@@ -495,13 +575,17 @@ function NewAgreementDrawer({
           />
         </div>
       </DrawerBody>
-      <DrawerFooter>
+      <DrawerFooter className="flex-wrap">
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
         <Button onClick={submit} disabled={saving}>
           {saving ? 'Saving…' : 'Issue'}
         </Button>
+        <p className="w-full text-right text-xs text-silver">
+          The associate is notified immediately and reminded weekly until
+          signed.
+        </p>
       </DrawerFooter>
     </Drawer>
   );
@@ -518,8 +602,12 @@ function SignDrawer({
 }) {
   const [signature, setSignature] = useState('');
   const [saving, setSaving] = useState(false);
+  // No attached document → nothing to read → nothing to legally agree to.
+  // Signing is blocked until HR attaches the file.
+  const missingDoc = !row.documentUrl;
 
   const submit = async () => {
+    if (missingDoc) return;
     if (!signature.trim()) {
       toast.error('Type your full name to sign.');
       return;
@@ -546,7 +634,7 @@ function SignDrawer({
       <DrawerBody className="space-y-4">
         {row.documentUrl ? (
           <a
-            href={row.documentUrl}
+            href={safeHref(row.documentUrl)}
             target="_blank"
             rel="noopener noreferrer"
             className="text-sm text-steel hover:underline"
@@ -554,8 +642,8 @@ function SignDrawer({
             Read the document →
           </a>
         ) : (
-          <div className="text-sm text-silver">
-            No document URL provided. Ask HR for the file before signing.
+          <div role="alert" className="text-sm text-alert">
+            The document file is missing — ask HR to attach it before signing.
           </div>
         )}
         {row.notes && (
@@ -568,17 +656,20 @@ function SignDrawer({
             value={signature}
             onChange={(e) => setSignature(e.target.value)}
             placeholder="Jane Q. Smith"
+            disabled={missingDoc}
           />
         </div>
-        <div className="text-xs text-silver">
-          By signing, you agree this is a legally binding electronic signature.
-        </div>
+        {!missingDoc && (
+          <div className="text-xs text-silver">
+            By signing, you agree this is a legally binding electronic signature.
+          </div>
+        )}
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={submit} disabled={saving}>
+        <Button onClick={submit} disabled={saving || missingDoc}>
           {saving ? 'Signing…' : 'Sign'}
         </Button>
       </DrawerFooter>

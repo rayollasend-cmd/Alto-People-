@@ -1,13 +1,13 @@
 import { Router } from 'express';
+import { PROFILE_PHOTO_MAX_BYTES } from '@alto-people/shared';
 import multer from 'multer';
 import { randomUUID } from 'node:crypto';
-import { writeFile, unlink } from 'node:fs/promises';
-import { createReadStream, statSync } from 'node:fs';
 import { extname } from 'node:path';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireAuth } from '../middleware/auth.js';
-import { resolveStoragePath, PROFILE_PHOTO_DIR } from '../lib/storage.js';
+import { PROFILE_PHOTO_DIR } from '../lib/storage.js';
+import { getBlobStore } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 
 /**
@@ -21,7 +21,7 @@ import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
  */
 export const profilePhotoRouter = Router();
 
-const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+const MAX_BYTES = PROFILE_PHOTO_MAX_BYTES;
 const ALLOWED_MIMES = new Set([
   'image/png',
   'image/jpeg',
@@ -77,8 +77,7 @@ profilePhotoRouter.post(
       EXT_BY_MIME[req.file.mimetype] ??
       (extname(cleanName).toLowerCase() || '.bin');
     const relativeKey = `${PROFILE_PHOTO_DIR}/${associateId}-${randomUUID()}${ext}`;
-    const fullPath = resolveStoragePath(relativeKey);
-    await writeFile(fullPath, req.file.buffer);
+    await getBlobStore().put(relativeKey, req.file.buffer, req.file.mimetype);
 
     const prior = await prisma.associate.findUnique({
       where: { id: associateId },
@@ -89,10 +88,10 @@ profilePhotoRouter.post(
       data: { photoS3Key: relativeKey, photoUpdatedAt: new Date() },
     });
     if (prior?.photoS3Key && prior.photoS3Key !== relativeKey) {
-      // Best-effort cleanup of the previous file. Failure here is fine —
+      // Best-effort cleanup of the previous blob. Failure here is fine —
       // it's an orphan blob, not a correctness problem.
       try {
-        await unlink(resolveStoragePath(prior.photoS3Key));
+        await getBlobStore().delete(prior.photoS3Key);
       } catch {
         /* swallow */
       }
@@ -129,7 +128,7 @@ profilePhotoRouter.delete(
     });
     if (prior?.photoS3Key) {
       try {
-        await unlink(resolveStoragePath(prior.photoS3Key));
+        await getBlobStore().delete(prior.photoS3Key);
       } catch {
         /* swallow */
       }
@@ -153,11 +152,9 @@ profilePhotoRouter.get(
     if (!associate?.photoS3Key) {
       throw new HttpError(404, 'no_photo', 'No profile photo on file.');
     }
-    const fullPath = resolveStoragePath(associate.photoS3Key);
-    let stat;
-    try {
-      stat = statSync(fullPath);
-    } catch {
+    // Driver-based read; null (blob gone) keeps the existing 404.
+    const blob = await getBlobStore().get(associate.photoS3Key);
+    if (!blob) {
       throw new HttpError(404, 'no_photo', 'No profile photo on file.');
     }
     const ext = extname(associate.photoS3Key).toLowerCase();
@@ -168,9 +165,13 @@ profilePhotoRouter.get(
           ? 'image/webp'
           : 'image/jpeg';
     res.setHeader('Content-Type', mime);
-    res.setHeader('Content-Length', String(stat.size));
+    // Same treatment as the document stream: never let a browser sniff a
+    // user-supplied image into something scriptable.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    res.setHeader('Content-Length', String(blob.length));
     // Cache-bustable via the ?v=<updatedAt> param consumers attach.
     res.setHeader('Cache-Control', 'private, max-age=3600');
-    createReadStream(fullPath).pipe(res);
+    res.send(blob);
   },
 );

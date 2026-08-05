@@ -1,12 +1,18 @@
 /**
  * Reported 2026-05-02: scheduling pickers were listing every Associate
  * regardless of role or status — managers (who use a separate system),
- * disabled/terminated users, and even invited-but-not-yet-accepted
- * associates were all appearing as schedulable rows. Fix filters to
- * Associates whose linked User is ACTIVE + role=ASSOCIATE.
+ * disabled/terminated users, and junk rows were all appearing as
+ * schedulable.
  *
- * This suite locks in the filter so a future refactor that re-introduces
- * the broader query fails loudly.
+ * Refined 2026-07-31: the fix originally required User.status === ACTIVE,
+ * which silently hid WORKING associates whose account was merely INVITED
+ * (never set a password, or HR re-sent their invite) — a team member
+ * vanished from the week grid. Schedulability now comes from EMPLOYMENT
+ * (approved application / open assignment); login state only excludes
+ * deliberately DISABLED accounts. Management-role accounts stay out.
+ *
+ * This suite locks in both halves so a refactor in either direction
+ * fails loudly.
  */
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
@@ -112,5 +118,48 @@ describe('GET /scheduling/associates filtering', () => {
 
     const returnedIds: string[] = res.body.associates.map((x: { id: string }) => x.id);
     expect(returnedIds).toEqual([eligible.id]);
+  });
+
+  it('login state does not hide working associates — INVITED and no-account people with approved applications are schedulable', async () => {
+    const client = await createClient('Acme Hosp');
+
+    // The Evaristus case: fully onboarded, but their portal account is
+    // INVITED (never accepted, or HR re-sent the invite which demotes
+    // ACTIVE-without-password back to INVITED). They work shifts.
+    const invited = await createAssociate({
+      firstName: 'Ivy',
+      lastName: 'Invited',
+      email: 'ivy@example.com',
+    });
+    await prisma.user.create({
+      data: { email: invited.email, role: 'ASSOCIATE', status: 'INVITED', associateId: invited.id },
+    });
+    await approveApplication(invited.id, client.id);
+
+    // Approved associate with no portal account at all — still employed.
+    const accountless = await createAssociate({
+      firstName: 'Andy',
+      lastName: 'Accountless',
+      email: 'andy@example.com',
+    });
+    await approveApplication(accountless.id, client.id);
+
+    // DISABLED stays hidden — that's the deliberate off switch.
+    const disabled = await createAssociate({
+      firstName: 'Dee',
+      lastName: 'Disabled',
+      email: 'dee@example.com',
+    });
+    await createUser({ role: 'ASSOCIATE', email: disabled.email, associateId: disabled.id, status: 'DISABLED' });
+    await approveApplication(disabled.id, client.id);
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const res = await a.get('/scheduling/associates');
+    expect(res.status).toBe(200);
+    const ids: string[] = res.body.associates.map((x: { id: string }) => x.id);
+    expect(ids).toContain(invited.id);
+    expect(ids).toContain(accountless.id);
+    expect(ids).not.toContain(disabled.id);
   });
 });

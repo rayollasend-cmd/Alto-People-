@@ -14,6 +14,7 @@ import {
   TimeApproveInputSchema,
   TimeEntryListResponseSchema,
   TimeExportInputSchema,
+  ExternalPayrollSheetInputSchema,
   TimesheetWeekInputSchema,
   TimesheetAssociateDetailInputSchema,
   TimeRejectInputSchema,
@@ -25,18 +26,24 @@ import {
   type TimeEntry,
   type TimeEntryListResponse,
 } from '@alto-people/shared';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeTimeEntries, scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
+import { runWithConcurrency } from '../lib/concurrency.js';
 import { z } from 'zod';
-import { recordTimeEvent } from '../lib/audit.js';
+import { recordTimeEvent, recordCriticalAudit } from '../lib/audit.js';
+import { buildExternalPayrollSheet } from '../lib/externalPayrollSheet.js';
+import { renderExternalPayrollSheetXlsx } from '../lib/externalPayrollSheetXlsx.js';
+import { renderExternalPayrollSheetPdf } from '../lib/externalPayrollSheetPdf.js';
 import { recomputeEntryAnomalies } from '../lib/recomputeEntryAnomalies.js';
 import { checkGeofence } from '../lib/geo.js';
 import { resolveAssociateGeofence } from '../lib/geofenceForAssociate.js';
 import { matchShiftForPunch } from '../lib/matchShiftForPunch.js';
 import { notifyAssociate } from '../lib/notify.js';
-import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone } from '../lib/timezone.js';
+import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone, localDateKey } from '../lib/timezone.js';
 import {
   detectAnomalies,
   endOfWeekUTC,
@@ -78,6 +85,7 @@ type RawEntry = Prisma.TimeEntryGetPayload<{
     job: { select: { name: true } };
     breaks: true;
     shift: { select: { startsAt: true; endsAt: true; position: true } };
+    location: { select: { timezone: true } };
   };
 }>;
 
@@ -87,6 +95,9 @@ const ENTRY_INCLUDE = {
   job: { select: { name: true } },
   breaks: true,
   shift: { select: { startsAt: true, endsAt: true, position: true } },
+  // The worksite's clock, threaded to the client so punch times render in
+  // the SITE zone rather than the reviewer's browser zone.
+  location: { select: { timezone: true } },
 } as const;
 
 /**
@@ -230,6 +241,7 @@ function buildEntry(row: RawEntry, clientName: string | null): TimeEntry {
     approverEmail: row.approvedBy?.email ?? null,
     approvedAt: row.approvedAt ? row.approvedAt.toISOString() : null,
     minutesElapsed: minutesElapsed(row),
+    locationTimezone: row.location?.timezone ?? null,
     jobId: row.jobId,
     jobName: row.job?.name ?? null,
     payRate: row.payRate ? Number(row.payRate) : null,
@@ -295,6 +307,9 @@ timeRouter.get('/me/active', async (req, res, next) => {
   }
 });
 
+// Display cap for an associate's own history.
+const ME_ENTRY_CAP = 200;
+
 timeRouter.get('/me/entries', async (req, res, next) => {
   try {
     const user = req.user!;
@@ -325,11 +340,15 @@ timeRouter.get('/me/entries', async (req, res, next) => {
             : {}),
       },
       orderBy: { clockInAt: 'desc' },
-      take: 200,
+      // +1 probe: fetch one past the display cap so we can TELL the caller
+      // the list was cut rather than presenting a partial history as
+      // complete. The admin sibling has always done this.
+      take: ME_ENTRY_CAP + 1,
       include: ENTRY_INCLUDE,
     });
-    const entries = await toEntries(rows);
-    const payload = TimeEntryListResponseSchema.parse({ entries });
+    const truncated = rows.length > ME_ENTRY_CAP;
+    const entries = await toEntries(rows.slice(0, ME_ENTRY_CAP));
+    const payload = TimeEntryListResponseSchema.parse({ entries, truncated });
     res.json(payload);
   } catch (err) {
     next(err);
@@ -671,10 +690,12 @@ timeRouter.post('/me/break/end', async (req, res, next) => {
 timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
   try {
     const clientId = req.query.clientId?.toString();
+    const locationId = req.query.locationId?.toString();
     const where: Prisma.TimeEntryWhereInput = {
       ...scopeTimeEntries(req.user!),
       status: 'ACTIVE',
       ...(clientId ? { clientId } : {}),
+      ...(locationId ? { locationId } : {}),
     };
     const rows = await prisma.timeEntry.findMany({
       take: 100,
@@ -703,7 +724,7 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
       prisma.location.findMany({
         take: 1000,
         where: { id: { in: locationIds } },
-        select: { id: true, latitude: true, longitude: true, geofenceRadiusMeters: true },
+        select: { id: true, latitude: true, longitude: true, geofenceRadiusMeters: true, timezone: true },
       }),
     ]);
     const clientById = new Map(clients.map((c) => [c.id, c]));
@@ -744,6 +765,7 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
         geofenceOk,
         clockInLat: r.clockInLat ? Number(r.clockInLat) : null,
         clockInLng: r.clockInLng ? Number(r.clockInLng) : null,
+        locationTimezone: l?.timezone ?? null,
       };
     });
     res.json(ActiveDashboardResponseSchema.parse({ entries }));
@@ -753,6 +775,51 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
 });
 
 /* ===== HR/Ops (/admin) =================================================== */
+
+/**
+ * Free-text associate-name filter, shared by the admin queue and the exports
+ * so a narrowed screen and its download can't disagree.
+ *
+ * Per-term AND across (first OR last) so a full-name search works: "Maria
+ * Lopez" → Maria must hit first/last AND Lopez must hit first/last. A single
+ * OR over the whole string matched neither field and returned nothing.
+ *
+ * Returns clauses rather than a `{ AND: [...] }` object: callers merge these
+ * with other clause producers into one AND array. Two helpers each spreading
+ * their own `AND` key into the same where object would silently drop the
+ * first — object spread keeps only the last.
+ */
+function associateNameSearchClauses(
+  search: string | undefined,
+): Prisma.TimeEntryWhereInput[] {
+  const trimmed = search?.trim();
+  if (!trimmed) return [];
+  return trimmed.split(/\s+/).map((term) => ({
+    associate: {
+      OR: [
+        { firstName: { contains: term, mode: 'insensitive' as const } },
+        { lastName: { contains: term, mode: 'insensitive' as const } },
+      ],
+    },
+  }));
+}
+
+/**
+ * "Anomalies only" — entries carrying at least one flag (missed punch,
+ * geofence violation, forgotten clock-out…).
+ *
+ * `anomalies` is a stored `Json?` column, so this is a real query rather than
+ * a post-filter: the export can apply it across the whole range instead of
+ * only the page the screen happened to fetch. Both the SQL NULL (older rows
+ * predating the column) and the empty array have to be excluded.
+ */
+function anomaliesOnlyClauses(on: boolean | undefined): Prisma.TimeEntryWhereInput[] {
+  if (!on) return [];
+  return [
+    { anomalies: { not: Prisma.DbNull } },
+    { NOT: { anomalies: { equals: [] } } },
+  ];
+}
 
 // Selectable pay-period windows for the review picker — derived from the
 // active payroll schedule's cadence plus actual run history.
@@ -771,10 +838,18 @@ timeRouter.get('/admin/pay-periods', MANAGE, async (_req, res, next) => {
 timeRouter.get('/admin/entries/count', MANAGE, async (req, res, next) => {
   try {
     const status = req.query.status?.toString();
+    // Optional client/site scoping so the pending-review badge can follow
+    // the page's filters — an org-wide "47 pending" over a client-filtered
+    // queue showing 3 read as a bug. Deliberately still all-time: the KPI
+    // is the total backlog, not the visible date window.
+    const clientId = req.query.clientId?.toString();
+    const locationId = req.query.locationId?.toString();
     const count = await prisma.timeEntry.count({
       where: {
         ...scopeTimeEntries(req.user!),
         ...(status ? { status: status as Prisma.TimeEntryWhereInput['status'] } : {}),
+        ...(clientId ? { clientId } : {}),
+        ...(locationId ? { locationId } : {}),
       },
     });
     res.json({ count });
@@ -788,6 +863,9 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
     const status = req.query.status?.toString();
     const associateId = req.query.associateId?.toString();
     const clientId = req.query.clientId?.toString();
+    // Narrow to one work-site within the client (cascading filter, same
+    // as scheduling). locationId is denormalized on TimeEntry.
+    const locationId = req.query.locationId?.toString();
     // Phase 65 — date range + free-text associate search.
     const fromStr = req.query.from?.toString();
     const toStr = req.query.to?.toString();
@@ -798,6 +876,7 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
       ...(status ? { status: status as Prisma.TimeEntryWhereInput['status'] } : {}),
       ...(associateId ? { associateId } : {}),
       ...(clientId ? { clientId } : {}),
+      ...(locationId ? { locationId } : {}),
       ...(fromStr || toStr
         ? {
             clockInAt: {
@@ -806,22 +885,7 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
             },
           }
         : {}),
-      ...(search
-        ? {
-            // Per-term AND across (first OR last) so a full-name search
-            // works: "Maria Lopez" → Maria must hit first/last AND Lopez
-            // must hit first/last. A single OR over the whole string
-            // matched neither field and returned nothing.
-            AND: search.split(/\s+/).map((term) => ({
-              associate: {
-                OR: [
-                  { firstName: { contains: term, mode: 'insensitive' as const } },
-                  { lastName: { contains: term, mode: 'insensitive' as const } },
-                ],
-              },
-            })),
-          }
-        : {}),
+      AND: associateNameSearchClauses(search),
     };
 
     // Fetch cap+1 so the response can SAY it was cut — a partial list that
@@ -1598,13 +1662,17 @@ timeRouter.post('/admin/bulk-approve', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const user = req.user!;
-    const results: BulkTimeResultRow[] = [];
     let succeeded = 0;
     let failed = 0;
     // One SUMMARY notification per associate, not one per entry — a
     // Friday bulk-approve of 40 entries must not buzz a phone 5 times.
     const approvedByAssociate = new Map<string, { count: number; minutes: number }>();
-    for (const entryId of parsed.data.entryIds) {
+    // PERF: bounded parallelism — each entry costs several queries
+    // (scope check, update, accrual); fully-serial was ~5 round-trips ×
+    // 500 ids per request. Results are index-addressed so response order
+    // stays stable under concurrency.
+    const results: BulkTimeResultRow[] = new Array(parsed.data.entryIds.length);
+    await runWithConcurrency(parsed.data.entryIds, 6, async (entryId, i) => {
       try {
         const done = await approveOneEntry(user, entryId, req);
         if (done) {
@@ -1613,15 +1681,15 @@ timeRouter.post('/admin/bulk-approve', MANAGE, async (req, res, next) => {
           agg.minutes += done.minutes;
           approvedByAssociate.set(done.associateId, agg);
         }
-        results.push({ entryId, ok: true, errorCode: null, errorMessage: null });
+        results[i] = { entryId, ok: true, errorCode: null, errorMessage: null };
         succeeded++;
       } catch (err) {
         const errorCode = err instanceof HttpError ? err.code : 'approve_failed';
         const errorMessage = err instanceof Error ? err.message : String(err);
-        results.push({ entryId, ok: false, errorCode, errorMessage });
+        results[i] = { entryId, ok: false, errorCode, errorMessage };
         failed++;
       }
-    }
+    });
     for (const [associateId, agg] of approvedByAssociate) {
       void notifyAssociate(associateId, {
         subject: 'Hours approved',
@@ -1645,11 +1713,12 @@ timeRouter.post('/admin/bulk-reject', MANAGE, async (req, res, next) => {
     }
     const user = req.user!;
     const { entryIds, reason } = parsed.data;
-    const results: BulkTimeResultRow[] = [];
     let succeeded = 0;
     let failed = 0;
     const rejectedByAssociate = new Map<string, number>();
-    for (const entryId of entryIds) {
+    // PERF: bounded parallelism, order-stable results (see bulk-approve).
+    const results: BulkTimeResultRow[] = new Array(entryIds.length);
+    await runWithConcurrency(entryIds, 6, async (entryId, i) => {
       try {
         const done = await rejectOneEntry(user, entryId, reason, req);
         if (done) {
@@ -1658,15 +1727,15 @@ timeRouter.post('/admin/bulk-reject', MANAGE, async (req, res, next) => {
             (rejectedByAssociate.get(done.associateId) ?? 0) + 1,
           );
         }
-        results.push({ entryId, ok: true, errorCode: null, errorMessage: null });
+        results[i] = { entryId, ok: true, errorCode: null, errorMessage: null };
         succeeded++;
       } catch (err) {
         const errorCode = err instanceof HttpError ? err.code : 'reject_failed';
         const errorMessage = err instanceof Error ? err.message : String(err);
-        results.push({ entryId, ok: false, errorCode, errorMessage });
+        results[i] = { entryId, ok: false, errorCode, errorMessage };
         failed++;
       }
-    }
+    });
     for (const [associateId, count] of rejectedByAssociate) {
       void notifyAssociate(associateId, {
         subject: 'Time entries rejected',
@@ -1705,15 +1774,19 @@ timeRouter.post('/admin/bulk-apply-break', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const user = req.user!;
-    const results: BulkTimeResultRow[] = [];
     let succeeded = 0;
     let failed = 0;
-    for (const entryId of parsed.data.entryIds) {
+    // PERF: one batched scope+breaks read for the whole id set, then
+    // bounded-parallel writes (was ~5 serial queries × up to 500 ids).
+    const preloaded = await prisma.timeEntry.findMany({
+      where: { id: { in: parsed.data.entryIds }, ...scopeTimeEntries(user) },
+      include: { breaks: true },
+    });
+    const entryById = new Map(preloaded.map((e) => [e.id, e]));
+    const results: BulkTimeResultRow[] = new Array(parsed.data.entryIds.length);
+    await runWithConcurrency(parsed.data.entryIds, 6, async (entryId, i) => {
       try {
-        const entry = await prisma.timeEntry.findFirst({
-          where: { id: entryId, ...scopeTimeEntries(user) },
-          include: { breaks: true },
-        });
+        const entry = entryById.get(entryId);
         if (!entry) {
           throw new HttpError(404, 'not_found', 'Entry not found.');
         }
@@ -1742,7 +1815,9 @@ timeRouter.post('/admin/bulk-apply-break', MANAGE, async (req, res, next) => {
           },
         });
         // Break changes net minutes → NO_BREAK clears, OT flags may move.
-        await recomputeEntryAnomalies(prisma, entry.id);
+        // Fire-and-forget per its own contract (the helper's doc says
+        // callers should void it) — the anomaly chips are advisory.
+        void recomputeEntryAnomalies(prisma, entry.id);
         await recordTimeEvent({
           actorUserId: user.id,
           action: 'time.break_applied',
@@ -1752,15 +1827,15 @@ timeRouter.post('/admin/bulk-apply-break', MANAGE, async (req, res, next) => {
           metadata: { minutes: APPLIED_BREAK_MINUTES, standard: true },
           req,
         });
-        results.push({ entryId, ok: true, errorCode: null, errorMessage: null });
+        results[i] = { entryId, ok: true, errorCode: null, errorMessage: null };
         succeeded++;
       } catch (err) {
         const errorCode = err instanceof HttpError ? err.code : 'apply_break_failed';
         const errorMessage = err instanceof Error ? err.message : String(err);
-        results.push({ entryId, ok: false, errorCode, errorMessage });
+        results[i] = { entryId, ok: false, errorCode, errorMessage };
         failed++;
       }
-    }
+    });
     const response: BulkTimeResponse = { succeeded, failed, results };
     res.status(200).json(response);
   } catch (err) {
@@ -1779,10 +1854,11 @@ timeRouter.post('/admin/bulk-apply-break', MANAGE, async (req, res, next) => {
 // hiding entries.
 const TIME_EXPORT_MAX_ROWS = 5000;
 
+// Delegates to the shared escaper: RFC-4180 quoting PLUS formula-injection
+// guarding (a cell starting with =, +, -, @ executes on open in Excel, and
+// these exports carry associate-controlled names and notes).
 function csvEscape(v: string): string {
-  if (v === '') return '';
-  if (/[",\n\r]/.test(v)) return `"${v.replace(/"/g, '""')}"`;
-  return v;
+  return sharedCsvCell(v);
 }
 
 async function loadExportRows(
@@ -1804,6 +1880,10 @@ async function loadExportRows(
     ...(input.clientId ? { clientId: input.clientId } : {}),
     ...(input.locationId ? { locationId: input.locationId } : {}),
     ...(input.associateId ? { associateId: input.associateId } : {}),
+    AND: [
+      ...associateNameSearchClauses(input.search),
+      ...anomaliesOnlyClauses(input.anomaliesOnly),
+    ],
   };
   const rows = await prisma.timeEntry.findMany({
     where,
@@ -1999,8 +2079,13 @@ timeRouter.post('/admin/export.csv', MANAGE, async (req, res, next) => {
     // (breaks subtracted). Both, explicitly named — the old single
     // "minutes" column was gross and never reconciled with the summary
     // export, which is net.
+    //
+    // Punches come in TWO forms: site-local wall time + a timezone column
+    // (what every screen shows — the old UTC-only export contradicted the
+    // queue by the full zone offset) AND the raw UTC instants for machine
+    // consumers.
     res.write(
-      'clockInAt,clockOutAt,grossMinutes,netMinutes,breakMinutes,associate,client,job,status,rejectionReason\n'
+      'clockInLocal,clockOutLocal,timezone,clockInUtc,clockOutUtc,grossMinutes,netMinutes,breakMinutes,associate,client,job,status,rejectionReason\n'
     );
     // Pre-fetch client names so we don't issue one SELECT per row.
     const clientIds = Array.from(
@@ -2021,7 +2106,13 @@ timeRouter.post('/admin/export.csv', MANAGE, async (req, res, next) => {
         { clockInAt: r.clockInAt, clockOutAt: r.clockOutAt },
         r.breaks,
       );
+      const tz = r.location?.timezone ?? DEFAULT_TIMEZONE;
+      const local = (d: Date) =>
+        `${localDateKey(d, tz)} ${formatTimeInZone(d, tz)}`;
       const cols = [
+        local(r.clockInAt),
+        r.clockOutAt ? local(r.clockOutAt) : '',
+        tz,
         r.clockInAt.toISOString(),
         r.clockOutAt ? r.clockOutAt.toISOString() : '',
         String(gross),
@@ -2095,6 +2186,9 @@ timeRouter.post('/admin/export.pdf', MANAGE, async (req, res, next) => {
       entries: rows.map((r) => ({
         clockInAt: r.clockInAt,
         clockOutAt: r.clockOutAt,
+        // Renderer formats punches on the SITE's wall clock, matching the
+        // queue — it used to toLocale* on the UTC server.
+        timezone: r.location?.timezone ?? DEFAULT_TIMEZONE,
         associateName: `${r.associate.firstName} ${r.associate.lastName}`,
         clientName: r.clientId ? clientMap.get(r.clientId) ?? null : null,
         jobName: r.job?.name ?? null,
@@ -2143,7 +2237,8 @@ async function loadPayrollSheet(
       where,
       orderBy: { clockInAt: 'asc' },
       include: {
-        associate: { select: { firstName: true, lastName: true } },
+        // state drives the OT thresholds (see PayrollSheetInputRow.state).
+        associate: { select: { firstName: true, lastName: true, state: true } },
         breaks: true,
       },
       take: TIME_SUMMARY_MAX_ROWS,
@@ -2173,6 +2268,7 @@ async function loadPayrollSheet(
     clockInAt: r.clockInAt,
     clockOutAt: r.clockOutAt,
     breaks: r.breaks,
+    state: r.associate.state,
   }));
   const hoursSheet = buildPayrollSheet(inputRows);
 
@@ -2266,6 +2362,130 @@ async function loadPayrollSheet(
   };
 }
 
+/* ===== External payroll sheet ============================================= *
+ *
+ * The handoff file for an outside payroll bureau: one row per worker with
+ * full SSN, full bank account + routing number, DOB and home address.
+ *
+ * Gated on `export:payroll-pii`, NOT the `MANAGE` (manage:time) guard the
+ * rest of this router uses — SHIFT_SUPERVISOR holds manage:time, and reusing
+ * it here would have handed every floor supervisor their client's identity
+ * documents. The capability sits with HR_ADMINISTRATOR alone.
+ *
+ * Generation is audited critically (record-then-send, aborting the download
+ * if the audit insert fails), on the same reasoning as payroll disbursement:
+ * a file this sensitive must never leave without a durable record of who
+ * took it, over what range, and how many people were in it.
+ * ========================================================================== */
+
+const EXPORT_PII = requireCapability('export:payroll-pii');
+
+async function loadExternalSheet(
+  req: import('express').Request,
+  format: 'xlsx' | 'pdf',
+) {
+  const parsed = ExternalPayrollSheetInputSchema.safeParse(req.body);
+  if (!parsed.success) {
+    throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+  }
+  const from = new Date(parsed.data.from);
+  const to = new Date(parsed.data.to);
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from) {
+    throw new HttpError(400, 'invalid_range', 'from / to must be valid, to after from');
+  }
+
+  const user = req.user!;
+  const data = await buildExternalPayrollSheet(
+    prisma,
+    scopeTimeEntries(user),
+    parsed.data,
+  );
+
+  // Record BEFORE the bytes go out. A throw here aborts the download, which
+  // is the intended trade: no silent export of SSNs and bank accounts.
+  await recordCriticalAudit(
+    {
+      actorUserId: user.id,
+      clientId: parsed.data.clientId ?? null,
+      action: 'payroll.external_sheet_exported',
+      // Free-form entityId (not a uuid column), so an org-wide export gets a
+      // stable key instead of dropping out of the entity timeline.
+      entityType: 'ExternalPayrollSheet',
+      entityId: parsed.data.clientId ?? 'ALL_CLIENTS',
+      metadata: {
+        format,
+        from: parsed.data.from,
+        to: parsed.data.to,
+        locationId: parsed.data.locationId ?? null,
+        associateId: parsed.data.associateId ?? null,
+        employeeCount: data.rows.length,
+        includedFullSsn: data.rows.filter((r) => r.ssn !== '').length,
+        includedBankAccounts: data.rows.filter((r) => r.accountNumber !== '').length,
+        gaps: data.gaps,
+        truncated: data.truncated,
+        ip: req.ip ?? null,
+        userAgent: req.get('user-agent') ?? null,
+      },
+    },
+    'externalPayrollSheet',
+  );
+
+  return data;
+}
+
+/** Gap counts ride back as headers so the UI can warn without a second call. */
+function setExternalSheetHeaders(
+  res: import('express').Response,
+  data: Awaited<ReturnType<typeof buildExternalPayrollSheet>>,
+): void {
+  res.setHeader('X-Employee-Count', String(data.rows.length));
+  res.setHeader('X-Sheet-Gaps', JSON.stringify(data.gaps));
+  if (data.truncated) res.setHeader('X-Truncated', 'true');
+  // This file should never sit in a shared cache or a browser's disk cache.
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.setHeader('Pragma', 'no-cache');
+}
+
+function externalSheetFilename(from: Date, to: Date, ext: string): string {
+  const dayStr = (d: Date) => d.toISOString().slice(0, 10);
+  return `external-payroll-${dayStr(from)}-to-${dayStr(new Date(to.getTime() - 1))}.${ext}`;
+}
+
+timeRouter.post('/admin/external-payroll-sheet.xlsx', EXPORT_PII, bulkPiiExportLimiter, async (req, res, next) => {
+  try {
+    const data = await loadExternalSheet(req, 'xlsx');
+    const xlsx = await renderExternalPayrollSheetXlsx(data, new Date());
+    setExternalSheetHeaders(res, data);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${externalSheetFilename(data.from, data.to, 'xlsx')}"`,
+    );
+    res.send(xlsx);
+  } catch (err) {
+    next(err);
+  }
+});
+
+timeRouter.post('/admin/external-payroll-sheet.pdf', EXPORT_PII, bulkPiiExportLimiter, async (req, res, next) => {
+  try {
+    const data = await loadExternalSheet(req, 'pdf');
+    const pdf = await renderExternalPayrollSheetPdf(data, new Date());
+    setExternalSheetHeaders(res, data);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${externalSheetFilename(data.from, data.to, 'pdf')}"`,
+    );
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
 function payrollSheetFilename(from: Date, to: Date, ext: string): string {
   const dayStr = (d: Date) => d.toISOString().slice(0, 10);
   return `payroll-sheet-${dayStr(from)}-to-${dayStr(new Date(to.getTime() - 1))}.${ext}`;
@@ -2344,6 +2564,36 @@ timeRouter.post('/admin/payroll-sheet.xlsx', MANAGE, async (req, res, next) => {
  * per week, net approved hours in the "Others" bucket, keyed by the week-
  * ending Friday. Powers the Timesheets page HR reads/copies into Fieldglass.
  */
+/**
+ * Clamp the timesheet clientId to the caller's tenant.
+ *
+ * The filing artifact (TimesheetFiling) is keyed on the REQUEST's clientId
+ * while the row data is scoped per-user — and `manage:time`, this router's
+ * guard, reaches down to SHIFT_SUPERVISOR. Without the clamp, a supervisor
+ * omitting clientId hit the org-wide (clientId=null) filing in both
+ * directions: filing overwrote HR's org-wide snapshot with one site's
+ * workers, and reading computed drift of HR's all-client snapshot against
+ * their scoped rows — leaking every other client's worker names and hours
+ * as "filed X, current 0" drift rows. The web UI pins bounded users to
+ * their client, but the API is the boundary, not the UI.
+ */
+function timesheetClientId(
+  user: NonNullable<import('express').Request['user']>,
+  requested: string | undefined,
+): string | undefined {
+  const clamped = effectiveClientIdFilter(user, requested);
+  if (clamped === null) {
+    // Tenant-bounded caller with no client on file — fail closed rather
+    // than fall through to the org-wide filing.
+    throw new HttpError(
+      403,
+      'client_required',
+      'Your account has no client assigned — ask an administrator to set one.',
+    );
+  }
+  return clamped;
+}
+
 timeRouter.post('/admin/timesheets', MANAGE, async (req, res, next) => {
   try {
     const parsed = TimesheetWeekInputSchema.safeParse(req.body);
@@ -2352,7 +2602,7 @@ timeRouter.post('/admin/timesheets', MANAGE, async (req, res, next) => {
     }
     const result = await buildTimesheetWeek(prisma, {
       weekStart: new Date(parsed.data.weekStart),
-      clientId: parsed.data.clientId,
+      clientId: timesheetClientId(req.user!, parsed.data.clientId),
       scopeWhere: scopeTimeEntries(req.user!),
       shiftScopeWhere: scopeShifts(req.user!),
     });
@@ -2374,7 +2624,7 @@ timeRouter.post('/admin/timesheets.xlsx', MANAGE, async (req, res, next) => {
     }
     const result = await buildTimesheetWeek(prisma, {
       weekStart: new Date(parsed.data.weekStart),
-      clientId: parsed.data.clientId,
+      clientId: timesheetClientId(req.user!, parsed.data.clientId),
       scopeWhere: scopeTimeEntries(req.user!),
       shiftScopeWhere: scopeShifts(req.user!),
     });
@@ -2412,7 +2662,7 @@ timeRouter.post('/admin/timesheets/file', MANAGE, async (req, res, next) => {
       prisma,
       {
         weekStart: new Date(parsed.data.weekStart),
-        clientId: parsed.data.clientId,
+        clientId: timesheetClientId(req.user!, parsed.data.clientId),
         scopeWhere: scopeTimeEntries(req.user!),
         shiftScopeWhere: scopeShifts(req.user!),
       },
@@ -2440,7 +2690,7 @@ timeRouter.post('/admin/timesheets/associate', MANAGE, async (req, res, next) =>
     const result = await buildAssociateTimesheetDetail(prisma, {
       associateId: parsed.data.associateId,
       weekStart: new Date(parsed.data.weekStart),
-      clientId: parsed.data.clientId,
+      clientId: timesheetClientId(req.user!, parsed.data.clientId),
       scopeWhere: scopeTimeEntries(req.user!),
     });
     res.json(result);

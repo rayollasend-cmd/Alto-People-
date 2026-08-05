@@ -46,12 +46,19 @@ interface ErrorBannerProps extends React.HTMLAttributes<HTMLDivElement> {
   hideIcon?: boolean;
   /** Severity tier. Defaults to "error" so the 44+ existing call sites keep their meaning. */
   severity?: Severity;
+  /**
+   * Recovery affordance (almost always a Retry button), pinned to the
+   * trailing edge. A failed load without a way to try again just tells
+   * the user they're stuck.
+   */
+  action?: React.ReactNode;
 }
 
 export function ErrorBanner({
   children,
   hideIcon,
   severity = 'error',
+  action,
   className,
   ...rest
 }: ErrorBannerProps) {
@@ -70,6 +77,7 @@ export function ErrorBanner({
         <Icon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
       )}
       <div className="min-w-0 flex-1">{children}</div>
+      {action && <div className="shrink-0 self-center">{action}</div>}
     </div>
   );
 }

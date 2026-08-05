@@ -29,6 +29,8 @@ vi.mock('@/lib/kioskQueue', () => ({
   enqueuePunch: vi.fn(),
   newIdempotencyKey: vi.fn(() => 'test-key'),
   queueSize: vi.fn(() => 0),
+  droppedCount: vi.fn(() => 0),
+  clearDroppedCount: vi.fn(),
 }));
 
 vi.mock('@/lib/confirm', () => ({
@@ -70,6 +72,11 @@ beforeEach(() => {
   vi.mocked(enqueuePunch).mockClear();
   window.localStorage.setItem('alto.kiosk.deviceToken', 'altokiosk_testtoken');
   window.localStorage.removeItem('alto.kiosk.lang');
+  // The offline consent cache persists in localStorage; without this, a
+  // consent recorded by one test leaks into the next and silently changes
+  // which screen the offline fallback lands on (camera vs PIN-only).
+  window.localStorage.removeItem('alto.kiosk.consent.v1');
+  window.localStorage.removeItem('alto.kiosk.dropped.v1');
 });
 
 describe('<KioskPage> punch flow', () => {
@@ -173,14 +180,17 @@ describe('<KioskPage> punch flow', () => {
     await user.click(
       await screen.findByRole('button', { name: /use photo verification/i }),
     );
-    // No mediaDevices in jsdom → "Camera unavailable" fallback.
+    // No mediaDevices in jsdom → "Camera unavailable" fallback. Wait for
+    // the error state before clicking — the normal camera screen also has
+    // a skip button, and clicking it mid-swap hits a detached node.
+    expect(await screen.findByText(/camera unavailable/i)).toBeInTheDocument();
     await user.click(
-      await screen.findByRole('button', { name: /continue without selfie/i }),
+      screen.getByRole('button', { name: /continue without selfie/i }),
     );
     expect(await screen.findByText('Clocked in')).toBeInTheDocument();
   });
 
-  it('network failure on verify AND punch lands in the offline queue', async () => {
+  it('network failure on verify AND punch lands in the offline queue — no camera without known consent', async () => {
     vi.mocked(kioskVerifyPin).mockRejectedValue(new Error('network down'));
     vi.mocked(kioskPunch).mockRejectedValue(new Error('network down'));
 
@@ -188,10 +198,38 @@ describe('<KioskPage> punch flow', () => {
     render(<KioskPage />);
     await typePin(user);
 
-    // Verify failed (non-ApiError) → camera fallback → skip → punch
-    // fails too → queued.
+    // Verify failed (non-ApiError) → offline fallback. The kiosk can't ask
+    // the server for consent and has none cached for this PIN, so it must
+    // NOT open the camera — capture is the consent-relevant act, and this
+    // path used to photograph associates who'd never been shown the
+    // consent screen. Straight to a queued PIN-only punch instead.
+    expect(await screen.findByText(/saved offline/i)).toBeInTheDocument();
+    expect(screen.queryByText(/camera unavailable/i)).not.toBeInTheDocument();
+    expect(enqueuePunch).toHaveBeenCalledTimes(1);
+    // The queued punch carries no photo.
+    expect(vi.mocked(enqueuePunch).mock.calls[0][0].selfie).toBeNull();
+  });
+
+  it('offline fallback still offers the camera when this PIN previously consented', async () => {
+    // Cache a GRANTED consent the way a prior ONLINE punch would have.
+    const { rememberConsent } = await import('@/lib/kioskConsentCache');
+    await rememberConsent('1234', 'GRANTED');
+
+    vi.mocked(kioskVerifyPin).mockRejectedValue(new Error('network down'));
+    vi.mocked(kioskPunch).mockRejectedValue(new Error('network down'));
+
+    const user = userEvent.setup();
+    render(<KioskPage />);
+    await typePin(user);
+
+    // Known GRANTED → selfie stage. jsdom has no camera, so the capture
+    // screen falls back to the error state. Wait for THAT state before
+    // clicking: the normal camera screen also carries a skip button now,
+    // and grabbing it mid-swap clicks a node the error-state re-render
+    // has already detached — the handler never fires.
+    expect(await screen.findByText(/camera unavailable/i)).toBeInTheDocument();
     await user.click(
-      await screen.findByRole('button', { name: /continue without selfie/i }),
+      screen.getByRole('button', { name: /continue without selfie/i }),
     );
     expect(await screen.findByText(/saved offline/i)).toBeInTheDocument();
     expect(enqueuePunch).toHaveBeenCalledTimes(1);

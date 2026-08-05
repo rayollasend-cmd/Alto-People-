@@ -3,6 +3,7 @@ import type {
   PayrollExceptionsInput,
   PayrollExceptionsResponse,
   PayrollItemListResponse,
+  PayrollItemYtdResponse,
   PayrollRunCreateInput,
   PayrollRunDetail,
   PayrollRunListResponse,
@@ -64,11 +65,15 @@ export function disbursePayrollRun(id: string): Promise<PayrollRunDetail> {
 }
 
 export function retryRunFailures(
-  id: string
+  id: string,
+  itemIds?: string[],
 ): Promise<{ retried: number; succeeded: number }> {
   return apiFetch<{ retried: number; succeeded: number }>(
     `/payroll/runs/${id}/retry-failures`,
-    { method: 'POST' }
+    {
+      method: 'POST',
+      ...(itemIds && itemIds.length > 0 ? { body: { itemIds } } : {}),
+    }
   );
 }
 
@@ -87,8 +92,14 @@ export function voidPayrollRun(
 
 /** Discard a DRAFT / FINALIZED run created in error. Server refuses once
  *  anything disbursed — those must be voided. */
-export function deletePayrollRun(id: string): Promise<{ ok: boolean }> {
-  return apiFetch<{ ok: boolean }>(`/payroll/runs/${id}`, { method: 'DELETE' });
+export function deletePayrollRun(
+  id: string,
+  reason?: string,
+): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(`/payroll/runs/${id}`, {
+    method: 'DELETE',
+    ...(reason?.trim() ? { body: { reason: reason.trim() } } : {}),
+  });
 }
 
 export interface AmendCorrection {
@@ -147,6 +158,17 @@ export function setBranchEnrollment(
 
 export function listMyPayrollItems(): Promise<PayrollItemListResponse> {
   return apiFetch<PayrollItemListResponse>('/payroll/me/items');
+}
+
+/**
+ * Authoritative YTD as of one paystub. The list above is capped at 50 rows,
+ * so YTD can't be summed client-side without understating it once someone
+ * has more stubs than that.
+ */
+export function getMyPayrollItemYtd(
+  itemId: string,
+): Promise<PayrollItemYtdResponse> {
+  return apiFetch<PayrollItemYtdResponse>(`/payroll/me/items/${itemId}/ytd`);
 }
 
 /**

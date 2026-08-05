@@ -19,6 +19,27 @@ import { Select } from '@/components/ui/Select';
 
 const STATUSES: ClientStatus[] = ['PROSPECT', 'ACTIVE', 'INACTIVE'];
 
+const STATUS_LABELS: Record<ClientStatus, string> = {
+  PROSPECT: 'Prospect',
+  ACTIVE: 'Active',
+  INACTIVE: 'Inactive',
+};
+
+// Free-text stays allowed — these just seed the browser datalist so common
+// values are spelled consistently across clients.
+const INDUSTRY_SUGGESTIONS = [
+  'Hospitality',
+  'Logistics',
+  'Warehousing',
+  'Manufacturing',
+  'Retail',
+  'Healthcare',
+  'Construction',
+  'Food service',
+  'Events',
+  'Cleaning services',
+] as const;
+
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -59,7 +80,7 @@ export function NewClientDialog({ open, onOpenChange, onCreated }: Props) {
       onCreated(created);
       onOpenChange(false);
     } catch (err) {
-      toast.error('Could not create client', {
+      toast.error('Could not create client.', {
         description: err instanceof ApiError ? err.message : String(err),
       });
     } finally {
@@ -73,7 +94,7 @@ export function NewClientDialog({ open, onOpenChange, onCreated }: Props) {
         <DialogHeader>
           <DialogTitle>New client</DialogTitle>
           <DialogDescription>
-            Defaults to PROSPECT — flip to ACTIVE once contracts are signed
+            Defaults to Prospect — flip to Active once contracts are signed
             and you're ready for the live roster numbers to count.
           </DialogDescription>
         </DialogHeader>
@@ -92,18 +113,26 @@ export function NewClientDialog({ open, onOpenChange, onCreated }: Props) {
           </Field>
           <Field label="Industry">
             {(p) => (
-              <Input
-                value={industry}
-                onChange={(e) => setIndustry(e.target.value)}
-                maxLength={80}
-                placeholder="e.g. Hospitality, Logistics"
-                {...p}
-              />
+              <>
+                <Input
+                  value={industry}
+                  onChange={(e) => setIndustry(e.target.value)}
+                  maxLength={80}
+                  placeholder="e.g. Hospitality, Logistics"
+                  list="new-client-industry-options"
+                  {...p}
+                />
+                <datalist id="new-client-industry-options">
+                  {INDUSTRY_SUGGESTIONS.map((s) => (
+                    <option key={s} value={s} />
+                  ))}
+                </datalist>
+              </>
             )}
           </Field>
           <Field
             label="Status"
-            hint="PROSPECT is hidden from active-roster counts in dashboards."
+            hint="Prospect clients are hidden from active-roster counts in dashboards."
           >
             {(p) => (
               <Select
@@ -113,7 +142,7 @@ export function NewClientDialog({ open, onOpenChange, onCreated }: Props) {
               >
                 {STATUSES.map((s) => (
                   <option key={s} value={s}>
-                    {s}
+                    {STATUS_LABELS[s]}
                   </option>
                 ))}
               </Select>

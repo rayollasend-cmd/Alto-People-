@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { randomBytes, createHmac } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { prisma } from '../db.js';
+import { assertSafeOutboundUrl } from '../lib/safeOutboundUrl.js';
+import { deliverOne } from '../lib/webhookDispatch.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { hashPassword } from '../lib/passwords.js';
@@ -146,6 +148,8 @@ apiKeysWebhooks93Router.get('/webhooks', VIEW, async (req, res) => {
 
 apiKeysWebhooks93Router.post('/webhooks', MANAGE, async (req, res) => {
   const input = WebhookInputSchema.parse(req.body);
+  // SSRF guard: https-only, publicly-routable destinations only.
+  await assertSafeOutboundUrl(input.url);
   const secret = randomBytes(32).toString('hex');
   const created = await prisma.webhook.create({
     data: {
@@ -167,6 +171,8 @@ apiKeysWebhooks93Router.post('/webhooks', MANAGE, async (req, res) => {
 
 apiKeysWebhooks93Router.put('/webhooks/:id', MANAGE, async (req, res) => {
   const input = WebhookInputSchema.parse(req.body);
+  // SSRF guard: https-only, publicly-routable destinations only.
+  await assertSafeOutboundUrl(input.url);
   await prisma.webhook.update({
     where: { id: req.params.id },
     data: {
@@ -238,45 +244,22 @@ apiKeysWebhooks93Router.post('/webhooks/:id/test', MANAGE, async (req, res) => {
       webhookId: w.id,
       eventType,
       payload: payload as Prisma.InputJsonValue,
+      nextAttemptAt: new Date(),
     },
   });
 
-  // For a test fire we deliver synchronously so the operator sees the
-  // outcome immediately. Real events go through the async worker.
-  const body = JSON.stringify(payload);
-  const signature = createHmac('sha256', w.secret).update(body).digest('hex');
-  let responseStatus: number | null = null;
-  let responseBody: string | null = null;
-  let ok = false;
-  try {
-    const r = await fetch(w.url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Alto-Signature': signature,
-        'X-Alto-Event': eventType,
-      },
-      body,
-      signal: AbortSignal.timeout(10_000),
-    });
-    responseStatus = r.status;
-    responseBody = (await r.text()).slice(0, 1000);
-    ok = r.ok;
-  } catch (err) {
-    responseBody = err instanceof Error ? err.message.slice(0, 1000) : 'unknown';
-  }
+  // For a test fire we attempt synchronously so the operator sees the
+  // outcome immediately — but through the SAME deliverOne the worker
+  // uses, so attempts/status/backoff are recorded identically. A failed
+  // test lands as RETRYING (or FAILED for an unsafe URL) and the worker
+  // finishes the retry schedule like any other delivery.
+  const { outcome, responseStatus } = await deliverOne(
+    prisma,
+    { id: delivery.id, eventType, payload, attemptCount: 0 },
+    { url: w.url, secret: w.secret },
+  );
 
-  await prisma.webhookDelivery.update({
-    where: { id: delivery.id },
-    data: {
-      attemptCount: 1,
-      lastAttemptAt: new Date(),
-      responseStatus,
-      responseBody,
-      status: ok ? 'DELIVERED' : 'FAILED',
-      deliveredAt: ok ? new Date() : null,
-    },
-  });
-
-  res.json({ ok, responseStatus, responseBody });
+  // Status only. The response body lives in the delivery log, which is
+  // readable through the deliveries endpoint under the same capability.
+  res.json({ ok: outcome === 'DELIVERED', responseStatus });
 });

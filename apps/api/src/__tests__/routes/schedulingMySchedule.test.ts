@@ -395,8 +395,9 @@ describe('double-booking guards (June audit P0s)', () => {
   it('publish-week skips a draft that would double-book its associate', async () => {
     const client = await createClient();
     const { associate: me } = await mkPlaced(client.id, 'Maria', 'Lopez');
-    // Pin both drafts to next week's Tuesday so they can't straddle the
-    // server's Monday-snapped week window no matter when the suite runs.
+    // The server publishes [weekStart, weekEnd) VERBATIM now (no re-snap —
+    // server-local snapping on a UTC box acted on the wrong week). Anchor
+    // the window to next Monday and pin both drafts to its Tuesday.
     const nextMonday = new Date();
     nextMonday.setHours(0, 0, 0, 0);
     nextMonday.setDate(nextMonday.getDate() - ((nextMonday.getDay() + 6) % 7) + 7);
@@ -422,7 +423,7 @@ describe('double-booking guards (June audit P0s)', () => {
     const hrAgent = await loginAs(hr.email);
     const res = await hrAgent
       .post('/scheduling/publish-week')
-      .send({ weekStart: t(33).toISOString() });
+      .send({ weekStart: nextMonday.toISOString() });
     expect(res.status).toBe(200);
     expect(res.body.published).toBe(1);
     expect(res.body.skipped).toHaveLength(1);
@@ -434,6 +435,59 @@ describe('double-booking guards (June audit P0s)', () => {
     });
     expect(statuses.filter((s) => s.status === 'ASSIGNED')).toHaveLength(1);
     expect(statuses.filter((s) => s.status === 'DRAFT')).toHaveLength(1);
+  });
+
+  it('publish-week honors the window verbatim — no server-local re-snap', async () => {
+    const client = await createClient();
+    // Window: an arbitrary Wednesday 06:00Z → +7d. Under the old
+    // server-local Monday snap, a draft on the following Monday 03:00Z
+    // (inside this window) and one on the window's own Tuesday (before it)
+    // would BOTH have been decided by the server's zone, not the caller's.
+    const wed = new Date();
+    wed.setUTCHours(6, 0, 0, 0);
+    wed.setUTCDate(wed.getUTCDate() - ((wed.getUTCDay() + 4) % 7) + 14); // a future Wednesday
+    const hours = (h: number) => new Date(wed.getTime() + h * 3_600_000);
+
+    const inside = await mkShift({
+      clientId: client.id,
+      status: 'DRAFT',
+      publishedAt: null,
+      startsAt: hours(1), // just inside the start
+      endsAt: hours(5),
+    });
+    const beforeWindow = await mkShift({
+      clientId: client.id,
+      status: 'DRAFT',
+      publishedAt: null,
+      startsAt: hours(-3), // 03:00Z same Wednesday — before weekStart
+      endsAt: hours(-1),
+    });
+    const afterWindow = await mkShift({
+      clientId: client.id,
+      status: 'DRAFT',
+      publishedAt: null,
+      startsAt: hours(7 * 24 + 1), // just past the exclusive end
+      endsAt: hours(7 * 24 + 5),
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const res = await hrAgent.post('/scheduling/publish-week').send({
+      weekStart: wed.toISOString(),
+      weekEnd: hours(7 * 24).toISOString(),
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.published).toBe(1);
+    expect(res.body.truncated).toBeUndefined();
+
+    const rows = await prisma.shift.findMany({
+      where: { id: { in: [inside.id, beforeWindow.id, afterWindow.id] } },
+      select: { id: true, status: true },
+    });
+    const byId = new Map(rows.map((r) => [r.id, r.status]));
+    expect(byId.get(inside.id)).toBe('OPEN'); // unassigned draft → OPEN
+    expect(byId.get(beforeWindow.id)).toBe('DRAFT');
+    expect(byId.get(afterWindow.id)).toBe('DRAFT');
   });
 
   it('PATCH rejects a startsAt-only change that inverts the window', async () => {

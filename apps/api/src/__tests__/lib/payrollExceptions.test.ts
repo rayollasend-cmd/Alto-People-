@@ -26,6 +26,9 @@ async function seedAssociate(opts: {
   deletedAt?: Date | null;
   withW4?: boolean;
   withPayoutMethod?: 'BRANCH_CARD' | 'BANK_ACCOUNT' | null;
+  /** Default true — an open comp record, so MISSING_COMP_RECORD only
+   *  fires in the test that explicitly opts out. */
+  withComp?: boolean;
 } = {}) {
   const a = await prisma.associate.create({
     data: {
@@ -67,6 +70,17 @@ async function seedAssociate(opts: {
         accountNumberEnc: Buffer.from([0x01, 0x02, 0x03]),
         routingNumberEnc: Buffer.from([0x01, 0x02, 0x03]),
         isPrimary: true,
+      },
+    });
+  }
+  if (opts.withComp !== false) {
+    await prisma.compensationRecord.create({
+      data: {
+        associateId: a.id,
+        effectiveFrom: new Date('2026-01-01T00:00:00Z'),
+        payType: 'HOURLY',
+        amount: 20,
+        reason: 'HIRE',
       },
     });
   }
@@ -267,5 +281,23 @@ describe('computePayrollExceptions', () => {
     expect(r.counts.blocking).toBe(1);
     expect(r.counts.warning).toBe(1);
     expect(r.counts.info).toBe(1);
+  });
+
+  it('flags a missing comp record as WARNING', async () => {
+    const c = await seedClient();
+    const a = await seedAssociate({
+      withW4: true,
+      withPayoutMethod: 'BRANCH_CARD',
+      withComp: false,
+    });
+    await seedHours(a.id, c.id, 8);
+    const r = await computePayrollExceptions(prisma, {
+      periodStart,
+      periodEndExclusive,
+      clientId: null,
+    });
+    const comp = r.exceptions.find((e) => e.kind === 'MISSING_COMP_RECORD');
+    expect(comp?.severity).toBe('WARNING');
+    expect(comp?.associateId).toBe(a.id);
   });
 });

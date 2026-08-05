@@ -23,36 +23,25 @@ vi.mock('@/lib/onboardingApi', () => ({
     extraWithholding: null,
     hasSsnOnFile: true,
     ssnNeedsResubmit: false,
-    hasSsnCardOnFile: false,
+    hasSsnCardOnFile: true,
     ssnLast4: '6789',
     submittedAt: null,
   })),
 }));
 
-vi.mock('@/lib/documentsApi', () => ({
-  uploadMyDocument: vi.fn(async (file: File) => ({
-    id: 'doc-1',
-    associateId: 'a',
-    associateName: null,
-    clientId: null,
+vi.mock('@/lib/i9Api', () => ({
+  uploadI9Document: vi.fn(async () => ({
+    documentId: 'd1',
     kind: 'SSN_CARD',
-    filename: file.name,
-    mimeType: file.type,
-    size: file.size,
-    status: 'UPLOADED',
-    expiresAt: null,
-    rejectionReason: null,
-    verifiedById: null,
-    verifierEmail: null,
-    verifiedAt: null,
-    createdAt: '2026-07-24T00:00:00.000Z',
-    fileAvailable: true,
+    side: null,
+    size: 100,
+    mimeType: 'image/jpeg',
+    sha256: 'x',
   })),
-  deleteMyDocument: vi.fn(async () => {}),
 }));
 
 import { submitW4, getW4 } from '@/lib/onboardingApi';
-import { uploadMyDocument } from '@/lib/documentsApi';
+import { uploadI9Document } from '@/lib/i9Api';
 import { W4Task } from '@/pages/onboarding/tasks/W4Task';
 
 const APP_ID = '00000000-0000-4000-8000-00000000bbbb';
@@ -123,7 +112,7 @@ describe('<W4Task>', () => {
     });
     const user = userEvent.setup();
     renderTask();
-    const ssnField = await screen.findByLabelText(/social security number/i);
+    const ssnField = await screen.findByLabelText(/social security/i);
     await user.type(ssnField, '123-45-6789');
 
     await user.click(screen.getByRole('button', { name: /submit w-4/i }));
@@ -142,7 +131,7 @@ describe('<W4Task>', () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     const user = userEvent.setup();
     renderTask();
-    await user.type(await screen.findByLabelText(/social security number/i), '123456789');
+    await user.type(await screen.findByLabelText(/social security/i), '123456789');
     await user.click(screen.getByRole('button', { name: /submit w-4/i }));
     await waitFor(() => expect(submitW4).toHaveBeenCalled());
 
@@ -152,55 +141,61 @@ describe('<W4Task>', () => {
     errSpy.mockRestore();
   });
 
-  it('blocks the re-collection resubmit until a card photo is uploaded', async () => {
+  it('blocks a recollection resubmit until the card photo is uploaded', async () => {
     vi.mocked(getW4).mockResolvedValueOnce({
       hasSubmission: true, filingStatus: 'SINGLE', multipleJobs: false,
-      dependentsAmount: '0', otherIncome: '0', deductions: '0',
-      extraWithholding: '0', hasSsnOnFile: false, ssnNeedsResubmit: true,
+      dependentsAmount: null, otherIncome: null, deductions: null,
+      extraWithholding: null, hasSsnOnFile: false, ssnNeedsResubmit: true,
       hasSsnCardOnFile: false, ssnLast4: '6789', submittedAt: null,
     });
     const user = userEvent.setup();
-    renderTask();
-    await user.type(
-      await screen.findByLabelText(/social security number/i),
-      '123-45-6789'
-    );
+    const { container } = renderTask();
+    await user.type(await screen.findByLabelText(/social security number/i), '123-45-6789');
 
-    // Submitting without the card photo is blocked client-side.
+    // No card yet — submit must be refused client-side.
     await user.click(screen.getByRole('button', { name: /submit w-4/i }));
     expect(
-      await screen.findByText(/upload a photo of your social security card/i)
+      await screen.findByText(/upload a photo of your social security card before submitting/i)
     ).toBeInTheDocument();
     expect(submitW4).not.toHaveBeenCalled();
 
     // Upload the card, then the submit goes through.
-    const file = new File(['img'], 'card.jpg', { type: 'image/jpeg' });
-    await user.upload(
-      screen.getByLabelText(/social security card photo file/i),
-      file
-    );
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    await user.upload(fileInput, new File(['img'], 'card.jpg', { type: 'image/jpeg' }));
     await waitFor(() =>
-      expect(uploadMyDocument).toHaveBeenCalledWith(file, 'SSN_CARD')
+      expect(uploadI9Document).toHaveBeenCalledWith(
+        APP_ID,
+        expect.any(File),
+        'SSN_CARD'
+      )
     );
-
     await user.click(screen.getByRole('button', { name: /submit w-4/i }));
     await waitFor(() => expect(submitW4).toHaveBeenCalledTimes(1));
-    expect(submitW4.mock.calls[0][1]).toMatchObject({ ssn: '123-45-6789' });
   });
 
-  it('does not demand a fresh photo when a card image is already on file', async () => {
+  it('requires the card upload for any resubmit missing a card image', async () => {
     vi.mocked(getW4).mockResolvedValueOnce({
       hasSubmission: true, filingStatus: 'SINGLE', multipleJobs: false,
-      dependentsAmount: '0', otherIncome: '0', deductions: '0',
-      extraWithholding: '0', hasSsnOnFile: false, ssnNeedsResubmit: true,
-      hasSsnCardOnFile: true, ssnLast4: '6789', submittedAt: null,
+      dependentsAmount: null, otherIncome: null, deductions: null,
+      extraWithholding: null, hasSsnOnFile: true, ssnNeedsResubmit: false,
+      hasSsnCardOnFile: false, ssnLast4: '6789', submittedAt: null,
     });
     const user = userEvent.setup();
-    renderTask();
-    await user.type(
-      await screen.findByLabelText(/social security number/i),
-      '123-45-6789'
-    );
+    const { container } = renderTask();
+    expect(
+      await screen.findByText(/^social security card photo$/i)
+    ).toBeInTheDocument();
+
+    // Mandatory even outside the re-collection state — submit is blocked.
+    await user.click(screen.getByRole('button', { name: /submit w-4/i }));
+    expect(
+      await screen.findByText(/upload a photo of your social security card before submitting/i)
+    ).toBeInTheDocument();
+    expect(submitW4).not.toHaveBeenCalled();
+
+    const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+    await user.upload(fileInput, new File(['img'], 'card.jpg', { type: 'image/jpeg' }));
+    await waitFor(() => expect(uploadI9Document).toHaveBeenCalled());
     await user.click(screen.getByRole('button', { name: /submit w-4/i }));
     await waitFor(() => expect(submitW4).toHaveBeenCalledTimes(1));
   });

@@ -111,6 +111,15 @@ describe('<NewApplicationDialog>', () => {
 
     await user.click(screen.getByRole('button', { name: /create.*invite/i }));
 
+    // The start date now prefills to next Monday (local), sent as a UTC
+    // midnight ISO string — mirror the dialog's formula.
+    const nextMonday = new Date();
+    nextMonday.setDate(
+      nextMonday.getDate() + ((8 - nextMonday.getDay()) % 7 || 7),
+    );
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const nextMondayIso = `${nextMonday.getFullYear()}-${pad(nextMonday.getMonth() + 1)}-${pad(nextMonday.getDate())}T00:00:00.000Z`;
+
     await waitFor(() => {
       expect(createApplication).toHaveBeenCalledWith({
         associateFirstName: 'Demo',
@@ -119,7 +128,7 @@ describe('<NewApplicationDialog>', () => {
         clientId: CLIENT_A,
         templateId: TPL_GLOBAL,
         position: 'Server',
-        startDate: undefined,
+        startDate: nextMondayIso,
         // Phase 41 — defaults to W-2 employee unless HR explicitly picks 1099.
         employmentType: 'W2_EMPLOYEE',
       });

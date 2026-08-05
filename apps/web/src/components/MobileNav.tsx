@@ -9,6 +9,7 @@ import {
   type ModuleGroup,
   type ModuleNav,
 } from '@/lib/modules';
+import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useAuth } from '@/lib/auth';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import { usePinnedModules } from '@/lib/navPersonalization';
@@ -152,11 +153,11 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
             to={DASHBOARD_NAV.path}
             active={activePath === DASHBOARD_NAV.path}
             label={DASHBOARD_NAV.label}
-            icon={DASHBOARD_NAV.icon}
+            icon={DASHBOARD_ICON}
           />
           {pinnedModules.length > 0 && (
             <div className="mt-3">
-              <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-widest text-silver/80">
+              <div className="px-4 py-1 text-2xs font-semibold uppercase tracking-widest text-silver/80">
                 {t('nav.pinned')}
               </div>
               {pinnedModules.map((m) => (
@@ -165,7 +166,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
                   to={m.path}
                   active={activePath === m.path}
                   label={m.label}
-                  icon={m.icon}
+                  icon={MODULE_ICONS[m.key]}
                   badge={m.key === 'approvals' ? approvalsCount : null}
                 />
               ))}
@@ -176,7 +177,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
             if (!items || items.length === 0) return null;
             return (
               <div key={group} className="mt-3">
-                <div className="px-4 py-1 text-[10px] font-semibold uppercase tracking-widest text-silver/80">
+                <div className="px-4 py-1 text-2xs font-semibold uppercase tracking-widest text-silver/80">
                   {GROUP_LABEL[group]}
                 </div>
                 {items.map((m) => (
@@ -185,7 +186,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
                     to={m.path}
                     active={activePath === m.path}
                     label={m.label}
-                    icon={m.icon}
+                    icon={MODULE_ICONS[m.key]}
                     badge={m.key === 'approvals' ? approvalsCount : null}
                   />
                 ))}
@@ -202,7 +203,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
           className="px-4 py-3 border-t border-navy-secondary flex items-center justify-between gap-3"
           onClick={(e) => e.stopPropagation()}
         >
-          <span className="text-[10px] font-semibold uppercase tracking-widest text-silver/80">
+          <span className="text-2xs font-semibold uppercase tracking-widest text-silver/80">
             {t('common.language')}
           </span>
           <SegmentedControl<Lang>
@@ -248,7 +249,7 @@ function MobileLink({ to, label, icon: Icon, active, badge }: MobileLinkProps) {
       <span className="truncate">{label}</span>
       {!!badge && (
         <span
-          className="ml-auto shrink-0 min-w-[1.25rem] h-5 px-1.5 grid place-items-center rounded-full bg-gold/15 border border-gold/40 text-gold text-[10px] font-semibold tabular-nums"
+          className="ml-auto shrink-0 min-w-[1.25rem] h-5 px-1.5 grid place-items-center rounded-full bg-gold/15 border border-gold/40 text-gold text-2xs font-semibold tabular-nums"
           aria-label={`${badge} pending`}
         >
           {badge > 99 ? '99+' : badge}

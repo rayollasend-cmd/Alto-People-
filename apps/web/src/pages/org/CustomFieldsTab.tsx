@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Plus, Sparkles, Trash2 } from 'lucide-react';
+import { Plus, Sparkles, Trash2, X } from 'lucide-react';
 import {
   createDefinition,
   deleteDefinition,
@@ -11,6 +11,7 @@ import {
 } from '@/lib/customFieldsApi';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
+import type { FieldRenderArgs } from '@/components/ui/Field';
 import {
   Badge,
   Button,
@@ -44,6 +45,21 @@ const TYPES: CustomFieldType[] = [
   'SELECT',
   'MULTISELECT',
 ];
+
+// Human labels for the raw enum values (option values stay unchanged).
+const ENTITY_LABELS: Record<CustomFieldEntity, string> = {
+  ASSOCIATE: 'Associate',
+  POSITION: 'Position',
+  CLIENT: 'Client',
+};
+const TYPE_LABELS: Record<CustomFieldType, string> = {
+  TEXT: 'Text',
+  NUMBER: 'Number',
+  DATE: 'Date',
+  BOOLEAN: 'Yes/no',
+  SELECT: 'Select',
+  MULTISELECT: 'Multi-select',
+};
 
 export function CustomFieldsTab({
   clientId,
@@ -84,7 +100,16 @@ export function CustomFieldsTab({
           </Button>
         )}
       </div>
-      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner className="mb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -127,7 +152,7 @@ export function CustomFieldsTab({
                 <TableCell className="font-medium">
                   <div className="min-w-0">
                     <div className="truncate">{d.label}</div>
-                    <div className="md:hidden text-[11px] text-silver/70 truncate">
+                    <div className="md:hidden text-xs2 text-silver/70 truncate">
                       <span className="font-mono">{d.key}</span>
                       {` · ${d.clientId ? 'Per-client' : 'Global'}`}
                     </div>
@@ -135,10 +160,10 @@ export function CustomFieldsTab({
                 </TableCell>
                 <TableCell className="hidden md:table-cell text-silver font-mono text-xs">{d.key}</TableCell>
                 <TableCell>
-                  <Badge variant="outline">{d.entityType}</Badge>
+                  <Badge variant="outline">{ENTITY_LABELS[d.entityType]}</Badge>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="default">{d.type}</Badge>
+                  <Badge variant="default">{TYPE_LABELS[d.type]}</Badge>
                 </TableCell>
                 <TableCell className="hidden md:table-cell text-silver">{d.isRequired ? 'Yes' : '—'}</TableCell>
                 <TableCell className="hidden md:table-cell text-silver">
@@ -197,9 +222,7 @@ function DefinitionDrawer({
   const [isRequired, setIsRequired] = useState(initial?.isRequired ?? false);
   const [isSensitive, setIsSensitive] = useState(initial?.isSensitive ?? false);
   const [helpText, setHelpText] = useState(initial?.helpText ?? '');
-  const [optionsText, setOptionsText] = useState(
-    (initial?.options ?? []).join(', '),
-  );
+  const [options, setOptions] = useState<string[]>(initial?.options ?? []);
   const [scope, setScope] = useState<'global' | 'client'>(
     initial?.clientId ? 'client' : 'global',
   );
@@ -211,10 +234,6 @@ function DefinitionDrawer({
     setError(null);
     setSubmitting(true);
     try {
-      const opts = optionsText
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
       const payload = {
         entityType,
         key: key.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_'),
@@ -223,15 +242,15 @@ function DefinitionDrawer({
         isRequired,
         isSensitive,
         helpText: helpText.trim() || null,
-        options: type === 'SELECT' || type === 'MULTISELECT' ? opts : null,
+        options: type === 'SELECT' || type === 'MULTISELECT' ? options : null,
         clientId: scope === 'client' ? clientId || null : null,
       };
       if (isNew) {
         await createDefinition(payload);
-        toast.success('Custom field created');
+        toast.success('Custom field created.');
       } else {
         await updateDefinition(initial!.id, payload);
-        toast.success('Custom field updated');
+        toast.success('Custom field updated.');
       }
       onSaved();
     } catch (err) {
@@ -247,7 +266,7 @@ function DefinitionDrawer({
     setSubmitting(true);
     try {
       await deleteDefinition(initial!.id);
-      toast.success('Deleted');
+      toast.success('Custom field deleted.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Delete failed.');
@@ -278,7 +297,7 @@ function DefinitionDrawer({
                 {...p}
               >
                 {ENTITY_TYPES.map((t) => (
-                  <option key={t} value={t}>{t}</option>
+                  <option key={t} value={t}>{ENTITY_LABELS[t]}</option>
                 ))}
               </Select>
             )}
@@ -304,7 +323,7 @@ function DefinitionDrawer({
                   {...p}
                 >
                   {TYPES.map((t) => (
-                    <option key={t} value={t}>{t}</option>
+                    <option key={t} value={t}>{TYPE_LABELS[t]}</option>
                   ))}
                 </Select>
               )}
@@ -333,14 +352,13 @@ function DefinitionDrawer({
             )}
           </Field>
           {(type === 'SELECT' || type === 'MULTISELECT') && (
-            <Field label="Options (comma-separated)">
+            <Field label="Options" hint="Type an option and press Enter to add it.">
               {(p) => (
-                <Input
-                  value={optionsText}
-                  onChange={(e) => setOptionsText(e.target.value)}
+                <OptionChipEditor
+                  options={options}
+                  onChange={setOptions}
                   disabled={!canManage}
-                  placeholder="A, B, C"
-                  {...p}
+                  inputProps={p}
                 />
               )}
             </Field>
@@ -413,5 +431,83 @@ function DefinitionDrawer({
         </div>
       </DrawerFooter>
     </>
+  );
+}
+
+/**
+ * Chip-style editor for SELECT/MULTISELECT options. Type + Enter adds a
+ * chip, the chip's × removes it. Replaces the old comma-separated text
+ * input so options containing commas are representable and typos are
+ * removable without re-typing the whole list.
+ */
+function OptionChipEditor({
+  options,
+  onChange,
+  disabled,
+  inputProps,
+}: {
+  options: string[];
+  onChange: (next: string[]) => void;
+  disabled?: boolean;
+  inputProps: FieldRenderArgs;
+}) {
+  const [draft, setDraft] = useState('');
+
+  const addDraft = () => {
+    const v = draft.trim();
+    if (!v) return;
+    // Case-insensitive dedupe — "Morning" and "morning" are one option.
+    if (!options.some((o) => o.toLowerCase() === v.toLowerCase())) {
+      onChange([...options, v]);
+    }
+    setDraft('');
+  };
+
+  return (
+    <div className="space-y-2">
+      <Input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            addDraft();
+          } else if (
+            e.key === 'Backspace' &&
+            draft === '' &&
+            options.length > 0
+          ) {
+            onChange(options.slice(0, -1));
+          }
+        }}
+        onBlur={addDraft}
+        disabled={disabled}
+        maxLength={120}
+        placeholder={options.length === 0 ? 'Type an option, press Enter' : 'Add another…'}
+        {...inputProps}
+      />
+      {options.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {options.map((o) => (
+            <span
+              key={o}
+              className="inline-flex items-center gap-1 rounded-full border border-navy-secondary bg-navy-secondary/40 px-2 py-0.5 text-xs text-white"
+            >
+              {o}
+              {!disabled && (
+                <button
+                  type="button"
+                  onClick={() => onChange(options.filter((x) => x !== o))}
+                  aria-label={`Remove option ${o}`}
+                  className="text-silver hover:text-alert"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

@@ -14,9 +14,12 @@ const shot = (name: string) => `e2e-results/walk-${name}.png`;
 test('associate visual walk', async ({ page }) => {
   await page.goto('/login');
   await page.getByLabel(/email/i).fill('maria.lopez@example.com');
-  await page.getByLabel(/password/i).fill('maria-dev-2026!');
+  await page.getByLabel(/^password/i).fill('maria-dev-2026!');
   await page.getByRole('button', { name: /sign in/i }).click();
-  await expect(page.getByText(/hey maria/i)).toBeVisible({ timeout: 20_000 });
+  // .first() because PageHeader publishes the same title to the topbar from an
+  // effect — the greeting lands in both the topbar <h2> and the hero <h1>, and
+  // which of them exists when the assertion polls is a race.
+  await expect(page.getByText(/hey maria/i).first()).toBeVisible({ timeout: 20_000 });
   await page.waitForTimeout(1_500); // let cards land
   await page.screenshot({ path: shot('01-dashboard'), fullPage: true });
 
@@ -41,10 +44,11 @@ test('associate visual walk', async ({ page }) => {
   await page.screenshot({ path: shot('05-month-view') });
   await page.getByRole('radio', { name: 'List' }).click();
 
-  // Clock screen.
-  await page.getByRole('navigation', { name: /primary/i }).getByRole('link', { name: /clock/i }).click();
+  // Pay screen (the associate tab bar now surfaces Pay where the old
+  // kiosk-only Clock tab used to dead-end).
+  await page.getByRole('navigation', { name: /primary/i }).getByRole('link', { name: /^pay$/i }).click();
   await page.waitForTimeout(1_200);
-  await page.screenshot({ path: shot('06-clock') });
+  await page.screenshot({ path: shot('06-pay') });
 
   // Time off + the request bottom sheet.
   await page.getByRole('navigation', { name: /primary/i }).getByRole('link', { name: /time off/i }).click();

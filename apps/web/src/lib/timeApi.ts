@@ -10,6 +10,8 @@ import type {
   BulkTimeResponse,
   ClockInInputV2,
   ClockOutInputV2,
+  ExternalPayrollSheetGaps,
+  ExternalPayrollSheetInput,
   PayPeriodListResponse,
   TimeApproveInput,
   TimeEntry,
@@ -23,6 +25,15 @@ import type {
   TimesheetAssociateDetailResponse,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
+import { announceTimeEntriesChanged } from './timeEntriesChannel';
+
+/** Announce on success so open timesheet views reload — see timeEntriesChannel. */
+function announced<T>(p: Promise<T>): Promise<T> {
+  return p.then((v) => {
+    announceTimeEntriesChanged();
+    return v;
+  });
+}
 
 export function getActiveTimeEntry(): Promise<ActiveTimeEntryResponse> {
   return apiFetch<ActiveTimeEntryResponse>('/time/me/active');
@@ -60,8 +71,15 @@ export function endBreak(): Promise<BreakEntry> {
   return apiFetch<BreakEntry>('/time/me/break/end', { method: 'POST' });
 }
 
-export function getActiveDashboard(): Promise<ActiveDashboardResponse> {
-  return apiFetch<ActiveDashboardResponse>('/time/admin/active');
+export function getActiveDashboard(filters: {
+  clientId?: string;
+  locationId?: string;
+} = {}): Promise<ActiveDashboardResponse> {
+  const params = new URLSearchParams();
+  if (filters.clientId) params.set('clientId', filters.clientId);
+  if (filters.locationId) params.set('locationId', filters.locationId);
+  const qs = params.toString();
+  return apiFetch<ActiveDashboardResponse>(`/time/admin/active${qs ? `?${qs}` : ''}`);
 }
 
 /**
@@ -103,9 +121,14 @@ export function tryGetGeolocation(timeoutMs = 5_000): Promise<{ lat: number; lng
  *  rows, so counting its length both over-fetched and under-counted. */
 export function countAdminTimeEntries(
   status?: TimeEntryStatus,
+  scope?: { clientId?: string; locationId?: string },
 ): Promise<{ count: number }> {
-  const qs = status ? `?status=${status}` : '';
-  return apiFetch<{ count: number }>(`/time/admin/entries/count${qs}`);
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (scope?.clientId) params.set('clientId', scope.clientId);
+  if (scope?.locationId) params.set('locationId', scope.locationId);
+  const qs = params.toString();
+  return apiFetch<{ count: number }>(`/time/admin/entries/count${qs ? `?${qs}` : ''}`);
 }
 
 /** Selectable pay-period windows (schedule cadence + actual run history). */
@@ -117,6 +140,7 @@ export function listAdminTimeEntries(filters: {
   status?: TimeEntryStatus;
   associateId?: string;
   clientId?: string;
+  locationId?: string;
   from?: string;
   to?: string;
   search?: string;
@@ -125,6 +149,7 @@ export function listAdminTimeEntries(filters: {
   if (filters.status) params.set('status', filters.status);
   if (filters.associateId) params.set('associateId', filters.associateId);
   if (filters.clientId) params.set('clientId', filters.clientId);
+  if (filters.locationId) params.set('locationId', filters.locationId);
   if (filters.from) params.set('from', filters.from);
   if (filters.to) params.set('to', filters.to);
   if (filters.search) params.set('search', filters.search);
@@ -138,20 +163,20 @@ export function approveTimeEntry(
   id: string,
   body: TimeApproveInput = {}
 ): Promise<TimeEntry> {
-  return apiFetch<TimeEntry>(`/time/admin/entries/${id}/approve`, {
+  return announced(apiFetch<TimeEntry>(`/time/admin/entries/${id}/approve`, {
     method: 'POST',
     body,
-  });
+  }));
 }
 
 export function rejectTimeEntry(
   id: string,
   body: TimeRejectInput
 ): Promise<TimeEntry> {
-  return apiFetch<TimeEntry>(`/time/admin/entries/${id}/reject`, {
+  return announced(apiFetch<TimeEntry>(`/time/admin/entries/${id}/reject`, {
     method: 'POST',
     body,
-  });
+  }));
 }
 
 /** Admin: create a time entry on behalf of an associate. Omit clockOutAt to
@@ -159,7 +184,7 @@ export function rejectTimeEntry(
 export function adminCreateTimeEntry(
   body: AdminCreateTimeEntryInput
 ): Promise<TimeEntry> {
-  return apiFetch<TimeEntry>('/time/admin/entries', { method: 'POST', body });
+  return announced(apiFetch<TimeEntry>('/time/admin/entries', { method: 'POST', body }));
 }
 
 /** Admin: edit a pre-approval entry (times/job/notes), or clock an associate
@@ -168,28 +193,28 @@ export function adminEditTimeEntry(
   id: string,
   body: AdminEditTimeEntryInput
 ): Promise<TimeEntry> {
-  return apiFetch<TimeEntry>(`/time/admin/entries/${id}`, {
+  return announced(apiFetch<TimeEntry>(`/time/admin/entries/${id}`, {
     method: 'PATCH',
     body,
-  });
+  }));
 }
 
 export function bulkApproveTimeEntries(
   body: BulkTimeApproveInput
 ): Promise<BulkTimeResponse> {
-  return apiFetch<BulkTimeResponse>('/time/admin/bulk-approve', {
+  return announced(apiFetch<BulkTimeResponse>('/time/admin/bulk-approve', {
     method: 'POST',
     body,
-  });
+  }));
 }
 
 export function bulkRejectTimeEntries(
   body: BulkTimeRejectInput
 ): Promise<BulkTimeResponse> {
-  return apiFetch<BulkTimeResponse>('/time/admin/bulk-reject', {
+  return announced(apiFetch<BulkTimeResponse>('/time/admin/bulk-reject', {
     method: 'POST',
     body,
-  });
+  }));
 }
 
 /** Admin break editing — each call returns the full updated entry so the
@@ -198,26 +223,26 @@ export function addTimeEntryBreak(
   entryId: string,
   body: { startedAt: string; endedAt: string; type?: 'MEAL' | 'REST' }
 ): Promise<TimeEntry> {
-  return apiFetch<TimeEntry>(`/time/admin/entries/${entryId}/breaks`, {
+  return announced(apiFetch<TimeEntry>(`/time/admin/entries/${entryId}/breaks`, {
     method: 'POST',
     body,
-  });
+  }));
 }
 
 export function updateTimeEntryBreak(
   breakId: string,
   body: { startedAt?: string; endedAt?: string }
 ): Promise<TimeEntry> {
-  return apiFetch<TimeEntry>(`/time/admin/breaks/${breakId}`, {
+  return announced(apiFetch<TimeEntry>(`/time/admin/breaks/${breakId}`, {
     method: 'PATCH',
     body,
-  });
+  }));
 }
 
 export function deleteTimeEntryBreak(breakId: string): Promise<TimeEntry> {
-  return apiFetch<TimeEntry>(`/time/admin/breaks/${breakId}`, {
+  return announced(apiFetch<TimeEntry>(`/time/admin/breaks/${breakId}`, {
     method: 'DELETE',
-  });
+  }));
 }
 
 /** Book the standard unpaid 1-hour meal break, centered mid-shift, on each
@@ -226,10 +251,10 @@ export function deleteTimeEntryBreak(breakId: string): Promise<TimeEntry> {
 export function bulkApplyBreakTimeEntries(
   entryIds: string[]
 ): Promise<BulkTimeResponse> {
-  return apiFetch<BulkTimeResponse>('/time/admin/bulk-apply-break', {
+  return announced(apiFetch<BulkTimeResponse>('/time/admin/bulk-apply-break', {
     method: 'POST',
     body: { entryIds },
-  });
+  }));
 }
 
 /**
@@ -312,6 +337,49 @@ export async function exportPayrollSheet(
   return {
     noClientCount: Number(headers.get('X-No-Client') ?? 0),
     pendingCount: Number(headers.get('X-Pending') ?? 0),
+  };
+}
+
+/**
+ * External payroll sheet — the handoff file for an outside payroll bureau.
+ * Full SSN, full bank account + routing number, DOB and home address, one row
+ * per worker. Requires `export:payroll-pii` (HR Administrator only) and every
+ * generation is written to the audit log before the file is sent.
+ *
+ * Returns the gap counts the server measured so the caller can warn about
+ * rows a provider will reject — a blank routing number is an unpaid worker,
+ * and it's invisible in a spreadsheet with hundreds of rows.
+ */
+export async function exportExternalPayrollSheet(
+  format: 'pdf' | 'xlsx',
+  body: ExternalPayrollSheetInput,
+): Promise<{
+  employeeCount: number;
+  gaps: ExternalPayrollSheetGaps;
+  truncated: boolean;
+}> {
+  const headers = await downloadExportPost(
+    `/api/time/admin/external-payroll-sheet.${format}`,
+    body,
+    `external-payroll.${format}`,
+  );
+  let gaps: ExternalPayrollSheetGaps = {
+    missingW4: 0,
+    unreadableSsn: 0,
+    missingBankDetails: 0,
+    missingPayRate: 0,
+  };
+  try {
+    const raw = headers.get('X-Sheet-Gaps');
+    if (raw) gaps = JSON.parse(raw) as ExternalPayrollSheetGaps;
+  } catch {
+    // A malformed header shouldn't fail a download that already succeeded;
+    // the zeroed default just means "no warning shown".
+  }
+  return {
+    employeeCount: Number(headers.get('X-Employee-Count') ?? 0),
+    gaps,
+    truncated: headers.get('X-Truncated') === 'true',
   };
 }
 

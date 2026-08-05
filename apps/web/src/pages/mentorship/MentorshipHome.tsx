@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { GraduationCap, Plus, Sparkles } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Download, GraduationCap, Plus, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import {
@@ -9,7 +9,9 @@ import {
   transitionMentorship,
   type Mentorship,
   type MentorshipCandidate,
+  type MentorshipStatus,
 } from '@/lib/mentorship112Api';
+import { listSkills, type SkillCatalogEntry } from '@/lib/skills111Api';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import {
@@ -24,8 +26,11 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
+  FilterBar,
   Input,
   PageHeader,
+  Select,
   SkeletonRows,
   Table,
   TableBody,
@@ -35,27 +40,105 @@ import {
   TableRow,
   Textarea,
 } from '@/components/ui';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { Label } from '@/components/ui/Label';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, ymdLocal } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
+
+const STATUSES: MentorshipStatus[] = [
+  'PROPOSED',
+  'ACTIVE',
+  'COMPLETED',
+  'DECLINED',
+  'CANCELLED',
+];
+
+const STATUS_LABELS: Record<MentorshipStatus, string> = {
+  PROPOSED: 'Proposed',
+  ACTIVE: 'Active',
+  COMPLETED: 'Completed',
+  DECLINED: 'Declined',
+  CANCELLED: 'Cancelled',
+};
+
+// Status contract: success = active/completed, pending = awaiting a
+// decision, destructive = declined/cancelled.
+const STATUS_VARIANT: Record<MentorshipStatus, 'success' | 'pending' | 'destructive'> = {
+  PROPOSED: 'pending',
+  ACTIVE: 'success',
+  COMPLETED: 'success',
+  DECLINED: 'destructive',
+  CANCELLED: 'destructive',
+};
+
+const LEVEL_LABELS: Record<MentorshipCandidate['level'], string> = {
+  BEGINNER: 'Beginner',
+  INTERMEDIATE: 'Intermediate',
+  ADVANCED: 'Advanced',
+  EXPERT: 'Expert',
+};
+
+interface PairingPrefill {
+  mentor: PickedAssociate;
+  mentee: PickedAssociate;
+  skillId: string;
+}
 
 export function MentorshipHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
   const [rows, setRows] = useState<Mentorship[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [showSuggest, setShowSuggest] = useState(false);
+  const [prefill, setPrefill] = useState<PairingPrefill | null>(null);
   const [completeTarget, setCompleteTarget] = useState<Mentorship | null>(null);
   const [completing, setCompleting] = useState(false);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<MentorshipStatus | ''>('');
 
   const refresh = () => {
     setRows(null);
+    setLoadError(null);
     listMentorships()
       .then((r) => setRows(r.mentorships))
-      .catch(() => setRows([]));
+      .catch((err) =>
+        setLoadError(
+          err instanceof ApiError ? err.message : 'Failed to load mentorships.',
+        ),
+      );
   };
   useEffect(() => {
     refresh();
   }, []);
+
+  const filtered = useMemo(() => {
+    if (!rows) return null;
+    const q = search.trim().toLowerCase();
+    return rows.filter(
+      (m) =>
+        (!q ||
+          m.mentorName.toLowerCase().includes(q) ||
+          m.menteeName.toLowerCase().includes(q)) &&
+        (!statusFilter || m.status === statusFilter),
+    );
+  }, [rows, search, statusFilter]);
+
+  const onExportCsv = () => {
+    if (!filtered) return;
+    downloadCsv(`mentorships-${ymdLocal()}.csv`, [
+      ['Mentor', 'Mentee', 'Focus skill', 'Status', 'Started', 'Ended', 'Created'],
+      ...filtered.map((m) => [
+        m.mentorName,
+        m.menteeName,
+        m.focusSkillName ?? '',
+        STATUS_LABELS[m.status],
+        m.startedAt ? fmtDate(m.startedAt) : '',
+        m.endedAt ? fmtDate(m.endedAt) : '',
+        fmtDate(m.createdAt),
+      ]),
+    ]);
+  };
 
   return (
     <div className="space-y-5">
@@ -63,26 +146,74 @@ export function MentorshipHome() {
         title="Mentorship"
         subtitle="Pair experienced associates with juniors. Status tracks the lifecycle from proposal to completion."
         breadcrumbs={[{ label: 'Mentorship' }]}
+        primaryAction={
+          canManage ? (
+            <Button onClick={() => setShowNew(true)}>
+              <Plus className="mr-2 h-4 w-4" /> New pairing
+            </Button>
+          ) : undefined
+        }
+        secondaryActions={
+          <>
+            {canManage && (
+              <Button variant="outline" onClick={() => setShowSuggest(true)}>
+                <Sparkles className="mr-2 h-4 w-4" /> Suggest mentors
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              onClick={onExportCsv}
+              disabled={!filtered || filtered.length === 0}
+            >
+              <Download className="mr-2 h-4 w-4" /> Export CSV
+            </Button>
+          </>
+        }
       />
-      {canManage && (
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => setShowSuggest(true)}>
-            <Sparkles className="mr-2 h-4 w-4" /> Suggest mentors
-          </Button>
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New pairing
-          </Button>
-        </div>
-      )}
+      <FilterBar>
+        <Input
+          placeholder="Search mentor or mentee…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="max-w-xs"
+          aria-label="Search mentor or mentee"
+        />
+        <Select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as MentorshipStatus | '')}
+          aria-label="Filter by status"
+          className="w-auto"
+        >
+          <option value="">All statuses</option>
+          {STATUSES.map((s) => (
+            <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+          ))}
+        </Select>
+      </FilterBar>
       <Card>
         <CardContent className="p-0">
-          {rows === null ? (
+          {loadError ? (
+            <div className="p-6">
+              <ErrorBanner>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{loadError}</span>
+                  <Button size="sm" variant="outline" onClick={refresh}>
+                    Retry
+                  </Button>
+                </div>
+              </ErrorBanner>
+            </div>
+          ) : filtered === null ? (
             <div className="p-6"><SkeletonRows count={3} /></div>
-          ) : rows.length === 0 ? (
+          ) : filtered.length === 0 ? (
             <EmptyState
               icon={GraduationCap}
-              title="No mentorships yet"
-              description="Pair an experienced associate with a junior to start one."
+              title={rows && rows.length > 0 ? 'No matches' : 'No mentorships yet'}
+              description={
+                rows && rows.length > 0
+                  ? 'No pairing matches the current search or status filter.'
+                  : 'Pair an experienced associate with a junior to start one.'
+              }
             />
           ) : (
             <Table>
@@ -97,29 +228,19 @@ export function MentorshipHome() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((m) => (
+                {filtered.map((m) => (
                   <TableRow key={m.id} className="group">
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{m.mentorName}</div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {m.focusSkillName ?? '—'} · {fmtDate(m.startedAt)}
                       </div>
                     </TableCell>
                     <TableCell>{m.menteeName}</TableCell>
                     <TableCell className="text-silver hidden md:table-cell">{m.focusSkillName ?? '—'}</TableCell>
                     <TableCell>
-                      <Badge
-                        variant={
-                          m.status === 'ACTIVE'
-                            ? 'success'
-                            : m.status === 'PROPOSED'
-                              ? 'pending'
-                              : m.status === 'COMPLETED'
-                                ? 'accent'
-                                : 'destructive'
-                        }
-                      >
-                        {m.status}
+                      <Badge variant={STATUS_VARIANT[m.status]}>
+                        {STATUS_LABELS[m.status]}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs hidden md:table-cell">
@@ -134,6 +255,7 @@ export function MentorshipHome() {
                             onClick={async () => {
                               try {
                                 await transitionMentorship(m.id, { status: 'ACTIVE' });
+                                toast.success('Pairing activated.');
                                 refresh();
                               } catch (err) {
                                 toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -148,6 +270,7 @@ export function MentorshipHome() {
                             onClick={async () => {
                               try {
                                 await transitionMentorship(m.id, { status: 'DECLINED' });
+                                toast.success('Pairing declined.');
                                 refresh();
                               } catch (err) {
                                 toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -175,17 +298,30 @@ export function MentorshipHome() {
           )}
         </CardContent>
       </Card>
-      {showNew && (
+      {(showNew || prefill !== null) && (
         <NewPairingDrawer
-          onClose={() => setShowNew(false)}
+          initialMentor={prefill?.mentor ?? null}
+          initialMentee={prefill?.mentee ?? null}
+          initialSkillId={prefill?.skillId ?? ''}
+          onClose={() => {
+            setShowNew(false);
+            setPrefill(null);
+          }}
           onSaved={() => {
             setShowNew(false);
+            setPrefill(null);
             refresh();
           }}
         />
       )}
       {showSuggest && (
-        <SuggestDrawer onClose={() => setShowSuggest(false)} />
+        <SuggestDrawer
+          onClose={() => setShowSuggest(false)}
+          onPropose={(p) => {
+            setShowSuggest(false);
+            setPrefill(p);
+          }}
+        />
       )}
       <ConfirmDialog
         open={completeTarget !== null}
@@ -220,29 +356,47 @@ export function MentorshipHome() {
 }
 
 function NewPairingDrawer({
+  initialMentor = null,
+  initialMentee = null,
+  initialSkillId = '',
   onClose,
   onSaved,
 }: {
+  initialMentor?: PickedAssociate | null;
+  initialMentee?: PickedAssociate | null;
+  initialSkillId?: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [mentor, setMentor] = useState('');
-  const [mentee, setMentee] = useState('');
-  const [skillId, setSkillId] = useState('');
+  const [mentor, setMentor] = useState<PickedAssociate | null>(initialMentor);
+  const [mentee, setMentee] = useState<PickedAssociate | null>(initialMentee);
+  const [skillId, setSkillId] = useState(initialSkillId);
+  const [skills, setSkills] = useState<SkillCatalogEntry[]>([]);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
   const [goals, setGoals] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const loadSkills = () => {
+    setSkillsError(null);
+    listSkills()
+      .then((r) => setSkills(r.skills))
+      .catch(() => setSkillsError('Failed to load the skill catalog.'));
+  };
+  useEffect(() => {
+    loadSkills();
+  }, []);
+
   const submit = async () => {
-    if (!mentor.trim() || !mentee.trim()) {
-      toast.error('Mentor and mentee IDs required.');
+    if (!mentor || !mentee) {
+      toast.error('Pick an associate.');
       return;
     }
     setSaving(true);
     try {
       await proposeMentorship({
-        mentorAssociateId: mentor.trim(),
-        menteeAssociateId: mentee.trim(),
-        focusSkillId: skillId.trim() || null,
+        mentorAssociateId: mentor.id,
+        menteeAssociateId: mentee.id,
+        focusSkillId: skillId || null,
         goals: goals.trim() || null,
       });
       toast.success('Pairing proposed.');
@@ -261,16 +415,36 @@ function NewPairingDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Mentor associate ID</Label>
-          <Input className="mt-1 font-mono text-xs" value={mentor} onChange={(e) => setMentor(e.target.value)} />
+          <Label>Mentor</Label>
+          <div className="mt-1">
+            <AssociatePicker value={mentor} onChange={setMentor} />
+          </div>
         </div>
         <div>
-          <Label>Mentee associate ID</Label>
-          <Input className="mt-1 font-mono text-xs" value={mentee} onChange={(e) => setMentee(e.target.value)} />
+          <Label>Mentee</Label>
+          <div className="mt-1">
+            <AssociatePicker value={mentee} onChange={setMentee} />
+          </div>
         </div>
         <div>
-          <Label>Focus skill ID (optional)</Label>
-          <Input className="mt-1 font-mono text-xs" value={skillId} onChange={(e) => setSkillId(e.target.value)} />
+          <Label>Focus skill (optional)</Label>
+          {skillsError ? (
+            <ErrorBanner className="mt-1">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>{skillsError}</span>
+                <Button size="sm" variant="outline" onClick={loadSkills}>
+                  Retry
+                </Button>
+              </div>
+            </ErrorBanner>
+          ) : (
+            <Select className="mt-1" value={skillId} onChange={(e) => setSkillId(e.target.value)}>
+              <option value="">None</option>
+              {skills.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </Select>
+          )}
         </div>
         <div>
           <Label>Goals (optional)</Label>
@@ -291,22 +465,44 @@ function NewPairingDrawer({
   );
 }
 
-function SuggestDrawer({ onClose }: { onClose: () => void }) {
-  const [menteeId, setMenteeId] = useState('');
+function SuggestDrawer({
+  onClose,
+  onPropose,
+}: {
+  onClose: () => void;
+  onPropose: (prefill: PairingPrefill) => void;
+}) {
+  const [mentee, setMentee] = useState<PickedAssociate | null>(null);
   const [skillId, setSkillId] = useState('');
+  const [skills, setSkills] = useState<SkillCatalogEntry[]>([]);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
   const [results, setResults] = useState<MentorshipCandidate[] | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const loadSkills = () => {
+    setSkillsError(null);
+    listSkills()
+      .then((r) => setSkills(r.skills))
+      .catch(() => setSkillsError('Failed to load the skill catalog.'));
+  };
+  useEffect(() => {
+    loadSkills();
+  }, []);
+
   const submit = async () => {
-    if (!menteeId.trim() || !skillId.trim()) {
-      toast.error('Mentee and skill IDs required.');
+    if (!mentee) {
+      toast.error('Pick an associate.');
+      return;
+    }
+    if (!skillId) {
+      toast.error('Pick a skill.');
       return;
     }
     setLoading(true);
     try {
       const r = await suggestMentors({
-        menteeAssociateId: menteeId.trim(),
-        skillId: skillId.trim(),
+        menteeAssociateId: mentee.id,
+        skillId,
       });
       setResults(r.candidates);
     } catch (err) {
@@ -323,12 +519,30 @@ function SuggestDrawer({ onClose }: { onClose: () => void }) {
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Mentee associate ID</Label>
-          <Input className="mt-1 font-mono text-xs" value={menteeId} onChange={(e) => setMenteeId(e.target.value)} />
+          <Label>Mentee</Label>
+          <div className="mt-1">
+            <AssociatePicker value={mentee} onChange={setMentee} />
+          </div>
         </div>
         <div>
-          <Label>Skill ID</Label>
-          <Input className="mt-1 font-mono text-xs" value={skillId} onChange={(e) => setSkillId(e.target.value)} />
+          <Label>Skill</Label>
+          {skillsError ? (
+            <ErrorBanner className="mt-1">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>{skillsError}</span>
+                <Button size="sm" variant="outline" onClick={loadSkills}>
+                  Retry
+                </Button>
+              </div>
+            </ErrorBanner>
+          ) : (
+            <Select className="mt-1" value={skillId} onChange={(e) => setSkillId(e.target.value)}>
+              <option value="">Select a skill…</option>
+              {skills.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </Select>
+          )}
         </div>
         <Button onClick={submit} disabled={loading}>
           {loading ? 'Searching…' : 'Find candidates'}
@@ -343,17 +557,32 @@ function SuggestDrawer({ onClose }: { onClose: () => void }) {
               results.map((c) => (
                 <div
                   key={c.associateId}
-                  className="flex items-center justify-between p-2 rounded border border-navy-secondary"
+                  className="flex items-center justify-between gap-2 p-2 rounded border border-navy-secondary"
                 >
-                  <div>
-                    <div className="text-white text-sm">{c.name}</div>
-                    <div className="text-xs text-silver">
+                  <div className="min-w-0">
+                    <div className="text-white text-sm truncate">{c.name}</div>
+                    <div className="text-xs text-silver truncate">
                       {c.email} • {c.yearsExperience ? `${c.yearsExperience}y exp` : 'exp unknown'}
                     </div>
                   </div>
-                  <Badge variant={c.level === 'EXPERT' ? 'success' : 'accent'}>
-                    {c.level}
-                  </Badge>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Badge variant={c.level === 'EXPERT' ? 'success' : 'accent'}>
+                      {LEVEL_LABELS[c.level]}
+                    </Badge>
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        if (!mentee) return;
+                        onPropose({
+                          mentor: { id: c.associateId, name: c.name },
+                          mentee,
+                          skillId,
+                        });
+                      }}
+                    >
+                      Propose
+                    </Button>
+                  </div>
                 </div>
               ))
             )}

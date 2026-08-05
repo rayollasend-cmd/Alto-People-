@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useDraggable,
   useDroppable,
   useSensor,
@@ -21,6 +22,8 @@ import {
   zonedMinutesOfDay,
   zonedWallTimeToUtc,
 } from '@/lib/format';
+import { addDays, sameDay, shiftMinutes, startOfDay, ymd } from './calendarDates';
+import { VirtualizedRows } from './VirtualizedRows';
 import {
   ShiftHoverCard,
   useShiftHoverCard,
@@ -31,6 +34,16 @@ import {
   useShiftContextMenu,
 } from './ShiftContextMenu';
 import { TEMPLATE_MIME } from './TemplatesRail';
+import {
+  GRIP_HIT,
+  GRIP_ICON,
+  RESIZE_RAIL_Y,
+  SHIFT_STATUS_LABEL,
+  ShiftTouchMenuButton,
+  StatusMark,
+  statusLabelClass,
+  statusTileClass,
+} from './shiftTile';
 
 /**
  * Phase 53.8 — time-grid week view (Sling/Outlook style).
@@ -70,48 +83,22 @@ const SNAP_MIN = 15;
 const MIN_DURATION_MIN = 15;
 const UNASSIGNED_ROW_ID = '__unassigned__';
 
+// Shared empty-cell fallback: `byCell.get(key) ?? EMPTY_SHIFTS` hands every
+// empty cell the SAME array identity, so memo'd TimeCells with no shifts see
+// referentially-equal props and skip re-rendering.
+const EMPTY_SHIFTS: Shift[] = [];
+
 function fmtTime(d: Date, timeZone?: string | null): string {
   return fmtTimeTz(d, timeZone);
 }
 
-function startOfDay(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-/** Local calendar-date key ("YYYY-MM-DD") of a column day. Columns are always
- *  browser-local-derived dates; this is just their stable label/lookup key. */
-function ymd(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function addDays(d: Date, n: number): Date {
-  const x = new Date(d);
-  x.setDate(x.getDate() + n);
-  return x;
-}
-
-function sameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
-
-function shiftMinutes(s: Shift): number {
-  return Math.max(
-    0,
-    Math.round(
-      (new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime()) / 60_000,
-    ),
-  );
-}
-
 function snap(min: number): number {
   return Math.round(min / SNAP_MIN) * SNAP_MIN;
+}
+
+/** Minutes → hours label with at most one decimal ("38.5", "40"). */
+function fmtHours(min: number): string {
+  return String(Math.round((min / 60) * 10) / 10);
 }
 
 interface Props {
@@ -126,6 +113,9 @@ interface Props {
   canManage: boolean;
   onShiftClick: (s: Shift, e: React.MouseEvent) => void;
   onCellCreate: (start: Date, associateId: string | null) => void;
+  /** Drag a vertical range in an empty cell → create with those exact
+   *  times prefilled (no 4h-guess to fix afterwards). */
+  onCellCreateRange?: (start: Date, end: Date, associateId: string | null) => void;
   selectedIds: Set<string>;
   onShiftMove: (
     s: Shift,
@@ -136,6 +126,11 @@ interface Props {
   /** Apply a dragged-from-rail template to a specific cell. */
   onTemplateDrop: (templateId: string, dayStart: Date, associateId: string | null) => void;
   showAllAssociates: boolean;
+  /** Per-associate availability fit, keyed by associateId. `dows` = weekday
+   *  numbers (0=Sun) with ANY weekly availability window; `blocked` = local
+   *  "YYYY-MM-DD" day keys vetoed by approved PTO / one-off exceptions.
+   *  Absent map or absent associate entry → no shading (unknown ≠ unavailable). */
+  availabilityFit?: Map<string, { dows: Set<number>; blocked: Set<string> }> | null;
 }
 
 export function TimeGridWeekView({
@@ -147,19 +142,40 @@ export function TimeGridWeekView({
   canManage,
   onShiftClick,
   onCellCreate,
+  onCellCreateRange,
   onShiftMove,
   onShiftResize,
   quickActions,
   selectedIds,
   onTemplateDrop,
   showAllAssociates,
+  availabilityFit = null,
 }: Props) {
   const hover = useShiftHoverCard();
   const ctxMenu = useShiftContextMenu();
+  // hover.bind / ctxMenu.openFor are recreated by their hooks on every
+  // render; route them through refs so the memo'd TimeCells below receive
+  // stable handler identities (they only close over setState + refs, so
+  // any render's copy behaves identically).
+  const hoverBindFnRef = useRef(hover.bind);
+  hoverBindFnRef.current = hover.bind;
+  const hoverBind = useCallback(
+    (s: Shift) => hoverBindFnRef.current(s),
+    [],
+  );
+  const ctxOpenFnRef = useRef(ctxMenu.openFor);
+  ctxOpenFnRef.current = ctxMenu.openFor;
+  const openContextMenu = useCallback(
+    (s: Shift, e: React.MouseEvent) => ctxOpenFnRef.current(s, e),
+    [],
+  );
   const days = useMemo(
     () => Array.from({ length: dayCount }).map((_, i) => addDays(weekStart, i)),
     [weekStart, dayCount],
   );
+  // The 7 (or dayCount) "YYYY-MM-DD" column keys, computed ONCE per render
+  // instead of re-deriving ymd(d) inside every per-associate loop below.
+  const dayKeys = useMemo(() => days.map(ymd), [days]);
 
   const byCell = useMemo(() => {
     const map = new Map<string, Shift[]>();
@@ -176,17 +192,60 @@ export function TimeGridWeekView({
     return map;
   }, [shifts, displayTimeZone]);
 
+  // Scheduled minutes per associate across the visible range — same bucketing
+  // rule as byCell (day key in the grid's zone must fall inside `days`), so the
+  // rail total always agrees with what the cells actually show.
+  const minutesByAssociate = useMemo(() => {
+    const daySet = new Set(dayKeys);
+    const map = new Map<string, number>();
+    for (const s of shifts) {
+      if (s.status === 'CANCELLED') continue;
+      if (!s.assignedAssociateId) continue;
+      if (!daySet.has(zonedDayKey(s.startsAt, displayTimeZone))) continue;
+      map.set(
+        s.assignedAssociateId,
+        (map.get(s.assignedAssociateId) ?? 0) + shiftMinutes(s),
+      );
+    }
+    return map;
+  }, [shifts, dayKeys, displayTimeZone]);
+
+  // Per-day footer totals: shift count + scheduled minutes (CANCELLED
+  // excluded) and how many of them are unassigned OPEN shifts.
+  const dayTotals = useMemo(() => {
+    const map = new Map<string, { count: number; minutes: number; open: number }>();
+    for (const s of shifts) {
+      if (s.status === 'CANCELLED') continue;
+      const key = zonedDayKey(s.startsAt, displayTimeZone);
+      const t = map.get(key) ?? { count: 0, minutes: 0, open: 0 };
+      t.count += 1;
+      t.minutes += shiftMinutes(s);
+      if (!s.assignedAssociateId && s.status === 'OPEN') t.open += 1;
+      map.set(key, t);
+    }
+    return map;
+  }, [shifts, displayTimeZone]);
+
   const visibleAssociates = useMemo(() => {
     if (showAllAssociates) return associates;
+    // Membership-checked (visible columns only) so an associate whose only
+    // shift sits on a padded fetch day doesn't get a phantom empty row.
+    const daySet = new Set(dayKeys);
     const withShifts = new Set<string>();
     for (const s of shifts) {
-      if (s.assignedAssociateId) withShifts.add(s.assignedAssociateId);
+      if (!s.assignedAssociateId) continue;
+      if (!daySet.has(zonedDayKey(s.startsAt, displayTimeZone))) continue;
+      withShifts.add(s.assignedAssociateId);
     }
     return associates.filter((a) => withShifts.has(a.id));
-  }, [associates, shifts, showAllAssociates]);
+  }, [associates, shifts, showAllAssociates, dayKeys, displayTimeZone]);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    // Mouse: 6px activation distance so chip clicks don't start drags.
+    // Touch: a hold delay so a finger SCROLLING the grid never picks a
+    // shift up — 6px of drift while panning used to move shifts.
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
   );
 
   const [movingShiftId, setMovingShiftId] = useState<string | null>(null);
@@ -204,29 +263,34 @@ export function TimeGridWeekView({
     const dragEnd = new Date(activeDrag.endsAt);
     const dayMinutes = zonedMinutesOfDay(dragStart, displayTimeZone);
     const durationMs = dragEnd.getTime() - dragStart.getTime();
+    // Predict the dropped instant in the grid's zone (null zone →
+    // browser-local, identical to the old setHours math). The predicted
+    // instant depends only on the DAY, so it's computed once per column
+    // here, not once per associate × day.
+    const dayDrops = dayKeys.map((key) => {
+      const [yy, mm, dd] = key.split('-').map(Number);
+      const target = zonedWallTimeToUtc(
+        yy, mm, dd,
+        Math.floor(dayMinutes / 60), dayMinutes % 60,
+        displayTimeZone,
+      );
+      return { key, target, targetEnd: new Date(target.getTime() + durationMs) };
+    });
     for (const a of visibleAssociates) {
-      for (const d of days) {
-        // Predict the dropped instant in the grid's zone (null zone →
-        // browser-local, identical to the old setHours math).
-        const [yy, mm, dd] = ymd(d).split('-').map(Number);
-        const target = zonedWallTimeToUtc(
-          yy, mm, dd,
-          Math.floor(dayMinutes / 60), dayMinutes % 60,
-          displayTimeZone,
-        );
-        const targetEnd = new Date(target.getTime() + durationMs);
-        const cell = byCell.get(`${a.id}_${ymd(d)}`) ?? [];
+      for (const { key, target, targetEnd } of dayDrops) {
+        const cell = byCell.get(`${a.id}_${key}`);
+        if (!cell) continue;
         const conflict = cell.some((s) => {
           if (s.id === activeDrag.id) return false;
           return (
             new Date(s.startsAt) < targetEnd && new Date(s.endsAt) > target
           );
         });
-        if (conflict) out.add(`${a.id}_${ymd(d)}`);
+        if (conflict) out.add(`${a.id}_${key}`);
       }
     }
     return out;
-  }, [activeDrag, visibleAssociates, days, byCell, displayTimeZone]);
+  }, [activeDrag, visibleAssociates, dayKeys, byCell, displayTimeZone]);
 
   const onDragStart = (e: DragStartEvent) => {
     const id = String(e.active.id);
@@ -263,9 +327,15 @@ export function TimeGridWeekView({
   // selected range fits on screen without horizontal scrolling. minWidth only
   // forces a scroller once columns would fall below a ~100px readable floor
   // (very wide ranges or a small viewport) — a normal 7-day week always fits.
-  const gridStyle = {
+  //
+  // The column template lives on EACH row group (not one board-wide grid):
+  // identical templates on full-width siblings align perfectly, and
+  // independent block-level rows are what lets VirtualizedRows window the
+  // roster — the single-grid version mounted every associate × day droppable
+  // at once, so drag latency scaled with roster size (same disease the
+  // pivot week view fixed).
+  const colStyle = {
     gridTemplateColumns: `200px 40px repeat(${dayCount}, minmax(0, 1fr))`,
-    minWidth: `${200 + 40 + dayCount * 100}px`,
   };
 
   return (
@@ -276,9 +346,10 @@ export function TimeGridWeekView({
       onDragCancel={() => setActiveDrag(null)}
     >
       <div className="rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto overscroll-x-contain">
-        <div className="grid" style={gridStyle}>
+        <div style={{ minWidth: `${200 + 40 + dayCount * 100}px` }}>
           {/* Header */}
-          <div className="sticky left-0 z-20 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 text-[10px] uppercase tracking-wider text-silver">
+          <div className="grid" style={colStyle}>
+          <div className="sticky left-0 z-20 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 text-2xs uppercase tracking-wider text-silver">
             Schedule
           </div>
           <div className="border-b border-r border-navy-secondary bg-navy/95" />
@@ -294,7 +365,7 @@ export function TimeGridWeekView({
               >
                 <div
                   className={cn(
-                    'text-[10px] uppercase tracking-wider',
+                    'text-2xs uppercase tracking-wider',
                     isToday ? 'text-gold' : 'text-silver',
                   )}
                 >
@@ -314,75 +385,136 @@ export function TimeGridWeekView({
             );
           })}
 
+          </div>
+
           {/* Unassigned row */}
+          <div className="grid" style={colStyle}>
           <RailCell
             label="Unassigned"
             sublabel="OPEN shifts"
             tone="warning"
           />
           <HourGutter />
-          {days.map((d) => (
+          {days.map((d, i) => (
             <TimeCell
               key={`u_${d.getTime()}`}
               cellId={`tg-cell:${UNASSIGNED_ROW_ID}:${d.getTime()}`}
-              shifts={byCell.get(`${UNASSIGNED_ROW_ID}_${ymd(d)}`) ?? []}
+              shifts={byCell.get(`${UNASSIGNED_ROW_ID}_${dayKeys[i]}`) ?? EMPTY_SHIFTS}
               dayStart={d}
               displayTimeZone={displayTimeZone}
               isToday={sameDay(d, today)}
               canManage={canManage}
               onShiftClick={onShiftClick}
               onCreate={onCellCreate}
+              onCreateRange={onCellCreateRange}
               onShiftResize={onShiftResize}
-              hoverBind={hover.bind}
-              onContextMenu={ctxMenu.openFor}
+              hoverBind={hoverBind}
+              onContextMenu={openContextMenu}
               movingShiftId={movingShiftId}
               selectedIds={selectedIds}
               isConflictTarget={false}
               variant="unassigned"
               associateId={null}
-              onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, null)}
+              onTemplateDrop={onTemplateDrop}
             />
           ))}
+          </div>
 
-          {/* Associate rows */}
+          {/* Associate rows — windowed past 60 so an org-wide roster doesn't
+              mount hundreds of hour-grid cells and droppables at once. */}
           {visibleAssociates.length === 0 && (
-            <div
-              className="px-4 py-6 text-center text-sm text-silver/70"
-              style={{ gridColumn: '1 / -1' }}
-            >
+            <div className="px-4 py-6 text-center text-sm text-silver/70">
               No associates have shifts in this range.
             </div>
           )}
-          {visibleAssociates.map((a) => {
+          <VirtualizedRows
+            count={visibleAssociates.length}
+            estimateRowPx={TOTAL_HEIGHT + 2}
+            renderRow={(index) => {
+            const a = visibleAssociates[index];
             const initials = `${a.firstName[0] ?? ''}${a.lastName[0] ?? ''}`.toUpperCase();
+            const fit = availabilityFit?.get(a.id);
             return (
-              <Row key={a.id} initials={initials} firstName={a.firstName} lastName={a.lastName}>
+              <Row
+                key={a.id}
+                colStyle={colStyle}
+                initials={initials}
+                firstName={a.firstName}
+                lastName={a.lastName}
+                scheduledMinutes={minutesByAssociate.get(a.id) ?? 0}
+              >
                 <HourGutter />
-                {days.map((d) => (
-                  <TimeCell
-                    key={`${a.id}_${d.getTime()}`}
-                    cellId={`tg-cell:${a.id}:${d.getTime()}`}
-                    shifts={byCell.get(`${a.id}_${ymd(d)}`) ?? []}
-                    dayStart={d}
-                    displayTimeZone={displayTimeZone}
-                    isToday={sameDay(d, today)}
-                    canManage={canManage}
-                    onShiftClick={onShiftClick}
-                    onCreate={onCellCreate}
-                    onShiftResize={onShiftResize}
-                    hoverBind={hover.bind}
-                    onContextMenu={ctxMenu.openFor}
-                    movingShiftId={movingShiftId}
-                    selectedIds={selectedIds}
-                    isConflictTarget={conflictCellKeys.has(`${a.id}_${ymd(d)}`)}
-                    variant="default"
-                    associateId={a.id}
-                    onTemplateDrop={(tplId) => onTemplateDrop(tplId, d, a.id)}
-                  />
-                ))}
+                {days.map((d, i) => {
+                  const dayKey = dayKeys[i];
+                  // Availability fit for this cell. PTO/exception veto beats
+                  // the weekly-pattern miss; an associate with NO windows at
+                  // all gets no shading (absence of data ≠ unavailable).
+                  let fitStatus: 'blocked' | 'unavailable' | null = null;
+                  if (fit) {
+                    if (fit.blocked.has(dayKey)) fitStatus = 'blocked';
+                    else if (fit.dows.size > 0 && !fit.dows.has(d.getDay())) {
+                      fitStatus = 'unavailable';
+                    }
+                  }
+                  return (
+                    <TimeCell
+                      key={`${a.id}_${d.getTime()}`}
+                      cellId={`tg-cell:${a.id}:${d.getTime()}`}
+                      shifts={byCell.get(`${a.id}_${dayKey}`) ?? EMPTY_SHIFTS}
+                      dayStart={d}
+                      displayTimeZone={displayTimeZone}
+                      isToday={sameDay(d, today)}
+                      canManage={canManage}
+                      onShiftClick={onShiftClick}
+                      onCreate={onCellCreate}
+                      onCreateRange={onCellCreateRange}
+                      onShiftResize={onShiftResize}
+                      hoverBind={hoverBind}
+                      onContextMenu={openContextMenu}
+                      movingShiftId={movingShiftId}
+                      selectedIds={selectedIds}
+                      isConflictTarget={conflictCellKeys.has(`${a.id}_${dayKey}`)}
+                      variant="default"
+                      associateId={a.id}
+                      onTemplateDrop={onTemplateDrop}
+                      fitStatus={fitStatus}
+                    />
+                  );
+                })}
               </Row>
             );
+          }}
+          />
+
+          {/* Daily totals footer */}
+          <div className="grid" style={colStyle}>
+          <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-t border-b border-r border-navy-secondary px-3 py-1.5 text-2xs uppercase tracking-wider text-silver/70 flex items-center">
+            Daily totals
+          </div>
+          <div className="border-t border-b border-r border-navy-secondary bg-navy/95" />
+          {days.map((d, i) => {
+            const t = dayTotals.get(dayKeys[i]);
+            return (
+              <div
+                key={`total_${d.getTime()}`}
+                className="border-t border-b border-r border-navy-secondary px-1 py-1.5 text-center text-2xs tabular-nums text-silver/70"
+              >
+                {t ? (
+                  <>
+                    <span>
+                      {t.count} · {fmtHours(t.minutes)}h
+                    </span>
+                    {t.open > 0 && (
+                      <span className="text-warning"> · {t.open} open</span>
+                    )}
+                  </>
+                ) : (
+                  <span>—</span>
+                )}
+              </div>
+            );
           })}
+          </div>
         </div>
       </div>
 
@@ -432,33 +564,51 @@ export function TimeGridWeekView({
 
 /* ===== Subcomponents ====================================================== */
 
-function Row({
+const Row = memo(function Row({
   initials,
   firstName,
   lastName,
+  scheduledMinutes,
+  colStyle,
   children,
 }: {
   initials: string;
   firstName: string;
   lastName: string;
+  /** Scheduled (non-CANCELLED) minutes within the visible range. */
+  scheduledMinutes: number;
+  /** The board's shared column template — each row is its own grid so the
+   *  roster can be windowed (identical templates align across siblings). */
+  colStyle: React.CSSProperties;
   children: React.ReactNode;
 }) {
+  const hours = scheduledMinutes / 60;
+  // Weekly-hours tone: at/over 40h reads as overtime, 36h+ as approaching it.
+  const tone =
+    hours >= 40 ? 'text-alert' : hours >= 36 ? 'text-warning' : 'text-silver/70';
+  const otLabel = hours >= 40 ? 'OT' : hours >= 36 ? 'near OT' : null;
   return (
-    <>
+    <div className="grid" style={colStyle}>
       <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 flex items-center gap-2.5">
-        <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-[10px] font-semibold flex items-center justify-center shrink-0">
+        <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-2xs font-semibold flex items-center justify-center shrink-0">
           {initials || '?'}
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-xs text-white truncate">
             {firstName} {lastName}
           </div>
+          <div className={cn('text-2xs tabular-nums truncate', tone)}>
+            {fmtHours(scheduledMinutes)}h
+            {otLabel && (
+              <span className="ml-1 uppercase tracking-wider">{otLabel}</span>
+            )}
+          </div>
         </div>
       </div>
       {children}
-    </>
+    </div>
   );
-}
+});
 
 function RailCell({
   label,
@@ -485,7 +635,7 @@ function RailCell({
         {label}
       </div>
       {sublabel && (
-        <div className="text-[10px] uppercase tracking-wider text-silver/70">
+        <div className="text-2xs uppercase tracking-wider text-silver/70">
           {sublabel}
         </div>
       )}
@@ -502,7 +652,7 @@ function HourGutter() {
       {hours.map((h, i) => (
         <div
           key={h}
-          className="absolute right-1.5 text-[9px] text-silver/70 tabular-nums"
+          className="absolute right-1.5 text-3xs text-silver/70 tabular-nums"
           style={{ top: i * PX_PER_HOUR - 5 }}
         >
           {i === 0 || i === hours.length - 1
@@ -514,7 +664,7 @@ function HourGutter() {
   );
 }
 
-function TimeCell({
+const TimeCell = memo(function TimeCell({
   cellId,
   shifts,
   dayStart,
@@ -524,6 +674,7 @@ function TimeCell({
   onShiftClick,
   onContextMenu,
   onCreate,
+  onCreateRange,
   onShiftResize,
   hoverBind,
   movingShiftId,
@@ -532,6 +683,7 @@ function TimeCell({
   variant,
   associateId,
   onTemplateDrop,
+  fitStatus = null,
 }: {
   cellId: string;
   shifts: Shift[];
@@ -542,6 +694,7 @@ function TimeCell({
   onShiftClick: (s: Shift, e: React.MouseEvent) => void;
   onContextMenu: (s: Shift, e: React.MouseEvent) => void;
   onCreate: (start: Date, associateId: string | null) => void;
+  onCreateRange?: (start: Date, end: Date, associateId: string | null) => void;
   onShiftResize: (s: Shift, newEndsAt: Date) => Promise<void>;
   hoverBind: (s: Shift) => {
     onPointerEnter: (e: React.PointerEvent<HTMLElement>) => void;
@@ -552,10 +705,67 @@ function TimeCell({
   isConflictTarget: boolean;
   variant: 'default' | 'unassigned';
   associateId: string | null;
-  onTemplateDrop: (templateId: string) => void;
+  onTemplateDrop: (templateId: string, dayStart: Date, associateId: string | null) => void;
+  /** Availability shading: 'blocked' = approved PTO/exception vetoes the day,
+   *  'unavailable' = outside the associate's weekly windows. Lowest-priority
+   *  background — never shown over drag/conflict/template tints. */
+  fitStatus?: 'blocked' | 'unavailable' | null;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: cellId });
   const [tplOver, setTplOver] = useState(false);
+  // Mouse drag-a-range → create a shift with those exact times. Anchor
+  // lives in a ref (no re-render per move); the highlight rect is state.
+  const dragAnchor = useRef<number | null>(null);
+  const dragHandled = useRef(false);
+  const [dragRange, setDragRange] = useState<{ a: number; b: number } | null>(null);
+
+  const minuteAtPointer = (e: React.PointerEvent<HTMLDivElement>): number => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const raw = snap(y / PX_PER_MIN + DAY_START_HOUR * 60);
+    return Math.min(DAY_END_HOUR * 60, Math.max(DAY_START_HOUR * 60, raw));
+  };
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!canManage || !onCreateRange) return;
+    if (e.pointerType !== 'mouse' || e.button !== 0) return;
+    if (e.target !== e.currentTarget) return;
+    dragAnchor.current = minuteAtPointer(e);
+    dragHandled.current = false;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragAnchor.current === null) return;
+    const cur = minuteAtPointer(e);
+    if (cur !== dragAnchor.current || dragRange) {
+      setDragRange({
+        a: Math.min(dragAnchor.current, cur),
+        b: Math.max(dragAnchor.current, cur),
+      });
+    }
+  };
+
+  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragAnchor.current === null) return;
+    const anchor = dragAnchor.current;
+    const cur = minuteAtPointer(e);
+    dragAnchor.current = null;
+    setDragRange(null);
+    const lo = Math.min(anchor, cur);
+    const hi = Math.max(anchor, cur);
+    if (hi - lo >= SNAP_MIN && onCreateRange) {
+      // A real drag — suppress the click that follows pointerup.
+      dragHandled.current = true;
+      const start = new Date(dayStart);
+      start.setHours(0, 0, 0, 0);
+      start.setMinutes(start.getMinutes() + lo);
+      const end = new Date(dayStart);
+      end.setHours(0, 0, 0, 0);
+      end.setMinutes(end.getMinutes() + hi);
+      onCreateRange(start, end, associateId);
+    }
+  };
   const onNativeDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     if (!canManage) return;
     if (!e.dataTransfer.types.includes(TEMPLATE_MIME)) return;
@@ -569,11 +779,16 @@ function TimeCell({
     const tplId = e.dataTransfer.getData(TEMPLATE_MIME);
     if (!tplId) return;
     e.preventDefault();
-    onTemplateDrop(tplId);
+    onTemplateDrop(tplId, dayStart, associateId);
   };
 
   const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!canManage) return;
+    if (dragHandled.current) {
+      // The pointerup of a drag-create already handled this gesture.
+      dragHandled.current = false;
+      return;
+    }
     if (e.target !== e.currentTarget) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const y = e.clientY - rect.top;
@@ -584,16 +799,59 @@ function TimeCell({
     onCreate(start, associateId);
   };
 
+  // Keyboard equivalent of click-to-create. The pointer path derives the time
+  // from Y position, which a keyboard user doesn't have, so Enter/Space opens
+  // creation at the start of the visible day and the dialog sets the real
+  // time. Without this the whole grid was mouse-only.
+  const onCreateKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!canManage) return;
+    if (e.target !== e.currentTarget) return;
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    const start = new Date(dayStart);
+    start.setHours(0, 0, 0, 0);
+    start.setMinutes(start.getMinutes() + DAY_START_HOUR * 60);
+    onCreate(start, associateId);
+  };
+
   return (
     <div
       ref={setNodeRef}
       onClick={onClick}
+      {...(canManage
+        ? {
+            role: 'button' as const,
+            tabIndex: 0,
+            // fmtWeekdayTz/fmtDateTz rather than toLocaleDateString so the
+            // date reads identically to every other surface (and satisfies
+            // the design-system lint rule).
+            'aria-label': `Add a shift on ${fmtWeekdayTz(dayStart)}, ${fmtDateTz(dayStart)}`,
+            onKeyDown: onCreateKeyDown,
+          }
+        : {})}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
       onDragOver={onNativeDragOver}
       onDragLeave={onNativeDragLeave}
       onDrop={onNativeDrop}
+      title={
+        fitStatus === 'blocked'
+          ? 'Approved time off / unavailable this day'
+          : fitStatus === 'unavailable'
+            ? 'Outside weekly availability'
+            : undefined
+      }
       className={cn(
         'relative border-b border-r border-navy-secondary cursor-pointer',
+        // Focusable now that it's keyboard-operable — it needs a visible ring.
+        canManage &&
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-inset',
         isToday && 'bg-gold/[0.03]',
+        // Availability fit — lowest-priority tint. Listed before (and gated
+        // against) the drag/conflict/template backgrounds so those always win.
+        fitStatus === 'blocked' && !isOver && !isConflictTarget && !tplOver && 'bg-alert/[0.07]',
+        fitStatus === 'unavailable' && !isOver && !isConflictTarget && !tplOver && 'bg-silver/[0.05]',
         isConflictTarget && !isOver && 'bg-alert/15',
         isConflictTarget && isOver && 'bg-alert/30 outline outline-1 outline-alert/60 -outline-offset-1',
         !isConflictTarget && isOver && 'bg-gold/15 outline outline-1 outline-gold/40 -outline-offset-1',
@@ -607,6 +865,16 @@ function TimeCell({
         backgroundSize: `100% ${PX_PER_HOUR}px`,
       }}
     >
+      {dragRange && (
+        <div
+          aria-hidden
+          className="absolute left-0.5 right-0.5 z-10 rounded-sm border border-gold/60 bg-gold/20 pointer-events-none"
+          style={{
+            top: (dragRange.a - DAY_START_HOUR * 60) * PX_PER_MIN,
+            height: Math.max(2, (dragRange.b - dragRange.a) * PX_PER_MIN),
+          }}
+        />
+      )}
       {shifts.map((s) => (
         <TimeChip
           key={s.id}
@@ -623,7 +891,7 @@ function TimeCell({
       ))}
     </div>
   );
-}
+});
 
 function TimeChip({
   shift,
@@ -749,6 +1017,7 @@ function TimeChip({
       }}
       className={cn(
         'rounded border transition-colors hover:brightness-125 overflow-hidden',
+        statusTileClass(shift.status),
         isDragging && 'elev-3 ring-2 ring-gold/60 opacity-90',
         isResizing && 'ring-2 ring-gold/70',
         isSelected && 'ring-2 ring-gold ring-offset-1 ring-offset-navy',
@@ -761,7 +1030,7 @@ function TimeChip({
       {isSelected && (
         <div
           aria-hidden
-          className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-gold text-navy flex items-center justify-center text-[9px] font-bold z-10"
+          className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-gold text-navy flex items-center justify-center text-3xs font-bold z-10"
         >
           ✓
         </div>
@@ -777,17 +1046,17 @@ function TimeChip({
           className="absolute bottom-0 left-0 right-0 h-3.5 bg-gradient-to-t from-navy/80 to-transparent flex items-end justify-center pointer-events-none"
           title="Continues overnight"
         >
-          <span className="text-[8px] leading-none text-white mb-0.5">⌄ overnight</span>
+          <span className="text-3xs leading-none text-white mb-0.5">⌄ overnight</span>
         </div>
       )}
       {!compact && (
         <div
           {...listeners}
           {...attributes}
-          className="absolute right-0.5 top-0.5 text-silver/30 hover:text-gold cursor-grab active:cursor-grabbing no-print"
+          className={cn('absolute right-0 top-0', GRIP_HIT)}
           aria-label={`Move ${shift.position}`}
         >
-          <GripVertical className="h-3 w-3" />
+          <GripVertical className={GRIP_ICON} />
         </div>
       )}
       {compact ? (
@@ -796,43 +1065,69 @@ function TimeChip({
           type="button"
           onClick={onClick}
           {...(compact ? { ...listeners, ...attributes } : {})}
-          className="w-full h-full text-left pl-2 pr-1 flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          className="w-full h-full text-left pl-2 pr-1 flex items-center gap-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          title={`${fmtTime(startsAt, shift.timezone)}–${fmtTime(previewEndsAt, shift.timezone)} · ${shift.position} · ${SHIFT_STATUS_LABEL[shift.status]}`}
         >
-          <span className="text-[10px] text-silver tabular-nums truncate">
+          <span className="text-2xs text-silver tabular-nums truncate">
             {fmtTime(startsAt, shift.timezone)}
           </span>
-          <span className="text-[10px] text-white truncate">
+          <span
+            className={cn(
+              'text-xs2 text-white truncate flex-1 min-w-0',
+              statusLabelClass(shift.status),
+            )}
+          >
             {shift.position}
           </span>
+          <StatusMark status={shift.status} />
         </button>
       ) : (
         <button
           type="button"
           onClick={onClick}
-          className="w-full h-full text-left pl-2 pr-4 pt-1 pb-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          className="w-full h-full text-left pl-2 pr-6 pt-1 pb-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          title={`${fmtTime(startsAt, shift.timezone)}–${fmtTime(previewEndsAt, shift.timezone)} · ${shift.position} · ${SHIFT_STATUS_LABEL[shift.status]}`}
         >
-          <div className="text-[10px] text-silver tabular-nums">
-            {fmtTime(startsAt, shift.timezone)}–{fmtTime(previewEndsAt, shift.timezone)}
+          <div className="flex items-center gap-1.5">
+            <div className="text-xs2 text-silver tabular-nums truncate">
+              {fmtTime(startsAt, shift.timezone)}–{fmtTime(previewEndsAt, shift.timezone)}
+            </div>
+            <StatusMark status={shift.status} className="ml-auto" />
           </div>
-          <div className="text-[11px] text-white font-medium truncate leading-tight">
+          <div
+            className={cn(
+              'text-xs text-white font-medium truncate leading-tight',
+              statusLabelClass(shift.status),
+            )}
+          >
             {shift.position}
           </div>
           {shift.assignedAssociateName && baseHeight > 50 && (
-            <div className="text-[10px] text-silver/70 truncate">
+            <div className="text-2xs text-silver/70 truncate">
               {shift.assignedAssociateName}
             </div>
           )}
         </button>
       )}
+      {/* Compact (very short) tiles clip a 28px control against
+          overflow-hidden — those fall back to tap → edit dialog. */}
+      {!compact && (
+        <ShiftTouchMenuButton
+          onOpen={onContextMenu}
+          label={`${shift.position} shift actions`}
+        />
+      )}
       {canManage && !compact && (
         <div
           onMouseDown={onResizeMouseDown}
-          className="absolute left-0 right-0 bottom-0 h-1.5 cursor-ns-resize hover:bg-gold/40 group no-print"
-          aria-label="Drag to resize duration"
-          role="slider"
-          tabIndex={-1}
+          className={RESIZE_RAIL_Y}
+          title="Drag to resize duration"
+          aria-hidden="true"
         >
-          <div className="mx-auto w-6 h-0.5 mt-0.5 rounded-full bg-silver/30 group-hover:bg-gold" />
+          {/* Mouse-only drag affordance — keyboard/AT users adjust times in
+              the edit dialog, so this is decoration to AT (role="slider"
+              here was a lie: no value, no keyboard operation). */}
+          <div className="w-6 h-0.5 rounded-full bg-silver/30 group-hover:bg-gold" />
         </div>
       )}
     </div>

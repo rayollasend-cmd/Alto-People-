@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import { AlertCircle, Calendar, Clock, ShieldAlert } from 'lucide-react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
+import { AlertCircle, Calendar, Clock, Download, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
+import { downloadCsv } from '@/lib/csv';
 import {
   getExpirations,
   type ExpirationItem,
@@ -21,8 +23,10 @@ import {
   DrawerHeader,
   DrawerTitle,
   EmptyState,
+  ErrorBanner,
   Input,
   PageHeader,
+  SegmentedControl,
   SkeletonRows,
   Table,
   TableBody,
@@ -31,8 +35,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui';
+import { SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, ymdLocal } from '@/lib/format';
 
 /**
  * Phase 113 — Expiration dashboard.
@@ -50,24 +55,59 @@ export function ExpirationsHome() {
     ? hasCapability(user.role, 'manage:scheduling')
     : false;
   const [data, setData] = useState<ExpirationsResponse | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [days, setDays] = useState<30 | 60 | 90>(60);
   const [filter, setFilter] = useState<'all' | 'cert'>('all');
+  const [search, setSearch] = useState('');
   const [renewTarget, setRenewTarget] = useState<ExpirationItem | null>(null);
 
   const refresh = () => {
     setData(null);
+    setLoadError(null);
     getExpirations({
       days,
       isCert: filter === 'cert' ? true : undefined,
     })
       .then(setData)
-      .catch(() => setData(null));
+      .catch(() => setLoadError('Failed to load expirations.'));
   };
 
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days, filter]);
+
+  const q = search.trim().toLowerCase();
+  const matches = (i: ExpirationItem) =>
+    !q ||
+    i.associateName.toLowerCase().includes(q) ||
+    i.associateEmail.toLowerCase().includes(q) ||
+    i.qualificationName.toLowerCase().includes(q) ||
+    i.qualificationCode.toLowerCase().includes(q);
+  const expired = data ? data.expired.filter(matches) : [];
+  const dueSoon = data ? data.dueSoon.filter(matches) : [];
+  const dueLater = data ? data.dueLater.filter(matches) : [];
+
+  const onExportCsv = () => {
+    if (!data) return;
+    const bucketRows = (bucket: string, items: ExpirationItem[]) =>
+      items.map((i) => [
+        bucket,
+        i.associateName,
+        i.associateEmail,
+        i.qualificationName,
+        i.qualificationCode,
+        i.isCert ? 'Yes' : 'No',
+        fmtDate(i.expiresAt),
+        i.daysUntilExpiry,
+      ]);
+    downloadCsv(`expirations-${ymdLocal()}.csv`, [
+      ['Bucket', 'Associate', 'Email', 'Qualification', 'Code', 'Cert', 'Expires', 'Days until expiry'],
+      ...bucketRows('Expired', expired),
+      ...bucketRows(`Due in ${data.days} days`, dueSoon),
+      ...bucketRows('Due later (within 1 year)', dueLater),
+    ]);
+  };
 
   return (
     <div className="space-y-5">
@@ -78,43 +118,55 @@ export function ExpirationsHome() {
       />
       <div className="flex flex-wrap items-center gap-3 text-sm">
         <span className="text-silver">Within:</span>
-        {[30, 60, 90].map((d) => (
-          <Button
-            key={d}
-            type="button"
-            size="xs"
-            variant={days === d ? 'primary' : 'secondary'}
-            className="rounded-full"
-            aria-pressed={days === d}
-            onClick={() => setDays(d as 30 | 60 | 90)}
-          >
-            {d}d
-          </Button>
-        ))}
+        <SegmentedControl
+          ariaLabel="Expiry window"
+          value={days}
+          onChange={(v) => setDays(v)}
+          options={[
+            { value: 30 as const, label: '30d' },
+            { value: 60 as const, label: '60d' },
+            { value: 90 as const, label: '90d' },
+          ]}
+        />
         <span className="ml-4 text-silver">Type:</span>
+        <SegmentedControl
+          ariaLabel="Qualification type"
+          value={filter}
+          onChange={(v) => setFilter(v)}
+          options={[
+            { value: 'all' as const, label: 'All' },
+            { value: 'cert' as const, label: 'Certs only' },
+          ]}
+        />
+        <SearchInput
+          className="w-64"
+          wrapperClassName="ml-auto"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search associate or qualification…"
+          aria-label="Search expirations"
+        />
         <Button
-          type="button"
-          size="xs"
-          variant={filter === 'all' ? 'primary' : 'secondary'}
-          className="rounded-full"
-          aria-pressed={filter === 'all'}
-          onClick={() => setFilter('all')}
+          size="sm"
+          variant="secondary"
+          onClick={onExportCsv}
+          disabled={!data}
         >
-          All
-        </Button>
-        <Button
-          type="button"
-          size="xs"
-          variant={filter === 'cert' ? 'primary' : 'secondary'}
-          className="rounded-full"
-          aria-pressed={filter === 'cert'}
-          onClick={() => setFilter('cert')}
-        >
-          Certs only
+          <Download className="mr-2 h-4 w-4" /> Export CSV
         </Button>
       </div>
 
-      {data === null ? (
+      {loadError ? (
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              Retry
+            </Button>
+          }
+        >
+          {loadError}
+        </ErrorBanner>
+      ) : data === null ? (
         <Card><CardContent><SkeletonRows count={5} /></CardContent></Card>
       ) : (
         <div className="space-y-4">
@@ -122,9 +174,9 @@ export function ExpirationsHome() {
             title="Expired"
             icon={AlertCircle}
             accent="text-alert"
-            count={data.counts.expired}
-            items={data.expired}
-            emptyHint="Nothing expired."
+            count={q ? expired.length : data.counts.expired}
+            items={expired}
+            emptyHint={q ? 'No matches.' : 'Nothing expired.'}
             canRenew={canRenew}
             onRenew={setRenewTarget}
           />
@@ -132,9 +184,9 @@ export function ExpirationsHome() {
             title={`Due in next ${data.days} days`}
             icon={ShieldAlert}
             accent="text-warning"
-            count={data.counts.dueSoon}
-            items={data.dueSoon}
-            emptyHint="Nothing due soon."
+            count={q ? dueSoon.length : data.counts.dueSoon}
+            items={dueSoon}
+            emptyHint={q ? 'No matches.' : 'Nothing due soon.'}
             canRenew={canRenew}
             onRenew={setRenewTarget}
           />
@@ -142,9 +194,9 @@ export function ExpirationsHome() {
             title="Due later (within 1 year)"
             icon={Calendar}
             accent="text-gold"
-            count={data.counts.dueLater}
-            items={data.dueLater}
-            emptyHint="Nothing further out."
+            count={q ? dueLater.length : data.counts.dueLater}
+            items={dueLater}
+            emptyHint={q ? 'No matches.' : 'Nothing further out.'}
             canRenew={canRenew}
             onRenew={setRenewTarget}
           />
@@ -184,6 +236,9 @@ function Bucket({
   canRenew: boolean;
   onRenew: (item: ExpirationItem) => void;
 }) {
+  const [showAll, setShowAll] = useState(false);
+  const truncated = !showAll && items.length > 100;
+  const shown = truncated ? items.slice(0, 100) : items;
   return (
     <Card>
       <CardContent className="p-0">
@@ -210,15 +265,15 @@ function Bucket({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.slice(0, 100).map((i) => (
+              {shown.map((i) => (
                 <TableRow
                   key={i.id}
                   className={canRenew ? 'cursor-pointer' : ''}
                   onClick={canRenew ? () => onRenew(i) : undefined}
                 >
                   <TableCell className="font-medium text-white">
-                    {i.associateName}
-                    <div className="text-[11px] text-silver/70 md:hidden">{i.associateEmail}</div>
+                    <AssociateLink associateId={i.associateId}>{i.associateName}</AssociateLink>
+                    <div className="text-xs2 text-silver/70 md:hidden">{i.associateEmail}</div>
                   </TableCell>
                   <TableCell className="text-silver text-xs hidden md:table-cell">{i.associateEmail}</TableCell>
                   <TableCell>
@@ -257,6 +312,23 @@ function Bucket({
             </TableBody>
           </Table>
         )}
+        {items.length > 100 && (
+          <div className="px-4 py-2 flex items-center gap-3 text-xs text-silver border-t border-navy-secondary">
+            <span>
+              {truncated
+                ? `Showing 100 of ${items.length}`
+                : `Showing all ${items.length}`}
+            </span>
+            <Button
+              type="button"
+              size="xs"
+              variant="secondary"
+              onClick={() => setShowAll((v) => !v)}
+            >
+              {truncated ? 'Show all' : 'Show first 100'}
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -271,12 +343,14 @@ function RenewDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  // Local-timezone defaults — toISOString() is UTC and pre-fills tomorrow's
+  // date for evening users west of UTC.
+  const today = ymdLocal();
   // Default new expiry to one year from today — typical cert renewal cycle.
   const oneYearOut = (() => {
     const d = new Date();
     d.setFullYear(d.getFullYear() + 1);
-    return d.toISOString().slice(0, 10);
+    return ymdLocal(d);
   })();
   const [acquiredAt, setAcquiredAt] = useState(today);
   const [expiresAt, setExpiresAt] = useState(oneYearOut);
@@ -317,7 +391,9 @@ function RenewDrawer({
       <DrawerBody className="space-y-4">
         <div className="text-sm">
           <div className="text-silver">For</div>
-          <div className="font-medium text-white">{item.associateName}</div>
+          <div className="font-medium text-white">
+            <AssociateLink associateId={item.associateId}>{item.associateName}</AssociateLink>
+          </div>
           <div className="text-xs text-silver">{item.associateEmail}</div>
         </div>
         <div className="text-sm border-t border-navy-secondary pt-3">

@@ -61,6 +61,8 @@ export interface TaxDoc {
   taxYear: number;
   issuedAt: string;
   fileSize: number | null;
+  /** Null for legacy rows with no stored file — download is unavailable. */
+  downloadUrl: string | null;
 }
 
 export const getProfile = () => apiFetch<SelfProfile>('/self/me/profile');

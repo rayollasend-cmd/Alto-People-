@@ -91,6 +91,10 @@ interface LoginContext {
 interface LoginSuccessContext extends LoginContext {
   userId: string;
   clientId?: string | null;
+  // How the session was established when it wasn't the default password
+  // flow — 'oidc' for SSO sign-ins. Recorded in metadata.method so the
+  // audit feed can distinguish IdP-brokered logins from local ones.
+  method?: string;
 }
 
 interface LoginFailureContext extends LoginContext {
@@ -98,6 +102,11 @@ interface LoginFailureContext extends LoginContext {
     | 'unknown_email'
     | 'no_password'
     | 'wrong_password'
+    // Account lockout: lockedUntil is in the future, so the attempt was
+    // refused regardless of whether the password was right. The HTTP
+    // response is the same generic 401 as wrong_password (no lockout
+    // oracle for attackers) — this reason is the forensic record.
+    | 'locked'
     | 'disabled'
     | 'soft_deleted'
     | 'non_human_role'
@@ -105,7 +114,20 @@ interface LoginFailureContext extends LoginContext {
     // window nor an unused recovery code. Distinct so the audit feed can
     // tell "they didn't know the password" from "they had the password
     // but couldn't pass MFA" — different incident response.
-    | 'mfa_invalid_code';
+    | 'mfa_invalid_code'
+    // Passkey (WebAuthn) failures — same triage value: a mismatch means
+    // an assertion arrived for a ceremony minted for someone else, an
+    // invalid one failed signature verification, ineligible means the
+    // account is disabled/deleted/non-human.
+    | 'passkey_mismatch'
+    | 'passkey_invalid'
+    | 'passkey_ineligible'
+    // OIDC SSO failures. The suffix is the precise machine reason
+    // (state_mismatch, nonce_mismatch, bad_signature, token_expired,
+    // unknown_email, disabled, …) — the browser only ever sees the
+    // generic /login?error=sso_failed|sso_no_account redirect, so the
+    // audit row is the only place the detail lives.
+    | `oidc_${string}`;
 }
 
 interface LogoutContext {
@@ -150,7 +172,10 @@ export async function recordLoginSuccess(ctx: LoginSuccessContext) {
       action: 'auth.login',
       entityType: 'User',
       entityId: ctx.userId,
-      metadata: meta(ctx.req, { email: ctx.email }),
+      metadata: meta(ctx.req, {
+        email: ctx.email,
+        ...(ctx.method ? { method: ctx.method } : {}),
+      }),
     },
     'recordLoginSuccess'
   );
@@ -208,7 +233,10 @@ interface OnboardingEventContext {
 interface ComplianceEventContext {
   actorUserId: string | null;
   action: string;
-  entityType: 'I9Verification' | 'BackgroundCheck' | 'J1Profile';
+  // 'Associate' covers E-Verify events that aren't anchored to an I-9 row:
+  // the case-detail view works for someone with no I-9 started yet, and the
+  // identity backfill edits the associate itself.
+  entityType: 'I9Verification' | 'BackgroundCheck' | 'DrugTest' | 'J1Profile' | 'Associate';
   entityId: string;
   associateId: string;
   clientId?: string | null;

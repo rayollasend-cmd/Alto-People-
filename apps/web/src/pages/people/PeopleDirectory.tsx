@@ -2,6 +2,7 @@ import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 're
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   keepPreviousData,
+  useInfiniteQuery,
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
@@ -15,19 +16,25 @@ import {
   Eye,
   EyeOff,
   ExternalLink,
-  FileText,
+  FileSearch,
+  FileSignature,
+  Fingerprint,
+  FlaskConical,
+  FolderOpen,
   Landmark,
+  Plane,
+  ShieldCheck,
   Mail,
   MapPin,
   Pencil,
   Phone,
   Plus,
-  Search,
   Send,
   ShieldAlert,
   Upload,
   Users,
   X,
+  type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -35,12 +42,15 @@ import type {
   DirectoryStatus,
   DocumentKind,
   DocumentRecord,
+  DocumentVaultResponse,
+  DocumentVaultSummary,
 } from '@alto-people/shared';
 import { listDirectory, type DirectoryFilters } from '@/lib/directoryApi';
-import { listClients } from '@/lib/clientsApi';
-import type { ClientListItem } from '@alto-people/shared';
+import { useClients } from '@/lib/useClients';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtPayRate, parseYmd, ymdLocal } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
+import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
 import {
   type CompChangeReason,
   type CompRecord,
@@ -49,8 +59,9 @@ import {
   listRecords,
 } from '@/lib/compApi';
 import {
+  downloadAllDocumentsUrl,
   downloadDocumentUrl,
-  listAdminDocuments,
+  getDocumentVault,
   rejectDocument,
   uploadAdminDocument,
   verifyDocument,
@@ -60,6 +71,7 @@ import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { nudgeApplicant } from '@/lib/onboardingApi';
 import {
+  eraseAssociatePersonalData,
   getAssociatePayoutMethod,
   getAssociateSsn,
   getAssociateW4,
@@ -67,6 +79,7 @@ import {
   patchAssociateProfile,
   revealAssociatePayoutMethod,
   revealAssociateSsn,
+  setAssociateBankName,
   transferAssociate,
   updateAssociateW4,
   type AssociateW4,
@@ -97,10 +110,15 @@ import {
   EmptyState,
   ErrorBanner,
   Field,
+  FilterBar,
+  FilterChip,
   Input,
   Label,
+  MetricCard,
   PageHeader,
+  SearchInput,
   Select,
+  Skeleton,
   SkeletonRows,
   SortableTableHead,
   Table,
@@ -122,23 +140,17 @@ import { usePersistentState } from '@/lib/usePersistentState';
 
 const STATUS_VARIANT: Record<
   DirectoryStatus,
-  'success' | 'pending' | 'default'
+  'success' | 'pending' | 'destructive'
 > = {
   ACTIVE: 'success',
   PENDING: 'pending',
-  INACTIVE: 'default',
+  INACTIVE: 'destructive',
 };
 
 const STATUS_LABEL: Record<DirectoryStatus, string> = {
   ACTIVE: 'Active',
   PENDING: 'Pending',
   INACTIVE: 'Inactive',
-};
-
-const EMPLOYMENT_LABEL: Record<string, string> = {
-  W2_EMPLOYEE: 'W-2',
-  CONTRACTOR_1099_INDIVIDUAL: '1099 Individual',
-  CONTRACTOR_1099_BUSINESS: '1099 Business',
 };
 
 const PAY_TYPE_SUFFIX: Record<string, string> = {
@@ -191,8 +203,33 @@ const isEmploymentTypeFilter = (v: unknown): v is EmploymentTypeFilter | '' =>
   (typeof v === 'string' &&
     (EMPLOYMENT_TYPE_VALUES as readonly string[]).includes(v));
 
+// PERF: the desktop table and the phone card stack used to BOTH mount, with
+// CSS (`hidden md:block` / `md:hidden`) hiding the inactive one — React still
+// committed ~9,000 dead DOM nodes for the hidden list on large directories.
+// This matchMedia hook lets us mount only the list the viewport can
+// actually show, and re-render on breakpoint crossings (resize / rotation).
+//
+// Same cutover rule as scheduling and Time & Attendance: mouse-class
+// devices get the table at md; touch devices (iPad portrait) keep the
+// card list until lg instead of a desktop table in ~half a screen.
+const DESKTOP_TABLE_QUERY =
+  '(min-width: 1024px), ((pointer: fine) and (min-width: 768px))';
+function useIsDesktop(): boolean {
+  const [isDesktop, setIsDesktop] = useState(
+    () => window.matchMedia(DESKTOP_TABLE_QUERY).matches,
+  );
+  useEffect(() => {
+    const mql = window.matchMedia(DESKTOP_TABLE_QUERY);
+    const onChange = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
+  return isDesktop;
+}
+
 export function PeopleDirectory() {
   const queryClient = useQueryClient();
+  const isDesktop = useIsDesktop();
   // Persisted list filters — status / workplace / employment type survive
   // revisits ('' = All). Free-text search and the cascading location /
   // department facets deliberately stay per-session.
@@ -224,10 +261,19 @@ export function PeopleDirectory() {
   const urlSeedApplied = useRef(false);
   if (!urlSeedApplied.current) {
     urlSeedApplied.current = true;
-    const raw = new URLSearchParams(window.location.search).get(
-      'status',
-    ) as DirectoryStatus | null;
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get('status') as DirectoryStatus | null;
     if (raw && SEEDABLE_STATUSES.has(raw) && raw !== status) setStatus(raw);
+    // ?employmentType= deep-link — the headcount dashboard's
+    // by-employment-type rows land here pre-filtered.
+    const rawType = params.get('employmentType');
+    if (
+      rawType &&
+      (EMPLOYMENT_TYPE_VALUES as readonly string[]).includes(rawType) &&
+      rawType !== employmentType
+    ) {
+      setEmploymentType(rawType as EmploymentTypeFilter);
+    }
   }
   const filters = useMemo<DirectoryFilters>(
     () => ({
@@ -270,14 +316,12 @@ export function PeopleDirectory() {
     return () => clearTimeout(id);
   }, [deferredSearch]);
 
-  // Clients change rarely; cache for a long time so the filter dropdown
-  // is instant on revisit. Failures are silent — the dropdown just shows
-  // "All clients" without specific options.
-  const { data: clients = [] as ClientListItem[] } = useQuery({
-    queryKey: ['clients', 'list'],
-    queryFn: async () => (await listClients()).clients,
-    staleTime: 5 * 60_000,
-  });
+  // Clients change rarely; the shared useClients() hook pins every picker
+  // in the app to one cached fetch (5-min staleTime, single query key —
+  // this also keeps the ['clients','list'] cache shape consistent with the
+  // other useClients() consumers). Failures are silent — the dropdown just
+  // shows "All clients" without specific options.
+  const { clients } = useClients();
 
   // Departments for the directory facet. Same long cache / silent-failure
   // treatment as clients — the picker just falls back to "All departments".
@@ -314,26 +358,80 @@ export function PeopleDirectory() {
   // keepPreviousData makes filter/search changes show the old rows
   // (faded by isFetching) until the new ones arrive instead of flashing
   // a skeleton — much smoother on slow connections.
-  const { data: rows, error: rowsError } = useQuery({
+  // Cursor-paged. The endpoint has always returned `nextCursor`; this
+  // page used to drop it on the floor, so associate #501 onward was
+  // invisible with no "load more" and no warning — the list simply
+  // ended. useInfiniteQuery consumes the cursor the server already sends.
+  const {
+    data: pages,
+    error: rowsError,
+    isFetching: rowsFetching,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: ['directory', filters],
-    queryFn: async () => (await listDirectory(filters)).associates,
+    queryFn: ({ pageParam }) =>
+      listDirectory({ ...filters, ...(pageParam ? { cursor: pageParam } : {}) }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
     placeholderData: keepPreviousData,
+    // A minute of freshness: back-navigating to the directory (or re-
+    // applying a recent filter combo) renders instantly from cache instead
+    // of refetching every page.
+    staleTime: 60_000,
   });
+  const rows = useMemo(
+    () => pages?.pages.flatMap((p) => p.associates),
+    [pages],
+  );
 
   // Resolve the deep-link associateId once rows load. setTarget is the
   // canonical drawer-open path so we get all the existing render logic
   // for free. Strip the query param so the URL stays clean and a back-
   // forward dance doesn't re-open the drawer after the user closed it.
+  //
+  // When no loaded row matches (persisted status/workplace filters can
+  // hide the person), there's no single-associate getter in the
+  // directory API to fall back on — so we clear those filters once and
+  // let the refetch surface them. If they're still absent after the
+  // widened fetch, the id is stale: drop the param instead of looping.
+  const deepLinkRetried = useRef(false);
   useEffect(() => {
-    if (!deepLinkAssociateId || !rows) return;
-    const match = rows.find((r) => r.id === deepLinkAssociateId);
-    if (match) {
-      setTarget(match);
+    if (!deepLinkAssociateId || !rows || rowsFetching) return;
+    const dropParam = () => {
       const next = new URLSearchParams(searchParams);
       next.delete('associateId');
       setSearchParams(next, { replace: true });
+    };
+    const match = rows.find((r) => r.id === deepLinkAssociateId);
+    if (match) {
+      setTarget(match);
+      dropParam();
+      return;
     }
-  }, [deepLinkAssociateId, rows, searchParams, setSearchParams]);
+    if (!deepLinkRetried.current && (status || clientId || locationId)) {
+      deepLinkRetried.current = true;
+      setStatus('');
+      setClientId('');
+      setLocationId('');
+      toast('Cleared filters to show this person.');
+      return;
+    }
+    toast.error("Couldn't find that person in the directory.");
+    dropParam();
+  }, [
+    deepLinkAssociateId,
+    rows,
+    rowsFetching,
+    searchParams,
+    setSearchParams,
+    status,
+    clientId,
+    locationId,
+    setStatus,
+    setClientId,
+  ]);
   const error = rowsError
     ? rowsError instanceof ApiError
       ? rowsError.message
@@ -351,121 +449,193 @@ export function PeopleDirectory() {
     return { total: rows.length, ...byStatus };
   }, [rows]);
 
+  const hasActiveFilters = Boolean(
+    q || status || clientId || locationId || departmentId || employmentType,
+  );
+
+  const clearAllFilters = () => {
+    setSearch('');
+    setQ('');
+    setStatus('');
+    setClientId('');
+    setLocationId('');
+    setDepartmentId('');
+    setEmploymentType('');
+  };
+
+  // Serializes exactly what the user is looking at — the current
+  // (server-filtered) rows, not the whole directory.
+  const exportCsv = () => {
+    if (!rows || rows.length === 0) return;
+    downloadCsv(`people-${ymdLocal()}.csv`, [
+      ['Name', 'Status', 'Email', 'Workplace', 'Type', 'Start date'],
+      ...rows.map((r) => [
+        `${r.firstName} ${r.lastName}`,
+        STATUS_LABEL[r.status],
+        r.email,
+        r.workplaceClientName ?? '',
+        EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
+        r.startDate ?? '',
+      ]),
+    ]);
+  };
+
   return (
     <div className="space-y-5">
       <PageHeader
         title="People directory"
         subtitle="Every associate Alto HR knows about — active, pending onboarding, and inactive — with workplace, pay, and contact in one row."
         breadcrumbs={[{ label: 'Workforce' }, { label: 'People' }]}
+        primaryAction={
+          <Button asChild>
+            <Link to="/onboarding">
+              <Plus className="h-4 w-4" />
+              Invite associates
+            </Link>
+          </Button>
+        }
+        secondaryActions={
+          <Button
+            variant="outline"
+            onClick={exportCsv}
+            disabled={!rows || rows.length === 0}
+            title="Download the current filtered list as CSV"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export CSV
+          </Button>
+        }
       />
 
       {/* KPI strip */}
       {stats && (
-        <Card>
-          <CardContent className="flex flex-wrap gap-x-6 gap-y-2 py-3">
-            <Kpi label="Total" value={stats.total} />
-            <Kpi label="Active" value={stats.ACTIVE} tone="text-success" />
-            <Kpi
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <MetricCard label="Total" value={stats.total} />
+          <MetricCard label="Active" value={stats.ACTIVE} />
+          {/* Interactive tile: toggles the Pending status filter. Wrapped
+              outside MetricCard so the canonical tile stays presentational. */}
+          <button
+            type="button"
+            onClick={() => setStatus((s) => (s === 'PENDING' ? '' : 'PENDING'))}
+            aria-pressed={status === 'PENDING'}
+            title={
+              status === 'PENDING'
+                ? 'Clear filter'
+                : 'Filter to pending onboarding'
+            }
+            className={cn(
+              'text-left rounded-lg transition-shadow focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+              status === 'PENDING' && 'ring-1 ring-gold/40',
+            )}
+          >
+            <MetricCard
               label="Pending onboarding"
               value={stats.PENDING}
-              tone={stats.PENDING > 0 ? 'text-warning' : 'text-silver'}
-              active={status === 'PENDING'}
-              onClick={() =>
-                setStatus((s) => (s === 'PENDING' ? '' : 'PENDING'))
-              }
+              accent={stats.PENDING > 0}
+              className="h-full"
             />
-            <Kpi label="Inactive" value={stats.INACTIVE} tone="text-silver" />
-          </CardContent>
-        </Card>
+          </button>
+          <MetricCard label="Inactive" value={stats.INACTIVE} />
+        </div>
       )}
 
       {/* Filter row */}
-      <Card>
-        <CardContent className="flex flex-wrap items-end gap-3 py-3">
-          <div className="flex-1 w-full sm:min-w-[220px]">
-            <label className="text-[10px] uppercase tracking-wider text-silver">
-              Search
-            </label>
-            <div className="relative mt-1">
-              <Search className="h-3.5 w-3.5 text-silver/70 absolute left-2.5 top-1/2 -translate-y-1/2" />
-              <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Name or email"
-                className="pl-8 pr-8"
-              />
-              {search && (
-                <button
-                  type="button"
-                  onClick={() => setSearch('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-silver/70 hover:text-white"
-                  aria-label="Clear search"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          </div>
-          <FilterPicker
-            label="Status"
-            value={status}
-            onChange={(v) => setStatus(v as DirectoryStatus | '')}
-            options={[
-              { value: '', label: 'All' },
-              { value: 'ACTIVE', label: 'Active' },
-              { value: 'PENDING', label: 'Pending' },
-              { value: 'INACTIVE', label: 'Inactive' },
-            ]}
+      <FilterBar>
+        <div className="w-full sm:w-64">
+          <SearchInput
+            size="sm"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name or email"
+            aria-label="Search people"
           />
-          <FilterPicker
-            label="Workplace"
-            value={clientId}
-            onChange={(v) => {
-              // Changing the workplace drops any location filter — a store
-              // from the previous client would match nothing here.
-              setClientId(v);
-              setLocationId('');
-            }}
-            options={[
-              { value: '', label: 'All' },
-              ...clients.map((c) => ({ value: c.id, label: c.name })),
-            ]}
-          />
-          {clientId && locations.length > 0 && (
-            <FilterPicker
-              label="Location"
-              value={locationId}
-              onChange={setLocationId}
-              options={[
-                { value: '', label: 'All' },
-                ...locations.map((l) => ({ value: l.id, label: l.name })),
-              ]}
-            />
-          )}
-          {departments.length > 0 && (
-            <FilterPicker
-              label="Department"
-              value={departmentId}
-              onChange={setDepartmentId}
-              options={[
-                { value: '', label: 'All' },
-                ...departments.map((d) => ({ value: d.id, label: d.name })),
-              ]}
-            />
-          )}
-          <FilterPicker
-            label="Employment type"
-            value={employmentType}
-            onChange={(v) => setEmploymentType(v as EmploymentTypeFilter | '')}
-            options={[
-              { value: '', label: 'All' },
-              { value: 'W2_EMPLOYEE', label: 'W-2' },
-              { value: 'CONTRACTOR_1099_INDIVIDUAL', label: '1099 Individual' },
-              { value: 'CONTRACTOR_1099_BUSINESS', label: '1099 Business' },
-            ]}
-          />
-        </CardContent>
-      </Card>
+        </div>
+        {(['ACTIVE', 'PENDING', 'INACTIVE'] as const).map((s) => (
+          <FilterChip
+            key={s}
+            active={status === s}
+            onClick={() => setStatus(status === s ? '' : s)}
+          >
+            {STATUS_LABEL[s]}
+          </FilterChip>
+        ))}
+        <Select
+          size="sm"
+          value={clientId}
+          onChange={(e) => {
+            // Changing the workplace drops any location filter — a store
+            // from the previous client would match nothing here.
+            setClientId(e.target.value);
+            setLocationId('');
+          }}
+          aria-label="Filter by workplace"
+          className="w-auto"
+        >
+          <option value="">All workplaces</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
+        {clientId && locations.length > 0 && (
+          <Select
+            size="sm"
+            value={locationId}
+            onChange={(e) => setLocationId(e.target.value)}
+            aria-label="Filter by location"
+            className="w-auto"
+          >
+            <option value="">All locations</option>
+            {locations.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </Select>
+        )}
+        {departments.length > 0 && (
+          <Select
+            size="sm"
+            value={departmentId}
+            onChange={(e) => setDepartmentId(e.target.value)}
+            aria-label="Filter by department"
+            className="w-auto"
+          >
+            <option value="">All departments</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}
+              </option>
+            ))}
+          </Select>
+        )}
+        <Select
+          size="sm"
+          value={employmentType}
+          onChange={(e) =>
+            setEmploymentType(e.target.value as EmploymentTypeFilter | '')
+          }
+          aria-label="Filter by employment type"
+          className="w-auto"
+        >
+          <option value="">All employment types</option>
+          <option value="W2_EMPLOYEE">W-2</option>
+          <option value="CONTRACTOR_1099_INDIVIDUAL">1099 Individual</option>
+          <option value="CONTRACTOR_1099_BUSINESS">1099 Business</option>
+        </Select>
+        {hasActiveFilters && (
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={clearAllFilters}
+            className="ml-auto"
+          >
+            <X className="h-3.5 w-3.5" />
+            Clear filters
+          </Button>
+        )}
+      </FilterBar>
 
       {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
@@ -475,36 +645,66 @@ export function PeopleDirectory() {
         <EmptyState
           icon={Users}
           title={
-            filters.q || filters.status || filters.clientId || filters.departmentId || filters.locationId || filters.employmentType
+            hasActiveFilters
               ? 'No associates match these filters'
               : 'No associates yet'
           }
           description={
-            filters.q || filters.status || filters.clientId || filters.departmentId || filters.locationId || filters.employmentType
+            hasActiveFilters
               ? 'Loosen a filter or clear the search.'
               : 'Once you invite associates through onboarding they show up here.'
+          }
+          action={
+            hasActiveFilters ? (
+              <Button variant="outline" size="sm" onClick={clearAllFilters}>
+                <X className="h-3.5 w-3.5" />
+                Clear all filters
+              </Button>
+            ) : (
+              <Button asChild size="sm">
+                <Link to="/onboarding">
+                  <Plus className="h-3.5 w-3.5" />
+                  Invite associates
+                </Link>
+              </Button>
+            )
           }
         />
       )}
 
       {rows && rows.length > 0 && (
-        <>
-          {/* md+ : columnar table. Columns reveal progressively as
+        // Only the breakpoint-active list is mounted (useIsDesktop) — the
+        // other used to render hidden, doubling DOM size for nothing.
+        isDesktop ? (
+          /* md+ : columnar table. Columns reveal progressively as
               viewport widens (md: Position, lg: Type + Pay, xl: Manager
               + Start). For lists past VIRTUALIZE_THRESHOLD we swap in a
               row virtualizer so DOM size stays bounded regardless of the
-              underlying list size. */}
-          <div className="hidden md:block">
-            <DirectoryTable rows={rows} onSelect={setTarget} />
-          </div>
-
-          {/* Phone: card stack. Tap card → drawer (same as table click). */}
-          <ul className="md:hidden space-y-2">
+              underlying list size. */
+          <DirectoryTable rows={rows} onSelect={setTarget} />
+        ) : (
+          /* Phone: card stack. Tap card → drawer (same as table click). */
+          <ul className="space-y-2">
             {rows.map((r) => (
               <DirectoryPhoneCard key={r.id} row={r} onSelect={setTarget} />
             ))}
           </ul>
-        </>
+        )
+      )}
+
+      {/* The list is capped per page. Without this control the directory
+          simply ended at the cap with no indication more people existed. */}
+      {hasNextPage && (
+        <div className="mt-4 flex justify-center">
+          <Button
+            variant="outline"
+            onClick={() => void fetchNextPage()}
+            loading={isFetchingNextPage}
+            disabled={isFetchingNextPage}
+          >
+            Load more associates
+          </Button>
+        </div>
       )}
 
       <Drawer
@@ -528,79 +728,6 @@ export function PeopleDirectory() {
           />
         )}
       </Drawer>
-    </div>
-  );
-}
-
-function Kpi({
-  label,
-  value,
-  tone = 'text-white',
-  onClick,
-  active,
-}: {
-  label: string;
-  value: number;
-  tone?: string;
-  onClick?: () => void;
-  active?: boolean;
-}) {
-  const body = (
-    <>
-      <div className="text-[10px] uppercase tracking-wider text-silver">{label}</div>
-      <div className={cn('text-2xl font-semibold tabular-nums', tone)}>{value}</div>
-    </>
-  );
-  if (!onClick) {
-    return <div className="min-w-[7rem]">{body}</div>;
-  }
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        'min-w-[7rem] text-left rounded-md -mx-1.5 px-1.5 py-0.5 transition-colors',
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
-        active
-          ? 'bg-gold/10 ring-1 ring-gold/40'
-          : 'hover:bg-navy-secondary/40',
-      )}
-      title={active ? 'Clear filter' : `Filter to ${label.toLowerCase()}`}
-    >
-      {body}
-    </button>
-  );
-}
-
-function FilterPicker({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: Array<{ value: string; label: string }>;
-}) {
-  return (
-    <div className="min-w-[150px]">
-      <label className="text-[10px] uppercase tracking-wider text-silver">
-        {label}
-      </label>
-      <Select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        size="sm"
-        className="mt-1"
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </Select>
     </div>
   );
 }
@@ -804,7 +931,7 @@ const DirectoryRow = memo(function DirectoryRow({
             <div className="text-xs text-silver truncate">{r.email}</div>
           </div>
           {r.j1Status && (
-            <Badge variant="default" className="ml-1 text-[10px]">
+            <Badge variant="default" className="ml-1 text-2xs">
               J-1
             </Badge>
           )}
@@ -814,7 +941,7 @@ const DirectoryRow = memo(function DirectoryRow({
         <div className="flex items-center gap-2">
           <Badge variant={STATUS_VARIANT[r.status]}>{STATUS_LABEL[r.status]}</Badge>
           {r.status === 'PENDING' && r.onboardingPercent !== null && (
-            <span className="text-[10px] tabular-nums text-silver">
+            <span className="text-2xs tabular-nums text-silver">
               {r.onboardingPercent}%
             </span>
           )}
@@ -861,7 +988,11 @@ const DirectoryRow = memo(function DirectoryRow({
         )}
       </TableCell>
       <TableCell className="hidden xl:table-cell text-silver text-xs tabular-nums">
-        {r.startDate ?? <span className="text-silver/70" aria-hidden="true">—</span>}
+        {r.startDate ? (
+          fmtDate(parseYmd(r.startDate) ?? r.startDate)
+        ) : (
+          <span className="text-silver/70" aria-hidden="true">—</span>
+        )}
       </TableCell>
     </TableRow>
   );
@@ -899,7 +1030,7 @@ const DirectoryPhoneCard = memo(function DirectoryPhoneCard({
             </div>
             <div className="text-xs text-silver truncate">{r.email}</div>
             {(r.workplaceClientName || r.position) && (
-              <div className="mt-1 text-[11px] text-silver/80 truncate">
+              <div className="mt-1 text-xs2 text-silver/80 truncate">
                 {r.workplaceClientName && (
                   <span className="inline-flex items-center gap-1">
                     <Building2 className="h-3 w-3" />
@@ -913,12 +1044,12 @@ const DirectoryPhoneCard = memo(function DirectoryPhoneCard({
               </div>
             )}
             {r.status === 'PENDING' && r.onboardingPercent !== null && (
-              <div className="mt-1 text-[10px] tabular-nums text-silver">
+              <div className="mt-1 text-2xs tabular-nums text-silver">
                 Onboarding {r.onboardingPercent}%
               </div>
             )}
             {r.j1Status && (
-              <Badge variant="default" className="mt-1.5 text-[10px]">
+              <Badge variant="default" className="mt-1.5 text-2xs">
                 J-1
               </Badge>
             )}
@@ -938,8 +1069,14 @@ function DirectoryDrawer({
   onClose: () => void;
   onAssociateChange: (patch: Partial<DirectoryEntry>) => void;
 }) {
+  // ?tab= picks the landing tab, so /people?associateId=X&tab=documents
+  // deep-links straight into someone's document vault.
+  const [drawerParams] = useSearchParams();
+  const requestedDrawerTab = drawerParams.get('tab');
   const [tab, setTab] = useState<'profile' | 'compensation' | 'documents'>(
-    'profile',
+    requestedDrawerTab === 'compensation' || requestedDrawerTab === 'documents'
+      ? requestedDrawerTab
+      : 'profile',
   );
   return (
     <>
@@ -951,7 +1088,7 @@ function DirectoryDrawer({
               {a.firstName} {a.lastName}
             </DrawerTitle>
             <DrawerDescription className="truncate flex items-center gap-2">
-              <Badge variant={STATUS_VARIANT[a.status]} className="text-[10px]">
+              <Badge variant={STATUS_VARIANT[a.status]} className="text-2xs">
                 {STATUS_LABEL[a.status]}
               </Badge>
               <span>{EMPLOYMENT_LABEL[a.employmentType] ?? a.employmentType}</span>
@@ -983,12 +1120,11 @@ function DirectoryDrawer({
         <Button variant="ghost" onClick={onClose}>
           Close
         </Button>
-        <Link
-          to={`/org`}
-          className="text-xs px-3 py-2 rounded bg-navy-secondary/60 text-silver hover:text-white border border-navy-secondary"
-        >
-          Edit org assignment
-        </Link>
+        <Button asChild variant="outline" size="sm">
+          <Link to={`/org?tab=people&associateId=${a.id}`}>
+            Edit org assignment
+          </Link>
+        </Button>
       </DrawerFooter>
     </>
   );
@@ -1051,7 +1187,10 @@ function ProfileTab({
           label="Position"
           value={a.position ?? '—'}
         />
-        <InfoRow label="Start date" value={a.startDate ?? '—'} />
+        <InfoRow
+          label="Start date"
+          value={a.startDate ? fmtDate(parseYmd(a.startDate) ?? a.startDate) : '—'}
+        />
         {a.status === 'PENDING' && a.onboardingPercent !== null && (
           <InfoRow
             label="Onboarding"
@@ -1150,7 +1289,151 @@ function ProfileTab({
           value={fmtDate(a.createdAt)}
         />
       </Section>
+
+      <DangerZoneSection associate={a} />
     </div>
+  );
+}
+
+/**
+ * Danger zone — privacy erasure. Anonymizes the associate's identity and
+ * scrubs credentials/ciphertext; payroll and tax history is legally
+ * retained and stays. Gated on view:hr-admin, the same capability that
+ * guards admin user management. The dialog demands a written reason and
+ * retyping the associate's last name (the server 409s on a mismatch).
+ */
+function DangerZoneSection({ associate: a }: { associate: DirectoryEntry }) {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [confirmName, setConfirmName] = useState('');
+  const [force, setForce] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const canErase = user ? hasCapability(user.role, 'view:hr-admin') : false;
+  if (!canErase) return null;
+
+  const openDialog = () => {
+    setReason('');
+    setConfirmName('');
+    setForce(false);
+    setOpen(true);
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    try {
+      await eraseAssociatePersonalData(a.id, {
+        reason: reason.trim(),
+        confirmName: confirmName.trim(),
+        ...(force ? { force: true } : {}),
+      });
+      toast.success('Personal data erased. Payroll history is retained.');
+      setOpen(false);
+      void qc.invalidateQueries({ queryKey: ['directory'] });
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : 'Erasure failed. Nothing was changed.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Section title="Danger zone">
+      <p className="text-xs text-silver/80">
+        Permanently anonymize this associate’s identity, delete their login
+        credentials, biometrics and document files. Pay and tax history is
+        kept, as required by law, under the anonymized record.
+      </p>
+      <div className="pt-2">
+        <Button variant="destructive" size="sm" onClick={openDialog}>
+          <ShieldAlert className="mr-2 h-3.5 w-3.5" />
+          Erase personal data
+        </Button>
+      </div>
+
+      <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Erase personal data — {a.firstName} {a.lastName}
+            </DialogTitle>
+            <DialogDescription>
+              This cannot be undone. Name, contact details, SSN, bank
+              details, documents, biometrics and login access are erased.
+              Time and payroll records are retained (IRS: 4 years, FLSA: 3
+              years) against the anonymized record.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={submit} className="grid gap-3">
+            <div className="grid gap-1">
+              <Label htmlFor="erase-reason">Reason (required, min 10 characters)</Label>
+              <Textarea
+                id="erase-reason"
+                autoFocus
+                required
+                minLength={10}
+                maxLength={500}
+                rows={3}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="e.g. GDPR/CCPA deletion request received 2026-07-20, ticket #1234"
+              />
+            </div>
+            <div className="grid gap-1">
+              <Label htmlFor="erase-confirm-name">
+                Type the associate’s last name (“{a.lastName}”) to confirm
+              </Label>
+              <Input
+                id="erase-confirm-name"
+                required
+                value={confirmName}
+                onChange={(e) => setConfirmName(e.target.value)}
+                placeholder={a.lastName}
+                autoComplete="off"
+              />
+            </div>
+            <label className="flex items-start gap-2 text-xs text-silver">
+              <input
+                type="checkbox"
+                checked={force}
+                onChange={(e) => setForce(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                Erase even though this associate is not marked separated
+                (only needed when the server refuses with “not separated”).
+              </span>
+            </label>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setOpen(false)}
+                disabled={busy}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant="destructive"
+                loading={busy}
+                disabled={
+                  busy || reason.trim().length < 10 || confirmName.trim().length === 0
+                }
+              >
+                Erase permanently
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </Section>
   );
 }
 
@@ -1180,14 +1463,14 @@ function PhoneField({
       return;
     }
     if (next !== null && next.length < 7) {
-      toast.error('Phone must be at least 7 characters');
+      toast.error('Phone must be at least 7 characters.');
       return;
     }
     setSaving(true);
     try {
       const r = await patchAssociateProfile(a.id, { phone: next });
       onSaved(r.phone);
-      toast.success('Phone updated');
+      toast.success('Phone updated.');
       setEditing(false);
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Could not save.';
@@ -1206,6 +1489,8 @@ function PhoneField({
         </div>
         <div className="flex-1 min-w-0 flex items-center gap-1">
           <Input
+            type="tel"
+            inputMode="tel"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder="555 555 0123"
@@ -1306,7 +1591,7 @@ function PendingActions({
       });
       setOpen(false);
       toast.success(
-        r.emailSent ? `Nudge sent to ${r.recipientEmail}` : 'Nudge logged',
+        r.emailSent ? `Nudge sent to ${r.recipientEmail}.` : 'Nudge logged.',
       );
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Could not send.';
@@ -1319,13 +1604,12 @@ function PendingActions({
   return (
     <Section title="Onboarding">
       <div className="flex flex-wrap gap-2">
-        <Link
-          to={`/onboarding/applications/${applicationId}`}
-          className="inline-flex items-center gap-1.5 text-xs px-3 py-2 rounded bg-navy-secondary/60 text-silver hover:text-white border border-navy-secondary"
-        >
-          <ExternalLink className="h-3.5 w-3.5" />
-          Open application
-        </Link>
+        <Button asChild variant="outline" size="sm">
+          <Link to={`/onboarding/applications/${applicationId}`}>
+            <ExternalLink className="h-3.5 w-3.5" />
+            Open application
+          </Link>
+        </Button>
         <Button
           variant="ghost"
           onClick={() => setOpen(true)}
@@ -1380,7 +1664,7 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
         <CardContent className="py-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="text-[10px] uppercase tracking-wider text-silver">
+              <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
                 Current rate
               </div>
               <div className="text-3xl font-semibold tabular-nums text-white mt-1">
@@ -1389,7 +1673,7 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
                   : fmtPay(a.payAmount, a.payType, a.payCurrency)}
               </div>
               {current && (
-                <div className="text-[11px] text-silver mt-1">
+                <div className="text-xs2 text-silver mt-1">
                   {REASON_LABEL[current.reason]} · effective{' '}
                   {fmtDate(current.effectiveFrom)}
                 </div>
@@ -1404,8 +1688,35 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
       </Card>
 
       <div>
-        <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-2 border-b border-navy-secondary pb-1">
-          History
+        <div className="flex items-center justify-between mb-2 border-b border-navy-secondary pb-1">
+          <div className="text-2xs uppercase tracking-widest text-silver/80">
+            History
+          </div>
+          {records && records.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                downloadCsv(
+                  `pay-history-${a.firstName}-${a.lastName}-${ymdLocal()}.csv`.toLowerCase(),
+                  [
+                    ['Effective from', 'Effective to', 'Amount', 'Pay type', 'Reason', 'Notes'],
+                    ...records.map((r) => [
+                      fmtDate(r.effectiveFrom),
+                      r.effectiveTo ? fmtDate(r.effectiveTo) : '',
+                      r.amount,
+                      r.payType,
+                      REASON_LABEL[r.reason],
+                      r.notes ?? '',
+                    ]),
+                  ],
+                )
+              }
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export CSV
+            </Button>
+          )}
         </div>
         {error && (
           <div className="text-sm text-alert" role="alert">
@@ -1445,7 +1756,7 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
                   <TableCell className="text-silver text-xs">
                     {REASON_LABEL[r.reason]}
                     {r.notes && (
-                      <span className="block text-[10px] text-silver/70 truncate max-w-[180px]">
+                      <span className="block text-2xs text-silver/70 truncate max-w-[180px]">
                         {r.notes}
                       </span>
                     )}
@@ -1484,7 +1795,7 @@ function TransferDialog({
   associate: DirectoryEntry;
   onSaved: (locationId: string, locationName: string) => void;
 }) {
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const today = useMemo(() => ymdLocal(), []);
   const [locationId, setLocationId] = useState<string>(a.currentLocationId ?? '');
   const [startedAt, setStartedAt] = useState(today);
   const [reason, setReason] = useState('');
@@ -1527,7 +1838,7 @@ function TransferDialog({
         reason: reason.trim() || null,
         notes: notes.trim() || null,
       });
-      toast.success(`Transferred to ${targetLocation.name}`);
+      toast.success(`Transferred to ${targetLocation.name}.`);
       onSaved(targetLocation.id, targetLocation.name);
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Could not transfer.';
@@ -1660,7 +1971,7 @@ function PayoutMethodSection({ associateId }: { associateId: string }) {
     <>
       <Section title="Pay setup">
         {isLoading ? (
-          <div className="text-xs text-silver">Loading…</div>
+          <Skeleton className="h-4 w-48" />
         ) : !data || !data.hasPayoutMethod ? (
           <InfoRow
             icon={<Landmark className="h-3.5 w-3.5" />}
@@ -1691,6 +2002,11 @@ function PayoutMethodSection({ associateId }: { associateId: string }) {
               value={`Direct deposit${
                 data.accountType ? ` (${data.accountType.toLowerCase()})` : ''
               }`}
+            />
+            <BankNameRow
+              associateId={associateId}
+              bankName={data.bankName ?? null}
+              onSaved={() => void refetch()}
             />
             <InfoRow
               label="Routing"
@@ -1740,6 +2056,128 @@ function PayoutMethodSection({ associateId }: { associateId: string }) {
         />
       )}
     </>
+  );
+}
+
+/**
+ * Bank name, inline-editable.
+ *
+ * The field was added after most associates onboarded, so existing records
+ * carry a blank that an external payroll provider's intake file expects.
+ * Without an admin path the only fix is asking each associate to re-save
+ * their direct deposit, so this edits the label in place.
+ *
+ * Only the label — routing and account numbers stay read-only here and
+ * writable only by the associate, whose self-service change fires a
+ * confirmation email as a fraud tripwire. An admin control that could
+ * rewrite where money lands is a payment-redirection vector, and nothing
+ * about naming a bank needs one.
+ */
+function BankNameRow({
+  associateId,
+  bankName,
+  onSaved,
+}: {
+  associateId: string;
+  bankName: string | null;
+  onSaved: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(bankName ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Re-sync when the query refetches under us (e.g. after a save elsewhere).
+  useEffect(() => {
+    if (!editing) setValue(bankName ?? '');
+  }, [bankName, editing]);
+
+  const save = async () => {
+    const next = value.trim();
+    if (!next) {
+      setError('Enter a bank name.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await setAssociateBankName(associateId, next);
+      setEditing(false);
+      onSaved();
+      toast.success('Bank name updated.');
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not save.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <InfoRow
+        label="Bank"
+        value={
+          <span className="inline-flex items-center gap-2">
+            {bankName ? (
+              <span>{bankName}</span>
+            ) : (
+              // Called out rather than shown as a neutral dash: a blank here
+              // is a cell the payroll provider expects filled.
+              <span className="text-warning">Not set</span>
+            )}
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              className="text-2xs uppercase tracking-wider text-silver/70 underline underline-offset-2 hover:text-gold"
+            >
+              {bankName ? 'Edit' : 'Add'}
+            </button>
+          </span>
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="py-1">
+      <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1">
+        Bank
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          autoFocus
+          value={value}
+          maxLength={120}
+          placeholder="Chase"
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void save();
+            if (e.key === 'Escape') {
+              setEditing(false);
+              setValue(bankName ?? '');
+              setError(null);
+            }
+          }}
+          className="h-8 text-sm"
+        />
+        <Button size="sm" onClick={() => void save()} loading={saving} disabled={saving}>
+          Save
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={saving}
+          onClick={() => {
+            setEditing(false);
+            setValue(bankName ?? '');
+            setError(null);
+          }}
+        >
+          Cancel
+        </Button>
+      </div>
+      {error && <div className="mt-1 text-xs text-alert">{error}</div>}
+    </div>
   );
 }
 
@@ -1927,7 +2365,7 @@ function SsnSection({ associateId }: { associateId: string }) {
     <>
       <Section title="Tax identity">
         {isLoading ? (
-          <div className="text-xs text-silver">Loading…</div>
+          <Skeleton className="h-4 w-48" />
         ) : !data || !data.hasSsn ? (
           <InfoRow
             label={data?.source === 'TIN' ? 'TIN' : 'SSN'}
@@ -2006,9 +2444,6 @@ function W4Section({ associateId }: { associateId: string }) {
   if (!canSee) return null;
   if (data && data.employmentType !== 'W2_EMPLOYEE') return null; // 1099 → no W-4
 
-  const money = (n: number | null) =>
-    n == null ? '—' : n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-
   const startEdit = () => {
     if (!data) return;
     setForm({
@@ -2040,7 +2475,7 @@ function W4Section({ associateId }: { associateId: string }) {
   return (
     <Section title="Federal W-4">
       {isLoading ? (
-        <div className="text-xs text-silver">Loading…</div>
+        <Skeleton className="h-4 w-48" />
       ) : !data || !data.hasSubmission ? (
         <InfoRow
           label="W-4"
@@ -2104,10 +2539,10 @@ function W4Section({ associateId }: { associateId: string }) {
             label="Filing status"
             value={data.filingStatus ? W4_FILING_LABEL[data.filingStatus] : '—'}
           />
-          <InfoRow label="Dependents credit" value={money(data.dependentsAmount)} />
-          <InfoRow label="Other income" value={money(data.otherIncome)} />
-          <InfoRow label="Deductions" value={money(data.deductions)} />
-          <InfoRow label="Extra withholding / check" value={money(data.extraWithholding)} />
+          <InfoRow label="Dependents credit" value={fmtMoney(data.dependentsAmount)} />
+          <InfoRow label="Other income" value={fmtMoney(data.otherIncome)} />
+          <InfoRow label="Deductions" value={fmtMoney(data.deductions)} />
+          <InfoRow label="Extra withholding / check" value={fmtMoney(data.extraWithholding)} />
           {data.signedAt && (
             <InfoRow
               label="Last signed"
@@ -2274,7 +2709,7 @@ function NewRateDialog({
   currentRecord: CompRecord | null;
   onSaved: () => void;
 }) {
-  const today = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const today = useMemo(() => ymdLocal(), []);
   const initialPayType: PayType =
     (currentRecord?.payType as PayType | undefined) ??
     (a.payType === 'SALARY' ? 'SALARY' : 'HOURLY');
@@ -2304,6 +2739,27 @@ function NewRateDialog({
   const valid =
     Number.isFinite(amountNum) && amountNum > 0 && effectiveFrom.length === 10;
 
+  // Live "was → will be" math against the current open record so the
+  // admin sees the delta before committing.
+  const currentAmountNum = currentRecord ? Number(currentRecord.amount) : NaN;
+  const deltaPct =
+    Number.isFinite(currentAmountNum) &&
+    currentAmountNum > 0 &&
+    Number.isFinite(amountNum) &&
+    amountNum > 0
+      ? ((amountNum - currentAmountNum) / currentAmountNum) * 100
+      : null;
+  // Effective-from can't sensibly predate the current record's start —
+  // back-dating past it rewrites already-closed history.
+  const minEffectiveFrom = currentRecord
+    ? currentRecord.effectiveFrom.slice(0, 10)
+    : undefined;
+  const backdated = Boolean(
+    minEffectiveFrom &&
+      effectiveFrom.length === 10 &&
+      effectiveFrom < minEffectiveFrom,
+  );
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!valid || submitting) return;
@@ -2316,7 +2772,7 @@ function NewRateDialog({
         notes: notes.trim() || undefined,
         effectiveFrom,
       });
-      toast.success('Rate updated');
+      toast.success('Rate updated.');
       onSaved();
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Could not save.';
@@ -2355,16 +2811,27 @@ function NewRateDialog({
               label={`Amount${payType === 'HOURLY' ? ' / hour' : ' / year'}`}
             >
               {(p) => (
-                <Input
-                  type="number"
-                  inputMode="decimal"
-                  step="0.01"
-                  min="0"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  placeholder={payType === 'HOURLY' ? '24.50' : '65000'}
-                  {...p}
-                />
+                <div>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min="0"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    placeholder={payType === 'HOURLY' ? '24.50' : '65000'}
+                    {...p}
+                  />
+                  {currentRecord && deltaPct !== null && (
+                    <p className="mt-1 text-xs2 text-silver tabular-nums">
+                      was{' '}
+                      {fmtPayRate(currentRecord.amount, currentRecord.payType)}{' '}
+                      → {fmtPayRate(amountNum, payType)} (
+                      {deltaPct >= 0 ? '+' : ''}
+                      {deltaPct.toFixed(1)}%)
+                    </p>
+                  )}
+                </div>
               )}
             </Field>
           </div>
@@ -2372,12 +2839,22 @@ function NewRateDialog({
           <div className="grid grid-cols-2 gap-3">
             <Field label="Effective from">
               {(p) => (
-                <Input
-                  type="date"
-                  value={effectiveFrom}
-                  onChange={(e) => setEffectiveFrom(e.target.value)}
-                  {...p}
-                />
+                <div>
+                  <Input
+                    type="date"
+                    value={effectiveFrom}
+                    min={minEffectiveFrom}
+                    onChange={(e) => setEffectiveFrom(e.target.value)}
+                    {...p}
+                  />
+                  {backdated && (
+                    <p className="mt-1 text-xs2 text-warning" role="alert">
+                      Before the current rate&apos;s start (
+                      {fmtDate(parseYmd(minEffectiveFrom!) ?? minEffectiveFrom)}
+                      ) — this back-dates pay history.
+                    </p>
+                  )}
+                </div>
               )}
             </Field>
             <Field label="Reason">
@@ -2489,13 +2966,202 @@ const HR_UPLOAD_KINDS: ReadonlyArray<DocumentKind> = [
 
 const DOC_STATUS_VARIANT: Record<
   DocumentRecord['status'],
-  'success' | 'pending' | 'default'
+  'success' | 'pending' | 'destructive'
 > = {
   VERIFIED: 'success',
   UPLOADED: 'pending',
-  REJECTED: 'default',
-  EXPIRED: 'default',
+  REJECTED: 'destructive',
+  EXPIRED: 'destructive',
 };
+
+const DOC_STATUS_LABEL: Record<DocumentRecord['status'], string> = {
+  VERIFIED: 'Verified',
+  UPLOADED: 'Uploaded',
+  REJECTED: 'Rejected',
+  EXPIRED: 'Expired',
+};
+
+/* ----- Document vault ----------------------------------------------------
+ * The Documents tab is the associate's whole file: every DocumentRecord in
+ * the system is keyed here whichever screen uploaded it, grouped by the
+ * compliance domain it belongs to, with each domain's ledger status beside
+ * its evidence. The four core screening domains always render (their
+ * status is the point, even with zero files); the rest appear when they
+ * have documents.
+ * ---------------------------------------------------------------------- */
+
+type BadgeTone = 'default' | 'pending' | 'success' | 'destructive' | 'accent';
+
+const VAULT_CATEGORIES: ReadonlyArray<{
+  key: string;
+  title: string;
+  /** One-line purpose under the title, so a section identifies itself. */
+  blurb: string;
+  icon: LucideIcon;
+  kinds: readonly string[];
+  /** ?tab= value on /compliance — the owning directorate. */
+  complianceTab?: string;
+  alwaysVisible?: boolean;
+}> = [
+  {
+    key: 'identity',
+    title: 'Identity & I-9',
+    blurb: 'IDs, SSN card, and Section 2 supporting documents',
+    icon: Fingerprint,
+    kinds: ['ID', 'SSN_CARD', 'I9_SUPPORTING'],
+    complianceTab: 'i9',
+    alwaysVisible: true,
+  },
+  {
+    key: 'everify',
+    title: 'E-Verify',
+    blurb: 'Federal work-authorization case and closure packet',
+    icon: ShieldCheck,
+    kinds: ['I9_VERIFICATION_RESULT'],
+    complianceTab: 'everify',
+    alwaysVisible: true,
+  },
+  {
+    key: 'background',
+    title: 'Background check',
+    blurb: 'Provider screening reports',
+    icon: FileSearch,
+    kinds: ['BACKGROUND_CHECK_RESULT'],
+    complianceTab: 'background',
+    alwaysVisible: true,
+  },
+  {
+    key: 'drug',
+    title: 'Drug test',
+    blurb: 'Lab results — a result is valid for 60 days',
+    icon: FlaskConical,
+    kinds: ['DRUG_TEST_RESULT'],
+    complianceTab: 'drugtests',
+    alwaysVisible: true,
+  },
+  {
+    key: 'j1',
+    title: 'J-1 program',
+    blurb: 'DS-2019 and visa documents',
+    icon: Plane,
+    kinds: ['J1_DS2019', 'J1_VISA'],
+    complianceTab: 'j1',
+  },
+  {
+    key: 'tax',
+    title: 'Tax & payroll',
+    blurb: 'W-4 and payroll paperwork',
+    icon: Landmark,
+    kinds: ['W4_PDF'],
+  },
+  {
+    key: 'agreements',
+    title: 'Agreements & policies',
+    blurb: 'Offer letters, signed agreements, and policy acknowledgments',
+    icon: FileSignature,
+    kinds: ['OFFER_LETTER', 'POLICY', 'HOUSING_AGREEMENT', 'TRANSPORT_AGREEMENT', 'SIGNED_AGREEMENT'],
+  },
+  {
+    key: 'other',
+    title: 'Other',
+    blurb: 'Everything that fits no other drawer',
+    icon: FolderOpen,
+    kinds: ['OTHER'],
+  },
+];
+
+const EVERIFY_CHIP: Record<string, { label: string; tone: BadgeTone }> = {
+  PENDING: { label: 'Case pending', tone: 'pending' },
+  EMPLOYMENT_AUTHORIZED: { label: 'Authorized', tone: 'success' },
+  TENTATIVE_NONCONFIRMATION: { label: 'Tentative nonconfirmation', tone: 'destructive' },
+  FINAL_NONCONFIRMATION: { label: 'Final nonconfirmation', tone: 'destructive' },
+  CLOSE_CASE_AND_RESUBMIT: { label: 'Close & resubmit', tone: 'pending' },
+};
+
+const SCREEN_CHIP: Record<string, { label: string; tone: BadgeTone }> = {
+  INITIATED: { label: 'Ordered', tone: 'accent' },
+  IN_PROGRESS: { label: 'In progress', tone: 'accent' },
+  NEEDS_REVIEW: { label: 'Needs review', tone: 'pending' },
+  PASSED: { label: 'Passed', tone: 'success' },
+  FAILED: { label: 'Failed', tone: 'destructive' },
+};
+
+/** Ledger → header chips: the decision each category's documents evidence. */
+function vaultChips(
+  key: string,
+  s: DocumentVaultSummary,
+  docCount: number,
+): Array<{ label: string; tone: BadgeTone }> {
+  switch (key) {
+    case 'identity': {
+      if (!s.i9) return [{ label: 'I-9 not started', tone: 'default' }];
+      return [
+        s.i9.section1CompletedAt
+          ? { label: 'Section 1 complete', tone: 'success' }
+          : { label: 'Section 1 pending', tone: 'pending' },
+        s.i9.section2CompletedAt
+          ? { label: 'Section 2 complete', tone: 'success' }
+          : { label: 'Section 2 pending', tone: 'pending' },
+      ];
+    }
+    case 'everify': {
+      if (!s.everify) return [{ label: 'No case recorded', tone: 'default' }];
+      const chip = (s.everify.status && EVERIFY_CHIP[s.everify.status]) || {
+        label: 'Case open',
+        tone: 'pending' as BadgeTone,
+      };
+      return s.everify.caseNumber
+        ? [chip, { label: `Case ${s.everify.caseNumber}`, tone: 'default' }]
+        : [chip];
+    }
+    case 'background': {
+      if (!s.background) return [{ label: 'Never screened', tone: 'default' }];
+      const chip = SCREEN_CHIP[s.background.status] ?? {
+        label: s.background.status,
+        tone: 'default' as BadgeTone,
+      };
+      const chips = [
+        s.background.completedAt
+          ? { ...chip, label: `${chip.label} ${fmtDate(s.background.completedAt)}` }
+          : chip,
+      ];
+      const finalized = s.background.status === 'PASSED' || s.background.status === 'FAILED';
+      if (finalized && docCount === 0) {
+        chips.push({ label: 'No report on file', tone: 'pending' });
+      }
+      return chips;
+    }
+    case 'drug': {
+      if (!s.drugTest) return [{ label: 'Never tested', tone: 'default' }];
+      const chips: Array<{ label: string; tone: BadgeTone }> = [];
+      if (s.drugTest.lastResultAt) {
+        chips.push(
+          s.drugTest.fresh
+            ? { label: `Result current (${fmtDate(s.drugTest.lastResultAt)})`, tone: 'success' }
+            : { label: `Result expired (${fmtDate(s.drugTest.lastResultAt)})`, tone: 'destructive' },
+        );
+      } else {
+        chips.push({ label: 'No result on file', tone: 'pending' });
+      }
+      if (s.drugTest.status === 'INITIATED' || s.drugTest.status === 'IN_PROGRESS') {
+        chips.push({ label: 'Order in flight', tone: 'accent' });
+      }
+      return chips;
+    }
+    case 'j1': {
+      if (!s.j1) return [];
+      return [
+        {
+          label: `Program ${fmtDate(`${s.j1.programStartDate}T12:00:00Z`)} – ${fmtDate(`${s.j1.programEndDate}T12:00:00Z`)}`,
+          tone: 'default',
+        },
+        { label: s.j1.sponsorAgency, tone: 'default' },
+      ];
+    }
+    default:
+      return [];
+  }
+}
 
 function DocumentsTab({ associateId }: { associateId: string }) {
   const queryClient = useQueryClient();
@@ -2504,10 +3170,13 @@ function DocumentsTab({ associateId }: { associateId: string }) {
   const [previewDoc, setPreviewDoc] = useState<DocumentRecord | null>(null);
   const [showUpload, setShowUpload] = useState(false);
 
-  const { data: docs, error: docsError } = useQuery({
-    queryKey: ['associate-docs', associateId],
-    queryFn: async () => (await listAdminDocuments({ associateId })).documents,
+  const [search, setSearch] = useState('');
+
+  const { data: vault, error: docsError } = useQuery({
+    queryKey: ['associate-vault', associateId],
+    queryFn: () => getDocumentVault(associateId),
   });
+  const docs = vault?.documents;
   const error = docsError
     ? docsError instanceof ApiError
       ? docsError.message
@@ -2515,19 +3184,55 @@ function DocumentsTab({ associateId }: { associateId: string }) {
     : null;
 
   function replaceDoc(updated: DocumentRecord) {
-    queryClient.setQueryData<DocumentRecord[]>(
-      ['associate-docs', associateId],
+    queryClient.setQueryData<DocumentVaultResponse>(
+      ['associate-vault', associateId],
       (old) =>
-        old ? old.map((d) => (d.id === updated.id ? updated : d)) : old,
+        old
+          ? {
+              ...old,
+              documents: old.documents.map((d) => (d.id === updated.id ? updated : d)),
+            }
+          : old,
     );
   }
 
   function prependDoc(created: DocumentRecord) {
-    queryClient.setQueryData<DocumentRecord[]>(
-      ['associate-docs', associateId],
-      (old) => (old ? [created, ...old] : [created]),
+    queryClient.setQueryData<DocumentVaultResponse>(
+      ['associate-vault', associateId],
+      (old) =>
+        old
+          ? { ...old, documents: [created, ...old.documents], total: old.total + 1 }
+          : old,
     );
   }
+
+  // Group by compliance domain; unknown future kinds fall into Other so
+  // nothing silently vanishes from the vault.
+  const searching = search.trim().length > 0;
+  const sections = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const matches = (d: DocumentRecord) =>
+      !q ||
+      d.filename.toLowerCase().includes(q) ||
+      (DOCUMENT_KIND_LABEL[d.kind] ?? d.kind).toLowerCase().includes(q);
+    const byKind = new Map<string, DocumentRecord[]>();
+    for (const d of docs ?? []) {
+      if (!matches(d)) continue;
+      const arr = byKind.get(d.kind);
+      if (arr) arr.push(d);
+      else byKind.set(d.kind, [d]);
+    }
+    const covered = new Set(VAULT_CATEGORIES.flatMap((c) => c.kinds));
+    return VAULT_CATEGORIES.map((cat) => ({
+      ...cat,
+      docs: [
+        ...cat.kinds.flatMap((k) => byKind.get(k) ?? []),
+        ...(cat.key === 'other'
+          ? [...byKind.entries()].filter(([k]) => !covered.has(k)).flatMap(([, v]) => v)
+          : []),
+      ],
+    }));
+  }, [docs, search]);
 
   async function handleVerify(d: DocumentRecord) {
     if (actingId) return;
@@ -2535,7 +3240,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
     try {
       const updated = await verifyDocument(d.id);
       replaceDoc(updated);
-      toast.success('Document verified');
+      toast.success('Document verified.');
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not verify.');
     } finally {
@@ -2550,7 +3255,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
     try {
       const updated = await rejectDocument(id, { reason });
       replaceDoc(updated);
-      toast.success('Document rejected');
+      toast.success('Document rejected.');
       setRejectTarget(null);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not reject.');
@@ -2562,9 +3267,19 @@ function DocumentsTab({ associateId }: { associateId: string }) {
   if (error) {
     return <ErrorBanner>{error}</ErrorBanner>;
   }
-  if (!docs) {
+  if (!vault || !docs) {
     return <SkeletonRows count={3} rowHeight="h-9" />;
   }
+
+  const summary = vault.summary;
+  // The four screening domains always render — their ledger status is the
+  // point even with zero files. J-1 appears for J-1 people; the rest only
+  // when they hold documents. A live search hides empty sections entirely.
+  const visibleSections = sections.filter((s) =>
+    searching
+      ? s.docs.length > 0
+      : s.docs.length > 0 || s.alwaysVisible || (s.key === 'j1' && summary.j1 !== null),
+  );
 
   const uploadButton = (
     <Button size="sm" variant="outline" onClick={() => setShowUpload(true)}>
@@ -2573,66 +3288,29 @@ function DocumentsTab({ associateId }: { associateId: string }) {
     </Button>
   );
 
-  if (docs.length === 0) {
-    return (
-      <>
-        <div className="flex items-center justify-end mb-3">{uploadButton}</div>
-        <EmptyState
-          icon={FileText}
-          title="No documents on file"
-          description="Upload background-check, drug-test, or E-Verify result PDFs here. Associate-submitted documents will also appear in this list."
-        />
-        <UploadResultDialog
-          open={showUpload}
-          onOpenChange={setShowUpload}
-          associateId={associateId}
-          onUploaded={prependDoc}
-        />
-      </>
-    );
-  }
-
-  return (
-    <>
-      <div className="flex items-center justify-between mb-3">
-        <div className="text-[10px] uppercase tracking-widest text-silver/80">
-          {docs.length} document{docs.length === 1 ? '' : 's'}
-        </div>
-        {uploadButton}
-      </div>
-      <Table caption="Documents">
-        <TableHeader>
-          <TableRow className="hover:bg-transparent">
-            <TableHead>Document</TableHead>
-            <TableHead className="w-28">Status</TableHead>
-            <TableHead className="hidden sm:table-cell">Uploaded</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {docs.map((d) => (
+  const docRow = (d: DocumentRecord) => (
             <TableRow key={d.id}>
               <TableCell>
                 <div className="font-medium text-white text-sm">
                   {DOCUMENT_KIND_LABEL[d.kind] ?? d.kind}
                 </div>
-                <div className="text-[10px] text-silver truncate max-w-[220px]">
+                <div className="text-2xs text-silver truncate max-w-[220px]">
                   {d.filename}
                 </div>
                 {!d.fileAvailable && (
-                  <div className="text-[10px] text-alert mt-0.5">
+                  <div className="text-2xs text-alert mt-0.5">
                     File missing on server — please re-upload
                   </div>
                 )}
                 {d.status === 'REJECTED' && d.rejectionReason && (
-                  <div className="text-[10px] text-alert mt-0.5 truncate max-w-[220px]">
+                  <div className="text-2xs text-alert mt-0.5 truncate max-w-[220px]">
                     {d.rejectionReason}
                   </div>
                 )}
               </TableCell>
               <TableCell>
                 <Badge variant={DOC_STATUS_VARIANT[d.status]}>
-                  {d.status.charAt(0) + d.status.slice(1).toLowerCase()}
+                  {DOC_STATUS_LABEL[d.status]}
                 </Badge>
               </TableCell>
               <TableCell className="hidden sm:table-cell text-xs text-silver tabular-nums">
@@ -2699,9 +3377,112 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                 </div>
               </TableCell>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+  );
+
+  return (
+    <>
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="font-display text-base font-semibold text-white">Document vault</h2>
+          <p className="mt-0.5 text-xs text-silver/70">
+            {vault.total === 0
+              ? 'Nothing on file yet — every document uploaded anywhere on the site lands here.'
+              : `${vault.total} document${vault.total === 1 ? '' : 's'} on file${
+                  vault.total > docs.length ? ` · showing latest ${docs.length}` : ''
+                } — the associate's complete file, grouped by compliance domain.`}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search documents…"
+            className="h-8 w-48 text-sm"
+            aria-label="Search documents"
+          />
+          {vault.total > 0 && (
+            <a
+              href={downloadAllDocumentsUrl(associateId)}
+              download
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-navy-secondary px-2.5 text-xs text-silver hover:border-gold/60 hover:text-white"
+              title="One zip of this associate's entire file (audited)"
+            >
+              <Download className="h-3.5 w-3.5" />
+              Download all
+            </a>
+          )}
+          {uploadButton}
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        {visibleSections.map((cat) => {
+          const chips = vaultChips(cat.key, summary, cat.docs.length);
+          const Icon = cat.icon;
+          return (
+            <section
+              key={cat.key}
+              className="overflow-hidden rounded-lg border border-navy-secondary bg-navy/40"
+            >
+              <header className="flex flex-wrap items-center gap-3 border-b border-navy-secondary bg-navy-secondary/25 px-4 py-3">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-gold/10 text-gold">
+                  <Icon className="h-4 w-4" aria-hidden />
+                </span>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold leading-tight text-white">
+                    {cat.title}
+                    <span className="ml-2 font-normal tabular-nums text-silver/60">
+                      {cat.docs.length}
+                    </span>
+                  </h3>
+                  <p className="text-2xs text-silver/60">{cat.blurb}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 sm:ml-2">
+                  {chips.map((c, i) => (
+                    <Badge key={i} variant={c.tone}>
+                      {c.label}
+                    </Badge>
+                  ))}
+                </div>
+                {cat.complianceTab && (
+                  <Link
+                    // associateId rides along so tabs that support person
+                    // deep-links (I-9 today) open THIS person; others
+                    // ignore it harmlessly.
+                    to={`/compliance?tab=${cat.complianceTab}&associateId=${associateId}`}
+                    className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"
+                  >
+                    Open in Compliance
+                    <ExternalLink className="h-3 w-3" />
+                  </Link>
+                )}
+              </header>
+              {cat.docs.length === 0 ? (
+                <p className="px-4 py-3 text-xs text-silver/60">
+                  No documents filed in this section.
+                </p>
+              ) : (
+                <Table caption={cat.title}>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead>Document</TableHead>
+                      <TableHead className="w-28">Status</TableHead>
+                      <TableHead className="hidden sm:table-cell">Uploaded</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>{cat.docs.map(docRow)}</TableBody>
+                </Table>
+              )}
+            </section>
+          );
+        })}
+        {searching && visibleSections.length === 0 && (
+          <p className="text-sm text-silver">
+            No documents match &ldquo;{search.trim()}&rdquo;.
+          </p>
+        )}
+      </div>
 
       <ConfirmDialog
         open={rejectTarget !== null}
@@ -2768,10 +3549,10 @@ function UploadResultDialog({
     try {
       const created = await uploadAdminDocument(file, kind, associateId);
       onUploaded(created);
-      toast.success('Result uploaded');
+      toast.success('Result uploaded.');
       onOpenChange(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Upload failed');
+      toast.error(err instanceof Error ? err.message : 'Upload failed.');
       setBusy(false);
     }
   }
@@ -2833,7 +3614,7 @@ function UploadResultDialog({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-2 border-b border-navy-secondary pb-1">
+      <div className="text-2xs uppercase tracking-widest text-silver/80 mb-2 border-b border-navy-secondary pb-1">
         {title}
       </div>
       <div className="space-y-1.5">{children}</div>

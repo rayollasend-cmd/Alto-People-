@@ -1,8 +1,12 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import {
+  BackgroundBulkInitiateInputSchema,
+  BackgroundBulkInitiateResponseSchema,
+  BackgroundCheckDetailSchema,
   BackgroundCheckListResponseSchema,
   BackgroundInitiateInputSchema,
+  BackgroundPendingResponseSchema,
   BackgroundUpdateInputSchema,
   I9ListResponseSchema,
   I9UpsertInputSchema,
@@ -16,11 +20,23 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeBackgroundChecks } from '../lib/scope.js';
+import { blobExistsForListing } from '../lib/blobStore.js';
 import { recordComplianceEvent } from '../lib/audit.js';
+import { everifyRouter } from './everify.js';
+import { drugTestsRouter } from './drugTests.js';
 
 export const complianceRouter = Router();
 
 const MANAGE = requireCapability('manage:compliance');
+
+// E-Verify directorate lives in its own module — it's roughly the size of
+// this file on its own. Mounted here rather than in app.ts so it inherits the
+// same view:compliance guard and sits under the same /compliance prefix.
+complianceRouter.use('/everify', everifyRouter);
+
+// Drug tests — same reasoning: a full directorate module mounted under the
+// same guard and prefix.
+complianceRouter.use('/drug-tests', drugTestsRouter);
 
 function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -36,7 +52,7 @@ type RawI9 = Prisma.I9VerificationGetPayload<{
         lastName: true;
         email: true;
         applications: {
-          select: { id: true; invitedAt: true };
+          select: { id: true; invitedAt: true; startDate: true };
           orderBy: { invitedAt: 'desc' };
           take: 1;
         };
@@ -61,6 +77,15 @@ function toI9(row: RawI9): I9Verification {
     supportingDocIds: Array.isArray(row.supportingDocIds)
       ? (row.supportingDocIds as string[])
       : [],
+    // Deadline anchors for the queue: without these HR couldn't tell
+    // which of 40 pending I-9s is due tomorrow vs next week, and
+    // expiring work authorizations were invisible here.
+    startDate: row.associate.applications[0]?.startDate
+      ? row.associate.applications[0].startDate.toISOString().slice(0, 10)
+      : null,
+    workAuthExpiresAt: row.workAuthExpiresAt
+      ? row.workAuthExpiresAt.toISOString().slice(0, 10)
+      : null,
   };
 }
 
@@ -71,7 +96,7 @@ const I9_INCLUDE = {
       lastName: true,
       email: true,
       applications: {
-        select: { id: true, invitedAt: true },
+        select: { id: true, invitedAt: true, startDate: true },
         orderBy: { invitedAt: 'desc' as const },
         take: 1,
       },
@@ -160,7 +185,7 @@ type RawBg = Prisma.BackgroundCheckGetPayload<{
   include: { associate: { select: { firstName: true; lastName: true } } };
 }>;
 
-function toBg(row: RawBg): BackgroundCheck {
+function toBg(row: RawBg, reportCount?: number): BackgroundCheck {
   return {
     id: row.id,
     associateId: row.associateId,
@@ -171,8 +196,13 @@ function toBg(row: RawBg): BackgroundCheck {
     status: row.status,
     initiatedAt: row.initiatedAt.toISOString(),
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+    ...(reportCount !== undefined ? { reportCount } : {}),
   };
 }
+
+/** Provider report PDFs are stored as documents of this kind, keyed by
+ *  associate — the same pattern as E-Verify closure packets. */
+const BG_REPORT_KIND = 'BACKGROUND_CHECK_RESULT' as const;
 
 const BG_INCLUDE = {
   associate: { select: { firstName: true, lastName: true } },
@@ -191,8 +221,213 @@ complianceRouter.get('/background', async (req, res, next) => {
       take: 200,
       include: BG_INCLUDE,
     });
+    // Report-on-file counts in one grouped query — the table flags finalized
+    // checks that have no evidence behind them without an N+1.
+    const counts = await prisma.documentRecord.groupBy({
+      by: ['associateId'],
+      where: {
+        associateId: { in: rows.map((r) => r.associateId) },
+        kind: BG_REPORT_KIND,
+        deletedAt: null,
+      },
+      _count: { _all: true },
+    });
+    const reportsByAssociate = new Map(counts.map((c) => [c.associateId, c._count._all]));
     res.json(
-      BackgroundCheckListResponseSchema.parse({ checks: rows.map(toBg) })
+      BackgroundCheckListResponseSchema.parse({
+        checks: rows.map((r) => toBg(r, reportsByAssociate.get(r.associateId) ?? 0)),
+      })
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Everyone onboarded or onboarding who has NEVER been screened, shaped for
+ * the provider's bulk-invitation CSV. Registered before /background/:id so
+ * "pending" isn't swallowed as an id. MANAGE because its only purpose is
+ * feeding an ordering workflow, and the read is audited as an export.
+ */
+complianceRouter.get('/background/pending', MANAGE, async (req, res, next) => {
+  try {
+    // Every never-screened associate, whatever their employment state — the
+    // dialog groups by status and defaults to active + onboarding, but HR can
+    // opt inactive people (ended, declined, or never applied) into an order.
+    // Any existing check — in flight, passed, or failed — means screened.
+    const rows = await prisma.associate.findMany({
+      take: 501, // one past the cap so truncation is detectable
+      where: {
+        deletedAt: null,
+        backgroundChecks: { none: {} },
+      },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        phone: true,
+        applications: { where: { deletedAt: null }, select: { status: true } },
+      },
+    });
+    const truncated = rows.length > 500;
+    const capped = rows.slice(0, 500);
+
+    // Same status rule as the People directory (directory.ts): APPROVED ⇒
+    // ACTIVE; any in-flight ⇒ PENDING; otherwise INACTIVE.
+    const statusOf = (apps: { status: string }[]) =>
+      apps.some((x) => x.status === 'APPROVED')
+        ? ('ACTIVE' as const)
+        : apps.some(
+              (x) =>
+                x.status === 'DRAFT' ||
+                x.status === 'SUBMITTED' ||
+                x.status === 'IN_REVIEW',
+            )
+          ? ('PENDING' as const)
+          : ('INACTIVE' as const);
+
+    await recordComplianceEvent({
+      actorUserId: req.user!.id,
+      action: 'compliance.background_pending_exported',
+      entityType: 'BackgroundCheck',
+      entityId: 'bulk',
+      associateId: 'bulk', // fleet-wide export — lands in metadata, no FK
+      metadata: { count: capped.length, truncated },
+      req,
+    });
+
+    res.json(
+      BackgroundPendingResponseSchema.parse({
+        rows: capped.map((a) => ({
+          associateId: a.id,
+          firstName: a.firstName,
+          lastName: a.lastName,
+          email: a.email,
+          phone: a.phone,
+          status: statusOf(a.applications),
+        })),
+        truncated,
+      })
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Record that a bulk order was actually placed — called AFTER the CSV upload
+ * to the provider succeeds, never on download. Creates INITIATED rows so the
+ * queue reflects the order; associates who gained a check in the meantime
+ * (another admin racing) are skipped, not duplicated.
+ */
+complianceRouter.post('/background/bulk-initiate', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = BackgroundBulkInitiateInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const associates = await prisma.associate.findMany({
+      take: 500,
+      where: { id: { in: parsed.data.associateIds }, deletedAt: null },
+      select: {
+        id: true,
+        // Same clientId derivation as single initiate.
+        applications: { select: { clientId: true }, take: 1 },
+      },
+    });
+    const existing = await prisma.backgroundCheck.findMany({
+      where: { associateId: { in: associates.map((a) => a.id) } },
+      select: { associateId: true },
+    });
+    const alreadyChecked = new Set(existing.map((e) => e.associateId));
+    const toCreate = associates.filter((a) => !alreadyChecked.has(a.id));
+
+    if (toCreate.length > 0) {
+      await prisma.backgroundCheck.createMany({
+        data: toCreate.map((a) => ({
+          associateId: a.id,
+          clientId: a.applications[0]?.clientId ?? null,
+          provider: parsed.data.provider,
+          status: 'INITIATED' as const,
+        })),
+      });
+    }
+
+    await recordComplianceEvent({
+      actorUserId: req.user!.id,
+      action: 'compliance.background_bulk_initiated',
+      entityType: 'BackgroundCheck',
+      entityId: 'bulk',
+      associateId: 'bulk', // fleet-wide order — lands in metadata, no FK
+      metadata: {
+        provider: parsed.data.provider,
+        requested: parsed.data.associateIds.length,
+        created: toCreate.length,
+        skipped: parsed.data.associateIds.length - toCreate.length,
+      },
+      req,
+    });
+
+    res.json(
+      BackgroundBulkInitiateResponseSchema.parse({
+        created: toCreate.length,
+        skipped: parsed.data.associateIds.length - toCreate.length,
+      })
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Check + its associate's report documents, for the drawer. Background
+ * reports are FCRA-sensitive consumer reports, so every view of the report
+ * list is a recorded disclosure — same treatment as the E-Verify case view.
+ */
+complianceRouter.get('/background/:id', async (req, res, next) => {
+  try {
+    const row = await prisma.backgroundCheck.findFirst({
+      where: { id: req.params.id, ...scopeBackgroundChecks(req.user!) },
+      include: BG_INCLUDE,
+    });
+    if (!row) {
+      throw new HttpError(404, 'background_check_not_found', 'Background check not found');
+    }
+    const docs = await prisma.documentRecord.findMany({
+      take: 100,
+      where: { associateId: row.associateId, kind: BG_REPORT_KIND, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, kind: true, filename: true, mimeType: true, s3Key: true },
+    });
+    const reports = docs.map((d) => ({
+      id: d.id,
+      kind: d.kind,
+      filename: d.filename,
+      mimeType: d.mimeType,
+      // Local driver: real existsSync. s3 driver: assumed available when
+      // s3Key is non-null (see blobStore.ts — S3 doesn't lose blobs on
+      // redeploy, which is the failure mode this flag exists for).
+      fileAvailable: blobExistsForListing(d.s3Key),
+    }));
+
+    await recordComplianceEvent({
+      actorUserId: req.user!.id,
+      action: 'compliance.background_report_viewed',
+      entityType: 'BackgroundCheck',
+      entityId: row.id,
+      associateId: row.associateId,
+      clientId: row.clientId,
+      metadata: { reportCount: reports.length },
+      req,
+    });
+
+    res.json(
+      BackgroundCheckDetailSchema.parse({
+        check: toBg(row, reports.length),
+        reports,
+      })
     );
   } catch (err) {
     next(err);
@@ -221,6 +456,7 @@ complianceRouter.post('/background', MANAGE, async (req, res, next) => {
         associateId: associate.id,
         clientId: associate.applications[0]?.clientId ?? null,
         provider: parsed.data.provider,
+        externalId: parsed.data.externalId ?? null,
         status: 'INITIATED',
       },
       include: BG_INCLUDE,

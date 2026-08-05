@@ -16,6 +16,7 @@ import {
   listTemplates,
 } from '@/lib/onboardingApi';
 import { listClientLocations } from '@/lib/clientsApi';
+import { listShiftPositions } from '@/lib/orgApi';
 import { Button } from '@/components/ui/Button';
 import {
   Dialog,
@@ -110,6 +111,19 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
     setInviteLink(null);
   };
 
+  // Default the start date to next Monday — the usual first day for a new
+  // hire — instead of opening blank. HR can still change or clear it.
+  useEffect(() => {
+    if (!open) return;
+    setStartDate((prev) => {
+      if (prev) return prev;
+      const d = new Date();
+      d.setDate(d.getDate() + ((8 - d.getDay()) % 7 || 7));
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    });
+  }, [open]);
+
   // Load pickers once when the dialog opens. Keep cached for subsequent
   // opens within the same session — clients/templates don't change often.
   useEffect(() => {
@@ -142,8 +156,35 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
     let cancelled = false;
     setLocations(null);
     listClientLocations(clientId)
-      .then((r) => !cancelled && setLocations(r.locations))
+      .then((r) => {
+        if (cancelled) return;
+        setLocations(r.locations);
+        // One possible answer — pick it (the server auto-defaults a sole
+        // site anyway; this keeps the form's required check in agreement).
+        if (r.locations.length === 1) setLocationId(r.locations[0].id);
+      })
       .catch(() => !cancelled && setLocations([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId]);
+
+  // The client's position catalog feeds the Position field as typeahead
+  // suggestions — free text still allowed for one-off titles.
+  const [positionNames, setPositionNames] = useState<string[]>([]);
+  useEffect(() => {
+    if (!clientId) {
+      setPositionNames([]);
+      return;
+    }
+    let cancelled = false;
+    listShiftPositions(clientId)
+      .then((r) => {
+        if (!cancelled) {
+          setPositionNames(r.shiftPositions.map((sp) => sp.name));
+        }
+      })
+      .catch(() => !cancelled && setPositionNames([]));
     return () => {
       cancelled = true;
     };
@@ -165,15 +206,23 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
 
   const submit = async () => {
     if (!firstName.trim() || !lastName.trim() || !email.trim()) {
-      toast.error('Name and email are required');
+      toast.error('Name and email are required.');
       return;
     }
     if (!clientId) {
-      toast.error('Pick a client');
+      toast.error('Pick a client.');
       return;
     }
     if (!templateId) {
-      toast.error('Pick an onboarding template');
+      toast.error('Pick an onboarding template.');
+      return;
+    }
+    // Mirror the server rule: a location-less invite leaves the associate's
+    // site unrecorded forever (approval only opens an assignment when the
+    // application has one), so a site is required whenever the client has
+    // locations to pick from.
+    if (!locationId && locations && locations.length > 0) {
+      toast.error('Pick a work site — this client has locations configured.');
       return;
     }
     setSubmitting(true);
@@ -198,9 +247,9 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
         // Dev-stub mode: keep the dialog open and surface the link so HR
         // can copy it. Closing only happens via the Close button below.
         setInviteLink(res.inviteUrl);
-        toast.success('Application created — invite link ready to copy');
+        toast.success('Application created — invite link ready to copy.');
       } else {
-        toast.success('Application created — invite emailed');
+        toast.success('Application created — invite emailed.');
         reset();
         onOpenChange(false);
       }
@@ -210,8 +259,8 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
           ? err.message
           : err instanceof Error
             ? err.message
-            : 'Could not create application';
-      toast.error('Could not create', { description: msg });
+            : 'Could not create the application.';
+      toast.error('Could not create the application.', { description: msg });
     } finally {
       setSubmitting(false);
     }
@@ -221,9 +270,9 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
     if (!inviteLink) return;
     try {
       await navigator.clipboard.writeText(inviteLink);
-      toast.success('Copied to clipboard');
+      toast.success('Copied to clipboard.');
     } catch {
-      toast.error('Could not copy');
+      toast.error('Could not copy the link.');
     }
   };
 
@@ -347,8 +396,8 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
             </Field>
 
             <Field
-              label="Location"
-              hint="Optional. Sets the associate's starting work site. Can be changed later via the Transfer button on the profile."
+              label={locations && locations.length > 0 ? 'Location (required)' : 'Location'}
+              hint="Sets the associate's starting work site — scheduling and site rosters key off it. Can be changed later via the Transfer button on the profile."
             >
               {(p) => (
                 <Select
@@ -364,7 +413,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
                         ? 'Loading…'
                         : locations.length === 0
                           ? 'No locations under this client'
-                          : 'No specific location'}
+                          : 'Pick a work site…'}
                   </option>
                   {locations?.map((l) => (
                     <option key={l.id} value={l.id}>
@@ -408,17 +457,32 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
             </Field>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Field label="Position">
+              <Field
+                label="Position"
+                hint={
+                  positionNames.length > 0
+                    ? "Suggestions come from the client's position catalog."
+                    : undefined
+                }
+              >
                 {(p) => (
-                  <Input
-                    value={position}
-                    onChange={(e) => setPosition(e.target.value)}
-                    placeholder="Server"
-                    {...p}
-                  />
+                  <>
+                    <Input
+                      value={position}
+                      onChange={(e) => setPosition(e.target.value)}
+                      placeholder="Server"
+                      list="new-app-position-options"
+                      {...p}
+                    />
+                    <datalist id="new-app-position-options">
+                      {positionNames.map((n) => (
+                        <option key={n} value={n} />
+                      ))}
+                    </datalist>
+                  </>
                 )}
               </Field>
-              <Field label="Start date">
+              <Field label="Start date" hint="Defaults to next Monday.">
                 {(p) => (
                   <Input
                     type="date"

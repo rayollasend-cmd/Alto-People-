@@ -33,11 +33,27 @@ import {
 } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
+import { fmtDate, fmtMoney, parseYmd } from '@/lib/format';
 
-const fmtMoney = (n: number) =>
-  n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+const fmtDelta = (n: number) => `${n < 0 ? '−' : '+'}${fmtMoney(Math.abs(n))}`;
+
+const deltaClass = (n: number) =>
+  n > 0 ? 'text-success' : n < 0 ? 'text-alert' : 'text-silver/70';
+
+// 50 states + DC. No shared list exists in apps/web or @alto-people/shared
+// (the API keeps its own for 941/FIRE), so define locally.
+const US_STATES: readonly string[] = [
+  'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'DC', 'FL', 'GA', 'HI',
+  'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN',
+  'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH',
+  'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA',
+  'WV', 'WI', 'WY',
+];
 
 interface Props {
   open: boolean;
@@ -55,6 +71,7 @@ interface DraftCorrection {
   medicare: string;
   stateWithholding: string;
   preTaxDeductions: string;
+  preTaxRetirement: string;
   postTaxDeductions: string;
   employerFica: string;
   employerMedicare: string;
@@ -72,6 +89,7 @@ const FIELD_LABEL: Record<keyof DraftCorrection, string> = {
   medicare: 'Medicare',
   stateWithholding: 'State withholding',
   preTaxDeductions: 'Pre-tax deductions',
+  preTaxRetirement: 'Pre-tax retirement (401k)',
   postTaxDeductions: 'Post-tax deductions',
   employerFica: 'Employer FICA',
   employerMedicare: 'Employer Medicare',
@@ -89,12 +107,27 @@ const NUMERIC_KEYS: Array<Exclude<keyof DraftCorrection, 'taxState'>> = [
   'medicare',
   'stateWithholding',
   'preTaxDeductions',
+  'preTaxRetirement',
   'postTaxDeductions',
   'employerFica',
   'employerMedicare',
   'employerFuta',
   'employerSuta',
 ];
+
+// The shared PayrollItem contract does not (yet) serialize the pre-tax
+// buckets, but the amend endpoint diffs corrections against the stored
+// originals — so seeding '0' when the original was non-zero emits a
+// spurious negative deduction delta (overpayment). Read the fields
+// defensively: use the item's real value the moment the API returns it,
+// fall back to 0 only when genuinely absent.
+function itemPreTax(
+  item: PayrollItem,
+  key: 'preTaxDeductions' | 'preTaxRetirement',
+): number {
+  const v = (item as Partial<Record<'preTaxDeductions' | 'preTaxRetirement', number>>)[key];
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
 
 function draftFromItem(item: PayrollItem): DraftCorrection {
   return {
@@ -105,7 +138,8 @@ function draftFromItem(item: PayrollItem): DraftCorrection {
     fica: String(item.fica),
     medicare: String(item.medicare),
     stateWithholding: String(item.stateWithholding),
-    preTaxDeductions: '0',
+    preTaxDeductions: String(itemPreTax(item, 'preTaxDeductions')),
+    preTaxRetirement: String(itemPreTax(item, 'preTaxRetirement')),
     postTaxDeductions: String(item.postTaxDeductions),
     employerFica: String(item.employerFica),
     employerMedicare: String(item.employerMedicare),
@@ -115,8 +149,15 @@ function draftFromItem(item: PayrollItem): DraftCorrection {
   };
 }
 
-function parseDraft(draft: DraftCorrection): { ok: true; value: Omit<AmendCorrection, 'associateId'> } | { ok: false; field: keyof DraftCorrection } {
-  const out: Partial<AmendCorrection> = {
+// PayrollRunAmendInputSchema accepts preTaxRetirement (defaults 0 when
+// omitted) but the client-side AmendCorrection type predates it; extend
+// locally so the payload carries it explicitly.
+type CorrectionPayload = AmendCorrection & { preTaxRetirement: number };
+
+function parseDraft(draft: DraftCorrection): { ok: true; value: Omit<CorrectionPayload, 'associateId'> } | { ok: false; field: keyof DraftCorrection } {
+  const out: Partial<CorrectionPayload> = {
+    // Empty = "(keep original)": the server preserves the source item's
+    // taxState for null/omitted alike (c.taxState ?? orig.taxState).
     taxState: draft.taxState.trim() === '' ? null : draft.taxState.trim(),
   };
   for (const k of NUMERIC_KEYS) {
@@ -126,7 +167,27 @@ function parseDraft(draft: DraftCorrection): { ok: true; value: Omit<AmendCorrec
     }
     (out as Record<string, number>)[k] = n;
   }
-  return { ok: true, value: out as Omit<AmendCorrection, 'associateId'> };
+  return { ok: true, value: out as Omit<CorrectionPayload, 'associateId'> };
+}
+
+// Display-only net-delta preview. Mirrors the server's amend math
+// (apps/api/src/routes/payroll.ts): correctedNet = gross − FIT − FICA −
+// Medicare − SIT − preTaxDeductions − postTaxDeductions, originalNet =
+// item.netPay. preTaxRetirement is a sub-bucket of preTaxDeductions and
+// is intentionally NOT subtracted again. Returns null while any involved
+// field is not a valid number.
+function draftNetDelta(draft: DraftCorrection, item: PayrollItem): number | null {
+  const num = (k: Exclude<keyof DraftCorrection, 'taxState'>) => Number(draft[k]);
+  const correctedNet =
+    num('grossPay') -
+    num('federalWithholding') -
+    num('fica') -
+    num('medicare') -
+    num('stateWithholding') -
+    num('preTaxDeductions') -
+    num('postTaxDeductions');
+  if (!Number.isFinite(correctedNet)) return null;
+  return round2(correctedNet - item.netPay);
 }
 
 export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }: Props) {
@@ -135,12 +196,16 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
   const [expanded, setExpanded] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [fieldError, setFieldError] = useState<{ associateId: string; field: keyof DraftCorrection } | null>(null);
+  // Rows where the admin edited gross directly — stop auto-recomputing
+  // gross from hours × rate for those.
+  const [grossTouched, setGrossTouched] = useState<Record<string, boolean>>({});
 
   const reset = () => {
     setReason('');
     setDrafts({});
     setExpanded(null);
     setFieldError(null);
+    setGrossTouched({});
   };
 
   const handleOpen = (v: boolean) => {
@@ -155,10 +220,26 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
   };
 
   const updateDraft = (associateId: string, field: keyof DraftCorrection, value: string) => {
-    setDrafts((d) => ({
-      ...d,
-      [associateId]: { ...d[associateId], [field]: value },
-    }));
+    // Editing gross directly pins it; hours/rate edits stop recomputing it.
+    const pinGross = field === 'grossPay';
+    const recomputeGross =
+      (field === 'hoursWorked' || field === 'hourlyRate') && !grossTouched[associateId];
+    setDrafts((d) => {
+      const cur = d[associateId];
+      if (!cur) return d;
+      const next: DraftCorrection = { ...cur, [field]: value };
+      if (recomputeGross) {
+        const hours = Number(next.hoursWorked);
+        const rate = Number(next.hourlyRate);
+        if (Number.isFinite(hours) && Number.isFinite(rate)) {
+          next.grossPay = String(round2(hours * rate));
+        }
+      }
+      return { ...d, [associateId]: next };
+    });
+    if (pinGross) {
+      setGrossTouched((t) => ({ ...t, [associateId]: true }));
+    }
     if (fieldError?.associateId === associateId && fieldError.field === field) {
       setFieldError(null);
     }
@@ -170,6 +251,11 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
       delete next[associateId];
       return next;
     });
+    setGrossTouched((t) => {
+      const next = { ...t };
+      delete next[associateId];
+      return next;
+    });
     if (expanded === associateId) setExpanded(null);
   };
 
@@ -178,13 +264,32 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
     [drafts],
   );
 
+  const itemsByAssociate = useMemo(() => {
+    const m = new Map<string, PayrollItem>();
+    for (const it of sourceRun.items) m.set(it.associateId, it);
+    return m;
+  }, [sourceRun.items]);
+
+  // Display-only sum of the per-row net deltas (rows with an invalid
+  // number in play are skipped until they parse again).
+  const totalNetDelta = useMemo(() => {
+    let sum = 0;
+    for (const [associateId, draft] of correctionEntries) {
+      const item = itemsByAssociate.get(associateId);
+      if (!item) continue;
+      const d = draftNetDelta(draft, item);
+      if (d !== null) sum += d;
+    }
+    return round2(sum);
+  }, [correctionEntries, itemsByAssociate]);
+
   const reasonValid = reason.trim().length > 0;
   const submitEnabled =
     reasonValid && correctionEntries.length > 0 && !submitting;
 
   const onSubmit = async () => {
     if (!submitEnabled) return;
-    const corrections: AmendCorrection[] = [];
+    const corrections: CorrectionPayload[] = [];
     for (const [associateId, draft] of correctionEntries) {
       const parsed = parseDraft(draft);
       if (!parsed.ok) {
@@ -220,7 +325,8 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
             Amend payroll run
           </DialogTitle>
           <DialogDescription>
-            {sourceRun.periodStart} → {sourceRun.periodEnd} · {sourceRun.items.length}{' '}
+            {fmtDate(parseYmd(sourceRun.periodStart))} →{' '}
+            {fmtDate(parseYmd(sourceRun.periodEnd))} · {sourceRun.items.length}{' '}
             paystub{sourceRun.items.length === 1 ? '' : 's'}. Edit any associate
             you need to correct. The server posts the SIGNED DELTAS as a new
             AMENDMENT run; untouched associates are unaffected.
@@ -247,10 +353,10 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
 
           <div>
             <div className="flex items-center justify-between mb-2">
-              <div className="text-[10px] uppercase tracking-widest text-silver/70">
+              <div className="text-2xs uppercase tracking-widest text-silver/70">
                 Paystubs ({sourceRun.items.length})
               </div>
-              <div className="text-[11px] text-silver/70">
+              <div className="text-xs2 text-silver/70">
                 {correctionEntries.length} editing
               </div>
             </div>
@@ -259,6 +365,7 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
                 const isEditing = !!drafts[it.associateId];
                 const isExpanded = expanded === it.associateId;
                 const draft = drafts[it.associateId];
+                const netDelta = draft ? draftNetDelta(draft, it) : null;
                 return (
                   <li
                     key={it.id}
@@ -272,9 +379,17 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
                         <div className="text-sm text-white truncate">
                           {it.associateName ?? '—'}
                         </div>
-                        <div className="text-[11px] text-silver/70">
+                        <div className="text-xs2 text-silver/70">
                           {it.hoursWorked.toFixed(2)} hrs · gross{' '}
                           {fmtMoney(it.grossPay)} · net {fmtMoney(it.netPay)}
+                          {netDelta !== null && (
+                            <>
+                              {' · '}
+                              <span className={cn('font-medium', deltaClass(netDelta))}>
+                                Net delta: {fmtDelta(netDelta)}
+                              </span>
+                            </>
+                          )}
                         </div>
                       </div>
                       {isEditing ? (
@@ -316,6 +431,11 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
                           <Field
                             key={k}
                             label={FIELD_LABEL[k]}
+                            hint={
+                              k === 'grossPay' && !grossTouched[it.associateId]
+                                ? 'Auto = hours × rate. Verify overtime manually if hours cross 40/wk.'
+                                : undefined
+                            }
                             error={
                               fieldError?.associateId === it.associateId &&
                               fieldError.field === k
@@ -339,16 +459,30 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
                         ))}
                         <Field label={FIELD_LABEL.taxState}>
                           {(p) => (
-                            <Input
+                            <Select
                               {...p}
                               value={draft.taxState}
                               onChange={(e) =>
                                 updateDraft(it.associateId, 'taxState', e.target.value)
                               }
-                              placeholder="e.g. CA"
-                              maxLength={2}
                               disabled={submitting}
-                            />
+                            >
+                              <option value="">(keep original)</option>
+                              {/* Preserve an out-of-list seeded value (bad
+                                  historical data) so the select doesn't
+                                  silently blank it. */}
+                              {draft.taxState !== '' &&
+                                !US_STATES.includes(draft.taxState) && (
+                                  <option value={draft.taxState}>
+                                    {draft.taxState}
+                                  </option>
+                                )}
+                              {US_STATES.map((s) => (
+                                <option key={s} value={s}>
+                                  {s}
+                                </option>
+                              ))}
+                            </Select>
                           )}
                         </Field>
                       </div>
@@ -361,6 +495,14 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
         </div>
 
         <DialogFooter>
+          {correctionEntries.length > 0 && (
+            <div className="self-center text-xs2 text-silver/70 sm:mr-auto">
+              This amendment changes total net pay by{' '}
+              <span className={cn('font-medium', deltaClass(totalNetDelta))}>
+                {fmtDelta(totalNetDelta)}
+              </span>
+            </div>
+          )}
           <Button
             variant="secondary"
             onClick={() => handleOpen(false)}

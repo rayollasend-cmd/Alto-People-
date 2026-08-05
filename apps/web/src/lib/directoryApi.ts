@@ -10,6 +10,11 @@ export interface DirectoryFilters {
   clientId?: string;
   departmentId?: string;
   locationId?: string;
+  /** Server caps at 500 (and defaults to it); pass a small value for
+   *  typeahead consumers so a two-letter prefix doesn't pull a full page. */
+  limit?: number;
+  /** Opaque id of the last row of the previous page — see nextCursor. */
+  cursor?: string;
   employmentType?:
     | 'W2_EMPLOYEE'
     | 'CONTRACTOR_1099_INDIVIDUAL'
@@ -26,6 +31,7 @@ export function listDirectory(
   if (filters.departmentId) p.set('departmentId', filters.departmentId);
   if (filters.locationId) p.set('locationId', filters.locationId);
   if (filters.employmentType) p.set('employmentType', filters.employmentType);
+  if (filters.limit) p.set('limit', String(filters.limit));
   const qs = p.toString();
   return apiFetch<DirectoryListResponse>(`/people/directory${qs ? `?${qs}` : ''}`);
 }

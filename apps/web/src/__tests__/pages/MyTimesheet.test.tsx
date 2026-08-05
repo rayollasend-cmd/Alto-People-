@@ -85,9 +85,11 @@ describe('<MyTimesheet>', () => {
     // Pending: same duality.
     expect(screen.getAllByText('4.0h')).toHaveLength(2);
     expect(screen.getAllByText('Pending review')).toHaveLength(2);
-    // Gross estimate stat (7.53h × $20 ≈ $151).
+    // Gross estimate stat (7.533h × $20 = $150.67). Cents are shown: this
+    // used to render "$151" via a local formatter that rounded whole-dollar,
+    // silently dropping 67 cents off a money figure.
     expect(screen.getByText('≈ Est. gross')).toBeInTheDocument();
-    expect(screen.getByText('$151')).toBeInTheDocument();
+    expect(screen.getByText('$150.67')).toBeInTheDocument();
     // Weekly grouping header (h3) — the label depends on how far real
     // time has moved past the fixed fixtures ("This week" → "Last week"
     // → "Week of …"), so accept all three. Role-scoped because preset

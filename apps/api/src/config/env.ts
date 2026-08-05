@@ -106,16 +106,29 @@ const EnvSchema = z.object({
       (v) => v === undefined || /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(v),
       { message: 'RESEND_REPLY_TO must be a bare email like info@altohr.com.' },
     ),
+  // Svix signing secret for Resend's inbound email-event webhook
+  // (email.delivered / bounced / complained), as shown on the Resend
+  // dashboard's webhook page — format "whsec_<base64>". When unset, the
+  // /resend/webhook endpoint refuses every request with 503 — never run
+  // an unauthenticated webhook in any environment.
+  RESEND_WEBHOOK_SECRET: z.string().optional(),
   // Phase 17 — invite reminder cron. 0 (default) disables. Set e.g. 1800
   // (every 30 min) in production. The threshold for "stale" is hard-coded
   // at 48h in lib/inviteReminder.ts; this only controls scan cadence.
-  INVITE_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // On by default (6h) — the sweep is the only automation keeping stalled
+  // onboarding moving. Set 0 to disable.
+  INVITE_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
   // Manual compliance attestation reminder cron. 0 (default) disables;
   // production should set 3600 (hourly) so HR gets pinged the day a
   // weekly/monthly compliance attestation comes due. Per-signal de-dup
   // inside the sweep ensures a 1h cadence doesn't spam HR — each
   // (key, periodStart) reminder fires at most once per 24h.
-  ATTESTATION_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // On by default like the other compliance-hygiene sweeps (the 24h
+  // per-signal de-dup makes hourly ticks safe). Set 0 to disable.
+  ATTESTATION_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
+  // Daily push of the scorecard's 0–30-day expirations (work auth, drug
+  // tests, J-1 program ends, training certs). Set 0 to disable.
+  EXPIRATION_DIGEST_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
   // Day-before shift reminder cron. 0 (default) disables; production should
   // set 1800-3600. Each assigned+published shift starting within the next
   // 24h is reminded exactly once — Shift.reminderSentAt is claimed with a
@@ -144,12 +157,25 @@ const EnvSchema = z.object({
   // should set 3600 (hourly). Thresholds (18h forgotten-shift, 90d selfie
   // retention) are hard-coded in lib/kioskMaintenance.ts.
   KIOSK_MAINTENANCE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(0),
+  // Outbound webhook delivery worker (Phase 93 follow-up). Sweeps due
+  // PENDING/RETRYING WebhookDelivery rows and POSTs them with the HMAC
+  // X-Alto-Signature. On by default (60s) — subscriptions already exist
+  // in the admin UI and silently never delivering is worse than a spare
+  // query per minute. Set 0 to disable (e.g. one-off scripts). Backoff
+  // and the 6-attempt cap are hard-coded in lib/webhookDispatch.ts.
+  WEBHOOK_DELIVERY_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(60),
   // Document maintenance cron: purges blob bytes for REJECTED docs once
   // they've passed REJECTED_DOC_RETENTION_DAYS (30, hard-coded). Defaults
   // to 86400 (daily) — this is a compliance/storage-hygiene sweep we
   // want on by default; set to 0 only if a downstream job handles purges.
   // The DocumentRecord row stays for audit — only the file leaves disk.
   DOCUMENT_MAINTENANCE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
+  // Scheduled-report delivery sweep (lib/reportScheduleRunner.ts): runs
+  // ReportSchedule rows whose nextRunAt has passed and emails the CSV to
+  // the stored recipients. Ticks every N seconds; each tick only touches
+  // due schedules, so a 5-minute cadence (default 300) is cheap. Set 0
+  // to disable (schedules then accumulate as due until re-enabled).
+  REPORT_SCHEDULE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(300),
   // Multi-replica deployment hint. The kiosk rate limit keeps state
   // per-process (see lib/kioskRateLimit.ts). When MULTI_REPLICA=1 we
   // refuse to boot unless a shared rate-limit store has been wired up
@@ -189,6 +215,16 @@ const EnvSchema = z.object({
   // request — never run unauthenticated in any environment.
   BRANCH_API_BASE_URL: z.string().url().default('https://api.branchapp.com'),
   BRANCH_WEBHOOK_SECRET: z.string().optional(),
+  // SCIM 2.0 provisioning bearer (Microsoft Entra ID / Okta). When unset,
+  // every /scim/v2/* request answers 503 — the surface never runs
+  // unauthenticated (same posture as BRANCH_WEBHOOK_SECRET above). Min 32
+  // chars; generate with `openssl rand -base64 32` and paste the same value
+  // into the IdP's provisioning credential. Rotating it revokes the old
+  // token immediately — update the IdP at the same time.
+  SCIM_TOKEN: z
+    .string()
+    .min(32, 'SCIM_TOKEN must be at least 32 chars — generate with `openssl rand -base64 32`')
+    .optional(),
   // Phase 44 — QuickBooks Online (Intuit). When both client id and secret
   // are set, OAuth is wired and JournalEntry POSTs hit Intuit's v3 API.
   // Otherwise the integration runs in stub mode: connect/disconnect work
@@ -228,6 +264,43 @@ const EnvSchema = z.object({
   // a Volume to this service and set UPLOAD_DIR to its mount path
   // (e.g. /data/uploads). See apps/api/STORAGE.md.
   UPLOAD_DIR: z.string().optional(),
+  // Blob storage driver for document/photo/PDF blobs. `local` (default)
+  // keeps today's behavior: files under UPLOAD_ROOT on the filesystem.
+  // `s3` stores blobs in an S3-compatible bucket (AWS S3, Backblaze B2,
+  // Cloudflare R2) — object keys map 1:1 to the relative keys already in
+  // DocumentRecord.s3Key, optionally under STORAGE_S3_PREFIX. Run
+  // scripts/migrate-blobs-to-s3.ts BEFORE flipping this to `s3` on an
+  // existing deployment. See apps/api/STORAGE.md.
+  STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
+  // Required when STORAGE_DRIVER=s3 (fail-loud guard below); ignored for
+  // local. ENDPOINT only for non-AWS providers. Credentials are optional —
+  // when unset, the SDK default provider chain (IAM role / env) applies;
+  // when set, both halves must be set together.
+  STORAGE_S3_BUCKET: z.string().optional(),
+  STORAGE_S3_REGION: z.string().optional(),
+  STORAGE_S3_ENDPOINT: z.string().url().optional(),
+  STORAGE_S3_ACCESS_KEY_ID: z.string().optional(),
+  STORAGE_S3_SECRET_ACCESS_KEY: z.string().optional(),
+  // Optional key prefix inside the bucket ("alto-uploads" stores objects
+  // as "alto-uploads/<s3Key>"). Leading/trailing slashes are stripped.
+  STORAGE_S3_PREFIX: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined) return undefined;
+      const trimmed = v.trim().replace(/^\/+|\/+$/g, '');
+      return trimmed.length === 0 ? undefined : trimmed;
+    }),
+  // Path-style addressing ("https://endpoint/bucket/key"). Unset defaults
+  // to true when STORAGE_S3_ENDPOINT is set (B2/R2 need it), false for
+  // plain AWS. Accepts 1/0/true/false — explicit string parse because
+  // z.coerce.boolean() would treat the string "false" as true.
+  STORAGE_S3_FORCE_PATH_STYLE: z
+    .string()
+    .optional()
+    .transform((v) =>
+      v === undefined ? undefined : v === '1' || v.toLowerCase() === 'true',
+    ),
   // Nightly off-site backup of UPLOAD_ROOT to any S3-compatible bucket
   // (AWS S3, Backblaze B2, Cloudflare R2). The Railway Volume protects
   // files against REDEPLOYS, not against deletion/corruption — Neon has
@@ -242,6 +315,26 @@ const EnvSchema = z.object({
   BACKUP_S3_ENDPOINT: z.string().url().optional(),
   BACKUP_INTERVAL_HOURS: z.coerce.number().int().positive().default(24),
   BACKUP_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
+  // Enterprise SSO — OIDC authorization-code + PKCE login (Microsoft
+  // Entra ID-ready, but any spec-compliant IdP works). All three core
+  // vars unset = the feature is fully off: the login page hides the SSO
+  // button and /auth/oidc/start 404s. https is required — discovery and
+  // the token exchange carry the client secret, and the ID token is
+  // bearer material. Partial configuration is a boot error (see the
+  // cross-field guard at the bottom of this file).
+  OIDC_ISSUER_URL: z
+    .string()
+    .url()
+    .refine((v) => v.startsWith('https://'), {
+      message:
+        'OIDC_ISSUER_URL must be an https:// URL (e.g. https://login.microsoftonline.com/<tenant-id>/v2.0)',
+    })
+    .optional(),
+  OIDC_CLIENT_ID: z.string().min(1).optional(),
+  OIDC_CLIENT_SECRET: z.string().min(1).optional(),
+  // Login-page button copy, e.g. "Sign in with Contoso". Served by
+  // GET /auth/oidc/config; never a secret.
+  OIDC_BUTTON_LABEL: z.string().min(1).max(60).default('Sign in with SSO'),
   // Sentry DSN. When set, unhandled errors from the request pipeline +
   // any error reaching the global error handler get reported. Unset =>
   // no reporting, no SDK init, zero network calls. Reasonable default
@@ -297,6 +390,32 @@ if (parsed.data.NODE_ENV === 'production') {
   }
 }
 
+// STORAGE_DRIVER=s3 with a half-configured bucket must never boot: every
+// upload would throw and every download would 500 while the service looks
+// healthy. Applies in every NODE_ENV — a broken s3 config is broken in dev
+// too. Mirrors the WISE/BRANCH fail-loud pattern below.
+if (parsed.data.STORAGE_DRIVER === 's3') {
+  if (!parsed.data.STORAGE_S3_BUCKET || !parsed.data.STORAGE_S3_REGION) {
+    console.error(
+      'FATAL: STORAGE_DRIVER is set to s3 but STORAGE_S3_BUCKET and/or STORAGE_S3_REGION ' +
+        'are not configured. The system will not start with blob storage half-wired. ' +
+        'Set both (plus STORAGE_S3_ENDPOINT/credentials for non-AWS providers) or set ' +
+        'STORAGE_DRIVER=local. See apps/api/STORAGE.md.',
+    );
+    process.exit(1);
+  }
+  if (
+    Boolean(parsed.data.STORAGE_S3_ACCESS_KEY_ID) !==
+    Boolean(parsed.data.STORAGE_S3_SECRET_ACCESS_KEY)
+  ) {
+    console.error(
+      'FATAL: exactly one of STORAGE_S3_ACCESS_KEY_ID / STORAGE_S3_SECRET_ACCESS_KEY is set. ' +
+        'Set both for static credentials, or neither to use the SDK default provider chain.',
+    );
+    process.exit(1);
+  }
+}
+
 if (parsed.data.PAYROLL_DISBURSEMENT_PROVIDER === 'WISE') {
   if (!parsed.data.WISE_API_KEY || !parsed.data.WISE_PROFILE_ID) {
     console.error(
@@ -324,6 +443,58 @@ if (parsed.data.PAYROLL_DISBURSEMENT_PROVIDER === 'BRANCH') {
         'Set BRANCH_WEBHOOK_SECRET in your environment variables.',
     );
     process.exit(1);
+  }
+}
+
+// OIDC SSO: all-or-nothing. A half-configured IdP either renders a dead
+// SSO button (issuer without credentials) or crashes mid-flow in front of
+// the user's browser (credentials without an issuer to validate against).
+// Fail loud at boot instead — mirrors the WISE/BRANCH guards above.
+{
+  const oidcVars = {
+    OIDC_ISSUER_URL: parsed.data.OIDC_ISSUER_URL,
+    OIDC_CLIENT_ID: parsed.data.OIDC_CLIENT_ID,
+    OIDC_CLIENT_SECRET: parsed.data.OIDC_CLIENT_SECRET,
+  };
+  const set = Object.entries(oidcVars).filter(
+    ([, v]) => v !== undefined && v.trim() !== '',
+  );
+  if (set.length > 0 && set.length < 3) {
+    const missing = Object.entries(oidcVars)
+      .filter(([, v]) => v === undefined || v.trim() === '')
+      .map(([k]) => k)
+      .join(', ');
+    console.error(
+      `FATAL: OIDC SSO is partially configured — missing ${missing}. ` +
+        'Set OIDC_ISSUER_URL, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET together, ' +
+        'or unset all three to turn SSO off.',
+    );
+    process.exit(1);
+  }
+}
+
+// Advisory, not fatal: bounce/complaint feedback is strongly recommended
+// once real email is flowing (bad addresses are otherwise mailed forever,
+// which erodes sender reputation), but email itself works exactly as
+// before without it — so a deploy with today's Railway env must boot
+// cleanly. Everything in this block is a log line only.
+if (
+  parsed.data.NODE_ENV === 'production' &&
+  parsed.data.RESEND_API_KEY &&
+  parsed.data.RESEND_API_KEY.trim() !== ''
+) {
+  if (
+    !parsed.data.RESEND_WEBHOOK_SECRET ||
+    parsed.data.RESEND_WEBHOOK_SECRET.trim() === ''
+  ) {
+    console.warn(
+      'WARNING: RESEND_API_KEY is set but RESEND_WEBHOOK_SECRET is not — real ' +
+        'email is being sent while bounce/complaint events cannot be received, ' +
+        'so the suppression list never populates. When convenient, create a ' +
+        'webhook endpoint at https://resend.com/webhooks pointing at ' +
+        '/api/resend/webhook and set its signing secret (whsec_...) as ' +
+        'RESEND_WEBHOOK_SECRET. Email sending works normally in the meantime.',
+    );
   }
 }
 

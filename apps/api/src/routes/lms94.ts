@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { notifyAssociate } from '../lib/notify.js';
 
 /**
  * Phase 94 — Learning Management System (LMS).
@@ -150,7 +151,7 @@ lms94Router.delete('/modules/:id', MANAGE, async (req, res) => {
 // ----- Enrollments ------------------------------------------------------
 
 const EnrollInputSchema = z.object({
-  associateIds: z.array(z.string().uuid()).min(1),
+  associateIds: z.array(z.string().uuid()).min(1).max(500),
 });
 
 lms94Router.post('/courses/:id/enroll', MANAGE, async (req, res) => {
@@ -164,29 +165,48 @@ lms94Router.post('/courses/:id/enroll', MANAGE, async (req, res) => {
     throw new HttpError(409, 'not_published', 'Cannot enroll into an unpublished course.');
   }
 
-  let created = 0;
-  let skipped = 0;
-  for (const associateId of input.associateIds) {
-    try {
-      await prisma.courseEnrollment.create({
-        data: {
-          courseId,
-          associateId,
-          assignedById: req.user!.id,
-        },
-      });
-      created++;
-    } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === 'P2002'
-      ) {
-        // Already actively enrolled — partial unique index hit.
-        skipped++;
-        continue;
-      }
-      throw err;
-    }
+  // Pre-fetch already-active enrollments (the partial unique index covers
+  // ASSIGNED/IN_PROGRESS), then insert the whole batch with skipDuplicates
+  // instead of a create-and-catch-P2002 round trip per associate.
+  const existing = await prisma.courseEnrollment.findMany({
+    where: {
+      courseId,
+      associateId: { in: input.associateIds },
+      status: { in: ['ASSIGNED', 'IN_PROGRESS'] },
+    },
+    select: { associateId: true },
+  });
+  const alreadyEnrolled = new Set(existing.map((e) => e.associateId));
+  const result = await prisma.courseEnrollment.createMany({
+    data: input.associateIds.map((associateId) => ({
+      courseId,
+      associateId,
+      assignedById: req.user!.id,
+    })),
+    skipDuplicates: true,
+  });
+  const created = result.count;
+  const skipped = input.associateIds.length - created;
+  const enrolledIds = [...new Set(input.associateIds)].filter(
+    (id) => !alreadyEnrolled.has(id),
+  );
+  // Fire-and-forget, per enrolled row, after the writes have landed.
+  // The course has no explicit due date field; surface the validity
+  // window (the closest thing to a deadline) when one is configured.
+  for (const associateId of enrolledIds) {
+    void notifyAssociate(associateId, {
+      subject: `You've been enrolled: ${course.title}`,
+      body:
+        `You have been enrolled in "${course.title}".` +
+        (course.isRequired ? ' This course is required.' : '') +
+        (course.validityDays
+          ? ` Once completed, it stays valid for ${course.validityDays} days before renewal is due.`
+          : '') +
+        ' Open the Learning page to get started.',
+      category: 'learning',
+      linkUrl: '/learning',
+      emailFallback: true,
+    });
   }
   res.status(201).json({ created, skipped });
 });

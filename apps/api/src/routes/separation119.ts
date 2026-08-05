@@ -4,6 +4,8 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
+import { notifyAllAdmins, notifyManager } from '../lib/notify.js';
+import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 
 /**
  * Phase 119 — Separations + exit interviews.
@@ -175,6 +177,21 @@ separation119Router.post('/separations', MANAGE, async (req, res) => {
         initiatedById: req.user!.id,
       },
     });
+    // Fire-and-forget after the write — never inside a transaction.
+    const who = `${associate.firstName} ${associate.lastName}`;
+    void notifyManager(input.associateId, {
+      subject: 'Separation initiated for your report',
+      body: `A separation was initiated for ${who} (reason: ${input.reason}). Last day worked: ${input.lastDayWorked}.`,
+      category: 'separation',
+      linkUrl: '/separation',
+    });
+    void notifyAllAdmins({
+      subject: `Separation initiated: ${who}`,
+      body: `${who}'s separation was initiated (reason: ${input.reason}). Last day worked: ${input.lastDayWorked}.`,
+      category: 'separation',
+      linkUrl: '/separation',
+      excludeUserId: req.user!.id,
+    });
     res.status(201).json({ id: created.id });
   } catch (err: unknown) {
     if (
@@ -200,7 +217,12 @@ separation119Router.post(
   MANAGE,
   async (req, res) => {
     const id = z.string().uuid().parse(req.params.id);
-    const existing = await prisma.separation.findUnique({ where: { id } });
+    const existing = await prisma.separation.findUnique({
+      where: { id },
+      include: {
+        associate: { select: { firstName: true, lastName: true } },
+      },
+    });
     if (!existing) {
       throw new HttpError(404, 'not_found', 'Separation not found.');
     }
@@ -232,6 +254,22 @@ separation119Router.post(
           { separationId: id, associateId: existing.associateId, err: err instanceof Error ? err.message : err },
         );
       }
+      // Outbound webhooks — the separation completing IS the termination
+      // event (access revoked, biometrics purged). Ids + dates only.
+      void emitWebhookEvent('associate.terminated', {
+        associateId: existing.associateId,
+        separationId: existing.id,
+        reason: existing.reason,
+        lastDayWorked: existing.lastDayWorked.toISOString().slice(0, 10),
+      });
+      const who = `${existing.associate.firstName} ${existing.associate.lastName}`;
+      void notifyAllAdmins({
+        subject: `Separation completed: ${who}`,
+        body: `Separation completed for ${who} — access revoked, biometrics purged.`,
+        category: 'separation',
+        linkUrl: '/separation',
+        excludeUserId: req.user!.id,
+      });
     }
     res.json({ ok: true, status: next });
   },

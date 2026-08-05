@@ -43,12 +43,20 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   WORKFORCE_MANAGER: 'Full org-wide access (mirrors HR Administrator)',
   MARKETING_MANAGER: 'Full org-wide access (mirrors HR Administrator)',
   SHIFT_SUPERVISOR:
-    'Scheduling + time & attendance for one client only — assign the client in Users & access',
+    'Scheduling, time & attendance, and onboarding invites for one client only — assign the client in Users & access',
 };
 
 export type Capability =
   | 'view:dashboard'
   | 'view:onboarding' | 'manage:onboarding'
+  // Split out of manage:onboarding so the floor supervisor who actually
+  // meets the new hire can send/resend the invite and nudge a stalled
+  // applicant, without inheriting the HR review powers that ride on
+  // manage:onboarding (approve/reject, I-9 Section 2, templates) or any
+  // access to the applicant's personal record. Every manage:onboarding
+  // holder also holds this — see ALL_MANAGE — so it is a strict superset
+  // and UI can gate invite-shaped affordances on it alone.
+  | 'invite:onboarding'
   | 'view:time' | 'manage:time'
   | 'view:scheduling' | 'manage:scheduling'
   // Gap 3 — `void:payroll` is intentionally NOT part of FULL_ADMIN.
@@ -57,6 +65,16 @@ export type Capability =
   // FINANCE_ACCOUNTANT and OPERATIONS_MANAGER both have process:payroll
   // but cannot void or amend disbursed runs.
   | 'view:payroll' | 'process:payroll' | 'void:payroll'
+  // The external payroll sheet — the handoff file for an outside payroll
+  // bureau. One row carries full SSN, full bank account + routing number,
+  // DOB and home address: everything needed to open credit or drain an
+  // account, for every worker in the range, in a single downloadable file.
+  //
+  // Deliberately NOT in FULL_ADMIN, same reasoning as void:payroll. Note
+  // especially that the Time routes' usual guard is manage:time, which
+  // SHIFT_SUPERVISOR holds — reusing it here would have handed floor
+  // supervisors their whole client's identity documents.
+  | 'export:payroll-pii'
   // Gap 10 — Reimbursement workflow caps (three-step split mirrors the
   // time-entry pattern). submit:reimbursement is the associate-side cap
   // for creating + submitting drafts. approve:reimbursement is the manager
@@ -118,6 +136,7 @@ const ALL_VIEWS: Capability[] = [
 
 const ALL_MANAGE: Capability[] = [
   'manage:onboarding',
+  'invite:onboarding',
   'manage:time',
   'manage:team-time',
   'manage:team-time-off',
@@ -148,6 +167,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   HR_ADMINISTRATOR: new Set<Capability>([
     ...FULL_ADMIN,
     'void:payroll',
+    'export:payroll-pii',
     'submit:reimbursement',
     'approve:reimbursement',
     'settle:reimbursement',
@@ -205,14 +225,23 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   WORKFORCE_MANAGER: new Set<Capability>(FULL_ADMIN),
   MARKETING_MANAGER: new Set<Capability>(FULL_ADMIN),
   // Client-scoped floor supervisor: full manage of Scheduling + Time for
-  // their one client (the scope* helpers enforce the client boundary). No
-  // payroll/HR/onboarding/clients surface.
+  // their one client (the scope* helpers enforce the client boundary), plus
+  // onboarding invites and progress monitoring for that same client. No
+  // payroll/HR/clients surface, and deliberately no manage:onboarding —
+  // approving applications, verifying I-9s, and reading applicant PII stay
+  // with HR (assertCanModifyApplication enforces the PII half).
   SHIFT_SUPERVISOR: new Set<Capability>([
     'view:dashboard',
     'view:time',
     'manage:time',
     'view:scheduling',
     'manage:scheduling',
+    'view:onboarding',
+    'invite:onboarding',
+    // The in-app inbox/bell. Without it, notifications routed to
+    // supervisors (shift claims, swaps, no-shows at their site) land in a
+    // mailbox they can't open — associates hold this for the same reason.
+    'view:communications',
   ]),
 };
 
@@ -246,3 +275,55 @@ export const ASN_CAPABILITIES: readonly Capability[] = [
 export const HUMAN_ROLES: Role[] = (Object.keys(ROLES) as Role[]).filter(
   (r) => r !== 'LIVE_ASN'
 );
+
+/* ===== Org-enforced MFA policy ========================================== */
+
+export const MFA_REQUIREMENT_VALUES = ['OFF', 'ADMINS', 'ALL'] as const;
+export type MfaRequirement = (typeof MFA_REQUIREMENT_VALUES)[number];
+
+/**
+ * "Admin-class" for the org MFA policy (`mfaRequirement = 'ADMINS'`),
+ * derived from the capability matrix rather than a hardcoded role list so
+ * new roles inherit the right treatment automatically.
+ *
+ * A role is admin-class when it can act on OTHER people's data or money:
+ * any `manage:*` capability, running/voiding payroll, exporting payroll
+ * PII, or the org-wide HR admin / audit surfaces. That currently captures
+ * every FULL_ADMIN role, EXECUTIVE_CHAIRMAN (view:hr-admin + view:audit),
+ * FINANCE_ACCOUNTANT (process:payroll), and SHIFT_SUPERVISOR
+ * (manage:time / manage:scheduling) — and deliberately excludes
+ * ASSOCIATE and CLIENT_PORTAL (self/read-only surfaces) and LIVE_ASN
+ * (non-human integration role that can't log in).
+ */
+export function isMfaAdminRole(role: Role): boolean {
+  const caps = ROLE_CAPABILITIES[role];
+  for (const c of caps) {
+    if (
+      c.startsWith('manage:') ||
+      c === 'process:payroll' ||
+      c === 'void:payroll' ||
+      c === 'export:payroll-pii' ||
+      c === 'view:hr-admin' ||
+      c === 'view:audit'
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Does the org's MFA requirement apply to this role?
+ * NOTE: this describes the TOTP-at-password-login requirement only —
+ * passkey sign-in already proves possession + user verification, so
+ * users who sign in with a passkey are exempt regardless of policy.
+ */
+export function mfaPolicyAppliesTo(
+  requirement: MfaRequirement,
+  role: Role,
+): boolean {
+  if (requirement === 'OFF') return false;
+  if (!HUMAN_ROLES.includes(role)) return false;
+  if (requirement === 'ALL') return true;
+  return isMfaAdminRole(role);
+}

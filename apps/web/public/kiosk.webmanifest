@@ -6,8 +6,11 @@
   "start_url": "/kiosk",
   "scope": "/kiosk",
   "display": "standalone",
-  "display_override": ["fullscreen", "standalone"],
-  "orientation": "portrait-primary",
+  "display_override": [
+    "fullscreen",
+    "standalone"
+  ],
+  "orientation": "any",
   "background_color": "#0B1832",
   "theme_color": "#0B1832",
   "icons": [
@@ -36,5 +39,8 @@
       "purpose": "maskable"
     }
   ],
-  "categories": ["business", "productivity"]
+  "categories": [
+    "business",
+    "productivity"
+  ]
 }

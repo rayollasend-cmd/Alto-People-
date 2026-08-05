@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { listDirectory } from '@/lib/directoryApi';
+import { cn } from '@/lib/cn';
 import { Input } from './Input';
 
 export interface PickedAssociate {
@@ -17,10 +18,19 @@ export function AssociatePicker({
   value,
   onChange,
   placeholder = 'Search associate…',
+  className,
+  id,
 }: {
   value: PickedAssociate | null;
   onChange: (v: PickedAssociate | null) => void;
   placeholder?: string;
+  /**
+   * Forwarded to both the search input and the selected-value chip, so a
+   * caller can match a toolbar's control height (the default Input is h-10).
+   */
+  className?: string;
+  /** Applied to the search input so a <Field>/<label htmlFor> can bind. */
+  id?: string;
 }) {
   const [term, setTerm] = useState('');
   const [results, setResults] = useState<PickedAssociate[]>([]);
@@ -33,7 +43,9 @@ export function AssociatePicker({
     }
     let live = true;
     const t = setTimeout(() => {
-      listDirectory({ q: term.trim() })
+      // PERF: limit 8 — without it the server returned up to 1000 full
+      // directory records per keystroke, 992 of which were discarded.
+      listDirectory({ q: term.trim(), limit: 8 })
         .then((r) => {
           if (!live) return;
           setResults(
@@ -54,7 +66,12 @@ export function AssociatePicker({
 
   if (value) {
     return (
-      <div className="flex items-center justify-between rounded-md border border-navy-secondary bg-navy px-3 py-2 text-sm">
+      <div
+        className={cn(
+          'flex items-center justify-between rounded-md border border-navy-secondary bg-navy px-3 py-2 text-sm',
+          className,
+        )}
+      >
         <span className="text-white">{value.name}</span>
         <button
           type="button"
@@ -74,13 +91,15 @@ export function AssociatePicker({
   return (
     <div className="relative">
       <Input
+        id={id}
         placeholder={placeholder}
         value={term}
         onChange={(e) => setTerm(e.target.value)}
         onFocus={() => results.length > 0 && setOpen(true)}
+        className={className}
       />
       {open && results.length > 0 && (
-        <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-navy-secondary bg-navy shadow-lg">
+        <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-navy-secondary bg-navy elev-2">
           {results.map((r) => (
             <button
               key={r.id}

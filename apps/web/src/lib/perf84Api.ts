@@ -15,6 +15,7 @@ export interface KeyResult {
 export interface Goal {
   id: string;
   associateId: string;
+  associateName: string | null;
   kind: GoalKind;
   title: string;
   description: string | null;
@@ -30,7 +31,9 @@ export type OneOnOneStatus = 'SCHEDULED' | 'COMPLETED' | 'CANCELLED';
 export interface OneOnOne {
   id: string;
   associateId: string;
+  associateName: string | null;
   managerUserId: string;
+  managerEmail: string | null;
   scheduledFor: string;
   completedAt: string | null;
   agenda: string | null;
@@ -53,6 +56,7 @@ export type PipStatus = 'DRAFT' | 'ACTIVE' | 'PASSED' | 'FAILED' | 'CANCELLED';
 export interface Pip {
   id: string;
   associateId: string;
+  associateName: string | null;
   managerUserId: string | null;
   sourceGoalId: string | null;
   startDate: string;
@@ -103,6 +107,7 @@ export type Review360Status = 'COLLECTING' | 'COMPLETED' | 'CANCELLED';
 export interface Review360 {
   id: string;
   subjectAssociateId: string;
+  subjectAssociateName: string | null;
   requestedById: string | null;
   periodStart: string;
   periodEnd: string;

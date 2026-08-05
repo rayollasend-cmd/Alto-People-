@@ -48,6 +48,7 @@ export const CardTitle = React.forwardRef<
   // h2, not h3: card titles sit directly under the page's h1 in practice
   // (same reasoning as EmptyState) — an h1 → h3 jump trips axe's
   // heading-order rule. Styling is class-driven, so this is visual-noop.
+  // eslint-disable-next-line jsx-a11y/heading-has-content -- children arrive via {...props}; every call site passes text.
   <h2
     ref={ref}
     className={cn('font-display text-xl text-white leading-tight', className)}

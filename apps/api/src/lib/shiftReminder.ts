@@ -14,7 +14,7 @@ import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { formatShiftLine, notifyShift } from './notifyShift.js';
-import { notifyAllAdmins } from './notify.js';
+import { notifyAllAdmins, notifyClientSupervisors } from './notify.js';
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 // Bound one sweep so a backlog (e.g. cron re-enabled after a week off)
@@ -124,19 +124,43 @@ export async function runShiftReminderSweep(
   });
 
   let noShows = 0;
+  // PERF: one batched "is anyone actually working?" probe for all suspects
+  // instead of a findFirst per shift. Earliest shift start bounds the
+  // covering-entry window for the whole batch; exact per-shift coverage is
+  // re-checked in JS.
+  const suspectAssociateIds = [
+    ...new Set(suspects.map((s) => s.assignedAssociateId!).filter(Boolean)),
+  ];
+  const earliestStart = suspects.reduce(
+    (min, s) => (s.startsAt < min ? s.startsAt : min),
+    now,
+  );
+  const coveringEntries =
+    suspectAssociateIds.length > 0
+      ? await prisma.timeEntry.findMany({
+          where: {
+            associateId: { in: suspectAssociateIds },
+            clockInAt: { lte: now },
+            OR: [{ clockOutAt: null }, { clockOutAt: { gte: earliestStart } }],
+          },
+          select: { associateId: true, clockOutAt: true },
+        })
+      : [];
+  const entriesByAssociate = new Map<string, { clockOutAt: Date | null }[]>();
+  for (const e of coveringEntries) {
+    const arr = entriesByAssociate.get(e.associateId) ?? [];
+    arr.push({ clockOutAt: e.clockOutAt });
+    entriesByAssociate.set(e.associateId, arr);
+  }
+
   for (const shift of suspects) {
     try {
       // Matcher blind spot: an associate who punched in >2h early (or via
       // an admin-created entry) is working but unlinked. Any open/covering
       // entry means "showed up" — stamp without alerting.
-      const working = await prisma.timeEntry.findFirst({
-        where: {
-          associateId: shift.assignedAssociateId!,
-          clockInAt: { lte: now },
-          OR: [{ clockOutAt: null }, { clockOutAt: { gte: shift.startsAt } }],
-        },
-        select: { id: true },
-      });
+      const working = (entriesByAssociate.get(shift.assignedAssociateId!) ?? []).some(
+        (e) => e.clockOutAt === null || e.clockOutAt >= shift.startsAt,
+      );
       const claim = await prisma.shift.updateMany({
         where: { id: shift.id, noShowNotifiedAt: null },
         data: { noShowNotifiedAt: now },
@@ -146,7 +170,7 @@ export async function runShiftReminderSweep(
       const who = shift.assignedAssociate
         ? `${shift.assignedAssociate.firstName} ${shift.assignedAssociate.lastName}`
         : 'The assigned associate';
-      await notifyAllAdmins({
+      const noShowNotice = {
         subject: `Possible no-show — ${who}`,
         body: `${who} hasn't clocked in for ${formatShiftLine({
           position: shift.position,
@@ -157,7 +181,13 @@ export async function runShiftReminderSweep(
         })}. Worth a call — the shift started over 15 minutes ago.`,
         category: 'shift_no_show',
         linkUrl: '/scheduling',
-      });
+      };
+      // Fire-and-forget — both helpers never reject, and the sweep's job
+      // is the claim stamp, not the delivery.
+      void notifyAllAdmins(noShowNotice);
+      // The on-site supervisor is the one person who can physically walk
+      // the floor and find (or replace) the associate.
+      void notifyClientSupervisors(shift.clientId, noShowNotice);
       noShows++;
     } catch (err) {
       errors.push({

@@ -15,7 +15,8 @@
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset --force",
     "db:seed": "tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "typecheck:test": "tsc -p tsconfig.test.json"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -27,6 +28,7 @@
     "@node-rs/argon2": "^1.8.3",
     "@prisma/client": "^5.20.0",
     "@sentry/node": "^10.52.0",
+    "@simplewebauthn/server": "^13.3.2",
     "@types/multer": "^2.1.0",
     "archiver": "^7.0.1",
     "compression": "^1.8.1",

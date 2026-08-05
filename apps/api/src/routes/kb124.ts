@@ -219,6 +219,32 @@ kb124Router.get('/kb/admin/articles', MANAGE, async (req, res) => {
   });
 });
 
+/**
+ * Admin fetch of a single article INCLUDING the body, regardless of status.
+ * The public GET /kb/articles/:slug is PUBLISHED-only and the admin list
+ * omits bodies — so editing a DRAFT used to open an empty editor and force
+ * the author to retype the whole article.
+ */
+kb124Router.get('/kb/admin/articles/:id', MANAGE, async (req, res) => {
+  const row = await prisma.kbArticle.findUnique({
+    where: { id: req.params.id },
+  });
+  if (!row) throw new HttpError(404, 'not_found', 'Article not found.');
+  res.json({
+    article: {
+      id: row.id,
+      slug: row.slug,
+      title: row.title,
+      category: row.category,
+      status: row.status,
+      tags: row.tags,
+      body: row.body,
+      clientId: row.clientId,
+      updatedAt: row.updatedAt.toISOString(),
+    },
+  });
+});
+
 // ----- Create --------------------------------------------------------------
 
 const CreateInputSchema = z.object({

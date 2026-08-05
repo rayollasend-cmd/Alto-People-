@@ -1,3 +1,4 @@
+import { isDateOnly, parseDateOnly } from '@alto-people/shared';
 /**
  * Centralized formatters. Pages have spawned ~3 implementations of money
  * (`toLocaleString(currency)`, custom `fmtPay`, bare `$${n}`) and a
@@ -62,10 +63,26 @@ export function fmtPercent(
   return `${rounded.toFixed(decimals)}%`;
 }
 
-/** "May 13, 2026". Accepts ISO date or full datetime. */
+/**
+ * "May 13, 2026". Accepts a date-only string, a full datetime, or a Date.
+ *
+ * Date-only strings ("2026-03-01") are anchored at LOCAL midnight rather
+ * than handed to `new Date()`, which parses them as UTC and then renders
+ * the PREVIOUS day everywhere west of Greenwich. That was a live bug:
+ * an application's start date read a day early on the list screen while
+ * the detail screen — which parsed it locally — read correctly. Doing it
+ * here means every caller is right by default instead of each screen
+ * needing to remember its own workaround.
+ */
 export function fmtDate(value: string | Date | null | undefined): string {
   if (!value) return DASH;
-  const d = value instanceof Date ? value : new Date(value);
+  // isDateOnly is a STRICT full match: a genuine timestamp
+  // ("2026-03-01T23:00:00Z") still goes through `new Date()` so it keeps
+  // rendering in the viewer's zone, which for a real instant is correct.
+  const d =
+    typeof value === 'string' && isDateOnly(value)
+      ? (parseDateOnly(value) ?? new Date(value))
+      : new Date(value as string | number | Date);
   if (Number.isNaN(d.getTime())) return DASH;
   return d.toLocaleDateString(EN_US, {
     year: 'numeric',
@@ -190,6 +207,13 @@ export function tzAbbrev(
  * except inside the ~1h DST-transition gap, which shifts almost never start in.
  * Falls back to browser-local when `timeZone` is absent (location-less shift).
  */
+// PERF: Intl.DateTimeFormat construction is expensive (locale + tz data
+// resolution). zonedWallTimeToUtc runs associates × days times the moment
+// a shift chip is picked up in the scheduling grid (up to 3,500 calls per
+// drag-start), so the formatter is cached per zone — same treatment
+// zonedDayKey already had.
+const WALL_TIME_FMT_CACHE = new Map<string, Intl.DateTimeFormat>();
+
 export function zonedWallTimeToUtc(
   year: number,
   month: number, // 1-12
@@ -200,16 +224,20 @@ export function zonedWallTimeToUtc(
 ): Date {
   if (!timeZone) return new Date(year, month - 1, day, hour, minute, 0, 0);
   const asUtc = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
-  const dtf = new Intl.DateTimeFormat(EN_US, {
-    timeZone,
-    hourCycle: 'h23',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  let dtf = WALL_TIME_FMT_CACHE.get(timeZone);
+  if (!dtf) {
+    dtf = new Intl.DateTimeFormat(EN_US, {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+    WALL_TIME_FMT_CACHE.set(timeZone, dtf);
+  }
   const p: Record<string, number> = {};
   for (const part of dtf.formatToParts(new Date(asUtc))) {
     if (part.type !== 'literal') p[part.type] = Number(part.value);
@@ -305,18 +333,26 @@ export function zonedDayKey(
  * position a chip on the vertical hour axis so it lands at its store-local
  * time, matching its label. Browser-local when `timeZone` is absent.
  */
+// PERF: called once per shift chip for vertical positioning in the
+// calendar views — cache the formatter per zone (see WALL_TIME_FMT_CACHE).
+const MINUTES_FMT_CACHE = new Map<string, Intl.DateTimeFormat>();
+
 export function zonedMinutesOfDay(
   value: string | Date,
   timeZone?: string | null,
 ): number {
   const d = value instanceof Date ? value : new Date(value);
   if (!timeZone) return d.getHours() * 60 + d.getMinutes();
-  const dtf = new Intl.DateTimeFormat(EN_US, {
-    timeZone,
-    hourCycle: 'h23',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  let dtf = MINUTES_FMT_CACHE.get(timeZone);
+  if (!dtf) {
+    dtf = new Intl.DateTimeFormat(EN_US, {
+      timeZone,
+      hourCycle: 'h23',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    MINUTES_FMT_CACHE.set(timeZone, dtf);
+  }
   const p: Record<string, number> = {};
   for (const part of dtf.formatToParts(d)) {
     if (part.type !== 'literal') p[part.type] = Number(part.value);
@@ -366,10 +402,72 @@ export function fmtRelativeDayTz(
   const es =
     typeof document !== 'undefined' && document.documentElement.lang === 'es';
   const key = zonedDayKey(value, timeZone);
-  if (key === zonedDayKey(new Date(now), timeZone)) return es ? 'Hoy' : 'Today';
-  if (key === zonedDayKey(new Date(now + 86_400_000), timeZone))
-    return es ? 'Mañana' : 'Tomorrow';
+  const todayKey = zonedDayKey(new Date(now), timeZone);
+  if (key === todayKey) return es ? 'Hoy' : 'Today';
+  // Tomorrow is derived from today's CALENDAR key, not from now + 86.4e6 ms.
+  // The instant-based version broke in any DST-observing zone: on the
+  // fall-back day (25 hours long) now + 24h is still today, so "Tomorrow"
+  // silently degraded to "Sun, Nov 1" — on the associate schedule, which is
+  // the surface that leans hardest on the relative wording.
+  if (key === nextCalendarDayKey(todayKey)) return es ? 'Mañana' : 'Tomorrow';
   return `${fmtWeekdayTz(value, timeZone)}, ${fmtDateTz(value, timeZone)}`;
+}
+
+/**
+ * "YYYY-MM-DD" → the next calendar day, same format. Uses UTC arithmetic on
+ * a date-only value, which has no offset to shift, so the result is exact in
+ * every timezone regardless of DST.
+ */
+function nextCalendarDayKey(key: string): string {
+  const [y, m, d] = key.split('-').map(Number);
+  const at = new Date(Date.UTC(y, m - 1, d));
+  at.setUTCDate(at.getUTCDate() + 1);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${at.getUTCFullYear()}-${pad(at.getUTCMonth() + 1)}-${pad(at.getUTCDate())}`;
+}
+
+/**
+ * Today's calendar date in the BROWSER's timezone as "YYYY-MM-DD".
+ * `new Date().toISOString().slice(0, 10)` is UTC, so an evening user west
+ * of UTC gets tomorrow's date pre-filled in forms — several pages carried
+ * private copies of this helper to avoid exactly that.
+ */
+export function ymdLocal(d: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Local midnight on `ymd`, as an ISO instant — the inclusive start of a range. */
+export function ymdToIsoStart(ymd: string): string {
+  return new Date(`${ymd}T00:00:00`).toISOString();
+}
+
+/**
+ * Local midnight on the day AFTER `ymd` — the exclusive end of a range.
+ *
+ * Uses calendar arithmetic (`setDate(+1)`), not `+ 24h`. A local day is 23 or
+ * 25 hours long across a DST change, so adding a fixed 24h lands at 23:00 or
+ * 01:00 rather than midnight: on the fall-back day that silently drops the
+ * final hour of the range, and on spring-forward it pulls in an hour of the
+ * next day.
+ */
+export function ymdToIsoEndExclusive(ymd: string): string {
+  const d = new Date(`${ymd}T00:00:00`);
+  d.setDate(d.getDate() + 1);
+  return d.toISOString();
+}
+
+/**
+ * Parse a date-only "YYYY-MM-DD" string as LOCAL midnight. `new Date(s)`
+ * parses date-only strings as UTC midnight, which renders/compares as the
+ * previous day west of UTC (birthdays a day early, expiries a day late).
+ * Returns null for malformed input.
+ */
+export function parseYmd(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
 }
 
 /** "2h ago", "yesterday", "Mar 4". For activity feeds. */

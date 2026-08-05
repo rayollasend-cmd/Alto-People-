@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, History, KeyRound, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Upload, User as UserIcon } from 'lucide-react';
+import { AtSign, Bell, Camera, CheckCircle2, ChevronDown, ChevronUp, Clock, Copy, Download, Fingerprint, History, KeyRound, Lock, LogOut, RefreshCw, ShieldAlert, ShieldCheck, Smartphone, Upload, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { MFA_RECOVERY_CODE_COUNT, type MfaEnrollStartResponse } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -24,6 +24,15 @@ import {
   type LoginEvent,
 } from '@/lib/settingsApi';
 import { deleteProfilePhoto, uploadProfilePhoto } from '@/lib/selfApi';
+import { getPushStatus, subscribeToPush, unsubscribeFromPush } from '@/lib/push';
+import { fmtDate, fmtDateTime } from '@/lib/format';
+import {
+  listPasskeys,
+  passkeysSupported,
+  registerPasskey,
+  removePasskey,
+  type PasskeySummary,
+} from '@/lib/webauthn';
 import {
   ROLE_LABELS,
   SUPPORTED_TIMEZONES,
@@ -95,6 +104,7 @@ export function Settings() {
         </div>
         <div className="space-y-6">
           <PasswordCard />
+          <PasskeysCard />
           <MfaCard />
         </div>
       </div>
@@ -141,6 +151,118 @@ function DataExportCard() {
             Download my data
           </Button>
         </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Passkeys — Face ID / Touch ID / Windows Hello sign-in. Registration and
+ * removal only; the sign-in leg lives on the login page. Hidden entirely
+ * on browsers without WebAuthn (old in-app webviews) rather than showing
+ * a card that can only apologize.
+ */
+function PasskeysCard() {
+  const [passkeys, setPasskeys] = useState<PasskeySummary[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const supported = passkeysSupported();
+
+  useEffect(() => {
+    if (!supported) return;
+    let cancelled = false;
+    listPasskeys()
+      .then((rows) => {
+        if (!cancelled) setPasskeys(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setPasskeys([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [supported]);
+
+  if (!supported) return null;
+
+  const onAdd = async () => {
+    setBusy(true);
+    try {
+      const created = await registerPasskey();
+      setPasskeys((cur) => [...(cur ?? []), created]);
+      toast.success('Passkey added — you can now sign in with Face ID / Touch ID / your device PIN.');
+    } catch (err) {
+      // NotAllowedError = the user closed the system sheet; not an error
+      // worth a red toast.
+      if (err instanceof Error && err.name === 'NotAllowedError') return;
+      toast.error(err instanceof Error ? err.message : 'Could not add a passkey.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRemove = async (p: PasskeySummary) => {
+    setBusy(true);
+    try {
+      await removePasskey(p.id);
+      setPasskeys((cur) => (cur ?? []).filter((x) => x.id !== p.id));
+      toast.success('Passkey removed.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not remove the passkey.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Fingerprint className="h-4 w-4 text-gold" />
+          Passkeys
+        </CardTitle>
+        <CardDescription>
+          Sign in with Face ID, Touch ID, or your device PIN — no password to
+          type, nothing to phish. A passkey also counts as your second step.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {passkeys === null ? (
+          <Skeleton className="h-10" />
+        ) : passkeys.length === 0 ? (
+          <p className="text-sm text-silver">No passkeys on this account yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {passkeys.map((p) => (
+              <li
+                key={p.id}
+                className="flex items-center justify-between gap-3 rounded-md border border-navy-secondary px-3 py-2 text-sm"
+              >
+                <div className="min-w-0">
+                  <div className="text-white truncate">
+                    {p.deviceName ?? 'Passkey'}
+                  </div>
+                  <div className="text-xs text-silver/70">
+                    Added {fmtDate(p.createdAt)}
+                    {p.lastUsedAt ? ` · last used ${fmtDate(p.lastUsedAt)}` : ''}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-alert hover:text-alert"
+                  onClick={() => void onRemove(p)}
+                  disabled={busy}
+                >
+                  Remove
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <Button onClick={() => void onAdd()} loading={busy} disabled={busy}>
+          <Fingerprint className="h-4 w-4" />
+          Add a passkey
+        </Button>
       </CardContent>
     </Card>
   );
@@ -440,7 +562,7 @@ function MfaCard() {
                     <ShieldCheck className="h-6 w-6 text-success" />
                   </div>
                   <div>
-                    <div className="text-[10px] uppercase tracking-widest text-success">
+                    <div className="text-2xs uppercase tracking-widest text-success">
                       Protected
                     </div>
                     <div className="font-display text-2xl md:text-3xl text-white leading-tight">
@@ -610,15 +732,15 @@ function EmailCard() {
   const submit = async () => {
     const target = newEmail.trim().toLowerCase();
     if (!target) {
-      toast.error('Enter a new email address');
+      toast.error('Enter a new email address.');
       return;
     }
     if (target === user?.email.toLowerCase()) {
-      toast.error('That is already your email');
+      toast.error('That is already your email.');
       return;
     }
     if (currentPassword.length < 12) {
-      toast.error('Enter your current password to confirm');
+      toast.error('Enter your current password to confirm.');
       return;
     }
     setSubmitting(true);
@@ -631,13 +753,13 @@ function EmailCard() {
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'invalid_credentials') {
-        toast.error('Current password is incorrect');
+        toast.error('Current password is incorrect.');
       } else if (code === 'email_in_use') {
-        toast.error('That email already belongs to another account');
+        toast.error('That email already belongs to another account.');
       } else if (code === 'same_email') {
-        toast.error('That is already your email');
+        toast.error('That is already your email.');
       } else {
-        toast.error('Could not request email change', {
+        toast.error('Could not request email change.', {
           description: err instanceof Error ? err.message : String(err),
         });
       }
@@ -711,9 +833,60 @@ function EmailCard() {
   );
 }
 
+type PushRowStatus =
+  | 'loading'
+  | 'unsupported'
+  | 'denied'
+  | 'subscribed'
+  | 'available';
+
 function NotificationsCard() {
   const queryClient = useQueryClient();
   const [pending, setPending] = useState<NotificationCategory | null>(null);
+
+  // Push subscription state for this device. Settings is the recovery
+  // path for users who dismissed the dashboard's one-time enable card
+  // (that dismissal writes a permanent localStorage flag).
+  const [pushStatus, setPushStatus] = useState<PushRowStatus>('loading');
+  const [pushBusy, setPushBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPushStatus().then((s) => {
+      if (!cancelled) setPushStatus(s);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onEnablePush = async () => {
+    setPushBusy(true);
+    try {
+      await subscribeToPush();
+      setPushStatus('subscribed');
+      toast.success("Push notifications are on for this device.");
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : 'Could not enable push notifications.',
+      );
+      // Permission may have just been denied — re-read the real state.
+      getPushStatus().then(setPushStatus);
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
+  const onDisablePush = async () => {
+    setPushBusy(true);
+    try {
+      await unsubscribeFromPush();
+      setPushStatus('available');
+      toast.success('Push notifications are off for this device.');
+    } finally {
+      setPushBusy(false);
+    }
+  };
 
   const { data: entries, error: entriesError } = useQuery({
     queryKey: ['notification-preferences'],
@@ -771,7 +944,7 @@ function NotificationsCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Bell className="h-4 w-4 text-gold" />
-          Email notifications
+          Notifications
         </CardTitle>
         <CardDescription>
           Choose which emails Alto sends you. The bell on the topbar always
@@ -824,6 +997,44 @@ function NotificationsCard() {
             ))}
           </ul>
         )}
+
+        {/* Push — device-level, separate from the per-category email
+            toggles above. */}
+        <div className="mt-4 pt-4 border-t border-navy-secondary flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex-1 min-w-48">
+            <div className="text-sm text-white flex items-center gap-2">
+              <Smartphone className="h-3.5 w-3.5 text-gold" />
+              Push notifications
+              {pushStatus === 'subscribed' && (
+                <span className="inline-flex items-center gap-1 text-xs text-success">
+                  <CheckCircle2 className="h-3 w-3" />
+                  on
+                </span>
+              )}
+            </div>
+            <div className="text-xs text-silver mt-0.5">
+              {pushStatus === 'subscribed'
+                ? 'Shift alerts reach this device even when the app is closed.'
+                : pushStatus === 'available'
+                  ? 'Get shift alerts on this device even when the app is closed.'
+                  : pushStatus === 'denied'
+                    ? 'Blocked in your browser settings — allow notifications for this site, then come back here.'
+                    : pushStatus === 'unsupported'
+                      ? 'Not supported in this browser. On iPhone, install the app to your home screen first.'
+                      : 'Checking this device…'}
+            </div>
+          </div>
+          {pushStatus === 'subscribed' && (
+            <Button variant="ghost" onClick={onDisablePush} loading={pushBusy}>
+              Disable
+            </Button>
+          )}
+          {pushStatus === 'available' && (
+            <Button onClick={onEnablePush} loading={pushBusy}>
+              Enable push notifications
+            </Button>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -932,8 +1143,10 @@ function SessionsCard() {
           Active sessions
         </CardTitle>
         <CardDescription>
-          See a sign-in below you don't recognise? Sign out everywhere else
-          immediately. This device keeps its session.
+          Signs your account out of every other device and browser in one go
+          — this device keeps its session. Use it if you left yourself signed
+          in somewhere or spot unfamiliar activity in the sign-in history
+          below.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -961,7 +1174,7 @@ function ProfileCard() {
     const f = firstName.trim();
     const l = lastName.trim();
     if (!dirty) {
-      toast.error('Make a change first');
+      toast.error('Make a change first.');
       return;
     }
     setSubmitting(true);
@@ -970,13 +1183,13 @@ function ProfileCard() {
         firstName: f,
         lastName: l,
       });
-      toast.success('Profile updated', {
+      toast.success('Profile updated.', {
         description: `Display name is now ${updated.firstName} ${updated.lastName}.`,
       });
       // Re-fetch /auth/me so the chrome avatar/name update without reload.
       await refreshUser();
     } catch (err) {
-      toast.error('Could not update profile', {
+      toast.error('Could not update profile.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {
@@ -1135,21 +1348,21 @@ function PasswordCard() {
 
   const submit = async () => {
     if (newPassword !== confirmPassword) {
-      toast.error('New password and confirmation must match');
+      toast.error('New password and confirmation must match.');
       return;
     }
     if (newPassword.length < 12) {
-      toast.error('New password must be at least 12 characters');
+      toast.error('New password must be at least 12 characters.');
       return;
     }
     if (newPassword === currentPassword) {
-      toast.error('New password must differ from your current password');
+      toast.error('New password must differ from your current password.');
       return;
     }
     setSubmitting(true);
     try {
       await changePassword({ currentPassword, newPassword });
-      toast.success('Password updated', {
+      toast.success('Password updated.', {
         description: 'Other devices have been signed out.',
       });
       setCurrent('');
@@ -1158,11 +1371,11 @@ function PasswordCard() {
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'invalid_credentials') {
-        toast.error('Current password is incorrect');
+        toast.error('Current password is incorrect.');
       } else if (code === 'invalid_body') {
-        toast.error('Password does not meet requirements');
+        toast.error('Password does not meet requirements.');
       } else {
-        toast.error('Could not change password', {
+        toast.error('Could not change password.', {
           description: err instanceof Error ? err.message : String(err),
         });
       }
@@ -1285,7 +1498,6 @@ function shortenAgent(ua: string | null): string {
 const LOGIN_HISTORY_PREVIEW = 5;
 
 function LoginHistoryCard() {
-  const { user } = useAuth();
   const [expanded, setExpanded] = useState(false);
 
   const { data: events, error: eventsError } = useQuery({
@@ -1297,25 +1509,6 @@ function LoginHistoryCard() {
       ? eventsError.message
       : 'Failed to load activity.'
     : null;
-
-  // When the user has a saved timezone, format every timestamp through it
-  // so the table reads consistently across devices. Falls back to the
-  // browser locale when null. Constructed once per render — DateTimeFormat
-  // throws on bad TZ strings, so guard with a try/catch.
-  const formatter = (() => {
-    try {
-      return new Intl.DateTimeFormat(undefined, {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-        timeZone: user?.timezone ?? undefined,
-      });
-    } catch {
-      return new Intl.DateTimeFormat(undefined, {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-      });
-    }
-  })();
 
   return (
     <Card>
@@ -1360,7 +1553,7 @@ function LoginHistoryCard() {
                   <TableRow key={e.id}>
                     <TableCell className="text-white">{ACTION_LABEL[e.action]}</TableCell>
                     <TableCell className="text-silver">
-                      {formatter.format(new Date(e.at))}
+                      {fmtDateTime(e.at)}
                     </TableCell>
                     <TableCell className="hidden sm:table-cell text-silver">
                       {shortenAgent(e.userAgent)}

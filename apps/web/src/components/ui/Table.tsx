@@ -121,6 +121,9 @@ export const TableRow = React.forwardRef<
         'hover:bg-navy-secondary/40',
         // Stronger hover when the row is interactive (callers add `cursor-pointer`).
         '[&.cursor-pointer]:hover:bg-navy-secondary/60',
+        // Press feedback — hover never fires under a finger, so without
+        // this every row tap on a phone/iPad felt dead.
+        '[&.cursor-pointer]:active:bg-navy-secondary/70',
         // Keyboard focus ring for the interactive rows promoted above.
         '[&.cursor-pointer]:focus-visible:outline-none [&.cursor-pointer]:focus-visible:ring-2 [&.cursor-pointer]:focus-visible:ring-gold-bright [&.cursor-pointer]:focus-visible:ring-inset',
         // Selected: brighter background plus a thin gold rail on the first cell.
@@ -142,7 +145,7 @@ export const TableHead = React.forwardRef<
     ref={ref}
     scope="col"
     className={cn(
-      'h-10 px-3 text-left align-middle text-[10px] font-semibold uppercase tracking-widest text-silver',
+      'h-10 px-3 text-left align-middle text-2xs font-semibold uppercase tracking-widest text-silver',
       className
     )}
     {...props}
@@ -264,7 +267,7 @@ export function SortableTableHead<K extends string>({
         type="button"
         onClick={() => onSort(sortKey)}
         className={cn(
-          'flex h-10 w-full items-center gap-1 px-3 text-left text-[10px] font-semibold uppercase tracking-widest transition-colors',
+          'flex h-10 w-full items-center gap-1 px-3 text-left text-2xs font-semibold uppercase tracking-widest transition-colors',
           'focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gold-bright',
           active ? 'text-gold' : 'text-silver hover:text-white',
         )}

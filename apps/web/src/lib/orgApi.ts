@@ -43,6 +43,7 @@ export interface PayoutMethodSummary {
   hasPayoutMethod: boolean;
   type?: 'BANK_ACCOUNT' | 'BRANCH_CARD';
   accountType?: string | null;
+  bankName?: string | null;
   routingMasked?: string | null;
   accountLast4?: string | null;
   branchCardId?: string | null;
@@ -53,6 +54,7 @@ export interface PayoutMethodSummary {
 export interface PayoutMethodReveal {
   type: 'BANK_ACCOUNT' | 'BRANCH_CARD';
   accountType: string | null;
+  bankName: string | null;
   routingNumber: string | null;
   accountNumber: string | null;
   branchCardId: string | null;
@@ -76,6 +78,25 @@ export function revealAssociatePayoutMethod(
   });
 }
 
+/**
+ * Set the institution name on an existing bank-account payout method.
+ *
+ * Backfill path: bankName was added after most associates onboarded, so
+ * their records carry a blank the external payroll file expects. Scoped to
+ * the label — routing and account numbers stay writable only by the
+ * associate (via self-service, which emails a change confirmation) so no
+ * admin endpoint can redirect where money lands.
+ */
+export function setAssociateBankName(
+  associateId: string,
+  bankName: string,
+): Promise<{ bankName: string }> {
+  return apiFetch(`/org/associates/${associateId}/payout-method`, {
+    method: 'PATCH',
+    body: { bankName },
+  });
+}
+
 export interface SsnSummary {
   hasSsn: boolean;
   ssnLast4: string | null;
@@ -91,6 +112,39 @@ export interface SsnReveal {
 
 export function getAssociateSsn(associateId: string): Promise<SsnSummary> {
   return apiFetch(`/org/associates/${associateId}/ssn`);
+}
+
+export interface ErasureCounts {
+  userDisabled: number;
+  passkeysDeleted: number;
+  mfaRecoveryCodesDeleted: number;
+  authTokensDeleted: number;
+  pushSubscriptionsDeleted: number;
+  w4SsnCleared: number;
+  payoutMethodsScrubbed: number;
+  documentsSoftDeleted: number;
+  documentBlobsUnlinked: number;
+  emergencyContactsDeleted: number;
+  kioskPinsDeleted: number;
+  kioskSelfiesPurged: number;
+  faceReferenceCleared: number;
+  notificationsScrubbed: number;
+}
+
+/**
+ * Irreversible privacy erasure: anonymizes the associate's identity and
+ * scrubs credentials/ciphertext while payroll and tax history is retained
+ * (legal requirement). Requires retyping the associate's last name and a
+ * written reason; `force` overrides the not-yet-separated guard only.
+ */
+export function eraseAssociatePersonalData(
+  associateId: string,
+  body: { reason: string; confirmName: string; force?: boolean },
+): Promise<{ ok: boolean; erasedAt: string; counts: ErasureCounts }> {
+  return apiFetch(`/org/associates/${associateId}/erase`, {
+    method: 'POST',
+    body,
+  });
 }
 
 /** Audited full-number reveal — requires a written reason; every call

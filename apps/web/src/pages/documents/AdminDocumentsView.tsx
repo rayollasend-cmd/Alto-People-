@@ -1,6 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
+import {
+  Fragment,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import {
   ChevronRight,
+  Download,
   FileText,
   Folder,
   LayoutList,
@@ -19,10 +28,12 @@ import type {
 } from '@alto-people/shared';
 import {
   bulkVerifyDocuments,
+  downloadAllDocumentsUrl,
   listAdminDocuments,
   rejectDocument,
   verifyDocument,
 } from '@/lib/documentsApi';
+import { fmtDate } from '@/lib/format';
 import { ApiError } from '@/lib/api';
 import { DocumentPreview } from '@/components/DocumentPreview';
 import { Avatar } from '@/components/ui/Avatar';
@@ -47,6 +58,7 @@ import {
 } from '@/components/ui/Drawer';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { FilterChip } from '@/components/ui/FilterBar';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Field } from '@/components/ui/Field';
@@ -94,6 +106,21 @@ const STATUS_VARIANT: Record<
   EXPIRED: 'destructive',
 };
 
+const STATUS_LABELS: Record<DocumentStatus, string> = {
+  UPLOADED: 'Awaiting review',
+  VERIFIED: 'Verified',
+  REJECTED: 'Rejected',
+  EXPIRED: 'Expired',
+};
+
+// Canned reasons for the bulk-reject panel — the common cases HR types
+// over and over. Clicking one fills the free-text field (still editable).
+const BULK_REJECT_PRESETS = [
+  'Blurry / unreadable',
+  'Expired document',
+  'Wrong document type',
+] as const;
+
 const fmtSize = (b: number): string => {
   if (b < 1024) return `${b} B`;
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
@@ -133,11 +160,21 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     (v): v is DocFilter => STATUS_FILTERS.some((f) => f.value === v),
   );
   const [kindFilter, setKindFilter] = useState<DocumentKind | 'ALL'>('ALL');
-  const [docs, setDocs] = useState<DocumentRecord[] | null>(null);
+  // Server-filtered slice — only populated when the active filter needs a
+  // server-side query (a specific status or kind). The client-expressible
+  // filters (ACTION_NEEDED / ALL with no kind) derive `docs` from allDocs
+  // below instead: the old refresh() hit the exact same unfiltered endpoint
+  // refreshAll() already calls, doubling the mount fetch for nothing.
+  const [serverDocs, setServerDocs] = useState<DocumentRecord[] | null>(null);
   // Unfiltered roll-up for the KPI / chip counts so they stay stable as
   // the user filters. Same pattern as the onboarding inbox. Doubles as the
   // source for the "By associate" view.
   const [allDocs, setAllDocs] = useState<DocumentRecord[] | null>(null);
+  // Server-side total for the unfiltered list. The list itself is capped
+  // (200), so when total > allDocs.length the KPIs/folders are partial and
+  // we say so instead of presenting the slice as audit truth.
+  const [allTotal, setAllTotal] = useState<number | null>(null);
+  const [allError, setAllError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -145,22 +182,47 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   const [rejectReason, setRejectReason] = useState('');
   const [rejectSubmitting, setRejectSubmitting] = useState(false);
   const [selectedAssociateId, setSelectedAssociateId] = useState<string | null>(null);
+  // The open folder's docs, fetched directly with ?associateId= so the
+  // drawer is complete even when the global list is truncated at the cap.
+  const [folderDocs, setFolderDocs] = useState<DocumentRecord[] | null>(null);
+  const [folderError, setFolderError] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocumentRecord | null>(null);
+  // Optional expiry captured alongside a single verify in the preview
+  // viewer ('YYYY-MM-DD'). Bulk verify stays expiry-less on purpose.
+  const [verifyExpiresAt, setVerifyExpiresAt] = useState('');
   // Bulk-verify selection (queue view only). Only docs that can transition to
   // VERIFIED — UPLOADED or REJECTED — are ever selectable.
   const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  // Bulk-reject panel state — one reason applied to every selected doc.
+  const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
+  const [bulkRejectReason, setBulkRejectReason] = useState('');
+
+  // True when the active filter needs data the unfiltered overview can't
+  // answer: a specific status or kind is server-filtered, so past the
+  // server's row cap it can return rows the unfiltered slice doesn't hold.
+  // ACTION_NEEDED / ALL with no kind used to call listAdminDocuments({})
+  // anyway (same request, same cap, narrowed client-side) — those derive
+  // from allDocs instead of refetching.
+  const needsServerFilter =
+    kindFilter !== 'ALL' || (filter !== 'ALL' && filter !== 'ACTION_NEEDED');
 
   const refresh = useCallback(async () => {
+    if (!needsServerFilter) {
+      // The queue derives from allDocs (refreshAll's data) — nothing to fetch.
+      setError(null);
+      return;
+    }
     try {
       setError(null);
       const kindParam = kindFilter === 'ALL' ? undefined : kindFilter;
       // 'ACTION_NEEDED' spans two statuses, which the backend's single-status
-      // query can't express — fetch all (optionally kind-scoped) and narrow
-      // client-side. The other filters map straight to status + kind params.
+      // query can't express — fetch all (kind-scoped; the kind-less case is
+      // handled above) and narrow client-side. The other filters map straight
+      // to status + kind params.
       if (filter === 'ACTION_NEEDED') {
         const res = await listAdminDocuments(kindParam ? { kind: kindParam } : {});
-        setDocs(
+        setServerDocs(
           res.documents.filter((d) =>
             ACTION_NEEDED_STATUSES.includes(d.status),
           ),
@@ -171,20 +233,51 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         ...(filter === 'ALL' ? {} : { status: filter }),
         ...(kindParam ? { kind: kindParam } : {}),
       });
-      setDocs(res.documents);
+      setServerDocs(res.documents);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
-  }, [filter, kindFilter]);
+  }, [filter, kindFilter, needsServerFilter]);
 
   const refreshAll = useCallback(async () => {
     try {
+      setAllError(null);
       const res = await listAdminDocuments({});
       setAllDocs(res.documents);
-    } catch {
-      setAllDocs([]);
+      setAllTotal(res.total ?? res.documents.length);
+    } catch (err) {
+      // Don't fake an empty vault — leave allDocs as-is (null on first load)
+      // and surface the failure in a banner instead of zeroed KPIs.
+      setAllError(err instanceof ApiError ? err.message : 'Failed to load.');
     }
   }, []);
+
+  // Per-associate folder fetch — direct, uncapped-by-the-global-list view of
+  // one person's documents.
+  const fetchFolder = useCallback(async (associateId: string) => {
+    try {
+      setFolderError(null);
+      const res = await listAdminDocuments({ associateId });
+      setFolderDocs(res.documents);
+    } catch (err) {
+      setFolderError(
+        err instanceof ApiError ? err.message : 'Failed to load this folder.',
+      );
+    }
+  }, []);
+
+  // What the queue works from: the server-filtered slice when a server-side
+  // filter is active, otherwise derived client-side from the unfiltered
+  // overview — identical data to what the dropped duplicate fetch returned,
+  // since both hit listAdminDocuments({}) under the same server cap.
+  const docs = useMemo(() => {
+    if (needsServerFilter) return serverDocs;
+    if (!allDocs) return null;
+    if (filter === 'ACTION_NEEDED') {
+      return allDocs.filter((d) => ACTION_NEEDED_STATUSES.includes(d.status));
+    }
+    return allDocs;
+  }, [needsServerFilter, serverDocs, allDocs, filter]);
 
   useEffect(() => {
     refresh();
@@ -194,15 +287,33 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     refreshAll();
   }, [refreshAll]);
 
+  useEffect(() => {
+    setFolderDocs(null);
+    setFolderError(null);
+    if (selectedAssociateId) fetchFolder(selectedAssociateId);
+  }, [selectedAssociateId, fetchFolder]);
+
+  // The optional expiry date belongs to one document — clear it whenever the
+  // preview switches docs or closes.
+  useEffect(() => {
+    setVerifyExpiresAt('');
+  }, [previewDoc?.id]);
+
   // Drop any selection when the visible slice changes (filter / kind / view),
   // so a bulk-verify can never act on rows the user can no longer see.
   useEffect(() => {
     setSelectedDocs(new Set());
   }, [filter, kindFilter, view]);
 
+  // Day-granularity "now" for the fmtAge labels in the render body. NOT a
+  // dependency of the stats memo below — that made the memo's inputs change
+  // on every render, so it never cached and re-scanned all docs per keystroke.
   const now = Date.now();
 
   const stats = useMemo(() => {
+    // Fresh timestamp taken when the memo actually recomputes ([allDocs]
+    // changes) — day-level precision doesn't need one per render.
+    const nowMs = Date.now();
     const src = allDocs ?? [];
     const byStatus: Record<string, number> = {};
     for (const d of src) byStatus[d.status] = (byStatus[d.status] ?? 0) + 1;
@@ -222,9 +333,9 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
       oldestUploadedDays:
         oldestUploaded === null
           ? null
-          : Math.floor((now - oldestUploaded) / ONE_DAY_MS),
+          : Math.floor((nowMs - oldestUploaded) / ONE_DAY_MS),
     };
-  }, [allDocs, now]);
+  }, [allDocs]);
 
   // Only offer kinds that actually exist in the tenant, sorted, so the
   // dropdown stays short instead of listing all 16 possible kinds.
@@ -234,9 +345,14 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     return Array.from(set).sort();
   }, [allDocs]);
 
+  // Deferred search term for the heavy derived lists: the input repaints
+  // immediately while React filters the doc queue / regroups associates at
+  // background priority, keeping the previous results on screen meanwhile.
+  const deferredSearch = useDeferredValue(search);
+
   const visibleDocs = useMemo(() => {
     if (!docs) return null;
-    const q = search.trim().toLowerCase();
+    const q = deferredSearch.trim().toLowerCase();
     if (!q) return docs;
     return docs.filter(
       (d) =>
@@ -244,7 +360,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         (d.associateName && d.associateName.toLowerCase().includes(q)) ||
         d.kind.toLowerCase().includes(q)
     );
-  }, [docs, search]);
+  }, [docs, deferredSearch]);
 
   // Click-to-sort for the flat queue table. Operates on the filtered slice
   // the table renders; third click restores server order (newest first).
@@ -326,7 +442,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   // person without flipping views.
   const visibleAssociateGroups = useMemo(() => {
     if (!associateGroups) return null;
-    const q = search.trim().toLowerCase();
+    const q = deferredSearch.trim().toLowerCase();
     if (!q) return associateGroups;
     return associateGroups.filter(
       (g) =>
@@ -337,7 +453,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             d.kind.toLowerCase().includes(q),
         ),
     );
-  }, [associateGroups, search]);
+  }, [associateGroups, deferredSearch]);
 
   const selectedGroup = useMemo(
     () =>
@@ -346,15 +462,44 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     [associateGroups, selectedAssociateId],
   );
 
-  const onVerify = async (d: DocumentRecord) => {
+  // What the folder drawer renders: the directly-fetched docs when they've
+  // arrived, falling back to the (possibly capped) global slice while
+  // loading. Counts are recomputed from whichever list is shown so the
+  // header chips always match the table.
+  const folder = useMemo(() => {
+    if (!selectedAssociateId) return null;
+    const source = folderDocs ?? selectedGroup?.docs ?? null;
+    const list = source ?? [];
+    const count = (s: DocumentStatus) =>
+      list.filter((d) => d.status === s).length;
+    return {
+      associateId: selectedAssociateId,
+      associateName:
+        selectedGroup?.associateName ?? list[0]?.associateName ?? '—',
+      docs: list,
+      loading: source === null,
+      total: list.length,
+      uploaded: count('UPLOADED'),
+      verified: count('VERIFIED'),
+      rejected: count('REJECTED'),
+      expired: count('EXPIRED'),
+      hasDownloadable: list.some((d) => d.fileAvailable),
+    };
+  }, [selectedAssociateId, folderDocs, selectedGroup]);
+
+  const onVerify = async (d: DocumentRecord, expiresAt?: string) => {
     if (pendingId) return;
     setPendingId(d.id);
     try {
-      await verifyDocument(d.id);
-      toast.success(`Verified ${d.filename}`);
-      await Promise.all([refresh(), refreshAll()]);
+      await verifyDocument(d.id, expiresAt ? { expiresAt } : {});
+      toast.success(`Verified ${d.filename}.`);
+      await Promise.all([
+        refresh(),
+        refreshAll(),
+        ...(selectedAssociateId ? [fetchFolder(selectedAssociateId)] : []),
+      ]);
     } catch (err) {
-      toast.error('Verify failed', {
+      toast.error('Verify failed.', {
         description: err instanceof ApiError ? err.message : undefined,
       });
     } finally {
@@ -376,12 +521,12 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     try {
       const res = await bulkVerifyDocuments(Array.from(selectedDocs));
       toast.success(
-        `Verified ${res.verified}${res.skipped.length ? ` · ${res.skipped.length} skipped` : ''}`,
+        `Verified ${res.verified}${res.skipped.length ? ` · ${res.skipped.length} skipped` : ''}.`,
       );
       setSelectedDocs(new Set());
       await Promise.all([refresh(), refreshAll()]);
     } catch (err) {
-      toast.error('Bulk verify failed', {
+      toast.error('Bulk verify failed.', {
         description: err instanceof ApiError ? err.message : undefined,
       });
     } finally {
@@ -389,17 +534,78 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     }
   };
 
+  // Of the current selection, the docs the reject endpoint will accept
+  // (UPLOADED / VERIFIED). Selected REJECTED docs are skipped — the ball
+  // is already in the associate's court.
+  const bulkRejectTargets = useMemo(
+    () =>
+      (docs ?? []).filter(
+        (d) =>
+          selectedDocs.has(d.id) &&
+          (d.status === 'UPLOADED' || d.status === 'VERIFIED'),
+      ),
+    [docs, selectedDocs],
+  );
+
+  const onBulkReject = async () => {
+    const reason = bulkRejectReason.trim();
+    if (bulkBusy || !reason || bulkRejectTargets.length === 0) return;
+    setBulkBusy(true);
+    let ok = 0;
+    const failures: string[] = [];
+    // Sequential on purpose: the per-id endpoint carries all the side
+    // effects (task rewind + email to the associate) — no parallel
+    // hammering, and a mid-loop failure leaves an honest partial state.
+    for (const d of bulkRejectTargets) {
+      try {
+        await rejectDocument(d.id, { reason });
+        ok += 1;
+      } catch (err) {
+        failures.push(
+          `${d.filename}: ${err instanceof ApiError ? err.message : 'failed'}`,
+        );
+      }
+    }
+    const skipped = selectedDocs.size - bulkRejectTargets.length;
+    const detailBits = [
+      skipped > 0 ? `${skipped} skipped (already rejected)` : null,
+      ...failures.slice(0, 3),
+      failures.length > 3 ? `+ ${failures.length - 3} more failed` : null,
+    ].filter((x): x is string => x !== null);
+    const description = detailBits.length > 0 ? detailBits.join(' · ') : undefined;
+    if (failures.length === 0) {
+      toast.success(`Rejected ${ok} document${ok === 1 ? '' : 's'}.`, {
+        description,
+      });
+    } else if (ok === 0) {
+      toast.error(`All ${failures.length} rejections failed.`, { description });
+    } else {
+      toast.message(`Rejected ${ok} of ${bulkRejectTargets.length}.`, {
+        description,
+      });
+    }
+    setBulkRejectOpen(false);
+    setBulkRejectReason('');
+    setSelectedDocs(new Set());
+    await Promise.all([refresh(), refreshAll()]);
+    setBulkBusy(false);
+  };
+
   const onConfirmReject = async () => {
     if (!rejectTarget || !rejectReason.trim()) return;
     setRejectSubmitting(true);
     try {
       await rejectDocument(rejectTarget.id, { reason: rejectReason.trim() });
-      toast.success(`Rejected ${rejectTarget.filename}`);
+      toast.success(`Rejected ${rejectTarget.filename}.`);
       setRejectTarget(null);
       setRejectReason('');
-      await Promise.all([refresh(), refreshAll()]);
+      await Promise.all([
+        refresh(),
+        refreshAll(),
+        ...(selectedAssociateId ? [fetchFolder(selectedAssociateId)] : []),
+      ]);
     } catch (err) {
-      toast.error('Reject failed', {
+      toast.error('Reject failed.', {
         description: err instanceof ApiError ? err.message : undefined,
       });
     } finally {
@@ -543,30 +749,24 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     : (stats.byStatus[f.value] ?? 0);
               const active = filter === f.value;
               return (
-                <Button
+                <FilterChip
                   key={f.value}
-                  type="button"
-                  size="xs"
-                  variant="outline"
+                  active={active}
                   onClick={() => setFilter(f.value)}
-                  className={cn(
-                    'gap-1.5 rounded-md',
-                    active &&
-                      'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold'
-                  )}
+                  className="gap-1.5 rounded-md"
                 >
                   {f.label}
                   {allDocs && (
-                    <span className="text-[10px] tabular-nums text-silver/70">
+                    <span className="text-2xs tabular-nums text-silver/70">
                       {count}
                     </span>
                   )}
-                </Button>
+                </FilterChip>
               );
             })}
           </div>
         )}
-        <span className="ml-auto text-[10px] text-silver/70 tabular-nums">
+        <span className="ml-auto text-2xs text-silver/70 tabular-nums">
           {view === 'queue'
             ? visibleDocs
               ? `${visibleDocs.length} shown`
@@ -578,6 +778,24 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
       </div>
 
       {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
+
+      {/* The overview fetch failed — say so instead of rendering zeroed
+          KPIs and an empty "No documents yet" folder view. */}
+      {allError && (
+        <ErrorBanner className="mb-4">
+          Couldn't load the document overview — KPIs, counts, and the
+          by-associate view are unavailable. {allError}
+        </ErrorBanner>
+      )}
+
+      {/* Truncation honesty: the unfiltered list is capped server-side. */}
+      {allDocs && allTotal !== null && allTotal > allDocs.length && (
+        <ErrorBanner severity="warning" className="mb-4">
+          Showing {allDocs.length} of {allTotal} documents — KPIs and folders
+          reflect only what's loaded; filter by status/kind or open a folder
+          to see everything for one person.
+        </ErrorBanner>
+      )}
 
       {view === 'queue' && !docs && !error && (
         <Card>
@@ -621,6 +839,29 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         const allVerifiableSelected =
           verifiable.length > 0 &&
           verifiable.every((d) => selectedDocs.has(d.id));
+        // Group the queue by associate — one header row per person — in
+        // order of first appearance under the current sort, so column
+        // sorting still decides both group order and order within a group.
+        const groups: Array<{
+          associateId: string;
+          associateName: string;
+          docs: DocumentRecord[];
+        }> = [];
+        const groupIndex = new Map<string, number>();
+        for (const d of sortedDocs) {
+          const at = groupIndex.get(d.associateId);
+          if (at === undefined) {
+            groupIndex.set(d.associateId, groups.length);
+            groups.push({
+              associateId: d.associateId,
+              associateName: d.associateName ?? '—',
+              docs: [d],
+            });
+          } else {
+            groups[at].docs.push(d);
+          }
+        }
+        const colCount = canManage ? 8 : 6;
         return (
         <Card className="overflow-hidden">
           {canManage && selectedDocs.size > 0 && (
@@ -647,7 +888,22 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   className="text-success"
                 >
                   <ShieldCheck className="h-3.5 w-3.5" />
-                  Verify {selectedDocs.size}
+                  Verify selected ({selectedDocs.size})
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => setBulkRejectOpen(true)}
+                  disabled={bulkBusy || bulkRejectTargets.length === 0}
+                  title={
+                    bulkRejectTargets.length === 0
+                      ? 'Nothing in the selection can be rejected'
+                      : 'Reject the selected documents with one reason'
+                  }
+                  className="text-alert hover:text-alert"
+                >
+                  <ShieldAlert className="h-3.5 w-3.5" />
+                  Reject selected ({bulkRejectTargets.length})
                 </Button>
               </div>
             </div>
@@ -691,14 +947,36 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                 <SortableTableHead sortKey="status" state={docSort} onSort={toggleDocSort} className="w-32">
                   Status
                 </SortableTableHead>
-                {canManage && <TableHead className="hidden md:table-cell w-44 text-right" aria-label="Actions" />}
+                {/* Actions stay visible at EVERY width — hiding this column
+                    below md left phone admins able to see documents but
+                    unable to verify or reject a single one. The table's
+                    overflow-auto wrapper handles the narrow-screen width. */}
+                {canManage && <TableHead className="w-44 text-right" aria-label="Actions" />}
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sortedDocs.map((d) => {
-                const selectable =
-                  d.status === 'UPLOADED' || d.status === 'REJECTED';
-                return (
+              {groups.map((g) => (
+                <Fragment key={g.associateId}>
+                  {/* Associate header row: name + doc count. */}
+                  <TableRow className="hover:bg-transparent bg-navy-secondary/40">
+                    <TableCell colSpan={colCount} className="py-1.5">
+                      <div className="flex items-center gap-2">
+                        <Avatar name={g.associateName} size="xs" />
+                        <span className="text-xs font-medium text-white truncate">
+                          <AssociateLink associateId={g.associateId} tab="documents">
+                            {g.associateName}
+                          </AssociateLink>
+                        </span>
+                        <span className="text-2xs tabular-nums text-silver/70">
+                          {g.docs.length} document{g.docs.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                  {g.docs.map((d) => {
+                    const selectable =
+                      d.status === 'UPLOADED' || d.status === 'REJECTED';
+                    return (
                 <TableRow key={d.id} className="group">
                   {canManage && (
                     <TableCell className="w-8">
@@ -728,14 +1006,14 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       <span className="truncate">{d.filename}</span>
                     </button>
                     {!d.fileAvailable && (
-                      <div className="text-[11px] text-alert truncate mt-0.5">
+                      <div className="text-xs2 text-alert truncate mt-0.5">
                         File missing on server — please re-upload
                       </div>
                     )}
                     {/* Phone-only secondary line — associate name takes the
                         place of its hidden column. Tap-target area still
                         opens the preview via the file button above. */}
-                    <div className="sm:hidden text-[11px] text-silver/70 truncate mt-0.5">
+                    <div className="sm:hidden text-xs2 text-silver/70 truncate mt-0.5">
                       {d.associateName ?? '—'}
                     </div>
                   </TableCell>
@@ -763,20 +1041,33 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   </TableCell>
                   <TableCell>
                     <Badge variant={STATUS_VARIANT[d.status]} data-status={d.status}>
-                      {d.status}
+                      {STATUS_LABELS[d.status]}
                     </Badge>
                     {d.rejectionReason && (
                       <div
-                        className="text-alert text-[10px] mt-1 max-w-[140px] truncate"
+                        className="text-alert text-2xs mt-1 max-w-[140px] truncate"
                         title={d.rejectionReason}
                       >
                         {d.rejectionReason}
                       </div>
                     )}
+                    {d.expiresAt && (
+                      <div
+                        className={cn(
+                          'text-2xs mt-1 tabular-nums',
+                          d.status === 'EXPIRED'
+                            ? 'text-alert'
+                            : 'text-silver/70',
+                        )}
+                      >
+                        {d.status === 'EXPIRED' ? 'Expired' : 'Expires'}{' '}
+                        {fmtDate(d.expiresAt)}
+                      </div>
+                    )}
                   </TableCell>
                   {canManage && (
-                    <TableCell className="hidden md:table-cell text-right whitespace-nowrap">
-                      <div className="flex items-center justify-end gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                    <TableCell className="text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-1 can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                         {(d.status === 'UPLOADED' || d.status === 'REJECTED') && (
                           <Button
                             size="sm"
@@ -810,15 +1101,17 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     </TableCell>
                   )}
                 </TableRow>
-                );
-              })}
+                    );
+                  })}
+                </Fragment>
+              ))}
             </TableBody>
           </Table>
         </Card>
         );
       })()}
 
-      {view === 'associates' && !allDocs && !error && (
+      {view === 'associates' && !allDocs && !error && !allError && (
         <Card>
           <div className="p-2">
             <SkeletonRows count={6} rowHeight="h-12" />
@@ -875,7 +1168,9 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                       <div className="flex items-center gap-2.5">
                         <Avatar name={g.associateName} size="sm" />
                         <span className="text-white font-medium truncate">
-                          {g.associateName}
+                          <AssociateLink associateId={g.associateId} tab="documents">
+                            {g.associateName}
+                          </AssociateLink>
                         </span>
                       </div>
                     </TableCell>
@@ -926,49 +1221,64 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
       {/* Per-associate folder. Opens from either view: clicking a row in the
           associates list or clicking the avatar/name in the queue's table. */}
       <Drawer
-        open={selectedGroup !== null}
+        open={folder !== null}
         onOpenChange={(o) => !o && setSelectedAssociateId(null)}
         width="max-w-3xl"
       >
-        {selectedGroup && (
+        {folder && (
           <>
             <DrawerHeader>
               <div className="flex items-center gap-3">
-                <Avatar name={selectedGroup.associateName} size="md" />
+                <Avatar name={folder.associateName} size="md" />
                 <div className="min-w-0">
                   <DrawerTitle className="truncate">
-                    {selectedGroup.associateName}
+                    <AssociateLink associateId={folder.associateId} tab="documents">
+                      {folder.associateName}
+                    </AssociateLink>
                   </DrawerTitle>
                   <DrawerDescription>
-                    {selectedGroup.total} document
-                    {selectedGroup.total === 1 ? '' : 's'} on file
+                    {folder.loading
+                      ? 'Loading documents…'
+                      : `${folder.total} document${folder.total === 1 ? '' : 's'} on file`}
                   </DrawerDescription>
                 </div>
               </div>
               <div className="flex flex-wrap gap-1.5 mt-3">
-                {selectedGroup.uploaded > 0 && (
+                {folder.uploaded > 0 && (
                   <Badge variant="pending">
-                    {selectedGroup.uploaded} awaiting
+                    {folder.uploaded} awaiting
                   </Badge>
                 )}
-                {selectedGroup.verified > 0 && (
+                {folder.verified > 0 && (
                   <Badge variant="success">
-                    {selectedGroup.verified} verified
+                    {folder.verified} verified
                   </Badge>
                 )}
-                {selectedGroup.rejected > 0 && (
+                {folder.rejected > 0 && (
                   <Badge variant="destructive">
-                    {selectedGroup.rejected} rejected
+                    {folder.rejected} rejected
                   </Badge>
                 )}
-                {selectedGroup.expired > 0 && (
+                {folder.expired > 0 && (
                   <Badge variant="destructive">
-                    {selectedGroup.expired} expired
+                    {folder.expired} expired
                   </Badge>
                 )}
               </div>
             </DrawerHeader>
             <DrawerBody>
+              {folderError && (
+                <ErrorBanner className="mb-3">{folderError}</ErrorBanner>
+              )}
+              {folder.loading && folder.docs.length === 0 && !folderError && (
+                <SkeletonRows count={4} rowHeight="h-12" />
+              )}
+              {!folder.loading && !folderError && folder.docs.length === 0 && (
+                <div className="py-8 text-center text-sm text-silver">
+                  No documents on file for this associate.
+                </div>
+              )}
+              {folder.docs.length > 0 && (
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
@@ -982,7 +1292,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {selectedGroup.docs.map((d) => (
+                  {folder.docs.map((d) => (
                     <TableRow key={d.id} className="group">
                       <TableCell>
                         <button
@@ -1006,14 +1316,27 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                           variant={STATUS_VARIANT[d.status]}
                           data-status={d.status}
                         >
-                          {d.status}
+                          {STATUS_LABELS[d.status]}
                         </Badge>
                         {d.rejectionReason && (
                           <div
-                            className="text-alert text-[10px] mt-1 max-w-[160px] truncate"
+                            className="text-alert text-2xs mt-1 max-w-[160px] truncate"
                             title={d.rejectionReason}
                           >
                             {d.rejectionReason}
+                          </div>
+                        )}
+                        {d.expiresAt && (
+                          <div
+                            className={cn(
+                              'text-2xs mt-1 tabular-nums',
+                              d.status === 'EXPIRED'
+                                ? 'text-alert'
+                                : 'text-silver/70',
+                            )}
+                          >
+                            {d.status === 'EXPIRED' ? 'Expired' : 'Expires'}{' '}
+                            {fmtDate(d.expiresAt)}
                           </div>
                         )}
                       </TableCell>
@@ -1056,8 +1379,21 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   ))}
                 </TableBody>
               </Table>
+              )}
             </DrawerBody>
             <DrawerFooter>
+              {folder.hasDownloadable && (
+                <Button asChild variant="secondary">
+                  <a
+                    href={downloadAllDocumentsUrl(folder.associateId)}
+                    download
+                    title="Download every available document for this associate as a zip"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download all (.zip)
+                  </a>
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 onClick={() => setSelectedAssociateId(null)}
@@ -1079,20 +1415,37 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             <div className="flex items-center gap-1">
               {(previewDoc.status === 'UPLOADED' ||
                 previewDoc.status === 'REJECTED') && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={async () => {
-                    const target = previewDoc;
-                    await onVerify(target);
-                    setPreviewDoc(null);
-                  }}
-                  loading={pendingId === previewDoc.id}
-                  className="text-success hover:text-success"
-                >
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  <span className="ml-1 hidden sm:inline">Verify</span>
-                </Button>
+                <>
+                  {/* Optional expiry, captured with the verify. Most useful
+                      for IDs / visas / certs; harmless to leave blank. */}
+                  <label
+                    className="hidden sm:flex items-center gap-1.5 text-xs2 text-silver"
+                    title="Optional — when this document lapses it flips to EXPIRED and the associate is asked for a fresh copy"
+                  >
+                    <span className="whitespace-nowrap">Expires on</span>
+                    <Input
+                      type="date"
+                      value={verifyExpiresAt}
+                      onChange={(e) => setVerifyExpiresAt(e.target.value)}
+                      aria-label="Expires on (optional)"
+                      className="h-8 w-[8.75rem] text-xs"
+                    />
+                  </label>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={async () => {
+                      const target = previewDoc;
+                      await onVerify(target, verifyExpiresAt || undefined);
+                      setPreviewDoc(null);
+                    }}
+                    loading={pendingId === previewDoc.id}
+                    className="text-success hover:text-success"
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5" />
+                    <span className="ml-1 hidden sm:inline">Verify</span>
+                  </Button>
+                </>
               )}
               {(previewDoc.status === 'UPLOADED' ||
                 previewDoc.status === 'VERIFIED') && (
@@ -1177,6 +1530,87 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Bulk rejection panel — one reason applied to every selected doc.
+          Loops the per-id endpoint sequentially so each rejection keeps its
+          side effects (task rewind + email to the associate). */}
+      <Dialog
+        open={bulkRejectOpen}
+        onOpenChange={(v) => {
+          if (bulkBusy) return;
+          setBulkRejectOpen(v);
+          if (!v) setBulkRejectReason('');
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Reject {bulkRejectTargets.length} document
+              {bulkRejectTargets.length === 1 ? '' : 's'}
+            </DialogTitle>
+            <DialogDescription>
+              The same reason is attached to every selected document. Each
+              associate is emailed and their upload task reopens so they can
+              re-submit.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            {selectedDocs.size > bulkRejectTargets.length && (
+              <div className="text-xs text-silver">
+                {selectedDocs.size - bulkRejectTargets.length} of the selected
+                documents are already rejected and will be skipped.
+              </div>
+            )}
+            <div className="flex flex-wrap gap-1.5">
+              {BULK_REJECT_PRESETS.map((r) => (
+                <Button
+                  key={r}
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  onClick={() => setBulkRejectReason(r)}
+                  className={cn(
+                    'rounded-md',
+                    bulkRejectReason === r &&
+                      'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
+                  )}
+                >
+                  {r}
+                </Button>
+              ))}
+            </div>
+            <Field label="Reason" required>
+              {(p) => (
+                <Textarea
+                  value={bulkRejectReason}
+                  onChange={(e) => setBulkRejectReason(e.target.value)}
+                  rows={3}
+                  maxLength={500}
+                  placeholder="Pick a preset above or write your own."
+                  {...p}
+                />
+              )}
+            </Field>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setBulkRejectOpen(false)}
+              disabled={bulkBusy}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={onBulkReject}
+              loading={bulkBusy}
+              disabled={!bulkRejectReason.trim() || bulkRejectTargets.length === 0}
+            >
+              <XCircle className="h-4 w-4" />
+              Reject {bulkRejectTargets.length}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1192,7 +1626,9 @@ function Kpi({
 }) {
   return (
     <div className="min-w-[6rem]">
-      <div className="text-[10px] uppercase tracking-wider text-silver">{label}</div>
+      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
+        {label}
+      </div>
       <div className={cn('text-xl font-semibold tabular-nums', tone)}>{value}</div>
     </div>
   );

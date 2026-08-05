@@ -9,6 +9,7 @@ import {
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { effectiveClientIdFilter } from '../lib/scope.js';
 
 export const jobsRouter = Router();
 
@@ -32,7 +33,13 @@ const JOB_INCLUDE = { client: { select: { name: true } } } as const;
 
 jobsRouter.get('/', async (req, res, next) => {
   try {
-    const clientId = req.query.clientId?.toString();
+    // Client-bounded roles only see their own client's job profiles.
+    const boundedJobs = effectiveClientIdFilter(
+      req.user!,
+      req.query.clientId?.toString(),
+    );
+    const clientId =
+      boundedJobs === null ? '00000000-0000-0000-0000-000000000000' : boundedJobs;
     const includeInactive = req.query.includeInactive === 'true';
     const where: Prisma.JobWhereInput = {
       deletedAt: null,

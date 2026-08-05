@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { httpUrl } from './safeUrl.js';
 
 /* -------------------------------------------------------------------------- *
  *  Common
@@ -39,6 +40,8 @@ export const ApplicationStatusSchema = z.enum([
   'REJECTED',
 ]);
 export type ApplicationStatus = z.infer<typeof ApplicationStatusSchema>;
+/** Every status value — for seeding total Record<ApplicationStatus, T> maps. */
+export const APPLICATION_STATUSES = ApplicationStatusSchema.options;
 
 export const TaskKindSchema = z.enum([
   'PROFILE_INFO',
@@ -164,6 +167,8 @@ export const ChecklistTaskSchema = z.object({
   order: z.number().int(),
   documentId: UuidSchema.nullable(),
   completedAt: z.string().datetime().nullable(),
+  /** Days before the application's start date this task is due. */
+  dueOffsetDays: z.number().int().nullable().optional(),
 });
 export type ChecklistTask = z.infer<typeof ChecklistTaskSchema>;
 
@@ -203,7 +208,10 @@ export const ApplicationSummarySchema = z.object({
   onboardingTrack: OnboardingTrackSchema,
   status: ApplicationStatusSchema,
   position: z.string().nullable(),
-  startDate: z.string().datetime().nullable(),
+  // Calendar date (@db.Date) — YYYY-MM-DD, never a timestamp. Encoding
+  // a zone onto a date can only introduce error (it rendered a day early
+  // west of UTC).
+  startDate: z.string().date().nullable(),
   invitedAt: z.string().datetime(),
   submittedAt: z.string().datetime().nullable(),
   percentComplete: z.number().min(0).max(100),
@@ -211,6 +219,10 @@ export const ApplicationSummarySchema = z.object({
   // tagged onboarding.invite or onboarding.nudge. null when there's no
   // such row yet (test fixtures, legacy data).
   lastInviteDelivery: InviteDeliveryInfoSchema.nullable().optional(),
+  /** Title of the first incomplete task — what the hire is stuck on. */
+  blockedOnTitle: z.string().nullable().optional(),
+  /** Most recent movement: latest task completion, else the invite. */
+  lastActivityAt: z.string().datetime().nullable().optional(),
 });
 export type ApplicationSummary = z.infer<typeof ApplicationSummarySchema>;
 
@@ -237,6 +249,11 @@ export type ApplicationDetail = z.infer<typeof ApplicationDetailSchema>;
 // approve dialog.
 export const ApproveApplicationInputSchema = z.object({
   hireDate: z.string().date(),
+  /** Verification gaps (skipped tasks, unreviewed documents, incomplete
+   *  I-9) make approval return 409 `approval_warnings` with the list —
+   *  pass true to approve anyway. Forces a human to SEE what was never
+   *  verified instead of activating a hire on a skipped checklist. */
+  acknowledgeWarnings: z.boolean().optional(),
 });
 export type ApproveApplicationInput = z.infer<
   typeof ApproveApplicationInputSchema
@@ -282,6 +299,9 @@ export const TemplateTaskSchema = z.object({
   title: z.string(),
   description: z.string().nullable(),
   order: z.number().int(),
+  /** Days before the application's start date this task should be done
+   *  (0 = by the start date; null = no deadline). */
+  dueOffsetDays: z.number().int().min(0).max(365).nullable().optional(),
 });
 export type TemplateTask = z.infer<typeof TemplateTaskSchema>;
 
@@ -309,6 +329,7 @@ export const TemplateTaskInputSchema = z.object({
   title: z.string().min(1).max(120),
   description: z.string().max(500).nullable().optional(),
   order: z.number().int().nonnegative().optional(),
+  dueOffsetDays: z.number().int().min(0).max(365).nullable().optional(),
 });
 export type TemplateTaskInput = z.infer<typeof TemplateTaskInputSchema>;
 
@@ -421,6 +442,10 @@ export const AuthUserSchema = z.object({
   role: RoleSchema,
   status: UserStatusSchema,
   clientId: UuidSchema.nullable(),
+  /** Display name of the bound client for client-scoped roles
+   *  (SHIFT_SUPERVISOR, CLIENT_PORTAL) — the web pins pickers/scope bars
+   *  to it instead of fetching a client list those roles can't read. */
+  clientName: z.string().nullable().optional(),
   associateId: UuidSchema.nullable(),
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),
@@ -457,9 +482,23 @@ export const LoginMfaRequiredResponseSchema = z.object({
 });
 export type LoginMfaRequiredResponse = z.infer<typeof LoginMfaRequiredResponseSchema>;
 
+/**
+ * Org policy (OrgSetting.mfaRequirement) applies to this user's role but
+ * they have no TOTP enrolled. The server issued a short-lived mfa_enroll
+ * cookie accepted ONLY by the /auth/me/mfa/enroll/* endpoints; the client
+ * drives the QR + confirm flow and receives a real session on confirm.
+ */
+export const LoginMfaEnrollRequiredResponseSchema = z.object({
+  mfaEnrollmentRequired: z.literal(true),
+});
+export type LoginMfaEnrollRequiredResponse = z.infer<
+  typeof LoginMfaEnrollRequiredResponseSchema
+>;
+
 export const LoginResponseSchema = z.union([
   LoginSuccessResponseSchema,
   LoginMfaRequiredResponseSchema,
+  LoginMfaEnrollRequiredResponseSchema,
 ]);
 export type LoginResponse = z.infer<typeof LoginResponseSchema>;
 
@@ -541,6 +580,10 @@ export const BulkInviteInputSchema = z.object({
   clientId: UuidSchema,
   templateId: UuidSchema,
   employmentType: EmploymentTypeSchema.optional(),
+  /** Starting work site for the whole batch. Required (server-enforced)
+   *  when the client has locations configured — a location-less invite
+   *  leaves the associate's site unrecorded forever. */
+  locationId: UuidSchema.optional(),
   applicants: z.array(BulkInviteApplicantSchema).min(1).max(200),
 });
 export type BulkInviteInput = z.infer<typeof BulkInviteInputSchema>;
@@ -605,7 +648,12 @@ export type NudgeResponse = z.infer<typeof NudgeResponseSchema>;
 export const ProfileSubmissionSchema = z.object({
   firstName: z.string().min(1).max(80),
   lastName: z.string().min(1).max(80),
-  dob: z.string().datetime().nullable().optional(),
+  // Both optional on Form I-9 but asked for by E-Verify. Collected here so
+  // new hires arrive complete; people onboarded before these existed get
+  // filled in from the E-Verify screen instead.
+  middleInitial: z.string().trim().max(1).nullable().optional(),
+  otherLastNames: z.array(z.string().trim().min(1).max(80)).max(10).optional(),
+  dob: z.string().date().nullable().optional(),
   phone: z.string().max(40).nullable().optional(),
   addressLine1: z.string().max(200).nullable().optional(),
   addressLine2: z.string().max(200).nullable().optional(),
@@ -641,6 +689,10 @@ export const DirectDepositInputSchema = z.discriminatedUnion('type', [
     routingNumber: z.string().regex(/^\d{9}$/, 'Routing number must be 9 digits'),
     accountNumber: z.string().regex(/^\d{4,17}$/, 'Account number must be 4–17 digits'),
     accountType: z.enum(['CHECKING', 'SAVINGS']),
+    // Institution name for the external payroll file. Optional so existing
+    // clients and the Branch-card path keep working; the form asks for it
+    // but an associate who leaves it blank still gets paid.
+    bankName: z.string().trim().min(1).max(120).optional(),
   }),
   z.object({
     type: z.literal('BRANCH_CARD'),
@@ -902,8 +954,8 @@ export const BenefitsEnrollmentSchema = z.object({
   associateId: UuidSchema,
   planId: UuidSchema,
   electedAmountCentsPerPeriod: z.number().int().nonnegative(),
-  effectiveDate: z.string().datetime(),
-  terminationDate: z.string().datetime().nullable(),
+  effectiveDate: z.string().date(),
+  terminationDate: z.string().date().nullable(),
   // Joined plan summary so the UI can render without a second fetch.
   planKind: BenefitsPlanKindSchema,
   planName: z.string(),
@@ -918,12 +970,12 @@ export type BenefitsEnrollmentListResponse = z.infer<typeof BenefitsEnrollmentLi
 export const BenefitsEnrollInputSchema = z.object({
   planId: UuidSchema,
   electedAmountCentsPerPeriod: z.number().int().nonnegative(),
-  effectiveDate: z.string().datetime(),
+  effectiveDate: z.string().date(),
 });
 export type BenefitsEnrollInput = z.infer<typeof BenefitsEnrollInputSchema>;
 
 export const BenefitsTerminateInputSchema = z.object({
-  terminationDate: z.string().datetime(),
+  terminationDate: z.string().date(),
 });
 export type BenefitsTerminateInput = z.infer<typeof BenefitsTerminateInputSchema>;
 
@@ -986,6 +1038,12 @@ export const TimeEntrySchema = z.object({
   clockOutLat: z.number().nullable().optional(),
   clockOutLng: z.number().nullable().optional(),
   anomalies: z.array(z.string()).optional(),
+  /** IANA timezone of the entry's worksite (Location.timezone). Lets the
+   *  review queue render punch times on the SITE's wall clock instead of
+   *  the reviewer's browser clock — the two disagreeing (and the timesheet
+   *  using a third, hardcoded zone) is exactly what users reported as
+   *  'the clock-in times don't match'. Null for entries with no location. */
+  locationTimezone: z.string().nullable().optional(),
   /** True while the entry is ACTIVE and a break row is open. Server-derived;
    *  lets the clock widget survive a page refresh mid-break instead of
    *  guessing from client-local state. */
@@ -1139,8 +1197,61 @@ export const TimeExportInputSchema = z.object({
   /** Facility scope — filter to a single worksite Location. */
   locationId: UuidSchema.optional(),
   associateId: UuidSchema.optional(),
+  /**
+   * Free-text associate-name filter, same semantics as the admin queue's
+   * `search`. Without it the queue could be narrowed on screen while the
+   * download still returned every associate in the range.
+   */
+  search: z.string().trim().min(1).max(100).optional(),
+  /**
+   * Restrict to entries carrying at least one anomaly flag, matching the
+   * queue's "Anomalies only" toggle. Applied server-side across the whole
+   * range, so the file isn't limited to the page the screen had loaded.
+   */
+  anomaliesOnly: z.boolean().optional(),
 });
 export type TimeExportInput = z.infer<typeof TimeExportInputSchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  External payroll sheet — the handoff file for an outside payroll bureau.
+ *
+ *  Deliberately a narrower input than TimeExportInput: no `search`, no
+ *  `anomaliesOnly`, no status filter. This sheet is always "approved time in
+ *  a date range", because a bureau file that quietly omitted people or
+ *  included unapproved hours would be paid out wrong. Scope is client /
+ *  location / associate only.
+ * -------------------------------------------------------------------------- */
+
+export const ExternalPayrollSheetInputSchema = z.object({
+  from: z.string().datetime(),
+  to: z.string().datetime(),
+  clientId: UuidSchema.optional(),
+  locationId: UuidSchema.optional(),
+  associateId: UuidSchema.optional(),
+});
+export type ExternalPayrollSheetInput = z.infer<
+  typeof ExternalPayrollSheetInputSchema
+>;
+
+/**
+ * Counts of what couldn't be filled in, returned as response headers so the
+ * UI can warn BEFORE the file is sent to a bureau. A blank SSN or routing
+ * number in a payroll file is a rejected submission or an unpaid worker, and
+ * the failure is invisible in a spreadsheet with hundreds of rows.
+ */
+export const ExternalPayrollSheetGapsSchema = z.object({
+  /** Rows with no W-4 on file at all. */
+  missingW4: z.number().int().nonnegative(),
+  /** W-4 exists but the SSN ciphertext won't decrypt under the current key. */
+  unreadableSsn: z.number().int().nonnegative(),
+  /** No payout method, or a card rather than a bank account. */
+  missingBankDetails: z.number().int().nonnegative(),
+  /** No current compensation record — pay rate is blank. */
+  missingPayRate: z.number().int().nonnegative(),
+});
+export type ExternalPayrollSheetGaps = z.infer<
+  typeof ExternalPayrollSheetGapsSchema
+>;
 
 /* -------------------------------------------------------------------------- *
  *  Timesheets — Fieldglass-shaped weekly export (Saturday → Friday)
@@ -1226,8 +1337,10 @@ export const TimesheetAssociateDetailResponseSchema = z.object({
   /* Accounting block (Fieldglass "Accounting (USD)"). */
   /** Rate label, e.g. "Standard Hourly Rate /Hr". */
   rateLabel: z.string(),
-  /** Associate's hourly pay rate (comp record; $15 default). */
-  payRate: z.number().nonnegative(),
+  /** Associate's hourly pay rate from their open comp record. Null when
+   *  none exists — rendered as a dash. (Used to silently default to $15,
+   *  a fabricated figure on a billing-adjacent document.) */
+  payRate: z.number().nonnegative().nullable(),
   /** Client bill rate ($/hr); null when the client has none set. */
   billRate: z.number().nonnegative().nullable(),
   /** billRate × totalHours; null when no bill rate is set. */
@@ -1683,7 +1796,12 @@ export const ShiftTemplateApplyInputSchema = z.object({
 export type ShiftTemplateApplyInput = z.infer<typeof ShiftTemplateApplyInputSchema>;
 
 export const CopyWeekInputSchema = z.object({
-  /** ISO timestamp; server snaps to the local Sunday at 00:00. */
+  /**
+   * ISO instant of the first day of the visible week (local midnight on the
+   * client). Used VERBATIM — the copy window is [sourceWeekStart, +7 days),
+   * so it always matches exactly what the manager is looking at, whatever
+   * weekday their week is anchored on.
+   */
   sourceWeekStart: z.string().datetime(),
   targetWeekStart: z.string().datetime(),
   /** When set, only shifts for this client are copied. */
@@ -1707,6 +1825,78 @@ export const CopyWeekResponseSchema = z.object({
 });
 export type CopyWeekResponse = z.infer<typeof CopyWeekResponseSchema>;
 
+/* Shift teams ==============================================================
+ * A standing crew at a work site ("Front Beach Morning"). Scheduling
+ * filters its roster to a team's members so a manager building the week
+ * sees only the people who work that shift. Optional default start/end
+ * minutes prefill the create-shift dialog.
+ */
+
+export const ShiftTeamSchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema,
+  locationId: UuidSchema,
+  locationName: z.string().nullable(),
+  name: z.string(),
+  /** Wall-clock minutes since site-local midnight; null = no default. */
+  startMinute: z.number().int().min(0).max(1439).nullable(),
+  endMinute: z.number().int().min(0).max(1439).nullable(),
+  memberCount: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
+});
+export type ShiftTeam = z.infer<typeof ShiftTeamSchema>;
+
+export const ShiftTeamListResponseSchema = z.object({
+  teams: z.array(ShiftTeamSchema),
+});
+export type ShiftTeamListResponse = z.infer<typeof ShiftTeamListResponseSchema>;
+
+export const ShiftTeamCreateInputSchema = z.object({
+  clientId: UuidSchema,
+  locationId: UuidSchema,
+  name: z.string().min(1).max(80),
+  startMinute: z.number().int().min(0).max(1439).nullable().optional(),
+  endMinute: z.number().int().min(0).max(1439).nullable().optional(),
+});
+export type ShiftTeamCreateInput = z.infer<typeof ShiftTeamCreateInputSchema>;
+
+export const ShiftTeamUpdateInputSchema = z.object({
+  name: z.string().min(1).max(80).optional(),
+  startMinute: z.number().int().min(0).max(1439).nullable().optional(),
+  endMinute: z.number().int().min(0).max(1439).nullable().optional(),
+});
+export type ShiftTeamUpdateInput = z.infer<typeof ShiftTeamUpdateInputSchema>;
+
+export const ShiftTeamDetailResponseSchema = z.object({
+  team: ShiftTeamSchema,
+  members: z.array(
+    z.object({
+      associateId: UuidSchema,
+      firstName: z.string(),
+      lastName: z.string(),
+      email: z.string(),
+      /** False when the associate has no open assignment/approved
+       *  application at the team's location — membership likely stale. */
+      atLocation: z.boolean(),
+      /** False when their portal account is INVITED/DISABLED or absent.
+       *  Informational only — login state never gates scheduling. */
+      portalActive: z.boolean().optional(),
+    }),
+  ),
+});
+export type ShiftTeamDetailResponse = z.infer<typeof ShiftTeamDetailResponseSchema>;
+
+/** Response of the "assign to this site" quick action on a team member. */
+export const ShiftTeamAssignHereResponseSchema = z.object({
+  assignmentId: UuidSchema,
+});
+export type ShiftTeamAssignHereResponse = z.infer<typeof ShiftTeamAssignHereResponseSchema>;
+
+export const ShiftTeamMemberInputSchema = z.object({
+  associateId: UuidSchema,
+});
+export type ShiftTeamMemberInput = z.infer<typeof ShiftTeamMemberInputSchema>;
+
 /* Phase 53 — pivot week view + publish-week ===============================
  * Slim associate list for the row-axis of the people-x-days grid; and a
  * batch-publish endpoint so HR can flip a whole week of DRAFT shifts to
@@ -1723,12 +1913,51 @@ export type AssociateLite = z.infer<typeof AssociateLiteSchema>;
 
 export const AssociateListResponseSchema = z.object({
   associates: z.array(AssociateLiteSchema),
+  // True when the roster hit the server's page cap and rows were dropped.
+  // The scheduling grid uses this list as its ROW AXIS, so a silent cut
+  // means a manager scanning for unstaffed people reads an incomplete grid
+  // as complete. Optional so older clients keep parsing.
+  truncated: z.boolean().optional(),
 });
 export type AssociateListResponse = z.infer<typeof AssociateListResponseSchema>;
 
+/**
+ * Week-at-a-glance fit data for the scheduling grid: each associate's
+ * weekly availability windows plus the specific days blocked by approved
+ * time off or one-off "can't work" exceptions. Lets the grid shade cells
+ * BEFORE the manager drops a shift on someone who can't take it.
+ */
+export const AvailabilityOverviewResponseSchema = z.object({
+  associates: z.array(
+    z.object({
+      associateId: UuidSchema,
+      windows: z.array(
+        z.object({
+          dayOfWeek: z.number().int().min(0).max(6),
+          startMinute: z.number().int().min(0).max(1439),
+          endMinute: z.number().int().min(0).max(1440),
+        }),
+      ),
+      /** Calendar days (YYYY-MM-DD) vetoed by approved PTO or exceptions. */
+      blockedDays: z.array(z.string()),
+    }),
+  ),
+});
+export type AvailabilityOverviewResponse = z.infer<
+  typeof AvailabilityOverviewResponseSchema
+>;
+
 export const PublishWeekInputSchema = z.object({
-  /** ISO; server snaps to local Monday 00:00 of that week. */
+  /**
+   * Exact start instant of the window (inclusive). The CLIENT computes the
+   * displayed week's boundary — the server must not re-snap it: snapping to
+   * "local Monday midnight" on a UTC server published the UTC week, not the
+   * one on the admin's screen (late-Sunday-evening drafts silently skipped).
+   */
   weekStart: z.string().datetime(),
+  /** Exclusive end instant. Omitted = weekStart + 7×24h (pre-DST-aware
+   *  callers); the UI sends the real zone-aware boundary. */
+  weekEnd: z.string().datetime().optional(),
   /** When set, only DRAFT shifts for this client are published. */
   clientId: UuidSchema.optional(),
 });
@@ -1752,14 +1981,21 @@ export type PublishWeekSkip = z.infer<typeof PublishWeekSkipSchema>;
 export const PublishWeekResponseSchema = z.object({
   published: z.number().int().nonnegative(),
   skipped: z.array(PublishWeekSkipSchema),
+  /** True when more than the per-request cap of drafts matched — the rest
+   *  are still DRAFT; run publish again. Silent before, which quietly left
+   *  drafts unpublished on very large weeks. */
+  truncated: z.boolean().optional(),
 });
 export type PublishWeekResponse = z.infer<typeof PublishWeekResponseSchema>;
 
 /* Auto-schedule the week ================================================== */
 
 export const AutoScheduleWeekInputSchema = z.object({
-  /** ISO; server snaps to local Monday 00:00 of that week. */
+  /** Exact window start (inclusive) — same no-server-resnap contract as
+   *  PublishWeekInput; snapping on a UTC server acted on the wrong week. */
   weekStart: z.string().datetime(),
+  /** Exclusive end. Omitted = weekStart + 7×24h. */
+  weekEnd: z.string().datetime().optional(),
   /** When set, only fills OPEN shifts for this client. */
   clientId: UuidSchema.optional(),
 });
@@ -1892,6 +2128,12 @@ export const PayrollItemSchema = z.object({
   employerFuta: z.number().nonnegative(),
   employerSuta: z.number().nonnegative(),
   netPay: z.number(),
+  /** Pre-tax benefit deductions taken this period. Serialized so the amend
+   *  wizard can seed the REAL value — omitting it made every amendment
+   *  zero the deduction and silently overpay. Optional for back-compat. */
+  preTaxDeductions: z.number().nonnegative().optional(),
+  /** 401(k)/403(b) sub-bucket of preTaxDeductions. */
+  preTaxRetirement: z.number().nonnegative().optional(),
   // Wave 4.2 — post-tax deductions (garnishments etc.) taken this period.
   // Subtracted from net AFTER taxes; does not affect taxable wages.
   postTaxDeductions: z.number().nonnegative(),
@@ -2002,6 +2244,9 @@ export const PayrollRunCreateInputSchema = z
     /** Default hourly rate when an associate's shifts in the period have none. */
     defaultHourlyRate: z.number().nonnegative().optional(),
     notes: z.string().max(1000).optional(),
+    /** OFF_CYCLE = bonus/terminal-pay run: no time aggregation, paychecks
+     *  come entirely from add-on earning lines. Default REGULAR. */
+    kind: z.enum(['REGULAR', 'OFF_CYCLE']).optional(),
   })
   .refine((v) => v.periodEnd >= v.periodStart, {
     message: 'periodEnd must be on or after periodStart',
@@ -2017,6 +2262,9 @@ export const PayrollRunPreviewItemSchema = z.object({
   associateName: z.string(),
   hoursWorked: z.number().nonnegative(),
   hourlyRate: z.number().nonnegative(),
+  /** Where the rate came from — DEFAULT means the editable $15 fallback
+   *  because the associate has NO compensation record (flag it!). */
+  rateSource: z.enum(['OVERRIDE', 'COMP', 'DEFAULT', 'SALARY']).optional(),
   regularHours: z.number().nonnegative(),
   overtimeHours: z.number().nonnegative(),
   grossPay: z.number().nonnegative(),
@@ -2057,6 +2305,35 @@ export const PayrollItemListResponseSchema = z.object({
   items: z.array(PayrollItemSchema),
 });
 export type PayrollItemListResponse = z.infer<typeof PayrollItemListResponseSchema>;
+
+/**
+ * Authoritative year-to-date totals as of one paystub — every DISBURSED item
+ * of that stub's year up to and including it, summed in SQL.
+ *
+ * The client cannot compute this: GET /payroll/me/items returns only the
+ * most recent 50 stubs, so summing what's loaded silently understates YTD
+ * once an associate has more (a weekly payer passes 50 inside one year).
+ */
+export const PayrollItemYtdResponseSchema = z.object({
+  year: z.number().int(),
+  /** Paystubs summed into these totals — lets the UI show what it's based on. */
+  paystubCount: z.number().int().nonnegative(),
+  gross: z.number(),
+  federalWithholding: z.number(),
+  fica: z.number(),
+  medicare: z.number(),
+  stateWithholding: z.number(),
+  preTaxDeductions: z.number(),
+  postTaxDeductions: z.number(),
+  netPay: z.number(),
+  employerFica: z.number(),
+  employerMedicare: z.number(),
+  employerFuta: z.number(),
+  employerSuta: z.number(),
+  /** Earning kind → YTD amount, for the earnings table's YTD column. */
+  byKind: z.record(PayrollEarningKindSchema, z.number()),
+});
+export type PayrollItemYtdResponse = z.infer<typeof PayrollItemYtdResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Wave 1.1 — Pay schedules (QuickBooks Online Payroll parity)
@@ -2159,6 +2436,8 @@ export const PayrollExceptionKindSchema = z.enum([
   'TERMINATED_IN_RUN',   // WARNING  — terminated <= periodEnd but has hours
   'OT_SPIKE',            // INFO     — > 20 OT hours in this period
   'UNSUPPORTED_STATE',   // INFO     — state has no real SIT table; using fallback
+  'UNAPPROVED_TIME',     // WARNING  — unapproved hours will NOT be paid this run
+  'MISSING_COMP_RECORD', // WARNING  — no comp record; the default rate would apply
 ]);
 export type PayrollExceptionKind = z.infer<typeof PayrollExceptionKindSchema>;
 
@@ -2255,6 +2534,10 @@ export const PayrollConfigSchema = z.object({
   fedBracketsSingle: z.array(PayrollConfigBracketSchema),
   fedBracketsMfj: z.array(PayrollConfigBracketSchema),
   fedBracketsHoh: z.array(PayrollConfigBracketSchema),
+  /** When true, Disburse requires a second approver (not the run's
+   *  creator). Surfaced so the UI can disable the button instead of
+   *  letting the admin walk the full ceremony into a 409. */
+  requireSecondApproval: z.boolean().optional(),
   updatedAt: z.string().datetime(),
 });
 export type PayrollConfigBracket = z.infer<typeof PayrollConfigBracketSchema>;
@@ -2294,12 +2577,75 @@ export const DocumentStatusSchema = z.enum([
 ]);
 export type DocumentStatus = z.infer<typeof DocumentStatusSchema>;
 
+/* ----- I-9 document catalog ---------------------------------------------- *
+ * The federal acceptable-documents lists. Uploads used to land as generic
+ * "Photo ID" blobs, so Section 2 verification meant HR guessing which list
+ * an image.jpg belonged to. The associate now declares the specific
+ * document; the SERVER derives the list from this catalog (the client's
+ * claimed list is never trusted).
+ *
+ * Legacy uploads (before the catalog) carry NULLs everywhere and are never
+ * reclassified or invalidated — the submit gate has an explicit legacy
+ * pass-through for them.
+ * -------------------------------------------------------------------------- */
+
+export const I9DocListSchema = z.enum(['A', 'B', 'C']);
+export type I9DocList = z.infer<typeof I9DocListSchema>;
+
+export const DocSideSchema = z.enum(['FRONT', 'BACK']);
+export type DocSide = z.infer<typeof DocSideSchema>;
+
+export interface I9CatalogEntry {
+  title: string;
+  list: I9DocList;
+  /** The DocumentKind bucket the file stores under (keeps every existing
+   *  consumer — vault, E-Verify packet views, exports — working unchanged). */
+  kind: 'ID' | 'SSN_CARD' | 'I9_SUPPORTING';
+  /** Card-shaped documents get an optional front/back side tag at upload. */
+  card?: boolean;
+}
+
+export const I9_DOC_CATALOG: readonly I9CatalogEntry[] = [
+  // List A — identity AND employment authorization (sufficient alone).
+  { title: 'U.S. Passport or Passport Card', list: 'A', kind: 'ID', card: true },
+  { title: 'Permanent Resident Card (Green Card, Form I-551)', list: 'A', kind: 'ID', card: true },
+  { title: 'Foreign passport with I-551 stamp or work authorization', list: 'A', kind: 'ID' },
+  { title: 'Employment Authorization Document (Form I-766)', list: 'A', kind: 'ID', card: true },
+  // List B — identity only (must pair with a List C document).
+  { title: "Driver's license", list: 'B', kind: 'ID', card: true },
+  { title: 'State ID card', list: 'B', kind: 'ID', card: true },
+  { title: 'School ID card with photo', list: 'B', kind: 'ID', card: true },
+  { title: 'U.S. Military card or draft record', list: 'B', kind: 'ID', card: true },
+  // List C — employment authorization only.
+  { title: 'Social Security card (unrestricted)', list: 'C', kind: 'SSN_CARD', card: true },
+  { title: 'Birth certificate (original or certified copy)', list: 'C', kind: 'I9_SUPPORTING' },
+  { title: 'Native American tribal document', list: 'C', kind: 'I9_SUPPORTING' },
+];
+
+export function i9CatalogEntry(title: string): I9CatalogEntry | undefined {
+  return I9_DOC_CATALOG.find((e) => e.title === title);
+}
+
+/**
+ * Does a classified document set satisfy Form I-9? One List A document, OR
+ * at least one List B AND one List C. Unclassified (legacy) docs don't
+ * count here — callers apply the legacy pass-through separately.
+ */
+export function i9SetSatisfied(lists: Array<I9DocList | null | undefined>): boolean {
+  const has = (l: I9DocList) => lists.includes(l);
+  return has('A') || (has('B') && has('C'));
+}
+
 export const DocumentRecordSchema = z.object({
   id: UuidSchema,
   associateId: UuidSchema,
   associateName: z.string().nullable(),
   clientId: UuidSchema.nullable(),
   kind: DocumentKindSchema,
+  /** Federal catalog identity — null on legacy uploads + non-I-9 docs. */
+  i9DocTitle: z.string().nullable().optional(),
+  i9List: I9DocListSchema.nullable().optional(),
+  side: DocSideSchema.nullable().optional(),
   filename: z.string(),
   mimeType: z.string(),
   size: z.number().int().nonnegative(),
@@ -2320,6 +2666,10 @@ export type DocumentRecord = z.infer<typeof DocumentRecordSchema>;
 
 export const DocumentListResponseSchema = z.object({
   documents: z.array(DocumentRecordSchema),
+  /** Total matching rows — the list itself is capped at 200, so the UI
+   *  must say "showing 200 of N" instead of presenting a partial vault
+   *  as audit truth. Optional for back-compat. */
+  total: z.number().int().nonnegative().optional(),
 });
 export type DocumentListResponse = z.infer<typeof DocumentListResponseSchema>;
 
@@ -2327,6 +2677,63 @@ export const DocumentRejectInputSchema = z.object({
   reason: z.string().min(1).max(500),
 });
 export type DocumentRejectInput = z.infer<typeof DocumentRejectInputSchema>;
+
+/**
+ * The associate document vault — every DocumentRecord on file plus a
+ * compliance summary from each domain's ledger, so the profile's Documents
+ * tab can pair evidence with the decision it supports ("background PASSED,
+ * report on file") instead of showing a flat undated pile.
+ *
+ * Statuses are plain strings (not the domain enums) — the vault renders
+ * them; it is not the write path for any of these ledgers.
+ */
+export const DocumentVaultSummarySchema = z.object({
+  i9: z
+    .object({
+      section1CompletedAt: z.string().datetime().nullable(),
+      section2CompletedAt: z.string().datetime().nullable(),
+    })
+    .nullable(),
+  everify: z
+    .object({
+      status: z.string().nullable(),
+      caseNumber: z.string().nullable(),
+      closedAt: z.string().datetime().nullable(),
+    })
+    .nullable(),
+  /** Latest background check, or null if never screened. */
+  background: z
+    .object({
+      status: z.string(),
+      completedAt: z.string().datetime().nullable(),
+    })
+    .nullable(),
+  /** Latest drug test order + newest result recency (Walmart 60-day rule). */
+  drugTest: z
+    .object({
+      status: z.string().nullable(),
+      completedAt: z.string().datetime().nullable(),
+      lastResultAt: z.string().datetime().nullable(),
+      /** True when the newest DRUG_TEST_RESULT doc is inside the 60-day window. */
+      fresh: z.boolean(),
+    })
+    .nullable(),
+  j1: z
+    .object({
+      programStartDate: z.string(),
+      programEndDate: z.string(),
+      sponsorAgency: z.string(),
+    })
+    .nullable(),
+});
+export type DocumentVaultSummary = z.infer<typeof DocumentVaultSummarySchema>;
+
+export const DocumentVaultResponseSchema = z.object({
+  documents: z.array(DocumentRecordSchema),
+  total: z.number().int().nonnegative(),
+  summary: DocumentVaultSummarySchema,
+});
+export type DocumentVaultResponse = z.infer<typeof DocumentVaultResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Compliance — Phase 10 (I-9, Background, J-1)
@@ -2351,6 +2758,12 @@ export const I9VerificationSchema = z.object({
   section2VerifierEmail: z.string().email().nullable(),
   documentList: I9DocumentListSchema.nullable(),
   supportingDocIds: z.array(UuidSchema),
+  /** Application start date (YYYY-MM-DD) — anchors the Section 2
+   *  3-business-day deadline in the queue. */
+  startDate: z.string().nullable().optional(),
+  /** Work-authorization expiry (YYYY-MM-DD) — drives the reverification
+   *  filter for time-limited statuses. */
+  workAuthExpiresAt: z.string().nullable().optional(),
 });
 export type I9Verification = z.infer<typeof I9VerificationSchema>;
 
@@ -2394,6 +2807,9 @@ export const BackgroundCheckSchema = z.object({
   status: BgCheckStatusSchema,
   initiatedAt: z.string().datetime(),
   completedAt: z.string().datetime().nullable(),
+  /** BACKGROUND_CHECK_RESULT documents on file for this associate — a
+   *  finalized status with zero reports is a decision with no evidence. */
+  reportCount: z.number().int().nonnegative().optional(),
 });
 export type BackgroundCheck = z.infer<typeof BackgroundCheckSchema>;
 
@@ -2405,6 +2821,9 @@ export type BackgroundCheckListResponse = z.infer<typeof BackgroundCheckListResp
 export const BackgroundInitiateInputSchema = z.object({
   associateId: UuidSchema,
   provider: z.string().min(1).max(80).default('alto-stub'),
+  /** The provider's own reference (e.g. Checkr candidate/report id) so a
+   *  check ordered in an external portal is traceable from here. */
+  externalId: z.string().max(120).optional(),
 });
 export type BackgroundInitiateInput = z.infer<typeof BackgroundInitiateInputSchema>;
 
@@ -2413,6 +2832,158 @@ export const BackgroundUpdateInputSchema = z.object({
   externalId: z.string().max(120).optional(),
 });
 export type BackgroundUpdateInput = z.infer<typeof BackgroundUpdateInputSchema>;
+
+/**
+ * Bulk Checkr ordering — associates who have never been screened, shaped for
+ * the provider's bulk-invitation CSV (email required; first name and phone
+ * optional — Checkr collects DOB/SSN from the candidate directly, so no
+ * heavy PII leaves this system).
+ */
+export const BackgroundPendingRowSchema = z.object({
+  associateId: UuidSchema,
+  firstName: z.string(),
+  lastName: z.string(),
+  email: z.string(),
+  phone: z.string().nullable(),
+  /** Same derivation as DirectoryStatus (defined inline — that schema is
+   *  declared later in this module): APPROVED application ⇒ ACTIVE,
+   *  in-flight ⇒ PENDING (onboarding), otherwise INACTIVE. */
+  status: z.enum(['ACTIVE', 'PENDING', 'INACTIVE']),
+});
+export type BackgroundPendingRow = z.infer<typeof BackgroundPendingRowSchema>;
+
+export const BackgroundPendingResponseSchema = z.object({
+  rows: z.array(BackgroundPendingRowSchema),
+  /** True when more than the 500-row cap matched — the CSV is partial. */
+  truncated: z.boolean(),
+});
+export type BackgroundPendingResponse = z.infer<typeof BackgroundPendingResponseSchema>;
+
+/** Recorded AFTER the CSV upload to the provider succeeds — downloading a
+ *  file is not ordering, so the download itself marks nothing. */
+export const BackgroundBulkInitiateInputSchema = z.object({
+  associateIds: z.array(UuidSchema).min(1).max(500),
+  provider: z.string().min(1).max(80).default('checkr'),
+});
+export type BackgroundBulkInitiateInput = z.infer<typeof BackgroundBulkInitiateInputSchema>;
+
+export const BackgroundBulkInitiateResponseSchema = z.object({
+  created: z.number().int().nonnegative(),
+  /** Already had a check by the time this ran (raced with another admin). */
+  skipped: z.number().int().nonnegative(),
+});
+export type BackgroundBulkInitiateResponse = z.infer<typeof BackgroundBulkInitiateResponseSchema>;
+
+/** An HR-uploaded provider report on file for the check's associate. */
+export const BackgroundReportDocSchema = z.object({
+  id: UuidSchema,
+  kind: z.string(),
+  filename: z.string(),
+  mimeType: z.string(),
+  fileAvailable: z.boolean(),
+});
+export type BackgroundReportDoc = z.infer<typeof BackgroundReportDocSchema>;
+
+/**
+ * Drawer payload: the check plus its associate's report documents — the same
+ * evidence-next-to-decision aggregation the E-Verify case detail does with
+ * closure packets. Reports attach to the ASSOCIATE (by document kind), so an
+ * associate re-screened twice shares one report pool across both checks.
+ */
+export const BackgroundCheckDetailSchema = z.object({
+  check: BackgroundCheckSchema,
+  reports: z.array(BackgroundReportDocSchema),
+});
+export type BackgroundCheckDetail = z.infer<typeof BackgroundCheckDetailSchema>;
+
+/* ----- Drug tests --------------------------------------------------------- *
+ * Mirrors the background-check surface. The difference is recurrence: the
+ * Walmart SOW requires a result within 60 DAYS, so "needs a test" means the
+ * last DRUG_TEST_RESULT document is stale (or absent), not "never had a row".
+ * -------------------------------------------------------------------------- */
+
+export const DrugTestStatusSchema = z.enum([
+  'INITIATED',
+  'IN_PROGRESS',
+  'PASSED',
+  'FAILED',
+  'NEEDS_REVIEW',
+]);
+export type DrugTestStatus = z.infer<typeof DrugTestStatusSchema>;
+
+export const DrugTestSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string(),
+  clientId: UuidSchema.nullable(),
+  provider: z.string(),
+  externalId: z.string().nullable(),
+  status: DrugTestStatusSchema,
+  initiatedAt: z.string().datetime(),
+  completedAt: z.string().datetime().nullable(),
+  /** DRUG_TEST_RESULT documents on file for this associate. */
+  reportCount: z.number().int().nonnegative().optional(),
+});
+export type DrugTest = z.infer<typeof DrugTestSchema>;
+
+export const DrugTestListResponseSchema = z.object({
+  tests: z.array(DrugTestSchema),
+});
+export type DrugTestListResponse = z.infer<typeof DrugTestListResponseSchema>;
+
+export const DrugTestInitiateInputSchema = z.object({
+  associateId: UuidSchema,
+  provider: z.string().min(1).max(80).default('checkr'),
+  externalId: z.string().max(120).optional(),
+});
+export type DrugTestInitiateInput = z.infer<typeof DrugTestInitiateInputSchema>;
+
+export const DrugTestUpdateInputSchema = z.object({
+  status: DrugTestStatusSchema,
+  externalId: z.string().max(120).optional(),
+});
+export type DrugTestUpdateInput = z.infer<typeof DrugTestUpdateInputSchema>;
+
+export const DrugTestPendingRowSchema = z.object({
+  associateId: UuidSchema,
+  firstName: z.string(),
+  lastName: z.string(),
+  email: z.string(),
+  phone: z.string().nullable(),
+  /** Same derivation as DirectoryStatus: APPROVED application ⇒ ACTIVE,
+   *  in-flight ⇒ PENDING (onboarding), otherwise INACTIVE. */
+  status: z.enum(['ACTIVE', 'PENDING', 'INACTIVE']),
+  /** When their newest result document was filed — null means never tested;
+   *  a date here means the result aged past the 60-day window. */
+  lastResultAt: z.string().datetime().nullable(),
+});
+export type DrugTestPendingRow = z.infer<typeof DrugTestPendingRowSchema>;
+
+export const DrugTestPendingResponseSchema = z.object({
+  rows: z.array(DrugTestPendingRowSchema),
+  truncated: z.boolean(),
+});
+export type DrugTestPendingResponse = z.infer<typeof DrugTestPendingResponseSchema>;
+
+export const DrugTestBulkInitiateInputSchema = z.object({
+  associateIds: z.array(UuidSchema).min(1).max(500),
+  provider: z.string().min(1).max(80).default('checkr'),
+});
+export type DrugTestBulkInitiateInput = z.infer<typeof DrugTestBulkInitiateInputSchema>;
+
+export const DrugTestBulkInitiateResponseSchema = z.object({
+  created: z.number().int().nonnegative(),
+  /** Gained an open order by the time this ran (raced with another admin). */
+  skipped: z.number().int().nonnegative(),
+});
+export type DrugTestBulkInitiateResponse = z.infer<typeof DrugTestBulkInitiateResponseSchema>;
+
+export const DrugTestDetailSchema = z.object({
+  test: DrugTestSchema,
+  /** Same doc shape as background reports — both render in the doc viewer. */
+  reports: z.array(BackgroundReportDocSchema),
+});
+export type DrugTestDetail = z.infer<typeof DrugTestDetailSchema>;
 
 export const J1ProfileSchema = z.object({
   id: UuidSchema,
@@ -2498,7 +3069,17 @@ export type DashboardKPIs = z.infer<typeof DashboardKPIsSchema>;
 export const NotificationChannelSchema = z.enum(['SMS', 'PUSH', 'EMAIL', 'IN_APP']);
 export type NotificationChannel = z.infer<typeof NotificationChannelSchema>;
 
-export const NotificationStatusSchema = z.enum(['QUEUED', 'SENT', 'FAILED', 'READ']);
+export const NotificationStatusSchema = z.enum([
+  'QUEUED',
+  'SENT',
+  'FAILED',
+  'READ',
+  // EMAIL only — async statuses driven by Resend's event webhook and the
+  // do-not-email suppression list.
+  'BOUNCED',
+  'COMPLAINED',
+  'SUPPRESSED',
+]);
 export type NotificationStatus = z.infer<typeof NotificationStatusSchema>;
 
 export const NotificationSchema = z.object({
@@ -2512,6 +3093,9 @@ export const NotificationSchema = z.object({
   body: z.string(),
   category: z.string().nullable(),
   externalRef: z.string().nullable(),
+  // Resend's message id for real EMAIL sends; what the events webhook
+  // matches bounces/complaints against. Optional for back-compat.
+  providerMessageId: z.string().nullable().optional(),
   failureReason: z.string().nullable(),
   sentAt: z.string().datetime().nullable(),
   readAt: z.string().datetime().nullable(),
@@ -2527,6 +3111,10 @@ export type Notification = z.infer<typeof NotificationSchema>;
 
 export const NotificationListResponseSchema = z.object({
   notifications: z.array(NotificationSchema),
+  /** Total matching rows. The inbox is capped per request, and without
+   *  this the bell silently stopped at the cap — notification N+1 was
+   *  unreachable with no indication it existed. Optional for back-compat. */
+  total: z.number().int().nonnegative().optional(),
 });
 export type NotificationListResponse = z.infer<typeof NotificationListResponseSchema>;
 
@@ -2562,6 +3150,25 @@ export const NotificationBroadcastInputSchema = z.object({
   category: z.string().min(1).max(80).optional(),
 });
 export type NotificationBroadcastInput = z.infer<typeof NotificationBroadcastInputSchema>;
+
+/* ----- Email suppression list (do-not-email) --------------------------- */
+
+export const EmailSuppressionReasonSchema = z.enum(['BOUNCED', 'COMPLAINED', 'MANUAL']);
+export type EmailSuppressionReason = z.infer<typeof EmailSuppressionReasonSchema>;
+
+export const EmailSuppressionSchema = z.object({
+  id: UuidSchema,
+  email: z.string().email(),
+  reason: EmailSuppressionReasonSchema,
+  notes: z.string().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type EmailSuppression = z.infer<typeof EmailSuppressionSchema>;
+
+export const EmailSuppressionListResponseSchema = z.object({
+  suppressions: z.array(EmailSuppressionSchema),
+});
+export type EmailSuppressionListResponse = z.infer<typeof EmailSuppressionListResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Performance — Phase 13
@@ -2678,8 +3285,8 @@ export const CandidateCreateInputSchema = z.object({
   position: z.string().max(120).optional(),
   source: z.string().max(80).optional(),
   notes: z.string().max(2000).optional(),
-  resumeUrl: z.string().url().max(2000).optional(),
-  linkedinUrl: z.string().url().max(2000).optional(),
+  resumeUrl: httpUrl(2000).optional(),
+  linkedinUrl: httpUrl(2000).optional(),
 });
 export type CandidateCreateInput = z.infer<typeof CandidateCreateInputSchema>;
 
@@ -2695,8 +3302,8 @@ export const CareersApplyInputSchema = z.object({
   email: z.string().email(),
   phone: z.string().max(40).optional().nullable(),
   notes: z.string().max(4000).optional().nullable(),
-  resumeUrl: z.string().url().max(2000).optional().nullable(),
-  linkedinUrl: z.string().url().max(2000).optional().nullable(),
+  resumeUrl: httpUrl(2000).optional().nullable(),
+  linkedinUrl: httpUrl(2000).optional().nullable(),
   source: z.string().max(80).optional().nullable(),
   // Honeypot: must be empty/missing for legitimate submissions.
   website: z.string().max(500).optional().nullable(),
@@ -2839,6 +3446,8 @@ export const ActiveDashboardEntrySchema = z.object({
   geofenceOk: z.boolean().nullable(),
   clockInLat: z.number().nullable(),
   clockInLng: z.number().nullable(),
+  /** IANA zone of the entry's site, so punch times render on the site's wall clock. */
+  locationTimezone: z.string().nullable().optional(),
 });
 export type ActiveDashboardEntry = z.infer<typeof ActiveDashboardEntrySchema>;
 
@@ -3137,6 +3746,13 @@ export const NOTIFICATION_CATEGORIES = [
     mandatory: false,
   },
   {
+    key: 'broadcast',
+    label: 'Company announcements',
+    description:
+      'Broadcast messages from HR. Muting this (or using the unsubscribe link in an announcement email) stops the emails; the in-app copy still arrives.',
+    mandatory: false,
+  },
+  {
     key: 'discipline',
     label: 'Disciplinary actions',
     description: 'Always on — formal HR record required by policy.',
@@ -3310,11 +3926,16 @@ export const TimeOffRequestSchema = z.object({
   decidedAt: z.string().datetime().nullable(),
   cancelledAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
+  /** Admin list only: the associate's current balance for this category,
+   *  so approvers see over-draw BEFORE clicking approve. */
+  balanceMinutes: z.number().int().nullable().optional(),
 });
 export type TimeOffRequest = z.infer<typeof TimeOffRequestSchema>;
 
 export const TimeOffRequestListResponseSchema = z.object({
   requests: z.array(TimeOffRequestSchema),
+  /** True row count before the server cap — lets the UI say "200 of N". */
+  total: z.number().int().nonnegative().optional(),
 });
 export type TimeOffRequestListResponse = z.infer<typeof TimeOffRequestListResponseSchema>;
 
@@ -3646,6 +4267,167 @@ export const EVerifyStatusSchema = z.enum([
 ]);
 export type EVerifyStatus = z.infer<typeof EVerifyStatusSchema>;
 
+/* -------------------------------------------------------------------------- *
+ *  E-Verify directorate
+ *
+ *  Staging surface for the federal E-Verify portal: everything the government
+ *  form asks for, in one payload, plus a record of the case outcome. HR was
+ *  spending ~20 minutes per case gathering these fields off five screens.
+ *
+ *  Defined after EVerifyStatusSchema because it references it — module-level
+ *  consts are in the temporal dead zone until their declaration runs.
+ * -------------------------------------------------------------------------- */
+
+export const I9CitizenshipStatusSchema = z.enum([
+  'US_CITIZEN',
+  'NON_CITIZEN_NATIONAL',
+  'LAWFUL_PERMANENT_RESIDENT',
+  'ALIEN_AUTHORIZED_TO_WORK',
+]);
+export type I9CitizenshipStatus = z.infer<typeof I9CitizenshipStatusSchema>;
+
+export const EVerifyBlockerSchema = z.enum([
+  'NO_I9',
+  'SECTION1_INCOMPLETE',
+  'SECTION2_INCOMPLETE',
+  'NO_CITIZENSHIP',
+  'NO_SSN',
+  'NO_DOB',
+  'NO_HIRE_DATE',
+]);
+export type EVerifyBlocker = z.infer<typeof EVerifyBlockerSchema>;
+
+/** One row of the directory. SSN is last-4 only here — the full number is
+ *  returned solely by the per-associate detail endpoint, which is audited. */
+export const EVerifyRosterRowSchema = z.object({
+  associateId: UuidSchema,
+  associateName: z.string(),
+  associateEmail: z.string(),
+  hireDate: z.string().nullable(),
+  ssnLast4: z.string().nullable(),
+  caseNumber: z.string().nullable(),
+  status: EVerifyStatusSchema.nullable(),
+  caseOpenedAt: z.string().datetime().nullable(),
+  closedAt: z.string().datetime().nullable(),
+  /** 3 business days after the hire date — the federal filing deadline. */
+  dueBy: z.string().nullable(),
+  /** Past the deadline with no case opened. */
+  overdue: z.boolean(),
+  blockers: z.array(EVerifyBlockerSchema),
+  ready: z.boolean(),
+});
+export type EVerifyRosterRow = z.infer<typeof EVerifyRosterRowSchema>;
+
+export const EVerifyRosterResponseSchema = z.object({
+  rows: z.array(EVerifyRosterRowSchema),
+  counts: z.object({
+    total: z.number().int().nonnegative(),
+    authorized: z.number().int().nonnegative(),
+    pending: z.number().int().nonnegative(),
+    nonconfirmation: z.number().int().nonnegative(),
+    notRun: z.number().int().nonnegative(),
+    overdue: z.number().int().nonnegative(),
+    blocked: z.number().int().nonnegative(),
+  }),
+  truncated: z.boolean(),
+});
+export type EVerifyRosterResponse = z.infer<typeof EVerifyRosterResponseSchema>;
+
+/** An identity document attached to the I-9, for the Section 2 panel. */
+export const EVerifyDocumentSchema = z.object({
+  id: UuidSchema,
+  kind: z.string(),
+  filename: z.string(),
+  mimeType: z.string(),
+  side: z.enum(['FRONT', 'BACK']).nullable(),
+  /** Federal catalog identity — null on records uploaded before the
+   *  catalog existed (never backfilled). */
+  i9DocTitle: z.string().nullable().optional(),
+  i9List: I9DocListSchema.nullable().optional(),
+  fileAvailable: z.boolean(),
+});
+export type EVerifyDocument = z.infer<typeof EVerifyDocumentSchema>;
+
+/**
+ * The aggregation payload — the whole point of the feature. Field order
+ * mirrors the federal "Enter Form I-9 Information" screens so a verifier
+ * reads straight down one column instead of hunting across the product.
+ *
+ * Carries a FULL SSN. Returned only to manage:compliance holders and audited
+ * on every read.
+ */
+export const EVerifyCaseDetailSchema = z.object({
+  associateId: UuidSchema,
+  // --- Section 1: employee information and attestation ---
+  lastName: z.string(),
+  firstName: z.string(),
+  middleInitial: z.string().nullable(),
+  otherLastNames: z.array(z.string()),
+  dob: z.string().nullable(),
+  ssn: z.string().nullable(),
+  email: z.string().nullable(),
+  citizenshipStatus: I9CitizenshipStatusSchema.nullable(),
+  alienRegistrationNumber: z.string().nullable(),
+  workAuthExpiresAt: z.string().nullable(),
+  // --- Section 2: employer review and verification ---
+  documentList: I9DocumentListSchema.nullable(),
+  documents: z.array(EVerifyDocumentSchema),
+  /**
+   * The case packet E-Verify hands back once a case is closed — HR downloads
+   * it from the federal portal and uploads it here. Stored as
+   * I9_VERIFICATION_RESULT documents; kept separate from `documents` (the
+   * associate's identity papers) because they answer different questions:
+   * one is what was inspected, the other is what the government returned.
+   */
+  packets: z.array(EVerifyDocumentSchema),
+  section1CompletedAt: z.string().datetime().nullable(),
+  section2CompletedAt: z.string().datetime().nullable(),
+  section2VerifierEmail: z.string().nullable(),
+  // --- Case state ---
+  hireDate: z.string().nullable(),
+  dueBy: z.string().nullable(),
+  overdue: z.boolean(),
+  caseNumber: z.string().nullable(),
+  status: EVerifyStatusSchema.nullable(),
+  caseOpenedAt: z.string().datetime().nullable(),
+  closedAt: z.string().datetime().nullable(),
+  blockers: z.array(EVerifyBlockerSchema),
+  ready: z.boolean(),
+});
+export type EVerifyCaseDetail = z.infer<typeof EVerifyCaseDetailSchema>;
+
+export const EVerifyCaseInputSchema = z
+  .object({
+    caseNumber: z.string().trim().min(1).max(60).nullable().optional(),
+    status: EVerifyStatusSchema.nullable().optional(),
+    caseOpenedAt: z.string().datetime().nullable().optional(),
+    closedAt: z.string().datetime().nullable().optional(),
+  })
+  .refine(
+    (v) =>
+      // A closed case with no number is unusable: the case number is the only
+      // handle back into the federal portal if the outcome is ever queried.
+      !v.closedAt || (v.caseNumber !== undefined && v.caseNumber !== null),
+    { message: 'caseNumber is required when closing a case', path: ['caseNumber'] },
+  )
+  .refine(
+    (v) =>
+      // Same reasoning for a terminal outcome recorded without a number.
+      !v.status ||
+      v.status === 'PENDING' ||
+      (v.caseNumber !== undefined && v.caseNumber !== null),
+    { message: 'caseNumber is required to record an outcome', path: ['caseNumber'] },
+  );
+export type EVerifyCaseInput = z.infer<typeof EVerifyCaseInputSchema>;
+
+/** Narrow on purpose: this screen labels an identity, it doesn't rewrite one.
+ *  Name, DOB and SSN stay owned by onboarding. */
+export const EVerifyIdentityInputSchema = z.object({
+  middleInitial: z.string().trim().max(1).nullable().optional(),
+  otherLastNames: z.array(z.string().trim().min(1).max(80)).max(10).optional(),
+});
+export type EVerifyIdentityInput = z.infer<typeof EVerifyIdentityInputSchema>;
+
 export const ScorecardSeveritySchema = z.enum(['ok', 'warn', 'critical']);
 export type ScorecardSeverity = z.infer<typeof ScorecardSeveritySchema>;
 
@@ -3916,6 +4698,10 @@ export const ORG_LOGO_ALLOWED_TYPES = [
 ] as const;
 export type OrgLogoContentType = (typeof ORG_LOGO_ALLOWED_TYPES)[number];
 
+// Org-enforced MFA policy. Mirrors the Prisma MfaRequirement enum; the
+// role mapping for ADMINS lives in roles.ts (isMfaAdminRole).
+export const MfaRequirementSchema = z.enum(['OFF', 'ADMINS', 'ALL']);
+
 export const OrgBrandingSchema = z.object({
   orgName: z.string().min(1).max(120),
   senderName: z.string().min(1).max(120).nullable(),
@@ -3932,6 +4718,9 @@ export const OrgBrandingSchema = z.object({
   // the right content-type). Null when no logo uploaded.
   logoUrl: z.string().nullable(),
   logoUpdatedAt: z.string().datetime().nullable(),
+  // Security — org-enforced MFA. Not branding, but it lives on the same
+  // OrgSetting singleton and rides the same GET/PATCH surface.
+  mfaRequirement: MfaRequirementSchema,
   updatedAt: z.string().datetime(),
 });
 export type OrgBranding = z.infer<typeof OrgBrandingSchema>;
@@ -3953,6 +4742,7 @@ export const UpdateOrgBrandingInputSchema = z
       .regex(HEX_COLOR_REGEX, 'Must be a #RRGGBB hex colour.')
       .nullable()
       .optional(),
+    mfaRequirement: MfaRequirementSchema.optional(),
   })
   .strict();
 export type UpdateOrgBrandingInput = z.infer<typeof UpdateOrgBrandingInputSchema>;
@@ -4129,4 +4919,71 @@ export const PushPublicKeyResponseSchema = z.object({
   publicKey: z.string(),
 });
 export type PushPublicKeyResponse = z.infer<typeof PushPublicKeyResponseSchema>;
+
+/* ===== Bulk associate CSV import (client onboarding / migration) ========= */
+
+/** One parsed + normalized CSV row. Nullable fields were absent/blank in
+ *  the file. clientId is the RESOLVED id (clientName → id lookup done
+ *  server-side); clientName echoes what the file said for display. */
+export const CsvImportRowDataSchema = z.object({
+  firstName: z.string(),
+  lastName: z.string(),
+  email: z.string(),
+  phone: z.string().nullable(),
+  hireDate: z.string().nullable(), // YYYY-MM-DD
+  clientId: z.string().nullable(),
+  clientName: z.string().nullable(),
+  position: z.string().nullable(),
+});
+export type CsvImportRowData = z.infer<typeof CsvImportRowDataSchema>;
+
+export const CsvImportPreviewRowSchema = z.object({
+  /** 1-based physical line in the uploaded file where this row starts
+   *  (the header is line 1, so the first data row is usually line 2). */
+  line: z.number().int().positive(),
+  data: CsvImportRowDataSchema,
+  /** Empty = importable. Human-readable, field-prefixed messages. */
+  errors: z.array(z.string()),
+});
+export type CsvImportPreviewRow = z.infer<typeof CsvImportPreviewRowSchema>;
+
+export const CsvImportPreviewResponseSchema = z.object({
+  rows: z.array(CsvImportPreviewRowSchema),
+  summary: z.object({
+    total: z.number().int().nonnegative(),
+    valid: z.number().int().nonnegative(),
+    invalid: z.number().int().nonnegative(),
+    /** Rows flagged because the email already exists (associate/user) or
+     *  repeats an earlier line in the same file. Subset of `invalid`. */
+    duplicateEmails: z.number().int().nonnegative(),
+  }),
+});
+export type CsvImportPreviewResponse = z.infer<typeof CsvImportPreviewResponseSchema>;
+
+/** 'create' = silent migration (Associate + Application rows, no emails).
+ *  'invite' = additionally mint an INVITED user + send the invite email. */
+export const CsvImportModeSchema = z.enum(['create', 'invite']);
+export type CsvImportMode = z.infer<typeof CsvImportModeSchema>;
+
+export const CsvImportCommitRowSchema = z.object({
+  line: z.number().int().positive(),
+  email: z.string().nullable(),
+  status: z.enum(['created', 'invited', 'skipped']),
+  /** Set when status = skipped: 'already_exists', 'duplicate_in_file',
+   *  'invalid: …', or a runtime failure code/message. */
+  reason: z.string().nullable(),
+});
+export type CsvImportCommitRow = z.infer<typeof CsvImportCommitRowSchema>;
+
+export const CsvImportCommitResponseSchema = z.object({
+  mode: CsvImportModeSchema,
+  results: z.array(CsvImportCommitRowSchema),
+  summary: z.object({
+    total: z.number().int().nonnegative(),
+    created: z.number().int().nonnegative(),
+    invited: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+  }),
+});
+export type CsvImportCommitResponse = z.infer<typeof CsvImportCommitResponseSchema>;
 

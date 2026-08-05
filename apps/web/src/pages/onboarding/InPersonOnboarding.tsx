@@ -6,7 +6,9 @@ import {
   Camera,
   Check,
   ChevronLeft,
+  Copy,
   FileText,
+  LogIn,
   Upload,
   UserCheck,
 } from 'lucide-react';
@@ -112,6 +114,9 @@ export function InPersonOnboarding() {
   const [showCamera, setShowCamera] = useState(false);
   const [finishingDocs, setFinishingDocs] = useState(false);
   const [approveOpen, setApproveOpen] = useState(false);
+  // Set when resend-invite 409s because the associate already accepted —
+  // switches the hand-off card from "copy invite link" to "have them sign in".
+  const [alreadyAccepted, setAlreadyAccepted] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!applicationId) return;
@@ -134,10 +139,10 @@ export function InPersonOnboarding() {
     setUploading(true);
     try {
       await uploadAdminDocument(file, kind, detail.associateId);
-      toast.success(`${file.name} uploaded`);
+      toast.success(`Uploaded ${file.name}.`);
       await refresh();
     } catch (err) {
-      toast.error('Upload failed', {
+      toast.error('Upload failed.', {
         description: err instanceof Error ? err.message : undefined,
       });
     } finally {
@@ -163,12 +168,38 @@ export function InPersonOnboarding() {
       const res = await resendInvite(detail.id);
       if (res.inviteUrl) {
         await navigator.clipboard.writeText(res.inviteUrl).catch(() => {});
-        toast.success('Invite link copied to clipboard');
+        toast.success('Invite link copied to clipboard.');
       } else {
-        toast.success('Fresh invite sent to associate');
+        toast.success('Fresh invite sent to the associate.');
       }
+    } catch (err) {
+      // 409 user_already_active — the invite can't be reissued once accepted.
+      // Not an error from the workflow's point of view: switch the hand-off
+      // card to the "sign in" panel instead of dead-ending on a toast.
+      if (
+        err instanceof ApiError &&
+        (err.status === 409 || err.code === 'user_already_active')
+      ) {
+        setAlreadyAccepted(true);
+        return;
+      }
+      toast.error('Could not resend the invite.', {
+        description:
+          err instanceof ApiError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : undefined,
+      });
+    }
+  };
+
+  const copyLoginUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.origin);
+      toast.success('Login URL copied to clipboard.');
     } catch {
-      toast.error('Could not resend invite');
+      toast.error('Could not copy — select the URL manually.');
     }
   };
 
@@ -177,10 +208,10 @@ export function InPersonOnboarding() {
     setFinishingDocs(true);
     try {
       await finishDocumentUpload(applicationId);
-      toast.success('Documents marked submitted');
+      toast.success('Documents marked as submitted.');
       await refresh();
     } catch (err) {
-      toast.error('Could not mark complete', {
+      toast.error('Could not mark documents complete.', {
         description: err instanceof ApiError ? err.message : undefined,
       });
     } finally {
@@ -262,12 +293,12 @@ export function InPersonOnboarding() {
         <Card>
           <CardContent className="pt-5 flex items-center justify-between gap-4 flex-wrap">
             <div>
-              <div className="text-[10px] uppercase tracking-widest text-silver/80">
+              <div className="text-2xs uppercase tracking-widest text-silver/80">
                 Application status
               </div>
               <div className="mt-1 flex items-center gap-2">
                 <Badge variant={statusVariant(detail.status)}>
-                  {detail.status}
+                  {STATUS_LABELS[detail.status] ?? detail.status}
                 </Badge>
                 <span className="text-sm text-silver tabular-nums">
                   Checklist {detail.percentComplete}%
@@ -366,7 +397,7 @@ export function InPersonOnboarding() {
                           {d.filename}
                         </div>
                         <div className="text-xs text-silver/80">
-                          {d.kind.replace(/_/g, ' ')}
+                          {ID_KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' ')}
                         </div>
                       </div>
                       <Badge variant="success" className="shrink-0">
@@ -423,9 +454,31 @@ export function InPersonOnboarding() {
                   </li>
                 ))}
               </ul>
-              <Button variant="secondary" onClick={handleResendInvite}>
-                Copy fresh invite link
-              </Button>
+              {alreadyAccepted ? (
+                <div className="rounded-md border border-navy-secondary bg-navy-secondary/40 p-4 space-y-3">
+                  <div className="flex items-center gap-2 text-white font-medium">
+                    <LogIn className="h-4 w-4 text-gold shrink-0" />
+                    They already have an account — have them sign in
+                  </div>
+                  <p className="text-sm text-silver">
+                    The invite link can't be reissued once accepted. Open the
+                    login page on this device and let{' '}
+                    {detail.associateName.split(' ')[0] ?? 'the associate'} sign
+                    in with their own credentials.
+                  </p>
+                  <div className="text-2xl font-semibold text-gold font-mono break-all select-all">
+                    {window.location.origin}
+                  </div>
+                  <Button variant="secondary" onClick={copyLoginUrl}>
+                    <Copy className="h-4 w-4" />
+                    Copy login URL
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="secondary" onClick={handleResendInvite}>
+                  Copy fresh invite link
+                </Button>
+              )}
             </CardContent>
           </Card>
         )}
@@ -496,7 +549,7 @@ export function InPersonOnboarding() {
             setApproveOpen(false);
             navigate(`/onboarding/applications/${detail.id}`, { replace: true });
           } catch (err) {
-            toast.error('Approval failed', {
+            toast.error('Approval failed.', {
               description: err instanceof ApiError ? err.message : undefined,
             });
           }
@@ -505,6 +558,14 @@ export function InPersonOnboarding() {
     </div>
   );
 }
+
+const STATUS_LABELS: Record<string, string> = {
+  DRAFT: 'Draft',
+  SUBMITTED: 'Submitted',
+  IN_REVIEW: 'In review',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+};
 
 function statusVariant(
   s: string,

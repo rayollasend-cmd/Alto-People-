@@ -111,6 +111,45 @@ await rasterizeKioskIcon('kiosk-apple-touch-icon.png', 180);
 // legacy-browser fallback.
 await rasterizeFavicon('favicon-32.png', 32);
 
+// ---- Maskable icons -------------------------------------------------------
+// Android's adaptive-icon mask crops to a ~40%-radius safe zone. Reusing
+// the full-bleed mark for purpose:"maskable" clipped the compass rim on
+// every Android home screen. These render the mark at 60% of the canvas,
+// centered on solid brand navy, so any mask shape keeps the whole mark.
+async function rasterizeMaskable(outPngName, size, { kioskBadge = false } = {}) {
+  const inner = Math.round(size * 0.6);
+  let mark = await sharp(LOGO)
+    .resize(inner, inner, { fit: 'cover', position: 'center' })
+    .png()
+    .toBuffer();
+  if (kioskBadge) {
+    mark = await sharp(mark)
+      .composite([{ input: Buffer.from(clockBadgeSvg(inner)), top: 0, left: 0 }])
+      .png()
+      .toBuffer();
+  }
+  const png = await sharp({
+    create: {
+      width: size,
+      height: size,
+      channels: 4,
+      background: { r: 11, g: 24, b: 50, alpha: 1 }, // #0B1832
+    },
+  })
+    .composite([
+      { input: mark, top: Math.round((size - inner) / 2), left: Math.round((size - inner) / 2) },
+    ])
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+  await writeFile(path.join(PUBLIC, outPngName), png);
+  console.log(`[pwa-icons] wrote ${outPngName} (${size}x${size}, ${png.length} bytes, maskable)`);
+}
+
+await rasterizeMaskable('icon-maskable-192.png', 192);
+await rasterizeMaskable('icon-maskable-512.png', 512);
+await rasterizeMaskable('kiosk-icon-maskable-192.png', 192, { kioskBadge: true });
+await rasterizeMaskable('kiosk-icon-maskable-512.png', 512, { kioskBadge: true });
+
 // ---- Screenshots for the richer PWA install dialog -----------------------
 // Chrome's "richer install UI" needs at least one screenshot per form factor.
 // We composite the logo onto a navy backdrop + product name at the two

@@ -89,7 +89,7 @@ export function WhatsNew() {
       className="fixed bottom-20 right-4 z-40 w-80 max-w-[calc(100vw-2rem)] rounded-lg border border-gold/40 bg-navy elev-2 p-4 animate-fade-in md:bottom-6"
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-gold">
+        <div className="flex items-center gap-1.5 text-2xs uppercase tracking-widest text-gold">
           <Sparkles className="h-3 w-3" aria-hidden="true" />
           {entry.title}
         </div>

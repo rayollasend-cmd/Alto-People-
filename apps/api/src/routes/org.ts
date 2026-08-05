@@ -20,13 +20,19 @@ import {
   type JobProfile,
   type ShiftPosition,
 } from '@alto-people/shared';
+import { csvCell as sharedCsvCell } from '@alto-people/shared';
+import { toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { piiRevealLimiter, bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { asOf, recordChange } from '../lib/associateHistory.js';
+import { eraseAssociate } from '../lib/erasure.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
+import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { decryptString } from '../lib/crypto.js';
+import { maskRoutingNumber, readRoutingNumber } from '../lib/payoutMethod.js';
 import { z } from 'zod';
 import { hasCapability } from '@alto-people/shared';
 
@@ -684,6 +690,27 @@ orgRouter.put(
       costCenterId: updated.costCenterId,
       jobProfileId: updated.jobProfileId,
     });
+    // Fire-and-forget: tell the associate (and their new manager) what
+    // changed. After the write, never inside a transaction.
+    const changed: string[] = [];
+    if (existing.managerId !== updated.managerId) changed.push('manager');
+    if (existing.departmentId !== updated.departmentId) changed.push('department');
+    if (existing.costCenterId !== updated.costCenterId) changed.push('cost center');
+    if (existing.jobProfileId !== updated.jobProfileId) changed.push('job profile');
+    if (changed.length > 0) {
+      const what = changed.join(', ');
+      void notifyAssociate(id, {
+        subject: 'Your assignment was updated',
+        body: `Your ${what} ${changed.length === 1 ? 'was' : 'were'} updated. Open your profile for details.`,
+        category: 'org',
+        linkUrl: '/me',
+      });
+      void notifyManager(id, {
+        subject: 'Assignment updated on your team',
+        body: `${existing.firstName} ${existing.lastName}: ${what} updated.`,
+        category: 'org',
+      });
+    }
     res.json({
       id: updated.id,
       managerId: updated.managerId,
@@ -712,7 +739,7 @@ orgRouter.get(
     res.json({
       history: rows.map((r) => ({
         id: r.id,
-        effectiveFrom: r.effectiveFrom.toISOString(),
+        effectiveFrom: toDateOnly(r.effectiveFrom),
         effectiveTo: r.effectiveTo?.toISOString() ?? null,
         managerId: r.managerId,
         departmentId: r.departmentId,
@@ -835,12 +862,10 @@ orgRouter.get(
     let routingMasked: string | null = null;
     let accountLast4: string | null = null;
     try {
-      if (payout.routingNumberEnc) {
-        // Routing is stored as plain UTF-8 (per the comment in the
-        // onboarding POST handler) — decode, mask all but last 4.
-        const r = payout.routingNumberEnc.toString('utf8');
-        routingMasked = `•••••${r.slice(-4)}`;
-      }
+      // maskRoutingNumber, not toString('utf8'): the column holds plaintext
+      // from the onboarding path and ciphertext from self-service, and the
+      // raw decode turned the latter into mojibake.
+      routingMasked = maskRoutingNumber(payout.routingNumberEnc);
       if (payout.accountNumberEnc) {
         const a = decryptString(payout.accountNumberEnc);
         accountLast4 = a.slice(-4);
@@ -865,6 +890,7 @@ orgRouter.get(
 orgRouter.post(
   '/associates/:id/payout-method/reveal',
   PAYROLL_OR_HR,
+  piiRevealLimiter,
   async (req: Request, res: Response) => {
     // Belt-and-braces: also require process:payroll explicitly here so
     // the middleware change can't accidentally widen exposure. The
@@ -888,9 +914,7 @@ orgRouter.post(
     let routingNumber: string | null = null;
     let accountNumber: string | null = null;
     try {
-      if (payout.routingNumberEnc) {
-        routingNumber = payout.routingNumberEnc.toString('utf8');
-      }
+      routingNumber = readRoutingNumber(payout.routingNumberEnc) || null;
       if (payout.accountNumberEnc) {
         accountNumber = decryptString(payout.accountNumberEnc);
       }
@@ -932,12 +956,74 @@ orgRouter.post(
     res.json({
       type: payout.type,
       accountType: payout.accountType,
+      bankName: payout.bankName,
       routingNumber,
       accountNumber,
       branchCardId: payout.branchCardId,
       verifiedAt: payout.verifiedAt?.toISOString() ?? null,
       updatedAt: payout.updatedAt?.toISOString() ?? null,
     });
+  },
+);
+
+/**
+ * PATCH /associates/:id/payout-method — bank name only.
+ *
+ * Exists for backfill: bankName was added after most associates onboarded,
+ * so their records carry a blank institution name that an external payroll
+ * provider's intake file expects. Without this, the only way to fill it in
+ * is asking each associate to re-save their direct deposit.
+ *
+ * Deliberately scoped to the LABEL. Routing and account numbers stay
+ * writable only by the associate themselves (self-service, which emails a
+ * change confirmation as a fraud tripwire) or via onboarding. An admin
+ * endpoint that could rewrite where money lands is a payment-redirection
+ * vector, and nothing about backfilling a bank name needs it.
+ *
+ * Not a "reveal", so no written reason and a normal (non-critical) audit
+ * row: this discloses nothing, it only labels what's already there.
+ */
+const PayoutBankNameSchema = z.object({
+  bankName: z.string().trim().min(1).max(120),
+});
+
+orgRouter.patch(
+  '/associates/:id/payout-method',
+  PAYROLL_OR_HR,
+  async (req: Request, res: Response) => {
+    const { bankName } = PayoutBankNameSchema.parse(req.body ?? {});
+    const { payout } = await loadPrimaryPayoutMethod(req.params.id);
+
+    if (!payout) {
+      throw new HttpError(
+        404,
+        'no_payout_method',
+        'This associate has no direct-deposit method on file.',
+      );
+    }
+    if (payout.type !== 'BANK_ACCOUNT') {
+      throw new HttpError(
+        409,
+        'not_a_bank_account',
+        'Only a bank-account payout method can carry a bank name.',
+      );
+    }
+
+    const previous = payout.bankName;
+    await prisma.payoutMethod.update({
+      where: { id: payout.id },
+      data: { bankName },
+    });
+
+    // Old value included: a bank name silently changing on a payroll file is
+    // the kind of thing a reviewer needs to be able to trace back.
+    audit(req, 'associate.payout_bank_name_updated', 'PayoutMethod', payout.id, {
+      associateId: req.params.id,
+      previousBankName: previous,
+      bankName,
+    });
+
+    res.json({ bankName });
   },
 );
 
@@ -1009,6 +1095,7 @@ orgRouter.get(
 orgRouter.post(
   '/associates/:id/ssn/reveal',
   PAYROLL_OR_HR,
+  piiRevealLimiter,
   async (req: Request, res: Response) => {
     // Same belt-and-braces double check as the payout reveal.
     if (!hasCapability(req.user!.role, 'process:payroll')) {
@@ -1186,6 +1273,58 @@ orgRouter.patch(
   },
 );
 
+// ----- Privacy erasure ----------------------------------------------------
+//
+// POST /associates/:id/erase — anonymize an associate's identity while
+// keeping the legally retained payroll/tax history (see lib/erasure.ts for
+// the full policy). Gated on view:hr-admin — the same capability that
+// guards the admin user-management surface, the most sensitive admin
+// actions in the product. Two cheap integrity checks against fat-fingers:
+// a written reason (min 10 chars, lands on the audit row) and retyping the
+// associate's CURRENT last name (`confirmName`, 409 on mismatch).
+
+const EraseAssociateSchema = z.object({
+  reason: z.string().trim().min(10).max(500),
+  confirmName: z.string().trim().min(1).max(120),
+  force: z.boolean().optional(),
+});
+
+orgRouter.post(
+  '/associates/:id/erase',
+  requireCapability('view:hr-admin'),
+  async (req: Request, res: Response) => {
+    const input = EraseAssociateSchema.parse(req.body);
+    const associate = await prisma.associate.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, lastName: true, erasedAt: true },
+    });
+    if (!associate) {
+      throw new HttpError(404, 'not_found', 'Associate not found.');
+    }
+    if (
+      input.confirmName.toLowerCase() !== associate.lastName.trim().toLowerCase()
+    ) {
+      throw new HttpError(
+        409,
+        'name_mismatch',
+        'The typed name does not match this associate’s last name. Erasure aborted.',
+      );
+    }
+    const result = await eraseAssociate(
+      prisma,
+      associate.id,
+      req.user!.id,
+      input.reason,
+      { force: input.force === true },
+    );
+    res.json({
+      ok: true,
+      erasedAt: result.erasedAt.toISOString(),
+      counts: result.counts,
+    });
+  },
+);
+
 // ----- Payroll-provider census export ------------------------------------
 //
 // POST /associates/payroll-census-export  → text/csv, active associates only
@@ -1229,11 +1368,12 @@ const CENSUS_HEADERS = [
   'Account Number',
 ] as const;
 
-// RFC-4180 quoting: wrap in double-quotes and double any embedded quote
-// whenever the value carries a comma, quote, or newline. null/undefined → "".
+// Kept as a thin wrapper so existing call sites don't change; the escaping
+// itself is the shared implementation (RFC-4180 quoting PLUS formula-
+// injection guarding — this census carries associate-controlled names and
+// addresses next to routing and account numbers, and lands in Excel).
 function csvCell(value: string | null | undefined): string {
-  const s = value == null ? '' : String(value);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  return sharedCsvCell(value);
 }
 
 function isoDate(d: Date | null | undefined): string {
@@ -1243,6 +1383,7 @@ function isoDate(d: Date | null | undefined): string {
 orgRouter.post(
   '/associates/payroll-census-export',
   PAYROLL_OR_HR,
+  bulkPiiExportLimiter,
   async (req: Request, res: Response) => {
     // Same belt-and-braces double check as the single-record reveals.
     if (!hasCapability(req.user!.role, 'process:payroll')) {
@@ -1460,6 +1601,18 @@ orgRouter.post(
       fromAssignmentId: open?.id ?? null,
       toLocationId: target.id,
       startedAt: input.startedAt,
+    });
+    // Fire-and-forget, after the transaction has committed.
+    void notifyAssociate(id, {
+      subject: 'Your assignment was updated',
+      body: `You were ${open ? 'transferred' : 'assigned'} to ${target.name}, starting ${input.startedAt}.`,
+      category: 'org',
+      linkUrl: '/me',
+    });
+    void notifyManager(id, {
+      subject: 'Team member location change',
+      body: `${associate.firstName} ${associate.lastName} moves to ${target.name} on ${input.startedAt}.`,
+      category: 'org',
     });
     const response: AssociateTransferResponse = {
       id: created.id,

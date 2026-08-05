@@ -43,7 +43,7 @@ import {
   type PayFrequency,
 } from './payrollTax.js';
 import { computeGarnishmentDeductions } from './garnishments.js';
-import { computeYtdMedicareWages, computeYtdWages } from './payrollYtd.js';
+import { computeYtdWagesBatch } from './payrollYtd.js';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -175,6 +175,8 @@ export interface ProjectedItem {
   associateName: string;
   hoursWorked: number;
   hourlyRate: number;
+  /** DEFAULT = the editable fallback rate because no comp record exists. */
+  rateSource: 'OVERRIDE' | 'COMP' | 'DEFAULT' | 'SALARY';
   /** Federal weekly OT split: regular vs overtime hours. */
   regularHours: number;
   overtimeHours: number;
@@ -438,6 +440,103 @@ export async function aggregatePayrollProjection(
   }
 
   const yearStart = new Date(Date.UTC(periodStart.getUTCFullYear(), 0, 1));
+
+  // PERF: batched pre-loads. The per-associate loop below used to issue up
+  // to six queries per associate — ~1,800 sequential round-trips at 300
+  // people, on every preview, every /payroll/upcoming render, and inside
+  // run-creation's transaction. Everything the loop needs is fetched in
+  // five set-based queries here and looked up from Maps.
+  const universeIds = [...universe];
+
+  const ytdByAssociate = await computeYtdWagesBatch(
+    tx,
+    universeIds,
+    yearStart,
+    periodStart,
+  );
+
+  const allEntryClientIds = new Set<string>();
+  for (const group of byAssociate.values()) {
+    for (const e of group) if (e.clientId) allEntryClientIds.add(e.clientId);
+  }
+  type PremiumRuleRow = Prisma.PremiumPayRuleGetPayload<Record<string, never>>;
+  const premiumRulesByClient = new Map<string, PremiumRuleRow[]>();
+  if (allEntryClientIds.size > 0) {
+    const allRules = await tx.premiumPayRule.findMany({
+      where: { isActive: true, clientId: { in: [...allEntryClientIds] } },
+    });
+    for (const r of allRules) {
+      const arr = premiumRulesByClient.get(r.clientId) ?? [];
+      arr.push(r);
+      premiumRulesByClient.set(r.clientId, arr);
+    }
+  }
+
+  const enrollmentsByAssociate = new Map<
+    string,
+    { electedAmountCentsPerPeriod: number; plan: { kind: BenefitsPlanKind } }[]
+  >();
+  if (universeIds.length > 0) {
+    const enrollRows = await tx.benefitsEnrollment.findMany({
+      where: {
+        associateId: { in: universeIds },
+        effectiveDate: { lte: periodEndExclusive },
+        OR: [{ terminationDate: null }, { terminationDate: { gte: periodStart } }],
+      },
+      select: {
+        associateId: true,
+        electedAmountCentsPerPeriod: true,
+        plan: { select: { kind: true } },
+      },
+    });
+    for (const e of enrollRows) {
+      const arr = enrollmentsByAssociate.get(e.associateId) ?? [];
+      arr.push(e);
+      enrollmentsByAssociate.set(e.associateId, arr);
+    }
+  }
+
+  type GarnishmentRow = Prisma.GarnishmentGetPayload<Record<string, never>>;
+  const garnsByAssociate = new Map<string, GarnishmentRow[]>();
+  if (universeIds.length > 0) {
+    const garnRows = await tx.garnishment.findMany({
+      where: {
+        associateId: { in: universeIds },
+        status: 'ACTIVE',
+        deletedAt: null,
+        startDate: { lte: periodEndExclusive },
+        OR: [{ endDate: null }, { endDate: { gte: periodStart } }],
+      },
+      orderBy: [{ associateId: 'asc' }, { priority: 'asc' }],
+    });
+    for (const g of garnRows) {
+      const arr = garnsByAssociate.get(g.associateId) ?? [];
+      arr.push(g);
+      garnsByAssociate.set(g.associateId, arr);
+    }
+  }
+
+  const reimbByAssociate = new Map<
+    string,
+    { id: string; totalAmount: Prisma.Decimal }[]
+  >();
+  if (universeIds.length > 0) {
+    const reimbRows = await tx.reimbursement.findMany({
+      where: {
+        associateId: { in: universeIds },
+        status: 'SETTLED',
+        payrollItemId: null,
+      },
+      select: { id: true, totalAmount: true, associateId: true },
+      orderBy: { settledAt: 'asc' },
+    });
+    for (const r of reimbRows) {
+      const arr = reimbByAssociate.get(r.associateId) ?? [];
+      arr.push({ id: r.id, totalAmount: r.totalAmount });
+      reimbByAssociate.set(r.associateId, arr);
+    }
+  }
+
   const items: ProjectedItem[] = [];
   let totalGross = 0;
   let totalEmployeeTax = 0;
@@ -470,11 +569,18 @@ export async function aggregatePayrollProjection(
     let otSplit = { regularHours: 0, overtimeHours: 0 };
     let regularPay = 0;
     let overtimePay = 0;
+    // Where the rate came from — surfaced on preview items so a silent
+    // $15/hr default fallback (no comp record) is visible BEFORE money
+    // moves, instead of requiring a row-by-row compare against People.
+    let rateSource: 'OVERRIDE' | 'COMP' | 'DEFAULT' | 'SALARY' =
+      annualSalary !== undefined ? 'SALARY' : 'DEFAULT';
     if (annualSalary === undefined && hoursWorked > 0) {
       // Rate resolution: an explicit caller override wins (the payroll
       // sheet passes one), then the associate's individual HOURLY comp
       // record, then the editable default (15). The shift rate is no
       // longer consulted — pay follows the person's contracted wage.
+      if (input.hourlyRateOverride?.has(associateId)) rateSource = 'OVERRIDE';
+      else if (hourlyRateByAssociate.has(associateId)) rateSource = 'COMP';
       hourlyRate =
         input.hourlyRateOverride?.get(associateId) ??
         hourlyRateByAssociate.get(associateId) ??
@@ -498,9 +604,9 @@ export async function aggregatePayrollProjection(
         ...new Set(group.map((e) => e.clientId).filter((c): c is string => c !== null)),
       ];
       if (entryClientIds.length > 0) {
-        const rules = await tx.premiumPayRule.findMany({
-          where: { isActive: true, clientId: { in: entryClientIds } },
-        });
+        const rules = entryClientIds.flatMap(
+          (cid) => premiumRulesByClient.get(cid) ?? [],
+        );
         for (const rule of rules) {
           const ruleEntries = group.filter(
             (e) => e.clientId === rule.clientId && e.status === 'APPROVED' && e.clockOutAt,
@@ -577,9 +683,10 @@ export async function aggregatePayrollProjection(
 
     // Gap 8 — live YTD aggregation. Excludes CANCELLED (voided) runs and
     // non-DISBURSED items; AMENDMENT items contribute signed deltas so
-    // corrections naturally land in the result.
-    const ytdWages = await computeYtdWages(tx, associateId, yearStart, periodStart);
-    const ytdMedicareWages = await computeYtdMedicareWages(tx, associateId, yearStart, periodStart);
+    // corrections naturally land in the result. Medicare base is the same
+    // number today (see payrollYtd.ts) — both read the one batched map.
+    const ytdWages = ytdByAssociate.get(associateId) ?? 0;
+    const ytdMedicareWages = ytdWages;
 
     const w4 = meta.w4Submission;
     const associateState =
@@ -591,20 +698,7 @@ export async function aggregatePayrollProjection(
     let preTaxDeductions = 0;
     let preTaxRetirement = 0;
     if (employmentType === 'W2_EMPLOYEE') {
-      const enrollments = await tx.benefitsEnrollment.findMany({
-        where: {
-          associateId,
-          effectiveDate: { lte: periodEndExclusive },
-          OR: [
-            { terminationDate: null },
-            { terminationDate: { gte: periodStart } },
-          ],
-        },
-        select: {
-          electedAmountCentsPerPeriod: true,
-          plan: { select: { kind: true } },
-        },
-      });
+      const enrollments = enrollmentsByAssociate.get(associateId) ?? [];
       let totalCents = 0;
       let retirementCents = 0;
       for (const e of enrollments) {
@@ -706,16 +800,7 @@ export async function aggregatePayrollProjection(
 
     const activeGarns =
       employmentType === 'W2_EMPLOYEE' && disposableEarnings > 0
-        ? await tx.garnishment.findMany({
-            where: {
-              associateId,
-              status: 'ACTIVE',
-              deletedAt: null,
-              startDate: { lte: periodEndExclusive },
-              OR: [{ endDate: null }, { endDate: { gte: periodStart } }],
-            },
-            orderBy: { priority: 'asc' },
-          })
+        ? garnsByAssociate.get(associateId) ?? []
         : [];
 
     const garnResult = computeGarnishmentDeductions({
@@ -737,15 +822,7 @@ export async function aggregatePayrollProjection(
     // Read-only here (preview safe); persistence is run-creation's job.
     // Accountable-plan rule: amount is added AFTER taxes and never
     // touches grossPay / taxableGross / any wage base.
-    const settledReimbursements = await tx.reimbursement.findMany({
-      where: {
-        associateId,
-        status: 'SETTLED',
-        payrollItemId: null,
-      },
-      select: { id: true, totalAmount: true },
-      orderBy: { settledAt: 'asc' },
-    });
+    const settledReimbursements = reimbByAssociate.get(associateId) ?? [];
     const reimbursementsTotal = round2(
       settledReimbursements.reduce((sum, r) => sum + Number(r.totalAmount), 0)
     );
@@ -813,6 +890,7 @@ export async function aggregatePayrollProjection(
       associateName,
       hoursWorked,
       hourlyRate,
+      rateSource,
       regularHours: otSplit.regularHours,
       overtimeHours: otSplit.overtimeHours,
       earnings,

@@ -11,6 +11,7 @@ import {
 } from '@/lib/clientsApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import {
@@ -20,10 +21,10 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/Card';
-import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { JobsSection } from './JobsSection';
@@ -32,6 +33,18 @@ import { BenefitsPlansSection } from './BenefitsPlansSection';
 import { QuickbooksSection } from './QuickbooksSection';
 
 const STATUSES: ClientStatus[] = ['PROSPECT', 'ACTIVE', 'INACTIVE'];
+
+const STATUS_LABELS: Record<ClientStatus, string> = {
+  PROSPECT: 'Prospect',
+  ACTIVE: 'Active',
+  INACTIVE: 'Inactive',
+};
+
+const STATUS_VARIANT: Record<ClientStatus, 'success' | 'pending' | 'destructive'> = {
+  ACTIVE: 'success',
+  PROSPECT: 'pending',
+  INACTIVE: 'destructive',
+};
 
 // Index = the 0=Sunday…6=Saturday convention Client.weekStartsOn uses.
 const WEEKDAY_NAMES: string[] = [
@@ -57,6 +70,7 @@ export function ClientDetail() {
   const navigate = useNavigate();
   const { can } = useAuth();
   const canManage = can('manage:clients');
+  const confirm = useConfirm();
 
   const [client, setClient] = useState<ClientSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,14 +78,24 @@ export function ClientDetail() {
 
   const onArchive = async () => {
     if (!client) return;
-    if (!confirm(`Archive "${client.name}"? They'll be hidden from the clients list. Open applications, payroll, and associates aren't deleted.`)) return;
+    if (
+      !(await confirm({
+        title: `Archive "${client.name}"?`,
+        description:
+          "They'll be hidden from the clients list. Open applications, payroll, and associates aren't deleted.",
+        confirmLabel: 'Archive',
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
     setArchiving(true);
     try {
       await archiveClient(client.id);
       toast.success(`"${client.name}" archived.`);
       navigate('/clients');
     } catch (err) {
-      toast.error('Could not archive', {
+      toast.error('Could not archive.', {
         description: err instanceof ApiError ? err.message : String(err),
       });
       setArchiving(false);
@@ -95,7 +119,21 @@ export function ClientDetail() {
   if (error) {
     return (
       <div className="mx-auto">
-        <ErrorBanner>{error}</ErrorBanner>
+        <ErrorBanner>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>{error}</span>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setError(null);
+                refresh();
+              }}
+            >
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
       </div>
     );
   }
@@ -111,26 +149,28 @@ export function ClientDetail() {
 
   return (
     <div className="mx-auto space-y-6">
-      <Breadcrumb segments={[{ label: 'Clients', to: '/clients' }, { label: client.name }]} />
-
-      <header className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="font-display text-3xl md:text-4xl text-white mb-1">
-            {client.name}
-          </h1>
-          <div className="flex items-center gap-2 text-sm text-silver">
-            <Badge>{client.status}</Badge>
+      <PageHeader
+        title={client.name}
+        breadcrumbs={[{ label: 'Clients', to: '/clients' }, { label: client.name }]}
+        subtitle={
+          <span className="flex flex-wrap items-center gap-2">
+            <Badge variant={STATUS_VARIANT[client.status]}>
+              {STATUS_LABELS[client.status]}
+            </Badge>
             {client.industry && <span>· {client.industry}</span>}
             {client.contactEmail && <span>· {client.contactEmail}</span>}
-          </div>
-        </div>
-        {canManage && (
-          <Button variant="ghost" onClick={onArchive} loading={archiving}>
-            <Archive className="h-4 w-4" />
-            Archive
-          </Button>
-        )}
-      </header>
+          </span>
+        }
+        secondaryActions={
+          canManage ? (
+            <Button variant="ghost" onClick={onArchive} loading={archiving}>
+              <Archive className="h-4 w-4" />
+              Archive
+            </Button>
+          ) : undefined
+        }
+        className="mb-0"
+      />
 
       <BasicsEditor
         client={client}
@@ -238,7 +278,7 @@ function BasicsEditor({
       onSaved(updated);
       toast.success('Client saved.');
     } catch (err) {
-      toast.error('Could not save', {
+      toast.error('Could not save.', {
         description: err instanceof ApiError ? err.message : String(err),
       });
     } finally {
@@ -291,7 +331,7 @@ function BasicsEditor({
               >
                 {STATUSES.map((s) => (
                   <option key={s} value={s}>
-                    {s}
+                    {STATUS_LABELS[s]}
                   </option>
                 ))}
               </Select>
@@ -406,9 +446,9 @@ function StateEditor({
         state: value ? value.toUpperCase() : null,
       });
       onSaved(updated);
-      toast.success('Work-site state saved');
+      toast.success('Work-site state saved.');
     } catch (err) {
-      toast.error('Could not save', {
+      toast.error('Could not save.', {
         description: err instanceof Error ? err.message : String(err),
       });
     } finally {

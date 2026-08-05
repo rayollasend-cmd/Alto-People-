@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { send } from './notifications.js';
@@ -59,10 +60,15 @@ export async function closeForgottenClockOuts(
     take: 500,
   });
 
+  if (stuck.length === 0) return { closed: 0, errors: [] };
+
   const errors: { entityId: string; error: string }[] = [];
   let closed = 0;
-  for (const entry of stuck) {
-    try {
+  // Every row gets a DISTINCT inferred clockOutAt/anomalies payload, so this
+  // can't be a plain updateMany — but one UPDATE ... FROM (VALUES ...) closes
+  // the whole batch in a single statement instead of 500 round trips.
+  const values = Prisma.join(
+    stuck.map((entry) => {
       // Cap the inferred clock-out at clockInAt + DEFAULT_SHIFT_HOURS. We
       // never know what time they actually walked out, but this is a
       // sensible upper bound that doesn't burn payroll while still
@@ -76,21 +82,22 @@ export async function closeForgottenClockOuts(
       const nextAnomalies = priorAnomalies.includes('FORGOT_CLOCKOUT')
         ? priorAnomalies
         : [...priorAnomalies, 'FORGOT_CLOCKOUT'];
-
-      await prisma.timeEntry.update({
-        where: { id: entry.id },
-        data: {
-          clockOutAt: inferredClockOut,
-          status: 'COMPLETED',
-          anomalies: nextAnomalies,
-        },
-      });
-      closed++;
-    } catch (err) {
-      errors.push({
-        entityId: entry.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
+      return Prisma.sql`(${entry.id}::uuid, ${inferredClockOut}::timestamptz, ${JSON.stringify(nextAnomalies)}::jsonb)`;
+    }),
+  );
+  try {
+    closed = await prisma.$executeRaw`
+      UPDATE "TimeEntry" AS t
+      SET "clockOutAt" = v."clockOutAt",
+          "status" = 'COMPLETED'::"TimeEntryStatus",
+          "anomalies" = v."anomalies",
+          "updatedAt" = NOW()
+      FROM (VALUES ${values}) AS v(id, "clockOutAt", "anomalies")
+      WHERE t."id" = v.id`;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    for (const entry of stuck) {
+      errors.push({ entityId: entry.id, error: message });
     }
   }
   return { closed, errors };
@@ -148,20 +155,24 @@ export async function purgeDormantFaceReferences(
  * still needs to audit historical hours / anomalies for payroll
  * disputes), but their biometric data leaves the DB immediately
  * rather than waiting for the 90-day retention sweep.
+ *
+ * Accepts a TransactionClient too so callers that scrub biometrics as
+ * part of a larger atomic operation (privacy erasure) can run it inside
+ * their transaction.
  */
 export async function purgeAssociateBiometrics(
-  prisma: PrismaClient,
+  prisma: PrismaClient | Prisma.TransactionClient,
   associateId: string,
 ): Promise<{ selfiesPurged: number; faceReferenceCleared: boolean }> {
-  const [selfieResult, faceResult] = await Promise.all([
-    prisma.kioskPunch.updateMany({
-      where: { associateId, selfie: { not: null } },
-      data: { selfie: null },
-    }),
-    prisma.kioskFaceReference.deleteMany({
-      where: { associateId },
-    }),
-  ]);
+  // Sequential, not Promise.all: a TransactionClient must not run queries
+  // in parallel, and two quick statements gain nothing from overlap.
+  const selfieResult = await prisma.kioskPunch.updateMany({
+    where: { associateId, selfie: { not: null } },
+    data: { selfie: null },
+  });
+  const faceResult = await prisma.kioskFaceReference.deleteMany({
+    where: { associateId },
+  });
   return {
     selfiesPurged: selfieResult.count,
     faceReferenceCleared: faceResult.count > 0,
@@ -298,15 +309,18 @@ export async function sendKioskFleetNotices(
 
   // Stamp dedup state AFTER the emails went out, so a send failure
   // (thrown above) retries on the next hourly run instead of going dark.
-  for (const e of expiring) {
-    await prisma.kioskDevice.update({
-      where: { id: e.id },
-      data: { expiryNoticeStage: e.stage },
+  // Constant payload per group → one updateMany per stage + one for silence.
+  for (const stage of [1, 2]) {
+    const ids = expiring.filter((e) => e.stage === stage).map((e) => e.id);
+    if (ids.length === 0) continue;
+    await prisma.kioskDevice.updateMany({
+      where: { id: { in: ids } },
+      data: { expiryNoticeStage: stage },
     });
   }
-  for (const s of silent) {
-    await prisma.kioskDevice.update({
-      where: { id: s.id },
+  if (silent.length > 0) {
+    await prisma.kioskDevice.updateMany({
+      where: { id: { in: silent.map((s) => s.id) } },
       data: { silentNoticeAt: now },
     });
   }

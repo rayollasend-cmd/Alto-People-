@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Briefcase, Building2, CalendarClock, FolderTree, Hash, Plus, Sparkles, Trash2, Users } from 'lucide-react';
 import { PositionsTab } from './PositionsTab';
 import { CustomFieldsTab } from './CustomFieldsTab';
 import type {
+  ClientSummary,
   CostCenter,
   Department,
   JobProfile,
   ShiftPosition,
   AssociateOrgSummary,
 } from '@alto-people/shared';
-import { listClients } from '@/lib/clientsApi';
-import type { ClientListItem } from '@alto-people/shared';
+import { useClients } from '@/lib/useClients';
 import {
   assignOrgFields,
   createCostCenter,
@@ -37,6 +37,8 @@ import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
+import { fmtDateTime } from '@/lib/format';
+import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import {
   Avatar,
   Badge,
@@ -54,6 +56,7 @@ import {
   Field,
   Input,
   PageHeader,
+  SearchInput,
   Select,
   SkeletonRows,
   Table,
@@ -72,26 +75,46 @@ import { toast } from 'sonner';
 
 type Tab = 'departments' | 'cost-centers' | 'job-profiles' | 'positions' | 'shift-positions' | 'people' | 'custom-fields';
 
+const TAB_VALUES: readonly Tab[] = [
+  'departments',
+  'cost-centers',
+  'job-profiles',
+  'positions',
+  'shift-positions',
+  'people',
+  'custom-fields',
+];
+
 export function OrgHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
-  const [clients, setClients] = useState<ClientListItem[]>([]);
+  // Shared react-query cache — fetched at most once per 5 minutes app-wide.
+  const {
+    clients,
+    isError: clientsError,
+    refetch: refetchClients,
+  } = useClients();
   const [clientId, setClientId] = useState<string>('');
-  const [tab, setTab] = useState<Tab>('departments');
+  // ?tab= deep-link (the People-directory drawer's "Edit org assignment"
+  // link lands on /org?tab=people&associateId=…). Seeded once at mount.
+  const [tab, setTab] = useState<Tab>(() => {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    return t && (TAB_VALUES as readonly string[]).includes(t)
+      ? (t as Tab)
+      : 'departments';
+  });
+  const deepLinkAssociateId = useRef(
+    new URLSearchParams(window.location.search).get('associateId'),
+  );
+  const clientSelectRef = useRef<HTMLSelectElement>(null);
+  const focusClientPicker = () => clientSelectRef.current?.focus();
 
+  // With exactly one client there is nothing to choose — preselect it.
   useEffect(() => {
-    listClients()
-      .then((res) => {
-        setClients(res.clients);
-        if (!clientId && res.clients.length === 1) {
-          setClientId(res.clients[0].id);
-        }
-      })
-      .catch(() => {
-        // listClients failure is non-fatal — manager UI can still work
-        // without the per-client filter applied (returns global view).
-      });
-  }, [clientId]);
+    if (clients.length === 1) {
+      setClientId((prev) => prev || clients[0].id);
+    }
+  }, [clients]);
 
   return (
     <div className="space-y-5">
@@ -101,12 +124,24 @@ export function OrgHome() {
         breadcrumbs={[{ label: 'Workforce' }, { label: 'Org' }]}
       />
 
+      {clientsError && (
+        <ErrorBanner>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span>Could not load clients.</span>
+            <Button size="sm" variant="outline" onClick={() => void refetchClients()}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
+
       <Card>
         <CardContent className="p-4 flex items-center gap-3 flex-wrap">
-          <span className="text-[11px] uppercase tracking-wider text-silver">
+          <span className="text-xs2 uppercase tracking-wider text-silver">
             Client
           </span>
           <Select
+            ref={clientSelectRef}
             size="sm"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
@@ -153,22 +188,43 @@ export function OrgHome() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="departments">
-          <DepartmentsTab clientId={clientId} canManage={canManage} />
+          <DepartmentsTab
+            clientId={clientId}
+            canManage={canManage}
+            onPickClient={focusClientPicker}
+          />
         </TabsContent>
         <TabsContent value="cost-centers">
-          <CostCentersTab clientId={clientId} canManage={canManage} />
+          <CostCentersTab
+            clientId={clientId}
+            canManage={canManage}
+            onPickClient={focusClientPicker}
+          />
         </TabsContent>
         <TabsContent value="job-profiles">
-          <JobProfilesTab clientId={clientId} canManage={canManage} />
+          <JobProfilesTab
+            clientId={clientId}
+            canManage={canManage}
+            onPickClient={focusClientPicker}
+          />
         </TabsContent>
         <TabsContent value="positions">
           <PositionsTab clientId={clientId} canManage={canManage} />
         </TabsContent>
         <TabsContent value="shift-positions">
-          <ShiftPositionsTab clientId={clientId} canManage={canManage} />
+          <ShiftPositionsTab
+            clientId={clientId}
+            canManage={canManage}
+            onPickClient={focusClientPicker}
+          />
         </TabsContent>
         <TabsContent value="people">
-          <PeopleTab clientId={clientId} canManage={canManage} clients={clients} />
+          <PeopleTab
+            clientId={clientId}
+            canManage={canManage}
+            clients={clients}
+            initialAssociateId={deepLinkAssociateId.current}
+          />
         </TabsContent>
         <TabsContent value="custom-fields">
           <CustomFieldsTab clientId={clientId} canManage={canManage} />
@@ -183,9 +239,11 @@ export function OrgHome() {
 function DepartmentsTab({
   clientId,
   canManage,
+  onPickClient,
 }: {
   clientId: string;
   canManage: boolean;
+  onPickClient: () => void;
 }) {
   const [rows, setRows] = useState<Department[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -217,7 +275,16 @@ function DepartmentsTab({
           </Button>
         )}
       </div>
-      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner className="mb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -229,7 +296,11 @@ function DepartmentsTab({
               : 'Pick a client to start adding departments.'
           }
           action={
-            canManage && clientId ? (
+            !clientId ? (
+              <Button variant="outline" size="sm" onClick={onPickClient}>
+                Choose a client
+              </Button>
+            ) : canManage ? (
               <Button onClick={() => setDrawerTarget('new')} size="sm">
                 <Plus className="h-4 w-4" />
                 New department
@@ -263,7 +334,7 @@ function DepartmentsTab({
                 >
                   <TableCell className="font-medium">
                     {d.name}
-                    <div className="text-[11px] text-silver/70 md:hidden">
+                    <div className="text-xs2 text-silver/70 md:hidden">
                       {[d.code, parent?.name].filter(Boolean).join(' · ') || '—'}
                     </div>
                   </TableCell>
@@ -340,7 +411,7 @@ function DepartmentDrawer({
           parentId: parentId || null,
           description: description.trim() || null,
         });
-        toast.success('Department created');
+        toast.success('Department created.');
       } else {
         await updateDepartment(initial!.id, {
           name: name.trim(),
@@ -348,7 +419,7 @@ function DepartmentDrawer({
           parentId: parentId || null,
           description: description.trim() || null,
         });
-        toast.success('Department updated');
+        toast.success('Department updated.');
       }
       onSaved();
     } catch (err) {
@@ -364,7 +435,7 @@ function DepartmentDrawer({
     setSubmitting(true);
     try {
       await deleteDepartment(initial!.id);
-      toast.success('Department deleted');
+      toast.success('Department deleted.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Delete failed.');
@@ -476,9 +547,11 @@ function DepartmentDrawer({
 function CostCentersTab({
   clientId,
   canManage,
+  onPickClient,
 }: {
   clientId: string;
   canManage: boolean;
+  onPickClient: () => void;
 }) {
   const [rows, setRows] = useState<CostCenter[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -510,7 +583,16 @@ function CostCentersTab({
           </Button>
         )}
       </div>
-      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner className="mb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -522,7 +604,11 @@ function CostCentersTab({
               : 'Pick a client to start adding cost centers.'
           }
           action={
-            canManage && clientId ? (
+            !clientId ? (
+              <Button variant="outline" size="sm" onClick={onPickClient}>
+                Choose a client
+              </Button>
+            ) : canManage ? (
               <Button onClick={() => setDrawerTarget('new')} size="sm">
                 <Plus className="h-4 w-4" />
                 New cost center
@@ -616,14 +702,14 @@ function CostCenterDrawer({
           name: name.trim(),
           description: description.trim() || null,
         });
-        toast.success('Cost center created');
+        toast.success('Cost center created.');
       } else {
         await updateCostCenter(initial!.id, {
           code: code.trim(),
           name: name.trim(),
           description: description.trim() || null,
         });
-        toast.success('Cost center updated');
+        toast.success('Cost center updated.');
       }
       onSaved();
     } catch (err) {
@@ -639,7 +725,7 @@ function CostCenterDrawer({
     setSubmitting(true);
     try {
       await deleteCostCenter(initial!.id);
-      toast.success('Cost center deleted');
+      toast.success('Cost center deleted.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Delete failed.');
@@ -736,9 +822,11 @@ function CostCenterDrawer({
 function ShiftPositionsTab({
   clientId,
   canManage,
+  onPickClient,
 }: {
   clientId: string;
   canManage: boolean;
+  onPickClient: () => void;
 }) {
   const [rows, setRows] = useState<ShiftPosition[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -775,7 +863,16 @@ function ShiftPositionsTab({
         it curated stops the same role being typed a dozen different ways and
         keeps scheduling reports clean.
       </p>
-      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner className="mb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -787,7 +884,11 @@ function ShiftPositionsTab({
               : 'Pick a client to manage its shift positions.'
           }
           action={
-            canManage && clientId ? (
+            !clientId ? (
+              <Button variant="outline" size="sm" onClick={onPickClient}>
+                Choose a client
+              </Button>
+            ) : canManage ? (
               <Button onClick={() => setDrawerTarget('new')} size="sm">
                 <Plus className="h-4 w-4" />
                 New position
@@ -800,7 +901,7 @@ function ShiftPositionsTab({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-16">Order</TableHead>
+              <TableHead className="w-16 text-right">Order</TableHead>
               <TableHead>Name</TableHead>
             </TableRow>
           </TableHeader>
@@ -815,7 +916,7 @@ function ShiftPositionsTab({
                   setDrawerTarget(p);
                 }}
               >
-                <TableCell className="tabular-nums text-silver">{p.sortOrder}</TableCell>
+                <TableCell className="text-right tabular-nums text-silver">{p.sortOrder}</TableCell>
                 <TableCell className="font-medium">{p.name}</TableCell>
               </TableRow>
             ))}
@@ -878,13 +979,13 @@ function ShiftPositionDrawer({
           name: name.trim(),
           ...(order !== undefined && Number.isFinite(order) ? { sortOrder: order } : {}),
         });
-        toast.success('Shift position created');
+        toast.success('Shift position created.');
       } else {
         await updateShiftPosition(initial!.id, {
           name: name.trim(),
           ...(order !== undefined && Number.isFinite(order) ? { sortOrder: order } : {}),
         });
-        toast.success('Shift position updated');
+        toast.success('Shift position updated.');
       }
       onSaved();
     } catch (err) {
@@ -900,7 +1001,7 @@ function ShiftPositionDrawer({
     setSubmitting(true);
     try {
       await deleteShiftPosition(initial!.id);
-      toast.success('Shift position deleted');
+      toast.success('Shift position deleted.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Delete failed.');
@@ -982,9 +1083,11 @@ function ShiftPositionDrawer({
 function JobProfilesTab({
   clientId,
   canManage,
+  onPickClient,
 }: {
   clientId: string;
   canManage: boolean;
+  onPickClient: () => void;
 }) {
   const [rows, setRows] = useState<JobProfile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1016,7 +1119,16 @@ function JobProfilesTab({
           </Button>
         )}
       </div>
-      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner className="mb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
       {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -1028,7 +1140,11 @@ function JobProfilesTab({
               : 'Pick a client to start adding job profiles.'
           }
           action={
-            canManage && clientId ? (
+            !clientId ? (
+              <Button variant="outline" size="sm" onClick={onPickClient}>
+                Choose a client
+              </Button>
+            ) : canManage ? (
               <Button onClick={() => setDrawerTarget('new')} size="sm">
                 <Plus className="h-4 w-4" />
                 New job profile
@@ -1063,7 +1179,7 @@ function JobProfilesTab({
                 <TableCell className="font-medium tabular-nums">{j.code}</TableCell>
                 <TableCell>
                   {j.title}
-                  <div className="text-[11px] text-silver/70 md:hidden">
+                  <div className="text-xs2 text-silver/70 md:hidden">
                     {[j.family, j.level].filter(Boolean).join(' · ') || '—'}
                   </div>
                 </TableCell>
@@ -1145,7 +1261,7 @@ function JobProfileDrawer({
           isExempt,
           description: description.trim() || null,
         });
-        toast.success('Job profile created');
+        toast.success('Job profile created.');
       } else {
         await updateJobProfile(initial!.id, {
           code: code.trim(),
@@ -1155,7 +1271,7 @@ function JobProfileDrawer({
           isExempt,
           description: description.trim() || null,
         });
-        toast.success('Job profile updated');
+        toast.success('Job profile updated.');
       }
       onSaved();
     } catch (err) {
@@ -1171,7 +1287,7 @@ function JobProfileDrawer({
     setSubmitting(true);
     try {
       await deleteJobProfile(initial!.id);
-      toast.success('Job profile deleted');
+      toast.success('Job profile deleted.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Delete failed.');
@@ -1302,10 +1418,12 @@ function PeopleTab({
   clientId,
   canManage,
   clients,
+  initialAssociateId,
 }: {
   clientId: string;
   canManage: boolean;
-  clients: ClientListItem[];
+  clients: ClientSummary[];
+  initialAssociateId: string | null;
 }) {
   const [rows, setRows] = useState<AssociateOrgSummary[] | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -1313,6 +1431,17 @@ function PeopleTab({
   const [jobProfiles, setJobProfiles] = useState<JobProfile[]>([]);
   const [target, setTarget] = useState<AssociateOrgSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Client-side name/email filter over the loaded rows, debounced so
+  // typing doesn't re-filter a 1000-row list on every keystroke.
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => clearTimeout(id);
+  }, [search]);
+  // ?associateId= deep-link (from the People-directory drawer). Consumed
+  // once when the first row set arrives.
+  const deepLinkConsumed = useRef(false);
 
   const refresh = async () => {
     try {
@@ -1337,18 +1466,62 @@ function PeopleTab({
     refresh();
   }, [clientId]);
 
-  const managerCandidates = useMemo(() => rows ?? [], [rows]);
+  // Auto-open the drawer for a deep-linked associate once rows land.
+  useEffect(() => {
+    if (!initialAssociateId || deepLinkConsumed.current || !rows) return;
+    deepLinkConsumed.current = true;
+    const match = rows.find((a) => a.id === initialAssociateId);
+    if (match) setTarget(match);
+    else toast.error('That associate is not in the current client view.');
+  }, [initialAssociateId, rows]);
+
+  const filtered = useMemo(() => {
+    if (!rows) return null;
+    const q = debouncedSearch.toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (a) =>
+        `${a.firstName} ${a.lastName}`.toLowerCase().includes(q) ||
+        a.email.toLowerCase().includes(q),
+    );
+  }, [rows, debouncedSearch]);
 
   const clientLabel = clients.find((c) => c.id === clientId)?.name ?? 'All clients';
 
   return (
     <section>
-      <div className="flex items-center justify-between gap-3 mb-4">
+      <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
         <h2 className="text-base font-medium text-white">
           Associates · {clientLabel}
         </h2>
+        <div className="flex items-center gap-3">
+          {rows && filtered && (
+            <span className="text-xs text-silver tabular-nums">
+              {debouncedSearch
+                ? `${filtered.length} of ${rows.length}`
+                : rows.length}{' '}
+              associate{(debouncedSearch ? filtered.length : rows.length) === 1 ? '' : 's'}
+            </span>
+          )}
+          <SearchInput
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name or email"
+            className="h-8 text-sm w-56"
+            aria-label="Search associates"
+          />
+        </div>
       </div>
-      {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+      {error && (
+        <ErrorBanner className="mb-3">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span>{error}</span>
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
       {!rows && <SkeletonRows count={6} rowHeight="h-14" />}
       {rows && rows.length === 0 && (
         <EmptyState
@@ -1357,7 +1530,19 @@ function PeopleTab({
           description="Once associates are onboarded for the selected client, they'll appear here for org-field assignment."
         />
       )}
-      {rows && rows.length > 0 && (
+      {rows && filtered && rows.length > 0 && filtered.length === 0 && (
+        <EmptyState
+          icon={Users}
+          title="No associates match"
+          description="Try a different name or email."
+          action={
+            <Button variant="outline" size="sm" onClick={() => setSearch('')}>
+              Clear search
+            </Button>
+          }
+        />
+      )}
+      {filtered && filtered.length > 0 && (
         <Table>
           <TableHeader>
             <TableRow>
@@ -1369,7 +1554,7 @@ function PeopleTab({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((a) => (
+            {filtered.map((a) => (
               <TableRow
                 key={a.id}
                 className="group cursor-pointer"
@@ -1384,7 +1569,7 @@ function PeopleTab({
                     <Avatar src={a.photoUrl} name={`${a.firstName} ${a.lastName}`} email={a.email} size="sm" />
                     <div className="min-w-0">
                       <span>{a.firstName} {a.lastName}</span>
-                      <div className="text-[11px] text-silver/70 md:hidden">
+                      <div className="text-xs2 text-silver/70 md:hidden">
                         {[a.managerName, a.departmentName].filter(Boolean).join(' · ') || '—'}
                       </div>
                     </div>
@@ -1414,7 +1599,6 @@ function PeopleTab({
             departments={departments}
             costCenters={costCenters}
             jobProfiles={jobProfiles}
-            managerCandidates={managerCandidates}
             onClose={() => setTarget(null)}
             onSaved={() => {
               setTarget(null);
@@ -1433,7 +1617,6 @@ function PersonOrgDrawer({
   departments,
   costCenters,
   jobProfiles,
-  managerCandidates,
   onClose,
   onSaved,
 }: {
@@ -1442,43 +1625,54 @@ function PersonOrgDrawer({
   departments: Department[];
   costCenters: CostCenter[];
   jobProfiles: JobProfile[];
-  managerCandidates: AssociateOrgSummary[];
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [managerId, setManagerId] = useState(associate.managerId ?? '');
+  const [manager, setManager] = useState<PickedAssociate | null>(
+    associate.managerId
+      ? { id: associate.managerId, name: associate.managerName ?? 'Current manager' }
+      : null,
+  );
   const [departmentId, setDepartmentId] = useState(associate.departmentId ?? '');
   const [costCenterId, setCostCenterId] = useState(associate.costCenterId ?? '');
   const [jobProfileId, setJobProfileId] = useState(associate.jobProfileId ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<AssociateHistoryEntry[] | null>(null);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [historyRetry, setHistoryRetry] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
+    setHistory(null);
+    setHistoryError(null);
     listAssociateHistory(associate.id)
       .then((res) => {
         if (!cancelled) setHistory(res.history);
       })
-      .catch(() => {
-        if (!cancelled) setHistory([]);
+      .catch((err) => {
+        if (!cancelled) {
+          setHistoryError(
+            err instanceof ApiError ? err.message : 'Could not load history.',
+          );
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [associate.id]);
+  }, [associate.id, historyRetry]);
 
   const submit = async () => {
     setError(null);
     setSubmitting(true);
     try {
       await assignOrgFields(associate.id, {
-        managerId: managerId || null,
+        managerId: manager?.id ?? null,
         departmentId: departmentId || null,
         costCenterId: costCenterId || null,
         jobProfileId: jobProfileId || null,
       });
-      toast.success('Org assignment updated');
+      toast.success('Org assignment updated.');
       onSaved();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Save failed.');
@@ -1510,23 +1704,25 @@ function PersonOrgDrawer({
       <DrawerBody>
         <div className="space-y-3">
           <Field label="Manager">
-            {(p) => (
-              <Select
-                value={managerId}
-                onChange={(e) => setManagerId(e.target.value)}
-                disabled={!canManage}
-                {...p}
-              >
-                <option value="">—</option>
-                {managerCandidates
-                  .filter((c) => c.id !== associate.id)
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.firstName} {c.lastName}
-                    </option>
-                  ))}
-              </Select>
-            )}
+            {() =>
+              canManage ? (
+                <AssociatePicker
+                  value={manager}
+                  onChange={(v) => {
+                    if (v && v.id === associate.id) {
+                      toast.error('An associate cannot manage themselves.');
+                      return;
+                    }
+                    setManager(v);
+                  }}
+                  placeholder="Search for a manager…"
+                />
+              ) : (
+                <div className="rounded-md border border-navy-secondary bg-navy px-3 py-2 text-sm text-white">
+                  {manager?.name ?? '—'}
+                </div>
+              )
+            }
           </Field>
           <Field label="Department">
             {(p) => (
@@ -1576,10 +1772,24 @@ function PersonOrgDrawer({
           {error && <ErrorBanner>{error}</ErrorBanner>}
 
           <div className="pt-3 border-t border-navy-secondary">
-            <div className="text-[10px] uppercase tracking-widest text-silver/80 mb-2">
+            <div className="text-2xs uppercase tracking-widest text-silver/80 mb-2">
               Effective changes
             </div>
-            {history === null && (
+            {historyError && (
+              <ErrorBanner className="mb-2">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <span>{historyError}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setHistoryRetry((n) => n + 1)}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              </ErrorBanner>
+            )}
+            {history === null && !historyError && (
               <div className="space-y-1.5">
                 <Skeleton className="h-4 w-3/4" />
                 <Skeleton className="h-4 w-1/2" />
@@ -1600,7 +1810,7 @@ function PersonOrgDrawer({
                     >
                       <div className="min-w-0">
                         <div className="text-white tabular-nums">
-                          {new Date(h.effectiveFrom).toLocaleString()}
+                          {fmtDateTime(h.effectiveFrom)}
                           {isCurrent ? (
                             <Badge variant="default" className="ml-2">current</Badge>
                           ) : null}

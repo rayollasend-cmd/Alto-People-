@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
   AlertTriangle,
@@ -26,12 +27,17 @@ import type {
   KpiTrend,
 } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
-import { ROLE_LABELS, type Role } from '@/lib/roles';
+import {
+  hasCapability,
+  ROLE_LABELS,
+  type Capability,
+  type Role,
+} from '@/lib/roles';
 import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { getW4RecollectionSummary } from '@/lib/w4RecollectionApi';
 import { searchAuditLogs } from '@/lib/auditApi';
 import { ApiError } from '@/lib/api';
-import { fmtDateTz } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -64,28 +70,15 @@ const SUBTITLE_BY_ROLE: Partial<Record<Role, string>> = {
     'Recruiting pipeline and open onboarding applications.',
   CLIENT_PORTAL: 'Your workforce snapshot.',
   MANAGER: 'Your team — pending approvals and time-off requests.',
+  // Harmless fallback — SHIFT_SUPERVISOR normally routes to the dedicated
+  // SupervisorDashboard before this component ever renders.
+  SHIFT_SUPERVISOR: "Your site today — who's on, who's late, what's open.",
 };
 
-const fmtMoney = (n: number) =>
-  n.toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 0,
-  });
-
-const fmtRelative = (iso: string): string => {
-  const ms = Date.now() - new Date(iso).getTime();
-  const min = Math.floor(ms / 60_000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min}m ago`;
-  const hrs = Math.floor(min / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  if (days < 7) return `${days}d ago`;
-  // fmtDateTz without a zone renders "May 13" in the browser zone —
-  // byte-for-byte the previous inline toLocaleDateString options.
-  return fmtDateTz(iso);
-};
+// Thousands-separated integer ("1,234"). Kept local because @/lib/format
+// has no integer formatter; Intl directly, since toLocale* is lint-banned.
+const INT_FMT = new Intl.NumberFormat('en-US');
+const fmtInt = (n: number): string => INT_FMT.format(n);
 
 const greetingFor = (hour: number): string => {
   if (hour < 5) return 'Up late';
@@ -135,6 +128,8 @@ const humanizeAction = (action: string): string => {
 };
 
 export function AdminDashboard() {
+  const pullQueryClient = useQueryClient();
+  const pullState = usePullToRefresh(() => pullQueryClient.invalidateQueries());
   const { user, role, can } = useAuth();
   const [now, setNow] = useState(() => new Date());
 
@@ -175,29 +170,27 @@ export function AdminDashboard() {
   const activity: AuditSearchEntry[] | null = canSeeAudit
     ? (activityQuery.data?.entries ?? null)
     : [];
-  // KPIs are required; audit failure is silent (the section just shows empty).
+  // KPIs are required; the activity feed surfaces its own inline error +
+  // retry (see ActivityFeed) instead of masquerading as "no activity".
   const error = kpisQuery.error
     ? kpisQuery.error instanceof ApiError
       ? kpisQuery.error.message
       : 'Failed to load dashboard data.'
     : null;
 
-  const greetingName = user?.email
-    ? firstNameFromEmail(user.email)
-    : 'there';
+  const greetingName =
+    user?.firstName?.trim() ||
+    (user?.email ? firstNameFromEmail(user.email) : 'there');
   const greeting = greetingFor(now.getHours());
-  const dateLabel = now.toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'long',
-    day: 'numeric',
-  });
+  const dateLabel = fmtDate(now);
 
   return (
     <div className="mx-auto space-y-8">
+      <PullToRefreshIndicator state={pullState} />
       {/* Greeting strip — calm, generous typography, time + role context. */}
       <header>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="text-[11px] uppercase tracking-[0.18em] text-silver flex items-center gap-2">
+          <div className="text-xs2 uppercase tracking-[0.18em] text-silver flex items-center gap-2">
             <Calendar className="h-3 w-3" aria-hidden="true" />
             {dateLabel}
           </div>
@@ -229,11 +222,17 @@ export function AdminDashboard() {
         ssnRecollectionOutstanding={ssnRecollectionOutstanding}
       />
 
-      <KpiSection kpis={kpis} />
+      <KpiSection kpis={kpis} role={role} />
 
       {canSeeOnboarding && <OnboardingFunnel kpis={kpis} />}
 
-      {canSeeAudit && <ActivityFeed entries={activity} />}
+      {canSeeAudit && (
+        <ActivityFeed
+          entries={activity}
+          error={Boolean(activityQuery.error)}
+          onRetry={() => void activityQuery.refetch()}
+        />
+      )}
     </div>
   );
 }
@@ -284,7 +283,7 @@ function WelcomeCard({ greetingName }: { greetingName: string }) {
         >
           <X className="h-4 w-4" aria-hidden="true" />
         </Button>
-        <div className="text-[10px] uppercase tracking-widest text-silver/80 flex items-center gap-1.5">
+        <div className="text-2xs uppercase tracking-widest text-silver/80 flex items-center gap-1.5">
           <Sparkles className="h-3 w-3 text-gold" aria-hidden="true" />
           Welcome
         </div>
@@ -295,7 +294,7 @@ function WelcomeCard({ greetingName }: { greetingName: string }) {
           This is your home base. Items needing your attention are pinned
           at the top, followed by today's workforce metrics. Click any
           tile to drill in. Drag a sidebar item into the topbar's
-          command palette (<kbd className="px-1 py-0.5 rounded border border-navy-secondary text-[10px] font-mono">⌘K</kbd>) to jump anywhere in two
+          command palette (<kbd className="px-1 py-0.5 rounded border border-navy-secondary text-2xs font-mono">⌘K</kbd>) to jump anywhere in two
           keystrokes.
         </p>
       </CardContent>
@@ -397,7 +396,7 @@ function ActionRequiredSection({
           ssnRecollectionOutstanding === 1
             ? 'SSN needs re-collection'
             : 'SSNs need re-collection',
-        hint: 'Stored W-4 SSNs unreadable since the June 11 key incident — blocks new-hire reporting and W-2s.',
+        hint: 'W-4 SSNs unreadable since the June 11 key incident, or card photos still missing — blocks new-hire reporting and W-2s.',
         to: '/payroll/w4-recollection',
         cta: 'Open campaign',
         icon: ShieldCheck,
@@ -499,7 +498,7 @@ function ActionCard({ item }: { item: ActionItem }) {
         // elev-1 (same as other cards in the grid) and lifts to elev-2
         // on hover plus a 1px vertical translate so the cue compounds.
         // Matches the rest of the system instead of inventing a one-off
-        // shadow-lg flourish.
+        // elev-2 flourish.
         'group flex flex-col rounded-lg border bg-navy p-5 elev-1 transition-all',
         'hover:-translate-y-0.5 hover:elev-2',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight',
@@ -553,13 +552,21 @@ interface Kpi {
   trend?: KpiTrend & { deltaLabel: string };
 }
 
-function KpiSection({ kpis }: { kpis: DashboardKPIs | null }) {
+function KpiSection({
+  kpis,
+  role,
+}: {
+  kpis: DashboardKPIs | null;
+  role: Role | null;
+}) {
   return (
     <section aria-label="Workforce metrics" className="space-y-3">
       <SectionTitle icon={Activity}>Workforce snapshot</SectionTitle>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {kpis ? (
-          buildKpis(kpis).map((kpi) => <KpiTile key={kpi.label} kpi={kpi} />)
+          buildKpis(kpis, role).map((kpi) => (
+            <KpiTile key={kpi.label} kpi={kpi} />
+          ))
         ) : (
           Array.from({ length: 4 }).map((_, i) => (
             <Card key={i}>
@@ -584,42 +591,61 @@ function withLabel(
   return trend ? { ...trend, deltaLabel } : undefined;
 }
 
-function buildKpis(k: DashboardKPIs): Kpi[] {
-  return [
+function buildKpis(k: DashboardKPIs, role: Role | null): Kpi[] {
+  const has = (cap: Capability) => (role ? hasCapability(role, cap) : false);
+  // A tile links out only when the viewer can actually open the destination
+  // module (/people → view:org, /onboarding → view:onboarding, /payroll →
+  // view:payroll, /scheduling → view:scheduling); otherwise it renders as a
+  // plain, unlinked tile — no dead ends into 403s.
+  const linkTo = (to: string, cap: Capability) =>
+    has(cap) ? to : undefined;
+
+  const xs: Kpi[] = [
     {
       label: 'Active associates',
-      value: k.activeAssociates.toLocaleString(),
+      value: fmtInt(k.activeAssociates),
       hint:
         k.associatesClockedIn > 0
-          ? `${k.associatesClockedIn.toLocaleString()} clocked in now`
+          ? `${fmtInt(k.associatesClockedIn)} clocked in now`
           : 'No one on the clock',
       icon: Users,
-      to: '/people?status=ACTIVE',
+      to: linkTo('/people?status=ACTIVE', 'view:org'),
       // Series is weekly *hires* — the leading edge of headcount.
       trend: withLabel(k.trends?.hires, 'hires vs last wk'),
     },
     {
       label: `Open shifts · next ${k.windowDays}d`,
-      value: k.openShiftsNext30d.toLocaleString(),
+      value: fmtInt(k.openShiftsNext30d),
       hint: k.openShiftsNext30d === 0 ? 'Schedule fully covered' : undefined,
       icon: Clock,
-      to: '/scheduling',
+      to: linkTo('/scheduling', 'view:scheduling'),
       // Series is shifts scheduled per week (all non-cancelled statuses).
       trend: withLabel(k.trends?.shiftsScheduled, 'scheduled vs last wk'),
     },
-    {
+  ];
+  // Onboarding pipeline (and its I-9 Section 2 hint — compliance-adjacent)
+  // only for roles that can see onboarding; the API zeroes these counts for
+  // bounded roles anyway, but a permanent "0" tile is just noise.
+  if (has('view:onboarding')) {
+    xs.push({
       label: 'Onboarding in flight',
-      value: k.pendingOnboardingApplications.toLocaleString(),
+      value: fmtInt(k.pendingOnboardingApplications),
       hint:
         k.pendingI9Section2 > 0
           ? `${k.pendingI9Section2} I-9 Section 2 pending`
           : 'I-9s up to date',
       icon: ClipboardList,
-      to: '/onboarding',
+      to: linkTo('/onboarding', 'view:onboarding'),
       // Series is new applications per week.
       trend: withLabel(k.trends?.applications, 'new vs last wk'),
-    },
-    {
+    });
+  }
+  // Money tiles (net paid + pending disbursement) only for payroll-capable
+  // roles — the API clamps these to $0 for bounded roles, and rendering a
+  // zeroed money tile reads as "nobody got paid", which is worse than
+  // rendering nothing.
+  if (has('view:payroll')) {
+    xs.push({
       label: `Net paid · last ${k.windowDays}d`,
       value: fmtMoney(k.netPaidLast30d),
       hint:
@@ -627,9 +653,10 @@ function buildKpis(k: DashboardKPIs): Kpi[] {
           ? `${fmtMoney(k.netPendingDisbursement)} queued`
           : 'No pending runs',
       icon: DollarSign,
-      to: '/payroll',
-    },
-  ];
+      to: linkTo('/payroll', 'view:payroll'),
+    });
+  }
+  return xs;
 }
 
 function KpiTile({ kpi }: { kpi: Kpi }) {
@@ -646,12 +673,13 @@ function KpiTile({ kpi }: { kpi: Kpi }) {
     >
       <CardContent className="pt-5">
         <div className="flex items-center justify-between">
-          <div className="text-[10px] md:text-[11px] uppercase tracking-[0.15em] text-silver">
+          {/* Canonical KPI label spec (matches MetricCard). */}
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
             {kpi.label}
           </div>
           <Icon className="h-3.5 w-3.5 text-gold/70" aria-hidden="true" />
         </div>
-        <div className="font-display text-3xl md:text-[2rem] text-gold-bright mt-3 leading-none tabular-nums">
+        <div className="font-display text-3xl md:text-hero text-gold-bright mt-3 leading-none tabular-nums">
           <CountUpValue value={kpi.value} />
         </div>
         {kpi.trend && (
@@ -775,7 +803,7 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
                   className="min-w-0 block rounded-md -m-1 p-1 hover:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                   title={`View ${PIPELINE_LABEL[status].toLowerCase()} applications`}
                 >
-                  <div className="text-[10px] uppercase tracking-widest text-silver">
+                  <div className="text-2xs uppercase tracking-widest text-silver">
                     {PIPELINE_LABEL[status]}
                   </div>
                   <div
@@ -800,7 +828,7 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
                       style={{ width: `${pct}%` }}
                     />
                   </div>
-                  <div className="text-[10px] text-silver/70 mt-1 tabular-nums">
+                  <div className="text-2xs text-silver/70 mt-1 tabular-nums">
                     {pct}% of pipeline
                   </div>
                 </Link>
@@ -833,7 +861,15 @@ function entityHref(entityType: string, entityId: string): string | null {
   }
 }
 
-function ActivityFeed({ entries }: { entries: AuditSearchEntry[] | null }) {
+function ActivityFeed({
+  entries,
+  error,
+  onRetry,
+}: {
+  entries: AuditSearchEntry[] | null;
+  error: boolean;
+  onRetry: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const collapsible =
     entries !== null && entries.length > ACTIVITY_FEED_PREVIEW;
@@ -858,7 +894,21 @@ function ActivityFeed({ entries }: { entries: AuditSearchEntry[] | null }) {
       </div>
       <Card>
         <CardContent className="p-0">
-          {entries === null ? (
+          {error ? (
+            <div className="p-6 text-center">
+              <div role="alert" className="text-sm text-alert">
+                Couldn't load recent activity.
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="mt-3"
+                onClick={onRetry}
+              >
+                Retry
+              </Button>
+            </div>
+          ) : entries === null ? (
             <div className="p-5 space-y-3">
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className="flex items-center gap-3">
@@ -900,7 +950,7 @@ function ActivityFeed({ entries }: { entries: AuditSearchEntry[] | null }) {
                           </span>{' '}
                           {humanizeAction(e.action)}
                         </div>
-                        <div className="text-[11px] text-silver/70">
+                        <div className="text-xs2 text-silver/70">
                           {href ? (
                             <Link
                               to={href}
@@ -913,7 +963,7 @@ function ActivityFeed({ entries }: { entries: AuditSearchEntry[] | null }) {
                           )}{' '}
                           ·{' '}
                           <span className="tabular-nums">
-                            {fmtRelative(e.createdAt)}
+                            {fmtRelativeDate(e.createdAt)}
                           </span>
                         </div>
                       </div>
@@ -940,7 +990,7 @@ function ActivityFeed({ entries }: { entries: AuditSearchEntry[] | null }) {
                           className="h-3.5 w-3.5"
                           aria-hidden="true"
                         />
-                        Show all {entries.length}
+                        Show {entries.length} most recent
                       </>
                     )}
                   </button>

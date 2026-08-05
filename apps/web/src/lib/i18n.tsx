@@ -82,6 +82,16 @@ const en = {
   'dash.pushBody': 'New shifts, swaps, and reminders — even when the app is closed.',
   'dash.pushOn': 'Turn on',
   'dash.pushLater': 'Not now',
+  'dash.actionNeeded': 'Action needed',
+  'dash.allCaughtUp': "You're all caught up ✓",
+  'dash.actionAgreements': '{count} agreement waiting for your signature',
+  'dash.actionAgreementsPlural': '{count} agreements waiting for your signature',
+  'dash.actionDocs': '{count} document needs your attention',
+  'dash.actionDocsPlural': '{count} documents need your attention',
+  'dash.actionShifts': '{count} upcoming shift to confirm',
+  'dash.actionShiftsPlural': '{count} upcoming shifts to confirm',
+  'dash.actionInbox': '{count} unread message in your inbox',
+  'dash.actionInboxPlural': '{count} unread messages in your inbox',
 
   // My schedule chrome
   'sched.title': 'My schedule',
@@ -215,11 +225,14 @@ const en = {
   'timeoff.reasonOptional': 'Reason (optional)',
   'timeoff.reasonPlaceholder': 'Family event, doctor visit, etc.',
   'timeoff.submit': 'Submit',
+  'timeoff.balanceLine': '{avail} available · {after} left after this request',
+  'timeoff.balanceOver': 'This request exceeds your available balance by {over}.',
 
   // Pay — associate paystub list
   'pay.title': 'My pay',
   'pay.subtitle': 'Recent paystubs with year-to-date totals.',
   'pay.loadFailed': 'Failed to load.',
+  'pay.ytdLoadFailed': "Couldn't load year-to-date totals.",
   'pay.noPaystubs': 'No paystubs yet',
   'pay.noPaystubsDesc':
     'Your first paystub will appear here after payroll runs for a period you worked.',
@@ -273,6 +286,7 @@ const en = {
   // Login
   'login.title': 'Sign in',
   'login.subtitle': 'Use your Alto HR credentials.',
+  'login.brandTagline': 'Your schedule, time clock, and pay',
   'login.email': 'Email',
   'login.password': 'Password',
   'login.forgot': 'Forgot password?',
@@ -344,6 +358,16 @@ const es: Record<MessageKey, string> = {
     'Nuevos turnos, cambios y recordatorios — incluso con la app cerrada.',
   'dash.pushOn': 'Activar',
   'dash.pushLater': 'Ahora no',
+  'dash.actionNeeded': 'Acción necesaria',
+  'dash.allCaughtUp': 'Estás al día ✓',
+  'dash.actionAgreements': '{count} acuerdo espera tu firma',
+  'dash.actionAgreementsPlural': '{count} acuerdos esperan tu firma',
+  'dash.actionDocs': '{count} documento necesita tu atención',
+  'dash.actionDocsPlural': '{count} documentos necesitan tu atención',
+  'dash.actionShifts': '{count} turno próximo por confirmar',
+  'dash.actionShiftsPlural': '{count} turnos próximos por confirmar',
+  'dash.actionInbox': '{count} mensaje sin leer en tu bandeja de entrada',
+  'dash.actionInboxPlural': '{count} mensajes sin leer en tu bandeja de entrada',
 
   'sched.title': 'Mi horario',
   'sched.subtitle': 'Tus turnos publicados.',
@@ -473,10 +497,13 @@ const es: Record<MessageKey, string> = {
   'timeoff.reasonOptional': 'Motivo (opcional)',
   'timeoff.reasonPlaceholder': 'Evento familiar, cita médica, etc.',
   'timeoff.submit': 'Enviar',
+  'timeoff.balanceLine': '{avail} disponibles · {after} restantes después de esta solicitud',
+  'timeoff.balanceOver': 'Esta solicitud excede tu saldo disponible por {over}.',
 
   'pay.title': 'Mi pago',
   'pay.subtitle': 'Recibos de pago recientes con totales acumulados del año.',
   'pay.loadFailed': 'No se pudo cargar.',
+  'pay.ytdLoadFailed': 'No se pudieron cargar los totales del año.',
   'pay.noPaystubs': 'Aún no hay recibos',
   'pay.noPaystubsDesc':
     'Tu primer recibo aparecerá aquí cuando se procese la nómina de un período que trabajaste.',
@@ -529,6 +556,7 @@ const es: Record<MessageKey, string> = {
 
   'login.title': 'Iniciar sesión',
   'login.subtitle': 'Usa tus credenciales de Alto HR.',
+  'login.brandTagline': 'Tu horario, tu reloj y tu pago',
   'login.email': 'Correo electrónico',
   'login.password': 'Contraseña',
   'login.forgot': '¿Olvidaste tu contraseña?',

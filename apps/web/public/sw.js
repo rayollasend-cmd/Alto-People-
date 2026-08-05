@@ -18,7 +18,7 @@
 // activate handler evicts the previous cache instead of leaving stale
 // entries (e.g. an old index.html with chunk hashes from a prior
 // deploy that no longer exist on the server) lying around.
-const CACHE_NAME = 'alto-shell-v13';
+const CACHE_NAME = 'alto-shell-v14';
 const SHELL = [
   '/',
   '/index.html',
@@ -46,6 +46,13 @@ const SHELL = [
 // plugin) the cache-on-first-fetch fallback below still works.
 async function precacheChunksFromManifest(cache) {
   try {
+    // Respect metered / constrained connections: precaching is a nicety,
+    // and on data-saver or 2G it's actively hostile. The manifest itself
+    // is now an allowlist (shell + top routes), not the whole build.
+    const conn = self.navigator && self.navigator.connection;
+    if (conn && (conn.saveData || conn.effectiveType === '2g' || conn.effectiveType === 'slow-2g')) {
+      return;
+    }
     const res = await fetch('/asset-manifest.json', {
       credentials: 'same-origin',
       cache: 'no-cache',
@@ -83,16 +90,31 @@ self.addEventListener('install', (event) => {
         );
         await precacheChunksFromManifest(cache);
       })
-      .then(() => self.skipWaiting()),
+      // No unconditional skipWaiting: the page shows a 'new version'
+      // toast and posts SKIP_WAITING when the user chooses to reload —
+      // updates stop landing silently mid-session.
   );
 });
+
+self.addEventListener('message', (event) => {
+  if (event.data === 'SKIP_WAITING') self.skipWaiting();
+});
+
+// The share-target stash is transient user data, not a build artifact —
+// it must survive an activation that happens mid-share, and it is dropped
+// by the page as soon as the file is consumed (and on sign-out).
+const SHARE_INTAKE_CACHE = 'alto-shared-intake';
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
       .then((keys) =>
-        Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))),
+        Promise.all(
+          keys
+            .filter((k) => k !== CACHE_NAME && k !== SHARE_INTAKE_CACHE)
+            .map((k) => caches.delete(k)),
+        ),
       )
       .then(() => self.clients.claim()),
   );
@@ -174,6 +196,43 @@ self.addEventListener('notificationclick', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
+
+  // Web Share Target — the OS share sheet POSTs the shared files here
+  // (installed app only; manifest.share_target). Stash them in a
+  // dedicated cache and bounce to My Documents, which picks them up,
+  // pre-attaches them to the upload form, and clears the stash.
+  if (req.method === 'POST' && new URL(req.url).pathname === '/share-target') {
+    event.respondWith(
+      (async () => {
+        try {
+          const form = await req.formData();
+          const files = form.getAll('files').filter((f) => f instanceof File);
+          const cache = await caches.open(SHARE_INTAKE_CACHE);
+          // One share replaces the last — a stale stash must never
+          // resurface days later as a mystery attachment.
+          for (const key of await cache.keys()) await cache.delete(key);
+          await Promise.all(
+            files.slice(0, 5).map((file, i) =>
+              cache.put(
+                `/shared-intake/${i}`,
+                new Response(file, {
+                  headers: {
+                    'content-type': file.type || 'application/octet-stream',
+                    'x-shared-filename': encodeURIComponent(file.name || `shared-${i}`),
+                  },
+                }),
+              ),
+            ),
+          );
+        } catch {
+          /* fall through — land on the page either way */
+        }
+        return Response.redirect('/documents?shared=1', 303);
+      })(),
+    );
+    return;
+  }
+
   if (req.method !== 'GET') return;
 
   const url = new URL(req.url);

@@ -10,6 +10,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { recordComplianceEvent } from '../lib/audit.js';
+import { notifyAssociate, notifyUser } from '../lib/notify.js';
 
 export const performanceRouter = Router();
 
@@ -188,6 +189,14 @@ performanceRouter.post('/reviews/:id/submit', MANAGE, async (req, res, next) => 
       data: { status: 'SUBMITTED', submittedAt: new Date() },
       include: REVIEW_INCLUDE,
     });
+    // Fire-and-forget: the review is shared regardless of inbox delivery.
+    void notifyAssociate(updated.associateId, {
+      subject: 'Your performance review is ready',
+      body: `Your review for ${ymd(updated.periodStart)} – ${ymd(updated.periodEnd)} has been shared with you.`,
+      category: 'performance',
+      linkUrl: '/performance',
+      emailFallback: true,
+    });
     res.json(toReview(updated));
   } catch (err) {
     next(err);
@@ -252,6 +261,16 @@ performanceRouter.post('/me/reviews/:id/acknowledge', async (req, res, next) => 
       data: { status: 'ACKNOWLEDGED', acknowledgedAt: new Date() },
       include: REVIEW_INCLUDE,
     });
+    // Close the loop for the reviewer (fire-and-forget). reviewerUserId is
+    // nullable in the model, so skip when no reviewer is recorded.
+    if (updated.reviewerUserId) {
+      void notifyUser(updated.reviewerUserId, {
+        subject: 'Review acknowledged',
+        body: `${updated.associate.firstName} ${updated.associate.lastName} acknowledged their performance review for ${ymd(updated.periodStart)} – ${ymd(updated.periodEnd)}.`,
+        category: 'performance',
+        linkUrl: '/performance',
+      });
+    }
     res.json(toReview(updated));
   } catch (err) {
     next(err);

@@ -12,35 +12,43 @@ import {
 import { listJobs } from '@/lib/jobsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { fmtDateTime, fmtTime } from '@/lib/format';
+import {
+  fmtPayRate,
+  fmtTime,
+  ymdLocal,
+  ymdToIsoEndExclusive,
+  ymdToIsoStart,
+} from '@/lib/format';
 import { hapticSuccess } from '@/lib/haptics';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Clock, CalendarRange } from 'lucide-react';
+import { Clock, CalendarRange, ChevronDown } from 'lucide-react';
+import { ShiftTimeline } from './ShiftTimeline';
+import { TimesheetWeeks } from './TimesheetWeeks';
+import { fmtPunchTime, formatHM, punchDayOffset } from './punchFormat';
 
-function formatHM(mins: number): string {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  if (h === 0) return `${m}m`;
-  return `${h}h ${m.toString().padStart(2, '0')}m`;
-}
+const STATUS_LABELS: Record<TimeEntry['status'], string> = {
+  ACTIVE: 'Active',
+  COMPLETED: 'Pending',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+};
 
-function statusBadge(status: TimeEntry['status']): { label: string; cls: string } {
-  switch (status) {
-    case 'ACTIVE':
-      return { label: 'Active', cls: 'bg-gold/20 text-gold border-gold/40' };
-    case 'COMPLETED':
-      return { label: 'Pending', cls: 'bg-silver/10 text-silver border-silver/30' };
-    case 'APPROVED':
-      return { label: 'Approved', cls: 'bg-success/15 text-success border-success/30' };
-    case 'REJECTED':
-      return { label: 'Rejected', cls: 'bg-alert/15 text-alert border-alert/30' };
-  }
-}
+const STATUS_VARIANTS: Record<
+  TimeEntry['status'],
+  'accent' | 'pending' | 'success' | 'destructive'
+> = {
+  ACTIVE: 'accent',
+  COMPLETED: 'pending',
+  APPROVED: 'success',
+  REJECTED: 'destructive',
+};
 
 function useTicker(active: boolean): number {
   const [, setTick] = useState(0);
@@ -50,14 +58,6 @@ function useTicker(active: boolean): number {
     return () => clearInterval(id);
   }, [active]);
   return Date.now();
-}
-
-// YYYY-MM-DD in local time. Converted to ISO on the way out to the API.
-function ymdLocal(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
 }
 
 function defaultHistoryFromYmd(): string {
@@ -70,19 +70,12 @@ function defaultHistoryToYmd(): string {
   return ymdLocal(new Date());
 }
 
-function ymdToIsoStart(ymd: string): string {
-  return new Date(`${ymd}T00:00:00`).toISOString();
-}
-
-function ymdToIsoEndExclusive(ymd: string): string {
-  const d = new Date(`${ymd}T00:00:00`);
-  d.setDate(d.getDate() + 1);
-  return d.toISOString();
-}
-
 export function AssociateTimeView() {
   const [active, setActive] = useState<TimeEntry | null>(null);
   const [entries, setEntries] = useState<TimeEntry[] | null>(null);
+  // History row expanded to its punch timeline. One at a time keeps the
+  // list scannable on a phone.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string>('');
   const [busy, setBusy] = useState(false);
@@ -209,9 +202,20 @@ export function AssociateTimeView() {
   const weekStart = new Date();
   weekStart.setHours(0, 0, 0, 0);
   weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+  // The open shift is excluded from the history sum and re-added as
+  // liveMinutes: /me/entries applies no status filter, so the ACTIVE entry is
+  // already in `entries` with minutesElapsed = now - clockInAt — the very same
+  // quantity liveMinutes computes. Adding both counted the current shift
+  // twice and pushed the overtime warning hours early. REJECTED time is
+  // dropped too; it was never worked hours.
   const weekMinutes =
     (entries ?? [])
-      .filter((e) => new Date(e.clockInAt) >= weekStart)
+      .filter(
+        (e) =>
+          new Date(e.clockInAt) >= weekStart &&
+          e.status !== 'REJECTED' &&
+          e.id !== active?.id,
+      )
       .reduce((sum, e) => sum + (e.minutesElapsed ?? 0), 0) + liveMinutes;
   const weekHours = (weekMinutes / 60).toFixed(1);
   const overtimeNudge =
@@ -341,7 +345,7 @@ export function AssociateTimeView() {
                   {jobs.map((j) => (
                     <option key={j.id} value={j.id}>
                       {j.name}
-                      {j.payRate ? ` · $${j.payRate.toFixed(2)}/hr` : ''}
+                      {j.payRate ? ` · ${fmtPayRate(j.payRate, 'HOURLY')}` : ''}
                       {j.clientName ? ` · ${j.clientName}` : ''}
                     </option>
                   ))}
@@ -362,11 +366,7 @@ export function AssociateTimeView() {
             </p>
           </>
         )}
-        {error && (
-          <p role="alert" className="text-sm text-alert mt-4">
-            {error}
-          </p>
-        )}
+        {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
         {info && (
           <p className="text-sm text-silver mt-4">{info}</p>
         )}
@@ -379,7 +379,7 @@ export function AssociateTimeView() {
               360px screens); back to the compact inline pair at sm+. */}
           <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:w-auto sm:items-end">
             <div>
-              <label className="block text-[11px] uppercase tracking-wider text-silver mb-1">
+              <label className="block text-xs2 uppercase tracking-wider text-silver mb-1">
                 From
               </label>
               <input
@@ -393,7 +393,7 @@ export function AssociateTimeView() {
               />
             </div>
             <div>
-              <label className="block text-[11px] uppercase tracking-wider text-silver mb-1">
+              <label className="block text-xs2 uppercase tracking-wider text-silver mb-1">
                 To
               </label>
               <input
@@ -428,60 +428,89 @@ export function AssociateTimeView() {
           );
         })()}
         {entries && entries.length > 0 && (
-          <ul className="space-y-2">
-            {entries.map((e) => {
-              const badge = statusBadge(e.status);
+          <TimesheetWeeks
+            entries={entries}
+            renderEntry={(e) => {
               const anomalies = e.anomalies ?? [];
+              const expanded = expandedId === e.id;
+              const dayOff = e.clockOutAt
+                ? punchDayOffset(e.clockInAt, e.clockOutAt, e.locationTimezone)
+                : 0;
               return (
-                <li
-                  key={e.id}
-                  className="flex items-start justify-between gap-4 p-4 bg-navy border border-navy-secondary rounded-lg"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="text-white tabular-nums">
-                      {fmtDateTime(e.clockInAt)} –{' '}
-                      {e.clockOutAt ? fmtTime(e.clockOutAt) : '…'}
-                    </div>
-                    <div className="text-sm text-silver">
-                      {formatHM(e.netMinutes ?? e.minutesElapsed)}
-                      {e.netMinutes != null && e.netMinutes < e.minutesElapsed && (
-                        <span className="ml-1 text-silver/70">
-                          ({formatHM(e.minutesElapsed - e.netMinutes)} break)
-                        </span>
-                      )}
-                      {e.jobName && <span className="ml-2">· {e.jobName}</span>}
-                      {e.payRate && (
-                        <span className="ml-2">· ${e.payRate.toFixed(2)}/hr</span>
-                      )}
-                      {e.rejectionReason && (
-                        <span className="ml-2 text-alert">· {e.rejectionReason}</span>
-                      )}
-                    </div>
-                    {anomalies.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {anomalies.map((a) => (
-                          <span
-                            key={a}
-                            className="text-[11px] uppercase tracking-widest px-2 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert"
-                          >
-                            {timeAnomalyLabel(a)}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  <span
-                    className={cn(
-                      'shrink-0 text-xs uppercase tracking-widest px-2 py-1 rounded border',
-                      badge.cls
-                    )}
+                <div>
+                  <button
+                    type="button"
+                    aria-expanded={expanded}
+                    onClick={() => setExpandedId(expanded ? null : e.id)}
+                    className="flex w-full items-start justify-between gap-4 px-3 py-2.5 text-left active:bg-navy-secondary/40 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                   >
-                    {badge.label}
-                  </span>
-                </li>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-white tabular-nums">
+                        {fmtPunchTime(e.clockInAt, e.locationTimezone)}
+                        {' → '}
+                        {e.clockOutAt ? (
+                          <>
+                            {fmtPunchTime(e.clockOutAt, e.locationTimezone)}
+                            {dayOff > 0 && (
+                              <span className="ml-1 text-2xs text-warning align-super">
+                                +{dayOff}d
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-silver">on the clock</span>
+                        )}
+                      </div>
+                      <div className="text-sm text-silver">
+                        {formatHM(e.netMinutes ?? e.minutesElapsed)}
+                        {e.netMinutes != null && e.netMinutes < e.minutesElapsed && (
+                          <span className="ml-1 text-silver/70">
+                            ({formatHM(e.minutesElapsed - e.netMinutes)} break)
+                          </span>
+                        )}
+                        {e.jobName && <span className="ml-2">· {e.jobName}</span>}
+                        {e.payRate && (
+                          <span className="ml-2">· {fmtPayRate(e.payRate, 'HOURLY')}</span>
+                        )}
+                        {e.rejectionReason && (
+                          <span className="ml-2 text-alert">· {e.rejectionReason}</span>
+                        )}
+                      </div>
+                      {anomalies.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {anomalies.map((a) => (
+                            <span
+                              key={a}
+                              className="text-xs2 uppercase tracking-widest px-2 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert"
+                            >
+                              {timeAnomalyLabel(a)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <span className="flex shrink-0 items-center gap-2">
+                      <Badge variant={STATUS_VARIANTS[e.status]}>
+                        {STATUS_LABELS[e.status]}
+                      </Badge>
+                      <ChevronDown
+                        aria-hidden
+                        className={cn(
+                          'h-4 w-4 text-silver/60 transition-transform',
+                          expanded && 'rotate-180',
+                        )}
+                      />
+                    </span>
+                  </button>
+                  {expanded && (
+                    <div className="px-3 pb-3">
+                      <ShiftTimeline entry={e} />
+                    </div>
+                  )}
+                </div>
               );
-            })}
-          </ul>
+            }}
+          />
         )}
       </section>
     </div>

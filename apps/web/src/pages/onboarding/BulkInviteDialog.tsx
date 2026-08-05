@@ -5,11 +5,12 @@ import type {
   BulkInviteApplicant,
   BulkInviteResultRow,
   ClientSummary,
+  LocationSummary,
   EmploymentType,
   OnboardingTemplate,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { bulkInvite, listClients, listTemplates } from '@/lib/onboardingApi';
+import { bulkInvite, listClients, listInviteLocations, listTemplates } from '@/lib/onboardingApi';
 import { Button } from '@/components/ui/Button';
 import {
   Dialog,
@@ -20,7 +21,7 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { Field } from '@/components/ui/Field';
-import { Textarea } from '@/components/ui/Input';
+import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { cn } from '@/lib/cn';
 
@@ -35,19 +36,35 @@ interface ParsedRow {
   email: string | null;
   firstName: string;
   lastName: string;
+  /** Optional per-row position (4th column). */
+  position?: string;
+  /** Optional per-row start date, YYYY-MM-DD (5th column). */
+  startDate?: string;
   /** Reason this row is invalid; null = ok. */
   error: string | null;
 }
 
 const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const DATE_RX = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Strict YYYY-MM-DD calendar check — the shape alone lets 2026-02-30 through. */
+function isValidYmd(s: string): boolean {
+  if (!DATE_RX.test(s)) return false;
+  const d = new Date(`${s}T00:00:00.000Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
 
 /**
  * Parse one row of the paste box. Supports:
  *   - "alice@example.com"
  *   - "alice@example.com,Alice,Hart"
+ *   - "alice@example.com,Alice,Hart,Line cook"
+ *   - "alice@example.com,Alice,Hart,Line cook,2026-08-01"
  *   - "Alice Hart <alice@example.com>"
  *   - "Alice Hart, alice@example.com"
  * The local-part of the email is the fallback when no name is given.
+ * A trailing YYYY-MM-DD column is always the start date, so the position
+ * column can be omitted ("email,first,last,2026-08-01" works too).
  */
 function parseRow(line: string): ParsedRow {
   const raw = line.trim();
@@ -81,21 +98,51 @@ function parseRow(line: string): ParsedRow {
   let email: string | undefined;
   let firstName = '';
   let lastName = '';
+  let position: string | undefined;
+  let startDate: string | undefined;
 
   for (const c of cols) {
     if (!email && EMAIL_RX.test(c)) {
       email = c.toLowerCase();
     }
   }
-  // Names = the non-email columns, in order.
-  const nonEmail = cols.filter((c) => !EMAIL_RX.test(c));
-  if (nonEmail.length === 1) {
-    const parts = nonEmail[0].split(/\s+/).filter(Boolean);
+  // Everything that isn't the email: first, last, [position], [start date].
+  let nameCols = cols.filter((c) => !EMAIL_RX.test(c));
+
+  // A trailing date-shaped column is the start date, wherever the row
+  // stopped ("email,first,last,2026-08-01" — position omitted — works).
+  const tail = nameCols[nameCols.length - 1];
+  if (tail !== undefined && DATE_RX.test(tail)) {
+    if (!isValidYmd(tail)) {
+      return {
+        raw,
+        email: email ?? null,
+        firstName,
+        lastName,
+        error: 'invalid start date (use YYYY-MM-DD)',
+      };
+    }
+    startDate = tail;
+    nameCols = nameCols.slice(0, -1);
+  } else if (nameCols.length >= 4) {
+    // Five columns pasted but the 5th isn't a date.
+    return {
+      raw,
+      email: email ?? null,
+      firstName,
+      lastName,
+      error: 'invalid start date (use YYYY-MM-DD)',
+    };
+  }
+
+  if (nameCols.length === 1) {
+    const parts = nameCols[0].split(/\s+/).filter(Boolean);
     firstName = parts[0] ?? '';
     lastName = parts.slice(1).join(' ');
-  } else if (nonEmail.length >= 2) {
-    firstName = nonEmail[0];
-    lastName = nonEmail.slice(1).join(' ');
+  } else if (nameCols.length >= 2) {
+    firstName = nameCols[0];
+    lastName = nameCols[1];
+    position = nameCols.slice(2).join(' ') || undefined;
   }
 
   if (!email) {
@@ -104,7 +151,7 @@ function parseRow(line: string): ParsedRow {
   if (!firstName) firstName = email.split('@')[0];
   if (!lastName) lastName = '—';
 
-  return { raw, email, firstName, lastName, error: null };
+  return { raw, email, firstName, lastName, position, startDate, error: null };
 }
 
 interface Props {
@@ -124,17 +171,26 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
   const [clients, setClients] = useState<ClientSummary[] | null>(null);
   const [templates, setTemplates] = useState<OnboardingTemplate[] | null>(null);
   const [clientId, setClientId] = useState('');
+  const [locationId, setLocationId] = useState('');
+  const [locations, setLocations] = useState<LocationSummary[] | null>(null);
   const [templateId, setTemplateId] = useState('');
   const [employmentType, setEmploymentType] = useState<EmploymentType>('W2_EMPLOYEE');
   const [paste, setPaste] = useState('');
+  // "Apply to all" fallbacks — used for rows that didn't carry their own
+  // position / start-date column.
+  const [defaultPosition, setDefaultPosition] = useState('');
+  const [defaultStartDate, setDefaultStartDate] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [results, setResults] = useState<BulkInviteResultRow[] | null>(null);
 
   const reset = () => {
     setClientId('');
+    setLocationId('');
     setTemplateId('');
     setEmploymentType('W2_EMPLOYEE');
     setPaste('');
+    setDefaultPosition('');
+    setDefaultStartDate('');
     setResults(null);
   };
 
@@ -143,7 +199,14 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
     let cancelled = false;
     if (!clients) {
       listClients()
-        .then((r) => !cancelled && setClients(r.clients))
+        .then((r) => {
+          if (cancelled) return;
+          setClients(r.clients);
+          // Client-bounded callers (SHIFT_SUPERVISOR) only ever get their own
+          // client back from the scoped list — don't make them answer a
+          // question with one possible answer. The server clamps this anyway.
+          if (r.clients.length === 1) setClientId(r.clients[0].id);
+        })
         .catch(() => !cancelled && setClients([]));
     }
     if (!templates) {
@@ -155,6 +218,30 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
       cancelled = true;
     };
   }, [open, clients, templates]);
+
+  // Work-site picker for the batch. Loads via the invite-scoped endpoint
+  // (supervisors have no view:clients). Required when the client has sites —
+  // a location-less invite leaves the associate's site unrecorded forever.
+  useEffect(() => {
+    setLocationId('');
+    if (!clientId || !open) {
+      setLocations(null);
+      return;
+    }
+    let cancelled = false;
+    setLocations(null);
+    listInviteLocations(clientId)
+      .then((r) => {
+        if (cancelled) return;
+        setLocations(r.locations);
+        // One possible answer — don't make them pick it.
+        if (r.locations.length === 1) setLocationId(r.locations[0].id);
+      })
+      .catch(() => !cancelled && setLocations([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [clientId, open]);
 
   const visibleTemplates = useMemo(() => {
     if (!templates) return [];
@@ -188,45 +275,61 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
 
   const submit = async () => {
     if (!clientId) {
-      toast.error('Pick a client');
+      toast.error('Pick a client.');
       return;
     }
     if (!templateId) {
-      toast.error('Pick a template');
+      toast.error('Pick a template.');
+      return;
+    }
+    if (!locationId && locations && locations.length > 0) {
+      toast.error('Pick a work site — this client has locations configured.');
       return;
     }
     if (validRows.length === 0) {
-      toast.error('Paste at least one valid email');
+      toast.error('Paste at least one valid email.');
       return;
     }
     setSubmitting(true);
     try {
-      const applicants: BulkInviteApplicant[] = validRows.map((r) => ({
-        email: r.email!,
-        firstName: r.firstName,
-        lastName: r.lastName,
-      }));
+      const applicants: BulkInviteApplicant[] = validRows.map((r) => {
+        // Per-row values win; the "apply to all" fields fill the gaps.
+        const position = r.position ?? (defaultPosition.trim() || undefined);
+        const ymd = r.startDate ?? (defaultStartDate || undefined);
+        return {
+          email: r.email!,
+          firstName: r.firstName,
+          lastName: r.lastName,
+          ...(position ? { position } : {}),
+          // Contract wants a full ISO datetime — same midnight-UTC
+          // convention as the single-invite dialog.
+          ...(ymd
+            ? { startDate: new Date(`${ymd}T00:00:00.000Z`).toISOString() }
+            : {}),
+        };
+      });
       const res = await bulkInvite({
         clientId,
         templateId,
         employmentType,
+        ...(locationId ? { locationId } : {}),
         applicants,
       });
       setResults(res.results);
       if (res.succeeded > 0) onCreated();
       if (res.failed === 0) {
-        toast.success(`Invited ${res.succeeded} applicant${res.succeeded === 1 ? '' : 's'}`);
+        toast.success(`Invited ${res.succeeded} applicant${res.succeeded === 1 ? '' : 's'}.`);
       } else if (res.succeeded === 0) {
-        toast.error(`All ${res.failed} invites failed`);
+        toast.error(`All ${res.failed} invites failed.`);
       } else {
-        toast.message(`Invited ${res.succeeded}, ${res.failed} failed`, {
+        toast.message(`Invited ${res.succeeded}, ${res.failed} failed.`, {
           description: 'Check the result list and retry the failed rows.',
         });
       }
     } catch (err) {
       const msg =
-        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Bulk invite failed';
-      toast.error('Could not bulk invite', { description: msg });
+        err instanceof ApiError ? err.message : err instanceof Error ? err.message : 'Bulk invite failed.';
+      toast.error('Could not bulk invite.', { description: msg });
     } finally {
       setSubmitting(false);
     }
@@ -245,7 +348,8 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
           <DialogTitle>Bulk invite applicants</DialogTitle>
           <DialogDescription>
             Paste a list of emails (one per line). Same client, template, and
-            employment type apply to every row.
+            employment type apply to every row; position and start date can be
+            set per row or once for the whole batch.
           </DialogDescription>
         </DialogHeader>
 
@@ -300,6 +404,34 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
                   </Select>
                 )}
               </Field>
+              <Field
+                label={locations && locations.length > 0 ? 'Work site (required)' : 'Work site'}
+              >
+                {(p) => (
+                  <Select
+                    value={locationId}
+                    onChange={(e) => setLocationId(e.target.value)}
+                    disabled={!clientId || locations === null || locations.length === 0}
+                    {...p}
+                  >
+                    <option value="">
+                      {!clientId
+                        ? 'Pick client first'
+                        : locations === null
+                          ? 'Loading…'
+                          : locations.length === 0
+                            ? 'No sites under this client'
+                            : 'Pick a work site…'}
+                    </option>
+                    {locations?.map((l) => (
+                      <option key={l.id} value={l.id}>
+                        {l.name}
+                        {l.state ? ` · ${l.state}` : ''}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </Field>
             </div>
 
             <Field label="Employment type">
@@ -321,9 +453,11 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
               required
               hint={
                 <>
-                  Accepts plain email, &ldquo;email,first,last&rdquo;, or
-                  &ldquo;Name &lt;email&gt;&rdquo;. Up to 200 rows. Names
-                  default to the email local-part if missing.
+                  Accepts plain email, &ldquo;email,first,last&rdquo;,
+                  &ldquo;email,first,last,position,start date&rdquo; (start
+                  date as YYYY-MM-DD; either of the last two columns can be
+                  omitted), or &ldquo;Name &lt;email&gt;&rdquo;. Up to 200
+                  rows. Names default to the email local-part if missing.
                 </>
               }
             >
@@ -335,6 +469,7 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
                   placeholder={[
                     'alice@example.com',
                     'bob@example.com,Bob,Smith',
+                    'dana@example.com,Dana,Lee,Line cook,2026-08-01',
                     'Carol Diaz <carol@example.com>',
                   ].join('\n')}
                   className="font-mono"
@@ -342,6 +477,37 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
                 />
               )}
             </Field>
+
+            {/* Batch-wide fallbacks for rows that didn't specify their own. */}
+            <div className="grid grid-cols-2 gap-3">
+              <Field
+                label="Position (apply to all)"
+                hint="Used for rows without their own position column."
+              >
+                {(p) => (
+                  <Input
+                    value={defaultPosition}
+                    onChange={(e) => setDefaultPosition(e.target.value)}
+                    maxLength={120}
+                    placeholder="e.g. Line cook"
+                    {...p}
+                  />
+                )}
+              </Field>
+              <Field
+                label="Start date (apply to all)"
+                hint="Used for rows without their own start-date column."
+              >
+                {(p) => (
+                  <Input
+                    type="date"
+                    value={defaultStartDate}
+                    onChange={(e) => setDefaultStartDate(e.target.value)}
+                    {...p}
+                  />
+                )}
+              </Field>
+            </div>
 
             {parsed.length > 0 && (
               <div className="text-xs flex items-center gap-3">

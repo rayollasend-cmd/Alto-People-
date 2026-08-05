@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { TrendingUp, TrendingDown, Users, Activity, ArrowDown, ArrowUp } from 'lucide-react';
+import { TrendingUp, TrendingDown, Users, Activity, ArrowDown, ArrowUp, Download } from 'lucide-react';
 import {
   getHeadcountSnapshot,
   getTurnover,
@@ -9,6 +9,10 @@ import {
 } from '@/lib/headcount110Api';
 import { listOrgAssociates } from '@/lib/orgApi';
 import type { AssociateOrgSummary } from '@alto-people/shared';
+import { ApiError } from '@/lib/api';
+import { downloadCsv } from '@/lib/csv';
+import { ymdLocal } from '@/lib/format';
+import { EMPLOYMENT_LABEL } from '@/lib/employmentLabels';
 import {
   Button,
   Card,
@@ -18,7 +22,9 @@ import {
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
+  ErrorBanner,
   PageHeader,
+  SearchInput,
   SegmentedControl,
   SkeletonRows,
   Table,
@@ -29,31 +35,56 @@ import {
   TableRow,
 } from '@/components/ui';
 
-type Drill =
-  | { kind: 'department'; departmentId: string | null; label: string }
-  | { kind: 'employmentType'; employmentType: string; label: string };
+// By-employment-type drills route to the People directory (which
+// filters server-side via ?employmentType=) because the org-associates
+// payload used by the drawer has no employment type to filter on.
+interface Drill {
+  departmentId: string | null;
+  label: string;
+}
 
 /**
  * Phase 110 — Headcount & turnover dashboard.
  *
  * KPI cards on top (total, hires, terminations, turnover %), then
  * three breakdown panels: by department, by client, by employment
- * type. By-client rows link straight to /clients/:id; by-department
- * and by-employment-type open a drawer that lists matching associates.
+ * type. By-client rows link straight to /clients/:id; by-employment-type
+ * rows deep-link into the pre-filtered People directory; by-department
+ * opens a drawer that lists matching associates.
  */
 export function HeadcountHome() {
   const [snap, setSnap] = useState<HeadcountSnapshot | null>(null);
+  const [snapError, setSnapError] = useState<string | null>(null);
   const [turn, setTurn] = useState<TurnoverSummary | null>(null);
+  const [turnError, setTurnError] = useState<string | null>(null);
   const [days, setDays] = useState<30 | 90 | 365>(90);
+  const [turnRetry, setTurnRetry] = useState(0);
   const [drill, setDrill] = useState<Drill | null>(null);
 
-  useEffect(() => {
-    getHeadcountSnapshot().then(setSnap).catch(() => setSnap(null));
-  }, []);
+  const loadSnap = () => {
+    setSnap(null);
+    setSnapError(null);
+    getHeadcountSnapshot()
+      .then(setSnap)
+      .catch((err) =>
+        setSnapError(
+          err instanceof ApiError ? err.message : 'Could not load headcount.',
+        ),
+      );
+  };
+  useEffect(loadSnap, []);
+
   useEffect(() => {
     setTurn(null);
-    getTurnover(days).then(setTurn).catch(() => setTurn(null));
-  }, [days]);
+    setTurnError(null);
+    getTurnover(days)
+      .then(setTurn)
+      .catch((err) =>
+        setTurnError(
+          err instanceof ApiError ? err.message : 'Could not load turnover.',
+        ),
+      );
+  }, [days, turnRetry]);
 
   return (
     <div className="space-y-5">
@@ -62,6 +93,31 @@ export function HeadcountHome() {
         subtitle="Active associates, hires and separations across the company."
         breadcrumbs={[{ label: 'Headcount' }]}
       />
+
+      {snapError && (
+        <ErrorBanner>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>{snapError}</span>
+            <Button variant="outline" size="sm" onClick={loadSnap}>
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
+      {turnError && (
+        <ErrorBanner>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>{turnError}</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setTurnRetry((n) => n + 1)}
+            >
+              Retry
+            </Button>
+          </div>
+        </ErrorBanner>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <KpiCard
@@ -106,12 +162,13 @@ export function HeadcountHome() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <BreakdownCard
           title="By department"
+          loading={!snap && !snapError}
+          csvName={`headcount-by-department-${ymdLocal()}.csv`}
           rows={snap?.byDepartment.map((r) => ({
             label: r.departmentName,
             count: r.count,
             onClick: () =>
               setDrill({
-                kind: 'department',
                 departmentId: r.departmentId,
                 label: r.departmentName,
               }),
@@ -119,6 +176,8 @@ export function HeadcountHome() {
         />
         <BreakdownCard
           title="By client"
+          loading={!snap && !snapError}
+          csvName={`headcount-by-client-${ymdLocal()}.csv`}
           rows={snap?.byClient.map((r) => ({
             label: r.clientName,
             count: r.count,
@@ -127,15 +186,12 @@ export function HeadcountHome() {
         />
         <BreakdownCard
           title="By employment type"
+          loading={!snap && !snapError}
+          csvName={`headcount-by-employment-type-${ymdLocal()}.csv`}
           rows={snap?.byEmploymentType.map((r) => ({
-            label: r.employmentType,
+            label: EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
             count: r.count,
-            onClick: () =>
-              setDrill({
-                kind: 'employmentType',
-                employmentType: r.employmentType,
-                label: r.employmentType,
-              }),
+            href: `/people?employmentType=${encodeURIComponent(r.employmentType)}`,
           })) ?? null}
         />
       </div>
@@ -164,10 +220,10 @@ function KpiCard({
     <Card>
       <CardContent>
         <div className="flex items-center justify-between">
-          <div className="text-xs uppercase tracking-wider text-silver">{label}</div>
+          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">{label}</div>
           <Icon className={`h-4 w-4 ${accent}`} />
         </div>
-        <div className={`text-3xl font-display mt-2 ${accent}`}>
+        <div className={`text-3xl font-display mt-2 tabular-nums ${accent}`}>
           {value === null ? '—' : value}
         </div>
         {sub && <div className="text-xs text-silver mt-1">{sub}</div>}
@@ -183,27 +239,56 @@ interface BreakdownRow {
   onClick?: () => void;
 }
 
+const BREAKDOWN_VISIBLE_ROWS = 12;
+
 function BreakdownCard({
   title,
   rows,
+  loading,
+  csvName,
 }: {
   title: string;
   rows: BreakdownRow[] | null;
+  loading: boolean;
+  csvName: string;
 }) {
+  const [showAll, setShowAll] = useState(false);
+  const visible =
+    rows === null ? null : showAll ? rows : rows.slice(0, BREAKDOWN_VISIBLE_ROWS);
   return (
     <Card>
       <CardContent>
         <div className="text-sm uppercase tracking-wider text-silver mb-3 flex items-center gap-2">
           <Activity className="h-4 w-4" />
-          {title}
+          <span className="flex-1">{title}</span>
+          {rows && rows.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                downloadCsv(csvName, [
+                  ['Segment', 'Count'],
+                  ...rows.map((r) => [r.label, r.count]),
+                ])
+              }
+              title="Export this breakdown as CSV"
+            >
+              <Download className="h-3.5 w-3.5" />
+              CSV
+            </Button>
+          )}
         </div>
         {rows === null ? (
-          <SkeletonRows count={3} />
+          loading ? (
+            <SkeletonRows count={3} />
+          ) : (
+            <div className="text-sm text-silver">Not loaded.</div>
+          )
         ) : rows.length === 0 ? (
           <div className="text-sm text-silver">No data.</div>
         ) : (
           <div className="space-y-2">
-            {rows.slice(0, 12).map((r) => {
+            {visible!.map((r) => {
               const max = Math.max(1, ...rows.map((x) => x.count));
               const interactive = r.href || r.onClick;
               const inner = (
@@ -221,7 +306,7 @@ function BreakdownCard({
                       style={{ width: `${(r.count / max) * 100}%` }}
                     />
                   </div>
-                  <div className="w-10 text-right text-white">{r.count}</div>
+                  <div className="w-10 text-right tabular-nums text-white">{r.count}</div>
                 </div>
               );
               if (r.href) {
@@ -244,10 +329,14 @@ function BreakdownCard({
               }
               return <div key={r.label}>{inner}</div>;
             })}
-            {rows.length > 12 && (
-              <div className="text-xs text-silver pt-1">
-                +{rows.length - 12} more
-              </div>
+            {rows.length > BREAKDOWN_VISIBLE_ROWS && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAll((s) => !s)}
+              >
+                {showAll ? 'Show fewer' : `Show all ${rows.length}`}
+              </Button>
             )}
           </div>
         )}
@@ -264,27 +353,52 @@ function DrillDrawer({
   onClose: () => void;
 }) {
   const [rows, setRows] = useState<AssociateOrgSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
+    setRows(null);
+    setError(null);
     listOrgAssociates()
       .then((r) => {
-        if (drill.kind === 'department') {
-          setRows(
-            r.associates.filter((a) => a.departmentId === drill.departmentId),
-          );
-        } else {
-          // Employment type isn't in AssociateOrgSummary today, so we can't
-          // filter further client-side. Fall back to "all" with a warning.
-          setRows(r.associates);
-        }
+        setRows(
+          r.associates.filter((a) => a.departmentId === drill.departmentId),
+        );
       })
-      .catch(() => setRows([]));
-  }, [drill]);
+      .catch((err) =>
+        setError(
+          err instanceof ApiError ? err.message : 'Could not load associates.',
+        ),
+      );
+  }, [drill, retry]);
 
-  const subtitle =
-    drill.kind === 'department'
-      ? `Associates in ${drill.label}`
-      : `${drill.label} (showing all associates — employment-type filter not available client-side)`;
+  const filtered = useMemo(() => {
+    if (!rows) return null;
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (a) =>
+        `${a.firstName} ${a.lastName}`.toLowerCase().includes(q) ||
+        a.email.toLowerCase().includes(q),
+    );
+  }, [rows, search]);
+
+  const exportCsv = () => {
+    if (!filtered || filtered.length === 0) return;
+    downloadCsv(
+      `headcount-${drill.label.replace(/[^a-z0-9]+/gi, '-')}-${ymdLocal()}.csv`.toLowerCase(),
+      [
+        ['Name', 'Email', 'Job profile', 'Manager'],
+        ...filtered.map((a) => [
+          `${a.firstName} ${a.lastName}`,
+          a.email,
+          a.jobProfileTitle ?? '',
+          a.managerName ?? '',
+        ]),
+      ],
+    );
+  };
 
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-3xl">
@@ -292,14 +406,49 @@ function DrillDrawer({
         <DrawerTitle>{drill.label}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody>
-        <div className="text-xs text-silver mb-3">{subtitle}</div>
-        {rows === null ? (
-          <SkeletonRows count={4} />
-        ) : rows.length === 0 ? (
-          <div className="text-sm text-silver italic">
-            No associates in this segment.
+        <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+          <div className="flex-1 min-w-[200px] max-w-sm">
+            <SearchInput
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name or email"
+              className="h-8 text-sm"
+              aria-label="Search associates in this segment"
+            />
           </div>
-        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={exportCsv}
+            disabled={!filtered || filtered.length === 0}
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export CSV
+          </Button>
+        </div>
+        {error && (
+          <ErrorBanner>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>{error}</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setRetry((n) => n + 1)}
+              >
+                Retry
+              </Button>
+            </div>
+          </ErrorBanner>
+        )}
+        {!error && rows === null && <SkeletonRows count={4} />}
+        {!error && filtered && filtered.length === 0 && (
+          <div className="text-sm text-silver italic">
+            {search.trim()
+              ? 'No associates match the search.'
+              : 'No associates in this segment.'}
+          </div>
+        )}
+        {!error && filtered && filtered.length > 0 && (
           <Table>
             <TableHeader>
               <TableRow>
@@ -310,14 +459,17 @@ function DrillDrawer({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((a) => (
+              {filtered.map((a) => (
                 <TableRow key={a.id}>
                   <TableCell className="font-medium text-white">
                     <div className="min-w-0">
-                      <div className="truncate">
+                      <Link
+                        to={`/people?associateId=${a.id}`}
+                        className="truncate block hover:text-gold"
+                      >
                         {a.firstName} {a.lastName}
-                      </div>
-                      <div className="md:hidden text-[11px] text-silver/70 truncate">
+                      </Link>
+                      <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {a.email}{a.managerName ? ` · ${a.managerName}` : ''}
                       </div>
                     </div>
@@ -334,8 +486,12 @@ function DrillDrawer({
             </TableBody>
           </Table>
         )}
-        <div className="text-xs text-silver mt-3">
-          {rows ? `${rows.length} associates` : ''}
+        <div className="text-xs text-silver mt-3 tabular-nums">
+          {rows && filtered
+            ? search.trim()
+              ? `${filtered.length} of ${rows.length} associates`
+              : `${rows.length} associates`
+            : ''}
         </div>
       </DrawerBody>
       <DrawerFooter>

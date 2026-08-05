@@ -58,6 +58,23 @@ export function denyAdminRequest(id: string, input: TimeOffRequestDenyInput) {
   );
 }
 
+export interface BulkDecideResponse {
+  decided: number;
+  failed: Array<{ id: string; ok: false; error: string }>;
+}
+
+/** Decide many requests at once. `note` is required when denying. */
+export function bulkDecideRequests(input: {
+  ids: string[];
+  decision: 'APPROVE' | 'DENY';
+  note?: string;
+}) {
+  return apiFetch<BulkDecideResponse>('/time-off/admin/requests/bulk-decide', {
+    method: 'POST',
+    body: input,
+  });
+}
+
 export function listAdminEntitlements(associateId?: string) {
   const qs = associateId ? `?associateId=${encodeURIComponent(associateId)}` : '';
   return apiFetch<TimeOffEntitlementListResponse>(
