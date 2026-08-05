@@ -1,6 +1,7 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import {
+  EmailSuppressionListResponseSchema,
   NotificationBroadcastInputSchema,
   NotificationChannelSchema,
   NotificationListResponseSchema,
@@ -17,8 +18,9 @@ import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
-import { sendStubbed } from '../lib/notifications.js';
+import { EmailSuppressedError, sendStubbed } from '../lib/notifications.js';
 import { pushConfigured } from '../lib/webPush.js';
+import { enqueueAudit } from '../lib/audit.js';
 
 export const communicationsRouter = Router();
 
@@ -40,6 +42,7 @@ function toNotif(row: RawNotif): Notification {
     body: row.body,
     category: row.category,
     externalRef: row.externalRef,
+    providerMessageId: row.providerMessageId,
     failureReason: row.failureReason,
     sentAt: row.sentAt ? row.sentAt.toISOString() : null,
     readAt: row.readAt ? row.readAt.toISOString() : null,
@@ -242,9 +245,13 @@ communicationsRouter.post('/admin/send', MANAGE, idempotent, async (req, res, ne
       res.status(201).json(toNotif(sent));
     } catch (sendErr) {
       const reason = sendErr instanceof Error ? sendErr.message : 'unknown error';
+      // A suppressed address is not a provider failure — surface it as its
+      // own status so the admin sees WHY nothing went out (and where to
+      // fix it: the Suppressed emails list below).
+      const status = sendErr instanceof EmailSuppressedError ? 'SUPPRESSED' : 'FAILED';
       const failed = await prisma.notification.update({
         where: { id: created.id },
-        data: { status: 'FAILED', failureReason: reason },
+        data: { status, failureReason: reason },
         include: NOTIF_INCLUDE,
       });
       res.status(202).json(toNotif(failed));
@@ -253,6 +260,72 @@ communicationsRouter.post('/admin/send', MANAGE, idempotent, async (req, res, ne
     next(err);
   }
 });
+
+/* ===== Email suppression list (do-not-email) =========================== */
+
+/**
+ * GET /communications/admin/suppressions
+ *
+ * Addresses the system refuses to email — populated automatically by the
+ * Resend webhook on hard bounce / spam complaint. Same manage gate as the
+ * other admin actions on this router.
+ */
+communicationsRouter.get('/admin/suppressions', MANAGE, async (_req, res, next) => {
+  try {
+    const rows = await prisma.emailSuppression.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 500,
+    });
+    res.json(
+      EmailSuppressionListResponseSchema.parse({
+        suppressions: rows.map((r) => ({
+          id: r.id,
+          email: r.email,
+          reason: r.reason,
+          notes: r.notes,
+          createdAt: r.createdAt.toISOString(),
+        })),
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * DELETE /communications/admin/suppressions/:email  (un-suppress, audited)
+ *
+ * Removing an address resumes delivery on the next send. Keyed by email
+ * (URL-encoded) rather than row id so the admin UI can delete straight
+ * off the listed address.
+ */
+communicationsRouter.delete(
+  '/admin/suppressions/:email',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const email = req.params.email.trim().toLowerCase();
+      const existing = await prisma.emailSuppression.findUnique({ where: { email } });
+      if (!existing) {
+        throw new HttpError(404, 'suppression_not_found', 'Address is not suppressed.');
+      }
+      await prisma.emailSuppression.delete({ where: { email } });
+      enqueueAudit(
+        {
+          actorUserId: req.user!.id,
+          action: 'email.unsuppressed',
+          entityType: 'EmailSuppression',
+          entityId: email,
+          metadata: { reason: existing.reason, notes: existing.notes },
+        },
+        'communications.unsuppress',
+      );
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 communicationsRouter.post('/admin/broadcast', MANAGE, idempotent, async (req, res, next) => {
   try {

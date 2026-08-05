@@ -106,6 +106,12 @@ const EnvSchema = z.object({
       (v) => v === undefined || /^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(v),
       { message: 'RESEND_REPLY_TO must be a bare email like info@altohr.com.' },
     ),
+  // Svix signing secret for Resend's inbound email-event webhook
+  // (email.delivered / bounced / complained), as shown on the Resend
+  // dashboard's webhook page — format "whsec_<base64>". When unset, the
+  // /resend/webhook endpoint refuses every request with 503 — never run
+  // an unauthenticated webhook in any environment.
+  RESEND_WEBHOOK_SECRET: z.string().optional(),
   // Phase 17 — invite reminder cron. 0 (default) disables. Set e.g. 1800
   // (every 30 min) in production. The threshold for "stale" is hard-coded
   // at 48h in lib/inviteReminder.ts; this only controls scan cadence.
@@ -462,6 +468,26 @@ if (parsed.data.PAYROLL_DISBURSEMENT_PROVIDER === 'BRANCH') {
       `FATAL: OIDC SSO is partially configured — missing ${missing}. ` +
         'Set OIDC_ISSUER_URL, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET together, ' +
         'or unset all three to turn SSO off.',
+    );
+    process.exit(1);
+  }
+}
+
+if (
+  parsed.data.NODE_ENV === 'production' &&
+  parsed.data.RESEND_API_KEY &&
+  parsed.data.RESEND_API_KEY.trim() !== ''
+) {
+  if (
+    !parsed.data.RESEND_WEBHOOK_SECRET ||
+    parsed.data.RESEND_WEBHOOK_SECRET.trim() === ''
+  ) {
+    console.error(
+      'FATAL: RESEND_API_KEY is set but RESEND_WEBHOOK_SECRET is not configured. ' +
+        'Real email is being sent while bounce/complaint events cannot be received, ' +
+        'so bad addresses would be mailed forever and tank sender reputation. ' +
+        'Create a webhook endpoint at https://resend.com/webhooks pointing at ' +
+        '/api/resend/webhook and set its signing secret (whsec_...) as RESEND_WEBHOOK_SECRET.',
     );
     process.exit(1);
   }
