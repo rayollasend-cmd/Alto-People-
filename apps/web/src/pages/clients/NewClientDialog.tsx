@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import type { ClientStatus, ClientSummary } from '@alto-people/shared';
 import { createClient } from '@/lib/clientsApi';
 import { ApiError } from '@/lib/api';
+import { queryClient } from '@/lib/queryClient';
 import { Button } from '@/components/ui/Button';
 import {
   Dialog,
@@ -77,6 +78,10 @@ export function NewClientDialog({ open, onOpenChange, onCreated }: Props) {
         contactEmail: contactEmail.trim() || null,
       });
       toast.success(`Client "${created.name}" created.`);
+      // Every client picker app-wide reads the shared ['clients','list']
+      // cache (lib/useClients, staleTime 5 min) — without this, a newly
+      // created client is missing from pickers until the cache expires.
+      void queryClient.invalidateQueries({ queryKey: ['clients'] });
       onCreated(created);
       onOpenChange(false);
     } catch (err) {

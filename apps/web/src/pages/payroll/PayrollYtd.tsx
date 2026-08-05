@@ -56,7 +56,10 @@ export function PayrollYtd() {
   }, [data, q]);
 
   return (
-    <div className="mx-auto print:max-w-none">
+    // `print-area` opts this page into the global print stylesheet's
+    // allowlist (index.css @media print hides everything else). Without
+    // it the Print button produced a blank page.
+    <div className="mx-auto print:max-w-none print-area">
       <PageHeader
         title={`Year-to-date payroll report — ${year}`}
         subtitle="Per-associate gross, withholding, and net pay aggregated across all disbursed runs in the tax year."
