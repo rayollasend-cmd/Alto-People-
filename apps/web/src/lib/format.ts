@@ -36,6 +36,33 @@ export function fmtMoney(
   });
 }
 
+/**
+ * Compact money for DENSE surfaces only — KPI strips, calendar day-total
+ * rows, chart axes — where `fmtMoney`'s two decimals don't fit: "$840",
+ * "$1.2k", "$24k", "$3.4M". Grouped en-US digits below the compaction
+ * tiers. Anywhere the exact amount matters (tables, payroll, dialogs),
+ * use `fmtMoney` — compaction deliberately throws away precision.
+ */
+export function fmtMoneyCompact(
+  value: number | string | null | undefined,
+): string {
+  if (value === null || value === undefined || value === '') return DASH;
+  const n = typeof value === 'string' ? Number(value) : value;
+  if (!Number.isFinite(n)) return DASH;
+  const sign = n < 0 ? '-' : '';
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) {
+    // One decimal keeps signal on low millions ($3.4M); ≥$10M the decimal
+    // is noise at grid density.
+    return `${sign}$${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
+  }
+  // ≥$10k the hundred-dollar digit stops mattering at a glance ($24k);
+  // $1k–$10k keeps one decimal ($1.2k).
+  if (abs >= 10_000) return `${sign}$${Math.round(abs / 1000)}k`;
+  if (abs >= 1_000) return `${sign}$${(abs / 1000).toFixed(1)}k`;
+  return `${sign}$${Math.round(abs).toLocaleString(EN_US)}`;
+}
+
 /** "/hr" or "/yr" suffix tacked on for pay rates. */
 export function fmtPayRate(
   amount: number | string | null | undefined,
@@ -166,6 +193,50 @@ export function fmtWeekdayTz(
   if (Number.isNaN(d.getTime())) return DASH;
   return d.toLocaleDateString(EN_US, {
     weekday: 'short',
+    ...(timeZone ? { timeZone } : {}),
+  });
+}
+
+/**
+ * Full day header for calendar surfaces: "Friday, Jun 13" (or
+ * "Friday, Jun 13, 2026" with `year`). The weekday-with-date sibling of
+ * fmtWeekdayTz/fmtDateTz, so day headers can't drift from the chip dates
+ * rendered next to them.
+ *
+ * Zone rule, same as the whole *Tz family: pass the STORE zone when the
+ * value is a shift instant; pass nothing when the value is a calendar
+ * anchor (a browser-local-midnight Date whose local Y/M/D IS the day the
+ * grid buckets by — see calendarDates.ts), so the label always matches
+ * the `ymd(anchor)` bucketing key.
+ */
+export function fmtDayHeaderTz(
+  value: string | Date | null | undefined,
+  timeZone?: string | null,
+  opts: { year?: boolean } = {},
+): string {
+  if (!value) return DASH;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return DASH;
+  return d.toLocaleDateString(EN_US, {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+    ...(opts.year ? { year: 'numeric' } : {}),
+    ...(timeZone ? { timeZone } : {}),
+  });
+}
+
+/** "June 2026" — month-view headers. Same zone rule as fmtDayHeaderTz. */
+export function fmtMonthYearTz(
+  value: string | Date | null | undefined,
+  timeZone?: string | null,
+): string {
+  if (!value) return DASH;
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return DASH;
+  return d.toLocaleDateString(EN_US, {
+    month: 'long',
+    year: 'numeric',
     ...(timeZone ? { timeZone } : {}),
   });
 }

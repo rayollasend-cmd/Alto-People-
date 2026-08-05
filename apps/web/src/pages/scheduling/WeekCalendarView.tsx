@@ -17,6 +17,7 @@ import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
 import {
   fmtDateTz,
+  fmtMoneyCompact,
   fmtTimeTz,
   fmtWeekdayTz,
   zonedDayKey,
@@ -97,12 +98,6 @@ function compactRange(
   timeZone?: string | null,
 ): string {
   return `${compactClock(startIso, timeZone)}–${compactClock(endIso, timeZone)}`;
-}
-
-function formatCost(n: number): string {
-  if (n >= 10_000) return `$${Math.round(n / 1000)}k`;
-  if (n >= 1_000) return `$${(n / 1000).toFixed(1)}k`;
-  return `$${Math.round(n)}`;
 }
 
 interface Props {
@@ -567,7 +562,7 @@ export function WeekCalendarView({
                     {cost > 0 && (
                       <>
                         <span className="text-silver/70">·</span>
-                        <span className="text-silver">{formatCost(cost)}</span>
+                        <span className="text-silver">{fmtMoneyCompact(cost)}</span>
                       </>
                     )}
                   </div>

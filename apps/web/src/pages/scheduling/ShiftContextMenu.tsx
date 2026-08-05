@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Copy as CopyIcon,
-  Edit3,
+  Pencil,
   Trash2,
-  Trash,
   UserMinus,
   UserPlus,
   UsersRound,
@@ -79,7 +78,7 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
   }, [onClose]);
 
   const items: Array<
-    | { kind: 'item'; label: string; icon: typeof Edit3; onClick: () => void; danger?: boolean; disabled?: boolean }
+    | { kind: 'item'; label: string; icon: typeof Pencil; onClick: () => void; danger?: boolean; disabled?: boolean }
     | { kind: 'sep' }
   > = [];
 
@@ -87,7 +86,9 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
     items.push({
       kind: 'item',
       label: 'Edit',
-      icon: Edit3,
+      // Pencil, not Edit3 — the one edit glyph used app-wide (see the
+      // admin toolbar + mobile action sheet).
+      icon: Pencil,
       onClick: () => {
         actions.onEdit(active.shift);
         onClose();
@@ -125,7 +126,7 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
     });
     items.push({
       kind: 'item',
-      label: 'Duplicate to employee…',
+      label: 'Duplicate to associate…',
       icon: UsersRound,
       onClick: () => {
         actions.onDuplicateToEmployee(active.shift);
@@ -193,10 +194,14 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
         },
       });
     }
+    // Cancel and Delete share the Trash2 glyph deliberately — both are
+    // destructive and read as such; the LABEL ("Cancel shift" keeps a
+    // CANCELLED record, "Delete shift" removes it) carries the difference,
+    // not a subtle icon variant nobody can tell apart at 14px.
     items.push({
       kind: 'item',
       label: 'Delete shift',
-      icon: Trash,
+      icon: Trash2,
       danger: true,
       onClick: async () => {
         await actions.onDelete(active.shift);
@@ -207,7 +212,7 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
     items.push({
       kind: 'item',
       label: 'View details',
-      icon: Edit3,
+      icon: Pencil,
       onClick: () => {
         actions.onEdit(active.shift);
         onClose();
