@@ -4859,3 +4859,70 @@ export const PushPublicKeyResponseSchema = z.object({
 });
 export type PushPublicKeyResponse = z.infer<typeof PushPublicKeyResponseSchema>;
 
+/* ===== Bulk associate CSV import (client onboarding / migration) ========= */
+
+/** One parsed + normalized CSV row. Nullable fields were absent/blank in
+ *  the file. clientId is the RESOLVED id (clientName → id lookup done
+ *  server-side); clientName echoes what the file said for display. */
+export const CsvImportRowDataSchema = z.object({
+  firstName: z.string(),
+  lastName: z.string(),
+  email: z.string(),
+  phone: z.string().nullable(),
+  hireDate: z.string().nullable(), // YYYY-MM-DD
+  clientId: z.string().nullable(),
+  clientName: z.string().nullable(),
+  position: z.string().nullable(),
+});
+export type CsvImportRowData = z.infer<typeof CsvImportRowDataSchema>;
+
+export const CsvImportPreviewRowSchema = z.object({
+  /** 1-based physical line in the uploaded file where this row starts
+   *  (the header is line 1, so the first data row is usually line 2). */
+  line: z.number().int().positive(),
+  data: CsvImportRowDataSchema,
+  /** Empty = importable. Human-readable, field-prefixed messages. */
+  errors: z.array(z.string()),
+});
+export type CsvImportPreviewRow = z.infer<typeof CsvImportPreviewRowSchema>;
+
+export const CsvImportPreviewResponseSchema = z.object({
+  rows: z.array(CsvImportPreviewRowSchema),
+  summary: z.object({
+    total: z.number().int().nonnegative(),
+    valid: z.number().int().nonnegative(),
+    invalid: z.number().int().nonnegative(),
+    /** Rows flagged because the email already exists (associate/user) or
+     *  repeats an earlier line in the same file. Subset of `invalid`. */
+    duplicateEmails: z.number().int().nonnegative(),
+  }),
+});
+export type CsvImportPreviewResponse = z.infer<typeof CsvImportPreviewResponseSchema>;
+
+/** 'create' = silent migration (Associate + Application rows, no emails).
+ *  'invite' = additionally mint an INVITED user + send the invite email. */
+export const CsvImportModeSchema = z.enum(['create', 'invite']);
+export type CsvImportMode = z.infer<typeof CsvImportModeSchema>;
+
+export const CsvImportCommitRowSchema = z.object({
+  line: z.number().int().positive(),
+  email: z.string().nullable(),
+  status: z.enum(['created', 'invited', 'skipped']),
+  /** Set when status = skipped: 'already_exists', 'duplicate_in_file',
+   *  'invalid: …', or a runtime failure code/message. */
+  reason: z.string().nullable(),
+});
+export type CsvImportCommitRow = z.infer<typeof CsvImportCommitRowSchema>;
+
+export const CsvImportCommitResponseSchema = z.object({
+  mode: CsvImportModeSchema,
+  results: z.array(CsvImportCommitRowSchema),
+  summary: z.object({
+    total: z.number().int().nonnegative(),
+    created: z.number().int().nonnegative(),
+    invited: z.number().int().nonnegative(),
+    skipped: z.number().int().nonnegative(),
+  }),
+});
+export type CsvImportCommitResponse = z.infer<typeof CsvImportCommitResponseSchema>;
+

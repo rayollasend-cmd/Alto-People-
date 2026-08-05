@@ -13,6 +13,9 @@ import type {
   BulkResendInput,
   BulkResendResponse,
   ClientListResponse,
+  CsvImportCommitResponse,
+  CsvImportMode,
+  CsvImportPreviewResponse,
   DirectDepositInput,
   DocumentUploadCompleteResponse,
   J1DocsCompleteResponse,
@@ -27,7 +30,7 @@ import type {
   TemplateUpsertInput,
   W4SubmissionInput,
 } from '@alto-people/shared';
-import { apiFetch } from './api';
+import { ApiError, apiFetch } from './api';
 
 export interface ListApplicationsFilters {
   /**
@@ -139,6 +142,52 @@ export function bulkInvite(body: BulkInviteInput): Promise<BulkInviteResponse> {
  *  (they have no view:clients for the /clients locations route). */
 export function listInviteLocations(clientId: string): Promise<LocationListResponse> {
   return apiFetch<LocationListResponse>(`/onboarding/invite-locations?clientId=${clientId}`);
+}
+
+/* ------------- Bulk associate CSV import (migration path) ------------- */
+
+// apiFetch JSON-encodes bodies; multipart goes through fetch directly
+// (same pattern as documentsApi). Errors are normalized into ApiError so
+// the dialog can show the server's code/message like everywhere else.
+async function csvImportRequest<T>(path: string, fd: FormData): Promise<T> {
+  const res = await fetch(path, {
+    method: 'POST',
+    credentials: 'include',
+    body: fd,
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const err = (body as {
+      error?: { code?: string; message?: string; details?: unknown; requestId?: string };
+    } | null)?.error;
+    throw new ApiError(
+      res.status,
+      err?.code ?? `http_${res.status}`,
+      err?.message ?? `Request failed (${res.status})`,
+      err?.details,
+      err?.requestId ?? undefined,
+    );
+  }
+  return body as T;
+}
+
+/** Dry-run: parse + validate the CSV server-side, nothing is written. */
+export function previewCsvImport(file: File): Promise<CsvImportPreviewResponse> {
+  const fd = new FormData();
+  fd.append('file', file);
+  return csvImportRequest<CsvImportPreviewResponse>('/api/onboarding/admin/import/preview', fd);
+}
+
+/** Commit the import. Safe to re-run the same file: rows whose email
+ *  already exists come back skipped/already_exists instead of duplicating. */
+export function commitCsvImport(
+  file: File,
+  mode: CsvImportMode,
+): Promise<CsvImportCommitResponse> {
+  const fd = new FormData();
+  fd.append('mode', mode);
+  fd.append('file', file);
+  return csvImportRequest<CsvImportCommitResponse>('/api/onboarding/admin/import/commit', fd);
 }
 
 export function bulkResendInvite(body: BulkResendInput): Promise<BulkResendResponse> {
