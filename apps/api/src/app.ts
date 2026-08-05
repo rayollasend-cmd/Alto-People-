@@ -34,6 +34,8 @@ import { auditRouter } from './routes/audit.js';
 import { benefitsRouter } from './routes/benefits.js';
 import { quickbooksRouter } from './routes/quickbooks.js';
 import { branchWebhookRouter } from './routes/branchWebhook.js';
+import { resendWebhookRouter } from './routes/resendWebhook.js';
+import { emailUnsubscribeRouter } from './routes/emailUnsubscribe.js';
 import { orgRouter } from './routes/org.js';
 import { directoryRouter } from './routes/directory.js';
 import { positionsRouter } from './routes/positions.js';
@@ -182,6 +184,9 @@ export function createApp() {
   // bytes survive for HMAC verification (the global parser would consume
   // the stream and re-serialization breaks signatures on whitespace).
   app.use('/branch/webhook', branchWebhookRouter);
+  // Same deal for Resend's email-event webhook — the Svix signature is
+  // computed over the exact raw bytes.
+  app.use('/resend/webhook', resendWebhookRouter);
   // 2mb to accommodate base64-encoded kiosk selfies (1MB raw → ~1.4MB
   // base64 → headroom for the JSON envelope).
   app.use(express.json({ limit: '2mb' }));
@@ -244,6 +249,10 @@ export function createApp() {
     requireCapability('view:dashboard'),
     analyticsRouter
   );
+  // One-click unsubscribe: mailbox providers POST this with no session, so
+  // it must sit OUTSIDE the view:communications gate below. Mounted first —
+  // Express matches the longer prefix before the gated /communications mount.
+  app.use('/communications/unsubscribe', emailUnsubscribeRouter);
   app.use(
     '/communications',
     requireCapability('view:communications'),
