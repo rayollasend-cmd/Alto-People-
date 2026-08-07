@@ -62,6 +62,7 @@ import {
   markTaskSkippedById,
 } from '../lib/checklist.js';
 import multer, { MulterError } from 'multer';
+import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { decryptString, encryptString, tryDecryptString } from '../lib/crypto.js';
 import { maskRoutingNumber } from '../lib/payoutMethod.js';
 import { enqueueAudit, recordOnboardingEvent } from '../lib/audit.js';
@@ -2879,9 +2880,16 @@ onboardingRouter.post(
         i9List = entry.list;
       }
 
-      // Hash the file body for content-addressed storage. Keeps duplicate
-      // uploads (a user re-tapping submit) from spamming the vault.
-      const { createHash } = await import('node:crypto');
+      // The declared mimetype is attacker-controlled — verify the actual
+      // bytes, same gate as /documents/me/upload. Identity documents are
+      // the LAST place a renamed executable or HTML polyglot should slip
+      // into storage and be served back with an image content-type.
+      const magicError = verifyFileMagic(file.buffer, file.mimetype);
+      if (magicError) {
+        throw new HttpError(400, 'invalid_file_contents', magicError);
+      }
+
+      const { createHash, randomUUID: newDocId } = await import('node:crypto');
       const sha = createHash('sha256').update(file.buffer).digest('hex');
       const ext = (file.mimetype === 'image/jpeg' && '.jpg') ||
         (file.mimetype === 'image/png' && '.png') ||
@@ -2889,13 +2897,22 @@ onboardingRouter.post(
         (file.mimetype === 'application/pdf' && '.pdf') ||
         '';
       const sideTag = side ? `-${side.toLowerCase()}` : '';
-      const relativeKey = `i9/${app.associateId}/${sha.slice(0, 16)}${sideTag}${ext}`;
+      // The record id is part of the key ON PURPOSE. A purely content-
+      // addressed key meant a double-tapped submit produced two rows
+      // sharing one blob — and the rejected-doc purge (or the associate
+      // deleting the duplicate) hard-deleted the blob out from under the
+      // VERIFIED row, silently destroying federal I-9 evidence.
+      const docId = newDocId();
+      const relativeKey = `i9/${app.associateId}/${docId}-${sha.slice(0, 16)}${sideTag}${ext}`;
       // Driver put() creates intermediate directories on the local driver.
       await getBlobStore().put(relativeKey, file.buffer, file.mimetype);
 
-      const baseFilename = file.originalname || `i9-${documentKind.toLowerCase()}${sideTag}${ext}`;
+      const baseFilename = file.originalname
+        ? sanitizeUploadFilename(file.originalname)
+        : `i9-${documentKind.toLowerCase()}${sideTag}${ext}`;
       const doc = await prisma.documentRecord.create({
         data: {
+          id: docId,
           associateId: app.associateId,
           clientId: app.clientId,
           kind: documentKind as 'I9_SUPPORTING' | 'ID' | 'SSN_CARD' | 'J1_VISA' | 'J1_DS2019',

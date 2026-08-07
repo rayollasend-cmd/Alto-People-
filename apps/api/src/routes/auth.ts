@@ -342,9 +342,20 @@ authRouter.post(
         // MFA challenges deliberately do NOT feed this counter — they have
         // their own rate limiters (mfaChallengeUserLimiter), and a wrong
         // TOTP code isn't evidence the password is being guessed.
+        //
+        // An EXPIRED lock starts a fresh count of 1 instead of
+        // incrementing past the threshold: the stale count otherwise
+        // re-locked on the very next wrong attempt, which both re-locked
+        // an honest user's first typo after waiting out a lock AND let an
+        // attacker keep any account locked forever with one request per
+        // window.
+        const lockExpired =
+          user.lockedUntil !== null && user.lockedUntil.getTime() <= Date.now();
         const bumped = await prisma.user.update({
           where: { id: user.id },
-          data: { failedLoginCount: { increment: 1 } },
+          data: lockExpired
+            ? { failedLoginCount: 1, lockedUntil: null }
+            : { failedLoginCount: { increment: 1 } },
           select: { failedLoginCount: true },
         });
         if (bumped.failedLoginCount >= LOCKOUT_THRESHOLD) {
@@ -841,6 +852,11 @@ authRouter.post('/change-password', requireAuth, changePasswordLimiter, async (r
         tokenVersion: { increment: 1 },
       },
     });
+    // Without this, the attachUser fast path keeps honoring pre-change
+    // cookies against the warm cache entry for the TTL — exactly the
+    // window where a user changing their password is trying to evict a
+    // hijacked session. Every sibling that bumps tokenVersion does this.
+    invalidateUserCache(updated.id);
 
     const sessionToken = signSession({
       sub: updated.id,
@@ -1311,6 +1327,25 @@ authRouter.post('/me/mfa/enroll/start', allowMfaEnrollToken, requireAuth, async 
   try {
     const userId = req.user!.id;
     const email = req.user!.email;
+
+    // Re-enrolling while MFA is ENABLED is refused outright. This route
+    // used to overwrite the live secret and delete every recovery code
+    // before /enroll/confirm ran — abandoning the QR screen locked the
+    // account out permanently, and (since this route requires no password
+    // re-auth) a stolen session could evict the real owner's second
+    // factor. Rotating MFA now goes through DELETE /me/mfa (password-
+    // gated) followed by a fresh enrollment.
+    const current = await prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { mfaEnabledAt: true },
+    });
+    if (current.mfaEnabledAt) {
+      throw new HttpError(
+        409,
+        'mfa_already_enabled',
+        'Two-step verification is already enabled. Disable it first (requires your password), then re-enroll.',
+      );
+    }
 
     const secret = generateSecret();
     const issuer = getBrandingSync().orgName || 'Alto HR';
