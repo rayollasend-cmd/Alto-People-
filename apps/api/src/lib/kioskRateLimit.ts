@@ -19,12 +19,14 @@ import { HttpError } from '../middleware/error.js';
  * in under three hours (faster still across buckets and devices).
  *
  * So failures now carry an ESCALATING backoff (see enforcePinBackoff):
- * consecutive wrong PINs on a device double the required wait, and any
- * correct PIN resets it to zero. A real associate mistyping once or
- * twice barely notices; a blind sweep is pushed from hours to years.
- * Because the reset is on success, a busy kiosk with legitimate
- * traffic never locks up — which is the failure mode that killed the
- * old design.
+ * consecutive wrong PINs on a device double the required wait. A
+ * correct PIN walks the streak back ONE step (not to zero — a full
+ * reset let an insider interleave their own PIN between guesses,
+ * fail-fail-success, and sweep the keyspace with the backoff pinned at
+ * zero). A real associate mistyping once or twice barely notices, and
+ * a streak older than PIN_STREAK_TTL_MS ages out entirely, so a busy
+ * kiosk with legitimate traffic never locks up — the failure mode that
+ * killed the old hard-lockout design.
  *
  * **Multi-replica caveat:** the default store keeps state per-process.
  * On Railway / Render / Fly with a single replica that's exactly what
@@ -46,6 +48,9 @@ const PIN_BACKOFF_MAX_MS = 60_000;
 // Consecutive failures before any delay applies — covers the honest
 // fat-finger without giving an attacker meaningful free attempts.
 const PIN_BACKOFF_FREE_ATTEMPTS = 2;
+// A streak this stale is forgiven wholesale — yesterday's typos must not
+// slow down today's clock-ins.
+const PIN_STREAK_TTL_MS = 30 * 60_000;
 
 export interface DeviceRateLimitState {
   lastPunchAt: number;
@@ -151,21 +156,32 @@ export function enforcePinBackoff(deviceId: string): void {
   }
 }
 
-/** Record a wrong PIN — escalates this device's backoff. */
+/** Record a wrong PIN — escalates this device's backoff. A stale streak
+ *  (no failure within PIN_STREAK_TTL_MS) restarts from 1. */
 export function recordPinFailure(deviceId: string): void {
   const key = FAIL_KEY(deviceId);
   const s = store.read(key);
-  s.pinFailures = (s.pinFailures ?? 0) + 1;
-  s.lastFailureAt = Date.now();
+  const now = Date.now();
+  const stale = s.lastFailureAt !== undefined && now - s.lastFailureAt > PIN_STREAK_TTL_MS;
+  s.pinFailures = stale ? 1 : (s.pinFailures ?? 0) + 1;
+  s.lastFailureAt = now;
   store.write(key, s);
 }
 
-/** A correct PIN clears the streak, so honest traffic is never punished. */
+/**
+ * A correct PIN walks the streak back one step instead of clearing it.
+ * Clearing let anyone who knows ONE valid PIN (their own) interleave it
+ * between guesses and keep the backoff at zero forever; decrementing
+ * makes each guess cost net progress while honest typos (below the free
+ * attempts, walked off by the successes that follow) still never wait.
+ */
 export function clearPinFailures(deviceId: string): void {
   const key = FAIL_KEY(deviceId);
   const s = store.read(key);
-  s.pinFailures = 0;
-  s.lastFailureAt = undefined;
+  const n = s.pinFailures ?? 0;
+  if (n === 0) return;
+  s.pinFailures = n - 1;
+  if (s.pinFailures === 0) s.lastFailureAt = undefined;
   store.write(key, s);
 }
 
