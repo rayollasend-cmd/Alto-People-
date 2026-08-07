@@ -311,6 +311,7 @@ export function W4Task() {
           <>
             <Field
               label="Social Security number"
+              required
               hint="9 digits — required. Encrypted at rest the moment you submit. Never logged."
             >
               <input

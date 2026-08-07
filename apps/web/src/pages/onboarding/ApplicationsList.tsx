@@ -5,6 +5,7 @@ import {
   Ban,
   BarChart3,
   ClipboardList,
+  FileUp,
   LayoutGrid,
   LayoutTemplate,
   List,
@@ -40,6 +41,7 @@ import { useAuth } from '@/lib/auth';
 import { ProgressBar } from '@/components/ProgressBar';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
+import { StatusBadge } from '@/lib/status';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import {
@@ -68,6 +70,7 @@ import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { toast } from 'sonner';
 import { ApplicationDetailBody } from './ApplicationDetail';
 import { BulkInviteDialog } from './BulkInviteDialog';
+import { CsvImportDialog } from './CsvImportDialog';
 import { NewApplicationDialog } from './NewApplicationDialog';
 import { NudgeDialog } from './NudgeDialog';
 import { cn } from '@/lib/cn';
@@ -75,25 +78,6 @@ import { usePersistentState } from '@/lib/usePersistentState';
 
 const VIEW_OPTIONS = ['table', 'cards'] as const;
 type ApplicationsView = (typeof VIEW_OPTIONS)[number];
-
-const STATUS_LABEL: Record<string, string> = {
-  DRAFT: 'Draft',
-  SUBMITTED: 'Submitted',
-  IN_REVIEW: 'In review',
-  APPROVED: 'Approved',
-  REJECTED: 'Rejected',
-};
-
-const STATUS_VARIANT: Record<
-  string,
-  'success' | 'pending' | 'destructive' | 'default'
-> = {
-  DRAFT: 'default',
-  SUBMITTED: 'pending',
-  IN_REVIEW: 'pending',
-  APPROVED: 'success',
-  REJECTED: 'destructive',
-};
 
 const TRACK_LABEL: Record<string, string> = {
   STANDARD: 'Standard',
@@ -360,6 +344,7 @@ export function ApplicationsList() {
   const [error, setError] = useState<string | null>(null);
   const [openCreate, setOpenCreate] = useState(false);
   const [openBulkInvite, setOpenBulkInvite] = useState(false);
+  const [openCsvImport, setOpenCsvImport] = useState(false);
   const [resendingIds, setResendingIds] = useState<Set<string>>(new Set());
   const [bulkResending, setBulkResending] = useState(false);
   const [bulkRejecting, setBulkRejecting] = useState(false);
@@ -671,6 +656,10 @@ export function ApplicationsList() {
                   </Link>
                 </>
               )}
+              <Button variant="secondary" onClick={() => setOpenCsvImport(true)}>
+                <FileUp className="h-4 w-4" />
+                Import CSV
+              </Button>
               <Button variant="secondary" onClick={() => setOpenBulkInvite(true)}>
                 <Users className="h-4 w-4" />
                 Bulk invite
@@ -992,6 +981,15 @@ export function ApplicationsList() {
         }}
       />
 
+      <CsvImportDialog
+        open={openCsvImport}
+        onOpenChange={setOpenCsvImport}
+        onImported={() => {
+          refresh();
+          refreshStats();
+        }}
+      />
+
       <NudgeDialog
         open={!!nudgeTarget}
         onOpenChange={(v) => !v && setNudgeTarget(null)}
@@ -1170,12 +1168,7 @@ export function ApplicationsList() {
                       </span>
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        variant={STATUS_VARIANT[a.status] ?? 'default'}
-                        data-status={a.status}
-                      >
-                        {STATUS_LABEL[a.status] ?? a.status}
-                      </Badge>
+                      <StatusBadge status={a.status} data-status={a.status} />
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
@@ -1462,13 +1455,7 @@ function ApplicationCard({
             {a.position ? ` · ${a.position}` : ''}
           </div>
         </div>
-        <Badge
-          variant={STATUS_VARIANT[a.status] ?? 'default'}
-          data-status={a.status}
-          className="shrink-0"
-        >
-          {STATUS_LABEL[a.status] ?? a.status}
-        </Badge>
+        <StatusBadge status={a.status} data-status={a.status} className="shrink-0" />
       </div>
 
       <div>

@@ -84,14 +84,14 @@ export function PayrollConfigView() {
               <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <dt className="text-xs text-silver">Social Security wage base</dt>
-                  <dd className="font-display text-2xl text-white">{fmtMoney(config.ssWageBase)}</dd>
+                  <dd className="text-2xl text-white">{fmtMoney(config.ssWageBase)}</dd>
                   <p className="text-xs text-silver/70 mt-1">
                     Wages above this in YTD are not subject to the 6.2% Social Security tax.
                   </p>
                 </div>
                 <div>
                   <dt className="text-xs text-silver">Medicare surcharge threshold</dt>
-                  <dd className="font-display text-2xl text-white">
+                  <dd className="text-2xl text-white">
                     {fmtMoney(config.medicareSurchargeThreshold)}
                   </dd>
                   <p className="text-xs text-silver/70 mt-1">

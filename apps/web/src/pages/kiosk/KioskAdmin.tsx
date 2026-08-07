@@ -232,13 +232,13 @@ function PinHealthBanner({ onTab }: { onTab: () => void }) {
           </ul>
           <div className="mt-1.5 text-xs text-silver">
             Lock those secrets in your host so they can&rsquo;t drift again, then{' '}
-            <button
-              type="button"
+            <Button
+              variant="link"
               onClick={onTab}
-              className="font-medium text-white underline underline-offset-2 hover:text-gold"
+              className="text-xs text-white underline underline-offset-2 hover:text-gold"
             >
               Employee numbers → Rotate all
-            </button>{' '}
+            </Button>{' '}
             to re-issue the affected codes. {healthy} of {total} are healthy.
           </div>
         </div>
@@ -506,7 +506,9 @@ function DevicesTab({
                         </Button>
                       )}
                       {canManage && (
-                        <button
+                        <Button
+                          variant="ghost"
+                          size="xs"
                           onClick={async () => {
                             if (!(await confirm({ title: 'Permanently delete?', destructive: true }))) return;
                             try {
@@ -516,10 +518,10 @@ function DevicesTab({
                               toast.error(err instanceof ApiError ? err.message : 'Failed.');
                             }
                           }}
-                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
+                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 hover:text-alert"
                         >
                           Delete
-                        </button>
+                        </Button>
                       )}
                     </TableCell>
                   </TableRow>
@@ -761,23 +763,26 @@ function EmployeeNumberCell({ value }: { value: string | null }) {
       <span className="font-mono tracking-widest text-white tabular-nums">
         {revealed ? value : '••••'}
       </span>
-      <button
-        type="button"
+      {/* -my keeps the icon-sm hit target from stretching the table row. */}
+      <Button
+        variant="ghost"
+        size="icon-sm"
         onClick={() => setRevealed((r) => !r)}
-        className="text-silver hover:text-white transition can-hover:opacity-60 group-hover:opacity-100"
+        className="-my-1.5 can-hover:opacity-60 group-hover:opacity-100"
         aria-label={revealed ? 'Hide employee number' : 'Show employee number'}
         title={revealed ? 'Hide' : 'Show'}
       >
         {revealed ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-      </button>
-      <button
-        type="button"
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
         onClick={() => {
           void navigator.clipboard.writeText(value);
           setCopied(true);
           window.setTimeout(() => setCopied(false), 1200);
         }}
-        className="text-silver hover:text-white transition can-hover:opacity-60 group-hover:opacity-100"
+        className="-my-1.5 can-hover:opacity-60 group-hover:opacity-100"
         aria-label="Copy employee number"
         title="Copy"
       >
@@ -786,7 +791,7 @@ function EmployeeNumberCell({ value }: { value: string | null }) {
         ) : (
           <Copy className="h-3.5 w-3.5" />
         )}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -851,26 +856,27 @@ function FaceConsentCell({
         // tap-unreachable on tablets); hover-revealed on pointer devices.
         <span className="inline-flex gap-2 opacity-100 can-hover:opacity-0 can-hover:group-hover:opacity-100 group-focus-within:opacity-100 transition">
           {status !== null && (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="xs"
               disabled={busy}
               onClick={() => act('RESET')}
-              className="text-xs text-silver hover:text-white transition"
               title="Clear the answer — the kiosk asks again at their next punch"
             >
               Re-ask
-            </button>
+            </Button>
           )}
           {status !== 'DECLINED' && (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="xs"
               disabled={busy}
               onClick={() => act('DECLINE')}
-              className="text-xs text-silver hover:text-alert transition"
+              className="hover:text-alert"
               title="Record an opt-out and delete stored biometrics"
             >
               Decline
-            </button>
+            </Button>
           )}
         </span>
       )}
@@ -1427,7 +1433,9 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-3">
                         {canManage && p.employeeNumber && (
-                          <button
+                          <Button
+                            variant="ghost"
+                            size="xs"
                             onClick={async () => {
                               if (
                                 !(await confirm({
@@ -1445,13 +1453,15 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                                 );
                               }
                             }}
-                            className="inline-flex items-center gap-1 text-xs text-silver opacity-60 transition hover:text-white group-hover:opacity-100 group-focus-within:opacity-100"
+                            className="gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
                           >
                             <Mail className="h-3.5 w-3.5" /> Email
-                          </button>
+                          </Button>
                         )}
                         {canManage && (
-                          <button
+                          <Button
+                            variant="ghost"
+                            size="xs"
                             onClick={async () => {
                               if (
                                 !(await confirm({
@@ -1490,13 +1500,15 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                                 );
                               }
                             }}
-                            className="inline-flex items-center gap-1 text-xs text-silver opacity-60 transition hover:text-white group-hover:opacity-100 group-focus-within:opacity-100"
+                            className="gap-1 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100"
                           >
                             <RotateCw className="h-3.5 w-3.5" /> Rotate
-                          </button>
+                          </Button>
                         )}
                         {canManage && (
-                          <button
+                          <Button
+                            variant="ghost"
+                            size="xs"
                             onClick={async () => {
                               if (!(await confirm({ title: 'Revoke this employee number?', destructive: true }))) return;
                               try {
@@ -1506,10 +1518,10 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                                 toast.error(err instanceof ApiError ? err.message : 'Failed.');
                               }
                             }}
-                            className="text-xs text-silver opacity-60 transition hover:text-alert group-hover:opacity-100 group-focus-within:opacity-100"
+                            className="opacity-60 hover:text-alert group-hover:opacity-100 group-focus-within:opacity-100"
                           >
                             Revoke
-                          </button>
+                          </Button>
                         )}
                       </div>
                     </TableCell>
@@ -2298,8 +2310,9 @@ function LogTab() {
           <AlertTriangle className="mr-1 inline h-3.5 w-3.5" /> Anomalies only
         </button>
         {hasFilters && (
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => {
               setAssociate(null);
               setDeviceId('');
@@ -2307,21 +2320,23 @@ function LogTab() {
               setRange('all');
               setAnomaliesOnly(false);
             }}
-            className="h-9 px-2 text-sm text-silver hover:text-white"
+            // h-9 keeps it flush with the h-9 filter selects beside it.
+            className="h-9 px-2 text-sm"
           >
             Clear
-          </button>
+          </Button>
         )}
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={() => void exportCsv()}
           disabled={exporting || rows === null || rows.length === 0}
-          className="h-9 rounded-md border border-navy-secondary bg-navy-secondary/40 px-3 text-sm text-silver hover:text-white transition-colors disabled:opacity-50"
+          className="h-9 gap-1 text-sm text-silver hover:text-white"
           title="Download everything matching the current filters as CSV"
         >
-          <Download className="mr-1 inline h-3.5 w-3.5" />
+          <Download className="h-3.5 w-3.5" />
           {exporting ? 'Exporting…' : 'Export CSV'}
-        </button>
+        </Button>
         <div className="ml-auto text-xs text-silver">
           {rows ? `${rows.length} loaded${nextCursor ? '+' : ''}` : ''}
         </div>
@@ -2467,7 +2482,9 @@ function FacesTab({ canManage }: { canManage: boolean }) {
                   </TableCell>
                   <TableCell className="text-right">
                     {canManage && (
-                      <button
+                      <Button
+                        variant="ghost"
+                        size="xs"
                         onClick={async () => {
                           if (
                             !(await confirm({
@@ -2485,10 +2502,10 @@ function FacesTab({ canManage }: { canManage: boolean }) {
                             toast.error(err instanceof ApiError ? err.message : 'Failed.');
                           }
                         }}
-                        className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
+                        className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 hover:text-alert"
                       >
                         Reset
-                      </button>
+                      </Button>
                     )}
                   </TableCell>
                 </TableRow>

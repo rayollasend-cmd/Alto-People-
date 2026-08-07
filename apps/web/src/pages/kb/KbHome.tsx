@@ -31,6 +31,7 @@ import {
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
+import { statusLabel, statusTone } from '@/lib/status';
 import {
   Badge,
   Button,
@@ -59,19 +60,6 @@ import {
 } from '@/components/ui';
 import { FilterChip, SearchInput } from '@/components/ui/FilterBar';
 import { Label } from '@/components/ui/Label';
-
-/** DRAFT is neutral-default per the status contract, not pending. */
-const STATUS_VARIANT: Record<KbStatus, 'default' | 'success' | 'outline'> = {
-  DRAFT: 'default',
-  PUBLISHED: 'success',
-  ARCHIVED: 'outline',
-};
-
-const STATUS_LABELS: Record<KbStatus, string> = {
-  DRAFT: 'Draft',
-  PUBLISHED: 'Published',
-  ARCHIVED: 'Archived',
-};
 
 /** "How to request PTO?" → "how-to-request-pto". */
 function slugify(s: string): string {
@@ -389,8 +377,8 @@ export function KbHome() {
                           {a.category}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={STATUS_VARIANT[a.status]}>
-                            {STATUS_LABELS[a.status]}
+                          <Badge variant={statusTone(a.status)}>
+                            {statusLabel(a.status)}
                           </Badge>
                         </TableCell>
                         <TableCell className="text-sm hidden lg:table-cell text-right tabular-nums">

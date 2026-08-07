@@ -1,11 +1,13 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Eye, EyeOff, Fingerprint, Lock, Mail, ShieldCheck } from 'lucide-react';
+import { Building2, Eye, EyeOff, Fingerprint, Lock, Mail, ShieldCheck } from 'lucide-react';
+import type { MfaEnrollStartResponse } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { safeNextPath } from '@/lib/safeNextPath';
 import { passkeysSupported, signInWithPasskey } from '@/lib/webauthn';
-import { useI18n } from '@/lib/i18n';
-import { ApiError, NetworkError } from '@/lib/api';
+import { useI18n, type Translate } from '@/lib/i18n';
+import { ApiError, NetworkError, apiFetch } from '@/lib/api';
+import { confirmMfaEnrollment, startMfaEnrollment } from '@/lib/settingsApi';
 import { useFocusFirstError } from '@/lib/useFocusFirstError';
 import { Button } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Field';
@@ -13,6 +15,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { Label, FormHint } from '@/components/ui/Label';
 import { Logo } from '@/components/Logo';
+import { Skeleton } from '@/components/ui/Skeleton';
 
 interface LocationState {
   from?: string;
@@ -20,7 +23,29 @@ interface LocationState {
 
 const DEFAULT_DEV_EMAIL = import.meta.env.DEV ? 'admin@altohr.com' : '';
 
-type Step = 'password' | 'mfa';
+type Step = 'password' | 'mfa' | 'enroll';
+
+interface SsoConfig {
+  enabled: boolean;
+  buttonLabel: string | null;
+}
+
+/**
+ * The OIDC callback bounces failed sign-ins back here as
+ * /login?error=sso_no_account | sso_failed. Deliberately coarse copy —
+ * the server never distinguishes "no account" from "disabled" (no status
+ * oracle), and the operational detail lives in the audit log.
+ */
+function ssoErrorMessage(search: string, t: Translate): string | null {
+  const code = new URLSearchParams(search).get('error');
+  if (code === 'sso_no_account') {
+    return t('login.errSsoNoAccount');
+  }
+  if (code === 'sso_failed') {
+    return t('login.errSsoFailed');
+  }
+  return null;
+}
 
 export function Login() {
   const { t } = useI18n();
@@ -33,8 +58,33 @@ export function Login() {
   const [step, setStep] = useState<Step>('password');
   const [code, setCode] = useState('');
   const [useRecovery, setUseRecovery] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Seed the banner from the ?error= query the OIDC callback redirects with.
+  const [error, setError] = useState<string | null>(() =>
+    ssoErrorMessage(location.search, t),
+  );
   const [submitting, setSubmitting] = useState(false);
+  // Org-enforced MFA enrollment (mfaEnrollmentRequired login response).
+  // Same building blocks as the Settings enrollment card, driven by the
+  // short-lived mfa_enroll cookie instead of a session.
+  const [enroll, setEnroll] = useState<MfaEnrollStartResponse | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [enrollCode, setEnrollCode] = useState('');
+  const [sso, setSso] = useState<SsoConfig | null>(null);
+
+  // Feature probe alongside initial render. A failed fetch (offline, cold
+  // API) just leaves the button hidden — it must never block password login.
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<SsoConfig>('/auth/oidc/config')
+      .then((cfg) => {
+        if (!cancelled) setSso(cfg);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const queryNext = new URLSearchParams(location.search).get('next');
   const from = safeNextPath(
@@ -51,6 +101,11 @@ export function Login() {
       if (res.mfaRequired) {
         setStep('mfa');
         setCode('');
+        return;
+      }
+      if (res.mfaEnrollmentRequired) {
+        setStep('enroll');
+        await beginEnrollment();
         return;
       }
       navigate(from, { replace: true });
@@ -82,24 +137,89 @@ export function Login() {
       navigate(from, { replace: true });
     } catch (err) {
       if (err instanceof NetworkError) {
-        setError('Network error — check your connection and try again.');
+        setError(t('login.errNetwork'));
       } else if (err instanceof ApiError) {
         if (err.status === 429) {
-          setError('Too many code attempts. Try again in a few minutes.');
+          setError(t('login.errCodeRateLimited'));
         } else if (err.code === 'mfa_pending_missing' || err.code === 'mfa_state_invalid') {
-          setError('Sign-in expired. Please start again.');
+          setError(t('login.errSignInExpired'));
           setStep('password');
           setPassword('');
           setCode('');
         } else if (err.code === 'invalid_code') {
-          setError('That code is incorrect or expired.');
+          setError(t('login.errCodeInvalid'));
         } else if (err.status >= 500) {
-          setError("We're having trouble verifying your code. Please try again in a moment.");
+          setError(t('login.errCodeVerifyServer'));
         } else {
-          setError('Could not verify code.');
+          setError(t('login.errCodeVerify'));
         }
       } else {
-        setError('Could not verify code.');
+        setError(t('login.errCodeVerify'));
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // Org-enforced enrollment: fetch a fresh secret + recovery codes. The
+  // mfa_enroll cookie set by /auth/login authorizes these two endpoints
+  // (and nothing else) for 15 minutes.
+  const beginEnrollment = async () => {
+    setEnroll(null);
+    setQrDataUrl(null);
+    setAcknowledged(false);
+    setEnrollCode('');
+    try {
+      const res = await startMfaEnrollment();
+      setEnroll(res);
+      // Lazy-load qrcode — only paid for by users actually enrolling.
+      const { default: QRCode } = await import('qrcode');
+      const dataUrl = await QRCode.toDataURL(res.provisioningUri, {
+        margin: 1,
+        width: 176,
+        color: { dark: '#0f172a', light: '#ffffff' },
+      });
+      setQrDataUrl(dataUrl);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        setError(t('login.errSignInExpired'));
+        setStep('password');
+        setPassword('');
+      } else {
+        setError(t('login.errEnrollStart'));
+        setStep('password');
+      }
+    }
+  };
+
+  const handleEnrollSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      // On success the server issues the real session cookie (promotion
+      // from the mfa_enroll token) — refreshUser picks it up.
+      await confirmMfaEnrollment({ code: enrollCode.trim() });
+      await refreshUser();
+      navigate(from, { replace: true });
+    } catch (err) {
+      if (err instanceof NetworkError) {
+        setError(t('login.errNetwork'));
+      } else if (err instanceof ApiError) {
+        if (err.status === 429) {
+          setError(t('login.errCodeRateLimited'));
+        } else if (err.code === 'invalid_code') {
+          setError(t('login.errCodeInvalid'));
+        } else if (err.status === 401 || err.code === 'no_pending_enrollment') {
+          setError(t('login.errSignInExpired'));
+          setStep('password');
+          setPassword('');
+        } else {
+          setError(t('login.errCodeVerify'));
+        }
+      } else {
+        setError(t('login.errCodeVerify'));
       }
     } finally {
       setSubmitting(false);
@@ -113,7 +233,7 @@ export function Login() {
     if (submitting) return;
     const trimmed = email.trim();
     if (!trimmed) {
-      setError('Enter your email first, then use your passkey.');
+      setError(t('login.errPasskeyEmailFirst'));
       return;
     }
     setError(null);
@@ -128,7 +248,7 @@ export function Login() {
       if (err instanceof NetworkError) {
         setError(t('login.errNetwork'));
       } else {
-        setError('Passkey sign-in failed — use your password instead.');
+        setError(t('login.errPasskey'));
       }
     } finally {
       setSubmitting(false);
@@ -164,7 +284,7 @@ export function Login() {
             className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in"
             noValidate
           >
-            <h2 className="font-display text-xl text-white mb-1">
+            <h2 className="text-xl text-white mb-1">
               {t('login.title')}
             </h2>
             <p className="text-silver text-sm mb-6">
@@ -244,27 +364,48 @@ export function Login() {
               {submitting ? t('login.signingIn') : t('login.signIn')}
             </Button>
 
-            {passkeysSupported() && (
+            {(passkeysSupported() || sso?.enabled) && (
               <>
                 <div className="my-4 flex items-center gap-3 text-2xs uppercase tracking-widest text-silver/50">
                   <span className="h-px flex-1 bg-navy-secondary" />
-                  or
+                  {t('login.or')}
                   <span className="h-px flex-1 bg-navy-secondary" />
                 </div>
-                {/* "Use a passkey", not "Sign in with…": the e2e suite (and
-                    anyone else) targets the primary button by /sign in/i,
-                    and two matches is a strict-mode violation. */}
-                <Button
-                  type="button"
-                  size="lg"
-                  variant="outline"
-                  onClick={() => void handlePasskey()}
-                  disabled={submitting}
-                  className="w-full"
-                >
-                  <Fingerprint className="h-4 w-4" />
-                  Use a passkey
-                </Button>
+                <div className="space-y-3">
+                  {passkeysSupported() && (
+                    /* "Use a passkey", not "Sign in with…": the e2e suite (and
+                        anyone else) targets the primary button by /sign in/i,
+                        and two matches is a strict-mode violation. */
+                    <Button
+                      type="button"
+                      size="lg"
+                      variant="outline"
+                      onClick={() => void handlePasskey()}
+                      disabled={submitting}
+                      className="w-full"
+                    >
+                      <Fingerprint className="h-4 w-4" />
+                      {t('login.usePasskey')}
+                    </Button>
+                  )}
+                  {sso?.enabled && (
+                    /* Full-page navigation, not fetch: /auth/oidc/start
+                       answers a 302 to the IdP, and the browser must follow
+                       it as a top-level document load so the flow cookie and
+                       the eventual callback redirect work. */
+                    <Button
+                      type="button"
+                      size="lg"
+                      variant="outline"
+                      onClick={() => window.location.assign('/api/auth/oidc/start')}
+                      disabled={submitting}
+                      className="w-full"
+                    >
+                      <Building2 className="h-4 w-4" />
+                      {sso.buttonLabel ?? t('login.ssoButton')}
+                    </Button>
+                  )}
+                </div>
               </>
             )}
 
@@ -279,24 +420,22 @@ export function Login() {
               </p>
             )}
           </form>
-        ) : (
+        ) : step === 'mfa' ? (
           <form
             onSubmit={handleMfaSubmit}
             className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in"
             noValidate
           >
-            <h2 className="font-display text-2xl md:text-3xl text-white mb-1">
-              Two-step sign-in
+            <h2 className="text-2xl md:text-3xl text-white mb-1">
+              {t('login.mfaTitle')}
             </h2>
             <p className="text-silver text-sm mb-6">
-              {useRecovery
-                ? 'Enter one of the recovery codes you saved when you set up two-step sign-in. Each code works once.'
-                : 'Enter the 6-digit code from your authenticator app.'}
+              {useRecovery ? t('login.mfaRecoveryDesc') : t('login.mfaCodeDesc')}
             </p>
 
             <div>
               <Label htmlFor="login-mfa-code" required>
-                {useRecovery ? 'Recovery code' : 'Authenticator code'}
+                {useRecovery ? t('login.recoveryCode') : t('login.authCode')}
               </Label>
               <Input
                 id="login-mfa-code"
@@ -326,7 +465,7 @@ export function Login() {
               loading={submitting}
               className="w-full mt-6"
             >
-              {submitting ? 'Verifying…' : 'Verify and sign in'}
+              {submitting ? t('login.verifying') : t('login.verifyAndSignIn')}
             </Button>
 
             <div className="mt-4 flex items-center justify-between gap-2 text-xs">
@@ -339,7 +478,7 @@ export function Login() {
                 }}
                 className="text-silver hover:text-gold-bright transition-colors underline-offset-2 hover:underline"
               >
-                {useRecovery ? 'Use authenticator code instead' : 'Use a recovery code instead'}
+                {useRecovery ? t('login.useAuthCodeInstead') : t('login.useRecoveryInstead')}
               </button>
               <button
                 type="button"
@@ -352,7 +491,117 @@ export function Login() {
                 }}
                 className="text-silver hover:text-gold-bright transition-colors underline-offset-2 hover:underline"
               >
-                Cancel
+                {t('common.cancel')}
+              </button>
+            </div>
+
+            <div className="mt-6 flex items-center justify-center gap-1.5 text-2xs uppercase tracking-widest text-silver/70">
+              <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+              {t('login.securedBy')}
+            </div>
+          </form>
+        ) : (
+          <form
+            onSubmit={handleEnrollSubmit}
+            className="bg-navy/80 backdrop-blur border border-navy-secondary rounded-lg p-6 md:p-8 elev-3 ring-1 ring-white/[0.06] animate-zoom-in"
+            noValidate
+          >
+            <h2 className="text-2xl md:text-3xl text-white mb-1">
+              {t('login.enrollTitle')}
+            </h2>
+            <p className="text-silver text-sm mb-6">{t('login.enrollBody')}</p>
+
+            {enroll ? (
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="shrink-0 self-center sm:self-start">
+                    {qrDataUrl ? (
+                      <img
+                        src={qrDataUrl}
+                        alt={t('login.qrAlt')}
+                        className="rounded-md border border-navy-secondary bg-white p-2"
+                        width={176}
+                        height={176}
+                      />
+                    ) : (
+                      <Skeleton className="h-44 w-44" />
+                    )}
+                  </div>
+                  <div className="flex-1 space-y-3 min-w-0">
+                    <div>
+                      <Label>{t('login.manualSecret')}</Label>
+                      <code className="block rounded-md bg-navy-secondary/60 px-3 py-2 font-mono text-xs text-white break-all">
+                        {enroll.secret}
+                      </code>
+                    </div>
+                    <div>
+                      <Label>{t('login.recoveryCodesLabel')}</Label>
+                      <ul className="grid grid-cols-2 gap-1.5 rounded-md bg-navy-secondary/60 p-3 font-mono text-xs text-white">
+                        {enroll.recoveryCodes.map((c) => (
+                          <li key={c}>{c}</li>
+                        ))}
+                      </ul>
+                      <FormHint>{t('login.recoveryCodesHint')}</FormHint>
+                    </div>
+                  </div>
+                </div>
+                <label className="flex items-start gap-2 text-sm text-white">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={acknowledged}
+                    onChange={(e) => setAcknowledged(e.target.checked)}
+                  />
+                  <span>{t('login.ackSaved')}</span>
+                </label>
+                <div>
+                  <Label htmlFor="login-enroll-code" required>
+                    {t('login.enrollCodeLabel')}
+                  </Label>
+                  <Input
+                    id="login-enroll-code"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    required
+                    maxLength={6}
+                    value={enrollCode}
+                    onChange={(e) => setEnrollCode(e.target.value.replace(/\D/g, ''))}
+                    placeholder="123456"
+                    className="font-mono tracking-widest text-center"
+                  />
+                </div>
+              </div>
+            ) : (
+              <Skeleton className="h-44 w-full" />
+            )}
+
+            {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
+
+            <Button
+              type="submit"
+              size="lg"
+              disabled={!enroll || !acknowledged || enrollCode.length !== 6 || submitting}
+              loading={submitting}
+              className="w-full mt-6"
+            >
+              {submitting ? t('login.verifying') : t('login.turnOnAndSignIn')}
+            </Button>
+
+            <div className="mt-4 text-right text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setStep('password');
+                  setPassword('');
+                  setEnroll(null);
+                  setQrDataUrl(null);
+                  setEnrollCode('');
+                  setAcknowledged(false);
+                  setError(null);
+                }}
+                className="text-silver hover:text-gold-bright transition-colors underline-offset-2 hover:underline"
+              >
+                {t('common.cancel')}
               </button>
             </div>
 

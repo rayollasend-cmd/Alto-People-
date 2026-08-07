@@ -14,6 +14,8 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { TaskShell, inputCls, Field } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
+import { fmtSize } from '@/lib/format';
+import { statusTone } from '@/lib/status';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -28,24 +30,12 @@ const J1_KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
 const MAX_BYTES = UPLOAD_MAX_BYTES;
 const ACCEPTED_MIMES = 'application/pdf,image/png,image/jpeg,image/webp';
 
-const fmtSize = (b: number): string => {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  return `${(b / 1024 / 1024).toFixed(2)} MB`;
-};
 
 const STATUS_LABEL: Record<string, string> = {
   UPLOADED: 'Awaiting review',
   VERIFIED: 'Verified',
   REJECTED: 'Rejected',
   EXPIRED: 'Expired',
-};
-
-const STATUS_VARIANT: Record<string, 'pending' | 'success' | 'destructive'> = {
-  UPLOADED: 'pending',
-  VERIFIED: 'success',
-  REJECTED: 'destructive',
-  EXPIRED: 'destructive',
 };
 
 const KIND_LABEL: Record<string, string> = {
@@ -396,7 +386,7 @@ export function J1DocsTask() {
                   </div>
                   <Badge
                     size="sm"
-                    variant={STATUS_VARIANT[d.status] ?? 'pending'}
+                    variant={statusTone(d.status)}
                     data-status={d.status}
                   >
                     {STATUS_LABEL[d.status] ?? d.status}

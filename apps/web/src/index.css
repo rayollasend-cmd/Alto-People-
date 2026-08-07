@@ -60,10 +60,20 @@
   --color-midnight:         8  15  32;  /* #080F20 */
   --color-gold:           217 185 103;  /* #D9B967 — AA-compliant on navy */
   --color-gold-bright:    240 216 120;  /* #F0D878 */
+  /* Gold as a FILL under dark `on-accent` ink (primary button gradient,
+     toast action, drawer active row). In dark mode these match the text
+     tier exactly — the split only matters in light mode. */
+  --color-gold-fill:      217 185 103;  /* #D9B967 */
+  --color-gold-fill-bright: 240 216 120; /* #F0D878 */
   --color-silver:         192 208 224;  /* #C0D0E0 — bumped from #A8B8C8 so
                                           fractional opacities (silver/60,
                                           /70) clear WCAG AA on navy. */
-  --color-steel:           24  95 165;  /* #185FA5 */
+  /* #185FA5 was a light-mode blue left in the dark palette: 2.70:1 as
+     text on navy and 2.41:1 on its own tint, so every steel badge/tone
+     was unreadable here. blue-400 is the dark-surface equivalent. The
+     only solid `bg-steel` uses are a dot and a progress fill (no ink on
+     them), so lightening the token is safe. */
+  --color-steel:           96 165 250;  /* #60A5FA — 6.9:1 on navy (AA) */
   --color-sky:            230 241 251;  /* #E6F1FB */
   --color-teal:            15 110  86;  /* #0F6E56 */
   --color-alert:          233  98  85;  /* #E96255 — brightened for safer AA margin on navy (≈5.3:1) */
@@ -84,21 +94,44 @@
   --color-navy:           255 255 255;  /* #FFFFFF */
   --color-navy-secondary: 226 232 240;  /* #E2E8F0 — borders / subtle hover */
   --color-midnight:       248 250 252;  /* #F8FAFC — app background */
-  /* Gold dropped a step so it passes AA on white. */
-  --color-gold:           184 134  11;  /* #B8860B — ≈4.6:1 on white */
-  --color-gold-bright:    212 158  36;  /* #D49E24 */
-  /* "silver" (secondary text) becomes a dark slate. Slate-700 (not
-     slate-600) so the fractional opacity utilities used throughout the
-     app (text-silver/60, /70, /80) still clear WCAG AA on white. A
-     softer slate-600 fails AA at /60 and below; bumping the base lets
-     the same Tailwind classes work in both themes without a sweep. */
+  /* Gold darkened further so SMALL gold text (links, eyebrow labels, the
+     active nav tab) clears WCAG AA on white — the earlier #B8860B was only
+     ~3.25:1 (large-text-only), which failed every small gold link in light
+     mode. #87680C ≈ 5.2:1 on white / 5.0:1 on the #F8FAFC app bg. */
+  --color-gold:           135 104  12;  /* #87680C — ≈5.2:1 on white (AA) */
+  /* gold-bright is NOT display-only — 33 of its 77 uses are text-sm or
+     smaller, and it is the hover fill under `bg-gold hover:bg-gold-bright
+     text-navy`. Both jobs need 4.5:1, so it lands DARKER than base gold
+     here: in light mode "brighter" has to mean "more emphatic", which on
+     white means more ink, not less. 6.4:1 as text and under white ink. */
+  --color-gold-bright:    122  89   6;  /* #7A5906 — ≈6.4:1 on white (AA) */
+  /* Fill tier stays at the LIGHTER golds so dark `on-accent` ink keeps
+     clearing AA on top of it: #D49E24 → 7.3:1 and #B8860B → 5.4:1 against
+     the #0B1832 ink. Darkening these with the text tier would have taken
+     the primary button's label to 3.4:1 — the one thing the gold change
+     could not afford to break. */
+  --color-gold-fill:      184 134  11;  /* #B8860B — 5.4:1 under on-accent ink */
+  --color-gold-fill-bright: 212 158 36; /* #D49E24 — 7.3:1 under on-accent ink */
+  /* "silver" (secondary text) becomes a dark slate. Slate-700 keeps the
+     high alphas (/80, /90, full) clear of AA on their own; everything at
+     /70 and below is floored by an explicit rule further down, because
+     alpha compositing — not the base colour — is what breaks them. */
   --color-silver:          51  65  85;  /* #334155 — slate-700 */
-  --color-steel:           37  99 235;  /* #2563EB */
-  --color-sky:            219 234 254;  /* #DBEAFE */
-  --color-teal:            13 148 136;  /* #0D9488 */
-  --color-alert:          220  38  38;  /* #DC2626 */
-  --color-success:          5 150 105;  /* #059669 */
-  --color-warning:        217 119   6;  /* #D97706 */
+  --color-steel:           37  99 235;  /* #2563EB — 5.2:1 as link text on white */
+  /* "sky" is a pale tint that only ever works as text on a DARK surface.
+     Left at #DBEAFE it rendered pale-blue-on-pale-blue in light mode —
+     the `info` badge and ErrorBanner info tone measured 1.01:1, i.e.
+     invisible. In light mode it has to be the ink, not the wash. */
+  --color-sky:             29  78 216;  /* #1D4ED8 — 5.4:1 on a steel/8 tint */
+  --color-teal:            15 118 110;  /* #0F766E — teal-700, 4.8:1 on white */
+  /* red-600 was 4.83:1 bare and only 3.82:1 once it sat on its own tint
+     (every destructive badge). red-700 clears both. */
+  --color-alert:          185  28  28;  /* #B91C1C — 6.5:1 on white (AA) */
+  /* success + warning darkened a step so SMALL status text / inline
+     errors clear AA on white (the emerald-600 / amber-600 tier was only
+     ~3.2-3.8:1, large-text-only). */
+  --color-success:          4 120  87;  /* #047857 — ≈5.5:1 on white (AA) */
+  --color-warning:        180  83   9;  /* #B45309 — ≈5.0:1 on white (AA) */
   --color-muted:          148 163 184;  /* #94A3B8 */
   /* Primary text in light mode. */
   --color-fg:              15  23  42;  /* #0F172A — slate-900 */
@@ -120,12 +153,38 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Editorial serif is reserved for the largest, most expressive headings.
-     h3/h4 inherit the body sans (Geist) so card titles and section labels
-     stay crisp at small sizes — Cormorant Garamond is fragile below ~24px.
-     Pages that want the serif at smaller sizes can opt in via `font-display`. */
+  /* Thinned antialiasing is the right call for light-on-dark, where strokes
+     optically bloom — but it was applied globally, so light mode was also
+     shedding weight from dark-on-light text that had none to spare. Hand
+     light mode back to the platform renderer. (WebKit/macOS only; a no-op
+     on Windows.) */
+  :root[data-theme='light'] body {
+    -webkit-font-smoothing: auto;
+    -moz-osx-font-smoothing: auto;
+  }
+
+  /* Editorial serif is reserved for genuine display type: 30px and up.
+     Measured from the shipped files, Cormorant Garamond's x-height is 38.6%
+     of its em against Geist's 53.0% — lowercase renders 27% smaller at the
+     same nominal size, so the serif needs ~1.37x the point size to read as
+     equal. A 16px serif heading has a smaller lowercase (6.2px) than a 12px
+     sans caption (6.4px), which is why "large" headings were reading small.
+     High stroke contrast compounds it: the hairlines thin out at small sizes
+     and on non-Retina Windows displays, which is most of the admin base.
+
+     h1/h2 therefore no longer inherit the serif — it is opt-in via
+     `font-display`, and only above the floor. Every heading at 3xl+ already
+     carried the class explicitly, so nothing display-scale changed here. */
   h1, h2 {
-    @apply font-display tracking-tight leading-tight;
+    @apply tracking-tight leading-tight;
+  }
+
+  /* Cormorant ships 300-700 and defaults to 400, which is thin enough that
+     its hairlines fade on dark surfaces. 500 holds the stroke without
+     reading as bold. In the base layer so an explicit font-semibold /
+     font-bold utility still wins. */
+  .font-display {
+    font-weight: 500;
   }
 
   /* Tabular numerals everywhere data is presented in columns. Affects
@@ -135,6 +194,20 @@
      Fortune-500 HR/payroll product gets this right. */
   td, th {
     font-variant-numeric: tabular-nums;
+  }
+
+  /* Numeric VALUES set in the display serif render their digits in the
+     sans instead. Cormorant Garamond's lining "1" is a serifed vertical
+     stroke that reads as a capital "I" at a glance — unacceptable on KPI
+     tiles and count badges where the number IS the content. The
+     `.font-display.tabular-nums` pair is only ever a metric/stat value
+     (labels + prose headings use font-display WITHOUT tabular-nums), so
+     this swaps exactly the numbers and leaves every editorial heading,
+     greeting, and title in the brand serif. Geist's figures are
+     unambiguous and are the data-viz convention regardless. */
+  .font-display.tabular-nums {
+    font-family: theme('fontFamily.sans');
+    letter-spacing: -0.01em;
   }
 
   ::selection {
@@ -172,7 +245,40 @@
    ladder's own light-mode shadows at equal specificity (which previously
    won or lost purely on source order). */
 :root[data-theme='light'] .bg-navy:not([class*='elev-']) {
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+/* ---------------------------------------------------------------------------
+ * Card / divider edge in light mode.
+ *
+ * A white card on a #F8FAFC page separated by an #E2E8F0 border is three
+ * weak signals stacked: 1.05:1 surface difference, 1.23:1 border, and a
+ * 4%-opacity shadow. Nothing delineates the card, which is what "margins
+ * aren't clear" describes.
+ *
+ * The page background is deliberately NOT darkened to fix this — the text
+ * floors set above are computed against #F8FAFC, and moving the page to
+ * slate-100 would drop slate-500 secondary text to ~4.35:1 and undo the
+ * contrast work. So the edge is strengthened instead: border to ~1.94:1
+ * (visible but not a wireframe outline) and slightly more shadow.
+ * Form controls override this with the 3:1 tier above — a card edge is
+ * decorative, a control boundary is not.
+ * ------------------------------------------------------------------------- */
+:root[data-theme='light'] .border-navy-secondary {
+  border-color: rgb(176 187 201); /* 1.94:1 on white, 1.86:1 on the page */
+}
+/* Dark was left at 1.26:1 — the same number light sat at when users called
+   the margins unclear. It reads better there (a LIGHTER border on a dark
+   surface catches the eye more than pale grey on white), but it was the
+   weakest edge left in either theme. Brought to parity with light. */
+:root:not([data-theme='light']) .border-navy-secondary {
+  border-color: rgb(42 74 126); /* 2.00:1 on navy, 2.16:1 on midnight */
+}
+:root[data-theme='light'] .border-navy-secondary\/60 {
+  border-color: rgb(176 187 201 / 0.75);
+}
+:root[data-theme='light'] .border-navy-secondary\/50 {
+  border-color: rgb(176 187 201 / 0.65);
 }
 
 /* `bg-black/30` and `bg-black/40` show up across the payroll views as
@@ -187,15 +293,67 @@
   background-color: rgba(15, 23, 42, 0.06);
 }
 
-/* Floor the very-tertiary silver alphas in light mode. Slate-700 base
-   carries /60 and above to AA, but /40 and /50 still wash out on white.
-   Override those two utilities with a fixed slate-500 (≈4.6:1 on white)
-   so labels like timestamps, kbd hints, and "n of N" counts stay legible. */
+/* Floor the tertiary silver alphas. Alpha compositing, not the base
+   colour, is what breaks these: slate-700 at /70 lands on 4.35:1 against
+   a white card and 4.25:1 against the #F8FAFC page — under AA, on the
+   app's single most-used secondary text class (617 uses, 275 of them at
+   10-11px). The earlier version of this rule stopped at /60, so the
+   LIGHTER alphas were repaired while the most-used one was left failing.
+   Floor everything at /70 and below to a solid slate-500; /80 and /90
+   clear AA on their own (5.74 / 7.69) and keep the hierarchy above it. */
+:root[data-theme='light'] .text-silver\/30,
 :root[data-theme='light'] .text-silver\/40,
 :root[data-theme='light'] .text-silver\/50,
-:root[data-theme='light'] .text-silver\/60 {
-  color: rgb(100 116 139); /* slate-500 — readable on white at full opacity */
+:root[data-theme='light'] .text-silver\/60,
+:root[data-theme='light'] .text-silver\/70 {
+  color: rgb(100 116 139); /* slate-500 — 4.76:1 on white, 4.55:1 on the page */
 }
+
+/* The same floor was never written for DARK mode, where /30 (2.14:1),
+   /40 (2.83:1) and /50 (3.71:1) fail on navy. Pin them to the /60
+   composite — the lightest step that still clears AA — so the ramp stays
+   monotonic instead of inverting against /60. */
+:root:not([data-theme='light']) .text-silver\/30,
+:root:not([data-theme='light']) .text-silver\/40,
+:root:not([data-theme='light']) .text-silver\/50 {
+  color: rgb(120 134 154); /* 4.78:1 on navy, 5.19:1 on midnight */
+}
+
+/* ---------------------------------------------------------------------------
+ * Light-mode status tint cap.
+ *
+ * Status chips paint same-hue text on a tint of themselves
+ * (`bg-warning/15 text-warning`). On a dark surface the tint darkens the
+ * background and contrast IMPROVES; on white it lightens the text side of
+ * the pair and contrast DROPS by roughly a full point. Every badge is
+ * 10-11px, so it needs 4.5:1, and at /15 they measured pending 4.08,
+ * accent 4.28, success 4.43, destructive 3.82 — all failing.
+ *
+ * Capping the faint tints at 8% in light mode fixes every chip app-wide
+ * without retuning the four status hues (which are already at their AA
+ * floor on white) and without touching a single component. The high
+ * alphas (/50-/90) are solid fills carrying on-solid ink and are left
+ * alone. Dark mode is unaffected — it was already passing.
+ * ------------------------------------------------------------------------- */
+:root[data-theme='light'] .bg-gold\/10,
+:root[data-theme='light'] .bg-gold\/15,
+:root[data-theme='light'] .bg-gold\/20,
+:root[data-theme='light'] .bg-gold\/30 { background-color: rgb(var(--color-gold) / 0.08); }
+:root[data-theme='light'] .bg-alert\/10,
+:root[data-theme='light'] .bg-alert\/15,
+:root[data-theme='light'] .bg-alert\/20,
+:root[data-theme='light'] .bg-alert\/30 { background-color: rgb(var(--color-alert) / 0.08); }
+:root[data-theme='light'] .bg-warning\/10,
+:root[data-theme='light'] .bg-warning\/15,
+:root[data-theme='light'] .bg-warning\/20,
+:root[data-theme='light'] .bg-warning\/25 { background-color: rgb(var(--color-warning) / 0.08); }
+:root[data-theme='light'] .bg-success\/10,
+:root[data-theme='light'] .bg-success\/15,
+:root[data-theme='light'] .bg-success\/20,
+:root[data-theme='light'] .bg-success\/25 { background-color: rgb(var(--color-success) / 0.08); }
+:root[data-theme='light'] .bg-steel\/10,
+:root[data-theme='light'] .bg-steel\/15,
+:root[data-theme='light'] .bg-steel\/20 { background-color: rgb(var(--color-steel) / 0.08); }
 
 /* ---------------------------------------------------------------------------
  * Theme-aware modal/drawer backdrop.
@@ -270,8 +428,8 @@
 .btn-gold {
   background-image: linear-gradient(
     to bottom,
-    rgb(var(--color-gold-bright)) 0%,
-    rgb(var(--color-gold)) 100%
+    rgb(var(--color-gold-fill-bright)) 0%,
+    rgb(var(--color-gold-fill)) 100%
   );
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.25) inset,
@@ -281,8 +439,8 @@
 .btn-gold:hover:not(:disabled) {
   background-image: linear-gradient(
     to bottom,
-    rgb(var(--color-gold-bright)) 0%,
-    rgb(var(--color-gold-bright)) 100%
+    rgb(var(--color-gold-fill-bright)) 0%,
+    rgb(var(--color-gold-fill-bright)) 100%
   );
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.35) inset,
@@ -292,8 +450,8 @@
 .btn-gold:active:not(:disabled) {
   background-image: linear-gradient(
     to bottom,
-    rgb(var(--color-gold)) 0%,
-    rgb(var(--color-gold)) 100%
+    rgb(var(--color-gold-fill)) 0%,
+    rgb(var(--color-gold-fill)) 100%
   );
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.25) inset,
@@ -314,12 +472,9 @@
   background-color: rgb(var(--color-navy-secondary));
   color: rgb(var(--color-silver) / 0.7);
 }
+/* Light mode keeps the base gradient (it already reads off the fill tier,
+   which does not darken with the text tier) and only softens the glow. */
 :root[data-theme='light'] .btn-gold {
-  background-image: linear-gradient(
-    to bottom,
-    rgb(var(--color-gold-bright)) 0%,
-    rgb(var(--color-gold)) 100%
-  );
   box-shadow:
     0 1px 0 rgba(255, 255, 255, 0.5) inset,
     0 0 0 1px rgba(184, 134, 11, 0.35),
@@ -380,6 +535,47 @@ select.border-navy-secondary:focus {
   outline: none;
   border-color: rgb(var(--color-gold));
   box-shadow: 0 0 0 2px rgb(var(--color-gold) / 0.4);
+}
+
+/* ---------------------------------------------------------------------------
+ * Form-control boundary — WCAG 1.4.11 (non-text contrast).
+ *
+ * `navy-secondary` is doing two jobs that pull opposite ways: it is the
+ * subtle FILL behind a field (bg-navy-secondary/40) and also the field's
+ * BORDER. Tuned as a fill it has to stay near the surface, which left the
+ * border at 1.23:1 against a white card and 1.14:1 against the field's own
+ * fill — the control was effectively invisible in light mode, and 1.26:1
+ * in dark. 1.4.11 requires 3:1 for the visual information needed to
+ * identify a control, and a text input has no other boundary.
+ *
+ * Fixed here rather than in the components because all 490 border sites
+ * already declare the class, exactly like the <select> hook above. Card
+ * and divider borders keep the softer tier set further down — only real
+ * controls get the strong edge.
+ * ------------------------------------------------------------------------- */
+:root:not([data-theme='light']) input.border-navy-secondary,
+:root:not([data-theme='light']) select.border-navy-secondary,
+:root:not([data-theme='light']) textarea.border-navy-secondary {
+  border-color: rgb(85 115 165); /* 3.68:1 on navy, 3.39:1 on the field fill */
+}
+:root[data-theme='light'] input.border-navy-secondary,
+:root[data-theme='light'] select.border-navy-secondary,
+:root[data-theme='light'] textarea.border-navy-secondary {
+  border-color: rgb(130 140 150); /* 3.42:1 on white, 3.15:1 on the field fill */
+}
+/* Hover must not read as WEAKER than rest. Both themes ship a
+   `hover:border-silver/40` on these controls, which composites to 2.2:1 on
+   white and 2.83:1 on navy — below the resting borders above in BOTH cases,
+   so hovering a field made it fainter. Raised past resting in each theme. */
+:root[data-theme='light'] input.border-navy-secondary:hover:not(:disabled):not(:focus),
+:root[data-theme='light'] select.border-navy-secondary:hover:not(:disabled):not(:focus),
+:root[data-theme='light'] textarea.border-navy-secondary:hover:not(:disabled):not(:focus) {
+  border-color: rgb(100 116 139); /* 4.76:1 — a clear step up from 3.42 resting */
+}
+:root:not([data-theme='light']) input.border-navy-secondary:hover:not(:disabled):not(:focus),
+:root:not([data-theme='light']) select.border-navy-secondary:hover:not(:disabled):not(:focus),
+:root:not([data-theme='light']) textarea.border-navy-secondary:hover:not(:disabled):not(:focus) {
+  border-color: rgb(var(--color-silver) / 0.6); /* 4.78:1 — up from 3.68 resting */
 }
 
 /* Theme native checkboxes / radios with the brand gold so the checked

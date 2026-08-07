@@ -1,4 +1,4 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -53,14 +53,14 @@ import { renderTaxFormSummaryPdf } from '../lib/taxFormSummaryPdf.js';
 import { send } from '../lib/notifications.js';
 
 /**
- * Phase 91 â€” Garnishments + tax forms (941, 940, W-2, 1099-NEC).
+ * Phase 91 — Garnishments + tax forms (941, 940, W-2, 1099-NEC).
  *
  * Garnishments are recurring deductions; the per-pay-run withholding
  * worker (separate cron) walks active garnishments and inserts
  * GarnishmentDeduction rows. Routes here manage the lifecycle.
  *
  * Tax forms are immutable once filed. The "filing" routes don't
- * actually transmit to the IRS â€” they just freeze the snapshot and
+ * actually transmit to the IRS — they just freeze the snapshot and
  * mark FILED. Real e-file integration is out of scope for this phase.
  */
 
@@ -422,7 +422,7 @@ payrollTax91Router.post('/tax-forms/:id/file', MANAGE, async (req, res) => {
 });
 
 /**
- * POST /tax-forms/bulk-file { ids: string[] } — file many drafts in one
+ * POST /tax-forms/bulk-file { ids: string[] } � file many drafts in one
  * action. W-2 season for 200 employees was 400 clicks of per-row
  * File+confirm; this is the select-all path. Per-form failures (wrong
  * state, duplicate filing) skip with a reason instead of failing the
@@ -471,7 +471,7 @@ payrollTax91Router.post('/tax-forms/:id/void', MANAGE, async (req, res) => {
 /**
  * Aggregate "build" helper for 941: pulls the YTD payroll figures for
  * the given quarter so HR doesn't have to type them in. Returns a
- * suggested amounts object â€” caller can review, edit, then POST.
+ * suggested amounts object — caller can review, edit, then POST.
  */
 payrollTax91Router.get('/tax-forms/build/941', VIEW, async (req, res) => {
   const taxYear = z
@@ -520,7 +520,7 @@ payrollTax91Router.get('/tax-forms/build/941', VIEW, async (req, res) => {
       totalWages: totalWages.toFixed(2),
       totalFederalWithheld: totalFedWithheld.toFixed(2),
       totalEmployerTax: totalEmployerTax.toFixed(2),
-      // 7.65% combined (FICA 6.2 + Medicare 1.45) â€” illustrative only.
+      // 7.65% combined (FICA 6.2 + Medicare 1.45) — illustrative only.
       ficaMedicareWages: totalWages.toFixed(2),
     },
     periodStart: periodStart.toISOString().slice(0, 10),
@@ -595,7 +595,7 @@ payrollTax91Router.get('/tax-forms/build/940', VIEW, async (req, res) => {
 });
 
 /**
- * GET /tax-forms/w3.pdf?taxYear=YYYY — W-3 transmittal totals: the sums of
+ * GET /tax-forms/w3.pdf?taxYear=YYYY � W-3 transmittal totals: the sums of
  * every non-VOIDED W-2 for the year, which is exactly what the W-3 boxes
  * carry. Rendered as a labeled summary sheet for transcription to the
  * official form (the SSA EFW2 file's RT/RU records carry the same totals
@@ -611,7 +611,7 @@ payrollTax91Router.get('/tax-forms/w3.pdf', VIEW, async (req, res, next) => {
       select: { amounts: true },
     });
     if (forms.length === 0) {
-      throw new HttpError(404, 'no_forms', `No W-2s exist for ${taxYear} — generate them first.`);
+      throw new HttpError(404, 'no_forms', `No W-2s exist for ${taxYear} � generate them first.`);
     }
     const sumBox = (key: string) =>
       forms.reduce((s, f) => {
@@ -622,21 +622,21 @@ payrollTax91Router.get('/tax-forms/w3.pdf', VIEW, async (req, res, next) => {
       n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
     const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
     const { pdf } = await renderTaxFormSummaryPdf({
-      title: `Form W-3 transmittal totals — ${taxYear}`,
-      employer: { name: profile?.name ?? 'Alto HR', ein: profile?.ein ?? '—' },
+      title: `Form W-3 transmittal totals � ${taxYear}`,
+      employer: { name: profile?.name ?? 'Alto HR', ein: profile?.ein ?? '�' },
       status: 'SUMMARY',
       generatedAt: new Date().toISOString(),
       lines: [
         { label: 'Number of W-2 forms (box c)', value: String(forms.length), bold: true },
-        { label: 'Box 1 — wages, tips, other compensation', value: money(sumBox('box1')) },
-        { label: 'Box 2 — federal income tax withheld', value: money(sumBox('box2')) },
-        { label: 'Box 3 — Social Security wages', value: money(sumBox('box3')) },
-        { label: 'Box 4 — Social Security tax withheld', value: money(sumBox('box4')) },
-        { label: 'Box 5 — Medicare wages and tips', value: money(sumBox('box5')) },
-        { label: 'Box 6 — Medicare tax withheld', value: money(sumBox('box6')) },
+        { label: 'Box 1 � wages, tips, other compensation', value: money(sumBox('box1')) },
+        { label: 'Box 2 � federal income tax withheld', value: money(sumBox('box2')) },
+        { label: 'Box 3 � Social Security wages', value: money(sumBox('box3')) },
+        { label: 'Box 4 � Social Security tax withheld', value: money(sumBox('box4')) },
+        { label: 'Box 5 � Medicare wages and tips', value: money(sumBox('box5')) },
+        { label: 'Box 6 � Medicare tax withheld', value: money(sumBox('box6')) },
       ],
       footnote:
-        'These totals must equal the sums of the attached W-2s and reconcile with the four quarterly 941s for the year. When e-filing via EFW2, the RT/RU records carry these same totals — a standalone W-3 is only mailed with paper Copy A.',
+        'These totals must equal the sums of the attached W-2s and reconcile with the four quarterly 941s for the year. When e-filing via EFW2, the RT/RU records carry these same totals � a standalone W-3 is only mailed with paper Copy A.',
     });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="w3-${taxYear}.pdf"`);
@@ -647,7 +647,7 @@ payrollTax91Router.get('/tax-forms/w3.pdf', VIEW, async (req, res, next) => {
 });
 
 /**
- * POST /tax-forms/:id/send-recipient-copy — email the worker their copy
+ * POST /tax-forms/:id/send-recipient-copy � email the worker their copy
  * (W-2 Copy B, W-2c, or 1099) as a PDF attachment and stamp
  * recipientCopySentAt. Filing isn't complete until the recipient copy is
  * distributed; this makes that step auditable. `force: true` re-sends.
@@ -686,7 +686,7 @@ async function sendRecipientCopyForForm(
     subject: `Your ${form.taxYear} ${label} from Alto HR`,
     body:
       `Hi ${form.associate.firstName},\n\nAttached is your ${form.taxYear} ${label}. ` +
-      `Keep it for your tax records — you'll need it to file your ${form.taxYear} return.\n\n` +
+      `Keep it for your tax records � you'll need it to file your ${form.taxYear} return.\n\n` +
       `If anything on it looks wrong, contact your manager right away so a correction can be issued.`,
     attachments: [{ filename, content: pdf, contentType: 'application/pdf' }],
   });
@@ -710,7 +710,7 @@ payrollTax91Router.post('/tax-forms/:id/send-recipient-copy', MANAGE, async (req
 });
 
 /**
- * POST /tax-forms/bulk-send-copies { ids: string[], force? } — distribute
+ * POST /tax-forms/bulk-send-copies { ids: string[], force? } � distribute
  * recipient copies for many forms in one action. Per-form failures
  * (no email, already sent, aggregate form) skip with a reason.
  */
@@ -748,7 +748,7 @@ const GenerateW2BodySchema = z.object({
 });
 
 /**
- * POST /tax-forms/w2/generate { taxYear, clientId? } â€” for every associate
+ * POST /tax-forms/w2/generate { taxYear, clientId? } — for every associate
  * with at least one disbursed paystub in the year, run the aggregator and
  * persist a TaxForm(kind=W2, status=DRAFT) row carrying the box totals.
  *
@@ -769,7 +769,7 @@ payrollTax91Router.post('/tax-forms/w2/generate', MANAGE, async (req, res) => {
   const created: { id: string; associateId: string }[] = [];
 
   for (const associateId of associateIds) {
-    // Tier-2 — one W-2 per employer EIN. A worker paid by two clients in
+    // Tier-2 � one W-2 per employer EIN. A worker paid by two clients in
     // the year gets a separate W-2 for each; wages under each EIN
     // aggregate independently (the first-run single-EIN heuristic is
     // retired). Legacy rows with a null ein still block regeneration so
@@ -843,11 +843,11 @@ const GenerateF1099NecBodySchema = z.object({
 });
 
 /**
- * POST /tax-forms/1099-nec/generate { taxYear, clientId? } â€” for every
+ * POST /tax-forms/1099-nec/generate { taxYear, clientId? } — for every
  * contractor associate that meets the IRS reporting threshold (Box 1
  * >= $600 OR Box 4 > 0), run the aggregator and persist a TaxForm
  * (kind=F1099_NEC, status=DRAFT) row. Mirrors the W-2 generate route
- * exactly except the eligibility filter â€” see f1099NecAggregator.
+ * exactly except the eligibility filter — see f1099NecAggregator.
  *
  * Idempotent at the per-associate level: if a non-VOIDED 1099-NEC
  * already exists for {associate, year}, it's skipped (re-runs are
@@ -904,7 +904,7 @@ payrollTax91Router.post('/tax-forms/1099-nec/generate', MANAGE, async (req, res)
   });
 });
 
-// ----- 1099-MISC generation (Gap 11 â€” Phase 8) --------------------------
+// ----- 1099-MISC generation (Gap 11 — Phase 8) --------------------------
 
 const GenerateF1099MiscBodySchema = z.object({
   taxYear: z.number().int().min(2020).max(2100),
@@ -913,7 +913,7 @@ const GenerateF1099MiscBodySchema = z.object({
 });
 
 /**
- * POST /tax-forms/1099-misc/generate { taxYear, clientId? } â€” for every
+ * POST /tax-forms/1099-misc/generate { taxYear, clientId? } — for every
  * contractor associate that meets the IRS reporting thresholds (per-box;
  * Royalties at $10, Box 4 backup withholding always triggers, others at
  * $600), run the aggregator and persist a TaxForm (kind=F1099_MISC,
@@ -988,7 +988,7 @@ const W2cBodySchema = z
     correctionReason: z.string().trim().min(1).max(500),
     /**
      * Optional explicit corrected box values. When omitted the route
-     * recomputes from current PayrollItems via aggregateW2Wages â€”
+     * recomputes from current PayrollItems via aggregateW2Wages —
      * the typical case after an AMENDMENT run posts to a year that's
      * already been W-2'd. When supplied, the caller is expressing a
      * manual override (e.g. spotted a data-entry mistake).
@@ -1014,14 +1014,14 @@ const W2cBodySchema = z
   .strict();
 
 /**
- * POST /tax-forms/w2c â€” creates a W-2c TaxForm correcting an existing
- * W-2. The original must be FILED or AMENDED (you don't W-2c a DRAFT â€”
+ * POST /tax-forms/w2c — creates a W-2c TaxForm correcting an existing
+ * W-2. The original must be FILED or AMENDED (you don't W-2c a DRAFT —
  * just edit and re-generate). On success the original flips to AMENDED
  * (it stays in the table; the IRS keeps it as the historical record)
  * and the new W2C row is returned.
  *
  * Idempotency: if `correctedBoxes` is omitted and the recomputed totals
- * match the original exactly, returns 409 â€” no point creating a no-op
+ * match the original exactly, returns 409 — no point creating a no-op
  * correction.
  */
 payrollTax91Router.post('/tax-forms/w2c', MANAGE, async (req, res) => {
@@ -1049,7 +1049,7 @@ payrollTax91Router.post('/tax-forms/w2c', MANAGE, async (req, res) => {
     );
   }
 
-  // Resolve corrected boxes â€” caller-supplied or recomputed from current
+  // Resolve corrected boxes — caller-supplied or recomputed from current
   // PayrollItems (the AMENDMENT-run case).
   const corrected: W2Boxes = input.correctedBoxes
     ? { ...input.correctedBoxes, sourceItemCount: 0 }
@@ -1107,7 +1107,7 @@ payrollTax91Router.post('/tax-forms/w2c', MANAGE, async (req, res) => {
   });
 });
 
-// Shared helper â€” pulls the form + associate + W-4, looks up an employer
+// Shared helper — pulls the form + associate + W-4, looks up an employer
 // block from the associate's first disbursed run in the year, and renders
 // the W-2 (or W-2c) PDF. Used by single-PDF and bulk-zip routes. Throws
 // HttpError on missing inputs so the caller's catch block produces a clean
@@ -1156,7 +1156,7 @@ async function renderW2ForForm(
 
   const yearStart = new Date(Date.UTC(form.taxYear, 0, 1));
   const yearEndExclusive = new Date(Date.UTC(form.taxYear + 1, 0, 1));
-  // Tier-2 — a form stamped with an EIN resolves its employer block from
+  // Tier-2 � a form stamped with an EIN resolves its employer block from
   // the client carrying that EIN; legacy null-EIN forms keep the
   // first-disbursed-run heuristic.
   const sampleItem = await prisma.payrollItem.findFirst({
@@ -1407,7 +1407,7 @@ async function renderF1099NecForForm(formId: string): Promise<{
 
 /**
  * Renders Form 1099-MISC for one TaxForm row. Mirrors renderF1099NecForForm
- * â€” same payer / recipient resolution, same TIN-on-file gating, same
+ * — same payer / recipient resolution, same TIN-on-file gating, same
  * client-from-sample-item trick. Only the box layout + PDF helper differ.
  */
 async function renderF1099MiscForForm(formId: string): Promise<{
@@ -1501,20 +1501,20 @@ async function renderF1099MiscForForm(formId: string): Promise<{
 }
 
 /**
- * GET /tax-forms/:id/pdf â€” renders the PDF for a TaxForm. Dispatches on
+ * GET /tax-forms/:id/pdf — renders the PDF for a TaxForm. Dispatches on
  * form.kind:
- *   - W2 / W2C       â†’ renderW2ForForm
- *   - F1099_NEC      â†’ renderF1099NecForForm
- *   - F1099_MISC     â†’ renderF1099MiscForForm
- *   - else           â†’ 400 unsupported_kind
+ *   - W2 / W2C       → renderW2ForForm
+ *   - F1099_NEC      → renderF1099NecForForm
+ *   - F1099_MISC     → renderF1099MiscForForm
+ *   - else           → 400 unsupported_kind
  * Stamps `pdfHash` on first download (matching the paystub immutability
  * contract). Same hash semantics across kinds; the per-helper hash
  * function returns sha256 of the rendered bytes.
  *
- * Optional query params (W-2 only â€” ignored for W-2c):
- *   ?copy=A|B|C|D|2  â†’ which single-copy variant to render. Defaults
+ * Optional query params (W-2 only — ignored for W-2c):
+ *   ?copy=A|B|C|D|2  → which single-copy variant to render. Defaults
  *                      to B (employee files with federal return).
- *   ?layout=4up      â†’ renders the 4-up multi-copy paper sheet (B/C/2/2
+ *   ?layout=4up      → renders the 4-up multi-copy paper sheet (B/C/2/2
  *                      quadrants). Mutually exclusive with ?copy=.
  *
  * The pdfHash stamp deliberately tracks Copy B (the canonical single-
@@ -1528,7 +1528,7 @@ async function renderF1099MiscForForm(formId: string): Promise<{
 // requireAuth is explicit here: this router is mounted bare at '/' with
 // no router-level auth, and the handler dereferences req.user! to decide
 // owner-vs-manager. Without it an unauthenticated request only failed by
-// ACCIDENT — a TypeError producing a 500 — and this endpoint serves W-2
+// ACCIDENT � a TypeError producing a 500 � and this endpoint serves W-2
 // PDFs containing the full SSN.
 payrollTax91Router.get('/tax-forms/:id/pdf', requireAuth, async (req, res, next) => {
   try {
@@ -1547,13 +1547,13 @@ payrollTax91Router.get('/tax-forms/:id/pdf', requireAuth, async (req, res, next)
       throw new HttpError(404, 'not_found', 'Form not found.');
     }
 
-    // Aggregate forms (941/940) render as labeled summary sheets — the
+    // Aggregate forms (941/940) render as labeled summary sheets � the
     // review-and-transcribe copy for the official form or e-file portal.
     if (form.kind === 'F941' || form.kind === 'F940') {
       const profile = await prisma.submitterProfile.findUnique({ where: { id: 'singleton' } });
       const amounts = (form.amounts ?? {}) as Record<string, unknown>;
       const lines = Object.entries(amounts).map(([key, v]) => ({
-        // camelCase → spaced words; numbers get currency formatting.
+        // camelCase ? spaced words; numbers get currency formatting.
         label: key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^./, (c) => c.toUpperCase()),
         value:
           typeof v === 'number'
@@ -1563,9 +1563,9 @@ payrollTax91Router.get('/tax-forms/:id/pdf', requireAuth, async (req, res, next)
       const { pdf } = await renderTaxFormSummaryPdf({
         title:
           form.kind === 'F941'
-            ? `Form 941 — Q${form.quarter} ${form.taxYear}`
-            : `Form 940 — ${form.taxYear}`,
-        employer: { name: profile?.name ?? 'Alto HR', ein: form.ein ?? profile?.ein ?? '—' },
+            ? `Form 941 � Q${form.quarter} ${form.taxYear}`
+            : `Form 940 � ${form.taxYear}`,
+        employer: { name: profile?.name ?? 'Alto HR', ein: form.ein ?? profile?.ein ?? '�' },
         status: form.status,
         generatedAt: new Date().toISOString(),
         lines,
@@ -1629,7 +1629,7 @@ payrollTax91Router.get('/tax-forms/:id/pdf', requireAuth, async (req, res, next)
         });
       } else if (form.pdfHash !== hash) {
         // Layout change between renders. Surface in logs but still serve
-        // the bytes â€” finance shouldn't be blocked by a font swap or PDF
+        // the bytes — finance shouldn't be blocked by a font swap or PDF
         // engine update. Hash mismatch is observable via the audit log.
         // eslint-disable-next-line no-console
         console.warn(
@@ -1647,7 +1647,7 @@ payrollTax91Router.get('/tax-forms/:id/pdf', requireAuth, async (req, res, next)
 });
 
 /**
- * GET /tax-forms/w2/bulk.zip?taxYear=YYYY&clientId=UUID â€” streams a zip of
+ * GET /tax-forms/w2/bulk.zip?taxYear=YYYY&clientId=UUID — streams a zip of
  * every non-VOIDED W-2 PDF for the year (and optional client scope). Skips
  * forms that fail to render (missing SSN / employer info) and surfaces the
  * skip count in a manifest.txt at the root of the zip so finance can spot
@@ -1747,7 +1747,7 @@ payrollTax91Router.get('/tax-forms/w2/bulk.zip', MANAGE, async (req, res, next) 
 });
 
 /**
- * GET /tax-forms/1099-nec/bulk.zip?taxYear=YYYY&clientId=UUID â€” sibling of
+ * GET /tax-forms/1099-nec/bulk.zip?taxYear=YYYY&clientId=UUID — sibling of
  * the W-2 bulk endpoint. Streams every non-VOIDED 1099-NEC PDF for the
  * year (and optional client scope), skips forms that fail to render, and
  * appends a manifest.txt listing the skips.
@@ -1839,7 +1839,7 @@ payrollTax91Router.get('/tax-forms/1099-nec/bulk.zip', MANAGE, async (req, res, 
 });
 
 /**
- * GET /tax-forms/1099-misc/bulk.zip?taxYear=YYYY&clientId=UUID â€” sibling
+ * GET /tax-forms/1099-misc/bulk.zip?taxYear=YYYY&clientId=UUID — sibling
  * of the 1099-NEC bulk endpoint for 1099-MISC forms.
  */
 payrollTax91Router.get('/tax-forms/1099-misc/bulk.zip', MANAGE, async (req, res, next) => {
@@ -1947,7 +1947,7 @@ const SubmitterProfileBodySchema = z.object({
   contactName: z.string().min(1).max(57),
   contactPhone: z.string().min(7).max(20),
   contactEmail: z.string().email().max(40),
-  // Gap 11 â€” IRS FIRE Transmitter Control Code, 5 chars, IRS-assigned.
+  // Gap 11 — IRS FIRE Transmitter Control Code, 5 chars, IRS-assigned.
   // Required for 1099-NEC e-file; nullable so W-2-only filers can save
   // a profile without it. Validated as exactly 5 alphanumerics when set.
   irsTcc: z
@@ -1981,12 +1981,12 @@ payrollTax91Router.post('/tax-forms/submitter', MANAGE, async (req, res) => {
 // ----- EFW2 generator (Gap 1) --------------------------------------------
 
 /**
- * GET /tax-forms/w2/efw2.txt?taxYear=YYYY&clientId=UUID â€” builds and
+ * GET /tax-forms/w2/efw2.txt?taxYear=YYYY&clientId=UUID — builds and
  * streams the EFW2 e-file. Includes every non-VOIDED W-2 row whose
  * associate has a disbursed run for that client in the year. GET so
  * the admin UI can trigger the download with a plain anchor tag.
  *
- * Submitter block is read from the SubmitterProfile singleton â€” finance
+ * Submitter block is read from the SubmitterProfile singleton — finance
  * sets it up once via POST /tax-forms/submitter. The route 400s with a
  * clear error if the profile is missing.
  *
@@ -2183,7 +2183,7 @@ payrollTax91Router.get('/tax-forms/w2/efw2.txt', MANAGE, async (req, res, next) 
 });
 
 /**
- * GET /tax-forms/w2/efw2c.txt?taxYear=YYYY&clientId=UUID â€” streams the
+ * GET /tax-forms/w2/efw2c.txt?taxYear=YYYY&clientId=UUID — streams the
  * EFW2C correction e-file. Includes every non-VOIDED W-2c row whose
  * associate has a disbursed run for that client in the year. Same
  * caveats as the EFW2 route: spec verification needed before BSO upload
@@ -2387,7 +2387,7 @@ payrollTax91Router.get(
 // ----- IRS FIRE 1099-NEC generator (Gap 11) ------------------------------
 
 /**
- * GET /tax-forms/1099-nec/fire.txt?taxYear=YYYY&clientId=UUID â€” streams
+ * GET /tax-forms/1099-nec/fire.txt?taxYear=YYYY&clientId=UUID — streams
  * the IRS FIRE-format e-file for every non-VOIDED 1099-NEC whose
  * recipient was paid by this client in the year. Distinct from EFW2/
  * EFW2C (those file with SSA via BSO; this files with the IRS via
@@ -2415,7 +2415,7 @@ payrollTax91Router.get(
           .parse(req.query.taxYear),
         clientId: z.string().uuid().parse(req.query.clientId),
         // Optional CSV of USPS state codes to enrol in Combined Federal/
-        // State Filing â€” e.g. ?cfsf=FL,CA,NY. Empty / omitted = federal
+        // State Filing — e.g. ?cfsf=FL,CA,NY. Empty / omitted = federal
         // only, no K records emitted. Each state must be in
         // IRS_CFSF_STATE_CODES; per-year participation is the caller's
         // call (not every state participates every year).
@@ -2477,7 +2477,7 @@ payrollTax91Router.get(
         include: { associate: true },
       });
       // Filter to forms whose recipient was paid by THIS client in the
-      // year (form rows don't carry clientId â€” resolve via PayrollItem).
+      // year (form rows don't carry clientId — resolve via PayrollItem).
       const yearStart = new Date(Date.UTC(input.taxYear, 0, 1));
       const yearEndExclusive = new Date(Date.UTC(input.taxYear + 1, 0, 1));
       const eligibleAssociateIds = new Set<string>(
@@ -2623,14 +2623,14 @@ payrollTax91Router.get(
   },
 );
 
-// ----- IRS FIRE 1099-MISC generator (Gap 11 â€” Phase 8) -------------------
+// ----- IRS FIRE 1099-MISC generator (Gap 11 — Phase 8) -------------------
 
 /**
  * GET /tax-forms/1099-misc/fire.txt?taxYear=YYYY&clientId=UUID&cfsf=FL,CA
- * â€” sibling of /tax-forms/1099-nec/fire.txt that produces the IRS FIRE
+ * — sibling of /tax-forms/1099-nec/fire.txt that produces the IRS FIRE
  * file with formType "MI" instead of "NE". Same submitter / TIN /
  * payer-info validation; same CF/SF semantics. The duplicated body is
- * deliberate â€” extracting a shared helper would obscure the per-route
+ * deliberate — extracting a shared helper would obscure the per-route
  * eligibility filtering that's likely to diverge as MISC grows
  * box-mapping complexity.
  */
@@ -2845,14 +2845,14 @@ payrollTax91Router.get(
 
 // ----- W-9 / Recipient TIN (Gap 11) --------------------------------------
 //
-// Captures the contractor's Taxpayer Identification Number â€” SSN for
+// Captures the contractor's Taxpayer Identification Number — SSN for
 // individuals, EIN for businesses. Encrypted at rest with the same
 // PAYOUT_ENCRYPTION_KEY scheme as W4Submission.ssnEncrypted. The 1099-
 // NEC PDF + IRS FIRE routes refuse to render until this is set.
 //
 // We don't accept full W-9 forms in this iteration; HR captures the TIN
 // directly. A real W-9 model (signed PDF, audit trail) can hang off the
-// same column later â€” the column survives the abstraction.
+// same column later — the column survives the abstraction.
 
 const TinBodySchema = z.object({
   /** 9-digit TIN, dashes optional (we strip them). */
@@ -2873,7 +2873,7 @@ payrollTax91Router.get('/associates/:id/tin', VIEW, async (req, res, next) => {
       },
     });
     if (!a) throw new HttpError(404, 'not_found', 'Associate not found.');
-    // Don't return the raw TIN â€” only whether one is on file. The PDF /
+    // Don't return the raw TIN — only whether one is on file. The PDF /
     // IRS FIRE routes are the only things that read it, and they go
     // straight from DB to the file body.
     res.json({

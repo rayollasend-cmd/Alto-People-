@@ -21,6 +21,7 @@ import {
 } from '@/lib/tuition127Api';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
+import { StatusBadge, statusLabel } from '@/lib/status';
 import {
   Badge,
   Button,
@@ -50,23 +51,6 @@ import {
   TableRow,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
-
-const STATUS_VARIANT: Record<
-  TuitionStatus,
-  'pending' | 'success' | 'destructive' | 'accent'
-> = {
-  SUBMITTED: 'pending',
-  APPROVED: 'accent',
-  REJECTED: 'destructive',
-  PAID: 'success',
-};
-
-const STATUS_LABELS: Record<TuitionStatus, string> = {
-  SUBMITTED: 'Submitted',
-  APPROVED: 'Approved',
-  REJECTED: 'Rejected',
-  PAID: 'Paid',
-};
 
 const GRADE_OPTIONS = [
   'A',
@@ -251,7 +235,7 @@ export function TuitionHome() {
         r.termEndDate,
         r.amount,
         r.currency,
-        STATUS_LABELS[r.status],
+        statusLabel(r.status),
         r.gradeReceived ?? '',
         r.reviewerNotes ?? '',
       ]),
@@ -409,9 +393,7 @@ export function TuitionHome() {
                         {fmtMoney(r.amount, { currency: r.currency })}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={STATUS_VARIANT[r.status]}>
-                          {STATUS_LABELS[r.status]}
-                        </Badge>
+                        <StatusBadge status={r.status} />
                       </TableCell>
                       <TableCell className="text-sm hidden md:table-cell">
                         {r.gradeReceived ?? (
@@ -533,9 +515,7 @@ export function TuitionHome() {
                           {fmtMoney(r.amount, { currency: r.currency })}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={STATUS_VARIANT[r.status]}>
-                            {STATUS_LABELS[r.status]}
-                          </Badge>
+                          <StatusBadge status={r.status} />
                         </TableCell>
                         <TableCell className="text-sm hidden lg:table-cell">
                           {r.gradeReceived ?? (
@@ -754,9 +734,7 @@ function MyDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[row.status]}>
-            {STATUS_LABELS[row.status]}
-          </Badge>
+          <StatusBadge status={row.status} />
           <span className="text-sm text-silver tabular-nums">
             {fmtMoney(row.amount, { currency: row.currency })}
           </span>
@@ -773,7 +751,7 @@ function MyDetailDrawer({
             href={safeHref(row.receiptUrl)}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-steel hover:underline"
+            className="text-sm text-gold hover:underline"
           >
             Receipt ↗
           </a>
@@ -858,9 +836,7 @@ function QueueDetailDrawer({
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[row.status]}>
-            {STATUS_LABELS[row.status]}
-          </Badge>
+          <StatusBadge status={row.status} />
           <span className="text-sm text-silver tabular-nums">
             {fmtMoney(row.amount, { currency: row.currency })}
           </span>
@@ -877,7 +853,7 @@ function QueueDetailDrawer({
             href={safeHref(row.receiptUrl)}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-sm text-steel hover:underline"
+            className="text-sm text-gold hover:underline"
           >
             Receipt ↗
           </a>

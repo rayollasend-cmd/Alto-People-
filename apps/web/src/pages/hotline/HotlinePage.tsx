@@ -14,10 +14,10 @@ import { Button } from '@/components/ui/Button';
 import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
-import { Badge } from '@/components/ui/Badge';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime } from '@/lib/format';
+import { StatusBadge } from '@/lib/status';
 import {
   fileAnonymousReport,
   lookupReportByCode,
@@ -36,26 +36,10 @@ const CATEGORY_LABELS: Record<ReportCategory, string> = {
   OTHER: 'Other',
 };
 
-/** Reporter-facing status wording — the raw enum never reaches this page. */
-const STATUS_LABELS: Record<PublicReport['status'], string> = {
-  RECEIVED: 'Received',
-  TRIAGING: 'Triaging',
-  INVESTIGATING: 'Investigating',
-  RESOLVED: 'Resolved',
-  CLOSED: 'Closed',
-};
-
-const STATUS_VARIANT: Record<
-  PublicReport['status'],
-  'pending' | 'accent' | 'success' | 'outline'
-> = {
-  RECEIVED: 'pending',
-  TRIAGING: 'pending',
-  // In-flight work reads gold per the status contract.
-  INVESTIGATING: 'accent',
-  RESOLVED: 'success',
-  CLOSED: 'outline',
-};
+// TRIAGING is domain-only (a wait state to the reporter). Everything else —
+// including RECEIVED, which reads as a calm amber "we have it" here, unlike
+// the admin queue's red "unseen" — comes from the shared status vocabulary.
+const HOTLINE_PUBLIC_STATUS_TONES = { TRIAGING: 'pending' } as const;
 
 /**
  * Public-facing hotline page. No authentication. Has two modes:
@@ -77,7 +61,7 @@ export function HotlinePage() {
         </div>
         <div className="flex items-center gap-3 mb-2">
           <ShieldQuestion className="h-7 w-7 text-gold" />
-          <h1 className="font-display text-2xl md:text-3xl text-white">
+          <h1 className="text-2xl md:text-3xl text-white">
             Confidential Reporting
           </h1>
         </div>
@@ -455,9 +439,11 @@ function LookupForm() {
       <div className="rounded-md border border-navy-secondary bg-navy/40 p-4 space-y-2">
         <div className="flex items-start justify-between gap-3">
           <div className="text-base font-semibold">{report.subject}</div>
-          <Badge variant={STATUS_VARIANT[report.status]} className="shrink-0">
-            {STATUS_LABELS[report.status]}
-          </Badge>
+          <StatusBadge
+            status={report.status}
+            overrides={HOTLINE_PUBLIC_STATUS_TONES}
+            className="shrink-0"
+          />
         </div>
         <div className="text-xs text-silver">
           {CATEGORY_LABELS[report.category]} · Filed{' '}

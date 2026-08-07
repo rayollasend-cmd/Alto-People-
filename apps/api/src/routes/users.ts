@@ -79,6 +79,7 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       createdAt: true,
       clientId: true,
       associateId: true,
+      lockedUntil: true,
       associate: {
         select: { firstName: true, lastName: true },
       },
@@ -103,6 +104,12 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
         : null,
       clientId: u.clientId,
       clientName: u.client?.name ?? null,
+      // Account lockout (brute-force lock). Only surfaced while still in
+      // the future — an expired lock is just noise to an admin.
+      lockedUntil:
+        u.lockedUntil && u.lockedUntil.getTime() > Date.now()
+          ? u.lockedUntil.toISOString()
+          : null,
     })),
     // True row count before the 500 cap — the UI (and the billing seat
     // count) must never present a capped page length as the total.
@@ -277,6 +284,68 @@ usersRouter.patch(
         },
       },
       'admin.user_updated',
+    );
+
+    res.status(204).end();
+  },
+);
+
+// ----- Unlock a brute-force-locked account ---------------------------------
+
+/**
+ * POST /admin/users/:id/unlock
+ *
+ * Clears the failed-login counter and lockedUntil so the user can try
+ * their password again immediately instead of waiting out the 15-minute
+ * window. Idempotent — unlocking an unlocked account is a no-op 204 (but
+ * still audited, since the admin's intent to unlock is what matters for
+ * forensics).
+ */
+usersRouter.post(
+  '/admin/users/:id/unlock',
+  requireCapability('view:hr-admin'),
+  async (req, res) => {
+    const id = z.string().uuid().parse(req.params.id);
+
+    const target = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        email: true,
+        clientId: true,
+        deletedAt: true,
+        failedLoginCount: true,
+        lockedUntil: true,
+      },
+    });
+    if (!target || target.deletedAt) {
+      throw new HttpError(404, 'not_found', 'User not found.');
+    }
+
+    await prisma.user.update({
+      where: { id },
+      data: { failedLoginCount: 0, lockedUntil: null },
+    });
+
+    // Critical: unlocking re-opens the password path on an account that
+    // was under active brute-force pressure — the audit row is the only
+    // durable record of who lifted the lock and when.
+    await recordCriticalAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: target.clientId ?? null,
+        action: 'admin.user_unlocked',
+        entityType: 'User',
+        entityId: id,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+          targetEmail: target.email,
+          failedLoginCount: target.failedLoginCount,
+          lockedUntil: target.lockedUntil?.toISOString() ?? null,
+        },
+      },
+      'admin.user_unlocked',
     );
 
     res.status(204).end();

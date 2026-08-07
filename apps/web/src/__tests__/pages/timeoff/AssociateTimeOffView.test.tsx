@@ -123,6 +123,122 @@ describe('<AssociateTimeOffView>', () => {
     });
   });
 
+  it('Esc on a dirty dialog asks before discarding; Keep editing stays, Discard closes', async () => {
+    const user = userEvent.setup();
+    renderView();
+    await waitFor(() => expect(getMyBalance).toHaveBeenCalled());
+
+    await user.click(screen.getByRole('button', { name: /request time off/i }));
+    // Dirty the form — the reason field is part of the dirty predicate.
+    await user.type(screen.getByLabelText(/reason/i), 'dentist');
+
+    // Esc is intercepted: the discard confirm shows, the dialog survives.
+    await user.keyboard('{Escape}');
+    expect(await screen.findByText('Discard your changes?')).toBeInTheDocument();
+    expect(screen.getByLabelText(/reason/i)).toBeInTheDocument();
+
+    // Cancelling the confirm keeps the dialog (and the typed value).
+    await user.click(screen.getByRole('button', { name: /keep editing/i }));
+    await waitFor(() =>
+      expect(screen.queryByText('Discard your changes?')).not.toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText(/reason/i)).toHaveValue('dentist');
+
+    // Confirming the discard actually closes the dialog.
+    await user.keyboard('{Escape}');
+    await user.click(await screen.findByRole('button', { name: /^discard$/i }));
+    await waitFor(() =>
+      expect(screen.queryByLabelText(/reason/i)).not.toBeInTheDocument(),
+    );
+  });
+
+  it('Esc on a clean dialog closes without prompting', async () => {
+    const user = userEvent.setup();
+    renderView();
+    await waitFor(() => expect(getMyBalance).toHaveBeenCalled());
+
+    await user.click(screen.getByRole('button', { name: /request time off/i }));
+    await user.keyboard('{Escape}');
+    expect(screen.queryByText('Discard your changes?')).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByLabelText(/reason/i)).not.toBeInTheDocument(),
+    );
+  });
+
+  it('submit-close does not prompt to discard', async () => {
+    vi.mocked(createMyRequest).mockClear();
+    vi.mocked(createMyRequest).mockResolvedValue({
+      request: {
+        id: 'r1',
+        associateId: 'a',
+        associateName: 'Maria',
+        category: 'VACATION',
+        startDate: '2026-05-04',
+        endDate: '2026-05-04',
+        requestedMinutes: 480,
+        reason: null,
+        status: 'PENDING',
+        reviewerUserId: null,
+        reviewerEmail: null,
+        reviewerNote: null,
+        decidedAt: null,
+        cancelledAt: null,
+        createdAt: new Date().toISOString(),
+      },
+    });
+    const user = userEvent.setup();
+    renderView();
+    await waitFor(() => expect(getMyBalance).toHaveBeenCalled());
+
+    await user.click(screen.getByRole('button', { name: /request time off/i }));
+    // Dirty the form, then submit — the programmatic close after success
+    // must NOT run through the discard guard.
+    await user.type(screen.getByLabelText(/reason/i), 'dentist');
+    await user.click(screen.getByRole('button', { name: /^submit$/i }));
+
+    await waitFor(() => expect(createMyRequest).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryByLabelText(/reason/i)).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText('Discard your changes?')).not.toBeInTheDocument();
+  });
+
+  it('Enter in a field submits the form-wrapped dialog', async () => {
+    // No clearMocks config in this suite — reset the count so the earlier
+    // submit tests can't satisfy the toHaveBeenCalledTimes below.
+    vi.mocked(createMyRequest).mockClear();
+    vi.mocked(createMyRequest).mockResolvedValue({
+      request: {
+        id: 'r1',
+        associateId: 'a',
+        associateName: 'Maria',
+        category: 'VACATION',
+        startDate: '2026-05-04',
+        endDate: '2026-05-04',
+        requestedMinutes: 480,
+        reason: null,
+        status: 'PENDING',
+        reviewerUserId: null,
+        reviewerEmail: null,
+        reviewerNote: null,
+        decidedAt: null,
+        cancelledAt: null,
+        createdAt: new Date().toISOString(),
+      },
+    });
+    const user = userEvent.setup();
+    renderView();
+    await waitFor(() => expect(getMyBalance).toHaveBeenCalled());
+
+    await user.click(screen.getByRole('button', { name: /request time off/i }));
+    await user.type(screen.getByLabelText(/reason/i), 'dentist{Enter}');
+
+    await waitFor(() => expect(createMyRequest).toHaveBeenCalledTimes(1));
+    expect(createMyRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'dentist' }),
+    );
+  });
+
   it('shows withdraw button for PENDING requests and not for APPROVED', async () => {
     vi.mocked(listMyRequests).mockResolvedValue({
       requests: [

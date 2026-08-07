@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { ClipboardList, Download, Plus, Star } from 'lucide-react';
 import { toast } from 'sonner';
@@ -202,6 +203,11 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
             ? 'Compose, submit, and track performance reviews.'
             : 'Read-only view of performance reviews.'
         }
+        secondaryActions={
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/performance/extras">Goals, PIPs &amp; 360s</Link>
+          </Button>
+        }
         primaryAction={
           canManage ? (
             <Button onClick={() => setShowCreate(true)}>
@@ -327,7 +333,7 @@ export function AdminReviewsView({ canManage }: { canManage: boolean }) {
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="inline-flex items-center gap-1 font-display text-base text-gold tabular-nums">
+                      <span className="inline-flex items-center gap-1 text-base text-gold tabular-nums">
                         <Star className="h-4 w-4" />
                         {r.overallRating}/5
                       </span>
@@ -435,7 +441,7 @@ function ReviewDetailPanel({
       </DrawerHeader>
       <DrawerBody>
         <div className="flex flex-wrap items-center gap-3 mb-4">
-          <span className="inline-flex items-center gap-1 font-display text-2xl text-gold tabular-nums">
+          <span className="inline-flex items-center gap-1 text-2xl text-gold tabular-nums">
             <Star className="h-5 w-5" />
             {r.overallRating}/5
           </span>

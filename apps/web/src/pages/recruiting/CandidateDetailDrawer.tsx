@@ -11,6 +11,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
   Avatar,
   Badge,
@@ -135,7 +136,7 @@ function StageTracker({ stage }: { stage: CandidateStage }) {
               aria-current={current ? 'step' : undefined}
               className={cn(
                 'rounded-full px-2 py-0.5 text-2xs whitespace-nowrap transition-colors',
-                current && 'bg-gold text-on-accent font-medium',
+                current && 'bg-gold-fill text-on-accent font-medium',
                 done && 'bg-navy-secondary text-silver',
                 !done && !current && 'text-silver/50',
               )}
@@ -230,6 +231,18 @@ export function CandidateDetailDrawer({
       </DrawerHeader>
 
       <DrawerBody className="space-y-6">
+        {/* The hire handoff's landing spot: a hired candidate's record used
+            to be a dead end with no way out to the associate it created. */}
+        {candidate.stage === 'HIRED' && candidate.hiredAssociateId && (
+          <div className="rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm text-white">
+            <span className="font-medium text-success">Hired</span>
+            {candidate.hiredAt ? ` ${fmtDate(candidate.hiredAt)}` : ''} · associate
+            record:{' '}
+            <AssociateLink associateId={candidate.hiredAssociateId}>
+              {fullName}
+            </AssociateLink>
+          </div>
+        )}
         {outcome && (
           <div
             className={cn(

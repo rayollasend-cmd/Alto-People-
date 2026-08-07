@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Download, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
@@ -67,7 +68,7 @@ import { toast } from 'sonner';
 type Tab = 'projects' | 'premium' | 'tips';
 
 export function PayRulesHome() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Seed and pin the picker to their one client instead.
   const boundedClient = useMemo(
@@ -96,6 +97,16 @@ export function PayRulesHome() {
         title="Pay rules"
         subtitle="Project codes, premium-pay differentials (OT, night, holiday), and tip pools."
         breadcrumbs={[{ label: 'Time & Pay' }, { label: 'Pay rules' }]}
+        secondaryActions={
+          // Worktags are the sibling finance-config surface (spend/reporting
+          // dimensions); its route is gated on view:hr-admin, so only show
+          // the door to people it opens for.
+          can('view:hr-admin') ? (
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/worktags">Worktags</Link>
+            </Button>
+          ) : undefined
+        }
       />
       <Card>
         <CardContent className="p-4 flex items-center gap-3 flex-wrap">

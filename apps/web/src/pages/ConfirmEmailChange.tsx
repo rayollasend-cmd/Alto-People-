@@ -70,7 +70,7 @@ export function ConfirmEmailChange() {
           {state === 'pending' && (
             <>
               <AtSign className="mx-auto h-12 w-12 text-gold mb-4 animate-pulse" />
-              <h2 className="font-display text-xl md:text-2xl text-white mb-2">
+              <h2 className="text-xl md:text-2xl text-white mb-2">
                 Confirming your new email…
               </h2>
               <p className="text-silver text-sm">
@@ -81,7 +81,7 @@ export function ConfirmEmailChange() {
           {state === 'done' && (
             <>
               <ShieldCheck className="mx-auto h-12 w-12 text-success mb-4" />
-              <h2 className="font-display text-xl md:text-2xl text-white mb-2">
+              <h2 className="text-xl md:text-2xl text-white mb-2">
                 Email updated
               </h2>
               <p className="text-silver text-sm mb-6">
@@ -100,7 +100,7 @@ export function ConfirmEmailChange() {
           {state === 'error' && (
             <>
               <ShieldX className="mx-auto h-12 w-12 text-alert mb-4" />
-              <h2 className="font-display text-xl md:text-2xl text-white mb-2">
+              <h2 className="text-xl md:text-2xl text-white mb-2">
                 Couldn't confirm
               </h2>
               <p className="text-silver text-sm mb-6">{error}</p>

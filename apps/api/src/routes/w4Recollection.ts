@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
+import { idempotent } from '../middleware/idempotency.js';
 import { tryDecryptString } from '../lib/crypto.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { notifyUser } from '../lib/notify.js';
@@ -223,7 +224,7 @@ const BulkEmailSchema = z.object({
 
 export type W4RecollectionSkipReason = 'not_affected' | 'no_account' | 'no_application';
 
-w4RecollectionRouter.post('/email', async (req, res) => {
+w4RecollectionRouter.post('/email', idempotent, async (req, res) => {
   const { associateIds } = BulkEmailSchema.parse(req.body);
   const { outstanding } = await loadCampaign();
   const byId = new Map(outstanding.map((r) => [r.associate.id, r]));

@@ -4,7 +4,13 @@ import { Calendar, Clock, MapPin, StickyNote, User, X } from 'lucide-react';
 import type { Shift } from '@alto-people/shared';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
-import { fmtDateTz, fmtTimeTz, fmtWeekdayTz } from '@/lib/format';
+import {
+  fmtDateTz,
+  fmtMoney,
+  fmtPayRate,
+  fmtTimeTz,
+  fmtWeekdayTz,
+} from '@/lib/format';
 import { colorForPosition } from '@/lib/positionColor';
 
 /**
@@ -26,7 +32,7 @@ export interface QuickActions {
   onUnassign: (s: Shift) => Promise<void> | void;
   onCancel: (s: Shift) => Promise<void> | void;
   onDuplicate: (s: Shift) => Promise<void> | void;
-  /** Copy this shift onto a different employee (opens a picker). */
+  /** Copy this shift onto a different associate (opens a picker). */
   onDuplicateToEmployee: (s: Shift) => void;
   /** Publish a single DRAFT shift (DRAFT → OPEN/ASSIGNED). */
   onPublish: (s: Shift) => Promise<void> | void;
@@ -212,13 +218,20 @@ export function ShiftHoverCard({
             <div className="whitespace-pre-wrap">{shift.notes}</div>
           </div>
         )}
-        {shift.payRate != null && (
+        {(shift.effectivePayRate ?? shift.payRate) != null && (
           <div className="text-xs text-silver/70 tabular-nums">
-            ${shift.payRate.toFixed(2)}/hr · projected $
-            {(
-              (shift.payRate * (shift.scheduledMinutes ?? 0)) /
-              60
-            ).toFixed(2)}
+            {fmtPayRate(shift.effectivePayRate ?? shift.payRate, 'HOURLY')}
+            {/* Rate inherited from the (client, position) default rather
+                than set on the shift — worth flagging to the scheduler. */}
+            {shift.payRate == null && shift.effectivePayRate != null && (
+              <span className="text-silver/50"> (default)</span>
+            )}
+            {' '}· projected{' '}
+            {fmtMoney(
+              ((shift.effectivePayRate ?? shift.payRate)! *
+                (shift.scheduledMinutes ?? 0)) /
+                60,
+            )}
           </div>
         )}
       </div>

@@ -17,6 +17,17 @@ if (process.env.NODE_ENV !== 'test') {
 // same string in branchWebhook.test.ts. Real prod value comes from Railway.
 process.env.BRANCH_WEBHOOK_SECRET = 'test-branch-webhook-secret-do-not-use-outside-tests';
 
+// Deterministic SCIM provisioning bearer for tests — same rationale as the
+// Branch secret above (ships with the repo so CI runs without extra env).
+// Must satisfy the 32-char minimum in config/env.ts.
+process.env.SCIM_TOKEN = 'test-scim-token-do-not-use-outside-tests';
+
+// Deterministic Resend/Svix webhook secret for tests (same rationale as
+// above). Svix format: "whsec_" + base64 key; the tests re-derive the
+// signature from this exact value via lib/resendWebhook.signResendWebhook.
+process.env.RESEND_WEBHOOK_SECRET =
+  'whsec_dGVzdC1yZXNlbmQtd2ViaG9vay1zZWNyZXQtZG8tbm90LXVzZQ==';
+
 // Preload the payroll tax config cache from the alto_test DB. Route-level
 // tests that drive the payroll engine (paystub, disbursement, payroll)
 // would otherwise throw "config cache empty" at compute time. Test files

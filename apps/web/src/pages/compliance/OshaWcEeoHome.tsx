@@ -57,6 +57,7 @@ import { Label } from '@/components/ui/Label';
 import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
 import { toast } from 'sonner';
+import { statusTone } from '@/lib/status';
 
 type Tab = 'osha' | 'wc' | 'eeo';
 
@@ -130,13 +131,10 @@ const SEVERITY_LABELS: Record<OshaSeverity, string> = {
   FATAL: 'Fatal',
 };
 
-const OSHA_STATUS_VARIANT: Record<OshaStatus, 'pending' | 'accent' | 'success' | 'destructive'> = {
-  REPORTED: 'pending',
-  // In-flight work reads gold per the status contract.
-  INVESTIGATING: 'accent',
-  RESOLVED: 'success',
-  ESCALATED: 'destructive',
-};
+// Domain-only codes the shared vocabulary doesn't carry: REPORTED awaits
+// review (amber); ESCALATED demands attention (red). INVESTIGATING / RESOLVED
+// come from the shared status vocabulary.
+const OSHA_STATUS_TONES = { REPORTED: 'pending', ESCALATED: 'destructive' } as const;
 
 const OSHA_STATUS_LABELS: Record<OshaStatus, string> = {
   REPORTED: 'Reported',
@@ -285,7 +283,7 @@ function OshaTab({ clientId }: { clientId: string }) {
                       {i.daysAway}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={OSHA_STATUS_VARIANT[i.status]}>
+                      <Badge variant={statusTone(i.status, { overrides: OSHA_STATUS_TONES })}>
                         {OSHA_STATUS_LABELS[i.status]}
                       </Badge>
                     </TableCell>

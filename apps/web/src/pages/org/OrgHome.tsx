@@ -39,6 +39,7 @@ import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
 import { fmtDateTime } from '@/lib/format';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
   Avatar,
   Badge,
@@ -444,7 +445,17 @@ function DepartmentDrawer({
   };
 
   return (
-    <>
+    // Form-wrapped so Enter in any field saves (same rules as the Save
+    // button). flex classes mirror the Drawer column layout the fragment
+    // used to inherit, keeping DrawerBody's internal scroll working.
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!canManage || submitting) return;
+        void submit();
+      }}
+      className="flex min-h-0 flex-1 flex-col"
+    >
       <DrawerHeader>
         <DrawerTitle>
           {isNew ? 'New department' : initial!.name}
@@ -516,6 +527,7 @@ function DepartmentDrawer({
       <DrawerFooter className="justify-between">
         {!isNew && canManage ? (
           <Button
+            type="button"
             variant="ghost"
             onClick={remove}
             disabled={submitting}
@@ -528,17 +540,17 @@ function DepartmentDrawer({
           <span />
         )}
         <div className="flex gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={submitting}>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
           {canManage && (
-            <Button onClick={submit} loading={submitting} disabled={!name.trim()}>
+            <Button type="submit" loading={submitting} disabled={!name.trim()}>
               {isNew ? 'Create' : 'Save'}
             </Button>
           )}
         </div>
       </DrawerFooter>
-    </>
+    </form>
   );
 }
 
@@ -734,7 +746,15 @@ function CostCenterDrawer({
   };
 
   return (
-    <>
+    // Form-wrapped so Enter saves — see DepartmentDrawerContent.
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!canManage || submitting) return;
+        void submit();
+      }}
+      className="flex min-h-0 flex-1 flex-col"
+    >
       <DrawerHeader>
         <DrawerTitle>{isNew ? 'New cost center' : initial!.code}</DrawerTitle>
         <DrawerDescription>
@@ -785,6 +805,7 @@ function CostCenterDrawer({
       <DrawerFooter className="justify-between">
         {!isNew && canManage ? (
           <Button
+            type="button"
             variant="ghost"
             onClick={remove}
             disabled={submitting}
@@ -797,12 +818,12 @@ function CostCenterDrawer({
           <span />
         )}
         <div className="flex gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={submitting}>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
           {canManage && (
             <Button
-              onClick={submit}
+              type="submit"
               loading={submitting}
               disabled={!code.trim() || !name.trim()}
             >
@@ -811,7 +832,7 @@ function CostCenterDrawer({
           )}
         </div>
       </DrawerFooter>
-    </>
+    </form>
   );
 }
 
@@ -1010,7 +1031,15 @@ function ShiftPositionDrawer({
   };
 
   return (
-    <>
+    // Form-wrapped so Enter saves — see DepartmentDrawerContent.
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!canManage || submitting) return;
+        void submit();
+      }}
+      className="flex min-h-0 flex-1 flex-col"
+    >
       <DrawerHeader>
         <DrawerTitle>{isNew ? 'New shift position' : initial!.name}</DrawerTitle>
         <DrawerDescription>
@@ -1052,6 +1081,7 @@ function ShiftPositionDrawer({
       <DrawerFooter className="justify-between">
         {!isNew && canManage ? (
           <Button
+            type="button"
             variant="ghost"
             onClick={remove}
             disabled={submitting}
@@ -1064,17 +1094,17 @@ function ShiftPositionDrawer({
           <span />
         )}
         <div className="flex items-center gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={submitting}>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
           {canManage && (
-            <Button onClick={submit} disabled={submitting || !name.trim()}>
+            <Button type="submit" disabled={submitting || !name.trim()}>
               {isNew ? 'Create' : 'Save'}
             </Button>
           )}
         </div>
       </DrawerFooter>
-    </>
+    </form>
   );
 }
 
@@ -1568,14 +1598,24 @@ function PeopleTab({
                   <div className="flex items-center gap-2.5">
                     <Avatar src={a.photoUrl} name={`${a.firstName} ${a.lastName}`} email={a.email} size="sm" />
                     <div className="min-w-0">
-                      <span>{a.firstName} {a.lastName}</span>
+                      <AssociateLink associateId={a.id}>
+                        {a.firstName} {a.lastName}
+                      </AssociateLink>
                       <div className="text-xs2 text-silver/70 md:hidden">
                         {[a.managerName, a.departmentName].filter(Boolean).join(' · ') || '—'}
                       </div>
                     </div>
                   </div>
                 </TableCell>
-                <TableCell className="text-silver hidden md:table-cell">{a.managerName ?? '—'}</TableCell>
+                <TableCell className="text-silver hidden md:table-cell">
+                  {a.managerName ? (
+                    <AssociateLink associateId={a.managerId}>
+                      {a.managerName}
+                    </AssociateLink>
+                  ) : (
+                    '—'
+                  )}
+                </TableCell>
                 <TableCell className="text-silver hidden md:table-cell">{a.departmentName ?? '—'}</TableCell>
                 <TableCell className="text-silver tabular-nums hidden lg:table-cell">
                   {a.costCenterCode ?? '—'}

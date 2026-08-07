@@ -14,6 +14,7 @@ import {
 import { listSkills, type SkillCatalogEntry } from '@/lib/skills111Api';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
+import { StatusBadge, statusLabel } from '@/lib/status';
 import {
   Badge,
   Button,
@@ -52,24 +53,6 @@ const STATUSES: MentorshipStatus[] = [
   'DECLINED',
   'CANCELLED',
 ];
-
-const STATUS_LABELS: Record<MentorshipStatus, string> = {
-  PROPOSED: 'Proposed',
-  ACTIVE: 'Active',
-  COMPLETED: 'Completed',
-  DECLINED: 'Declined',
-  CANCELLED: 'Cancelled',
-};
-
-// Status contract: success = active/completed, pending = awaiting a
-// decision, destructive = declined/cancelled.
-const STATUS_VARIANT: Record<MentorshipStatus, 'success' | 'pending' | 'destructive'> = {
-  PROPOSED: 'pending',
-  ACTIVE: 'success',
-  COMPLETED: 'success',
-  DECLINED: 'destructive',
-  CANCELLED: 'destructive',
-};
 
 const LEVEL_LABELS: Record<MentorshipCandidate['level'], string> = {
   BEGINNER: 'Beginner',
@@ -132,7 +115,7 @@ export function MentorshipHome() {
         m.mentorName,
         m.menteeName,
         m.focusSkillName ?? '',
-        STATUS_LABELS[m.status],
+        statusLabel(m.status),
         m.startedAt ? fmtDate(m.startedAt) : '',
         m.endedAt ? fmtDate(m.endedAt) : '',
         fmtDate(m.createdAt),
@@ -186,7 +169,7 @@ export function MentorshipHome() {
         >
           <option value="">All statuses</option>
           {STATUSES.map((s) => (
-            <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+            <option key={s} value={s}>{statusLabel(s)}</option>
           ))}
         </Select>
       </FilterBar>
@@ -239,9 +222,7 @@ export function MentorshipHome() {
                     <TableCell>{m.menteeName}</TableCell>
                     <TableCell className="text-silver hidden md:table-cell">{m.focusSkillName ?? '—'}</TableCell>
                     <TableCell>
-                      <Badge variant={STATUS_VARIANT[m.status]}>
-                        {STATUS_LABELS[m.status]}
-                      </Badge>
+                      <StatusBadge status={m.status} />
                     </TableCell>
                     <TableCell className="text-xs hidden md:table-cell">
                       {fmtDate(m.startedAt)}

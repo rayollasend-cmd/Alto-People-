@@ -24,6 +24,7 @@ import {
 import { countAdminTimeEntries } from '@/lib/timeApi';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, parseYmd } from '@/lib/format';
+import { useSelection } from '@/lib/useSelection';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { Button } from '@/components/ui/Button';
@@ -179,21 +180,6 @@ const CATEGORY_LABELS: Record<string, string> = {
  *  day early west of UTC. */
 const fmtYmd = (iso: string) => fmtDate(parseYmd(iso));
 
-/* --------------------------------------------------- shared selection */
-
-function useSelection() {
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  const toggle = (id: string) =>
-    setSelected((prev) => {
-      const next = new Set<string>(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  const clear = () => setSelected(new Set<string>());
-  return { selected, toggle, clear };
-}
-
 /** Loop a single-approve endpoint over the selection; report both halves. */
 async function approveAllSettled(
   ids: string[],
@@ -223,7 +209,8 @@ function PendingTimeOffPanel({
   const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [denyTarget, setDenyTarget] = useState<TimeOffRequest | null>(null);
-  const { selected, toggle, clear } = useSelection();
+  const { selected, toggle, clear, allSelected, someSelected, toggleAll } =
+    useSelection(items?.map((r) => r.id) ?? []);
   const [bulkBusy, setBulkBusy] = useState(false);
 
   // Optimistically drop the row from the cached list the moment a
@@ -347,6 +334,21 @@ function PendingTimeOffPanel({
           </p>
         )}
         {!error && items && items.length > 0 && (
+          <>
+            {/* Tri-state select-all — same pattern as AdminTimeView's
+                header checkbox, aligned over the row checkboxes. */}
+            <label className="flex w-fit cursor-pointer items-center gap-3 px-3 pb-2 text-xs text-silver">
+              <input
+                type="checkbox"
+                aria-label="Select all time-off requests"
+                checked={allSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = someSelected;
+                }}
+                onChange={toggleAll}
+              />
+              Select all
+            </label>
           <ul className="space-y-2">
             {items.map((r) => (
               <li
@@ -400,6 +402,7 @@ function PendingTimeOffPanel({
               </li>
             ))}
           </ul>
+          </>
         )}
       </CardContent>
 
@@ -480,7 +483,6 @@ function DenyDialog({
 function SwapsPanel() {
   const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const { selected, toggle, clear } = useSelection();
   const [bulkBusy, setBulkBusy] = useState(false);
 
   const swapsQuery = useQuery({
@@ -488,6 +490,8 @@ function SwapsPanel() {
     queryFn: () => listAdminSwaps({ status: 'PEER_ACCEPTED' }),
   });
   const items = swapsQuery.data?.requests ?? null;
+  const { selected, toggle, clear, allSelected, someSelected, toggleAll } =
+    useSelection(items?.map((s) => s.id) ?? []);
   const error = swapsQuery.isError
     ? swapsQuery.error instanceof ApiError
       ? swapsQuery.error.message
@@ -551,6 +555,19 @@ function SwapsPanel() {
           </p>
         )}
         {!error && items && items.length > 0 && (
+          <>
+            <label className="flex w-fit cursor-pointer items-center gap-3 px-3 pb-2 text-xs text-silver">
+              <input
+                type="checkbox"
+                aria-label="Select all swap requests"
+                checked={allSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = someSelected;
+                }}
+                onChange={toggleAll}
+              />
+              Select all
+            </label>
           <ul className="space-y-2">
             {items.map((s) => (
               <li
@@ -617,6 +634,7 @@ function SwapsPanel() {
               </li>
             ))}
           </ul>
+          </>
         )}
       </CardContent>
     </Card>
@@ -628,7 +646,6 @@ function SwapsPanel() {
 function PickupsPanel() {
   const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const { selected, toggle, clear } = useSelection();
   const [bulkBusy, setBulkBusy] = useState(false);
 
   const pickupsQuery = useQuery({
@@ -636,6 +653,8 @@ function PickupsPanel() {
     queryFn: () => listOpenShiftClaims(),
   });
   const items = pickupsQuery.data?.claims ?? null;
+  const { selected, toggle, clear, allSelected, someSelected, toggleAll } =
+    useSelection(items?.map((c) => c.id) ?? []);
   const error = pickupsQuery.isError
     ? pickupsQuery.error instanceof ApiError
       ? pickupsQuery.error.message
@@ -702,6 +721,19 @@ function PickupsPanel() {
           </p>
         )}
         {!error && items && items.length > 0 && (
+          <>
+            <label className="flex w-fit cursor-pointer items-center gap-3 px-3 pb-2 text-xs text-silver">
+              <input
+                type="checkbox"
+                aria-label="Select all pickup requests"
+                checked={allSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = someSelected;
+                }}
+                onChange={toggleAll}
+              />
+              Select all
+            </label>
           <ul className="space-y-2">
             {items.map((c) => (
               <li
@@ -760,6 +792,7 @@ function PickupsPanel() {
               </li>
             ))}
           </ul>
+          </>
         )}
       </CardContent>
     </Card>

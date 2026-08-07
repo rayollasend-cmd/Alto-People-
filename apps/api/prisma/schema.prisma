@@ -60,6 +60,16 @@ enum ClientStatus {
   PROSPECT
 }
 
+// Org-enforced MFA policy (OrgSetting.mfaRequirement). OFF = opt-in only,
+// ADMINS = every admin-class role (see isMfaAdminRole in packages/shared)
+// must have TOTP enrolled to sign in with a password, ALL = every human
+// role. Passkey sign-in counts as strong auth and is exempt.
+enum MfaRequirement {
+  OFF
+  ADMINS
+  ALL
+}
+
 enum OnboardingTrack {
   STANDARD
   J1
@@ -298,6 +308,9 @@ enum NotificationStatus {
   SENT // delivered to provider (or in-app written)
   FAILED // provider returned an error
   READ // IN_APP only — recipient opened it
+  BOUNCED // EMAIL only — provider reported a bounce (async via Resend webhook)
+  COMPLAINED // EMAIL only — recipient marked it as spam (async via Resend webhook)
+  SUPPRESSED // EMAIL only — send short-circuited because the address is on the suppression list
 }
 
 enum PerformanceReviewStatus {
@@ -352,6 +365,18 @@ model User {
   role               Role
   status             UserStatus @default(INVITED)
   tokenVersion       Int        @default(0)
+  // SCIM 2.0 externalId passthrough — the identity provider's (Entra ID /
+  // Okta) own identifier for this account. Opaque to us; stored so we can
+  // echo it back on every SCIM read and the IdP can correlate resources.
+  scimExternalId     String?    @db.VarChar(255)
+  // Account lockout — persistent brute-force defense (complements the
+  // in-memory per-email rate limiter, which resets on deploy).
+  // failedLoginCount increments on every wrong-password attempt; when it
+  // reaches 10 the account locks for 15 minutes via lockedUntil. Both are
+  // reset on a successful password verification. Passkey (WebAuthn)
+  // sign-in ignores both fields — see /auth/webauthn/login/verify.
+  failedLoginCount   Int        @default(0)
+  lockedUntil        DateTime?  @db.Timestamptz(6)
   // IANA timezone preference for date display in /settings, login history,
   // and (later) email templates. Nullable — when null, the UI falls back
   // to the browser's locale, the email layer falls back to UTC.
@@ -492,6 +517,8 @@ model User {
   // Phase 131 — assignment-row authorship (audit of who moved an
   // associate to which location, and why).
   associateAssignmentsNoted         AssociateAssignment[]         @relation("AssociateAssignmentNoter")
+  // Privacy erasures this admin performed (Associate.erasedById).
+  associatesErased                  Associate[]                   @relation("AssociateEraser")
 
   @@index([role])
   @@index([clientId])
@@ -566,6 +593,7 @@ model Client {
   jobProfiles            JobProfile[]
   // Per-client catalog that constrains Shift.position to a curated list.
   shiftPositions         ShiftPosition[]
+  shiftRateDefaults      ShiftRateDefault[]
   // Phase 78 — positions / seats.
   positions              Position[]
   // Phase 80 — workflow definitions can be client-scoped.
@@ -813,6 +841,14 @@ model Associate {
   // 1 = the original pre-version token format, so URLs minted before
   // this column existed keep verifying.
   calendarFeedVersion Int          @default(1)
+  // Privacy erasure (admin-initiated, lib/erasure.ts). Set exactly once —
+  // identity fields are anonymized in place while payroll/tax history rows
+  // stay untouched (IRS 4-year / FLSA 3-year retention). erasedById is the
+  // admin who ran it; the written reason + per-category scrub counts live
+  // on the privacy.associate_erased AuditLog row.
+  erasedAt          DateTime?      @db.Timestamptz(6)
+  erasedById        String?        @db.Uuid
+  erasedBy          User?          @relation("AssociateEraser", fields: [erasedById], references: [id], onDelete: SetNull)
   createdAt         DateTime       @default(now()) @db.Timestamptz(6)
   updatedAt         DateTime       @updatedAt @db.Timestamptz(6)
   deletedAt         DateTime?      @db.Timestamptz(6)
@@ -2318,6 +2354,12 @@ model Notification {
   category        String?
   // Provider's id for the sent message (Twilio SID, FCM message id).
   externalRef     String?
+  // Resend's message id for real EMAIL sends. Kept as its own (indexed)
+  // column — externalRef also carries STUB-* refs and other providers' ids
+  // — so the /resend/webhook handler can match async delivery events
+  // (delivered / bounced / complained) back to this row. Nullable: stub
+  // sends, non-EMAIL channels, and rows created before this column.
+  providerMessageId String?
   failureReason   String?
   sentAt          DateTime?           @db.Timestamptz(6)
   readAt          DateTime?           @db.Timestamptz(6)
@@ -2339,6 +2381,12 @@ model Notification {
   @@index([category, createdAt(sort: Desc)])
   @@index([channel, createdAt(sort: Desc)])
   @@index([createdAt(sort: Desc)])
+  // Webhook-event matching. providerMessageId is the primary key for the
+  // lookup; externalRef is the fallback for rows written by send paths
+  // that only stored the Resend id there (it equals the Resend id for
+  // every real send made before providerMessageId existed).
+  @@index([providerMessageId])
+  @@index([externalRef])
 }
 
 model AuditLog {
@@ -2535,6 +2583,29 @@ model CostCenter {
 // name is still stored as a string on Shift.position (no FK) — this table
 // only governs the dropdown of allowed values. New clients are auto-seeded
 // with a default set; admins edit the list under Org → Shift positions.
+// Default pay/bill rate for a (client, position) pair. Shift positions are
+// free text, so this is the lookup that turns "F&D Overnight @ Walmart"
+// into an hourly rate. A shift's own payRate overrides it; when a shift
+// has none, the scheduling KPIs + labor-cost footer resolve the rate from
+// here so the numbers aren't $0. Position match is exact (the same string
+// the shift carries). Resurrected from wip/scheduling-pay-rates.
+model ShiftRateDefault {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId  String   @db.Uuid
+  position  String
+  // Cost side — what the associate is paid per hour. Drives labor cost.
+  payRate   Decimal  @db.Decimal(8, 2)
+  // Optional bill/revenue rate per hour.
+  billRate  Decimal? @db.Decimal(8, 2)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, position])
+  @@index([clientId])
+}
+
 model ShiftPosition {
   id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   clientId  String    @db.Uuid
@@ -4161,6 +4232,7 @@ model AcaMonth {
 
 enum WebhookDeliveryStatus {
   PENDING
+  RETRYING
   DELIVERED
   FAILED
 }
@@ -4214,6 +4286,9 @@ model WebhookDelivery {
   status         WebhookDeliveryStatus @default(PENDING)
   attemptCount   Int                   @default(0)
   lastAttemptAt  DateTime?             @db.Timestamptz(6)
+  // When the worker may (re)attempt this row. NULL = due immediately
+  // (also covers rows enqueued before this column existed).
+  nextAttemptAt  DateTime?             @db.Timestamptz(6)
   responseStatus Int?
   responseBody   String?
   deliveredAt    DateTime?             @db.Timestamptz(6)
@@ -4223,6 +4298,7 @@ model WebhookDelivery {
 
   @@index([webhookId])
   @@index([status])
+  @@index([status, nextAttemptAt])
 }
 
 // Phase 94 — LMS: courses, modules, enrollments, certifications.
@@ -4410,6 +4486,9 @@ model ReportSchedule {
   recipients String
   isActive   Boolean               @default(true)
   lastRunAt  DateTime?             @db.Timestamptz(6)
+  // Outcome of the most recent delivery attempt: "SUCCESS", "PARTIAL (n/m
+  // delivered)", or "FAILED: <reason>". Null until the first run.
+  lastStatus String?
   nextRunAt  DateTime              @db.Timestamptz(6)
   createdAt  DateTime              @default(now()) @db.Timestamptz(6)
   updatedAt  DateTime              @updatedAt @db.Timestamptz(6)
@@ -5776,6 +5855,11 @@ model OrgSetting {
   // re-price already-approved rows. IRS announces the next-year rate in
   // December; HR updates this column at year start.
   mileageRatePerMile Decimal   @default(0.6700) @db.Decimal(8, 4)
+  // Org-enforced MFA policy. OFF = opt-in only. ADMINS = admin-class roles
+  // (derived from capabilities — see isMfaAdminRole in packages/shared)
+  // must enroll in TOTP before a password sign-in completes. ALL = every
+  // human role. Passkey sign-in is exempt (it is already strong auth).
+  mfaRequirement     MfaRequirement @default(OFF)
   updatedAt          DateTime  @updatedAt @db.Timestamptz(6)
 }
 
@@ -5944,6 +6028,55 @@ model BranchWebhookEvent {
   @@index([status, receivedAt])
 }
 
+enum ResendWebhookStatus {
+  PROCESSED // matched a Notification row and applied the status change
+  IGNORED // valid signature but unhandled event type / unknown message id
+  ERROR // exception during processing; admin needs to investigate
+}
+
+// Audit log of every inbound Resend email-event webhook delivery + the
+// idempotency mechanism (mirrors BranchWebhookEvent). svixId — Svix's
+// per-delivery message id — is UNIQUE so a duplicate POST collapses at
+// INSERT and the handler skips reprocessing.
+model ResendWebhookEvent {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  svixId         String              @unique
+  // email.delivered, email.bounced, email.complained, etc.
+  eventType      String
+  payload        Json
+  status         ResendWebhookStatus @default(PROCESSED)
+  // Matched Notification when applicable; null for IGNORED rows.
+  notificationId String?             @db.Uuid
+  // Free-text "why" for non-PROCESSED rows (unknown message id, parse error).
+  notes          String?
+  receivedAt     DateTime            @default(now()) @db.Timestamptz(6)
+  processedAt    DateTime?           @db.Timestamptz(6)
+
+  @@index([eventType, receivedAt])
+  @@index([status, receivedAt])
+}
+
+enum EmailSuppressionReason {
+  BOUNCED // hard bounce reported by the provider
+  COMPLAINED // recipient marked a message as spam
+  MANUAL // admin added the address by hand
+}
+
+// Do-not-email list. Before any real EMAIL send, lib/notifications.ts
+// checks this table and short-circuits to a SUPPRESSED delivery status —
+// continuing to mail hard-bounced or complaining addresses tanks sender
+// reputation for everyone. Rows are upserted by the /resend/webhook
+// handler on hard bounce / complaint and removable by admins (audited)
+// via /communications/admin/suppressions.
+model EmailSuppression {
+  id        String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Always stored lowercased; lookups lowercase the candidate first.
+  email     String                 @unique
+  reason    EmailSuppressionReason
+  notes     String?
+  createdAt DateTime               @default(now()) @db.Timestamptz(6)
+}
+
 // Manual compliance attestation — used for billing/invoicing scorecard
 // signals where the actual action happens outside Alto (Fieldglass,
 // Walmart vendor portal, QBO) and the only thing we track is "did HR
@@ -6010,4 +6143,25 @@ model TimesheetFiling {
   // Same pattern as TimeEntry's one-ACTIVE-per-associate partial unique.
   @@unique([weekStart, clientId])
   @@index([weekStart])
+}
+
+/// One remembered response per (user, method, path, Idempotency-Key).
+/// Backs the optional Idempotency-Key request header on money-moving /
+/// bulk-send POST endpoints: a network-level retry with the same key
+/// replays the stored response instead of re-executing the mutation.
+/// responseStatus NULL marks an in-flight original (claims the key);
+/// rows expire after 24h and are swept hourly.
+model IdempotencyRecord {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String   @db.Uuid
+  method         String   @db.VarChar(10)
+  path           String   @db.VarChar(512)
+  key            String   @db.VarChar(200)
+  requestHash    String   @db.VarChar(64)
+  responseStatus Int?
+  responseBody   Json?
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([userId, method, path, key])
+  @@index([createdAt])
 }

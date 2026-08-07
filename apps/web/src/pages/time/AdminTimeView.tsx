@@ -55,6 +55,7 @@ import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
+import { useSelection } from '@/lib/useSelection';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { ShiftTimeline } from './ShiftTimeline';
@@ -536,7 +537,6 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
       cancelled = true;
     };
   }, [clientFilter]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [rejectOpen, setRejectOpen] = useState<null | { mode: 'one'; id: string } | { mode: 'bulk' }>(null);
   const [drawerTarget, setDrawerTarget] = useState<TimeEntry | null>(null);
@@ -586,7 +586,9 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
       setEntries(res.entries);
       setTruncated(Boolean(res.truncated));
       // Selection only valid on the COMPLETED filter; clear when refreshing.
-      setSelected(new Set());
+      // (clearSelection is a stable callback from useSelection, declared
+      // below — safe to call from this closure, deliberately not a dep.)
+      clearSelection();
     } catch (err) {
       if (seq !== queueReqSeq.current) return;
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
@@ -904,36 +906,19 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     return visibleEntries.filter((e) => e.status === 'COMPLETED').map((e) => e.id);
   }, [visibleEntries]);
 
-  const allSelected =
-    selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
-  const someSelected = selected.size > 0 && !allSelected;
-
-  const toggleAll = () => {
-    if (allSelected) setSelected(new Set());
-    else setSelected(new Set(selectableIds));
-  };
-
-  const toggleOne = useCallback((id: string) => {
-    setSelected((s) => {
-      const next = new Set(s);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }, []);
-
-  // Day-header checkbox in the individual timesheet: select/clear a whole
-  // day's pending entries in one click.
-  const toggleMany = useCallback((ids: string[], select: boolean) => {
-    setSelected((s) => {
-      const next = new Set(s);
-      for (const id of ids) {
-        if (select) next.add(id);
-        else next.delete(id);
-      }
-      return next;
-    });
-  }, []);
+  // Shared selection mechanics; selectableIds carries this page's RULE
+  // (only COMPLETED rows). toggleMany is the day-header checkbox in the
+  // individual timesheet: select/clear a whole day's pending entries in
+  // one click.
+  const {
+    selected,
+    toggle: toggleOne,
+    setMany: toggleMany,
+    clear: clearSelection,
+    allSelected,
+    someSelected,
+    toggleAll,
+  } = useSelection(selectableIds);
 
   return (
     <div className="mx-auto">
@@ -1010,14 +995,16 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         <ErrorBanner className="mb-4">
           <div className="flex items-start gap-2">
             <span className="flex-1">{error}</span>
-            <button
-              type="button"
+            {/* -my keeps the icon-sm hit target from inflating the banner. */}
+            <Button
+              variant="ghost"
+              size="icon-sm"
               onClick={() => setError(null)}
-              className="text-alert/60 hover:text-alert"
+              className="-my-1.5 text-alert/60 hover:text-alert"
               aria-label="Dismiss"
             >
               <X className="h-4 w-4" />
-            </button>
+            </Button>
           </div>
         </ErrorBanner>
       )}
@@ -1468,7 +1455,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => setSelected(new Set())}
+                  onClick={clearSelection}
                   disabled={bulkBusy}
                 >
                   Clear
@@ -1845,7 +1832,7 @@ function FocusTimesheet({
   entries: TimeEntry[];
   canManage: boolean;
   showSelect: boolean;
-  selected: Set<string>;
+  selected: ReadonlySet<string>;
   pendingId: string | null;
   bulkBusy: boolean;
   onToggleSelect: (id: string) => void;
@@ -2801,15 +2788,16 @@ function TimeEntryFormDrawer({
           />
         </div>
         {schedShift && (
-          <button
-            type="button"
+          <Button
+            variant="outline"
+            size="xs"
             onClick={applySchedule}
-            className="inline-flex items-center gap-1.5 rounded-full border border-gold/40 bg-gold/10 px-3 py-1.5 text-xs text-gold hover:bg-gold/20"
+            className="gap-1.5 rounded-full border-gold/40 bg-gold/10 text-gold hover:border-gold/60 hover:bg-gold/20 hover:text-gold"
           >
             <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
             Use scheduled shift {fmtTime(schedShift.startsAt)} –{' '}
             {fmtTime(schedShift.endsAt)}
-          </button>
+          </Button>
         )}
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -2845,13 +2833,13 @@ function TimeEntryFormDrawer({
           <p className="-mt-2 text-xs text-gold">
             Ends the next day (+{endOffset === 1 ? '1 day' : `${endOffset} days`})
             {!overnight && extraDays > 0 && (
-              <button
-                type="button"
+              <Button
+                variant="link"
                 onClick={() => setExtraDays(0)}
-                className="ml-2 underline hover:text-gold-bright"
+                className="ml-2 text-xs font-normal text-gold underline hover:text-gold-bright"
               >
                 make it same-day
-              </button>
+              </Button>
             )}
           </p>
         )}

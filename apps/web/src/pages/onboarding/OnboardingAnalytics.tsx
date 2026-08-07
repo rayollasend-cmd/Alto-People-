@@ -184,7 +184,7 @@ export function OnboardingAnalytics() {
                       </div>
                       <div
                         className={cn(
-                          'text-2xl font-display tabular-nums mt-1',
+                          'text-2xl tabular-nums mt-1',
                           s === 'APPROVED'
                             ? 'text-success'
                             : s === 'REJECTED'

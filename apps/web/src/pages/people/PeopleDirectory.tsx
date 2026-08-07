@@ -71,6 +71,7 @@ import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { nudgeApplicant } from '@/lib/onboardingApi';
 import {
+  eraseAssociatePersonalData,
   getAssociatePayoutMethod,
   getAssociateSsn,
   getAssociateW4,
@@ -136,27 +137,13 @@ import {
 } from '@/components/ui';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
-
-const STATUS_VARIANT: Record<
-  DirectoryStatus,
-  'success' | 'pending' | 'destructive'
-> = {
-  ACTIVE: 'success',
-  PENDING: 'pending',
-  INACTIVE: 'destructive',
-};
-
-const STATUS_LABEL: Record<DirectoryStatus, string> = {
-  ACTIVE: 'Active',
-  PENDING: 'Pending',
-  INACTIVE: 'Inactive',
-};
+import { StatusBadge, statusLabel } from '@/lib/status';
 
 const PAY_TYPE_SUFFIX: Record<string, string> = {
-  HOURLY: '/ hr',
-  SALARY: '/ yr',
+  HOURLY: '/hr',
+  SALARY: '/yr',
   COMMISSION: ' commission',
-  PIECEWORK: ' / piece',
+  PIECEWORK: '/piece',
 };
 
 function fmtPay(amount: string | null, type: string | null, currency: string | null): string {
@@ -470,7 +457,7 @@ export function PeopleDirectory() {
       ['Name', 'Status', 'Email', 'Workplace', 'Type', 'Start date'],
       ...rows.map((r) => [
         `${r.firstName} ${r.lastName}`,
-        STATUS_LABEL[r.status],
+        statusLabel(r.status),
         r.email,
         r.workplaceClientName ?? '',
         EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
@@ -555,7 +542,7 @@ export function PeopleDirectory() {
             active={status === s}
             onClick={() => setStatus(status === s ? '' : s)}
           >
-            {STATUS_LABEL[s]}
+            {statusLabel(s)}
           </FilterChip>
         ))}
         <Select
@@ -938,7 +925,7 @@ const DirectoryRow = memo(function DirectoryRow({
       </TableCell>
       <TableCell>
         <div className="flex items-center gap-2">
-          <Badge variant={STATUS_VARIANT[r.status]}>{STATUS_LABEL[r.status]}</Badge>
+          <StatusBadge status={r.status} />
           {r.status === 'PENDING' && r.onboardingPercent !== null && (
             <span className="text-2xs tabular-nums text-silver">
               {r.onboardingPercent}%
@@ -1023,9 +1010,7 @@ const DirectoryPhoneCard = memo(function DirectoryPhoneCard({
               <div className="font-medium text-white truncate">
                 {r.firstName} {r.lastName}
               </div>
-              <Badge variant={STATUS_VARIANT[r.status]} className="shrink-0">
-                {STATUS_LABEL[r.status]}
-              </Badge>
+              <StatusBadge status={r.status} className="shrink-0" />
             </div>
             <div className="text-xs text-silver truncate">{r.email}</div>
             {(r.workplaceClientName || r.position) && (
@@ -1087,9 +1072,7 @@ function DirectoryDrawer({
               {a.firstName} {a.lastName}
             </DrawerTitle>
             <DrawerDescription className="truncate flex items-center gap-2">
-              <Badge variant={STATUS_VARIANT[a.status]} className="text-2xs">
-                {STATUS_LABEL[a.status]}
-              </Badge>
+              <StatusBadge status={a.status} className="text-2xs" />
               <span>{EMPLOYMENT_LABEL[a.employmentType] ?? a.employmentType}</span>
               {a.j1Status && <Badge variant="default">J-1</Badge>}
             </DrawerDescription>
@@ -1288,7 +1271,151 @@ function ProfileTab({
           value={fmtDate(a.createdAt)}
         />
       </Section>
+
+      <DangerZoneSection associate={a} />
     </div>
+  );
+}
+
+/**
+ * Danger zone — privacy erasure. Anonymizes the associate's identity and
+ * scrubs credentials/ciphertext; payroll and tax history is legally
+ * retained and stays. Gated on view:hr-admin, the same capability that
+ * guards admin user management. The dialog demands a written reason and
+ * retyping the associate's last name (the server 409s on a mismatch).
+ */
+function DangerZoneSection({ associate: a }: { associate: DirectoryEntry }) {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [confirmName, setConfirmName] = useState('');
+  const [force, setForce] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const canErase = user ? hasCapability(user.role, 'view:hr-admin') : false;
+  if (!canErase) return null;
+
+  const openDialog = () => {
+    setReason('');
+    setConfirmName('');
+    setForce(false);
+    setOpen(true);
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    try {
+      await eraseAssociatePersonalData(a.id, {
+        reason: reason.trim(),
+        confirmName: confirmName.trim(),
+        ...(force ? { force: true } : {}),
+      });
+      toast.success('Personal data erased. Payroll history is retained.');
+      setOpen(false);
+      void qc.invalidateQueries({ queryKey: ['directory'] });
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : 'Erasure failed. Nothing was changed.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Section title="Danger zone">
+      <p className="text-xs text-silver/80">
+        Permanently anonymize this associate’s identity, delete their login
+        credentials, biometrics and document files. Pay and tax history is
+        kept, as required by law, under the anonymized record.
+      </p>
+      <div className="pt-2">
+        <Button variant="destructive" size="sm" onClick={openDialog}>
+          <ShieldAlert className="mr-2 h-3.5 w-3.5" />
+          Erase personal data
+        </Button>
+      </div>
+
+      <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Erase personal data — {a.firstName} {a.lastName}
+            </DialogTitle>
+            <DialogDescription>
+              This cannot be undone. Name, contact details, SSN, bank
+              details, documents, biometrics and login access are erased.
+              Time and payroll records are retained (IRS: 4 years, FLSA: 3
+              years) against the anonymized record.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={submit} className="grid gap-3">
+            <div className="grid gap-1">
+              <Label htmlFor="erase-reason">Reason (required, min 10 characters)</Label>
+              <Textarea
+                id="erase-reason"
+                autoFocus
+                required
+                minLength={10}
+                maxLength={500}
+                rows={3}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="e.g. GDPR/CCPA deletion request received 2026-07-20, ticket #1234"
+              />
+            </div>
+            <div className="grid gap-1">
+              <Label htmlFor="erase-confirm-name">
+                Type the associate’s last name (“{a.lastName}”) to confirm
+              </Label>
+              <Input
+                id="erase-confirm-name"
+                required
+                value={confirmName}
+                onChange={(e) => setConfirmName(e.target.value)}
+                placeholder={a.lastName}
+                autoComplete="off"
+              />
+            </div>
+            <label className="flex items-start gap-2 text-xs text-silver">
+              <input
+                type="checkbox"
+                checked={force}
+                onChange={(e) => setForce(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                Erase even though this associate is not marked separated
+                (only needed when the server refuses with “not separated”).
+              </span>
+            </label>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setOpen(false)}
+                disabled={busy}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                variant="destructive"
+                loading={busy}
+                disabled={
+                  busy || reason.trim().length < 10 || confirmName.trim().length === 0
+                }
+              >
+                Erase permanently
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </Section>
   );
 }
 
@@ -1362,18 +1489,19 @@ function PhoneField({
               }
             }}
           />
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onClick={() => void save()}
             disabled={saving}
             aria-label="Save phone"
             title="Save"
-            className="grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60 disabled:opacity-40"
           >
             <Check className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onClick={() => {
               setDraft(a.phone ?? '');
               setEditing(false);
@@ -1381,10 +1509,9 @@ function PhoneField({
             disabled={saving}
             aria-label="Cancel"
             title="Cancel"
-            className="grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60 disabled:opacity-40"
           >
             <X className="h-4 w-4" />
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -1405,17 +1532,18 @@ function PhoneField({
               '—'
             )}
           </span>
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onClick={() => setEditing(true)}
             aria-label="Edit phone"
             title="Edit"
             // Always visible on touch devices (no hover to reveal it);
             // hover-revealed on pointer devices to keep the row clean.
-            className="opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 grid place-items-center h-9 w-9 rounded text-silver hover:text-white hover:bg-navy-secondary/60 transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            className="opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
           >
             <Pencil className="h-3.5 w-3.5" />
-          </button>
+          </Button>
         </div>
       }
     />
@@ -1980,13 +2108,13 @@ function BankNameRow({
               // is a cell the payroll provider expects filled.
               <span className="text-warning">Not set</span>
             )}
-            <button
-              type="button"
+            <Button
+              variant="link"
               onClick={() => setEditing(true)}
-              className="text-2xs uppercase tracking-wider text-silver/70 underline underline-offset-2 hover:text-gold"
+              className="text-2xs font-normal uppercase tracking-wider text-silver/70 underline underline-offset-2 hover:text-gold"
             >
               {bankName ? 'Edit' : 'Add'}
-            </button>
+            </Button>
           </span>
         }
       />
@@ -2819,23 +2947,6 @@ const HR_UPLOAD_KINDS: ReadonlyArray<DocumentKind> = [
   'OTHER',
 ];
 
-const DOC_STATUS_VARIANT: Record<
-  DocumentRecord['status'],
-  'success' | 'pending' | 'destructive'
-> = {
-  VERIFIED: 'success',
-  UPLOADED: 'pending',
-  REJECTED: 'destructive',
-  EXPIRED: 'destructive',
-};
-
-const DOC_STATUS_LABEL: Record<DocumentRecord['status'], string> = {
-  VERIFIED: 'Verified',
-  UPLOADED: 'Uploaded',
-  REJECTED: 'Rejected',
-  EXPIRED: 'Expired',
-};
-
 /* ----- Document vault ----------------------------------------------------
  * The Documents tab is the associate's whole file: every DocumentRecord in
  * the system is keyed here whichever screen uploaded it, grouped by the
@@ -3164,28 +3275,27 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                 )}
               </TableCell>
               <TableCell>
-                <Badge variant={DOC_STATUS_VARIANT[d.status]}>
-                  {DOC_STATUS_LABEL[d.status]}
-                </Badge>
+                <StatusBadge status={d.status} />
               </TableCell>
               <TableCell className="hidden sm:table-cell text-xs text-silver tabular-nums">
                 {fmtDate(d.createdAt)}
               </TableCell>
               <TableCell>
                 <div className="flex justify-end items-center gap-1">
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
                     onClick={() => setPreviewDoc(d)}
                     aria-label={`View ${d.filename}`}
                     title={d.fileAvailable ? 'View' : 'File missing — open for details'}
-                    className="grid place-items-center h-8 w-8 rounded text-silver hover:text-white hover:bg-navy-secondary/60"
                   >
                     <Eye className="h-4 w-4" />
-                  </button>
+                  </Button>
                   {d.status === 'UPLOADED' && (
                     <>
-                      <button
-                        type="button"
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
                         onClick={() => void handleVerify(d)}
                         disabled={actingId === d.id || !d.fileAvailable}
                         aria-label={`Verify ${d.filename}`}
@@ -3194,20 +3304,21 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                             ? 'Verify'
                             : "Can't verify — file missing on server"
                         }
-                        className="grid place-items-center h-8 w-8 rounded text-success hover:bg-navy-secondary/60 disabled:opacity-40"
+                        className="text-success hover:text-success"
                       >
                         <Check className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
                         onClick={() => setRejectTarget(d)}
                         disabled={actingId === d.id}
                         aria-label={`Reject ${d.filename}`}
                         title="Reject"
-                        className="grid place-items-center h-8 w-8 rounded text-alert hover:bg-navy-secondary/60 disabled:opacity-40"
+                        className="text-alert hover:text-alert"
                       >
                         <X className="h-4 w-4" />
-                      </button>
+                      </Button>
                     </>
                   )}
                   {d.fileAvailable ? (
@@ -3238,7 +3349,7 @@ function DocumentsTab({ associateId }: { associateId: string }) {
     <>
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="font-display text-base font-semibold text-white">Document vault</h2>
+          <h2 className="text-base font-semibold text-white">Document vault</h2>
           <p className="mt-0.5 text-xs text-silver/70">
             {vault.total === 0
               ? 'Nothing on file yet — every document uploaded anywhere on the site lands here.'

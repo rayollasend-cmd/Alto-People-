@@ -203,7 +203,7 @@ function HeroStrip({
       <CardContent className="py-4">
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
           <div className="flex-1 min-w-[260px]">
-            <h1 className="font-display text-xl text-white flex items-center gap-2">
+            <h1 className="text-xl text-white flex items-center gap-2">
               <ShieldCheck className="h-5 w-5 text-gold" />
               Walmart Contract Compliance Scorecard
             </h1>

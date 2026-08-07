@@ -55,17 +55,29 @@ interface PerformCtx {
   close: () => void;
 }
 
-/** Shared row styling so entity rows look identical to static rows. */
+/** Shared row styling so entity rows look identical to static rows.
+ *  `normal-case tracking-normal` are explicit guards: cmdk nests items
+ *  inside the group wrapper, so without them a group-level text-transform
+ *  would cascade into every label + description. */
 const ITEM_CLASS = cn(
   'flex items-center gap-3 px-2.5 py-2 rounded-md text-sm cursor-pointer text-white',
+  'normal-case tracking-normal',
   // Gold left rail marks the active row — reads at a glance even when the
   // background tint is subtle.
   'border-l-2 border-transparent',
   'data-[selected=true]:bg-navy-secondary data-[selected=true]:text-gold data-[selected=true]:border-gold'
 );
 
+// Style the cmdk heading child specifically — NOT the group wrapper.
+// Putting `uppercase tracking-widest` on the wrapper (the old bug) made
+// text-transform + letter-spacing inherit into every row, which rendered
+// all labels/descriptions uppercase and widened them enough to clip both
+// edges of the palette.
 const GROUP_CLASS = cn(
-  'text-2xs uppercase tracking-widest text-silver/80 px-2 pt-2 pb-1',
+  'px-1',
+  '[&_[cmdk-group-heading]]:text-2xs [&_[cmdk-group-heading]]:uppercase',
+  '[&_[cmdk-group-heading]]:tracking-widest [&_[cmdk-group-heading]]:text-silver/80',
+  '[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1',
   // Hairline between groups so Pages / People / Actions scan as sections.
   '[&:not(:first-of-type)]:mt-1 [&:not(:first-of-type)]:border-t [&:not(:first-of-type)]:border-navy-secondary/60'
 );
@@ -321,7 +333,11 @@ export function CommandPalette({
           Search to navigate, find people and clients, run quick actions, or
           access account controls.
         </DialogDescription>
-        <Command label="Command palette" shouldFilter={false} className="bg-navy">
+        <Command
+          label="Command palette"
+          shouldFilter={false}
+          className="bg-navy w-full min-w-0 overflow-hidden"
+        >
           <div className="flex items-center border-b border-navy-secondary px-3">
             <Search className="h-4 w-4 text-silver/70 mr-2 shrink-0" aria-hidden="true" />
             <Command.Input
@@ -335,7 +351,7 @@ export function CommandPalette({
               )}
             />
           </div>
-          <Command.List className="max-h-[60vh] overflow-y-auto p-1">
+          <Command.List className="max-h-[60vh] w-full overflow-y-auto overflow-x-hidden p-1 [&_[cmdk-list-sizer]]:w-full [&_[cmdk-list-sizer]]:min-w-0">
             {/* Suppress "No results." while a people search is pending so
                 the list shows only the Searching… row, not both. */}
             {!hasAnyResult && !peopleSearching && (

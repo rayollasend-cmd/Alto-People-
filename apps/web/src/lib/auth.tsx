@@ -4,10 +4,12 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
+import { toast } from 'sonner';
 import {
   type AuthUser,
   type Capability,
@@ -20,6 +22,18 @@ import {
   hasCapability,
 } from '@alto-people/shared';
 import { ApiError, NetworkError, TimeoutError, apiFetch } from './api';
+import { onApiAuthFailure, onApiConnectivity } from './sessionEvents';
+
+/**
+ * How long a network failure must go un-contradicted (no request getting
+ * a response) before the Topbar "Reconnecting…" pill shows. A lone
+ * transient failure immediately followed by a success never flashes the
+ * pill. Exported for tests.
+ */
+export const OFFLINE_GRACE_MS = 1500;
+
+/** Toast id — pinning it makes "exactly one session-ended toast" cheap. */
+const SESSION_ENDED_TOAST_ID = 'auth-session-ended';
 
 interface AuthState {
   /** Initial /auth/me probe in flight. Components should hold rendering. */
@@ -32,10 +46,17 @@ interface AuthState {
   /**
    * POST /auth/login. Returns `{ mfaRequired: true }` when the account
    * has two-step sign-in turned on — the caller is expected to drive a
-   * code prompt and finish the flow with `submitMfaChallenge`. Otherwise
-   * the user is signed in and `user` state is set.
+   * code prompt and finish the flow with `submitMfaChallenge`. Returns
+   * `{ mfaEnrollmentRequired: true }` when the org policy requires TOTP
+   * but the account has none — the caller drives the enrollment flow
+   * (QR + confirm) against /auth/me/mfa/enroll/*, which the short-lived
+   * mfa_enroll cookie set by the server authorizes. Otherwise the user
+   * is signed in and `user` state is set.
    */
-  signIn: (email: string, password: string) => Promise<{ mfaRequired: boolean }>;
+  signIn: (
+    email: string,
+    password: string,
+  ) => Promise<{ mfaRequired: boolean; mfaEnrollmentRequired: boolean }>;
   /** POST /auth/mfa-challenge. Sets `user` state on success. */
   submitMfaChallenge: (input: MfaChallengeInput) => Promise<void>;
   signOut: () => Promise<void>;
@@ -141,6 +162,107 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // ---------------------------------------------------------------------
+  // App-wide session death + connectivity (see lib/sessionEvents.ts).
+  // apiFetch emits; this provider is the single consumer, so every page
+  // gets the redirect-on-session-death and the accurate offline pill for
+  // free while keeping its own per-request error banners.
+  // ---------------------------------------------------------------------
+
+  // Refs, not state, inside the listeners: the subscriptions are
+  // mounted once and must always see the CURRENT user without
+  // re-subscribing on every auth change.
+  const userRef = useRef<AuthUser | null>(null);
+  const reprobeInFlightRef = useRef(false);
+  const deathToastShownRef = useRef(false);
+  const offlineTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    userRef.current = user;
+    // A fresh sign-in re-arms the toast for the NEXT session death.
+    if (user) deathToastShownRef.current = false;
+  }, [user]);
+
+  // Mid-session 401 → verify with ONE /auth/me re-probe (the 401 might be
+  // a one-off, e.g. a race with a just-rotated token) before logging out.
+  useEffect(() => {
+    return onApiAuthFailure(() => {
+      // Not signed in — nothing to kill. This also covers the dual-use
+      // /auth/me/mfa/enroll/* endpoints during the org-forced enrollment
+      // step on /login, where a 401 means "enrollment window expired".
+      if (!userRef.current) return;
+      // Single-flight: a page firing five queries at once produces five
+      // 401s — one probe answers for all of them. (This flag also stops
+      // the probe's own 401 from re-triggering the handler.)
+      if (reprobeInFlightRef.current) return;
+      reprobeInFlightRef.current = true;
+
+      const die = () => {
+        // Clearing the user makes RequireAuth bounce to /login with the
+        // current location preserved in state.from — no hard navigation.
+        setUser(null);
+        if (!deathToastShownRef.current) {
+          deathToastShownRef.current = true;
+          toast.error('Your session ended — sign in again.', {
+            id: SESSION_ENDED_TOAST_ID,
+          });
+        }
+      };
+
+      void (async () => {
+        try {
+          const me = await apiFetch<MeResponse>('/auth/me');
+          if (me.user) {
+            // Session is alive — the 401 was a one-off, OR the account's
+            // role/capabilities changed server-side (admin edit) and this
+            // endpoint 401s under the old grant. Same update-in-place
+            // refreshUser does: chrome + capability gates re-render.
+            setUser(me.user);
+          } else {
+            die();
+          }
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 401) {
+            die();
+          }
+          // Network/5xx: inconclusive — keep the session; the
+          // connectivity layer below owns that UX.
+        } finally {
+          reprobeInFlightRef.current = false;
+        }
+      })();
+    });
+  }, []);
+
+  // Connectivity transitions → the isOffline flag the Topbar pill reads.
+  // Flapping guard: 'offline' arms a short grace timer instead of
+  // flipping immediately; any response received cancels it. The pill
+  // never clears on silence — only an actual success flips it back.
+  useEffect(() => {
+    const unsubscribe = onApiConnectivity((state) => {
+      if (state === 'online') {
+        if (offlineTimerRef.current !== null) {
+          window.clearTimeout(offlineTimerRef.current);
+          offlineTimerRef.current = null;
+        }
+        setIsOffline(false);
+        return;
+      }
+      if (offlineTimerRef.current !== null) return;
+      offlineTimerRef.current = window.setTimeout(() => {
+        offlineTimerRef.current = null;
+        setIsOffline(true);
+      }, OFFLINE_GRACE_MS);
+    });
+    return () => {
+      unsubscribe();
+      if (offlineTimerRef.current !== null) {
+        window.clearTimeout(offlineTimerRef.current);
+        offlineTimerRef.current = null;
+      }
+    };
+  }, []);
+
   const signIn = useCallback(async (email: string, password: string) => {
     const res = await apiFetch<LoginResponse>('/auth/login', {
       method: 'POST',
@@ -150,11 +272,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Don't touch user state — the cookie set by the server is the
       // ephemeral mfa_pending one, not a real session. Caller drives the
       // next step.
-      return { mfaRequired: true };
+      return { mfaRequired: true, mfaEnrollmentRequired: false };
+    }
+    // Only the enroll variant carries this key, so a bare `in` check
+    // narrows cleanly (a compound check defeats TS's negation narrowing).
+    if ('mfaEnrollmentRequired' in res) {
+      // Same posture: the only cookie is the ephemeral mfa_enroll one.
+      // The caller drives the enrollment flow; a real session is issued
+      // by /auth/me/mfa/enroll/confirm.
+      return { mfaRequired: false, mfaEnrollmentRequired: true };
     }
     setUser(res.user);
     setIsOffline(false);
-    return { mfaRequired: false };
+    return { mfaRequired: false, mfaEnrollmentRequired: false };
   }, []);
 
   const submitMfaChallenge = useCallback(async (input: MfaChallengeInput) => {

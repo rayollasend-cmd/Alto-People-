@@ -162,6 +162,27 @@ describe('<RecruitingHome> candidate detail', () => {
     );
   });
 
+  // The hire handoff's landing spot — a HIRED candidate's drawer must link
+  // out to the associate record the hire created, not dead-end.
+  it('links a HIRED candidate to their associate profile', async () => {
+    vi.mocked(listCandidates).mockResolvedValue({
+      candidates: [
+        {
+          ...MARIA,
+          stage: 'HIRED',
+          hiredAssociateId: 'assoc-9',
+          hiredAt: '2026-07-20T12:00:00.000Z',
+        },
+      ],
+    } as never);
+
+    const user = renderHome();
+    const drawer = await openMaria(user);
+
+    const link = drawer.getByRole('link', { name: /maria lopez/i });
+    expect(link).toHaveAttribute('href', '/people?associateId=assoc-9');
+  });
+
   it('still opens terminal candidates, which cannot be dragged', async () => {
     vi.mocked(listCandidates).mockResolvedValue({
       candidates: [

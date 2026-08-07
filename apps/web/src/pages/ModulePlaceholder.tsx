@@ -26,7 +26,7 @@ export function ModulePlaceholder({
           <div className="inline-block px-3 py-1 rounded-full bg-gold/10 border border-gold/30 text-gold text-xs uppercase tracking-widest mb-4">
             Phase 1 placeholder
           </div>
-          <p className="font-display text-2xl text-white mb-2">
+          <p className="text-2xl text-white mb-2">
             Module not yet implemented
           </p>
           <p className="text-silver max-w-md mx-auto text-sm leading-relaxed">

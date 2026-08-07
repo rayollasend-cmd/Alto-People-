@@ -5,18 +5,19 @@ import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { notifyAllAdmins, notifyManager } from '../lib/notify.js';
+import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 
 /**
- * Phase 119 — Separations + exit interviews.
+ * Phase 119 â€” Separations + exit interviews.
  *
- * Reuses onboarding caps for symmetry — the same audience that hires people
- * processes their leave. The state machine is one-way: PLANNED → IN_PROGRESS
- * → COMPLETE.
+ * Reuses onboarding caps for symmetry â€” the same audience that hires people
+ * processes their leave. The state machine is one-way: PLANNED â†’ IN_PROGRESS
+ * â†’ COMPLETE.
  */
 
 export const separation119Router = Router();
 
-// Separations + exit-interview content are org-wide HR data —
+// Separations + exit-interview content are org-wide HR data â€”
 // gate reads on view:hr-admin so associates with view:onboarding
 // can't enumerate every termination across the company.
 const VIEW = requireCapability('view:hr-admin');
@@ -176,19 +177,19 @@ separation119Router.post('/separations', MANAGE, async (req, res) => {
         initiatedById: req.user!.id,
       },
     });
-    // Fire-and-forget after the write — never inside a transaction.
+    // Fire-and-forget after the write â€” never inside a transaction.
     const who = `${associate.firstName} ${associate.lastName}`;
     void notifyManager(input.associateId, {
       subject: 'Separation initiated for your report',
       body: `A separation was initiated for ${who} (reason: ${input.reason}). Last day worked: ${input.lastDayWorked}.`,
       category: 'separation',
-      linkUrl: '/separation',
+      linkUrl: '/separations',
     });
     void notifyAllAdmins({
       subject: `Separation initiated: ${who}`,
       body: `${who}'s separation was initiated (reason: ${input.reason}). Last day worked: ${input.lastDayWorked}.`,
       category: 'separation',
-      linkUrl: '/separation',
+      linkUrl: '/separations',
       excludeUserId: req.user!.id,
     });
     res.status(201).json({ id: created.id });
@@ -239,7 +240,7 @@ separation119Router.post(
           : {}),
       },
     });
-    // Phase 131 follow-up — when the offboarding completes, drop the
+    // Phase 131 follow-up â€” when the offboarding completes, drop the
     // associate's selfies and face reference immediately rather than
     // waiting for the 90-day retention sweep. Punch rows stay for HR
     // audit; only the biometric bytes are removed. Best-effort: a
@@ -253,12 +254,20 @@ separation119Router.post(
           { separationId: id, associateId: existing.associateId, err: err instanceof Error ? err.message : err },
         );
       }
+      // Outbound webhooks â€” the separation completing IS the termination
+      // event (access revoked, biometrics purged). Ids + dates only.
+      void emitWebhookEvent('associate.terminated', {
+        associateId: existing.associateId,
+        separationId: existing.id,
+        reason: existing.reason,
+        lastDayWorked: existing.lastDayWorked.toISOString().slice(0, 10),
+      });
       const who = `${existing.associate.firstName} ${existing.associate.lastName}`;
       void notifyAllAdmins({
         subject: `Separation completed: ${who}`,
-        body: `Separation completed for ${who} — access revoked, biometrics purged.`,
+        body: `Separation completed for ${who} â€” access revoked, biometrics purged.`,
         category: 'separation',
-        linkUrl: '/separation',
+        linkUrl: '/separations',
         excludeUserId: req.user!.id,
       });
     }

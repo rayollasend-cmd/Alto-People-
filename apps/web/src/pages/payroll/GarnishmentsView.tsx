@@ -43,7 +43,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/Table';
-import { Badge } from '@/components/ui/Badge';
+import { StatusBadge } from '@/lib/status';
 import { toast } from '@/components/ui/Toaster';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { fmtMoney, ymdLocal } from '@/lib/format';
@@ -66,23 +66,6 @@ const KIND_HINT: Record<GarnishmentKind, string> = {
   BANKRUPTCY: 'Court-ordered amount, no statutory cap',
   CREDITOR: 'CCPA cap: 25% of disposable',
   OTHER: 'CCPA cap: 25% of disposable',
-};
-
-const STATUS_VARIANT: Record<
-  GarnishmentStatus,
-  'success' | 'pending' | 'destructive' | 'default'
-> = {
-  ACTIVE: 'success',
-  SUSPENDED: 'pending',
-  COMPLETED: 'default',
-  TERMINATED: 'destructive',
-};
-
-const STATUS_LABELS: Record<GarnishmentStatus, string> = {
-  ACTIVE: 'Active',
-  SUSPENDED: 'Suspended',
-  COMPLETED: 'Completed',
-  TERMINATED: 'Terminated',
 };
 
 const STATUS_FILTERS: Array<{ value: GarnishmentStatus | 'ALL'; label: string }> = [
@@ -329,7 +312,7 @@ function GarnishmentRow({
       </TableCell>
       <TableCell className="text-center text-silver hidden lg:table-cell">{g.priority}</TableCell>
       <TableCell>
-        <Badge variant={STATUS_VARIANT[g.status]}>{STATUS_LABELS[g.status]}</Badge>
+        <StatusBadge status={g.status} />
       </TableCell>
       {canProcess && (
         <TableCell className="text-right">

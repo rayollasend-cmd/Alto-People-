@@ -2,6 +2,7 @@ import * as React from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { DiscardConfirm, useDiscardGuard } from './Dialog';
 
 /**
  * Right-edge slide-over drawer for record detail panels — the F500 pattern
@@ -25,10 +26,25 @@ interface DrawerProps {
   onOpenChange: (open: boolean) => void;
   /** Width in tailwind sizing tokens. Defaults to "max-w-md". */
   width?: string;
+  /**
+   * Guard user dismissals (Esc / overlay / X / swipe-right) behind a
+   * "Discard your changes?" confirm while the value (or predicate) is
+   * true. Programmatic closes — the caller setting `open` to false —
+   * are never intercepted.
+   */
+  confirmDiscard?: boolean | (() => boolean);
   children: React.ReactNode;
 }
 
-export function Drawer({ open, onOpenChange, width = 'max-w-md', children }: DrawerProps) {
+export function Drawer({
+  open,
+  onOpenChange,
+  width = 'max-w-md',
+  confirmDiscard,
+  children,
+}: DrawerProps) {
+  // Dirty-guard — same contract as Dialog's confirmDiscard.
+  const guard = useDiscardGuard(confirmDiscard, () => onOpenChange(false));
   // Swipe-right-to-close — the native side-panel dismissal gesture.
   // Direction-locked: the gesture only claims the touch once it's clearly
   // horizontal, so vertical scrolling inside DrawerBody is untouched.
@@ -68,7 +84,8 @@ export function Drawer({ open, onOpenChange, width = 'max-w-md', children }: Dra
     if (dx > 110) {
       el.style.transform = '';
       el.style.transition = '';
-      onOpenChange(false);
+      // Swipe-dismiss is a user dismissal — snap back + confirm when dirty.
+      if (!guard.intercept()) onOpenChange(false);
     } else {
       el.style.transition = 'transform 150ms ease-out';
       el.style.transform = 'translateX(0px)';
@@ -94,6 +111,9 @@ export function Drawer({ open, onOpenChange, width = 'max-w-md', children }: Dra
           onTouchMove={onTouchMove}
           onTouchEnd={onTouchEnd}
           onTouchCancel={onTouchEnd}
+          onEscapeKeyDown={(e) => guard.intercept(e)}
+          onPointerDownOutside={(e) => guard.intercept(e)}
+          onInteractOutside={(e) => guard.intercept(e)}
           className={cn(
             'fixed right-0 top-0 bottom-0 z-50 w-full',
             width,
@@ -108,6 +128,9 @@ export function Drawer({ open, onOpenChange, width = 'max-w-md', children }: Dra
           )}
         >
           <DialogPrimitive.Close
+            // Radix's close-on-click checks defaultPrevented, so the
+            // guard's preventDefault holds the drawer open.
+            onClick={(e) => guard.intercept(e)}
             className="absolute grid place-items-center h-10 w-10 rounded-md text-silver hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright top-[max(0.5rem,env(safe-area-inset-top))] right-[max(0.5rem,env(safe-area-inset-right))]"
             aria-label="Close"
           >
@@ -116,6 +139,13 @@ export function Drawer({ open, onOpenChange, width = 'max-w-md', children }: Dra
           {children}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
+      {guard.enabled && (
+        <DiscardConfirm
+          open={guard.confirming}
+          onKeep={guard.keep}
+          onDiscard={guard.discard}
+        />
+      )}
     </DialogPrimitive.Root>
   );
 }
@@ -146,7 +176,7 @@ export const DrawerTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Title
     ref={ref}
-    className={cn('font-display text-2xl text-white leading-tight', className)}
+    className={cn('text-2xl text-white leading-tight', className)}
     {...props}
   />
 ));

@@ -19,7 +19,7 @@ import {
   i9CatalogEntry,
   i9SetSatisfied,
 } from '@alto-people/shared';
-import { fmtDate, fmtDateTime, parseYmd } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtSize, parseYmd } from '@/lib/format';
 import { Field, TaskShell, inputCls } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
@@ -57,11 +57,6 @@ const KIND_LABEL: Record<string, string> = {
   J1_DS2019: 'J-1 DS-2019',
 };
 
-const fmtSize = (b: number): string => {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  return `${(b / 1024 / 1024).toFixed(2)} MB`;
-};
 
 const CITIZENSHIP_OPTIONS: { value: CitizenshipStatus; label: string }[] = [
   { value: 'US_CITIZEN', label: 'A citizen of the United States' },

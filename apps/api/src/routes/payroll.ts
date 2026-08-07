@@ -32,6 +32,7 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopePayrollRuns, scopePayrollSchedules } from '../lib/scope.js';
 import { getCurrentPeriod, getNextPeriod } from '../lib/payrollSchedule.js';
@@ -59,6 +60,7 @@ import {
 import { decryptString } from '../lib/crypto.js';
 import type { PayoutMethod } from '@prisma/client';
 import { enqueueAudit, recordCriticalAudit, recordPayrollEvent } from '../lib/audit.js';
+import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import {
   isStubMode as qboIsStubMode,
   postPayrollJournalEntry,
@@ -644,7 +646,7 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
  * entries for every associate that has any in the period (optionally
  * scoped to a single client). Items are computed and snapshotted.
  */
-payrollRouter.post('/runs', PROCESS, async (req, res, next) => {
+payrollRouter.post('/runs', PROCESS, idempotent, async (req, res, next) => {
   try {
     const parsed = PayrollRunCreateInputSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -1112,7 +1114,7 @@ payrollRouter.delete('/runs/:id/add-ons/:addOnId', PROCESS, async (req, res, nex
   }
 });
 
-payrollRouter.post('/runs/:id/finalize', PROCESS, async (req, res, next) => {
+payrollRouter.post('/runs/:id/finalize', PROCESS, idempotent, async (req, res, next) => {
   try {
     const run = await prisma.payrollRun.findFirst({
       where: { id: req.params.id, ...scopePayrollRuns(req.user!) },
@@ -1133,6 +1135,21 @@ payrollRouter.post('/runs/:id/finalize', PROCESS, async (req, res, next) => {
       clientId: updated.clientId,
       req,
     });
+    // Outbound webhooks — run id + period + status only. Deliberately NO
+    // totals or per-associate amounts: pay data stays out of third-party
+    // payloads; consumers with an API key can pull details themselves.
+    void emitWebhookEvent(
+      'payroll.finalized',
+      {
+        payrollRunId: updated.id,
+        clientId: updated.clientId,
+        periodStart: updated.periodStart.toISOString().slice(0, 10),
+        periodEnd: updated.periodEnd.toISOString().slice(0, 10),
+        status: updated.status,
+        finalizedAt: updated.finalizedAt?.toISOString() ?? null,
+      },
+      { clientId: updated.clientId },
+    );
     res.json(toDetail(updated));
   } catch (err) {
     next(err);
@@ -1350,7 +1367,7 @@ payrollRouter.get('/runs/:id/wc-premium', PROCESS, async (req, res, next) => {
  * whole batch — the failing item stays PENDING with failureReason and HR
  * can retry. The run flips to DISBURSED only when every item succeeded.
  */
-payrollRouter.post('/runs/:id/disburse', PROCESS, async (req, res, next) => {
+payrollRouter.post('/runs/:id/disburse', PROCESS, idempotent, async (req, res, next) => {
   try {
     const run = await prisma.payrollRun.findFirst({
       where: { id: req.params.id, ...scopePayrollRuns(req.user!) },
@@ -2128,7 +2145,7 @@ payrollRouter.get('/garnishment-remittances/:id/advice.pdf', PROCESS, async (req
  * account, etc.). Idempotent on the Branch side because we keep using
  * PayrollItem.id as the idempotency key.
  */
-payrollRouter.post('/runs/:id/retry-failures', PROCESS, async (req, res, next) => {
+payrollRouter.post('/runs/:id/retry-failures', PROCESS, idempotent, async (req, res, next) => {
   try {
     const run = await prisma.payrollRun.findFirst({
       where: { id: req.params.id, ...scopePayrollRuns(req.user!) },

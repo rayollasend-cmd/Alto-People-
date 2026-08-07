@@ -18,6 +18,7 @@ import {
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAllAdmins, notifyAssociate, notifyManager } from '../lib/notify.js';
 import { timeOffRequestTemplate } from '../lib/emailTemplates.js';
@@ -32,6 +33,7 @@ import {
 } from '../lib/timeOffRequests.js';
 import { ensureEntitlementApplied } from '../lib/timeOffEntitlement.js';
 import { scopeTimeOffRequests } from '../lib/scope.js';
+import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 
 export const timeOffRouter = Router();
 
@@ -137,7 +139,7 @@ timeOffRouter.get('/me/balance', async (req, res, next) => {
  * associate profile can submit; the approval gate is the balance check
  * inside `approveRequest`, so HR can decide whether to approve or deny.
  */
-timeOffRouter.post('/me/requests', async (req, res, next) => {
+timeOffRouter.post('/me/requests', idempotent, async (req, res, next) => {
   try {
     const user = req.user!;
     if (!user.associateId) {
@@ -164,6 +166,17 @@ timeOffRouter.post('/me/requests', async (req, res, next) => {
         status: 'PENDING',
       },
       include: REQUEST_INCLUDE,
+    });
+
+    // Outbound webhooks — ids + dates only, no reason text (free-form
+    // prose from the associate stays out of third-party payloads).
+    void emitWebhookEvent('time_off.requested', {
+      requestId: created.id,
+      associateId: created.associateId,
+      category: created.category,
+      startDate: input.startDate,
+      endDate: input.endDate,
+      requestedMinutes,
     });
 
     // Manager-first routing: time-off is the manager's call. If the associate
@@ -417,6 +430,13 @@ timeOffRouter.post('/admin/requests/bulk-decide', MANAGE, async (req, res, next)
               decidedAt: new Date(),
             },
           });
+          void emitWebhookEvent('time_off.denied', {
+            requestId: id,
+            associateId: row.associateId,
+            category: row.category,
+            startDate: formatDateUTC(row.startDate),
+            endDate: formatDateUTC(row.endDate),
+          });
         }
         const verb = input.decision === 'APPROVE' ? 'approved' : 'denied';
         void notifyAssociate(row.associateId, {
@@ -533,6 +553,13 @@ timeOffRouter.post('/admin/requests/:id/deny', MANAGE, async (req, res, next) =>
         decidedAt: new Date(),
       },
       include: REQUEST_INCLUDE,
+    });
+    void emitWebhookEvent('time_off.denied', {
+      requestId: updated.id,
+      associateId: updated.associateId,
+      category: updated.category,
+      startDate: formatDateUTC(updated.startDate),
+      endDate: formatDateUTC(updated.endDate),
     });
     void notifyAssociate(updated.associateId, {
       subject: `Time off request denied: ${formatDateUTC(updated.startDate)} – ${formatDateUTC(updated.endDate)}`,

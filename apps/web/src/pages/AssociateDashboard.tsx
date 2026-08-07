@@ -138,6 +138,9 @@ export function AssociateDashboard() {
       <PageHeader
         title={t('dash.greeting', { name: greetingName })}
         subtitle={t('dash.subtitle')}
+        // The hero is a greeting; the chrome should say the page name, not
+        // echo "Hey Maria 👋" right above its own h1.
+        topbarTitle={t('tabs.home')}
       />
 
       <OnboardingBanner />
@@ -227,10 +230,10 @@ function EnablePushCard() {
     try {
       await subscribeToPush();
       hapticConfirm();
-      toast.success("Notifications on — you'll hear about shifts even with the app closed.");
+      toast.success(t('dash.pushOnToast'));
       setStatus('hidden');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not enable notifications.');
+      toast.error(err instanceof Error ? err.message : t('dash.pushFailed'));
       setStatus('ready');
     }
   };
@@ -457,7 +460,7 @@ function LoadFailedCard({
           <Icon className="h-3 w-3" aria-hidden="true" />
           {label}
         </div>
-        <div role="alert" className="font-display text-xl text-white mt-2">
+        <div role="alert" className="text-xl text-white mt-2">
           {t('dash.loadFailed')}
         </div>
         <p className="text-sm text-silver mt-1">{t('dash.checkConnection')}</p>
@@ -506,7 +509,7 @@ function ClockCard({ active, isClockedIn }: ClockCardProps) {
           <Clock className="h-3 w-3" aria-hidden="true" />
           {t('dash.clock')}
         </div>
-        <div className="font-display text-2xl text-white mt-2 leading-tight">
+        <div className="text-2xl text-white mt-2 leading-tight">
           {isClockedIn ? t('dash.onClock') : t('dash.offClock')}
         </div>
         {isClockedIn && active?.active ? (
@@ -541,7 +544,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
       await queryClient.invalidateQueries({ queryKey: ['me', 'shifts'] });
     } catch (err) {
       toast.error(
-        err instanceof ApiError ? err.message : 'Could not confirm the shift.'
+        err instanceof ApiError ? err.message : t('shift.confirmFailed')
       );
     } finally {
       setAcking(false);
@@ -567,7 +570,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
             <Timer className="h-3 w-3" aria-hidden="true" />
             {t('dash.nextShift')}
           </div>
-          <div className="font-display text-xl text-white mt-2">
+          <div className="text-xl text-white mt-2">
             {t('dash.nothingScheduled')}
           </div>
           <p className="text-sm text-silver mt-1">{t('dash.managerWillPublish')}</p>
@@ -590,7 +593,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
           {t('dash.nextShift')}
         </div>
         <div className="flex items-baseline gap-2 mt-2 flex-wrap">
-          <div className="font-display text-2xl text-white leading-tight">
+          <div className="text-2xl text-white leading-tight">
             {fmtRelativeDayTz(nextShift.startsAt, nextShift.timezone)}
           </div>
           <div className="text-lg text-gold tabular-nums">
@@ -658,7 +661,7 @@ function PaystubCard({
             <DollarSign className="h-3 w-3" aria-hidden="true" />
             {t('dash.lastPaystub')}
           </div>
-          <div className="font-display text-xl text-white mt-2">{t('dash.noPaystubs')}</div>
+          <div className="text-xl text-white mt-2">{t('dash.noPaystubs')}</div>
           <p className="text-sm text-silver mt-1">{t('dash.firstPaystub')}</p>
           <button
             type="button"
@@ -702,13 +705,15 @@ function PaystubCard({
   );
 }
 
-const CATEGORY_LABEL: Record<string, string> = {
-  SICK: 'Sick',
-  VACATION: 'Vacation',
-  PTO: 'PTO',
-  BEREAVEMENT: 'Bereavement',
-  JURY_DUTY: 'Jury duty',
-  OTHER: 'Other',
+// Same keys the Time-off page uses for these categories — the dashboard
+// chip and the Time-off balance card must never disagree on wording.
+const CATEGORY_KEY: Record<string, MessageKey> = {
+  SICK: 'timeoff.cat.SICK',
+  VACATION: 'timeoff.cat.VACATION',
+  PTO: 'timeoff.cat.PTO',
+  BEREAVEMENT: 'timeoff.cat.BEREAVEMENT',
+  JURY_DUTY: 'timeoff.cat.JURY_DUTY',
+  OTHER: 'timeoff.cat.OTHER',
 };
 
 function TimeOffCard({
@@ -738,7 +743,7 @@ function TimeOffCard({
             <CalendarOff className="h-3 w-3" aria-hidden="true" />
             {t('dash.timeOff')}
           </div>
-          <div className="font-display text-xl text-white mt-2">{t('dash.noBalance')}</div>
+          <div className="text-xl text-white mt-2">{t('dash.noBalance')}</div>
           <p className="text-sm text-silver mt-1">{t('dash.sickAccrues')}</p>
           <button
             type="button"
@@ -767,7 +772,9 @@ function TimeOffCard({
           <div className="font-display text-3xl text-gold tabular-nums">
             {(primary.balanceMinutes / 60).toFixed(1)}h
           </div>
-          <div className="text-sm text-silver">{CATEGORY_LABEL[primary.category] ?? primary.category}</div>
+          <div className="text-sm text-silver">
+            {CATEGORY_KEY[primary.category] ? t(CATEGORY_KEY[primary.category]) : primary.category}
+          </div>
         </div>
         {rest.length > 0 && (
           <div className="flex flex-wrap gap-2 mt-2">
@@ -776,7 +783,7 @@ function TimeOffCard({
                 key={b.category}
                 className="text-xs text-silver bg-navy-secondary/40 rounded px-2 py-0.5 tabular-nums"
               >
-                {CATEGORY_LABEL[b.category] ?? b.category}: {(b.balanceMinutes / 60).toFixed(1)}h
+                {CATEGORY_KEY[b.category] ? t(CATEGORY_KEY[b.category]) : b.category}: {(b.balanceMinutes / 60).toFixed(1)}h
               </span>
             ))}
           </div>
@@ -805,7 +812,7 @@ function QuickActions() {
   const { t } = useI18n();
   return (
     <section>
-      <h2 className="font-display text-xl text-white mb-3">{t('dash.quickLinks')}</h2>
+      <h2 className="text-xl text-white mb-3">{t('dash.quickLinks')}</h2>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
         {QUICK_LINKS.map(({ to, labelKey, icon: Icon }) => (
           <Link

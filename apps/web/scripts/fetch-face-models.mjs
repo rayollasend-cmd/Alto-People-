@@ -82,6 +82,13 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('[face-models] Failed:', err.message);
-  process.exit(1);
+  // Best-effort by design: this runs as `prebuild`, and a build box that
+  // can't reach the CDN must NOT fail the whole web build (that's what
+  // sank the first attempt to wire this in). The kiosk falls back to
+  // loading weights from jsDelivr at runtime when /face-models is empty.
+  console.warn(
+    '[face-models] Failed (non-fatal — kiosk will fall back to the CDN at runtime):',
+    err.message,
+  );
+  process.exit(0);
 });

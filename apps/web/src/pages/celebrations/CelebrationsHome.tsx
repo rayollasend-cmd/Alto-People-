@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Cake, PartyPopper, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
@@ -137,11 +138,30 @@ export function CelebrationsHome() {
                     {group.map((c) => {
                       const sent = sentKeys.has(keyOf(c));
                       return (
-                        <button
+                        /* A div-with-button-role rather than a <button>:
+                           the name inside is now a real profile link, and
+                           anchors can't legally nest inside buttons. */
+                        <div
                           key={keyOf(c)}
-                          onClick={() => !sent && setTarget(c)}
-                          disabled={sent}
-                          className="flex items-center gap-3 p-3 rounded-md border border-navy-secondary hover:border-gold/40 hover:bg-navy-secondary/40 transition-colors text-left group disabled:opacity-70 disabled:hover:border-navy-secondary disabled:hover:bg-transparent disabled:cursor-default"
+                          role="button"
+                          tabIndex={sent ? -1 : 0}
+                          aria-disabled={sent || undefined}
+                          onClick={(e) => {
+                            // Clicks on the profile link navigate; only the
+                            // rest of the card opens the high-five drawer.
+                            if ((e.target as HTMLElement).closest('a')) return;
+                            if (!sent) setTarget(c);
+                          }}
+                          onKeyDown={(e) => {
+                            if (sent || (e.key !== 'Enter' && e.key !== ' ')) return;
+                            e.preventDefault();
+                            setTarget(c);
+                          }}
+                          className={`flex items-center gap-3 p-3 rounded-md border border-navy-secondary transition-colors text-left group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright ${
+                            sent
+                              ? 'opacity-70 cursor-default'
+                              : 'cursor-pointer hover:border-gold/40 hover:bg-navy-secondary/40'
+                          }`}
                         >
                           <div className={`h-10 w-10 rounded-full grid place-items-center ${
                             c.kind === 'BIRTHDAY'
@@ -151,7 +171,11 @@ export function CelebrationsHome() {
                             {c.kind === 'BIRTHDAY' ? <Cake className="h-5 w-5" /> : <PartyPopper className="h-5 w-5" />}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <div className="text-white truncate">{c.associateName}</div>
+                            <div className="text-white truncate">
+                              <AssociateLink associateId={c.associateId}>
+                                {c.associateName}
+                              </AssociateLink>
+                            </div>
                             <div className="text-xs text-silver">
                               {fmtDate(parseYmd(c.date))}
                               {c.years != null && ` • ${c.years} year${c.years === 1 ? '' : 's'}`}
@@ -167,7 +191,7 @@ export function CelebrationsHome() {
                           ) : (
                             <Send className="h-4 w-4 text-silver can-hover:opacity-60 group-hover:opacity-100 transition-opacity" />
                           )}
-                        </button>
+                        </div>
                       );
                     })}
                   </div>

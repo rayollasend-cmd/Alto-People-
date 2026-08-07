@@ -13,6 +13,7 @@ import helmet from 'helmet';
 import { env } from './config/env.js';
 import { healthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
+import { oidcAuthRouter } from './routes/oidcAuth.js';
 import { clientsRouter } from './routes/clients.js';
 import { onboardingRouter } from './routes/onboarding.js';
 import { timeRouter } from './routes/time.js';
@@ -34,6 +35,8 @@ import { auditRouter } from './routes/audit.js';
 import { benefitsRouter } from './routes/benefits.js';
 import { quickbooksRouter } from './routes/quickbooks.js';
 import { branchWebhookRouter } from './routes/branchWebhook.js';
+import { resendWebhookRouter } from './routes/resendWebhook.js';
+import { emailUnsubscribeRouter } from './routes/emailUnsubscribe.js';
 import { orgRouter } from './routes/org.js';
 import { directoryRouter } from './routes/directory.js';
 import { positionsRouter } from './routes/positions.js';
@@ -86,7 +89,9 @@ import { profilePhotoRouter } from './routes/profilePhoto.js';
 import { usersRouter } from './routes/users.js';
 import { orgSettingsRouter } from './routes/orgSettings.js';
 import { integrationsV1Router } from './routes/integrationsV1.js';
+import { scimRouter } from './routes/scim.js';
 import { attachUser, requireCapability } from './middleware/auth.js';
+import { defaultApiLimiter } from './middleware/rateLimit.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { requestId } from './middleware/requestId.js';
 
@@ -182,13 +187,25 @@ export function createApp() {
   // bytes survive for HMAC verification (the global parser would consume
   // the stream and re-serialization breaks signatures on whitespace).
   app.use('/branch/webhook', branchWebhookRouter);
+  // Same deal for Resend's email-event webhook — the Svix signature is
+  // computed over the exact raw bytes.
+  app.use('/resend/webhook', resendWebhookRouter);
   // 2mb to accommodate base64-encoded kiosk selfies (1MB raw → ~1.4MB
   // base64 → headroom for the JSON envelope).
   app.use(express.json({ limit: '2mb' }));
   app.use(cookieParser());
   app.use(attachUser);
+  // Backstop rate limit for the whole authenticated surface (skips
+  // anonymous requests — those surfaces carry their own limiters).
+  // Sits directly after attachUser so req.user keys the bucket.
+  app.use(defaultApiLimiter);
 
   app.use('/health', healthRouter);
+  // Enterprise SSO (OIDC). Mounted at the same root-path convention as
+  // authRouter — its cookies (session + flow state, both path=/) must line
+  // up exactly with the password/passkey flows. Mounted before /auth so
+  // the more-specific prefix wins outright.
+  app.use('/auth/oidc', oidcAuthRouter);
   app.use('/auth', authRouter);
   // Public integration API (AltoHR / ShiftReport Nexus, etc.). Authenticates
   // via `Authorization: Bearer altop_<hex>` rather than the session cookie,
@@ -196,6 +213,12 @@ export function createApp() {
   // don't get tangled with cookie-flow routes if a caller forgets the
   // bearer header.
   app.use('/integrations/v1', integrationsV1Router);
+  // SCIM 2.0 user provisioning for IdP-driven lifecycle (Microsoft Entra
+  // ID / Okta). Self-authenticates with the dedicated SCIM_TOKEN bearer —
+  // deliberately NOT the altop_ ApiKey system; see routes/scim.ts for the
+  // rationale — so like /integrations/v1 it sits outside the session-
+  // cookie RBAC chain. 503s when SCIM_TOKEN is unset.
+  app.use('/scim/v2', scimRouter);
   // Public iCal feed — calendar clients poll without credentials, the
   // HMAC token in the URL is the authorization. Mounted before the
   // session-cookie chain so it doesn't get wrapped in view:scheduling.
@@ -244,6 +267,10 @@ export function createApp() {
     requireCapability('view:dashboard'),
     analyticsRouter
   );
+  // One-click unsubscribe: mailbox providers POST this with no session, so
+  // it must sit OUTSIDE the view:communications gate below. Mounted first —
+  // Express matches the longer prefix before the gated /communications mount.
+  app.use('/communications/unsubscribe', emailUnsubscribeRouter);
   app.use(
     '/communications',
     requireCapability('view:communications'),

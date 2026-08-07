@@ -5,8 +5,9 @@ import { env } from '../config/env.js';
 
 // Phase 9 storage: local filesystem rooted at UPLOAD_ROOT. The
 // DocumentRecord.s3Key column holds the relative path (e.g.
-// "f3a8.../filename.pdf"). When we wire S3 in a future phase, the column
-// name stays — only the resolver here changes.
+// "f3a8.../filename.pdf"). All blob I/O now goes through the driver in
+// lib/blobStore.ts (STORAGE_DRIVER=local|s3); this module remains the
+// local root + path-escape guard the local driver builds on.
 //
 // Production note: Railway's container filesystem is ephemeral. Set
 // UPLOAD_DIR on the Railway service to point at a mounted Volume so
@@ -33,7 +34,13 @@ if (!existsSync(profilePhotoFull)) {
   mkdirSync(profilePhotoFull, { recursive: true });
 }
 
-if (env.NODE_ENV === 'production' && !env.UPLOAD_DIR) {
+if (
+  env.NODE_ENV === 'production' &&
+  !env.UPLOAD_DIR &&
+  env.STORAGE_DRIVER !== 's3'
+) {
+  // With STORAGE_DRIVER=s3 the local disk holds nothing durable, so the
+  // missing-volume warning would be noise.
   // Loud warning, not a hard exit — the system is still functional, but
   // every uploaded file will be lost on next redeploy. Operators should
   // set UPLOAD_DIR to a mounted Volume path before going live.

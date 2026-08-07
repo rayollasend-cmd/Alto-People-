@@ -1,5 +1,10 @@
 # Uploads backup (off-site)
 
+> **Scope:** this job backs up the LOCAL uploads disk and only applies with
+> `STORAGE_DRIVER=local` (the default). With `STORAGE_DRIVER=s3` the disk
+> holds nothing — the cron skips itself with a boot log line; protect the
+> primary bucket with versioning/replication instead. See STORAGE.md.
+
 **TL;DR:** the Railway Volume protects uploaded files against *redeploys*,
 not against deletion, corruption, or a lost volume. The database has Neon
 point-in-time recovery; the document blobs (I-9 photos, W-4 PDFs,

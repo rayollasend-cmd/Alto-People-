@@ -11,6 +11,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useConfirm } from '@/lib/confirm';
+import { useI18n, type Translate } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
 import { fmtDateTz, fmtShiftRangeTz, fmtWeekdayTz } from '@/lib/format';
 import { SkeletonRows } from '@/components/ui/Skeleton';
@@ -36,38 +37,39 @@ const STATUS_CLS: Record<ShiftSwapStatus, string> = {
 function statusMeta(
   s: ShiftSwapRequest,
   tab: Tab,
+  t: Translate,
 ): { label: string; hint?: string } {
   switch (s.status) {
     case 'PENDING_PEER':
       return tab === 'incoming'
         ? {
-            label: 'Waiting for you to accept',
-            hint: 'Accept or decline below — a manager gives final approval after that.',
+            label: t('swap.stWaitingYou'),
+            hint: t('swap.stWaitingYouHint'),
           }
         : {
-            label: `Waiting for ${s.counterpartyName} to accept`,
-            hint: 'Once they accept, a manager gives final approval.',
+            label: t('swap.stWaitingPeer', { name: s.counterpartyName }),
+            hint: t('swap.stWaitingPeerHint'),
           };
     case 'PEER_ACCEPTED':
       return {
-        label: 'Accepted — waiting for manager approval',
-        hint: "You'll be notified when a manager decides.",
+        label: t('swap.stAccepted'),
+        hint: t('swap.stAcceptedHint'),
       };
     case 'PEER_DECLINED':
       return tab === 'incoming'
-        ? { label: 'You declined' }
-        : { label: `${s.counterpartyName} declined` };
+        ? { label: t('swap.stYouDeclined') }
+        : { label: t('swap.stPeerDeclined', { name: s.counterpartyName }) };
     case 'MANAGER_APPROVED':
-      return { label: 'Approved — schedules updated' };
+      return { label: t('swap.stApproved') };
     case 'MANAGER_REJECTED':
       return {
-        label: 'Not approved',
-        hint: 'A manager rejected this swap — the shift stays as originally scheduled.',
+        label: t('swap.stRejected'),
+        hint: t('swap.stRejectedHint'),
       };
     case 'CANCELLED':
       return tab === 'incoming'
-        ? { label: `${s.requesterName} cancelled this request` }
-        : { label: 'Cancelled' };
+        ? { label: t('swap.stCancelledByRequester', { name: s.requesterName }) }
+        : { label: t('swap.stCancelled') };
   }
 }
 
@@ -79,6 +81,7 @@ export function SwapMarketplace({
   refreshToken?: number;
 }) {
   const confirm = useConfirm();
+  const { t } = useI18n();
   const [tab, setTab] = useState<Tab>('incoming');
   const [items, setItems] = useState<ShiftSwapRequest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -90,9 +93,9 @@ export function SwapMarketplace({
       const res = tab === 'incoming' ? await listSwapsIncoming() : await listSwapsOutgoing();
       setItems(res.requests);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      setError(err instanceof ApiError ? err.message : t('swap.loadFailed'));
     }
-  }, [tab]);
+  }, [tab, t]);
 
   useEffect(() => {
     refresh();
@@ -104,7 +107,7 @@ export function SwapMarketplace({
       await fn();
       await refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Action failed.');
+      setError(err instanceof ApiError ? err.message : t('swap.actionFailed'));
     } finally {
       setPendingId(null);
     }
@@ -113,9 +116,9 @@ export function SwapMarketplace({
   const declineSwap = async (s: ShiftSwapRequest) => {
     if (
       !(await confirm({
-        title: 'Decline this swap request?',
-        description: `${s.requesterName} will be notified that you declined.`,
-        confirmLabel: 'Decline',
+        title: t('swap.declineConfirmTitle'),
+        description: t('swap.declineConfirmDesc', { name: s.requesterName }),
+        confirmLabel: t('swap.decline'),
         destructive: true,
       }))
     ) {
@@ -127,24 +130,24 @@ export function SwapMarketplace({
   return (
     <section className="bg-navy border border-navy-secondary rounded-lg p-5 mb-5">
       <div className="flex items-baseline justify-between mb-3">
-        <h2 className="font-display text-2xl text-white">Shift swaps</h2>
+        <h2 className="text-2xl text-white">{t('swap.title')}</h2>
       </div>
       <div role="tablist" className="flex gap-2 mb-4 border-b border-navy-secondary">
-        {(['incoming', 'outgoing'] as const).map((t) => (
+        {(['incoming', 'outgoing'] as const).map((tabId) => (
           <button
-            key={t}
+            key={tabId}
             type="button"
             role="tab"
-            aria-selected={tab === t}
-            onClick={() => setTab(t)}
+            aria-selected={tab === tabId}
+            onClick={() => setTab(tabId)}
             className={cn(
               'px-3 py-2 coarse:min-h-11 text-sm border-b-2 -mb-px transition capitalize',
-              tab === t
+              tab === tabId
                 ? 'border-gold text-gold'
                 : 'border-transparent text-silver hover:text-white active:text-white'
             )}
           >
-            {t}
+            {t(tabId === 'incoming' ? 'swap.tabIncoming' : 'swap.tabOutgoing')}
           </button>
         ))}
       </div>
@@ -154,7 +157,7 @@ export function SwapMarketplace({
           className="mb-3"
           action={
             <Button size="sm" variant="secondary" onClick={() => void refresh()}>
-              Retry
+              {t('common.retry')}
             </Button>
           }
         >
@@ -165,19 +168,17 @@ export function SwapMarketplace({
       {items && items.length === 0 && (
         <EmptyState
           icon={ArrowLeftRight}
-          title={tab === 'incoming' ? 'No incoming swap requests' : 'No outgoing swap requests'}
-          description={
-            tab === 'incoming'
-              ? "When a teammate asks to swap a shift with you, it'll show up here."
-              : "Request a swap from your assigned shift in the schedule above."
-          }
+          title={t(tab === 'incoming' ? 'swap.emptyIncomingTitle' : 'swap.emptyOutgoingTitle')}
+          description={t(
+            tab === 'incoming' ? 'swap.emptyIncomingDesc' : 'swap.emptyOutgoingDesc',
+          )}
         />
       )}
 
       {items && items.length > 0 && (
         <ul className="space-y-2">
           {items.map((s) => {
-            const meta = statusMeta(s, tab);
+            const meta = statusMeta(s, tab, t);
             return (
             <li
               key={s.id}
@@ -195,9 +196,7 @@ export function SwapMarketplace({
                   </div>
                   {s.inExchange && (
                     <div className="text-xs text-gold/90 tabular-nums mt-0.5">
-                      {tab === 'incoming'
-                        ? 'They take your: '
-                        : 'You take their: '}
+                      {t(tab === 'incoming' ? 'swap.theyTake' : 'swap.youTake')}
                       {s.inExchange.position} ·{' '}
                       {fmtWeekdayTz(s.inExchange.startsAt, s.inExchange.timezone)},{' '}
                       {fmtDateTz(s.inExchange.startsAt, s.inExchange.timezone)} ·{' '}
@@ -210,9 +209,9 @@ export function SwapMarketplace({
                   )}
                   <div className="text-xs text-silver mt-1">
                     {tab === 'incoming' ? (
-                      <>From <span className="text-white">{s.requesterName}</span></>
+                      <>{t('swap.from')} <span className="text-white">{s.requesterName}</span></>
                     ) : (
-                      <>To <span className="text-white">{s.counterpartyName}</span></>
+                      <>{t('swap.to')} <span className="text-white">{s.counterpartyName}</span></>
                     )}
                   </div>
                   {s.note && (
@@ -232,7 +231,7 @@ export function SwapMarketplace({
                         onClick={() => wrap(s.id, () => peerAcceptSwap(s.id))}
                         disabled={pendingId === s.id}
                       >
-                        Accept
+                        {t('swap.accept')}
                       </Button>
                       <Button
                         type="button"
@@ -242,7 +241,7 @@ export function SwapMarketplace({
                         onClick={() => void declineSwap(s)}
                         disabled={pendingId === s.id}
                       >
-                        Decline
+                        {t('swap.decline')}
                       </Button>
                     </>
                   )}
@@ -255,7 +254,7 @@ export function SwapMarketplace({
                         onClick={() => wrap(s.id, () => cancelSwap(s.id))}
                         disabled={pendingId === s.id}
                       >
-                        Cancel
+                        {t('common.cancel')}
                       </Button>
                     )}
                 </div>

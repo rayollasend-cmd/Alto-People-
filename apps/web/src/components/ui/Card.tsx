@@ -51,7 +51,7 @@ export const CardTitle = React.forwardRef<
   // eslint-disable-next-line jsx-a11y/heading-has-content -- children arrive via {...props}; every call site passes text.
   <h2
     ref={ref}
-    className={cn('font-display text-xl text-white leading-tight', className)}
+    className={cn('text-xl text-white leading-tight', className)}
     {...props}
   />
 ));

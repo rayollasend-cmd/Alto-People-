@@ -25,7 +25,7 @@
  * a Resend hiccup must not roll back a successful disbursement.
  */
 import { type PrismaClient } from '@prisma/client';
-import { send } from './notifications.js';
+import { EmailSuppressedError, send } from './notifications.js';
 import { renderPaystubPdf } from './paystub.js';
 import { buildPaystubDataFromItem, paystubItemInclude } from './paystubData.js';
 import { env } from '../config/env.js';
@@ -60,6 +60,7 @@ export type SendPaystubSkipReason =
   | 'no_recipient_email'
   | 'voided_or_held'
   | 'non_positive_net'
+  | 'suppressed'
   | 'send_failed';
 
 export interface SendPaystubEmailResult {
@@ -131,7 +132,9 @@ export async function sendPaystubEmail(
     const filename = `paystub-${data.period.start}-${item.id.slice(0, 8)}.pdf`;
 
     let externalRef: string | null = null;
+    let providerMessageId: string | null = null;
     let failureReason: string | null = null;
+    let suppressed = false;
     try {
       const r = await send({
         channel: 'EMAIL',
@@ -144,7 +147,9 @@ export async function sendPaystubEmail(
         ],
       });
       externalRef = r.externalRef;
+      providerMessageId = r.providerMessageId;
     } catch (err) {
+      if (err instanceof EmailSuppressedError) suppressed = true;
       failureReason = err instanceof Error ? err.message : String(err);
     }
 
@@ -158,13 +163,14 @@ export async function sendPaystubEmail(
     await prisma.notification.create({
       data: {
         channel: 'EMAIL',
-        status: failureReason ? 'FAILED' : 'SENT',
+        status: suppressed ? 'SUPPRESSED' : failureReason ? 'FAILED' : 'SENT',
         recipientUserId: portalUser?.id ?? null,
         recipientEmail: recipient,
         subject,
         body,
         category: 'payroll.paystub_emailed',
         externalRef,
+        providerMessageId,
         failureReason,
         sentAt: failureReason ? null : new Date(),
       },
@@ -179,7 +185,7 @@ export async function sendPaystubEmail(
       );
       return {
         sent: false,
-        skipped: 'send_failed',
+        skipped: suppressed ? 'suppressed' : 'send_failed',
         externalRef: null,
         failureReason,
       };

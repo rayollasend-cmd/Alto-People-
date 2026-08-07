@@ -287,7 +287,7 @@ function SidebarBrand({ railCollapsed, onToggleRail }: SidebarBrandProps) {
       {!railCollapsed && (
         <>
           <Logo size="sm" alt="Alto HR" />
-          <span className="font-display text-lg text-white leading-none tracking-tight truncate">
+          <span className="text-lg text-white leading-none tracking-tight truncate">
             Alto <span className="text-gold">People</span>
           </span>
         </>

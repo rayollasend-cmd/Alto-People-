@@ -22,6 +22,8 @@ import {
 import { hapticSuccess } from '@/lib/haptics';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
 import { Badge } from '@/components/ui/Badge';
+import { statusTone } from '@/lib/status';
+import { TIME_ENTRY_STATUS_TONES } from '@/lib/timeLabels';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -33,21 +35,14 @@ import { ShiftTimeline } from './ShiftTimeline';
 import { TimesheetWeeks } from './TimesheetWeeks';
 import { fmtPunchTime, formatHM, punchDayOffset } from './punchFormat';
 
+// Domain wording only — COMPLETED reads "Pending" to the associate because a
+// completed punch is still awaiting review. Tones come from the shared
+// vocabulary with the time-domain overrides (see lib/timeLabels.ts).
 const STATUS_LABELS: Record<TimeEntry['status'], string> = {
   ACTIVE: 'Active',
   COMPLETED: 'Pending',
   APPROVED: 'Approved',
   REJECTED: 'Rejected',
-};
-
-const STATUS_VARIANTS: Record<
-  TimeEntry['status'],
-  'accent' | 'pending' | 'success' | 'destructive'
-> = {
-  ACTIVE: 'accent',
-  COMPLETED: 'pending',
-  APPROVED: 'success',
-  REJECTED: 'destructive',
 };
 
 function useTicker(active: boolean): number {
@@ -374,7 +369,7 @@ export function AssociateTimeView() {
 
       <section aria-label="Recent time entries">
         <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
-          <h2 className="font-display text-2xl text-white">Recent entries</h2>
+          <h2 className="text-2xl text-white">Recent entries</h2>
           {/* Full-width 2-up on phones (two fixed w-40 fields overflowed
               360px screens); back to the compact inline pair at sm+. */}
           <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:w-auto sm:items-end">
@@ -490,7 +485,7 @@ export function AssociateTimeView() {
                       )}
                     </div>
                     <span className="flex shrink-0 items-center gap-2">
-                      <Badge variant={STATUS_VARIANTS[e.status]}>
+                      <Badge variant={statusTone(e.status, { overrides: TIME_ENTRY_STATUS_TONES })}>
                         {STATUS_LABELS[e.status]}
                       </Badge>
                       <ChevronDown

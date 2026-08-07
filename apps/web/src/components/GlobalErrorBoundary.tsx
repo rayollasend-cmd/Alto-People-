@@ -46,7 +46,7 @@ export class GlobalErrorBoundary extends Component<{ children: ReactNode }, Stat
     return (
       <div className="min-h-screen flex items-center justify-center bg-midnight p-6">
         <div className="max-w-md w-full text-center space-y-4">
-          <div className="font-display text-2xl text-gold">Something broke</div>
+          <div className="text-2xl text-gold">Something broke</div>
           <p className="text-sm text-silver">
             We logged the error and the team has been notified. Refreshing
             usually fixes it.

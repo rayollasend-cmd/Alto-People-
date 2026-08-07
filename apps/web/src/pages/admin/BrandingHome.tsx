@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { ImagePlus, RefreshCw, Trash2 } from 'lucide-react';
+import { ImagePlus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   HEX_COLOR_REGEX,
   ORG_LOGO_ALLOWED_TYPES,
   ORG_LOGO_MAX_BYTES,
+  type MfaRequirement,
   type OrgBranding,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -21,7 +22,14 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input } from '@/components/ui/Input';
 import { Field } from '@/components/ui/Field';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Skeleton } from '@/components/ui/Skeleton';
+
+const MFA_REQUIREMENT_LABELS: Record<MfaRequirement, string> = {
+  OFF: 'Off',
+  ADMINS: 'Admins',
+  ALL: 'Everyone',
+};
 
 /**
  * HR-only org branding admin. Lets the org overlay its name, sender display
@@ -42,6 +50,8 @@ export function BrandingHome() {
   const [supportEmailTouched, setSupportEmailTouched] = useState(false);
   const [primaryColor, setPrimaryColor] = useState('');
   const [primaryColorTouched, setPrimaryColorTouched] = useState(false);
+  const [mfaRequirement, setMfaRequirement] = useState<MfaRequirement>('OFF');
+  const [mfaSaving, setMfaSaving] = useState(false);
   const [logoBust, setLogoBust] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -57,6 +67,7 @@ export function BrandingHome() {
       setSupportEmailTouched(false);
       setPrimaryColor(b.primaryColor ?? '');
       setPrimaryColorTouched(false);
+      setMfaRequirement(b.mfaRequirement);
       setLogoBust((n) => n + 1);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load branding.');
@@ -132,6 +143,27 @@ export function BrandingHome() {
       toast.error(err instanceof ApiError ? err.message : 'Remove failed.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const onChangeMfaRequirement = async (next: MfaRequirement) => {
+    if (next === mfaRequirement || mfaSaving) return;
+    const prev = mfaRequirement;
+    setMfaRequirement(next); // optimistic — reverted on failure
+    setMfaSaving(true);
+    try {
+      const updated = await patchOrgBranding({ mfaRequirement: next });
+      setBranding(updated);
+      toast.success(
+        next === 'OFF'
+          ? 'Two-step sign-in is now optional for everyone.'
+          : `Two-step sign-in is now required for ${next === 'ALL' ? 'everyone' : 'admin roles'}.`,
+      );
+    } catch (err) {
+      setMfaRequirement(prev);
+      toast.error(err instanceof ApiError ? err.message : 'Save failed.');
+    } finally {
+      setMfaSaving(false);
     }
   };
 
@@ -335,6 +367,42 @@ export function BrandingHome() {
                   Last updated {fmtDateTime(branding.logoUpdatedAt)}
                 </p>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-gold" />
+                Security
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Field
+                label="Require two-step sign-in"
+                hint={
+                  <>
+                    Users covered by the policy must set up an authenticator
+                    app before a password sign-in completes. &ldquo;Admins&rdquo;
+                    covers every role that can manage other people&rsquo;s data
+                    (including finance and shift supervisors); associates and
+                    client portal accounts are exempt. Passkey sign-ins already
+                    count as strong authentication and are never blocked.
+                  </>
+                }
+              >
+                {() => (
+                  <SegmentedControl<MfaRequirement>
+                    options={(['OFF', 'ADMINS', 'ALL'] as const).map((v) => ({
+                      value: v,
+                      label: MFA_REQUIREMENT_LABELS[v],
+                    }))}
+                    value={mfaRequirement}
+                    onChange={(v) => void onChangeMfaRequirement(v)}
+                    ariaLabel="Require two-step sign-in"
+                  />
+                )}
+              </Field>
             </CardContent>
           </Card>
         </div>

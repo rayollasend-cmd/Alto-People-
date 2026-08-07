@@ -12,6 +12,13 @@ export default {
         gold: {
           DEFAULT: 'rgb(var(--color-gold) / <alpha-value>)',
           bright: 'rgb(var(--color-gold-bright) / <alpha-value>)',
+          // Gold as a FILL that carries `text-on-accent` (dark ink). Split
+          // from `gold`/`gold-bright` because those two are tuned as TEXT
+          // colors: in light mode they are dark enough to read on white,
+          // which leaves dark ink on top of them below AA. The fill tier
+          // stays light in both themes so the dark ink always clears.
+          fill: 'rgb(var(--color-gold-fill) / <alpha-value>)',
+          'fill-bright': 'rgb(var(--color-gold-fill-bright) / <alpha-value>)',
         },
         silver: 'rgb(var(--color-silver) / <alpha-value>)',
         steel: 'rgb(var(--color-steel) / <alpha-value>)',
@@ -43,9 +50,16 @@ export default {
         // The micro tier the app actually uses — previously 585 arbitrary
         // values (text-[10px] ×299, text-[11px] ×266...). Tokenized so the
         // whole tier can be retuned globally.
-        '3xs': ['0.5625rem', { lineHeight: '0.875rem' }], // 9px
-        '2xs': ['0.625rem', { lineHeight: '0.875rem' }], // 10px — eyebrow/micro-label
-        'xs2': ['0.6875rem', { lineHeight: '1rem' }], // 11px — meta/caption
+        // Legibility floor raised one step across the micro tier. 612 of
+        // these sit at 10-11px, and 275 of those also carry text-silver/70
+        // — smallest type at the lowest contrast, simultaneously, which is
+        // the combination users actually report as unreadable. Contrast is
+        // fixed in index.css; this fixes the size half. Retuned at the
+        // token so the whole tier moves together and can be reverted in
+        // one edit if any dense table regresses.
+        '3xs': ['0.625rem', { lineHeight: '0.875rem' }], // 10px (was 9px)
+        '2xs': ['0.6875rem', { lineHeight: '0.9375rem' }], // 11px (was 10px) — eyebrow/micro-label
+        'xs2': ['0.75rem', { lineHeight: '1rem' }], // 12px (was 11px) — meta/caption
         hero: ['2rem', { lineHeight: '1.1', letterSpacing: '-0.02em' }],
         'hero-lg': ['2.5rem', { lineHeight: '1.1', letterSpacing: '-0.02em' }],
       },

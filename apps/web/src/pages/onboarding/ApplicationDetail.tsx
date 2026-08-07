@@ -46,6 +46,7 @@ import {
 } from '@/lib/i9Api';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { statusTone } from '@/lib/status';
 import { ProgressBar } from '@/components/ProgressBar';
 import { AuditTimeline } from '@/components/AuditTimeline';
 import { Badge } from '@/components/ui/Badge';
@@ -1007,9 +1008,15 @@ function taskDestination(
         label: 'Open I-9 in Compliance',
       };
     case 'BACKGROUND_CHECK':
-      return { to: '/compliance?tab=background', label: 'Open background checks' };
+      return {
+        to: `/compliance?tab=background&associateId=${associateId}`,
+        label: 'Open background checks',
+      };
     case 'J1_DOCS':
-      return { to: '/compliance?tab=j1', label: 'Open J-1 program' };
+      return {
+        to: `/compliance?tab=j1&associateId=${associateId}`,
+        label: 'Open J-1 program',
+      };
     default:
       return null;
   }
@@ -1099,17 +1106,9 @@ function addBusinessDays(start: Date, days: number): Date {
   return d;
 }
 
-const I9_DOC_STATUS_VARIANT: Record<
-  I9DocumentListItem['status'],
-  'success' | 'pending' | 'destructive' | 'default'
-> = {
-  VERIFIED: 'success',
-  UPLOADED: 'pending',
-  PENDING: 'default',
-  REJECTED: 'destructive',
-  EXPIRED: 'destructive',
-};
-
+// Tones come from the shared status vocabulary (PENDING now reads amber like
+// every other awaiting state). Only the wording is local: UPLOADED means
+// "someone must review this", so it reads "Awaiting review".
 const I9_DOC_STATUS_LABEL: Record<I9DocumentListItem['status'], string> = {
   VERIFIED: 'Verified',
   UPLOADED: 'Awaiting review',
@@ -1265,7 +1264,7 @@ function I9Card({
                           ? ` · ${d.side === 'FRONT' ? 'Front' : 'Back'}`
                           : ''}
                       </span>
-                      <Badge size="sm" variant={I9_DOC_STATUS_VARIANT[d.status]}>
+                      <Badge size="sm" variant={statusTone(d.status)}>
                         {I9_DOC_STATUS_LABEL[d.status] ?? d.status}
                       </Badge>
                     </li>
@@ -1298,7 +1297,11 @@ function I9Card({
                 {!status?.section2 && (
                   <div className="mt-2">
                     <Button asChild variant="outline" size="sm">
-                      <Link to="/compliance">Open Section 2 verifier</Link>
+                      {/* Same deep link the header uses — landing on bare
+                          /compliance lost the tab AND the person. */}
+                      <Link to={`/compliance?tab=i9&associateId=${associateId}`}>
+                        Open Section 2 verifier
+                      </Link>
                     </Button>
                   </div>
                 )}

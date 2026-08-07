@@ -12,7 +12,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { Badge } from '@/components/ui/Badge';
+import { StatusBadge, statusLabel } from '@/lib/status';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -28,23 +28,12 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { JobsSection } from './JobsSection';
+import { RateDefaultsSection } from './RateDefaultsSection';
 import { LocationsSection } from './LocationsSection';
 import { BenefitsPlansSection } from './BenefitsPlansSection';
 import { QuickbooksSection } from './QuickbooksSection';
 
 const STATUSES: ClientStatus[] = ['PROSPECT', 'ACTIVE', 'INACTIVE'];
-
-const STATUS_LABELS: Record<ClientStatus, string> = {
-  PROSPECT: 'Prospect',
-  ACTIVE: 'Active',
-  INACTIVE: 'Inactive',
-};
-
-const STATUS_VARIANT: Record<ClientStatus, 'success' | 'pending' | 'destructive'> = {
-  ACTIVE: 'success',
-  PROSPECT: 'pending',
-  INACTIVE: 'destructive',
-};
 
 // Index = the 0=Sunday…6=Saturday convention Client.weekStartsOn uses.
 const WEEKDAY_NAMES: string[] = [
@@ -154,9 +143,7 @@ export function ClientDetail() {
         breadcrumbs={[{ label: 'Clients', to: '/clients' }, { label: client.name }]}
         subtitle={
           <span className="flex flex-wrap items-center gap-2">
-            <Badge variant={STATUS_VARIANT[client.status]}>
-              {STATUS_LABELS[client.status]}
-            </Badge>
+            <StatusBadge status={client.status} />
             {client.industry && <span>· {client.industry}</span>}
             {client.contactEmail && <span>· {client.contactEmail}</span>}
           </span>
@@ -187,6 +174,8 @@ export function ClientDetail() {
       <LocationsSection clientId={client.id} />
 
       <JobsSection clientId={client.id} />
+
+      <RateDefaultsSection clientId={client.id} />
 
       <BenefitsPlansSection clientId={client.id} />
 
@@ -331,7 +320,7 @@ function BasicsEditor({
               >
                 {STATUSES.map((s) => (
                   <option key={s} value={s}>
-                    {STATUS_LABELS[s]}
+                    {statusLabel(s)}
                   </option>
                 ))}
               </Select>

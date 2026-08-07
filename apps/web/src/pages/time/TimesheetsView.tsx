@@ -649,10 +649,15 @@ export function TimesheetsView() {
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
+                  {/* Responsive column budget: a phone keeps Associate / Δ /
+                      Flag — the "who deviated and how badly" read. The raw
+                      Scheduled and Actual figures the Δ is derived from
+                      return at md, and collapse into an inline summary
+                      under the name below md. */}
                   <TableRow>
                     <TableHead>Associate</TableHead>
-                    <TableHead className="text-right">Scheduled</TableHead>
-                    <TableHead className="text-right">Actual</TableHead>
+                    <TableHead className="hidden md:table-cell text-right">Scheduled</TableHead>
+                    <TableHead className="hidden md:table-cell text-right">Actual</TableHead>
                     <TableHead className="text-right">Δ</TableHead>
                     <TableHead>Flag</TableHead>
                   </TableRow>
@@ -663,11 +668,16 @@ export function TimesheetsView() {
                     const notable = Math.abs(s.delta) >= 2;
                     return (
                       <TableRow key={s.associateId}>
-                        <TableCell className="font-medium text-white">{s.worker}</TableCell>
-                        <TableCell className="text-right tabular-nums text-silver">
+                        <TableCell className="font-medium text-white">
+                          {s.worker}
+                          <div className="md:hidden text-xs2 font-normal tabular-nums text-silver/70">
+                            {s.scheduledHours.toFixed(2)} sched · {s.actualHours.toFixed(2)} actual
+                          </div>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">
                           {s.scheduledHours.toFixed(2)}
                         </TableCell>
-                        <TableCell className="text-right tabular-nums text-silver">
+                        <TableCell className="hidden md:table-cell text-right tabular-nums text-silver">
                           {s.actualHours.toFixed(2)}
                         </TableCell>
                         <TableCell

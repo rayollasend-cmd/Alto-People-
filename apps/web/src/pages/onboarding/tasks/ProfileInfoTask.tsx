@@ -180,7 +180,7 @@ export function ProfileInfoTask() {
     <TaskShell title="Profile information" backTo={backTo}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="First name">
+          <Field label="First name" required>
             <input
               type="text"
               required
@@ -190,7 +190,7 @@ export function ProfileInfoTask() {
               className={inputCls}
             />
           </Field>
-          <Field label="Last name">
+          <Field label="Last name" required>
             <input
               type="text"
               required
@@ -323,13 +323,14 @@ export function SubmitRow({
     // The negative margins let the bar span the TaskShell card edge-to-edge
     // so its backdrop reads as a footer, not a floating strip. md+ (roomy
     // screens) keeps the plain inline row.
+    // Cancel-left / submit-right, matching every dialog footer in the app.
     <div className="sticky bottom-0 z-10 -mx-5 -mb-5 mt-2 flex items-center gap-3 border-t border-navy-secondary bg-navy/95 px-5 py-3 backdrop-blur pb-[max(0.75rem,env(safe-area-inset-bottom))] md:static md:z-auto md:mx-0 md:mb-0 md:border-t-0 md:bg-transparent md:p-0 md:pt-2 md:backdrop-blur-none">
-      <Button type="submit" loading={submitting} disabled={submitting}>
-        {submitting ? 'Saving…' : label}
-      </Button>
       <Link to={backTo} className="text-sm text-silver hover:text-white">
         Cancel
       </Link>
+      <Button type="submit" loading={submitting} disabled={submitting}>
+        {submitting ? 'Saving…' : label}
+      </Button>
     </div>
   );
 }

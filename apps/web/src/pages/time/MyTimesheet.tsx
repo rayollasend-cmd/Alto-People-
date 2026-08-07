@@ -33,6 +33,8 @@ import {
   DialogTitle,
 } from '@/components/ui/Dialog';
 import { Badge } from '@/components/ui/Badge';
+import { statusTone } from '@/lib/status';
+import { TIME_ENTRY_STATUS_TONES } from '@/lib/timeLabels';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -53,21 +55,13 @@ import { cn } from '@/lib/cn';
  * a hallway conversation.
  */
 
+// Labels stay i18n keys (this page is translated); tones come from the
+// shared vocabulary with the time-domain overrides (see lib/timeLabels.ts).
 const STATUS_KEY: Record<TimeEntry['status'], MessageKey> = {
   ACTIVE: 'time.status.ACTIVE',
   COMPLETED: 'time.status.COMPLETED',
   APPROVED: 'time.status.APPROVED',
   REJECTED: 'time.status.REJECTED',
-};
-
-const STATUS_VARIANT: Record<
-  TimeEntry['status'],
-  'success' | 'pending' | 'destructive' | 'accent'
-> = {
-  ACTIVE: 'accent',
-  COMPLETED: 'pending',
-  APPROVED: 'success',
-  REJECTED: 'destructive',
 };
 
 const WEEK_REGULAR_CAP_MIN = 40 * 60;
@@ -406,7 +400,7 @@ export function MyTimesheet() {
                               >
                                 {fmtH(e.netMinutes ?? e.minutesElapsed)}
                               </span>
-                              <Badge variant={STATUS_VARIANT[e.status]}>
+                              <Badge variant={statusTone(e.status, { overrides: TIME_ENTRY_STATUS_TONES })}>
                                 {t(STATUS_KEY[e.status])}
                               </Badge>
                             </div>
@@ -448,7 +442,7 @@ function TimesheetStat({
       </div>
       <div
         className={cn(
-          'font-display text-2xl tabular-nums mt-0.5',
+          'text-2xl tabular-nums mt-0.5',
           tone === 'success' && 'text-success',
           tone === 'gold' && 'text-gold',
           tone === 'muted' && 'text-silver',

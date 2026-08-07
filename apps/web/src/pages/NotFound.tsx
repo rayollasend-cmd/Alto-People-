@@ -11,7 +11,7 @@ export function NotFound() {
           <Compass className="h-7 w-7 text-silver" aria-hidden="true" />
         </div>
         <div className="space-y-1">
-          <h1 className="font-display text-2xl text-white">Page not found</h1>
+          <h1 className="text-2xl text-white">Page not found</h1>
           <p className="text-sm text-silver">
             Nothing lives at <span className="font-mono text-silver/90">{pathname}</span>.
             It may have moved, or the link could be out of date.

@@ -25,6 +25,9 @@ import type {
   Shift,
   ShiftAssignInput,
   ShiftCancelInput,
+  ShiftRateDefault,
+  ShiftRateDefaultInput,
+  ShiftRateDefaultListResponse,
   ShiftConflictsResponse,
   ShiftCreateInput,
   ShiftListResponse,
@@ -456,5 +459,30 @@ export function autoScheduleWeek(
   return apiFetch<AutoScheduleWeekResponse>('/scheduling/auto-schedule-week', {
     method: 'POST',
     body,
+  });
+}
+
+/* ----- Pay-rate defaults per (client, position) -------------------------- */
+
+export function listRateDefaults(
+  clientId: string,
+): Promise<ShiftRateDefaultListResponse> {
+  return apiFetch<ShiftRateDefaultListResponse>(
+    `/scheduling/rate-defaults?clientId=${encodeURIComponent(clientId)}`,
+  );
+}
+
+export function upsertRateDefault(
+  body: ShiftRateDefaultInput,
+): Promise<ShiftRateDefault> {
+  return apiFetch<ShiftRateDefault>('/scheduling/rate-defaults', {
+    method: 'PUT',
+    body,
+  });
+}
+
+export function deleteRateDefault(id: string): Promise<void> {
+  return apiFetch<void>(`/scheduling/rate-defaults/${id}`, {
+    method: 'DELETE',
   });
 }

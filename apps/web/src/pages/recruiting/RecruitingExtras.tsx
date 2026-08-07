@@ -34,8 +34,8 @@ import { downloadCsv } from '@/lib/csv';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
+import { StatusBadge, statusLabel } from '@/lib/status';
 import {
-  Badge,
   Button,
   Card,
   CardContent,
@@ -561,23 +561,11 @@ function NewKitDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
 
 // ----- Offers -----------------------------------------------------------
 
-const OFFER_BADGE: Record<OfferRecord['status'], 'default' | 'success' | 'pending' | 'destructive' | 'accent'> = {
-  DRAFT: 'default',
-  SENT: 'accent',
-  ACCEPTED: 'success',
-  DECLINED: 'destructive',
-  EXPIRED: 'destructive',
-  WITHDRAWN: 'destructive',
-};
-
-const OFFER_STATUS_LABELS: Record<OfferRecord['status'], string> = {
-  DRAFT: 'Draft',
-  SENT: 'Sent',
-  ACCEPTED: 'Accepted',
-  DECLINED: 'Declined',
-  EXPIRED: 'Expired',
-  WITHDRAWN: 'Withdrawn',
-};
+// Deliberate departures from the shared vocabulary: a SENT offer is awaiting
+// the candidate's decision — an in-flight spotlight state (gold), not the
+// vocabulary's dispatched-successfully green. ACCEPTED is domain-only
+// terminal-good.
+const OFFER_STATUS_TONES = { SENT: 'accent', ACCEPTED: 'success' } as const;
 
 function OffersTab({ canManage }: { canManage: boolean }) {
   const [offers, setOffers] = useState<OfferRecord[] | null>(null);
@@ -615,7 +603,7 @@ function OffersTab({ canManage }: { canManage: boolean }) {
         o.salary ?? '',
         o.hourlyRate ?? '',
         o.currency,
-        OFFER_STATUS_LABELS[o.status],
+        statusLabel(o.status),
         o.sentAt ? fmtDateTime(o.sentAt) : '',
         o.decidedAt ? fmtDateTime(o.decidedAt) : '',
       ]),
@@ -639,7 +627,7 @@ function OffersTab({ canManage }: { canManage: boolean }) {
   const onDecide = async (id: string, decision: 'ACCEPTED' | 'DECLINED' | 'WITHDRAWN') => {
     try {
       await decideOffer(id, decision);
-      toast.success(`Offer ${OFFER_STATUS_LABELS[decision].toLowerCase()}.`);
+      toast.success(`Offer ${statusLabel(decision).toLowerCase()}.`);
       refresh();
     } catch (err) {
       toast.error(errMessage(err, 'Could not record the decision.'));
@@ -729,9 +717,7 @@ function OffersTab({ canManage }: { canManage: boolean }) {
                           : '—'}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={OFFER_BADGE[o.status]}>
-                        {OFFER_STATUS_LABELS[o.status]}
-                      </Badge>
+                      <StatusBadge status={o.status} overrides={OFFER_STATUS_TONES} />
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && o.status === 'DRAFT' && (
@@ -918,19 +904,7 @@ function NewOfferDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: ()
 
 // ----- Referrals --------------------------------------------------------
 
-const REF_BADGE: Record<ReferralStatus, 'default' | 'success' | 'pending' | 'destructive' | 'accent'> = {
-  OPEN: 'pending',
-  INTERVIEWING: 'accent',
-  HIRED: 'success',
-  REJECTED: 'destructive',
-};
-
-const REF_STATUS_LABELS: Record<ReferralStatus, string> = {
-  OPEN: 'Open',
-  INTERVIEWING: 'Interviewing',
-  HIRED: 'Hired',
-  REJECTED: 'Rejected',
-};
+const REF_STATUSES: ReferralStatus[] = ['OPEN', 'INTERVIEWING', 'HIRED', 'REJECTED'];
 
 function ReferralsTab({ canManage }: { canManage: boolean }) {
   const [referrals, setReferrals] = useState<ReferralRecord[] | null>(null);
@@ -1035,9 +1009,7 @@ function ReferralsTab({ canManage }: { canManage: boolean }) {
                     <TableCell className="hidden md:table-cell">{r.position ?? '—'}</TableCell>
                     <TableCell className="text-xs hidden lg:table-cell">{r.referrerEmail}</TableCell>
                     <TableCell>
-                      <Badge variant={REF_BADGE[r.status]}>
-                        {REF_STATUS_LABELS[r.status]}
-                      </Badge>
+                      <StatusBadge status={r.status} />
                     </TableCell>
                     <TableCell className="hidden md:table-cell text-right tabular-nums whitespace-nowrap">
                       {r.bonusAmount
@@ -1053,11 +1025,9 @@ function ReferralsTab({ canManage }: { canManage: boolean }) {
                             value={r.status}
                             onChange={(e) => onStatus(r.id, e.target.value as ReferralStatus)}
                           >
-                            {(
-                              Object.keys(REF_STATUS_LABELS) as ReferralStatus[]
-                            ).map((s) => (
+                            {REF_STATUSES.map((s) => (
                               <option key={s} value={s}>
-                                {REF_STATUS_LABELS[s]}
+                                {statusLabel(s)}
                               </option>
                             ))}
                           </Select>
@@ -1217,20 +1187,6 @@ function NewReferralDrawer({
 
 // DRAFT is the canonical "default" chip; CLOSED is a settled, de-emphasised
 // terminal state, so it reads as an outline rather than a warning.
-const POSTING_BADGE: Record<
-  JobPostingRecord['status'],
-  'default' | 'success' | 'outline'
-> = {
-  DRAFT: 'default',
-  OPEN: 'success',
-  CLOSED: 'outline',
-};
-
-const POSTING_STATUS_LABELS: Record<JobPostingRecord['status'], string> = {
-  DRAFT: 'Draft',
-  OPEN: 'Open',
-  CLOSED: 'Closed',
-};
 
 function PostingsTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
@@ -1341,9 +1297,7 @@ function PostingsTab({ canManage }: { canManage: boolean }) {
                         : '—'}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={POSTING_BADGE[p.status]}>
-                        {POSTING_STATUS_LABELS[p.status]}
-                      </Badge>
+                      <StatusBadge status={p.status} />
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       {canManage && p.status === 'DRAFT' && (

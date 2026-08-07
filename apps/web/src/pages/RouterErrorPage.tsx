@@ -26,7 +26,7 @@ export function RouterErrorPage() {
         <div className="mx-auto mb-5 h-14 w-14 rounded-full bg-alert/15 border border-alert/30 grid place-items-center">
           <AlertOctagon className="h-7 w-7 text-alert" aria-hidden="true" />
         </div>
-        <h1 className="font-display text-2xl text-white mb-2">{headline}</h1>
+        <h1 className="text-2xl text-white mb-2">{headline}</h1>
         <p className="text-sm text-silver mb-1">
           The page hit an unexpected error and couldn&apos;t load.
         </p>

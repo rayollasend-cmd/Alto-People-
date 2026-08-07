@@ -106,7 +106,7 @@ export function AssociateReviewsView() {
                   <div className="text-xs uppercase tracking-widest text-silver">
                     {fmtDate(parseYmd(r.periodStart))} → {fmtDate(parseYmd(r.periodEnd))}
                   </div>
-                  <div className="font-display text-2xl text-gold tabular-nums">
+                  <div className="text-2xl text-gold tabular-nums">
                     {ratingStars(r.overallRating)}
                   </div>
                 </div>

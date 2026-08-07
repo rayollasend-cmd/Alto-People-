@@ -1,6 +1,8 @@
 import { useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Sparkles, X } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
 
 /**
@@ -9,29 +11,35 @@ import { Button } from '@/components/ui/Button';
  * localStorage. Newest entry first; bump `id` when adding one, and the
  * card resurfaces for everyone exactly once.
  *
+ * Only rendered on the home dashboard: it's a "since you were last here"
+ * greeting, not page chrome, so it shouldn't trail the user onto every
+ * route and overlap their work.
+ *
  * Deliberately not a modal: release notes should never block work.
  */
 
 const SEEN_KEY = 'alto.whatsnew.seen.v1';
 
 interface ChangelogBullet {
-  text: string;
+  /** Literal English copy — admin-only bullets (admin UI is English). */
+  text?: string;
+  /** i18n key — associate-visible bullets translate through the dictionary. */
+  key?: MessageKey;
   /** Only shown to users who can manage scheduling — an associate on a
    *  phone has no sidebar to hover or ⌘K to press, and reading about
-   *  admin features they can't touch is noise, not news. */
+   *  admin features they can't touch is noise, not news. Admin-facing
+   *  copy stays English by the app's i18n boundary. */
   adminOnly?: boolean;
 }
 
 interface ChangelogEntry {
   id: string;
-  title: string;
   bullets: ChangelogBullet[];
 }
 
 const CHANGELOG: ChangelogEntry[] = [
   {
     id: '2026-07-02',
-    title: 'New this week',
     bullets: [
       {
         text: 'Pin your most-used pages — hover a sidebar item and tap the star.',
@@ -45,10 +53,8 @@ const CHANGELOG: ChangelogEntry[] = [
         text: 'Approvals now show a live count badge and update instantly.',
         adminOnly: true,
       },
-      {
-        text: "You'll get “Your week ahead” the evening before your work week starts.",
-      },
-      { text: 'La aplicación ahora habla español — cámbialo en el menú.' },
+      { key: 'whatsnew.weekAhead' },
+      { key: 'whatsnew.espanol' },
     ],
   },
 ];
@@ -66,7 +72,13 @@ function latestUnseen(): ChangelogEntry | null {
 
 export function WhatsNew() {
   const { can } = useAuth();
+  const { t } = useI18n();
+  const location = useLocation();
   const [entry, setEntry] = useState<ChangelogEntry | null>(() => latestUnseen());
+
+  // Home only — this is a "welcome back" note, not something that should
+  // shadow the user onto Payroll, Scheduling, etc.
+  if (location.pathname !== '/') return null;
   if (!entry) return null;
 
   const isAdmin = can('manage:scheduling');
@@ -91,7 +103,7 @@ export function WhatsNew() {
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-1.5 text-2xs uppercase tracking-widest text-gold">
           <Sparkles className="h-3 w-3" aria-hidden="true" />
-          {entry.title}
+          {t('whatsnew.title')}
         </div>
         <Button
           variant="ghost"
@@ -104,17 +116,20 @@ export function WhatsNew() {
         </Button>
       </div>
       <ul className="mt-2 space-y-1.5 text-sm text-silver">
-        {bullets.map((b) => (
-          <li key={b.text} className="flex gap-2">
-            <span className="text-gold" aria-hidden="true">
-              ·
-            </span>
-            <span>{b.text}</span>
-          </li>
-        ))}
+        {bullets.map((b) => {
+          const label = b.key ? t(b.key) : b.text ?? '';
+          return (
+            <li key={b.key ?? b.text} className="flex gap-2">
+              <span className="text-gold" aria-hidden="true">
+                ·
+              </span>
+              <span>{label}</span>
+            </li>
+          );
+        })}
       </ul>
       <Button size="sm" variant="secondary" className="mt-3 w-full" onClick={dismiss}>
-        Got it
+        {t('common.gotIt')}
       </Button>
     </div>
   );
