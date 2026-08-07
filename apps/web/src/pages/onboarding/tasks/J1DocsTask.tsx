@@ -9,7 +9,7 @@ import {
   listMyDocuments,
   uploadMyDocument,
 } from '@/lib/documentsApi';
-import { finishJ1Docs, saveJ1Profile } from '@/lib/onboardingApi';
+import { finishJ1Docs, getJ1Profile, saveJ1Profile } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { TaskShell, inputCls, Field } from './ProfileInfoTask';
@@ -85,6 +85,35 @@ export function J1DocsTask() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Hydrate the saved profile so a revisit (or the checklist's
+  // "Review / edit") shows what's on file instead of a blank form with a
+  // disabled Finish button — the DS-2019 number, SEVIS ID, and program
+  // dates were being retyped from memory, typos overwriting good data.
+  useEffect(() => {
+    if (!applicationId) return;
+    let cancelled = false;
+    void getJ1Profile(applicationId)
+      .then((r) => {
+        if (cancelled || !r.profile) return;
+        const p = r.profile;
+        setProgramStartDate(p.programStartDate.slice(0, 10));
+        setProgramEndDate(p.programEndDate.slice(0, 10));
+        setDs2019Number(p.ds2019Number);
+        setSponsorAgency(p.sponsorAgency);
+        setCountry(p.country);
+        setVisaNumber(p.visaNumber ?? '');
+        setSevisId(p.sevisId ?? '');
+        setProfileSaved(true);
+      })
+      .catch(() => {
+        // Hydration is best-effort — the blank form still works for a
+        // first visit; a revisit can re-save.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [applicationId]);
 
   const j1Docs = (docs ?? []).filter(
     (d) => d.kind === 'J1_DS2019' || d.kind === 'J1_VISA'

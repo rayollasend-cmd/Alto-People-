@@ -556,7 +556,10 @@ function NewSurveyDrawer({
         audience,
         audienceDepartmentId: audience === 'BY_DEPARTMENT' ? audienceId : null,
         audienceClientId: audience === 'BY_CLIENT' ? audienceId : null,
-        openHours,
+        // Clamp to the schema's bounds (int, 1..720h) — the free number
+        // input accepted 800 or 1.5, previewed a close date for it, then
+        // 400'd on send.
+        openHours: Math.min(720, Math.max(1, Math.round(openHours))),
       });
       toast.success('Survey sent — the audience has been notified.');
       onSaved();

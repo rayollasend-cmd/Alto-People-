@@ -1850,40 +1850,6 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   // 0. Idempotency short-circuit. If the kiosk is replaying a punch it
   // sent before (e.g., the previous response timed out), we don't want
   // to double-clock. Look up the original by idempotencyKey.
-  if (input.idempotencyKey) {
-    // PERF: select — include would pull the stored selfie bytes on every
-    // offline-queue replay.
-    const prior = await prisma.kioskPunch.findUnique({
-      where: { idempotencyKey: input.idempotencyKey },
-      select: {
-        id: true,
-        action: true,
-        rejectReason: true,
-        createdAt: true,
-        timeEntry: { select: { id: true, updatedAt: true } },
-        associate: { select: { firstName: true, lastName: true } },
-      },
-    });
-    if (prior) {
-      if (prior.action === 'REJECTED') {
-        throw new HttpError(
-          409,
-          'previously_rejected',
-          `This punch was previously rejected: ${prior.rejectReason ?? 'unknown'}`,
-        );
-      }
-      res.json({
-        action: prior.action,
-        associateName: prior.associate
-          ? `${prior.associate.firstName} ${prior.associate.lastName}`
-          : 'unknown',
-        at: (prior.timeEntry?.updatedAt ?? prior.createdAt).toISOString(),
-        punchId: prior.id,
-      });
-      return;
-    }
-  }
-
   // clientPunchedAt is validated AFTER device resolution (step 1b2 below)
   // so a rejection can be recorded against the device. It used to be
   // checked here — before we knew which device was calling — which meant a
@@ -1928,6 +1894,56 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   // version locked whole sites out over fat-fingered PINs; see the
   // rationale in lib/kioskRateLimit.ts.
   enforcePunchRateLimit(device.id);
+
+  // 1c. Offline-queue replay. Deliberately AFTER device auth + expiry +
+  // rate limit — it used to run first, which let an unauthenticated
+  // caller (or a revoked/expired kiosk) probe idempotency keys and read
+  // back another tenant's associateName/punchId with no throttle. Scoped
+  // to THIS device: a key minted on kiosk A never answers from kiosk B.
+  // PERF: select — include would pull the stored selfie bytes on every
+  // offline-queue replay.
+  if (input.idempotencyKey) {
+    const prior = await prisma.kioskPunch.findUnique({
+      where: { idempotencyKey: input.idempotencyKey },
+      select: {
+        id: true,
+        kioskDeviceId: true,
+        action: true,
+        rejectReason: true,
+        createdAt: true,
+        timeEntry: { select: { id: true, updatedAt: true } },
+        associate: { select: { firstName: true, lastName: true } },
+      },
+    });
+    if (prior && prior.kioskDeviceId !== device.id) {
+      // Same key, different device (e.g. a tablet wiped and re-registered
+      // as a new row replaying its old queue). Processing it fresh would
+      // trip the unique index and 500 — refuse explicitly instead.
+      throw new HttpError(
+        409,
+        'idempotency_key_conflict',
+        'This queued punch was already recorded by a different kiosk registration.',
+      );
+    }
+    if (prior && prior.kioskDeviceId === device.id) {
+      if (prior.action === 'REJECTED') {
+        throw new HttpError(
+          409,
+          'previously_rejected',
+          `This punch was previously rejected: ${prior.rejectReason ?? 'unknown'}`,
+        );
+      }
+      res.json({
+        action: prior.action,
+        associateName: prior.associate
+          ? `${prior.associate.firstName} ${prior.associate.lastName}`
+          : 'unknown',
+        at: (prior.timeEntry?.updatedAt ?? prior.createdAt).toISOString(),
+        punchId: prior.id,
+      });
+      return;
+    }
+  }
   enforcePinBackoff(device.id);
 
   // 1b2. Validate clientPunchedAt now that we know the device. A punch
@@ -2474,6 +2490,21 @@ kiosk99Router.post('/kiosk/punch/:id/face', async (req, res) => {
   if (!device) {
     throw new HttpError(401, 'invalid_device', 'Device not registered.');
   }
+  // Same expiry rule as /kiosk/punch and /kiosk/verify-pin — this was the
+  // one device-authed route that skipped it, so a decommissioned tablet's
+  // dead credential could still write selfie bytes and face descriptors
+  // (including first-time enrollment) onto historical punches.
+  if (device.tokenExpiresAt && device.tokenExpiresAt.getTime() < Date.now()) {
+    throw new HttpError(
+      401,
+      'device_token_expired',
+      "This kiosk's device token expired. Re-pair from the admin page.",
+    );
+  }
+  // Own throttle bucket: the selfie upload trails the punch by ~1s, so it
+  // must not share the punch bucket, but it shouldn't be unthrottled
+  // either.
+  enforcePunchRateLimit(device.id, 'face');
 
   const punch = await prisma.kioskPunch.findUnique({
     where: { id: punchId },

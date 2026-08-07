@@ -148,13 +148,22 @@ export function detectAnomalies(input: DetectAnomaliesInput): TimeAnomaly[] {
 }
 
 /** UTC ISO week-start (Sunday 00:00) for the given instant. */
+/**
+ * UTC start-of-week — MONDAY-anchored (ISO), matching the payroll
+ * engine's splitWeeklyOvertime. There is exactly one FLSA workweek in
+ * this codebase; this helper used to anchor on Sunday while payroll paid
+ * Mon–Sun, so the payroll-prep CSV, OT anomaly warnings, and the payroll
+ * sheet (whose comment already claimed Monday) could all disagree with
+ * what the run actually paid — 10h/day Wed–Sun showed 10h OT in payroll
+ * and 0h in the prep sheet.
+ */
 export function startOfWeekUTC(d: Date): Date {
   const c = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  c.setUTCDate(c.getUTCDate() - c.getUTCDay());
+  c.setUTCDate(c.getUTCDate() - ((c.getUTCDay() + 6) % 7));
   return c;
 }
 
-/** UTC end-of-week (next Sunday 00:00) for the given instant. */
+/** UTC end-of-week (next Monday 00:00) for the given instant. */
 export function endOfWeekUTC(d: Date): Date {
   const start = startOfWeekUTC(d);
   const end = new Date(start);

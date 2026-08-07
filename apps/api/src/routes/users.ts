@@ -389,6 +389,24 @@ usersRouter.post(
       throw new HttpError(404, 'not_found', 'User not found.');
     }
 
+    // Same principle as the PATCH role-escalation guard: acting on an
+    // account MORE privileged than your own is off-limits. Without this,
+    // any view-only holder of view:hr-admin (e.g. EXECUTIVE_CHAIRMAN,
+    // which has zero manage:* capabilities) could bump tokenVersion on
+    // every HR_ADMINISTRATOR — killing all their sessions repeatedly —
+    // and mint reset links for them.
+    const callerCaps = ROLE_CAPABILITIES[req.user!.role];
+    const beyondCaller = [...ROLE_CAPABILITIES[target.role]].filter(
+      (c) => !callerCaps.has(c),
+    );
+    if (beyondCaller.length > 0) {
+      throw new HttpError(
+        403,
+        'target_more_privileged',
+        'You can only force a password reset for accounts at or below your own capability level.',
+      );
+    }
+
     const { raw, hash } = generatePasswordResetToken();
     const expiresAt = new Date(Date.now() + PASSWORD_RESET_TTL_SECONDS * 1000);
 

@@ -279,7 +279,10 @@ function GoalsTab() {
     qc.invalidateQueries({ queryKey: perfKeys.goals() });
 
   const onProgress = async (g: Goal, pct: number) => {
-    const clamped = Math.max(0, Math.min(100, pct));
+    // Round — the schema wants an integer, and "62.5" typed into the
+    // number input 400'd with a raw "Expected integer" (the key-result
+    // handler already rounds; this one missed it).
+    const clamped = Math.round(Math.max(0, Math.min(100, pct)));
     if (!Number.isFinite(clamped) || clamped === g.progressPct) return;
     try {
       await updateGoal(g.id, { progressPct: clamped });

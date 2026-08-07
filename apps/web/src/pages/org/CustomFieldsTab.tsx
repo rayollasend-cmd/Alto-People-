@@ -234,9 +234,23 @@ function DefinitionDrawer({
     setError(null);
     setSubmitting(true);
     try {
+      // The server requires keys to START with a letter — sanitize must
+      // strip leading digits/underscores too, or "401k provider" becomes
+      // "401k_provider" and 400s with a message the displayed value
+      // appears to satisfy.
+      const sanitizedKey = key
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, '_')
+        .replace(/^[^a-z]+/, '');
+      if (!sanitizedKey) {
+        toast.error('Key must contain at least one letter.');
+        setSubmitting(false);
+        return;
+      }
       const payload = {
         entityType,
-        key: key.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+        key: sanitizedKey,
         label: label.trim(),
         type,
         isRequired,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -33,7 +33,7 @@ import {
   resendInvite,
 } from '@/lib/onboardingApi';
 import { useConfirm, usePrompt } from '@/lib/confirm';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, parseYmd } from '@/lib/format';
 import { listClients } from '@/lib/clientsApi';
 import type { ClientSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -237,9 +237,16 @@ function idleTone(days: number): string {
 /** Start-date risk chip: unfinished checklist vs. an imminent/past start. */
 function startRisk(a: ApplicationSummary, now: number): 'past' | 'at-risk' | null {
   if (!a.startDate || a.percentComplete >= 100 || isTerminal(a)) return null;
-  const startMs = new Date(a.startDate).getTime();
-  if (startMs < now) return 'past';
-  if (startMs - now <= 7 * ONE_DAY_MS) return 'at-risk';
+  // startDate is a calendar date (YYYY-MM-DD). new Date() on it parses
+  // UTC midnight, which flipped "past start" the evening BEFORE the real
+  // start west of UTC while the adjacent fmtDate showed the correct day.
+  // Anchor at LOCAL end-of-day: a start date is only "past" once that
+  // whole day has elapsed for the viewer.
+  const d = parseYmd(a.startDate);
+  if (!d) return null;
+  const endOfStartDay = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+  if (endOfStartDay < now) return 'past';
+  if (d.getTime() - now <= 7 * ONE_DAY_MS) return 'at-risk';
   return null;
 }
 
@@ -376,7 +383,14 @@ export function ApplicationsList() {
     isInvitedWindow,
   );
 
+  // Sequence guard: changing a filter while on page > 1 fires two fetches
+  // (this effect with the stale page, then the page-reset effect with
+  // page 1). Without the guard, whichever response lands LAST wins — a
+  // stale page-5 result could blank the list with "no applications match"
+  // even though page 1 has rows. Same pattern as AdminTimeView.
+  const listReqSeq = useRef(0);
   const refresh = useCallback(() => {
+    const seq = ++listReqSeq.current;
     setError(null);
     listApplications({
       status,
@@ -387,12 +401,14 @@ export function ApplicationsList() {
       pageSize: PAGE_SIZE,
     })
       .then((res) => {
+        if (seq !== listReqSeq.current) return; // newer request in flight
         setItems(res.applications);
         setFilteredTotal(res.total);
       })
-      .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Failed to load.')
-      );
+      .catch((err) => {
+        if (seq !== listReqSeq.current) return;
+        setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      });
   }, [status, urlQ, clientId, invitedWindow, page]);
 
   // Roll-up stats for KPIs / banners / chip counts. Tiny payload (counts +

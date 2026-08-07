@@ -409,11 +409,16 @@ export function PeopleDirectory() {
       dropParam();
       return;
     }
-    if (!deepLinkRetried.current && (status || clientId || locationId)) {
+    if (
+      !deepLinkRetried.current &&
+      (status || clientId || locationId || departmentId || employmentType || q)
+    ) {
       deepLinkRetried.current = true;
-      setStatus('');
-      setClientId('');
-      setLocationId('');
+      // Clear EVERY narrowing filter — a persisted employmentType (or a
+      // live search/department filter) hid deep-link targets just as
+      // effectively as the three this used to reset, e.g. any 1099
+      // contractor while the saved filter was W-2.
+      clearAllFilters();
       toast('Cleared filters to show this person.');
       return;
     }
@@ -428,6 +433,9 @@ export function PeopleDirectory() {
     status,
     clientId,
     locationId,
+    departmentId,
+    employmentType,
+    q,
     setStatus,
     setClientId,
   ]);
@@ -462,21 +470,42 @@ export function PeopleDirectory() {
     setEmploymentType('');
   };
 
-  // Serializes exactly what the user is looking at — the current
-  // (server-filtered) rows, not the whole directory.
-  const exportCsv = () => {
-    if (!rows || rows.length === 0) return;
-    downloadCsv(`people-${ymdLocal()}.csv`, [
-      ['Name', 'Status', 'Email', 'Workplace', 'Type', 'Start date'],
-      ...rows.map((r) => [
-        `${r.firstName} ${r.lastName}`,
-        statusLabel(r.status),
-        r.email,
-        r.workplaceClientName ?? '',
-        EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
-        r.startDate ?? '',
-      ]),
-    ]);
+  // Serializes the ENTIRE filtered directory, not just the pages the
+  // admin happened to scroll through — the old version exported loaded
+  // rows only, so a headcount export from a >1-page directory silently
+  // missed everyone past the first page.
+  const [exporting, setExporting] = useState(false);
+  const exportCsv = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const all: DirectoryEntry[] = [];
+      let cursor: string | undefined;
+      do {
+        const res = await listDirectory({
+          ...filters,
+          ...(cursor ? { cursor } : {}),
+        });
+        all.push(...res.associates);
+        cursor = res.nextCursor ?? undefined;
+      } while (cursor);
+      if (all.length === 0) return;
+      downloadCsv(`people-${ymdLocal()}.csv`, [
+        ['Name', 'Status', 'Email', 'Workplace', 'Type', 'Start date'],
+        ...all.map((r) => [
+          `${r.firstName} ${r.lastName}`,
+          statusLabel(r.status),
+          r.email,
+          r.workplaceClientName ?? '',
+          EMPLOYMENT_LABEL[r.employmentType] ?? r.employmentType,
+          r.startDate ?? '',
+        ]),
+      ]);
+    } catch {
+      toast.error('Export failed — try again.');
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -497,20 +526,26 @@ export function PeopleDirectory() {
           <Button
             variant="outline"
             onClick={exportCsv}
-            disabled={!rows || rows.length === 0}
-            title="Download the current filtered list as CSV"
+            disabled={!rows || rows.length === 0 || exporting}
+            title="Download the current filtered list as CSV (all pages)"
           >
             <Download className="h-3.5 w-3.5" />
-            Export CSV
+            {exporting ? 'Exporting…' : 'Export CSV'}
           </Button>
         }
       />
 
-      {/* KPI strip */}
+      {/* KPI strip. Counts cover the pages loaded so far; the "+" is the
+          honest signal that more exist beyond the fetch horizon (status
+          is derived server-side per page, so exact totals would need a
+          full walk on every filter change). */}
       {stats && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <MetricCard label="Total" value={stats.total} />
-          <MetricCard label="Active" value={stats.ACTIVE} />
+          <MetricCard
+            label={hasNextPage ? 'Total (loaded)' : 'Total'}
+            value={hasNextPage ? `${stats.total}+` : stats.total}
+          />
+          <MetricCard label="Active" value={hasNextPage ? `${stats.ACTIVE}+` : stats.ACTIVE} />
           {/* Interactive tile: toggles the Pending status filter. Wrapped
               outside MetricCard so the canonical tile stays presentational. */}
           <button
@@ -529,12 +564,15 @@ export function PeopleDirectory() {
           >
             <MetricCard
               label="Pending onboarding"
-              value={stats.PENDING}
+              value={hasNextPage ? `${stats.PENDING}+` : stats.PENDING}
               accent={stats.PENDING > 0}
               className="h-full"
             />
           </button>
-          <MetricCard label="Inactive" value={stats.INACTIVE} />
+          <MetricCard
+            label="Inactive"
+            value={hasNextPage ? `${stats.INACTIVE}+` : stats.INACTIVE}
+          />
         </div>
       )}
 

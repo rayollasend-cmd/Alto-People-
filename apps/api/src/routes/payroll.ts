@@ -2793,8 +2793,10 @@ payrollRouter.get('/runs/:runId/paystubs.zip', async (req, res, next) => {
     });
     if (!run) throw new HttpError(404, 'run_not_found', 'Payroll run not found');
 
+    // No cap: this ZIP is finance's "every stub in the run" artifact —
+    // take:100 silently truncated runs with more than 100 people and the
+    // file read as complete.
     const items = await prisma.payrollItem.findMany({
-      take: 100,
       where: { payrollRunId: run.id },
       include: paystubItemInclude(),
       orderBy: { associate: { lastName: 'asc' } },

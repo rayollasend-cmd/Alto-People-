@@ -48,16 +48,28 @@ export function W4Task() {
   // the associate to retype an already-encrypted SSN.
   useEffect(() => {
     if (!applicationId) return;
-    void getW4(applicationId).then((s) => {
-      setStatus(s);
-      setCardOnFile(!!s.hasSsnCardOnFile);
-      if (s.filingStatus) setFilingStatus(s.filingStatus);
-      setMultipleJobs(s.multipleJobs);
-      if (s.dependentsAmount != null) setDependents(s.dependentsAmount);
-      if (s.otherIncome != null) setOtherIncome(s.otherIncome);
-      if (s.deductions != null) setDeductions(s.deductions);
-      if (s.extraWithholding != null) setExtraWithholding(s.extraWithholding);
-    });
+    void getW4(applicationId)
+      .then((s) => {
+        setStatus(s);
+        setCardOnFile(!!s.hasSsnCardOnFile);
+        if (s.filingStatus) setFilingStatus(s.filingStatus);
+        setMultipleJobs(s.multipleJobs);
+        if (s.dependentsAmount != null) setDependents(s.dependentsAmount);
+        if (s.otherIncome != null) setOtherIncome(s.otherIncome);
+        if (s.deductions != null) setDeductions(s.deductions);
+        if (s.extraWithholding != null) setExtraWithholding(s.extraWithholding);
+      })
+      .catch((err) => {
+        // A failed hydration must NOT fall through to a blank form: the
+        // associate would see factory defaults, believe that's what's on
+        // file, and resubmit zeroed elections over their real ones (the
+        // null status also silently bypassed the SSN-card resubmit gate).
+        setError(
+          err instanceof ApiError
+            ? `Could not load what's on file: ${err.message}. Reload the page before making changes.`
+            : "Could not load what's on file. Reload the page before making changes.",
+        );
+      });
   }, [applicationId]);
 
   const ssnOnFile = !!status?.hasSsnOnFile;

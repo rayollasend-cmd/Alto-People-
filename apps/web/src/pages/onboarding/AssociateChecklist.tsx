@@ -116,9 +116,22 @@ export function AssociateChecklist() {
   }, [refresh]);
 
   if (error) {
+    // A new hire's primary surface must never dead-end: the single fetch
+    // used to fail (cold backend, flaky signal) into a bare banner with
+    // no way back except knowing to hard-reload the browser.
     return (
-      <div className="mx-auto">
+      <div className="mx-auto space-y-4">
         <ErrorBanner>{error}</ErrorBanner>
+        <button
+          type="button"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-gold text-navy text-sm font-semibold hover:bg-gold-bright transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          onClick={() => {
+            setError(null);
+            void refresh();
+          }}
+        >
+          Try again
+        </button>
       </div>
     );
   }
