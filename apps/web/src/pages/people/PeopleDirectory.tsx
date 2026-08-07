@@ -3390,6 +3390,26 @@ function PaymentEditorDialog({
     return Number.isFinite(n) && n >= 0 ? n : undefined; // undefined = invalid
   };
 
+  // Picking a start fills the end (and pay date) from the pay cadence:
+  // the associate's own last period length when there's history, else
+  // biweekly (14 days) — the org's standard cycle. New records only; when
+  // EDITING, a start correction must never silently move the end the
+  // auditor already saw. End and pay date stay directly editable.
+  const cadenceDays = lastPayment
+    ? Math.max(1, daysBetweenYmd(lastPayment.periodStart, lastPayment.periodEnd))
+    : 13;
+  const payDateOffset = lastPayment?.payDate
+    ? daysBetweenYmd(lastPayment.periodEnd, lastPayment.payDate)
+    : null;
+  const handleStartChange = (v: string) => {
+    setPeriodStart(v);
+    if (!payment && v) {
+      const end = addDaysYmd(v, cadenceDays);
+      setPeriodEnd(end);
+      if (payDateOffset !== null) setPayDate(addDaysYmd(end, payDateOffset));
+    }
+  };
+
   const submit = async () => {
     setError(null);
     if (!periodStart || !periodEnd) {
@@ -3474,10 +3494,13 @@ function PaymentEditorDialog({
               <Input
                 type="date"
                 value={periodStart}
-                onChange={(e) => setPeriodStart(e.target.value)}
+                onChange={(e) => handleStartChange(e.target.value)}
               />
             </Field>
-            <Field label="Period end">
+            <Field
+              label="Period end"
+              hint={payment ? undefined : 'Fills automatically from the start date'}
+            >
               <Input
                 type="date"
                 value={periodEnd}
