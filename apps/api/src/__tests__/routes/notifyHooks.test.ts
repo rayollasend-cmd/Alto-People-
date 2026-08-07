@@ -317,7 +317,13 @@ describe('Notification hooks', () => {
     expect(emails).toHaveLength(expectedFanOut);
     expect(emails.every((n) => n.status === 'SENT')).toBe(true);
 
-    // Trigger again; submittedAt is now stamped so notify is a no-op.
+    // Trigger again. The COMPLETION fan-out is deduped via submittedAt —
+    // but since the applicant is editing a SUBMITTED application, this
+    // second POST legitimately fires the once-per-cycle "updated after
+    // submission" reviewer alert (flagPostSubmissionEdit, PR #288). So:
+    // completion rows stay at expectedFanOut, plus exactly one edit-alert
+    // fan-out on top.
+    const UPDATED_SUBJECT = 'Application updated after submission';
     const r2 = await aA.post(`/onboarding/applications/${w.application.id}/profile`).send({
       firstName: 'Maria',
       lastName: 'Lopez',
@@ -331,7 +337,14 @@ describe('Notification hooks', () => {
         channel: 'IN_APP',
       },
     });
-    expect(inApp, 'submittedAt dedupe must prevent a second IN_APP fan-out').toHaveLength(expectedFanOut);
+    expect(
+      inApp.filter((n) => n.subject !== UPDATED_SUBJECT),
+      'submittedAt dedupe must prevent a second COMPLETION IN_APP fan-out',
+    ).toHaveLength(expectedFanOut);
+    expect(
+      inApp.filter((n) => n.subject === UPDATED_SUBJECT),
+      'post-submission edit alerts every reviewer once',
+    ).toHaveLength(expectedFanOut);
 
     emails = await prisma.notification.findMany({
       where: {
@@ -340,12 +353,36 @@ describe('Notification hooks', () => {
         channel: 'EMAIL',
       },
     });
-    expect(emails, 'submittedAt dedupe must prevent a second email fan-out').toHaveLength(expectedFanOut);
+    expect(
+      emails.filter((n) => n.subject !== UPDATED_SUBJECT),
+      'submittedAt dedupe must prevent a second COMPLETION email fan-out',
+    ).toHaveLength(expectedFanOut);
+
+    // A THIRD edit must not re-alert: updatedAfterSubmitAt is stamped, so
+    // the edit-alert dedupe holds until the next review cycle.
+    const r3 = await aA.post(`/onboarding/applications/${w.application.id}/profile`).send({
+      firstName: 'Maria',
+      lastName: 'Lopez',
+    });
+    expect(r3.status).toBe(204);
+    await flushPendingNotifications();
+    inApp = await prisma.notification.findMany({
+      where: {
+        recipientUserId: { in: w.allAdminIds },
+        category: 'onboarding',
+        channel: 'IN_APP',
+      },
+    });
+    expect(
+      inApp.filter((n) => n.subject === UPDATED_SUBJECT),
+      'edit alert fires once per review cycle, not per edit',
+    ).toHaveLength(expectedFanOut);
 
     const refreshed = await prisma.application.findUniqueOrThrow({
       where: { id: w.application.id },
-      select: { submittedAt: true },
+      select: { submittedAt: true, updatedAfterSubmitAt: true },
     });
     expect(refreshed.submittedAt).not.toBeNull();
+    expect(refreshed.updatedAfterSubmitAt).not.toBeNull();
   });
 });

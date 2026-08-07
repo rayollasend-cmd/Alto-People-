@@ -1887,21 +1887,15 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     );
   }
 
-  // 1b. Rate limit. Throws 429 if the device has punched in the last
-  // second. Runs AFTER device verification (so an attacker can't burn
-  // cycles with garbage tokens) but before any DB writes. NOTE: there is
-  // deliberately NO brute-force PIN lockout — an earlier 3-strikes/5-min
-  // version locked whole sites out over fat-fingered PINs; see the
-  // rationale in lib/kioskRateLimit.ts.
-  enforcePunchRateLimit(device.id);
-
-  // 1c. Offline-queue replay. Deliberately AFTER device auth + expiry +
-  // rate limit — it used to run first, which let an unauthenticated
-  // caller (or a revoked/expired kiosk) probe idempotency keys and read
-  // back another tenant's associateName/punchId with no throttle. Scoped
-  // to THIS device: a key minted on kiosk A never answers from kiosk B.
-  // PERF: select — include would pull the stored selfie bytes on every
-  // offline-queue replay.
+  // 1b. Offline-queue replay. Deliberately AFTER device auth + expiry —
+  // it used to run first, which let an unauthenticated caller (or a
+  // revoked/expired kiosk) probe idempotency keys and read back another
+  // tenant's associateName/punchId. But BEFORE the punch throttle: a
+  // queue drain replays many items back-to-back, and replays are cheap
+  // authenticated reads that must not fight the 1/sec punch limit.
+  // Scoped to THIS device: a key minted on kiosk A never answers from
+  // kiosk B. PERF: select — include would pull the stored selfie bytes
+  // on every offline-queue replay.
   if (input.idempotencyKey) {
     const prior = await prisma.kioskPunch.findUnique({
       where: { idempotencyKey: input.idempotencyKey },
@@ -1944,6 +1938,13 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
       return;
     }
   }
+
+  // 1c. Rate limit fresh punches. Throws 429 if the device has punched in
+  // the last second; runs before any DB writes. NOTE: there is
+  // deliberately NO brute-force PIN lockout — an earlier 3-strikes/5-min
+  // version locked whole sites out over fat-fingered PINs; see the
+  // rationale in lib/kioskRateLimit.ts.
+  enforcePunchRateLimit(device.id);
   enforcePinBackoff(device.id);
 
   // 1b2. Validate clientPunchedAt now that we know the device. A punch

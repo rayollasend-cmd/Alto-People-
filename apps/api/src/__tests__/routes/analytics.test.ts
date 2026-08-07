@@ -176,9 +176,11 @@ describe('GET /analytics/dashboard', () => {
 
     // Anchor on UTC week starts so fixtures land in deterministic buckets.
     // Bucket 7 = current (partial) week, 6 = last complete week, 5 = prior.
+    // Monday-anchored (ISO), matching startOfWeekUTC after the workweek
+    // unification — the fixture math must bucket like the route does.
     const thisWeek = new Date();
     thisWeek.setUTCHours(0, 0, 0, 0);
-    thisWeek.setUTCDate(thisWeek.getUTCDate() - thisWeek.getUTCDay());
+    thisWeek.setUTCDate(thisWeek.getUTCDate() - ((thisWeek.getUTCDay() + 6) % 7));
     const weekStart = (weeksAgo: number, dayOffsetHours = 12) =>
       new Date(thisWeek.getTime() - weeksAgo * 7 * 24 * 60 * 60 * 1000 + dayOffsetHours * 60 * 60 * 1000);
 
