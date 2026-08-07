@@ -37,13 +37,13 @@ const STATUS_BANNER: Record<
   SUBMITTED: {
     icon: Clock,
     title: 'Application submitted',
-    body: "Thanks! HR will start reviewing your information shortly — there's nothing else you need to do right now.",
+    body: 'Thanks! HR will start reviewing your information shortly. Spotted a mistake? You can still open any completed step below and fix it until HR approves.',
     cls: 'border-gold/40 bg-gold/[0.07] text-silver',
   },
   IN_REVIEW: {
     icon: Clock,
     title: 'In review',
-    body: "HR is reviewing your application. We'll reach out if anything else is needed — keep an eye on your email.",
+    body: 'HR is reviewing your application. You can still open any completed step below and correct it until HR approves — after that, contact HR for changes.',
     cls: 'border-gold/40 bg-gold/[0.07] text-silver',
   },
   APPROVED: {
@@ -220,6 +220,9 @@ export function AssociateChecklist() {
             task={t}
             applicationId={detail.id}
             isNext={nextTask?.id === t.id}
+            canRevisit={
+              detail.status !== 'APPROVED' && detail.status !== 'REJECTED'
+            }
           />
         ))}
       </section>
@@ -284,12 +287,17 @@ interface AssociateTaskRowProps {
   task: ChecklistTask;
   applicationId: string;
   isNext: boolean;
+  /** True until HR approves/rejects — completed tasks re-open for edits. */
+  canRevisit: boolean;
 }
 
-function AssociateTaskRow({ task, applicationId, isNext }: AssociateTaskRowProps) {
+function AssociateTaskRow({ task, applicationId, isNext, canRevisit }: AssociateTaskRowProps) {
   const isComplete = task.status === 'DONE' || task.status === 'SKIPPED';
   const isReal = REAL_KINDS.has(task.kind);
-  const linkable = isReal && !isComplete;
+  // Completed tasks stay linkable until HR settles the application — each
+  // task page hydrates what's on file, so revisiting means reviewing and
+  // correcting, not retyping. The server enforces the same boundary.
+  const linkable = isReal && (!isComplete || canRevisit);
   const linkTo = `/onboarding/me/${applicationId}/tasks/${task.kind.toLowerCase()}`;
 
   const tone = STATUS_TONE[task.status] ?? STATUS_TONE.PENDING;
@@ -308,18 +316,26 @@ function AssociateTaskRow({ task, applicationId, isNext }: AssociateTaskRowProps
           </div>
         )}
       </div>
-      <div className="shrink-0">
+      <div className="shrink-0 flex items-center gap-2">
         {isComplete ? (
-          <span
-            className={cn(
-              'text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded',
-              tone.bg === 'bg-navy' ? 'bg-silver/15' : 'bg-success/15',
-              tone.labelCx
+          <>
+            <span
+              className={cn(
+                'text-2xs uppercase tracking-wider px-1.5 py-0.5 rounded',
+                tone.bg === 'bg-navy' ? 'bg-silver/15' : 'bg-success/15',
+                tone.labelCx
+              )}
+              data-status={task.status}
+            >
+              {tone.label}
+            </span>
+            {linkable && (
+              <span className="inline-flex items-center gap-1 text-xs text-gold group-hover:text-gold-bright whitespace-nowrap">
+                Review / edit
+                <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+              </span>
             )}
-            data-status={task.status}
-          >
-            {tone.label}
-          </span>
+          </>
         ) : linkable ? (
           <span
             className={cn(

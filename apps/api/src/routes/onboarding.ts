@@ -473,6 +473,36 @@ async function inviteOneApplicant(
   };
 }
 
+/**
+ * Applicants may revise their application until HR settles it (the write
+ * lock lives in assertCanModifyApplication). When an edit lands AFTER the
+ * application already reached HR (SUBMITTED/IN_REVIEW), stamp it and tell
+ * the reviewers once per review cycle — nobody should approve data they
+ * read before it changed. HR's own edits are the review; they don't flag.
+ */
+async function flagPostSubmissionEdit(
+  app: { id: string; status: string; associateId: string; updatedAfterSubmitAt: Date | null },
+  user: { id: string; associateId: string | null },
+  what: string,
+): Promise<void> {
+  if (app.status !== 'SUBMITTED' && app.status !== 'IN_REVIEW') return;
+  if (!user.associateId || user.associateId !== app.associateId) return;
+  const firstEdit = app.updatedAfterSubmitAt === null;
+  await prisma.application.update({
+    where: { id: app.id },
+    data: { updatedAfterSubmitAt: new Date() },
+  });
+  if (firstEdit) {
+    void notifyAllAdmins({
+      subject: 'Application updated after submission',
+      body: `An applicant changed their ${what} after submitting their onboarding application. Review the latest data before approving.`,
+      category: 'onboarding',
+      linkUrl: `/onboarding/applications/${app.id}`,
+      excludeUserId: user.id,
+    });
+  }
+}
+
 /* ===== READ ============================================================== */
 
 onboardingRouter.get('/applications', async (req, res, next) => {
@@ -603,6 +633,9 @@ onboardingRouter.get('/applications', async (req, res, next) => {
         startDate: toDateOnly(row.startDate),
         invitedAt: row.invitedAt.toISOString(),
         submittedAt: row.submittedAt ? row.submittedAt.toISOString() : null,
+        updatedAfterSubmitAt: row.updatedAfterSubmitAt
+          ? row.updatedAfterSubmitAt.toISOString()
+          : null,
         percentComplete: computePercent(tasks),
         lastInviteDelivery: deliveryByAssociate.get(row.associateId) ?? null,
         blockedOnTitle: blocked?.title ?? null,
@@ -688,6 +721,9 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
       startDate: toDateOnly(row.startDate),
       invitedAt: row.invitedAt.toISOString(),
       submittedAt: row.submittedAt ? row.submittedAt.toISOString() : null,
+      updatedAfterSubmitAt: row.updatedAfterSubmitAt
+        ? row.updatedAfterSubmitAt.toISOString()
+        : null,
       percentComplete: computePercent(row.checklist?.tasks ?? []),
       lastInviteDelivery: deliveryByAssociate.get(row.associateId) ?? null,
     }));
@@ -774,6 +810,9 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
       startDate: toDateOnly(row.startDate),
       invitedAt: row.invitedAt.toISOString(),
       submittedAt: row.submittedAt ? row.submittedAt.toISOString() : null,
+      updatedAfterSubmitAt: row.updatedAfterSubmitAt
+        ? row.updatedAfterSubmitAt.toISOString()
+        : null,
       percentComplete: computePercent(row.checklist?.tasks ?? []),
       tasks,
       employmentType: row.associate.employmentType,
@@ -1688,7 +1727,7 @@ onboardingRouter.get('/applications/:id/profile', async (req, res, next) => {
 
 onboardingRouter.post('/applications/:id/profile', async (req, res, next) => {
   try {
-    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: true });
     const parsed = ProfileSubmissionSchema.safeParse(req.body);
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
@@ -1723,6 +1762,8 @@ onboardingRouter.post('/applications/:id/profile', async (req, res, next) => {
         await markTaskDoneByKind(tx, checklist.id, 'PROFILE_INFO');
       }
     }, TX_OPTS);
+
+    await flagPostSubmissionEdit(app, req.user!, 'profile information');
 
     await recordOnboardingEvent({
       actorUserId: req.user!.id,
@@ -1784,7 +1825,7 @@ onboardingRouter.get('/applications/:id/w4', async (req, res, next) => {
 
 onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
   try {
-    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: true });
     const parsed = W4SubmissionInputSchema.safeParse(req.body);
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
@@ -1876,6 +1917,8 @@ onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
       }
     }, TX_OPTS);
 
+    await flagPostSubmissionEdit(app, req.user!, 'W-4 tax elections');
+
     await recordOnboardingEvent({
       actorUserId: req.user!.id,
       action: 'onboarding.w4_submitted',
@@ -1959,7 +2002,7 @@ onboardingRouter.post(
   '/applications/:id/direct-deposit',
   async (req, res, next) => {
     try {
-      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: true });
       const parsed = DirectDepositInputSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
@@ -2027,6 +2070,8 @@ onboardingRouter.post(
         }
       }, TX_OPTS);
 
+      await flagPostSubmissionEdit(app, req.user!, 'bank information');
+
       await recordOnboardingEvent({
         actorUserId: req.user!.id,
         action: 'onboarding.direct_deposit_set',
@@ -2047,7 +2092,7 @@ onboardingRouter.post(
 /* POLICY_ACK ------------------------------------------------------------ */
 onboardingRouter.post('/applications/:id/policy-ack', async (req, res, next) => {
   try {
-    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: true });
     const parsed = PolicyAckInputSchema.safeParse(req.body);
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
@@ -2117,6 +2162,8 @@ onboardingRouter.post('/applications/:id/policy-ack', async (req, res, next) => 
       }
     }, TX_OPTS);
 
+    await flagPostSubmissionEdit(app, req.user!, 'policy acknowledgments');
+
     await recordOnboardingEvent({
       actorUserId: req.user!.id,
       action: 'onboarding.policy_acknowledged',
@@ -2146,7 +2193,7 @@ onboardingRouter.post(
   '/applications/:id/document-upload',
   async (req, res, next) => {
     try {
-      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: true });
 
       // Exclude REJECTED / EXPIRED rows: those count as "no good doc on
       // file" so finishing requires a fresh upload after a rejection.
@@ -2176,6 +2223,8 @@ onboardingRouter.post(
         await markTaskDoneByKind(prisma, checklist.id, 'DOCUMENT_UPLOAD');
       }
 
+      await flagPostSubmissionEdit(app, req.user!, 'uploaded documents');
+
       await recordOnboardingEvent({
         actorUserId: req.user!.id,
         action: 'onboarding.documents_submitted',
@@ -2202,7 +2251,7 @@ onboardingRouter.post(
   '/applications/:id/background-check',
   async (req, res, next) => {
     try {
-      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: true });
       const parsed = BackgroundCheckAuthorizeInputSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
@@ -2264,6 +2313,8 @@ onboardingRouter.post(
         await markTaskDoneByKind(prisma, checklist.id, 'BACKGROUND_CHECK');
       }
 
+      await flagPostSubmissionEdit(app, req.user!, 'background-check authorization');
+
       await recordOnboardingEvent({
         actorUserId: req.user!.id,
         action: 'onboarding.background_check_authorized',
@@ -2298,7 +2349,7 @@ onboardingRouter.post(
   '/applications/:id/j1-profile',
   async (req, res, next) => {
     try {
-      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: true });
       const parsed = J1UpsertInputSchema.safeParse(req.body);
       if (!parsed.success) {
         throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
@@ -2348,6 +2399,8 @@ onboardingRouter.post(
         data: { j1Status: true },
       });
 
+      await flagPostSubmissionEdit(app, req.user!, 'J-1 program details');
+
       await recordOnboardingEvent({
         actorUserId: req.user!.id,
         action: 'onboarding.j1_profile_saved',
@@ -2380,7 +2433,7 @@ onboardingRouter.post(
   '/applications/:id/j1-finish',
   async (req, res, next) => {
     try {
-      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: true });
       const [profile, documentCount] = await Promise.all([
         prisma.j1Profile.findUnique({ where: { associateId: app.associateId } }),
         prisma.documentRecord.count({
@@ -2415,6 +2468,8 @@ onboardingRouter.post(
       if (checklist) {
         await markTaskDoneByKind(prisma, checklist.id, 'J1_DOCS');
       }
+
+      await flagPostSubmissionEdit(app, req.user!, 'J-1 documents');
 
       await recordOnboardingEvent({
         actorUserId: req.user!.id,
@@ -2545,7 +2600,7 @@ onboardingRouter.get('/applications/:id/i9', async (req, res, next) => {
 // shows visible progress while HR works on Section 2.
 onboardingRouter.post('/applications/:id/i9/submit', async (req, res, next) => {
   try {
-    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: true });
 
     const verification = await prisma.i9Verification.findUnique({
       where: { associateId: app.associateId },
@@ -2607,6 +2662,8 @@ onboardingRouter.post('/applications/:id/i9/submit', async (req, res, next) => {
       return upd;
     }, TX_OPTS);
 
+    await flagPostSubmissionEdit(app, req.user!, 'I-9 submission');
+
     await recordOnboardingEvent({
       actorUserId: req.user!.id,
       action: 'onboarding.i9_documents_submitted',
@@ -2627,7 +2684,7 @@ onboardingRouter.post('/applications/:id/i9/submit', async (req, res, next) => {
 // Associate (or HR-on-behalf, audited) submits Section 1 attestation.
 onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) => {
   try {
-    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+    const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: true });
 
     const status = String(req.body?.citizenshipStatus ?? '').toUpperCase();
     if (!I9_CITIZENSHIP_VALUES.includes(status as I9CitizenshipStatus)) {
@@ -2709,6 +2766,8 @@ onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) =>
       return upserted;
     }, TX_OPTS);
 
+    await flagPostSubmissionEdit(app, req.user!, 'I-9 Section 1');
+
     await recordOnboardingEvent({
       actorUserId: req.user!.id,
       action: 'onboarding.i9_section1_submitted',
@@ -2782,7 +2841,7 @@ onboardingRouter.post(
   i9Upload.single('file'),
   async (req, res, next) => {
     try {
-      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: true });
       const file = req.file;
       if (!file) throw new HttpError(400, 'file_required', 'multipart "file" field required');
 
@@ -2851,6 +2910,8 @@ onboardingRouter.post(
           ...(i9DocTitle ? { i9DocTitle, i9List } : {}),
         },
       });
+
+      await flagPostSubmissionEdit(app, req.user!, 'I-9 documents');
 
       await recordOnboardingEvent({
         actorUserId: req.user!.id,
@@ -3160,7 +3221,7 @@ onboardingRouter.post(
   '/applications/:id/esign/agreements/:agreementId/sign',
   async (req, res, next) => {
     try {
-      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: true });
       const agreement = await prisma.esignAgreement.findFirst({
         where: { id: req.params.agreementId, applicationId: app.id },
         include: { application: { include: { associate: true } } },
@@ -3239,6 +3300,8 @@ onboardingRouter.post(
         }
         return { doc, sig, agreement: updatedAgreement };
       }, TX_OPTS);
+
+      await flagPostSubmissionEdit(app, req.user!, 'signed agreement');
 
       await recordOnboardingEvent({
         actorUserId: req.user!.id,

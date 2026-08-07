@@ -1017,6 +1017,10 @@ model Application {
   startDate           DateTime?            @db.Date
   invitedAt           DateTime             @default(now()) @db.Timestamptz(6)
   submittedAt         DateTime?            @db.Timestamptz(6)
+  // Set when the applicant edits anything after the application reached
+  // HR (SUBMITTED/IN_REVIEW) — the reviewer sees an "updated after
+  // submission" flag so stale data is never approved unnoticed.
+  updatedAfterSubmitAt DateTime?           @db.Timestamptz(6)
   // HR review outcome — exactly one of approvedAt / rejectedAt is set
   // once status leaves IN_REVIEW. rejectionReason is required on REJECTED
   // so the audit trail captures the why; approve has no equivalent free-
