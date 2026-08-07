@@ -110,7 +110,9 @@ export const submitReimbursement = (id: string) =>
 export const managerApproveReimbursement = (id: string, note?: string) =>
   apiFetch<{ ok: true }>(`/reimbursements/${id}/manager-approve`, {
     method: 'POST',
-    body: { note: note ?? null },
+    // Omit a blank note entirely — the schema treats absent and null the
+    // same, but older deployed servers only accept absent.
+    body: note ? { note } : {},
   });
 
 // Gap 10 — HR/Finance step: MANAGER_APPROVED → SETTLED. Capability:
