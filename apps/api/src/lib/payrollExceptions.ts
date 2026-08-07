@@ -90,6 +90,9 @@ export async function computePayrollExceptions(
       ...(clientId ? { clientId } : {}),
     },
     include: {
+      // Same net-of-breaks basis as the aggregator — exception hour totals
+      // must match what the run will actually pay.
+      breaks: { select: { startedAt: true, endedAt: true } },
       associate: {
         select: {
           id: true,

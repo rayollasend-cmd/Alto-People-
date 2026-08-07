@@ -350,7 +350,10 @@ reimbursements97Router.post('/reimbursements/:id/submit', SUBMIT, async (req, re
 });
 
 const ManagerApproveBodySchema = z.object({
-  note: z.string().max(2000).trim().optional(),
+  // nullable AND optional: the web client historically sent {note: null}
+  // for a blank note, which .optional() alone rejects — 400ing every
+  // no-note approval including all bulk approvals.
+  note: z.string().max(2000).trim().nullable().optional(),
 });
 
 /**

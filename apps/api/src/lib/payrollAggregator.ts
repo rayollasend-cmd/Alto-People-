@@ -14,6 +14,7 @@
 
 import type { BenefitsPlanKind, Prisma, PrismaClient } from '@prisma/client';
 import {
+  payableMs,
   round2,
   splitWeeklyOvertime,
   sumApprovedHours,
@@ -258,6 +259,11 @@ export async function aggregatePayrollProjection(
       ...(clientId ? { clientId } : {}),
     },
     include: {
+      // Pay is net-of-breaks (matches the review screen and every export) —
+      // without this include, payableMs sees no breaks and pays the full
+      // clock span. That was a real production bug: 8h punched with a 1h
+      // docked meal paid 8h while every report HR reconciled against said 7.
+      breaks: { select: { startedAt: true, endedAt: true } },
       associate: {
         select: {
           id: true,
@@ -616,7 +622,9 @@ export async function aggregatePayrollProjection(
           if (rule.kind === 'OVERTIME_DAILY') {
             const threshold = rule.thresholdHours ? Number(rule.thresholdHours) : 8;
             for (const e of ruleEntries) {
-              const h = (e.clockOutAt!.getTime() - e.clockInAt.getTime()) / 3_600_000;
+              // Net of breaks — a 9h clock span with a 1h meal is 8h worked
+              // and earns no daily OT past an 8h threshold.
+              const h = payableMs(e) / 3_600_000;
               qualifyingHours += Math.max(0, h - threshold);
             }
           } else if (

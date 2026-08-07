@@ -48,18 +48,43 @@ export function msToHours(ms: number): number {
   return round2(ms / (1000 * 60 * 60));
 }
 
+/** An entry as the pay math sees it — clock times plus (optionally) its
+ *  breaks, so pay is computed net-of-breaks exactly like the time-review
+ *  screen, the exports, and the external-payroll sheet. */
+export interface PayableEntry {
+  status: string;
+  clockInAt: Date;
+  clockOutAt: Date | null;
+  breaks?: Array<{ startedAt: Date; endedAt: Date | null }>;
+}
+
+/**
+ * Paid milliseconds for one closed entry: clock span minus break time.
+ * Breaks are clamped to non-negative and an open-ended break (crash mid-
+ * break) ends at clock-out — mirrors netWorkedMinutes in timeAnomalies.
+ */
+export function payableMs(e: PayableEntry): number {
+  if (!e.clockOutAt) return 0;
+  const end = e.clockOutAt.getTime();
+  let ms = end - e.clockInAt.getTime();
+  for (const b of e.breaks ?? []) {
+    const bEnd = b.endedAt ? b.endedAt.getTime() : end;
+    ms -= Math.max(0, bEnd - b.startedAt.getTime());
+  }
+  return Math.max(0, ms);
+}
+
 /**
  * Aggregate APPROVED time entries for one associate within a period.
- * Returns total hours worked. Excludes ACTIVE/COMPLETED/REJECTED.
+ * Returns total hours worked, NET of breaks. Excludes ACTIVE/COMPLETED/
+ * REJECTED. Callers must load `breaks` on each entry — an entry without
+ * them is treated as break-free (its full clock span pays).
  */
-export function sumApprovedHours(
-  entries: Array<{ status: string; clockInAt: Date; clockOutAt: Date | null }>
-): number {
+export function sumApprovedHours(entries: PayableEntry[]): number {
   let totalMs = 0;
   for (const e of entries) {
     if (e.status !== 'APPROVED') continue;
-    if (!e.clockOutAt) continue;
-    totalMs += e.clockOutAt.getTime() - e.clockInAt.getTime();
+    totalMs += payableMs(e);
   }
   return msToHours(totalMs);
 }
@@ -93,13 +118,13 @@ export function pickHourlyRate(
  * a Wave 2+ enhancement on top of this baseline.
  */
 export function splitWeeklyOvertime(
-  entries: Array<{ status: string; clockInAt: Date; clockOutAt: Date | null }>
+  entries: PayableEntry[]
 ): { regularHours: number; overtimeHours: number } {
-  // Bucket APPROVED hours by ISO week (Mon-anchored UTC).
+  // Bucket APPROVED net-of-break hours by ISO week (Mon-anchored UTC).
   const weeks = new Map<string, number>();
   for (const e of entries) {
     if (e.status !== 'APPROVED' || !e.clockOutAt) continue;
-    const ms = e.clockOutAt.getTime() - e.clockInAt.getTime();
+    const ms = payableMs(e);
     if (ms <= 0) continue;
     const key = isoWeekKeyUtc(e.clockInAt);
     weeks.set(key, (weeks.get(key) ?? 0) + ms);
