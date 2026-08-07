@@ -299,7 +299,9 @@ payrollTax91Router.get(
 // ----- Tax forms ---------------------------------------------------------
 
 const TaxFormInputSchema = z.object({
-  kind: z.enum(['F941', 'F940', 'W2', 'F1099_NEC']),
+  // W2C is intentionally NOT creatable here — a correction must carry
+  // amendsTaxFormId (DB CHECK), which the amend endpoint sets.
+  kind: z.enum(['F941', 'F940', 'W2', 'F1099_NEC', 'F1099_MISC']),
   taxYear: z.number().int().min(2000).max(2100),
   quarter: z.number().int().min(1).max(4).optional().nullable(),
   associateId: z.string().uuid().optional().nullable(),
@@ -309,7 +311,7 @@ const TaxFormInputSchema = z.object({
 
 payrollTax91Router.get('/tax-forms', VIEW, async (req, res) => {
   const kind = z
-    .enum(['F941', 'F940', 'W2', 'F1099_NEC'])
+    .enum(['F941', 'F940', 'W2', 'W2C', 'F1099_NEC', 'F1099_MISC'])
     .optional()
     .parse(req.query.kind);
   const taxYear = z
@@ -361,11 +363,14 @@ payrollTax91Router.post('/tax-forms', MANAGE, async (req, res) => {
   if (input.kind !== 'F941' && input.quarter != null) {
     throw new HttpError(400, 'quarter_invalid', 'Only 941 has a quarter.');
   }
-  if ((input.kind === 'W2' || input.kind === 'F1099_NEC') && !input.associateId) {
+  if (
+    (input.kind === 'W2' || input.kind === 'F1099_NEC' || input.kind === 'F1099_MISC') &&
+    !input.associateId
+  ) {
     throw new HttpError(
       400,
       'associate_required',
-      'W-2 / 1099-NEC require an associateId.',
+      'W-2 / 1099-NEC / 1099-MISC require an associateId.',
     );
   }
   if (

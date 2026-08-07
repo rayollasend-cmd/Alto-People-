@@ -832,6 +832,11 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         ...(filter !== 'ALL' ? { status: filter } : {}),
         ...(focusAssociate ? { associateId: focusAssociate.id } : {}),
         ...(appliedSearch ? { search: appliedSearch } : {}),
+        // client/site were the two filters this list applies that the
+        // export dropped — a file scoped to one client silently contained
+        // every client's entries (including other clients' worker data).
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+        ...(locationFilter ? { locationId: locationFilter } : {}),
         ...(anomaliesOnly ? { anomaliesOnly: true } : {}),
       });
     } catch (err) {

@@ -18,7 +18,7 @@
 // activate handler evicts the previous cache instead of leaving stale
 // entries (e.g. an old index.html with chunk hashes from a prior
 // deploy that no longer exist on the server) lying around.
-const CACHE_NAME = 'alto-shell-v14';
+const CACHE_NAME = 'alto-shell-v15';
 const SHELL = [
   '/',
   '/index.html',
@@ -121,24 +121,13 @@ self.addEventListener('activate', (event) => {
 });
 
 function isApiPath(url) {
-  // Heuristic: anything that looks like a JSON API call should bypass
-  // the cache. Adjust if the API origin diverges.
-  const p = url.pathname;
-  return (
-    p.startsWith('/auth') ||
-    p.startsWith('/clients') ||
-    p.startsWith('/onboarding') ||
-    p.startsWith('/time') ||
-    p.startsWith('/payroll') ||
-    p.startsWith('/scheduling') ||
-    p.startsWith('/recruiting') ||
-    p.startsWith('/benefits') ||
-    p.startsWith('/comp') ||
-    p.startsWith('/reports') ||
-    p.startsWith('/reimbursements') ||
-    p.startsWith('/integrations') ||
-    p.startsWith('/api')
-  );
+  // Every API call is under /api (apiFetch prepends it — lib/api.ts).
+  // The old prefix list (/time, /scheduling, /onboarding, …) only ever
+  // matched SPA PAGE navigations, which therefore bypassed the fetch
+  // handler entirely and never got the cached-shell offline fallback —
+  // an offline associate refreshing /scheduling got the browser error
+  // page instead of the shell the offline-roster feature depends on.
+  return url.pathname.startsWith('/api');
 }
 
 // ---- Web push -------------------------------------------------------------

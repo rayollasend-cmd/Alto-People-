@@ -106,8 +106,17 @@ const CreateInputSchema = z.object({
   currency: z.string().length(3).optional().default('USD'),
   grantDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   vestingStartDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  cliffMonths: z.coerce.number().int().min(0).max(120).optional().default(12),
-  vestingMonths: z.coerce.number().int().positive().max(120).optional().default(48),
+  // preprocess: JSON null (a cleared numeric input serialized via NaN)
+  // must mean "use the default", not z.coerce's Number(null) === 0 — a
+  // zero-month cliff is a legally meaningful vesting schedule.
+  cliffMonths: z.preprocess(
+    (v) => (v === null ? undefined : v),
+    z.coerce.number().int().min(0).max(120).optional().default(12),
+  ),
+  vestingMonths: z.preprocess(
+    (v) => (v === null ? undefined : v),
+    z.coerce.number().int().positive().max(120).optional().default(48),
+  ),
   expirationDate: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
