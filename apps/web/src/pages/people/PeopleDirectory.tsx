@@ -1124,6 +1124,8 @@ function ProfileTab({
   const canTransfer = Boolean(a.workplaceClientId);
   return (
     <div className="space-y-4">
+      <PersonalInfoSection associate={a} />
+
       <Section title="Contact">
         <InfoRow
           icon={<Mail className="h-3.5 w-3.5" />}
@@ -1142,8 +1144,6 @@ function ProfileTab({
           onSaved={(phone) => onAssociateChange({ phone })}
         />
       </Section>
-
-      <PersonalInfoSection associateId={a.id} />
 
       <Section title="Workplace">
         <InfoRow
@@ -2336,13 +2336,13 @@ function RevealPayoutDialog({
 // the whole-roster directory response. Read-only on purpose: the associate
 // owns these via self-service (Me → My profile) or the onboarding profile
 // task, so HR edits can't silently diverge from what the person attested.
-function PersonalInfoSection({ associateId }: { associateId: string }) {
+function PersonalInfoSection({ associate: a }: { associate: DirectoryEntry }) {
   const { user } = useAuth();
   const canSee = user ? hasCapability(user.role, 'process:payroll') : false;
 
   const { data, isLoading } = useQuery({
-    queryKey: ['associate-personal-info', associateId],
-    queryFn: () => getAssociatePersonalInfo(associateId),
+    queryKey: ['associate-personal-info', a.id],
+    queryFn: () => getAssociatePersonalInfo(a.id),
     enabled: canSee,
     staleTime: 30_000,
   });
@@ -2363,6 +2363,30 @@ function PersonalInfoSection({ associateId }: { associateId: string }) {
       ) : (
         <>
           <InfoRow
+            label="Legal name"
+            value={[a.firstName, data.middleInitial && `${data.middleInitial}.`, a.lastName]
+              .filter(Boolean)
+              .join(' ')}
+          />
+          {data.otherLastNames.length > 0 && (
+            <InfoRow
+              label="Other last names"
+              value={data.otherLastNames.join(', ')}
+            />
+          )}
+          <InfoRow
+            icon={<Mail className="h-3.5 w-3.5" />}
+            label="Email"
+            value={
+              <a
+                href={`mailto:${a.email}`}
+                className="text-gold hover:text-gold-bright"
+              >
+                {a.email}
+              </a>
+            }
+          />
+          <InfoRow
             label="Date of birth"
             value={
               data.dob ? (
@@ -2374,15 +2398,6 @@ function PersonalInfoSection({ associateId }: { associateId: string }) {
               )
             }
           />
-          {data.middleInitial && (
-            <InfoRow label="Middle initial" value={data.middleInitial} />
-          )}
-          {data.otherLastNames.length > 0 && (
-            <InfoRow
-              label="Other last names"
-              value={data.otherLastNames.join(', ')}
-            />
-          )}
           <InfoRow
             icon={<MapPin className="h-3.5 w-3.5" />}
             label="Home address"
