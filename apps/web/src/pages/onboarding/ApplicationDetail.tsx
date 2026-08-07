@@ -539,6 +539,15 @@ function DetailMeta({ detail }: { detail: ApplicationDetailType }) {
       >
         {EMPLOYMENT_LABEL[detail.employmentType] ?? detail.employmentType}
       </Badge>
+      {detail.updatedAfterSubmitAt &&
+        (detail.status === 'SUBMITTED' || detail.status === 'IN_REVIEW') && (
+          <Badge
+            variant="pending"
+            title="The applicant changed their information after submitting — review the latest data before approving."
+          >
+            Updated after submission
+          </Badge>
+        )}
     </div>
   );
 }

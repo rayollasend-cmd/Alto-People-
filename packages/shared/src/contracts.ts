@@ -214,6 +214,9 @@ export const ApplicationSummarySchema = z.object({
   startDate: z.string().date().nullable(),
   invitedAt: z.string().datetime(),
   submittedAt: z.string().datetime().nullable(),
+  /** Set when the applicant edited anything after submission — the
+   *  reviewer must re-check before approving. */
+  updatedAfterSubmitAt: z.string().datetime().nullable().optional(),
   percentComplete: z.number().min(0).max(100),
   // Phase 60 — most recent EMAIL Notification on this associate's user
   // tagged onboarding.invite or onboarding.nudge. null when there's no

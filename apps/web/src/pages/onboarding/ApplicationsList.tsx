@@ -1169,6 +1169,16 @@ export function ApplicationsList() {
                     </TableCell>
                     <TableCell>
                       <StatusBadge status={a.status} data-status={a.status} />
+                      {a.updatedAfterSubmitAt &&
+                        (a.status === 'SUBMITTED' || a.status === 'IN_REVIEW') && (
+                          <Badge
+                            variant="pending"
+                            className="ml-1.5"
+                            title={`The applicant changed their information on ${fmtDate(a.updatedAfterSubmitAt)} — re-check before approving.`}
+                          >
+                            updated
+                          </Badge>
+                        )}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">

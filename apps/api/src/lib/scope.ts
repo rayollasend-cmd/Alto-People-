@@ -292,7 +292,7 @@ export async function assertCanModifyApplication(
   tx: Tx,
   user: SessionUser,
   applicationId: string,
-  opts: { intent?: ApplicationAccessIntent } = {}
+  opts: { intent?: ApplicationAccessIntent; write?: boolean } = {}
 ): Promise<Application> {
   const app = await tx.application.findFirst({
     where: { ...scopeApplications(user), id: applicationId },
@@ -316,6 +316,22 @@ export async function assertCanModifyApplication(
       403,
       'forbidden',
       'Missing capability: manage:onboarding'
+    );
+  }
+  // Approval is the edit boundary. Until HR settles the application the
+  // applicant may freely revise what they entered (the forms re-open from
+  // the checklist); once APPROVED/REJECTED the record is what HR signed
+  // off on, and only manage:onboarding may correct it. Reads are never
+  // blocked — pass write: true only on mutating routes.
+  if (
+    opts.write &&
+    (app.status === 'APPROVED' || app.status === 'REJECTED') &&
+    !hasCapability(user.role, 'manage:onboarding')
+  ) {
+    throw new HttpError(
+      409,
+      'application_locked',
+      'This application has been finalized by HR and can no longer be changed. Contact HR to request a correction.'
     );
   }
   return app;
