@@ -89,6 +89,7 @@ import {
 import {
   applicationApprovedTemplate,
   applicationRejectedTemplate,
+  esignCopyTemplate,
   i9Section2Template,
   inviteTemplate,
 } from '../lib/emailTemplates.js';
@@ -3433,23 +3434,17 @@ onboardingRouter.post(
       // the attempt so HR can see it landed.
       if (associate.email) {
         const linkUrl = `${env.APP_BASE_URL}/api/onboarding/esign/signatures/${result.sig.id}/pdf`;
-        const subject = `Signed: ${agreement.title}`;
-        const emailBody = [
-          `Hi ${associate.firstName},`,
-          ``,
-          `Thank you for signing the ${agreement.title}.`,
-          ``,
-          `A copy of the signed agreement is attached to this email and is also`,
-          `available in your Documents in Alto People at any time:`,
-          linkUrl,
-          ``,
-          `Signed on: ${signedAt.toISOString()}`,
-          `Document fingerprint (SHA-256): ${pdfHash}`,
-          ``,
-          `If you didn't sign this, contact hr@altohr.com immediately.`,
-          ``,
-          `— Alto HR`,
-        ].join('\n');
+        // Branded layout — the signed-agreement copy is a legal artifact
+        // and used to go out as bare plain text with no logo or footer.
+        const tpl = esignCopyTemplate({
+          firstName: associate.firstName,
+          agreementTitle: agreement.title,
+          signedAtIso: signedAt.toISOString(),
+          pdfHash,
+          downloadUrl: linkUrl,
+        });
+        const subject = tpl.subject;
+        const emailBody = tpl.text;
         let emailRef: string | null = null;
         let emailFailed: string | null = null;
         try {
@@ -3462,6 +3457,7 @@ onboardingRouter.post(
             },
             subject,
             body: emailBody,
+            html: tpl.html,
             attachments: [
               {
                 filename: `${slugify(agreement.title)}.pdf`,

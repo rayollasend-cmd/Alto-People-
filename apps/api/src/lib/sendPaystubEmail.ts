@@ -29,6 +29,7 @@ import { EmailSuppressedError, send } from './notifications.js';
 import { renderPaystubPdf } from './paystub.js';
 import { buildPaystubDataFromItem, paystubItemInclude } from './paystubData.js';
 import { env } from '../config/env.js';
+import { paystubTemplate } from './emailTemplates.js';
 
 type PrismaSlice = Pick<
   PrismaClient,
@@ -111,23 +112,20 @@ export async function sendPaystubEmail(
     const pdf = await renderPaystubPdf(data);
 
     const period = `${data.period.start} → ${data.period.end}`;
+    // The money email gets the full branded layout — it was hand-rolled
+    // bare HTML signed "— Alto People" (not even the right brand name),
+    // on exactly the message a payday phisher would imitate.
+    const tpl = paystubTemplate({
+      firstName: item.associate.firstName,
+      periodLabel: period,
+      netPay: fmtMoney(netPay),
+      payrollUrl: `${env.APP_BASE_URL}/payroll`,
+    });
     const subject = data.amendment
-      ? `Amended paystub for ${period}`
-      : `Your paystub for ${period}`;
-    const body =
-      `Hi ${item.associate.firstName},\n\n` +
-      `Your paystub for the period ${period} is attached as a PDF.\n\n` +
-      `Net pay: ${fmtMoney(netPay)}\n\n` +
-      `You can also download the latest copy any time from ` +
-      `${env.APP_BASE_URL}/payroll.\n\n` +
-      `— Alto People`;
-    const html =
-      `<p>Hi ${escapeHtml(item.associate.firstName)},</p>` +
-      `<p>Your paystub for the period <strong>${escapeHtml(period)}</strong> is attached as a PDF.</p>` +
-      `<p><strong>Net pay:</strong> ${escapeHtml(fmtMoney(netPay))}</p>` +
-      `<p>You can also download the latest copy any time from ` +
-      `<a href="${escapeHtml(env.APP_BASE_URL)}/payroll">your paystubs page</a>.</p>` +
-      `<p>— Alto People</p>`;
+      ? `[For Your Records] Amended paystub for ${period}`
+      : tpl.subject;
+    const body = tpl.text;
+    const html = tpl.html;
 
     const filename = `paystub-${data.period.start}-${item.id.slice(0, 8)}.pdf`;
 
@@ -240,13 +238,4 @@ export async function sendPaystubEmail(
 
 function reasonOnly(reason: SendPaystubSkipReason): SendPaystubEmailResult {
   return { sent: false, skipped: reason, externalRef: null, failureReason: null };
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }
