@@ -19,6 +19,11 @@ import {
   splitWeeklyOvertime,
   sumApprovedHours,
 } from './payroll.js';
+import {
+  localDateKey,
+  zonedDayOfWeek,
+  zonedWallTimeToUtcInstant,
+} from './timezone.js';
 
 /**
  * Gap 1 — IRS pre-tax classification. Traditional retirement (401k/403b)
@@ -131,36 +136,51 @@ export interface ProjectedEarning {
 
 /**
  * Hours of [start, end) overlapping a rule's daily minute window /
- * day-of-week mask (bit N = UTC day N, Sunday=0). A null window means
- * the whole day; an end minute at or before the start minute wraps past
- * midnight.
+ * day-of-week mask (bit N = day N at the SITE, Sunday=0). A null window
+ * means the whole day; an end minute at or before the start minute wraps
+ * past midnight.
+ *
+ * Windows are wall-clock at the work site: admins type "22:00–06:00
+ * night differential" meaning the site's nights. The old implementation
+ * anchored the windows to UTC days, so at an Eastern site the premium
+ * band sat 22:00–06:00 UTC = 17:00–01:00 ET — day workers collected the
+ * night premium and night workers got half of it. DST is handled by
+ * zonedWallTimeToUtcInstant (window edges land on real instants).
  */
 function windowOverlapHours(
   start: Date,
   end: Date,
   rule: { startMinute: number | null; endMinute: number | null; dowMask: number | null },
+  timeZone: string,
 ): number {
-  const DAY_MS = 86_400_000;
   const overlap = (aStart: number, aEnd: number, bStart: number, bEnd: number) =>
     Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart));
   let totalMs = 0;
-  const firstDay = Date.UTC(
-    start.getUTCFullYear(),
-    start.getUTCMonth(),
-    start.getUTCDate(),
-  );
-  for (let dayStart = firstDay; dayStart < end.getTime(); dayStart += DAY_MS) {
-    const dow = new Date(dayStart).getUTCDay();
-    if (rule.dowMask !== null && !((rule.dowMask >> dow) & 1)) continue;
+  // Walk local calendar days from the site-local date of `start` until a
+  // day whose local midnight is past `end`.
+  let [y, m, d] = localDateKey(start, timeZone).split('-').map(Number) as [number, number, number];
+  for (let i = 0; i < 40; i++) {
+    const dayStart = zonedWallTimeToUtcInstant(y, m, d, 0, timeZone);
+    if (dayStart.getTime() >= end.getTime() && i > 0) break;
+    const dow = zonedDayOfWeek(dayStart, timeZone);
     const s = rule.startMinute ?? 0;
     const e = rule.endMinute ?? 1440;
-    if (rule.startMinute !== null && rule.endMinute !== null && e <= s) {
-      // Wraps midnight: [s..24:00) tonight + [00:00..e) tomorrow morning.
-      totalMs += overlap(start.getTime(), end.getTime(), dayStart + s * 60_000, dayStart + DAY_MS);
-      totalMs += overlap(start.getTime(), end.getTime(), dayStart, dayStart + e * 60_000);
-    } else {
-      totalMs += overlap(start.getTime(), end.getTime(), dayStart + s * 60_000, dayStart + e * 60_000);
+    const winStart = (min: number) =>
+      zonedWallTimeToUtcInstant(y, m, d, min, timeZone).getTime();
+    if (rule.dowMask === null || (rule.dowMask >> dow) & 1) {
+      if (rule.startMinute !== null && rule.endMinute !== null && e <= s) {
+        // Wraps midnight: [s..24:00) tonight + [00:00..e) tomorrow morning.
+        totalMs += overlap(start.getTime(), end.getTime(), winStart(s), winStart(1440));
+        totalMs += overlap(start.getTime(), end.getTime(), winStart(0), winStart(e));
+      } else {
+        totalMs += overlap(start.getTime(), end.getTime(), winStart(s), winStart(e));
+      }
     }
+    // Next local calendar day.
+    const next = new Date(Date.UTC(y, m - 1, d) + 86_400_000);
+    y = next.getUTCFullYear();
+    m = next.getUTCMonth() + 1;
+    d = next.getUTCDate();
   }
   return totalMs / 3_600_000;
 }
@@ -264,6 +284,9 @@ export async function aggregatePayrollProjection(
       // clock span. That was a real production bug: 8h punched with a 1h
       // docked meal paid 8h while every report HR reconciled against said 7.
       breaks: { select: { startedAt: true, endedAt: true } },
+      // Site zone for premium-rule windows — differentials are wall-clock
+      // at the work site, not UTC.
+      location: { select: { timezone: true } },
       associate: {
         select: {
           id: true,
@@ -304,7 +327,7 @@ export async function aggregatePayrollProjection(
     where: {
       payType: 'SALARY',
       effectiveTo: null,
-      effectiveFrom: { lte: periodEndExclusive },
+      effectiveFrom: { lt: periodEndExclusive },
       associate: {
         deletedAt: null,
         ...(clientId
@@ -332,7 +355,7 @@ export async function aggregatePayrollProjection(
     where: {
       payType: 'HOURLY',
       effectiveTo: null,
-      effectiveFrom: { lte: periodEndExclusive },
+      effectiveFrom: { lt: periodEndExclusive },
       associate: { deletedAt: null },
     },
     orderBy: { effectiveFrom: 'desc' },
@@ -486,7 +509,7 @@ export async function aggregatePayrollProjection(
     const enrollRows = await tx.benefitsEnrollment.findMany({
       where: {
         associateId: { in: universeIds },
-        effectiveDate: { lte: periodEndExclusive },
+        effectiveDate: { lt: periodEndExclusive },
         OR: [{ terminationDate: null }, { terminationDate: { gte: periodStart } }],
       },
       select: {
@@ -510,7 +533,7 @@ export async function aggregatePayrollProjection(
         associateId: { in: universeIds },
         status: 'ACTIVE',
         deletedAt: null,
-        startDate: { lte: periodEndExclusive },
+        startDate: { lt: periodEndExclusive },
         OR: [{ endDate: null }, { endDate: { gte: periodStart } }],
       },
       orderBy: [{ associateId: 'asc' }, { priority: 'asc' }],
@@ -633,11 +656,19 @@ export async function aggregatePayrollProjection(
             rule.kind === 'SHIFT_DIFFERENTIAL'
           ) {
             for (const e of ruleEntries) {
-              qualifyingHours += windowOverlapHours(e.clockInAt, e.clockOutAt!, {
-                startMinute: rule.startMinute,
-                endMinute: rule.endMinute,
-                dowMask: rule.dowMask,
-              });
+              qualifyingHours += windowOverlapHours(
+                e.clockInAt,
+                e.clockOutAt!,
+                {
+                  startMinute: rule.startMinute,
+                  endMinute: rule.endMinute,
+                  dowMask: rule.dowMask,
+                },
+                // Entries without a location snapshot fall back to the
+                // schema default zone (current deployment is single-region
+                // Eastern) rather than UTC.
+                e.location?.timezone ?? 'America/New_York',
+              );
             }
           } else {
             continue;

@@ -484,18 +484,21 @@ payrollTax91Router.get('/tax-forms/build/941', VIEW, async (req, res) => {
   const startMonth = (quarter - 1) * 3;
   const periodStart = new Date(Date.UTC(taxYear, startMonth, 1));
   const periodEnd = new Date(Date.UTC(taxYear, startMonth + 3, 0));
+  const quarterEndExclusive = new Date(Date.UTC(taxYear, startMonth + 3, 1));
 
+  // 941 follows the IRS pay-date rule: wages belong to the quarter they
+  // were PAID, so attribute by disbursedAt and count only DISBURSED runs.
+  // (The old query bucketed by periodStart and included FINALIZED runs
+  // that never paid anyone.)
   const runs = await prisma.payrollRun.findMany({
-    take: 100,
     where: {
-      periodStart: { gte: periodStart, lte: periodEnd },
-      status: { in: ['FINALIZED', 'DISBURSED'] },
+      disbursedAt: { gte: periodStart, lt: quarterEndExclusive },
+      status: 'DISBURSED',
     },
     select: {
       totalGross: true,
-      totalTax: true,
       totalEmployerTax: true,
-      items: { select: { id: true } },
+      items: { select: { associateId: true, federalWithholding: true } },
     },
   });
 
@@ -503,16 +506,23 @@ payrollTax91Router.get('/tax-forms/build/941', VIEW, async (req, res) => {
     (sum, r) => sum + Number(r.totalGross),
     0,
   );
+  // Line 3 is FEDERAL INCOME TAX only. run.totalTax bundles FICA +
+  // Medicare + state + local withholding on top of FIT (that inflated the
+  // pre-fill ~2.4×), so sum the itemized FIT column instead.
   const totalFedWithheld = runs.reduce(
-    (sum, r) => sum + Number(r.totalTax),
+    (sum, r) =>
+      sum + r.items.reduce((s, i) => s + Number(i.federalWithholding), 0),
     0,
   );
   const totalEmployerTax = runs.reduce(
     (sum, r) => sum + Number(r.totalEmployerTax),
     0,
   );
-  const employeeCount = new Set(runs.flatMap((r) => r.items.map((i) => i.id)))
-    .size;
+  // Distinct PEOPLE paid in the quarter — item ids are unique per row, so
+  // counting them reported total paychecks (100 people biweekly → "600").
+  const employeeCount = new Set(
+    runs.flatMap((r) => r.items.map((i) => i.associateId)),
+  ).size;
 
   res.json({
     suggestedAmounts: {

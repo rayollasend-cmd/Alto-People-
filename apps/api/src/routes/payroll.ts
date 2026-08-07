@@ -727,6 +727,60 @@ async function aggregateAndPersistRun(
   const addOnRows = await tx.payrollRunAddOn.findMany({
     where: { payrollRunId: run.id },
   });
+
+  // Release THIS run's pending-deduction stamps before recomputing.
+  // Re-aggregation (any add-on change re-runs this) rebuilds each item's
+  // net from a fresh projection that knows nothing about clawbacks; the
+  // consume step below then found no open rows — they were stamped on the
+  // first pass — so the clawback silently vanished from the paycheck
+  // while staying marked applied. Un-stamping first makes consumption
+  // idempotent across re-aggregations, matching what run deletion does.
+  // (A PARTIAL apply reduces row.amount in place and can't be restored —
+  // same pre-existing limitation as the deletion path. Full applies, the
+  // overwhelmingly common case, now round-trip correctly.)
+  await tx.pendingPayrollDeduction.updateMany({
+    where: { appliedRunId: run.id },
+    data: { appliedRunId: null, appliedItemId: null, appliedAt: null },
+  });
+
+  // Same idempotency rule for garnishments: remove THIS run's ledger rows
+  // and roll each garnishment's amountWithheld back BEFORE projecting.
+  // The CCPA-cap math reads amountWithheld as lifetime history — leaving
+  // this run's own earlier withholding in it made every re-aggregation
+  // see less remaining headroom and the deduction oscillated between
+  // $cap-remainder values on alternate re-runs.
+  const priorGarnRows = await tx.garnishmentDeduction.findMany({
+    where: { payrollRunId: run.id },
+    select: { garnishmentId: true },
+  });
+  if (priorGarnRows.length > 0) {
+    await tx.garnishmentDeduction.deleteMany({ where: { payrollRunId: run.id } });
+    const garnIds = [...new Set(priorGarnRows.map((g) => g.garnishmentId))];
+    for (const gid of garnIds) {
+      const sum = await tx.garnishmentDeduction.aggregate({
+        where: { garnishmentId: gid },
+        _sum: { amount: true },
+      });
+      const rolledBack = Number(sum._sum.amount ?? 0);
+      const g = await tx.garnishment.findUnique({
+        where: { id: gid },
+        select: { status: true, totalCap: true },
+      });
+      await tx.garnishment.update({
+        where: { id: gid },
+        data: {
+          amountWithheld: new Prisma.Decimal(rolledBack),
+          // If THIS run's withholding is what pushed it over the cap,
+          // reopen it so the re-projection can consider it again.
+          ...(g?.status === 'COMPLETED' &&
+          (g.totalCap === null || rolledBack < Number(g.totalCap))
+            ? { status: 'ACTIVE' as const }
+            : {}),
+        },
+      });
+    }
+  }
+
   const projection = await aggregatePayrollProjection(tx, {
     periodStart,
     periodEndExclusive,
@@ -2487,6 +2541,18 @@ payrollRouter.post('/runs/:id/amend', VOID, async (req, res, next) => {
     if (original.status === 'CANCELLED') {
       throw new HttpError(409, 'run_cancelled', 'Cannot amend a voided run');
     }
+    // Amendments model corrections to money that already MOVED — they
+    // mint clawbacks / catch-up payments against a disbursement. A DRAFT
+    // or FINALIZED run hasn't paid anyone yet: fix it directly (edit the
+    // draft, or void and re-run) instead of stacking a correction run on
+    // top of numbers that were never disbursed.
+    if (original.status !== 'DISBURSED') {
+      throw new HttpError(
+        409,
+        'run_not_disbursed',
+        `Only disbursed runs can be amended — this run is ${original.status}. Edit or void it instead.`,
+      );
+    }
 
     // Build a lookup of original items by associateId so we can validate
     // every correction targets a real associate on the run AND compute
@@ -2509,14 +2575,21 @@ payrollRouter.post('/runs/:id/amend', VOID, async (req, res, next) => {
     // before/after picture without re-fetching the original.
     const amendmentItems = corrections.map((c) => {
       const orig = originalByAssociate.get(c.associateId)!;
+      // The stored netPay also subtracts LOCAL withholding and adds
+      // settled REIMBURSEMENTS (payrollAggregator's finalNetPay). The
+      // correction form doesn't collect either, so carry the original
+      // values — omitting them skewed the delta by (reimbursements −
+      // localTax) on every amendment and clawed back the wrong amount.
       const correctedNet =
         c.grossPay -
         c.federalWithholding -
         c.fica -
         c.medicare -
         c.stateWithholding -
+        Number(orig.localWithholding) -
         c.preTaxDeductions -
-        c.postTaxDeductions;
+        c.postTaxDeductions +
+        Number(orig.reimbursementsTotal);
       const origNet = Number(orig.netPay);
       const dx = (corrected: number, origVal: Prisma.Decimal | number) =>
         round2(corrected - Number(origVal));
