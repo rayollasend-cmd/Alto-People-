@@ -1156,6 +1156,50 @@ orgRouter.post(
   },
 );
 
+// ----- Personal information ----------------------------------------------
+//
+// DOB and home address for the directory drawer — HR needs these for
+// E-Verify corrections, W-2 mailing, and benefits, but the directory list
+// endpoint deliberately excludes them so PII never rides along on a
+// whole-roster response. Read-only: the associate owns edits via
+// self-service (/me/profile) or the onboarding profile task. Same gate as
+// the masked SSN summary; no reveal ceremony — this is the mailing-label
+// tier of PII, not the identity-theft tier.
+
+orgRouter.get(
+  '/associates/:id/personal-info',
+  PAYROLL_OR_HR,
+  async (req: Request, res: Response) => {
+    const associate = await prisma.associate.findUnique({
+      where: { id: req.params.id },
+      select: {
+        deletedAt: true,
+        middleInitial: true,
+        otherLastNames: true,
+        dob: true,
+        addressLine1: true,
+        addressLine2: true,
+        city: true,
+        state: true,
+        zip: true,
+      },
+    });
+    if (!associate || associate.deletedAt) {
+      throw new HttpError(404, 'not_found', 'Associate not found.');
+    }
+    res.json({
+      middleInitial: associate.middleInitial,
+      otherLastNames: associate.otherLastNames ?? [],
+      dob: toDateOnly(associate.dob),
+      addressLine1: associate.addressLine1,
+      addressLine2: associate.addressLine2,
+      city: associate.city,
+      state: associate.state,
+      zip: associate.zip,
+    });
+  },
+);
+
 // ----- HR-facing W-4 view / edit ------------------------------------------
 //
 // The associate's W-4 elections are captured at onboarding and editable by

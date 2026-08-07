@@ -73,6 +73,7 @@ import { nudgeApplicant } from '@/lib/onboardingApi';
 import {
   eraseAssociatePersonalData,
   getAssociatePayoutMethod,
+  getAssociatePersonalInfo,
   getAssociateSsn,
   getAssociateW4,
   listDepartments,
@@ -1141,6 +1142,8 @@ function ProfileTab({
           onSaved={(phone) => onAssociateChange({ phone })}
         />
       </Section>
+
+      <PersonalInfoSection associateId={a.id} />
 
       <Section title="Workplace">
         <InfoRow
@@ -2329,6 +2332,90 @@ function RevealPayoutDialog({
 // behind a written reason + AuditLog row, auto-mask after 30s. This is
 // the in-system answer to "the packet redacts the SSN": the packet stays
 // redacted, this is the deliberate, logged path.
+// DOB and home address, fetched per-associate so PII never rides along on
+// the whole-roster directory response. Read-only on purpose: the associate
+// owns these via self-service (Me → My profile) or the onboarding profile
+// task, so HR edits can't silently diverge from what the person attested.
+function PersonalInfoSection({ associateId }: { associateId: string }) {
+  const { user } = useAuth();
+  const canSee = user ? hasCapability(user.role, 'process:payroll') : false;
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['associate-personal-info', associateId],
+    queryFn: () => getAssociatePersonalInfo(associateId),
+    enabled: canSee,
+    staleTime: 30_000,
+  });
+
+  if (!canSee) return null;
+
+  const cityLine = data
+    ? [data.city, [data.state, data.zip].filter(Boolean).join(' ')]
+        .filter(Boolean)
+        .join(', ')
+    : '';
+  const hasAddress = Boolean(data?.addressLine1 || cityLine);
+
+  return (
+    <Section title="Personal information">
+      {isLoading || !data ? (
+        <Skeleton className="h-4 w-48" />
+      ) : (
+        <>
+          <InfoRow
+            label="Date of birth"
+            value={
+              data.dob ? (
+                fmtDate(parseYmd(data.dob) ?? data.dob)
+              ) : (
+                <span className="text-silver">
+                  Not on file — collected during onboarding
+                </span>
+              )
+            }
+          />
+          {data.middleInitial && (
+            <InfoRow label="Middle initial" value={data.middleInitial} />
+          )}
+          {data.otherLastNames.length > 0 && (
+            <InfoRow
+              label="Other last names"
+              value={data.otherLastNames.join(', ')}
+            />
+          )}
+          <InfoRow
+            icon={<MapPin className="h-3.5 w-3.5" />}
+            label="Home address"
+            value={
+              hasAddress ? (
+                <span>
+                  {data.addressLine1}
+                  {data.addressLine2 && (
+                    <>
+                      <br />
+                      {data.addressLine2}
+                    </>
+                  )}
+                  {cityLine && (
+                    <>
+                      <br />
+                      {cityLine}
+                    </>
+                  )}
+                </span>
+              ) : (
+                <span className="text-silver">
+                  Not on file — collected during onboarding
+                </span>
+              )
+            }
+          />
+        </>
+      )}
+    </Section>
+  );
+}
+
 function SsnSection({ associateId }: { associateId: string }) {
   const { user } = useAuth();
   const canSee = user ? hasCapability(user.role, 'process:payroll') : false;

@@ -114,6 +114,24 @@ export function getAssociateSsn(associateId: string): Promise<SsnSummary> {
   return apiFetch(`/org/associates/${associateId}/ssn`);
 }
 
+export interface AssociatePersonalInfo {
+  middleInitial: string | null;
+  otherLastNames: string[];
+  /** Calendar date, YYYY-MM-DD — never a timestamp. */
+  dob: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+}
+
+export function getAssociatePersonalInfo(
+  associateId: string,
+): Promise<AssociatePersonalInfo> {
+  return apiFetch(`/org/associates/${associateId}/personal-info`);
+}
+
 export interface ErasureCounts {
   userDisabled: number;
   passkeysDeleted: number;
