@@ -2603,6 +2603,9 @@ export const DocumentKindSchema = z.enum([
   'BACKGROUND_CHECK_RESULT',
   'DRUG_TEST_RESULT',
   'I9_VERIFICATION_RESULT',
+  // Evidence of an externally-processed payment (paystub, cleared check,
+  // processor report) attached to an ExternalPayment pay period.
+  'PAYSTUB',
   'OTHER',
 ]);
 export type DocumentKind = z.infer<typeof DocumentKindSchema>;
@@ -2614,6 +2617,74 @@ export const DocumentStatusSchema = z.enum([
   'EXPIRED',
 ]);
 export type DocumentStatus = z.infer<typeof DocumentStatusSchema>;
+
+/* ----- External payments -------------------------------------------------- *
+ * Audit documentation for externally-run payroll: HR records each pay
+ * period per associate and attaches evidence files (kind=PAYSTUB). All
+ * dates are calendar dates (YYYY-MM-DD) — see the dateOnly helpers.
+ * -------------------------------------------------------------------------- */
+
+export const ExternalPaymentMethodSchema = z.enum([
+  'DIRECT_DEPOSIT',
+  'CHECK',
+  'CASH',
+  'PAYROLL_PROVIDER',
+  'OTHER',
+]);
+export type ExternalPaymentMethod = z.infer<typeof ExternalPaymentMethodSchema>;
+
+export const ExternalPaymentInputSchema = z
+  .object({
+    periodStart: z.string().date(),
+    periodEnd: z.string().date(),
+    payDate: z.string().date().nullable().optional(),
+    grossAmount: z.number().nonnegative().max(1_000_000).nullable().optional(),
+    netAmount: z.number().nonnegative().max(1_000_000).nullable().optional(),
+    method: ExternalPaymentMethodSchema.default('OTHER'),
+    reference: z.string().trim().max(120).nullable().optional(),
+    note: z.string().trim().max(500).nullable().optional(),
+  })
+  .refine((v) => v.periodEnd >= v.periodStart, {
+    message: 'periodEnd must be on or after periodStart',
+    path: ['periodEnd'],
+  });
+export type ExternalPaymentInput = z.infer<typeof ExternalPaymentInputSchema>;
+
+export const ExternalPaymentEvidenceSchema = z.object({
+  id: UuidSchema,
+  filename: z.string(),
+  mimeType: z.string(),
+  size: z.number(),
+  createdAt: z.string(),
+  /** False when the underlying blob is gone (ephemeral storage wiped). */
+  fileAvailable: z.boolean(),
+});
+export type ExternalPaymentEvidence = z.infer<typeof ExternalPaymentEvidenceSchema>;
+
+export const ExternalPaymentSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  periodStart: z.string(), // YYYY-MM-DD
+  periodEnd: z.string(), // YYYY-MM-DD
+  payDate: z.string().nullable(), // YYYY-MM-DD
+  grossAmount: z.number().nullable(),
+  netAmount: z.number().nullable(),
+  method: ExternalPaymentMethodSchema,
+  reference: z.string().nullable(),
+  note: z.string().nullable(),
+  createdByEmail: z.string().nullable(),
+  createdAt: z.string(),
+  evidence: z.array(ExternalPaymentEvidenceSchema),
+});
+export type ExternalPayment = z.infer<typeof ExternalPaymentSchema>;
+
+export const ExternalPaymentListResponseSchema = z.object({
+  payments: z.array(ExternalPaymentSchema),
+  total: z.number(),
+});
+export type ExternalPaymentListResponse = z.infer<
+  typeof ExternalPaymentListResponseSchema
+>;
 
 /* ----- I-9 document catalog ---------------------------------------------- *
  * The federal acceptable-documents lists. Uploads used to land as generic

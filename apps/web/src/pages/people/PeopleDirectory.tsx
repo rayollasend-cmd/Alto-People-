@@ -67,6 +67,18 @@ import {
   verifyDocument,
 } from '@/lib/documentsApi';
 import { DocumentPreview } from '@/components/DocumentPreview';
+import {
+  createExternalPayment,
+  deleteExternalPayment,
+  listExternalPayments,
+  updateExternalPayment,
+  uploadPaymentEvidence,
+} from '@/lib/externalPaymentsApi';
+import type {
+  ExternalPayment,
+  ExternalPaymentInput,
+  ExternalPaymentMethod,
+} from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { nudgeApplicant } from '@/lib/onboardingApi';
@@ -1058,11 +1070,15 @@ function DirectoryDrawer({
   // deep-links straight into someone's document vault.
   const [drawerParams] = useSearchParams();
   const requestedDrawerTab = drawerParams.get('tab');
-  const [tab, setTab] = useState<'profile' | 'compensation' | 'documents'>(
-    requestedDrawerTab === 'compensation' || requestedDrawerTab === 'documents'
+  const [tab, setTab] = useState<'profile' | 'compensation' | 'payments' | 'documents'>(
+    requestedDrawerTab === 'compensation' ||
+      requestedDrawerTab === 'documents' ||
+      requestedDrawerTab === 'payments'
       ? requestedDrawerTab
       : 'profile',
   );
+  const { user } = useAuth();
+  const canSeePayments = user ? hasCapability(user.role, 'process:payroll') : false;
   return (
     <>
       <DrawerHeader>
@@ -1085,6 +1101,7 @@ function DirectoryDrawer({
           <TabsList>
             <TabsTrigger value="profile">Profile</TabsTrigger>
             <TabsTrigger value="compensation">Compensation</TabsTrigger>
+            {canSeePayments && <TabsTrigger value="payments">Payments</TabsTrigger>}
             <TabsTrigger value="documents">Documents</TabsTrigger>
           </TabsList>
 
@@ -1094,6 +1111,11 @@ function DirectoryDrawer({
           <TabsContent value="compensation">
             <CompensationTab associate={a} />
           </TabsContent>
+          {canSeePayments && (
+            <TabsContent value="payments">
+              <PaymentsTab associateId={a.id} />
+            </TabsContent>
+          )}
           <TabsContent value="documents">
             <DocumentsTab associateId={a.id} />
           </TabsContent>
@@ -3019,6 +3041,451 @@ function PayTypeOption({
   );
 }
 
+/* ----- Payments tab -------------------------------------------------------
+ * Audit documentation for externally-run payroll: one card per pay period,
+ * each carrying evidence uploads (paystub, cleared check, processor report)
+ * that land in the document vault as PAYSTUB records under Tax & payroll.
+ * Deliberately manual — these document payments Alto never computed.
+ * ---------------------------------------------------------------------- */
+
+const PAYMENT_METHOD_LABEL: Record<ExternalPaymentMethod, string> = {
+  DIRECT_DEPOSIT: 'Direct deposit',
+  CHECK: 'Check',
+  CASH: 'Cash',
+  PAYROLL_PROVIDER: 'Payroll provider',
+  OTHER: 'Other',
+};
+
+function PaymentsTab({ associateId }: { associateId: string }) {
+  const qc = useQueryClient();
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['external-payments', associateId],
+    queryFn: () => listExternalPayments(associateId),
+    staleTime: 15_000,
+  });
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editing, setEditing] = useState<ExternalPayment | null>(null);
+
+  const refresh = () =>
+    qc.invalidateQueries({ queryKey: ['external-payments', associateId] });
+
+  const payments = data?.payments ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm text-silver">
+          Pay periods processed by the external payroll provider, with
+          uploaded evidence for audit. Files also appear in the Documents tab
+          under Tax &amp; payroll.
+        </p>
+        <Button
+          size="sm"
+          onClick={() => {
+            setEditing(null);
+            setEditorOpen(true);
+          }}
+        >
+          <Plus className="mr-1.5 h-3.5 w-3.5" />
+          Record payment
+        </Button>
+      </div>
+
+      {error instanceof Error && <ErrorBanner>{error.message}</ErrorBanner>}
+
+      {isLoading ? (
+        <SkeletonRows count={3} />
+      ) : payments.length === 0 ? (
+        <EmptyState
+          icon={Landmark}
+          title="No payments recorded"
+          description="Record the associate's first externally-processed pay period and attach the paystub or proof of payment."
+        />
+      ) : (
+        <ul className="space-y-3">
+          {payments.map((p) => (
+            <PaymentCard
+              key={p.id}
+              payment={p}
+              onEdit={() => {
+                setEditing(p);
+                setEditorOpen(true);
+              }}
+              onChanged={refresh}
+            />
+          ))}
+        </ul>
+      )}
+
+      <PaymentEditorDialog
+        open={editorOpen}
+        onOpenChange={setEditorOpen}
+        associateId={associateId}
+        payment={editing}
+        onSaved={() => {
+          setEditorOpen(false);
+          void refresh();
+        }}
+      />
+    </div>
+  );
+}
+
+function PaymentCard({
+  payment: p,
+  onEdit,
+  onChanged,
+}: {
+  payment: ExternalPayment;
+  onEdit: () => void;
+  onChanged: () => void;
+}) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await deleteExternalPayment(p.id);
+      toast.success('Payment record deleted. Evidence files stay in the vault.');
+      setConfirmDelete(false);
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Delete failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const uploadEvidence = async (file: File) => {
+    setUploading(true);
+    try {
+      await uploadPaymentEvidence(p.id, file);
+      toast.success(`Uploaded ${file.name}`);
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed.');
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const period = `${fmtDate(parseYmd(p.periodStart) ?? p.periodStart)} – ${fmtDate(parseYmd(p.periodEnd) ?? p.periodEnd)}`;
+
+  return (
+    <li className="rounded-lg border border-navy-secondary bg-navy p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-medium text-white">{period}</div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-silver">
+            {p.payDate && (
+              <span>Paid {fmtDate(parseYmd(p.payDate) ?? p.payDate)}</span>
+            )}
+            <Badge variant="default" className="text-2xs">
+              {PAYMENT_METHOD_LABEL[p.method]}
+            </Badge>
+            {p.reference && <span>Ref {p.reference}</span>}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onEdit}
+            title="Edit"
+            aria-label="Edit payment"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setConfirmDelete(true)}
+            title="Delete"
+            aria-label="Delete payment"
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+
+      {(p.grossAmount !== null || p.netAmount !== null) && (
+        <div className="flex gap-6 text-sm tabular-nums">
+          {p.grossAmount !== null && (
+            <span>
+              <span className="text-silver">Gross </span>
+              <span className="text-white">{fmtMoney(p.grossAmount)}</span>
+            </span>
+          )}
+          {p.netAmount !== null && (
+            <span>
+              <span className="text-silver">Net </span>
+              <span className="text-white">{fmtMoney(p.netAmount)}</span>
+            </span>
+          )}
+        </div>
+      )}
+
+      {p.note && <p className="text-xs text-silver">{p.note}</p>}
+
+      <div className="flex flex-wrap items-center gap-2 border-t border-navy-secondary pt-3">
+        {p.evidence.map((d) =>
+          d.fileAvailable ? (
+            <a
+              key={d.id}
+              href={downloadDocumentUrl(d.id)}
+              className="inline-flex items-center gap-1.5 rounded border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs text-gold hover:text-gold-bright"
+            >
+              <Download className="h-3 w-3" />
+              <span className="max-w-[180px] truncate">{d.filename}</span>
+            </a>
+          ) : (
+            <span
+              key={d.id}
+              className="inline-flex items-center gap-1.5 rounded border border-navy-secondary px-2 py-1 text-xs text-silver"
+              title="File missing on server — re-upload required"
+            >
+              <ShieldAlert className="h-3 w-3" />
+              <span className="max-w-[180px] truncate">{d.filename}</span>
+            </span>
+          ),
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".pdf,.png,.jpg,.jpeg,.webp"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void uploadEvidence(f);
+          }}
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={uploading}
+          onClick={() => fileRef.current?.click()}
+          className="text-xs"
+        >
+          <Upload className="mr-1.5 h-3 w-3" />
+          {uploading ? 'Uploading…' : p.evidence.length === 0 ? 'Upload paystub' : 'Add evidence'}
+        </Button>
+        {p.evidence.length === 0 && !uploading && (
+          <span className="text-2xs text-warning">No evidence attached</span>
+        )}
+      </div>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title="Delete this payment record?"
+        description={`Removes the ${period} pay period from this list. Uploaded evidence files are kept in the associate's document vault.`}
+        confirmLabel={busy ? 'Deleting…' : 'Delete'}
+        busy={busy}
+        onConfirm={remove}
+      />
+    </li>
+  );
+}
+
+function PaymentEditorDialog({
+  open,
+  onOpenChange,
+  associateId,
+  payment,
+  onSaved,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  associateId: string;
+  payment: ExternalPayment | null;
+  onSaved: () => void;
+}) {
+  const [periodStart, setPeriodStart] = useState('');
+  const [periodEnd, setPeriodEnd] = useState('');
+  const [payDate, setPayDate] = useState('');
+  const [gross, setGross] = useState('');
+  const [net, setNet] = useState('');
+  const [method, setMethod] = useState<ExternalPaymentMethod>('PAYROLL_PROVIDER');
+  const [reference, setReference] = useState('');
+  const [note, setNote] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Re-seed whenever the dialog opens for a different record (or blank).
+  useEffect(() => {
+    if (!open) return;
+    setPeriodStart(payment?.periodStart ?? '');
+    setPeriodEnd(payment?.periodEnd ?? '');
+    setPayDate(payment?.payDate ?? '');
+    setGross(payment?.grossAmount != null ? String(payment.grossAmount) : '');
+    setNet(payment?.netAmount != null ? String(payment.netAmount) : '');
+    setMethod(payment?.method ?? 'PAYROLL_PROVIDER');
+    setReference(payment?.reference ?? '');
+    setNote(payment?.note ?? '');
+    setError(null);
+  }, [open, payment]);
+
+  const parseAmount = (raw: string): number | null | undefined => {
+    if (raw.trim() === '') return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : undefined; // undefined = invalid
+  };
+
+  const submit = async () => {
+    setError(null);
+    if (!periodStart || !periodEnd) {
+      setError('Period start and end are required.');
+      return;
+    }
+    if (periodEnd < periodStart) {
+      setError('Period end must be on or after period start.');
+      return;
+    }
+    const grossAmount = parseAmount(gross);
+    const netAmount = parseAmount(net);
+    if (grossAmount === undefined || netAmount === undefined) {
+      setError('Amounts must be non-negative numbers.');
+      return;
+    }
+    // Calendar dates go over the wire exactly as the inputs yield them
+    // (YYYY-MM-DD) — never wrapped in Date/toISOString.
+    const input: ExternalPaymentInput = {
+      periodStart,
+      periodEnd,
+      payDate: payDate || null,
+      grossAmount,
+      netAmount,
+      method,
+      reference: reference.trim() || null,
+      note: note.trim() || null,
+    };
+    setBusy(true);
+    try {
+      if (payment) {
+        await updateExternalPayment(payment.id, input);
+        toast.success('Payment updated.');
+      } else {
+        await createExternalPayment(associateId, input);
+        toast.success('Payment recorded — now attach the paystub.');
+      }
+      onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Save failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {payment ? 'Edit payment' : 'Record external payment'}
+          </DialogTitle>
+          <DialogDescription>
+            Document a pay period processed outside Alto. Attach the paystub
+            or proof of payment after saving.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Period start">
+              <Input
+                type="date"
+                value={periodStart}
+                onChange={(e) => setPeriodStart(e.target.value)}
+              />
+            </Field>
+            <Field label="Period end">
+              <Input
+                type="date"
+                value={periodEnd}
+                onChange={(e) => setPeriodEnd(e.target.value)}
+              />
+            </Field>
+            <Field label="Pay date" hint="When funds were disbursed">
+              <Input
+                type="date"
+                value={payDate}
+                onChange={(e) => setPayDate(e.target.value)}
+              />
+            </Field>
+            <Field label="Method">
+              <Select
+                value={method}
+                onChange={(e) => setMethod(e.target.value as ExternalPaymentMethod)}
+              >
+                {(Object.keys(PAYMENT_METHOD_LABEL) as ExternalPaymentMethod[]).map(
+                  (m) => (
+                    <option key={m} value={m}>
+                      {PAYMENT_METHOD_LABEL[m]}
+                    </option>
+                  ),
+                )}
+              </Select>
+            </Field>
+            <Field label="Gross amount">
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                placeholder="0.00"
+                value={gross}
+                onChange={(e) => setGross(e.target.value)}
+              />
+            </Field>
+            <Field label="Net amount">
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                placeholder="0.00"
+                value={net}
+                onChange={(e) => setNet(e.target.value)}
+              />
+            </Field>
+          </div>
+          <Field label="Reference" hint="Check number, ACH trace, or provider document ID">
+            <Input
+              value={reference}
+              maxLength={120}
+              onChange={(e) => setReference(e.target.value)}
+            />
+          </Field>
+          <Field label="Note">
+            <Textarea
+              value={note}
+              maxLength={500}
+              rows={2}
+              onChange={(e) => setNote(e.target.value)}
+            />
+          </Field>
+          {error && (
+            <p role="alert" className="text-sm text-alert">
+              {error}
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={submit} loading={busy} disabled={busy}>
+            {busy ? 'Saving…' : payment ? 'Save changes' : 'Record payment'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 const DOCUMENT_KIND_LABEL: Record<string, string> = {
   ID: 'ID',
   SSN_CARD: 'SSN card',
@@ -3034,6 +3501,7 @@ const DOCUMENT_KIND_LABEL: Record<string, string> = {
   BACKGROUND_CHECK_RESULT: 'Background check result',
   DRUG_TEST_RESULT: 'Drug test result',
   I9_VERIFICATION_RESULT: 'I-9 verification result',
+  PAYSTUB: 'Paystub / payment evidence',
   OTHER: 'Other',
 };
 
@@ -3118,9 +3586,9 @@ const VAULT_CATEGORIES: ReadonlyArray<{
   {
     key: 'tax',
     title: 'Tax & payroll',
-    blurb: 'W-4 and payroll paperwork',
+    blurb: 'W-4, paystubs, and payroll paperwork',
     icon: Landmark,
-    kinds: ['W4_PDF'],
+    kinds: ['W4_PDF', 'PAYSTUB'],
   },
   {
     key: 'agreements',

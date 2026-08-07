@@ -123,6 +123,9 @@ enum DocumentKind {
   BACKGROUND_CHECK_RESULT
   DRUG_TEST_RESULT
   I9_VERIFICATION_RESULT
+  // 2026-08 — evidence of an externally-processed payment (paystub, cleared
+  // check, processor report) attached to an ExternalPayment pay period.
+  PAYSTUB
   OTHER
 }
 
@@ -405,6 +408,7 @@ model User {
   createdPayrollRuns                PayrollRun[]                  @relation("PayrollRunCreator")
   cancelledPayrollRuns              PayrollRun[]                  @relation("PayrollRunCanceller")
   verifiedDocuments                 DocumentRecord[]              @relation("DocumentVerifier")
+  externalPaymentsCreated           ExternalPayment[]             @relation("ExternalPaymentCreator")
   sentNotifications                 Notification[]                @relation("NotificationSender")
   receivedNotifications             Notification[]                @relation("NotificationRecipient")
   authoredReviews                   PerformanceReview[]           @relation("PerformanceReviewer")
@@ -526,54 +530,54 @@ model User {
 }
 
 model Client {
-  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name         String
-  industry     String?
-  status       ClientStatus @default(ACTIVE)
-  contactEmail String?
+  id                   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                 String
+  industry             String?
+  status               ClientStatus @default(ACTIVE)
+  contactEmail         String?
   // This client's scheduling week start, 0=Sunday … 6=Saturday. Some
   // clients run Sun–Sat weeks, others Wed–Tue; drives the associate
   // week-ahead digest (sent the evening before this day) and future
   // per-client week math.
-  weekStartsOn Int          @default(0)
+  weekStartsOn         Int          @default(0)
   // Tier-2 — this employer's actual SUTA experience rate + wage base
   // from the state agency's annual notice. Null = the new-employer
   // defaults baked into the engine's per-state table.
-  sutaRateOverride     Decimal? @db.Decimal(6, 5)
-  sutaWageBaseOverride Decimal? @db.Decimal(12, 2)
+  sutaRateOverride     Decimal?     @db.Decimal(6, 5)
+  sutaWageBaseOverride Decimal?     @db.Decimal(12, 2)
   // Gap 1 — Employer identity used on tax forms (W-2, 941, 1099-NEC).
   // legalName is the IRS-registered name shown on the W-2 employer block;
   // it can differ from `name` (the brand / display name). ein is the EIN
   // formatted as "XX-XXXXXXX". HR fills these in before generating W-2s.
-  legalName    String?      @db.VarChar(255)
-  ein          String?      @db.VarChar(20)
+  legalName            String?      @db.VarChar(255)
+  ein                  String?      @db.VarChar(20)
   // Gap 1 — Employer address used on tax forms. `state` already lives
   // below as the work-site code; reused for the W-2 employer block too.
-  addressLine1 String?      @db.VarChar(255)
-  addressLine2 String?      @db.VarChar(255)
-  city         String?      @db.VarChar(120)
-  zip          String?      @db.VarChar(10)
+  addressLine1         String?      @db.VarChar(255)
+  addressLine2         String?      @db.VarChar(255)
+  city                 String?      @db.VarChar(120)
+  zip                  String?      @db.VarChar(10)
   // Verbatim SAP Fieldglass "Site" label for this client engagement (e.g.
   // "1 - Onsite - FL - Destin"), rendered on the Timesheets export so the
   // Site column matches Fieldglass character-for-character. Null = fall back
   // to the worksite/client name.
-  fieldglassSiteName String? @db.VarChar(255)
+  fieldglassSiteName   String?      @db.VarChar(255)
   // Fieldglass bill rate ($/hr) for this SOW — the client-billed "Rate" on
   // the Fieldglass timesheet accounting block (Amount = rate × hours). Not
   // the associate pay rate. Null = accounting Amount can't be computed.
-  fieldglassBillRate Decimal? @db.Decimal(8, 2)
+  fieldglassBillRate   Decimal?     @db.Decimal(8, 2)
   // Two-letter USPS code of the work site. Drives Phase 23 OT/meal-break
   // policy AND Phase 25 predictive-scheduling enforcement (NY, IL, WA, PA,
   // OR demand 14-day notice). Null = federal default = no state-specific
   // rules enforced.
-  state        String?      @db.VarChar(2)
+  state                String?      @db.VarChar(2)
   // Phase 131 — geofence moved to Location. Each physical site has its
   // own coordinates and radius; lookups read Location.geofence with a
   // "first active Location under this client" fallback for associates
   // who haven't been placed at a Location yet.
-  createdAt    DateTime     @default(now()) @db.Timestamptz(6)
-  updatedAt    DateTime     @updatedAt @db.Timestamptz(6)
-  deletedAt    DateTime?    @db.Timestamptz(6)
+  createdAt            DateTime     @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime     @updatedAt @db.Timestamptz(6)
+  deletedAt            DateTime?    @db.Timestamptz(6)
 
   applications           Application[]
   users                  User[]
@@ -755,103 +759,103 @@ model AssociateAssignment {
 }
 
 model Associate {
-  id                String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  firstName         String
-  lastName          String
+  id                  String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  firstName           String
+  lastName            String
   // E-Verify / Form I-9 Section 1 identity fields. Both are optional on the
   // federal form but asked for, and without them the verifier hand-types
   // them into the portal every time. otherLastNames is a Postgres text
   // array — E-Verify collects prior surnames as a repeatable list, and an
   // array matches that without a join table for what is usually 0-2 values.
-  middleInitial     String?        @db.VarChar(1)
-  otherLastNames    String[]       @default([])
-  dob               DateTime?      @db.Date
-  email             String         @unique
-  phone             String?
-  ssnLast4          String?        @db.VarChar(4)
-  addressLine1      String?
-  addressLine2      String?
-  city              String?
-  state             String?        @db.VarChar(2)
-  zip               String?        @db.VarChar(10)
-  j1Status          Boolean        @default(false)
+  middleInitial       String?            @db.VarChar(1)
+  otherLastNames      String[]           @default([])
+  dob                 DateTime?          @db.Date
+  email               String             @unique
+  phone               String?
+  ssnLast4            String?            @db.VarChar(4)
+  addressLine1        String?
+  addressLine2        String?
+  city                String?
+  state               String?            @db.VarChar(2)
+  zip                 String?            @db.VarChar(10)
+  j1Status            Boolean            @default(false)
   // Phase 41 — W-2 vs 1099. Default W2 keeps every existing record's
   // payroll math identical; 1099 records skip W-4 / FICA / Medicare.
-  employmentType    EmploymentType @default(W2_EMPLOYEE)
+  employmentType      EmploymentType     @default(W2_EMPLOYEE)
   // Gap 11 — Recipient TIN for Form 1099-NEC. SSN for
   // CONTRACTOR_1099_INDIVIDUAL, EIN for CONTRACTOR_1099_BUSINESS.
   // Encrypted at rest with the same PAYOUT_ENCRYPTION_KEY scheme as
   // W4Submission.ssnEncrypted. Null for W-2 employees (their SSN
   // lives on W4Submission). Surfaces as `missing_tin` 400 in the
   // 1099-NEC PDF + IRS-FIRE routes when null.
-  tinEncrypted      Bytes?
+  tinEncrypted        Bytes?
   // Phase 76 — org hierarchy. All four are nullable: existing rows
   // continue to work with NULLs and HR fills them in over time. The
   // managerId self-reference enables direct-reports queries.
-  managerId         String?        @db.Uuid
-  departmentId      String?        @db.Uuid
-  costCenterId      String?        @db.Uuid
-  jobProfileId      String?        @db.Uuid
+  managerId           String?            @db.Uuid
+  departmentId        String?            @db.Uuid
+  costCenterId        String?            @db.Uuid
+  jobProfileId        String?            @db.Uuid
   // Wave 1.1 — pay schedule assignment. Drives the payroll run wizard's
   // "next period to run" calculation and determines pay frequency for
   // tax annualization. NULL = legacy associates that haven't been
   // assigned to a schedule yet (treated as biweekly default until set).
-  payrollScheduleId String?        @db.Uuid
+  payrollScheduleId   String?            @db.Uuid
   // Wave 3.2 — QBO Employee.Id (W2) or Vendor.Id (1099) cache. Set the
   // first time we sync this associate to QuickBooks. Used as the dedup
   // key so we never create duplicate QBO records, and (future) as the
   // EmployeeRef on per-associate journal entries.
-  qboEmployeeId     String?
-  qboVendorId       String?
-  qboSyncedAt       DateTime?      @db.Timestamptz(6)
+  qboEmployeeId       String?
+  qboVendorId         String?
+  qboSyncedAt         DateTime?          @db.Timestamptz(6)
   // Stamped when HR approves the associate's onboarding application
   // (POST /onboarding/applications/:id/approve). The date HR enters in
   // the approve dialog — distinct from Application.startDate (the
   // *planned* start at invitation time, which can differ if HR changes
   // their mind during review).
-  hireDate          DateTime?      @db.Date
+  hireDate            DateTime?          @db.Date
   // Tier-1 — when this hire was reported to the state new-hire directory
   // (federally required within ~20 days of hire). Null = not yet
   // reported; the new-hire report endpoints surface and stamp this.
-  newHireReportedAt DateTime?      @db.Timestamptz(6)
+  newHireReportedAt   DateTime?          @db.Timestamptz(6)
   // Tier-2 — city/county withholding rule for this associate (null =
   // no local tax). Withheld into PayrollItem.localWithholding.
-  localTaxRuleId    String?        @db.Uuid
-  localTaxRule      LocalTaxRule?  @relation(fields: [localTaxRuleId], references: [id], onDelete: SetNull)
+  localTaxRuleId      String?            @db.Uuid
+  localTaxRule        LocalTaxRule?      @relation(fields: [localTaxRuleId], references: [id], onDelete: SetNull)
   // Tier-3 — workers-comp classification for the premium accrual report.
-  wcClassCodeId     String?        @db.Uuid
-  wcClassCode       WcClassCode?   @relation(fields: [wcClassCodeId], references: [id], onDelete: SetNull)
+  wcClassCodeId       String?            @db.Uuid
+  wcClassCode         WcClassCode?       @relation(fields: [wcClassCodeId], references: [id], onDelete: SetNull)
   // Profile photo. photoS3Key is the storage path under uploads/profile-photos/;
   // photoUpdatedAt is the cache-buster the API stamps onto the photo URL so
   // the browser refetches after an upload. Null when no photo on file —
   // Avatar then falls back to initials.
-  photoS3Key        String?
-  photoUpdatedAt    DateTime?      @db.Timestamptz(6)
+  photoS3Key          String?
+  photoUpdatedAt      DateTime?          @db.Timestamptz(6)
   // Kiosk face-verification consent (BIPA-style biometric laws require
   // affirmative consent BEFORE collecting face geometry). NULL = never
   // asked — the kiosk shows a one-time consent screen after the first
   // successful PIN entry. DECLINED associates punch PIN-only: no
   // selfie, no descriptor, ever.
-  faceConsentStatus FaceConsentStatus?
-  faceConsentAt     DateTime?      @db.Timestamptz(6)
+  faceConsentStatus   FaceConsentStatus?
+  faceConsentAt       DateTime?          @db.Timestamptz(6)
   // iCal feed revocation. The feed token is HMAC(secret, associateId
   // [+ ":v" + version]), so bumping this number invalidates ONE
   // associate's leaked calendar URL without rotating the global
   // CALENDAR_FEED_SECRET (which would break every subscription).
   // 1 = the original pre-version token format, so URLs minted before
   // this column existed keep verifying.
-  calendarFeedVersion Int          @default(1)
+  calendarFeedVersion Int                @default(1)
   // Privacy erasure (admin-initiated, lib/erasure.ts). Set exactly once —
   // identity fields are anonymized in place while payroll/tax history rows
   // stay untouched (IRS 4-year / FLSA 3-year retention). erasedById is the
   // admin who ran it; the written reason + per-category scrub counts live
   // on the privacy.associate_erased AuditLog row.
-  erasedAt          DateTime?      @db.Timestamptz(6)
-  erasedById        String?        @db.Uuid
-  erasedBy          User?          @relation("AssociateEraser", fields: [erasedById], references: [id], onDelete: SetNull)
-  createdAt         DateTime       @default(now()) @db.Timestamptz(6)
-  updatedAt         DateTime       @updatedAt @db.Timestamptz(6)
-  deletedAt         DateTime?      @db.Timestamptz(6)
+  erasedAt            DateTime?          @db.Timestamptz(6)
+  erasedById          String?            @db.Uuid
+  erasedBy            User?              @relation("AssociateEraser", fields: [erasedById], references: [id], onDelete: SetNull)
+  createdAt           DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime           @updatedAt @db.Timestamptz(6)
+  deletedAt           DateTime?          @db.Timestamptz(6)
 
   user                     User?
   j1Profile                J1Profile?
@@ -867,6 +871,7 @@ model Associate {
   timeEntries              TimeEntry[]
   assignedShifts           Shift[]
   payrollItems             PayrollItem[]
+  externalPayments         ExternalPayment[]
   pendingPayrollDeductions PendingPayrollDeduction[]
   performanceReviews       PerformanceReview[]
   availability             AssociateAvailability[]
@@ -998,41 +1003,41 @@ model J1Profile {
 }
 
 model Application {
-  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId     String               @db.Uuid
-  clientId        String               @db.Uuid
+  id                  String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId         String               @db.Uuid
+  clientId            String               @db.Uuid
   // Phase 131 — initial work-site for the hire. Nullable: legacy apps
   // and apps where HR hasn't picked a site yet have NULL. When set on
   // approval, the AssociateAssignment row created at hire references
   // this location.
-  locationId      String?              @db.Uuid
-  onboardingTrack OnboardingTrack
-  status          ApplicationStatus    @default(DRAFT)
-  position        String?
-  startDate       DateTime?            @db.Date
-  invitedAt       DateTime             @default(now()) @db.Timestamptz(6)
-  submittedAt     DateTime?            @db.Timestamptz(6)
+  locationId          String?              @db.Uuid
+  onboardingTrack     OnboardingTrack
+  status              ApplicationStatus    @default(DRAFT)
+  position            String?
+  startDate           DateTime?            @db.Date
+  invitedAt           DateTime             @default(now()) @db.Timestamptz(6)
+  submittedAt         DateTime?            @db.Timestamptz(6)
   // HR review outcome — exactly one of approvedAt / rejectedAt is set
   // once status leaves IN_REVIEW. rejectionReason is required on REJECTED
   // so the audit trail captures the why; approve has no equivalent free-
   // text field by design (the hireDate stamped on Associate IS the
   // outcome record).
-  approvedAt      DateTime?            @db.Timestamptz(6)
-  rejectedAt      DateTime?            @db.Timestamptz(6)
-  rejectionReason String?
+  approvedAt          DateTime?            @db.Timestamptz(6)
+  rejectedAt          DateTime?            @db.Timestamptz(6)
+  rejectionReason     String?
   // Progress-reminder sweep bookkeeping: when the associate was last
   // nagged about incomplete tasks and how many times (2nd+ escalates
   // to HR).
-  progressRemindedAt DateTime?         @db.Timestamptz(6)
-  progressRemindCount Int              @default(0)
-  associate       Associate            @relation(fields: [associateId], references: [id], onDelete: Restrict)
-  client          Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
-  location        Location?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
-  checklist       OnboardingChecklist?
-  esignAgreements EsignAgreement[]
-  createdAt       DateTime             @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime             @updatedAt @db.Timestamptz(6)
-  deletedAt       DateTime?            @db.Timestamptz(6)
+  progressRemindedAt  DateTime?            @db.Timestamptz(6)
+  progressRemindCount Int                  @default(0)
+  associate           Associate            @relation(fields: [associateId], references: [id], onDelete: Restrict)
+  client              Client               @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  location            Location?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  checklist           OnboardingChecklist?
+  esignAgreements     EsignAgreement[]
+  createdAt           DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime             @updatedAt @db.Timestamptz(6)
+  deletedAt           DateTime?            @db.Timestamptz(6)
 
   @@index([associateId])
   @@index([clientId, status, associateId])
@@ -1089,17 +1094,17 @@ model OnboardingTemplate {
 }
 
 model OnboardingTemplateTask {
-  id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  templateId  String             @db.Uuid
-  kind        TaskKind
-  title       String
-  description String?
-  order       Int
+  id            String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId    String             @db.Uuid
+  kind          TaskKind
+  title         String
+  description   String?
+  order         Int
   /// Days BEFORE the application's start date this task should be done
   /// (0 = by the start date; null = no deadline). Copied onto each
   /// instantiated OnboardingTask; drives the at-risk math.
   dueOffsetDays Int?
-  template    OnboardingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  template      OnboardingTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
   @@index([templateId])
 }
@@ -1173,6 +1178,11 @@ model DocumentRecord {
   signatures          Signature[]
   tasks               OnboardingTask[]
   attestationEvidence ManualComplianceAttestation[] @relation("AttestationEvidence")
+  // 2026-08 — set when this file is evidence for an externally-processed
+  // pay period (kind=PAYSTUB). SetNull so deleting the payment record never
+  // destroys the audit artifact — the file stays in the vault.
+  externalPaymentId   String?                       @db.Uuid
+  externalPayment     ExternalPayment?              @relation("ExternalPaymentEvidence", fields: [externalPaymentId], references: [id], onDelete: SetNull)
   createdAt           DateTime                      @default(now()) @db.Timestamptz(6)
   updatedAt           DateTime                      @updatedAt @db.Timestamptz(6)
   deletedAt           DateTime?                     @db.Timestamptz(6)
@@ -1182,6 +1192,48 @@ model DocumentRecord {
   @@index([expiresAt])
   @@index([clientId])
   @@index([deletedAt])
+  @@index([externalPaymentId])
+}
+
+// 2026-08 — audit documentation for externally-run payroll. Payroll is
+// currently processed outside Alto, so HR records each pay period here and
+// attaches evidence (paystub PDF, cleared check, processor report) as
+// PAYSTUB DocumentRecords. Deliberately NOT derived from PayrollRun — these
+// rows document payments Alto never computed. When payroll moves in-house,
+// PayrollItem becomes the source of truth for new periods and this table
+// remains the historical record.
+model ExternalPayment {
+  id          String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String                @db.Uuid
+  // Calendar dates (@db.Date) — cross the wire as YYYY-MM-DD, never
+  // timestamps.
+  periodStart DateTime              @db.Date
+  periodEnd   DateTime              @db.Date
+  payDate     DateTime?             @db.Date
+  grossAmount Decimal?              @db.Decimal(12, 2)
+  netAmount   Decimal?              @db.Decimal(12, 2)
+  method      ExternalPaymentMethod @default(OTHER)
+  // Check number, ACH trace, or the external processor's document ID.
+  reference   String?               @db.VarChar(120)
+  note        String?               @db.VarChar(500)
+  createdById String?               @db.Uuid
+  associate   Associate             @relation(fields: [associateId], references: [id], onDelete: Restrict)
+  createdBy   User?                 @relation("ExternalPaymentCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  evidence    DocumentRecord[]      @relation("ExternalPaymentEvidence")
+  createdAt   DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime              @updatedAt @db.Timestamptz(6)
+  deletedAt   DateTime?             @db.Timestamptz(6)
+
+  @@index([associateId, periodEnd(sort: Desc)])
+  @@index([deletedAt])
+}
+
+enum ExternalPaymentMethod {
+  DIRECT_DEPOSIT
+  CHECK
+  CASH
+  PAYROLL_PROVIDER
+  OTHER
 }
 
 model Signature {
@@ -2340,38 +2392,38 @@ model PerformanceReview {
 }
 
 model Notification {
-  id              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  channel         NotificationChannel
-  status          NotificationStatus  @default(QUEUED)
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  channel           NotificationChannel
+  status            NotificationStatus  @default(QUEUED)
   // Recipient: a user (in-app), or by phone/email for SMS/EMAIL when the
   // recipient may not be a User yet.
-  recipientUserId String?             @db.Uuid
-  recipientPhone  String?
-  recipientEmail  String?
-  subject         String?
-  body            String
+  recipientUserId   String?             @db.Uuid
+  recipientPhone    String?
+  recipientEmail    String?
+  subject           String?
+  body              String
   // Optional template/category so HR can filter ("shift_reminder", etc.).
-  category        String?
+  category          String?
   // Provider's id for the sent message (Twilio SID, FCM message id).
-  externalRef     String?
+  externalRef       String?
   // Resend's message id for real EMAIL sends. Kept as its own (indexed)
   // column — externalRef also carries STUB-* refs and other providers' ids
   // — so the /resend/webhook handler can match async delivery events
   // (delivered / bounced / complained) back to this row. Nullable: stub
   // sends, non-EMAIL channels, and rows created before this column.
   providerMessageId String?
-  failureReason   String?
-  sentAt          DateTime?           @db.Timestamptz(6)
-  readAt          DateTime?           @db.Timestamptz(6)
+  failureReason     String?
+  sentAt            DateTime?           @db.Timestamptz(6)
+  readAt            DateTime?           @db.Timestamptz(6)
   // Sender: HR user, or null for system-triggered notifications.
-  senderUserId    String?             @db.Uuid
+  senderUserId      String?             @db.Uuid
   // Optional deeplink for IN_APP notifications. The bell renders the row
   // as a link when set; un-set means click only marks-read. First use:
   // payroll Branch-webhook FAILED/RETURNED → "/payroll?run={runId}".
-  linkUrl         String?
-  recipientUser   User?               @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: SetNull)
-  senderUser      User?               @relation("NotificationSender", fields: [senderUserId], references: [id], onDelete: SetNull)
-  createdAt       DateTime            @default(now()) @db.Timestamptz(6)
+  linkUrl           String?
+  recipientUser     User?               @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: SetNull)
+  senderUser        User?               @relation("NotificationSender", fields: [senderUserId], references: [id], onDelete: SetNull)
+  createdAt         DateTime            @default(now()) @db.Timestamptz(6)
 
   // Sort: Desc — invite-delivery + recent-notification queries always
   // ORDER BY createdAt DESC. Matching index order lets the planner do an
@@ -3189,12 +3241,12 @@ model Goal {
   updatedAt    DateTime   @updatedAt @db.Timestamptz(6)
   deletedAt    DateTime?  @db.Timestamptz(6)
 
-  associate    Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  parent       Goal?       @relation("GoalParent", fields: [parentGoalId], references: [id], onDelete: SetNull)
-  children     Goal[]      @relation("GoalParent")
-  createdBy    User?       @relation("GoalCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  keyResults   KeyResult[]
-  triggeredPips Pip[]      @relation("PipFromGoal")
+  associate     Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  parent        Goal?       @relation("GoalParent", fields: [parentGoalId], references: [id], onDelete: SetNull)
+  children      Goal[]      @relation("GoalParent")
+  createdBy     User?       @relation("GoalCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  keyResults    KeyResult[]
+  triggeredPips Pip[]       @relation("PipFromGoal")
 
   @@index([associateId, status])
   @@index([parentGoalId])
@@ -3271,9 +3323,9 @@ model Pip {
   createdAt     DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
 
-  associate     Associate           @relation(fields: [associateId], references: [id], onDelete: Cascade)
-  manager       User?               @relation("PipManager", fields: [managerUserId], references: [id], onDelete: SetNull)
-  sourceGoal    Goal?               @relation("PipFromGoal", fields: [sourceGoalId], references: [id], onDelete: SetNull)
+  associate        Associate           @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  manager          User?               @relation("PipManager", fields: [managerUserId], references: [id], onDelete: SetNull)
+  sourceGoal       Goal?               @relation("PipFromGoal", fields: [sourceGoalId], references: [id], onDelete: SetNull)
   triggeredReviews PerformanceReview[] @relation("ReviewFromPip")
 
   @@index([associateId, status])
@@ -3446,23 +3498,23 @@ model PremiumPayRule {
 }
 
 model TipPool {
-  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId    String        @db.Uuid
-  name        String
-  shiftDate   DateTime      @db.Date
-  totalAmount Decimal       @db.Decimal(12, 2)
-  currency    String        @default("USD") @db.VarChar(3)
-  status      TipPoolStatus @default(OPEN)
-  notes       String?
-  closedAt    DateTime?     @db.Timestamptz(6)
-  paidOutAt   DateTime?     @db.Timestamptz(6)
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId         String        @db.Uuid
+  name             String
+  shiftDate        DateTime      @db.Date
+  totalAmount      Decimal       @db.Decimal(12, 2)
+  currency         String        @default("USD") @db.VarChar(3)
+  status           TipPoolStatus @default(OPEN)
+  notes            String?
+  closedAt         DateTime?     @db.Timestamptz(6)
+  paidOutAt        DateTime?     @db.Timestamptz(6)
   // Tier-2 — the payroll run that folded this pool's allocations into
   // paychecks as TIPS earnings. Lets re-aggregation of the same run stay
   // idempotent while blocking a second run from double-paying the pool.
-  paidPayrollRunId String? @db.Uuid
-  createdById String?       @db.Uuid
-  createdAt   DateTime      @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime      @updatedAt @db.Timestamptz(6)
+  paidPayrollRunId String?       @db.Uuid
+  createdById      String?       @db.Uuid
+  createdAt        DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime      @updatedAt @db.Timestamptz(6)
 
   client      Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
   createdBy   User?               @relation("TipPoolCreator", fields: [createdById], references: [id], onDelete: SetNull)
@@ -4068,32 +4120,32 @@ model GarnishmentRemittance {
 }
 
 model TaxForm {
-  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  kind            TaxFormKind
-  quarter         Int?
-  taxYear         Int
-  associateId     String?       @db.Uuid
-  amounts         Json
-  status          TaxFormStatus @default(DRAFT)
-  filedAt         DateTime?     @db.Timestamptz(6)
-  filedById       String?       @db.Uuid
-  ein             String?       @db.VarChar(20)
+  id                  String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind                TaxFormKind
+  quarter             Int?
+  taxYear             Int
+  associateId         String?       @db.Uuid
+  amounts             Json
+  status              TaxFormStatus @default(DRAFT)
+  filedAt             DateTime?     @db.Timestamptz(6)
+  filedById           String?       @db.Uuid
+  ein                 String?       @db.VarChar(20)
   // Gap 1 — sha256 of the rendered W-2 PDF, stamped on first download.
   // Subsequent renders must produce the same hash (same as Phase 18's
   // PayrollItem.paystubHash pattern). Null until the form is rendered.
-  pdfHash         String?       @db.VarChar(64)
+  pdfHash             String?       @db.VarChar(64)
   // Gap 1 — when kind=W2C, points at the original W-2 row this form
   // corrects. Required for W2C, forbidden for any other kind (CHECK
   // enforced at the migration). The original is flipped to AMENDED at
   // W-2c create time so the UI hides it from the active list.
-  amendsTaxFormId String?       @db.Uuid
+  amendsTaxFormId     String?       @db.Uuid
   // Tier-1 — when the recipient copy (employee W-2 Copy B, contractor
   // 1099) was emailed to the associate. Filing isn't done until the
   // worker has their copy; this makes distribution auditable instead of
   // a UI checkbox nobody can verify.
-  recipientCopySentAt DateTime? @db.Timestamptz(6)
-  createdAt       DateTime      @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime      @updatedAt @db.Timestamptz(6)
+  recipientCopySentAt DateTime?     @db.Timestamptz(6)
+  createdAt           DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime      @updatedAt @db.Timestamptz(6)
 
   associate     Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
   filedBy       User?      @relation("TaxFormFiler", fields: [filedById], references: [id], onDelete: SetNull)
@@ -4636,21 +4688,21 @@ enum FaceConsentStatus {
 }
 
 model KioskDevice {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  clientId       String    @db.Uuid
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId          String    @db.Uuid
   // Phase 131 — the physical Location this device lives at. NOT NULL
   // after PR 3. Per-device geofence columns below stay as an optional
   // override for the rare case where one tablet needs a tighter
   // radius than the rest of the Location.
-  locationId     String    @db.Uuid
-  name           String
-  tokenHash      String
+  locationId        String    @db.Uuid
+  name              String
+  tokenHash         String
   // Phase 131 hardening — first 16 chars of the plaintext token, used
   // as a non-secret index so /kiosk/punch finds the right device row
   // in O(1) instead of bcrypt-verifying every active device row. NULL
   // on legacy rows created before this column; those devices fall
   // through to the slow scan path until HR rotates their token.
-  tokenPrefix    String?
+  tokenPrefix       String?
   // Phase 131 follow-up — device tokens expire 90 days after issue
   // (or the last rotate). Punches against an expired token return
   // 401 device_token_expired and the tablet auto-clears its local
@@ -4658,20 +4710,20 @@ model KioskDevice {
   // one. NULL = grandfathered legacy devices (none after the
   // backfill migration; kept nullable to allow opt-out for
   // air-gapped sites if that ever becomes a thing).
-  tokenExpiresAt DateTime? @db.Timestamptz(6)
-  lastSeenAt     DateTime? @db.Timestamptz(6)
-  isActive       Boolean   @default(true)
+  tokenExpiresAt    DateTime? @db.Timestamptz(6)
+  lastSeenAt        DateTime? @db.Timestamptz(6)
+  isActive          Boolean   @default(true)
   // Fleet-notice dedup (see sendKioskFleetNotices):
   //  - expiryNoticeStage: 0 = none sent, 1 = 14-day warning sent,
   //    2 = 3-day warning sent. Reset to 0 on token rotation.
   //  - silentNoticeAt: when the "device gone quiet" notice was sent.
   //    A device is re-noticed only after it comes back (lastSeenAt
   //    moves past silentNoticeAt) and goes silent again.
-  expiryNoticeStage Int     @default(0)
+  expiryNoticeStage Int       @default(0)
   silentNoticeAt    DateTime? @db.Timestamptz(6)
-  createdById    String?   @db.Uuid
-  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
-  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+  createdById       String?   @db.Uuid
+  createdAt         DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @db.Timestamptz(6)
 
   client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
   location  Location     @relation(fields: [locationId], references: [id], onDelete: Restrict)
@@ -5365,25 +5417,25 @@ enum AgreementStatus {
 }
 
 model Agreement {
-  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  associateId   String          @db.Uuid
-  kind          AgreementKind
-  customLabel   String?
-  status        AgreementStatus @default(PENDING_SIGNATURE)
-  documentUrl   String?
-  effectiveDate DateTime?       @db.Date
-  expiresOn     DateTime?       @db.Date
-  signedAt      DateTime?       @db.Timestamptz(6)
-  signature     String?
-  supersedesId  String?         @db.Uuid
-  notes         String?
-  issuedById    String?         @db.Uuid
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId    String          @db.Uuid
+  kind           AgreementKind
+  customLabel    String?
+  status         AgreementStatus @default(PENDING_SIGNATURE)
+  documentUrl    String?
+  effectiveDate  DateTime?       @db.Date
+  expiresOn      DateTime?       @db.Date
+  signedAt       DateTime?       @db.Timestamptz(6)
+  signature      String?
+  supersedesId   String?         @db.Uuid
+  notes          String?
+  issuedById     String?         @db.Uuid
   /// Last unsigned-agreement reminder sent by the daily sweep.
-  reminderSentAt DateTime?      @db.Timestamptz(6)
-  createdAt     DateTime        @default(now()) @db.Timestamptz(6)
-  updatedAt     DateTime        @updatedAt @db.Timestamptz(6)
+  reminderSentAt DateTime?       @db.Timestamptz(6)
+  createdAt      DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime        @updatedAt @db.Timestamptz(6)
   /// Soft delete — a legal record is never hard-deleted.
-  deletedAt     DateTime?       @db.Timestamptz(6)
+  deletedAt      DateTime?       @db.Timestamptz(6)
 
   associate    Associate   @relation(fields: [associateId], references: [id], onDelete: Cascade)
   supersedes   Agreement?  @relation("AgreementSupersedes", fields: [supersedesId], references: [id], onDelete: SetNull)
@@ -5833,34 +5885,34 @@ model VtoPolicy {
 // to the hard-coded brand defaults baked into emailTemplates.ts so the
 // system still ships emails even if HR never visits this page.
 model OrgSetting {
-  id                 String    @id @default("singleton") @db.VarChar(16)
-  orgName            String    @default("Alto HR") @db.VarChar(120)
+  id                 String         @id @default("singleton") @db.VarChar(16)
+  orgName            String         @default("Alto HR") @db.VarChar(120)
   // The display name in the From: header — combined at send time as
   // "{senderName} <{RESEND_FROM bare email}>". When null, the env's
   // RESEND_FROM is used verbatim.
-  senderName         String?   @db.VarChar(120)
+  senderName         String?        @db.VarChar(120)
   // Replaces the hard-coded info@altohr.com support address shown in the
   // email footer. RESEND_REPLY_TO env still controls the actual Reply-To
   // header — this is for the displayed address only.
-  supportEmail       String?   @db.VarChar(254)
+  supportEmail       String?        @db.VarChar(254)
   // Hex like "#0F2A44". Validated at the API + UI layer.
-  primaryColor       String?   @db.VarChar(7)
+  primaryColor       String?        @db.VarChar(7)
   // PNG/JPEG/WebP/SVG, ≤1MB. Embedded as data: URI in HTML emails so we
   // don't depend on a CDN being reachable.
   logoBytes          Bytes?
-  logoContentType    String?   @db.VarChar(64)
-  logoUpdatedAt      DateTime? @db.Timestamptz(6)
+  logoContentType    String?        @db.VarChar(64)
+  logoUpdatedAt      DateTime?      @db.Timestamptz(6)
   // Gap 10 — IRS standard mileage rate, snapshot-copied onto every new
   // mileage ExpenseLine at submit time so a rate change can't silently
   // re-price already-approved rows. IRS announces the next-year rate in
   // December; HR updates this column at year start.
-  mileageRatePerMile Decimal   @default(0.6700) @db.Decimal(8, 4)
+  mileageRatePerMile Decimal        @default(0.6700) @db.Decimal(8, 4)
   // Org-enforced MFA policy. OFF = opt-in only. ADMINS = admin-class roles
   // (derived from capabilities — see isMfaAdminRole in packages/shared)
   // must enroll in TOTP before a password sign-in completes. ALL = every
   // human role. Passkey sign-in is exempt (it is already strong auth).
   mfaRequirement     MfaRequirement @default(OFF)
-  updatedAt          DateTime  @updatedAt @db.Timestamptz(6)
+  updatedAt          DateTime       @updatedAt @db.Timestamptz(6)
 }
 
 // IRS payroll-tax constants that change yearly. One row per calendar year.
@@ -5919,32 +5971,32 @@ model LocalTaxRule {
 // enrollment; subsequent filings read from here so finance never has to
 // re-enter the User ID. Same fixed-id-of-'singleton' pattern as OrgSetting.
 model SubmitterProfile {
-  id           String   @id @default("singleton") @db.VarChar(16)
+  id              String   @id @default("singleton") @db.VarChar(16)
   // 9-digit EIN, no dashes (validated by CHECK in the migration).
-  ein          String   @db.VarChar(9)
+  ein             String   @db.VarChar(9)
   // BSO User ID — assigned by SSA when the company registers for the
   // Business Services Online portal. Required to file electronically.
-  userId       String   @db.VarChar(17)
-  name         String   @db.VarChar(57)
-  addressLine1 String   @db.VarChar(22)
-  addressLine2 String?  @db.VarChar(22)
-  city         String   @db.VarChar(22)
-  state        String   @db.VarChar(2)
-  zip5         String   @db.VarChar(5)
-  zip4         String?  @db.VarChar(4)
-  contactName  String   @db.VarChar(57)
-  contactPhone String   @db.VarChar(20)
-  contactEmail String   @db.VarChar(40)
+  userId          String   @db.VarChar(17)
+  name            String   @db.VarChar(57)
+  addressLine1    String   @db.VarChar(22)
+  addressLine2    String?  @db.VarChar(22)
+  city            String   @db.VarChar(22)
+  state           String   @db.VarChar(2)
+  zip5            String   @db.VarChar(5)
+  zip4            String?  @db.VarChar(4)
+  contactName     String   @db.VarChar(57)
+  contactPhone    String   @db.VarChar(20)
+  contactEmail    String   @db.VarChar(40)
   // Gap 11 — IRS FIRE Transmitter Control Code (5 chars, IRS-assigned).
   // Required for 1099-NEC e-file via FIRE; null when the transmitter
   // only does W-2 SSA filings.
-  irsTcc       String?  @db.VarChar(5)
+  irsTcc          String?  @db.VarChar(5)
   // Tier-1 — the employer's IRS 941 deposit schedule, from the lookback
   // rule (Pub 15 §11): MONTHLY (≤$50k liability in the lookback period,
   // deposits due the 15th of the following month) or SEMIWEEKLY
   // (Wed–Fri paydays due next Wednesday, Sat–Tue due next Friday).
-  depositSchedule String @default("MONTHLY") @db.VarChar(12)
-  updatedAt    DateTime @updatedAt @db.Timestamptz(6)
+  depositSchedule String   @default("MONTHLY") @db.VarChar(12)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(6)
 }
 
 // Tier-1 — federal tax deposit ledger. Every disbursed run accrues a

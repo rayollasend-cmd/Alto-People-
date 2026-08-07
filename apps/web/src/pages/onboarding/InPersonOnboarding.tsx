@@ -591,6 +591,7 @@ const ID_KIND_LABEL: Record<DocumentKind, string> = {
   BACKGROUND_CHECK_RESULT: 'background-check result',
   DRUG_TEST_RESULT: 'drug-test result',
   I9_VERIFICATION_RESULT: 'I-9 verification result',
+  PAYSTUB: 'paystub',
   OTHER: 'document',
 };
 
