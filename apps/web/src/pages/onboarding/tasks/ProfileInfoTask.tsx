@@ -151,7 +151,11 @@ export function ProfileInfoTask() {
       await submitProfile(applicationId, {
         firstName,
         lastName,
-        dob: dob ? new Date(dob).toISOString() : null,
+        // Calendar date — the input already yields YYYY-MM-DD, which is
+        // exactly what the contract (z.string().date()) accepts. Wrapping
+        // it in new Date().toISOString() made it a timestamp and the API
+        // rejected the whole body.
+        dob: dob || null,
         phone: phone || null,
         addressLine1: addressLine1 || null,
         addressLine2: addressLine2 || null,

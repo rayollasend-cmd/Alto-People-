@@ -63,6 +63,7 @@ describe('<ProfileInfoTask>', () => {
 
     await user.type(screen.getByLabelText(/first name/i), 'Maria');
     await user.type(screen.getByLabelText(/last name/i), 'Lopez');
+    await user.type(screen.getByLabelText(/date of birth/i), '1998-03-14');
     await user.type(screen.getByLabelText(/phone/i), '+1-850-555-0142');
     await user.type(screen.getByLabelText(/^city$/i), 'Tallahassee');
     await user.type(screen.getByLabelText(/^zip$/i), '32301');
@@ -75,6 +76,9 @@ describe('<ProfileInfoTask>', () => {
       expect.objectContaining({
         firstName: 'Maria',
         lastName: 'Lopez',
+        // Must cross the wire as a plain calendar date — the contract is
+        // z.string().date() and a timestamp fails the whole submission.
+        dob: '1998-03-14',
         phone: '+1-850-555-0142',
         city: 'Tallahassee',
         zip: '32301',
