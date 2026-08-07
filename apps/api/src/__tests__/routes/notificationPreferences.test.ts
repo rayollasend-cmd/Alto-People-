@@ -30,8 +30,8 @@ describe('GET /auth/me/notification-preferences', () => {
       mandatory: boolean;
       emailEnabled: boolean;
     }>;
-    // 5 opt-out-able + 3 mandatory = 8
-    expect(entries.length).toBe(8);
+    // 6 opt-out-able (broadcast joined in #277) + 3 mandatory = 9
+    expect(entries.length).toBe(9);
     // Every entry defaults to enabled when no row exists.
     expect(entries.every((e) => e.emailEnabled)).toBe(true);
     // Mandatory ones are flagged.

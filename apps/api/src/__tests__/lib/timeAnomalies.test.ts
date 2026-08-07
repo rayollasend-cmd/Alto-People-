@@ -187,17 +187,19 @@ describe('detectAnomalies', () => {
 });
 
 describe('week boundaries', () => {
-  it('startOfWeekUTC returns Sunday 00:00 UTC', () => {
-    // 2026-04-15 is a Wednesday. Week starts 2026-04-12 (Sun).
+  it('startOfWeekUTC returns Monday 00:00 UTC (ISO — matches the payroll workweek)', () => {
+    // 2026-04-15 is a Wednesday. ISO week starts 2026-04-13 (Mon) —
+    // Monday-anchored to match splitWeeklyOvertime, so the OT the
+    // anomaly warnings and exports report is the OT payroll pays.
     const wed = new Date('2026-04-15T15:30:00Z');
     const start = startOfWeekUTC(wed);
-    expect(start.getUTCDay()).toBe(0);
-    expect(start.toISOString()).toBe('2026-04-12T00:00:00.000Z');
+    expect(start.getUTCDay()).toBe(1);
+    expect(start.toISOString()).toBe('2026-04-13T00:00:00.000Z');
   });
 
   it('endOfWeekUTC is exactly 7 days after start', () => {
     const wed = new Date('2026-04-15T15:30:00Z');
     const end = endOfWeekUTC(wed);
-    expect(end.toISOString()).toBe('2026-04-19T00:00:00.000Z');
+    expect(end.toISOString()).toBe('2026-04-20T00:00:00.000Z');
   });
 });
