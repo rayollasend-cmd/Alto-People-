@@ -462,6 +462,14 @@ export function authorizeBackgroundCheck(
   );
 }
 
+export function getJ1Profile(
+  applicationId: string
+): Promise<{ profile: J1Profile | null }> {
+  return apiFetch<{ profile: J1Profile | null }>(
+    `/onboarding/applications/${applicationId}/j1-profile`
+  );
+}
+
 export function saveJ1Profile(
   applicationId: string,
   body: J1UpsertInput

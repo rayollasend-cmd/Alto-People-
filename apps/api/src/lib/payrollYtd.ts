@@ -28,6 +28,16 @@ type Tx = PrismaClient | Prisma.TransactionClient;
  * `periodStart` lies in `[yearStart, beforeDate)`. Returns dollars as a
  * Number (the tax engine works in plain numbers, not Prisma.Decimal).
  *
+ * KNOWN APPROXIMATION (audit 2026-08): the IRS attributes wages to the
+ * year PAID (disbursedAt — what the W-2 aggregator uses), while this
+ * windows on periodStart. The two disagree only for the single period
+ * straddling Dec/Jan, where the SS-cap/Medicare-surcharge bases can be
+ * off by one period at the year boundary. A naive switch to disbursedAt
+ * with these bounds would be WORSE (the previous period's paycheck
+ * normally disburses after the next period starts and would drop out of
+ * YTD entirely), so fixing this needs pay-date-aware bounds threaded
+ * from every caller — deliberately not attempted here.
+ *
  * - Excluded: items on runs with `status = CANCELLED` (voided runs).
  * - Excluded: items with `status` other than DISBURSED (PENDING/HELD/
  *   FAILED items represent "supposed to be paid but wasn't" — including

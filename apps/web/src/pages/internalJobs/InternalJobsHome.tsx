@@ -464,9 +464,17 @@ function ApplyDrawer({
   const submit = async () => {
     setSaving(true);
     try {
+      // The server wants a full http(s) URL; people paste
+      // "linkedin.com/in/me". Prefix the scheme instead of failing the
+      // whole application on it.
+      const trimmedResume = resumeUrl.trim();
       await applyToInternalJob(job.id, {
         coverLetter: coverLetter.trim() || null,
-        resumeUrl: resumeUrl.trim() || null,
+        resumeUrl: trimmedResume
+          ? /^https?:\/\//i.test(trimmedResume)
+            ? trimmedResume
+            : `https://${trimmedResume}`
+          : null,
       });
       try {
         localStorage.removeItem(coverDraftKey(job.id));

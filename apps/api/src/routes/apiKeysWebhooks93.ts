@@ -259,7 +259,17 @@ apiKeysWebhooks93Router.post('/webhooks/:id/test', MANAGE, async (req, res) => {
     { url: w.url, secret: w.secret },
   );
 
-  // Status only. The response body lives in the delivery log, which is
-  // readable through the deliveries endpoint under the same capability.
-  res.json({ ok: outcome === 'DELIVERED', responseStatus });
+  // The UI renders responseBody in its failure toast ("Test delivery
+  // failed: …") — returning status-only left it permanently saying
+  // "unknown error". Read the just-written delivery row and return a
+  // truncated diagnostic.
+  const written = await prisma.webhookDelivery.findUnique({
+    where: { id: delivery.id },
+    select: { responseBody: true },
+  });
+  res.json({
+    ok: outcome === 'DELIVERED',
+    responseStatus,
+    responseBody: written?.responseBody?.slice(0, 500) ?? null,
+  });
 });

@@ -939,6 +939,11 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
           where: {
             associateId: updated.associateId,
             status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] },
+            // Every other application lookup filters tombstones; without
+            // this, a soft-deleted app newer than the real one absorbed
+            // the rewind (and the rejection email deep-linked to it)
+            // while the live application's task never reopened.
+            deletedAt: null,
           },
           orderBy: { invitedAt: 'desc' },
           include: { checklist: { select: { id: true } } },
@@ -955,6 +960,10 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
               where: { id: liveApp.id },
               data: {
                 submittedAt: null,
+                // A rewind starts a fresh review cycle — reset the
+                // post-submission-edit stamp so the next applicant edit
+                // after resubmission notifies reviewers again.
+                updatedAfterSubmitAt: null,
                 ...(liveApp.status === 'SUBMITTED' ? { status: 'DRAFT' } : {}),
               },
             });

@@ -85,7 +85,17 @@ vto130Router.post('/volunteer-entries', requireAuth, async (req, res) => {
 
 vto130Router.get('/my/volunteer-entries', requireAuth, async (req, res) => {
   if (!req.user!.associateId) {
-    return res.json({ entries: [], year: null, capHours: 0, usedHours: 0 });
+    // Same shape as the full response — the client types matchRatio/
+    // matchCurrency as required, and omitting them here left undefineds
+    // waiting to crash any future unconditional use.
+    return res.json({
+      entries: [],
+      year: null,
+      capHours: 0,
+      usedHours: 0,
+      matchRatio: 0,
+      matchCurrency: 'USD',
+    });
   }
   const year = z.coerce
     .number()

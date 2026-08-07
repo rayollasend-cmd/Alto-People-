@@ -501,6 +501,10 @@ export function notifyHrOnApplicationComplete(applicationId: string): Promise<vo
         where: { id: applicationId },
         data: {
           submittedAt: new Date(),
+          // Fresh submission = fresh review cycle: clear the post-
+          // submission-edit stamp so the reviewer badge/notification
+          // dedupe starts over.
+          updatedAfterSubmitAt: null,
           ...(app.status === 'DRAFT' ? { status: 'SUBMITTED' } : {}),
         },
       });

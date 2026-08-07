@@ -3234,7 +3234,10 @@ export const NotificationSendInputSchema = z
   .object({
     channel: NotificationChannelSchema,
     recipientUserId: UuidSchema.optional(),
-    recipientPhone: z.string().min(5).max(20).optional(),
+    // max 40 matches the directory's stored phone length — the send
+    // dialog auto-fills from the directory, and a legally-stored
+    // 21+-char number ("+1 (555) 123-4567 ext 22") must not 400.
+    recipientPhone: z.string().min(5).max(40).optional(),
     recipientEmail: z.string().email().optional(),
     subject: z.string().max(200).optional(),
     body: z.string().min(1).max(4000),

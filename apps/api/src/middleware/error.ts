@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
+import { Prisma } from '@prisma/client';
 import { MulterError } from 'multer';
 import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import { ZodError } from 'zod';
@@ -76,6 +77,28 @@ export function errorHandler(
         ? `That file is too large. The limit is ${Math.round(UPLOAD_MAX_BYTES / (1024 * 1024))} MB.`
         : 'That upload could not be read. Try a different file.';
     res.status(status).json({ error: { code, message, requestId } });
+    return;
+  }
+
+  // Prisma's "you asked for something that isn't there" family are
+  // client errors, not server faults: P2023 = malformed id (e.g. a
+  // non-UUID in a :id param reaching a UUID column), P2025 = record not
+  // found on update/delete. Both used to fall through to 500
+  // internal_error AND page Sentry — a double-clicked "Revoke" button
+  // filed an incident.
+  if (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    (err.code === 'P2023' || err.code === 'P2025')
+  ) {
+    if (err.code === 'P2025') {
+      res.status(404).json({
+        error: { code: 'not_found', message: 'Record not found.', requestId },
+      });
+    } else {
+      res.status(400).json({
+        error: { code: 'invalid_id', message: 'Malformed identifier.', requestId },
+      });
+    }
     return;
   }
 

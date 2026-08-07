@@ -241,6 +241,18 @@ async function inviteOneApplicant(
 
   const result = await prisma.$transaction(async (tx) => {
     let associate = await tx.associate.findUnique({ where: { email } });
+    // A tombstoned (offboarded/erased) associate or user occupies the
+    // unique email but is invisible to every deletedAt-filtered surface —
+    // attaching a fresh invite to it produced a "new hire" that never
+    // appeared in the directory, E-Verify roster, or screening queues.
+    // Refuse loudly instead of silently resurrecting the tombstone.
+    if (associate?.deletedAt) {
+      throw new HttpError(
+        409,
+        'email_belongs_to_removed_associate',
+        'This email belongs to a removed associate record. Use a different email, or contact an administrator to restore the old record first.',
+      );
+    }
     if (!associate) {
       associate = await tx.associate.create({
         data: {
@@ -316,6 +328,13 @@ async function inviteOneApplicant(
 
     const hireRole = input.hireRole ?? 'ASSOCIATE';
     let user = await tx.user.findUnique({ where: { email } });
+    if (user?.deletedAt) {
+      throw new HttpError(
+        409,
+        'email_belongs_to_removed_user',
+        'This email belongs to a removed user account. Use a different email, or contact an administrator to restore it first.',
+      );
+    }
     if (user) {
       if (user.status === 'ACTIVE' && user.passwordHash) {
         throw new HttpError(
@@ -436,21 +455,29 @@ async function inviteOneApplicant(
   } catch (err) {
     emailFailed = err instanceof Error ? err.message : String(err);
   }
-  await prisma.notification.create({
-    data: {
-      channel: 'EMAIL',
-      status: emailFailed ? 'FAILED' : 'SENT',
-      recipientUserId: result.user.id,
-      recipientEmail: email,
-      subject,
-      body,
-      category: 'onboarding.invite',
-      externalRef: emailRef,
-      failureReason: emailFailed,
-      sentAt: emailFailed ? null : new Date(),
-      senderUserId: actorUserId,
-    },
-  });
+  // Best-effort bookkeeping: the invite (user + application + token) has
+  // already committed. A transient failure writing the Notification row
+  // used to 500 the request — HR retried and minted a DUPLICATE
+  // application for the same hire.
+  try {
+    await prisma.notification.create({
+      data: {
+        channel: 'EMAIL',
+        status: emailFailed ? 'FAILED' : 'SENT',
+        recipientUserId: result.user.id,
+        recipientEmail: email,
+        subject,
+        body,
+        category: 'onboarding.invite',
+        externalRef: emailRef,
+        failureReason: emailFailed,
+        sentAt: emailFailed ? null : new Date(),
+        senderUserId: actorUserId,
+      },
+    });
+  } catch (err) {
+    console.error('[onboarding] invite notification row failed to persist', err);
+  }
 
   await recordOnboardingEvent({
     actorUserId,
@@ -1747,13 +1774,24 @@ onboardingRouter.post('/applications/:id/profile', async (req, res, next) => {
           ...(input.otherLastNames !== undefined
             ? { otherLastNames: input.otherLastNames }
             : {}),
-          dob: input.dob ? new Date(input.dob) : null,
-          phone: input.phone ?? null,
-          addressLine1: input.addressLine1 ?? null,
-          addressLine2: input.addressLine2 ?? null,
-          city: input.city ?? null,
-          state: input.state ?? null,
-          zip: input.zip ?? null,
+          // undefined = "field not sent" and must not touch the column —
+          // `?? null` silently ERASED the stored DOB/address for any
+          // caller that omitted them (the web form always sends all
+          // fields, but the schema marks every one optional). Explicit
+          // null still clears.
+          ...(input.dob !== undefined
+            ? { dob: input.dob ? new Date(input.dob) : null }
+            : {}),
+          ...(input.phone !== undefined ? { phone: input.phone } : {}),
+          ...(input.addressLine1 !== undefined
+            ? { addressLine1: input.addressLine1 }
+            : {}),
+          ...(input.addressLine2 !== undefined
+            ? { addressLine2: input.addressLine2 }
+            : {}),
+          ...(input.city !== undefined ? { city: input.city } : {}),
+          ...(input.state !== undefined ? { state: input.state } : {}),
+          ...(input.zip !== undefined ? { zip: input.zip } : {}),
         },
       });
       const checklist = await tx.onboardingChecklist.findUnique({
@@ -1796,7 +1834,13 @@ onboardingRouter.get('/applications/:id/w4', async (req, res, next) => {
         select: { ssnLast4: true },
       }),
       prisma.documentRecord.count({
-        where: { associateId: app.associateId, kind: 'SSN_CARD', deletedAt: null },
+        // Mirrors the submit gate — a REJECTED/EXPIRED card is not on file.
+        where: {
+          associateId: app.associateId,
+          kind: 'SSN_CARD',
+          deletedAt: null,
+          status: { notIn: ['REJECTED', 'EXPIRED'] },
+        },
       }),
     ]);
     // A stored SSN only counts as "on file" when it decrypts under the
@@ -1863,7 +1907,14 @@ onboardingRouter.post('/applications/:id/w4', async (req, res, next) => {
     // phone call or an existing I-9 image would otherwise be blocked.
     if (existing !== null && req.user!.role === 'ASSOCIATE') {
       const ssnCardCount = await prisma.documentRecord.count({
-        where: { associateId: app.associateId, kind: 'SSN_CARD', deletedAt: null },
+        // REJECTED/EXPIRED cards don't satisfy the number+image pairing —
+        // the gate exists precisely because payroll needs a VALID image.
+        where: {
+          associateId: app.associateId,
+          kind: 'SSN_CARD',
+          deletedAt: null,
+          status: { notIn: ['REJECTED', 'EXPIRED'] },
+        },
       });
       if (ssnCardCount === 0) {
         throw new HttpError(
@@ -2428,6 +2479,42 @@ onboardingRouter.post(
   }
 );
 
+// GET — what's on file, so a revisiting associate reviews and corrects
+// instead of retyping the DS-2019 number, SEVIS ID, and program dates
+// from memory (the checklist's "Review / edit" promise was empty for J-1
+// hires without this — the form always came back blank and the Finish
+// button stayed disabled behind a session-local flag).
+onboardingRouter.get(
+  '/applications/:id/j1-profile',
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id);
+      const profile = await prisma.j1Profile.findUnique({
+        where: { associateId: app.associateId },
+      });
+      if (!profile) {
+        res.json({ profile: null });
+        return;
+      }
+      res.json({
+        profile: {
+          id: profile.id,
+          associateId: profile.associateId,
+          programStartDate: profile.programStartDate.toISOString(),
+          programEndDate: profile.programEndDate.toISOString(),
+          ds2019Number: profile.ds2019Number,
+          sponsorAgency: profile.sponsorAgency,
+          visaNumber: profile.visaNumber,
+          sevisId: profile.sevisId,
+          country: profile.country,
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 const J1_DOC_KINDS = ['J1_DS2019', 'J1_VISA'] as const;
 
 onboardingRouter.post(
@@ -2619,7 +2706,10 @@ onboardingRouter.post('/applications/:id/i9/submit', async (req, res, next) => {
       where: {
         associateId: app.associateId,
         deletedAt: null,
-        status: { not: 'REJECTED' },
+        // EXPIRED counts as "no good document on file" — same rule as the
+        // DOCUMENT_UPLOAD finish gate. A lapsed ID must not back an I-9
+        // submission.
+        status: { notIn: ['REJECTED', 'EXPIRED'] },
         kind: { in: ['I9_SUPPORTING', 'ID', 'SSN_CARD', 'J1_VISA', 'J1_DS2019'] },
       },
       select: { i9List: true },
@@ -3384,21 +3474,28 @@ onboardingRouter.post(
         } catch (err) {
           emailFailed = err instanceof Error ? err.message : String(err);
         }
-        await prisma.notification.create({
-          data: {
-            channel: 'EMAIL',
-            status: emailFailed ? 'FAILED' : 'SENT',
-            recipientUserId: req.user!.id,
-            recipientEmail: associate.email,
-            subject,
-            body: emailBody,
-            category: 'onboarding.esign_copy',
-            externalRef: emailRef,
-            failureReason: emailFailed,
-            sentAt: emailFailed ? null : new Date(),
-            senderUserId: req.user!.id,
-          },
-        });
+        // Best-effort: the signature already committed. Throwing here
+        // 500'd a successful signing — the associate retried and got a
+        // confusing 409 already_signed.
+        try {
+          await prisma.notification.create({
+            data: {
+              channel: 'EMAIL',
+              status: emailFailed ? 'FAILED' : 'SENT',
+              recipientUserId: req.user!.id,
+              recipientEmail: associate.email,
+              subject,
+              body: emailBody,
+              category: 'onboarding.esign_copy',
+              externalRef: emailRef,
+              failureReason: emailFailed,
+              sentAt: emailFailed ? null : new Date(),
+              senderUserId: req.user!.id,
+            },
+          });
+        } catch (err) {
+          console.error('[onboarding] esign copy notification row failed to persist', err);
+        }
       }
 
       res.status(200).json({

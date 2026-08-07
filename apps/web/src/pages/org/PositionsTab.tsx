@@ -314,7 +314,11 @@ function PositionDrawer({
         departmentId: departmentId || null,
         costCenterId: costCenterId || null,
         managerAssociateId: manager?.id ?? null,
-        fteAuthorized: Number(fte),
+        // Blank → omit (schema default applies); Number('') is 0, which
+        // the schema's min(0.01) rejects with an unhelpful generic 400 —
+        // and the native min/max attributes never ran because submit is a
+        // plain onClick, not a form submit.
+        ...(fte.trim() !== '' ? { fteAuthorized: Number(fte) } : {}),
         targetStartDate: targetStartDate || null,
         minHourlyRate: minRate ? Number(minRate) : null,
         maxHourlyRate: maxRate ? Number(maxRate) : null,

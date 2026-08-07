@@ -84,7 +84,11 @@ recruiting90Router.put('/interview-kits/:id', MANAGE, async (req, res) => {
   await prisma.interviewKit.update({
     where: { id: req.params.id },
     data: {
-      clientId: input.clientId ?? null,
+      // Absent means "leave the client scope alone" — the web's update
+      // payload doesn't carry clientId, so `?? null` was silently
+      // detaching a client-scoped kit on every edit. Explicit null still
+      // clears.
+      ...(input.clientId !== undefined ? { clientId: input.clientId } : {}),
       name: input.name,
       description: input.description ?? null,
       questions: input.questions as Prisma.InputJsonValue,

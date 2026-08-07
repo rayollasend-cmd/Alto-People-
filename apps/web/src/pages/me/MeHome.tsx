@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { Plus, Trash2 } from 'lucide-react';
@@ -399,8 +399,13 @@ function ProfilePanel({
   const [zip, setZip] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Seed once per mount, then hands off. Re-seeding on every profile
+  // identity change meant an accidental pull-to-refresh mid-edit silently
+  // discarded every keystroke and snapped the old values back.
+  const seededRef = useRef(false);
   useEffect(() => {
-    if (!profile) return;
+    if (!profile || seededRef.current) return;
+    seededRef.current = true;
     setPhone(profile.phone ?? '');
     setAddressLine1(profile.addressLine1 ?? '');
     setAddressLine2(profile.addressLine2 ?? '');

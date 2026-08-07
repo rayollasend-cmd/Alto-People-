@@ -50,19 +50,30 @@ export function DirectDepositTask() {
   // Hydrate so re-opens show the redacted view rather than blank fields.
   useEffect(() => {
     if (!applicationId) return;
-    void getDirectDeposit(applicationId).then((s) => {
-      setStatus(s);
-      if (s.hasPayoutMethod) {
-        if (s.type === 'BANK_ACCOUNT') setType('BANK_ACCOUNT');
-        if (s.type === 'BRANCH_CARD') setType('BRANCH_CARD');
-        if (s.accountType === 'CHECKING' || s.accountType === 'SAVINGS') {
-          setAccountType(s.accountType);
+    void getDirectDeposit(applicationId)
+      .then((s) => {
+        setStatus(s);
+        if (s.hasPayoutMethod) {
+          if (s.type === 'BANK_ACCOUNT') setType('BANK_ACCOUNT');
+          if (s.type === 'BRANCH_CARD') setType('BRANCH_CARD');
+          if (s.accountType === 'CHECKING' || s.accountType === 'SAVINGS') {
+            setAccountType(s.accountType);
+          }
+          // Safe to prefill — a bank's name isn't a secret, and retyping it on
+          // every edit is how it ends up blank or inconsistent.
+          if (s.bankName) setBankName(s.bankName);
         }
-        // Safe to prefill — a bank's name isn't a secret, and retyping it on
-        // every edit is how it ends up blank or inconsistent.
-        if (s.bankName) setBankName(s.bankName);
-      }
-    });
+      })
+      .catch((err) => {
+        // A silent failure showed the blank "add a bank account" form to
+        // someone with a verified account on file — implying nothing was
+        // set up and inviting a re-entry that resets verification.
+        setError(
+          err instanceof ApiError
+            ? `Could not load what's on file: ${err.message}. Reload the page before making changes.`
+            : "Could not load what's on file. Reload the page before making changes.",
+        );
+      });
   }, [applicationId]);
 
   const onFile = !!status?.hasPayoutMethod;

@@ -112,7 +112,7 @@ export function setKioskRateLimitStore(next: KioskRateLimitStore): void {
  */
 export function enforcePunchRateLimit(
   deviceId: string,
-  bucket: 'punch' | 'preflight' = 'punch',
+  bucket: 'punch' | 'preflight' | 'face' = 'punch',
 ): void {
   const now = Date.now();
   const key = `${bucket}:${deviceId}`;

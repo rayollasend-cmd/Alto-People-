@@ -349,7 +349,9 @@ function NewSeparationDrawer({
       await initiateSeparation({
         associateId: assoc.id,
         reason,
-        noticeDate,
+        // '' fails the server's date regex — a cleared optional field
+        // must go over as null, like its sibling below.
+        noticeDate: noticeDate || null,
         lastDayWorked,
         finalPaycheckDate: finalPaycheckDate || null,
       });

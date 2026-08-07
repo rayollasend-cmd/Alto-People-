@@ -22,7 +22,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { fmtDate, fmtWeekdayTz, parseYmd } from '@/lib/format';
+import { fmtDate, fmtWeekdayTz, parseYmd, ymdLocal } from '@/lib/format';
 import {
   hasCapability,
   type ApplicationDetail as ApplicationDetailType,
@@ -677,7 +677,10 @@ function ApproveDialog({
   warnings: string[] | null;
   onConfirm: (hireDate: string, acknowledgeWarnings: boolean) => Promise<void>;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  // LOCAL today — the UTC slice prefilled tomorrow's date as the official
+  // hire date for anyone approving after ~5-8pm west of UTC, and the hire
+  // date drives I-9/E-Verify deadlines downstream.
+  const today = ymdLocal();
   const [hireDate, setHireDate] = useState(defaultDate ?? today);
   const [submitting, setSubmitting] = useState(false);
 

@@ -380,17 +380,32 @@ projectsAndPayRouter.post(
         clientId: pool.clientId,
         clockInAt: { gte: new Date(input.from), lt: new Date(input.to) },
         clockOutAt: { not: null },
+        // Only APPROVED time earns a tip share — a REJECTED (fabricated)
+        // or still-unreviewed entry was diluting every legitimate
+        // worker's cut, and the wrong split became wages via payroll.
+        status: 'APPROVED',
       },
-      select: { associateId: true, clockInAt: true, clockOutAt: true },
+      select: {
+        associateId: true,
+        clockInAt: true,
+        clockOutAt: true,
+        breaks: { select: { startedAt: true, endedAt: true } },
+      },
     });
     if (entries.length === 0) {
-      throw new HttpError(400, 'no_hours', 'No completed time entries in window.');
+      throw new HttpError(400, 'no_hours', 'No approved time entries in window.');
     }
-    // Sum hours per associate.
+    // Sum hours per associate — net of breaks, same basis as pay.
     const hoursMap = new Map<string, number>();
     for (const e of entries) {
       if (!e.clockOutAt) continue;
-      const hrs = (e.clockOutAt.getTime() - e.clockInAt.getTime()) / 1000 / 3600;
+      const end = e.clockOutAt.getTime();
+      let ms = end - e.clockInAt.getTime();
+      for (const b of e.breaks) {
+        const bEnd = b.endedAt ? b.endedAt.getTime() : end;
+        ms -= Math.max(0, bEnd - b.startedAt.getTime());
+      }
+      const hrs = Math.max(0, ms) / 1000 / 3600;
       hoursMap.set(e.associateId, (hoursMap.get(e.associateId) ?? 0) + hrs);
     }
     const totalHours = Array.from(hoursMap.values()).reduce((a, b) => a + b, 0);
