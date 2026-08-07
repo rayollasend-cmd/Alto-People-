@@ -718,10 +718,26 @@ export function PeopleDirectory() {
             onAssociateChange={(patch) => {
               const updated = { ...target, ...patch };
               setTarget(updated);
-              queryClient.setQueryData<DirectoryEntry[]>(
-                ['directory', filters],
-                (old) =>
-                  old ? old.map((r) => (r.id === updated.id ? updated : r)) : old,
+              // This key holds useInfiniteQuery's InfiniteData ({pages,
+              // pageParams}), NOT a flat array — treating it as one threw
+              // a TypeError inside the updater, which surfaced as a false
+              // "Could not save/transfer" toast on writes that had already
+              // succeeded server-side (and tempted a duplicate retry).
+              queryClient.setQueryData<{
+                pages: Array<{ associates: DirectoryEntry[] } & Record<string, unknown>>;
+                pageParams: unknown[];
+              }>(['directory', filters], (old) =>
+                old
+                  ? {
+                      ...old,
+                      pages: old.pages.map((p) => ({
+                        ...p,
+                        associates: p.associates.map((r) =>
+                          r.id === updated.id ? updated : r,
+                        ),
+                      })),
+                    }
+                  : old,
               );
             }}
           />

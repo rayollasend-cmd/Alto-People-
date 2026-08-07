@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { getProfile, submitProfile } from '@/lib/onboardingApi';
@@ -103,10 +103,18 @@ export function ProfileInfoTask() {
     };
   }, [applicationId]);
 
+  // Draft saves only fire once the USER has typed something. Without the
+  // dirty gate, the effect persisted the server-hydrated snapshot as a
+  // "draft" 400ms after mount — and since drafts win over server data on
+  // the next visit, a revisiting associate saw (and could silently
+  // re-save) stale pre-correction values after HR fixed their record.
+  const dirtyRef = useRef(false);
+
   // Debounced draft save — cleared on successful submit. The cleanup also
   // cancels any pending write when the component unmounts after submit.
   useEffect(() => {
     if (!applicationId) return;
+    if (!dirtyRef.current) return;
     const t = window.setTimeout(() => {
       try {
         localStorage.setItem(
@@ -178,7 +186,15 @@ export function ProfileInfoTask() {
 
   return (
     <TaskShell title="Profile information" backTo={backTo}>
-      <form onSubmit={handleSubmit} className="space-y-4">
+      {/* onInput bubbles from every field (inputs and the state select) —
+          one listener marks the form user-dirty for the draft gate. */}
+      <form
+        onSubmit={handleSubmit}
+        onInput={() => {
+          dirtyRef.current = true;
+        }}
+        className="space-y-4"
+      >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label="First name" required>
             <input

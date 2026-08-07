@@ -22,6 +22,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { scopeBackgroundChecks } from '../lib/scope.js';
 import { blobExistsForListing } from '../lib/blobStore.js';
 import { recordComplianceEvent } from '../lib/audit.js';
+import { notifyHrOnApplicationComplete } from '../lib/notify.js';
 import { everifyRouter } from './everify.js';
 import { drugTestsRouter } from './drugTests.js';
 
@@ -158,6 +159,33 @@ complianceRouter.post('/i9/:associateId', MANAGE, async (req, res, next) => {
       update: data,
       include: I9_INCLUDE,
     });
+
+    // Keep the onboarding checklist in lockstep. HR completing Section 2
+    // from THIS tab used to leave the I9_VERIFICATION task IN_PROGRESS —
+    // the application could never reach 100%, auto-submit never fired,
+    // and Approve 409'd with checklist_incomplete even though the I-9 was
+    // fully verified (the onboarding-side section2 route always did this).
+    if (row.section1CompletedAt && row.section2CompletedAt) {
+      const liveApps = await prisma.application.findMany({
+        where: {
+          associateId: associate.id,
+          deletedAt: null,
+          status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] },
+        },
+        select: { id: true },
+      });
+      if (liveApps.length > 0) {
+        await prisma.onboardingTask.updateMany({
+          where: {
+            checklist: { applicationId: { in: liveApps.map((a) => a.id) } },
+            kind: 'I9_VERIFICATION',
+            status: { not: 'DONE' },
+          },
+          data: { status: 'DONE', completedAt: new Date() },
+        });
+        for (const a of liveApps) void notifyHrOnApplicationComplete(a.id);
+      }
+    }
 
     await recordComplianceEvent({
       actorUserId: req.user!.id,

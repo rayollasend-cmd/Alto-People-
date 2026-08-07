@@ -527,6 +527,13 @@ function NewHolidayDrawer({
       toast.error('Pick a state.');
       return;
     }
+    if (type === 'CLIENT_SPECIFIC' && !clientId.trim()) {
+      // The server rejects CLIENT_SPECIFIC without a client (400
+      // client_required) — the old "Org-wide (no client)" default option
+      // promised a NULL store that was never actually accepted.
+      toast.error('Pick a client, or change the type to Org-wide.');
+      return;
+    }
     setSaving(true);
     try {
       await createHoliday({
@@ -612,9 +619,10 @@ function NewHolidayDrawer({
                 value={clientId}
                 onChange={(e) => setClientId(e.target.value)}
               >
-                {/* clientId is optional server-side — blank stores NULL, i.e.
-                    the holiday applies org-wide despite the CLIENT_SPECIFIC type. */}
-                <option value="">Org-wide (no client)</option>
+                {/* A CLIENT_SPECIFIC holiday requires a client server-side
+                    (400 client_required otherwise) — for an org-wide
+                    holiday, pick the Org-wide TYPE instead. */}
+                <option value="">Select a client…</option>
                 {clients.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}

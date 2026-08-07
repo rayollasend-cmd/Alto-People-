@@ -2019,11 +2019,17 @@ function NewTaxFormDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: 
               setAmountValues({});
             }}
           >
-            {(Object.keys(FORM_KIND_LABEL) as TaxFormKind[]).map((k) => (
-              <option key={k} value={k}>
-                {FORM_KIND_LABEL[k]}
-              </option>
-            ))}
+            {/* W2C is deliberately absent: a correction must reference the
+                W-2 it amends (DB-enforced), so it's created via the Amend
+                action on the original W-2 row — offering it here produced
+                a guaranteed 400 on save. */}
+            {(Object.keys(FORM_KIND_LABEL) as TaxFormKind[])
+              .filter((k) => k !== 'W2C')
+              .map((k) => (
+                <option key={k} value={k}>
+                  {FORM_KIND_LABEL[k]}
+                </option>
+              ))}
           </Select>
         </div>
         <div className="grid grid-cols-2 gap-3">

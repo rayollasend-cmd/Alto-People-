@@ -554,6 +554,20 @@ function NewGrantDrawer({
       toast.error('Options require a strike price.');
       return;
     }
+    // NaN from a cleared numeric field serializes to JSON null, and the
+    // server's z.coerce turns null into 0 — a cleared cliff box silently
+    // created a grant with NO cliff instead of the documented 12-month
+    // default. Blank → omit (server default applies); junk → inline error.
+    const cliffParsed = cliffMonths.trim() === '' ? undefined : parseInt(cliffMonths, 10);
+    const vestingParsed = vestingMonths.trim() === '' ? undefined : parseInt(vestingMonths, 10);
+    if (cliffParsed !== undefined && !Number.isFinite(cliffParsed)) {
+      toast.error('Cliff (months) must be a number — leave it blank for the 12-month default.');
+      return;
+    }
+    if (vestingParsed !== undefined && !Number.isFinite(vestingParsed)) {
+      toast.error('Vesting (months) must be a number.');
+      return;
+    }
     setBusy(true);
     try {
       await createEquityGrant({
@@ -563,8 +577,8 @@ function NewGrantDrawer({
         strikePrice: isOption ? parseFloat(strikePrice) : null,
         grantDate,
         vestingStartDate,
-        cliffMonths: parseInt(cliffMonths, 10),
-        vestingMonths: parseInt(vestingMonths, 10),
+        cliffMonths: cliffParsed,
+        vestingMonths: vestingParsed,
         notes: notes.trim() || null,
       });
       toast.success('Grant created as proposed.');
