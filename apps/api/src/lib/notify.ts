@@ -47,7 +47,10 @@ import { prisma } from '../db.js';
 import { EmailSuppressedError, send } from './notifications.js';
 import { sendPushToUser } from './webPush.js';
 import { emitLiveEvent } from './liveEvents.js';
-import { onboardingCompleteTemplate } from './emailTemplates.js';
+import {
+  genericNotificationTemplate,
+  onboardingCompleteTemplate,
+} from './emailTemplates.js';
 import { env } from '../config/env.js';
 
 // Snapshot at module load. Drives the notifyAllAdmins recipient query.
@@ -160,13 +163,28 @@ function sendEmailNotification(
       let providerMessageId: string | null = null;
       let failureReason: string | null = null;
       let suppressed = false;
+      // Every email leaves in the branded layout. Callers that built a
+      // full template pass html; everyone else (the generic notify*
+      // fan-outs) used to go out as bare unstyled text with no logo,
+      // company block, or disclaimer — indistinguishable from phishing,
+      // which is exactly what the standard footer exists to prevent.
+      const branded = opts.html
+        ? { html: opts.html, text: opts.body }
+        : (() => {
+            const tpl = genericNotificationTemplate({
+              subject: opts.subject ?? 'Notification from Alto HR',
+              body: opts.body,
+              linkUrl: opts.linkUrl ?? null,
+            });
+            return { html: tpl.html, text: tpl.text };
+          })();
       try {
         const r = await send({
           channel: 'EMAIL',
           recipient: { userId, phone: null, email },
           subject: opts.subject,
-          body: opts.body,
-          html: opts.html,
+          body: branded.text,
+          html: branded.html,
           // Only the broadcast/announcement bucket carries the one-click
           // unsubscribe headers. Everything else routed through here is
           // transactional and must NOT advertise an unsubscribe.
@@ -421,12 +439,22 @@ export function notifyAssociate(
         select: { email: true },
       });
       if (!associate?.email) return;
+      // Same branding rule as sendEmailNotification — this account-less
+      // fallback path (e.g. "your application was declined") must not be
+      // the one send that leaves unbranded.
+      const tpl = opts.html
+        ? { html: opts.html, text: opts.body }
+        : genericNotificationTemplate({
+            subject: opts.subject ?? 'Notification from Alto HR',
+            body: opts.body,
+            linkUrl: opts.linkUrl ?? null,
+          });
       await send({
         channel: 'EMAIL',
         recipient: { userId: null, phone: null, email: associate.email },
         subject: opts.subject ?? 'Notification from Alto HR',
-        body: opts.body,
-        ...(opts.html ? { html: opts.html } : {}),
+        body: tpl.text,
+        html: tpl.html,
       });
     })().catch((err: unknown) => {
       console.warn('[notify] notifyAssociate failed:', err instanceof Error ? err.message : err);

@@ -91,6 +91,21 @@ const DEFAULT_COMPANY_NAME = 'Alto HR';
 const COMPANY_DEPT = 'Workforce Management Operations';
 const DEFAULT_COMPANY_EMAIL = 'hr@altohr.com';
 const COMPANY_WEB = 'altohr.com';
+// Corporate identity block — rendered in every email's footer so
+// recipients can verify a message is genuinely from us (and CAN-SPAM's
+// physical-address expectation is met on every send).
+const COMPANY_TAGLINE =
+  'Strategic staffing and workforce solutions for retail operations across the Florida Panhandle. People-first. Performance-driven.';
+const COMPANY_ADDRESS = '495 Grand Boulevard, Suite 206, Miramar Beach FL 32550';
+const COMPANY_PHONE = '(850) 805-3774';
+const COMPANY_CONTACT_EMAIL = 'info@altohr.com';
+const COMPANY_HOURS = 'Mon–Fri · 8 AM – 5 PM CT';
+// The anti-phishing line every associate-facing email carries. Scammers
+// imitate HR mail to harvest credentials and bank details; this states,
+// in every legitimate message, exactly what we will never ask for.
+const ANTI_PHISHING_NOTE =
+  `${DEFAULT_COMPANY_NAME} will never ask you for your password, verification codes, full Social Security number, or bank credentials by email or text. ` +
+  `If a message requesting any of these claims to be from us, do not respond — forward it to ${COMPANY_CONTACT_EMAIL}.`;
 
 interface Brand {
   color: string;
@@ -147,10 +162,17 @@ function signatureText(sig: Signatory, refId: string): string {
     top,
     `${b.email}  ·  ${COMPANY_WEB}`,
     '',
+    b.name,
+    COMPANY_TAGLINE,
+    COMPANY_ADDRESS,
+    `${COMPANY_PHONE}  ·  ${COMPANY_CONTACT_EMAIL}  ·  ${COMPANY_HOURS}`,
+    '',
     'CONFIDENTIAL — This message and any attachments are intended solely for',
     'the addressee and may contain confidential, proprietary, or legally',
     'privileged information. If you received this in error, please delete it',
     'and notify the sender immediately.',
+    '',
+    ANTI_PHISHING_NOTE,
     '',
     b.replyToNote,
     '',
@@ -175,11 +197,25 @@ function signatureHtml(sig: Signatory, refId: string): string {
         <a href="https://${COMPANY_WEB}" style="color:${MUTED_COLOR};text-decoration:none">${COMPANY_WEB}</a>
       </div>
     </div>
-    <div style="margin-top:24px;padding:16px;background:#FAFAF7;border-radius:6px;color:${MUTED_COLOR};font-size:11px;line-height:1.5">
+    <div style="margin-top:24px;padding-top:16px;border-top:1px solid ${BORDER_COLOR};color:${MUTED_COLOR};font-size:12px;line-height:1.6">
+      <div style="font-weight:600;color:${TEXT_COLOR}">${escapeHtml(b.name)}</div>
+      <div style="font-style:italic">${escapeHtml(COMPANY_TAGLINE)}</div>
+      <div style="margin-top:6px">${escapeHtml(COMPANY_ADDRESS)}</div>
+      <div>
+        <a href="tel:+18508053774" style="color:${MUTED_COLOR};text-decoration:none">${escapeHtml(COMPANY_PHONE)}</a>
+        &nbsp;·&nbsp;
+        <a href="mailto:${COMPANY_CONTACT_EMAIL}" style="color:${MUTED_COLOR};text-decoration:none">${COMPANY_CONTACT_EMAIL}</a>
+        &nbsp;·&nbsp;
+        ${escapeHtml(COMPANY_HOURS)}
+      </div>
+    </div>
+    <div style="margin-top:16px;padding:16px;background:#FAFAF7;border-radius:6px;color:${MUTED_COLOR};font-size:11px;line-height:1.5">
       <strong style="color:${TEXT_COLOR}">CONFIDENTIAL</strong> — This message and any attachments are intended
       solely for the addressee and may contain confidential, proprietary, or legally
       privileged information. If you received this in error, please delete it and
       notify the sender immediately.
+      <br><br>
+      <strong style="color:${TEXT_COLOR}">SECURITY</strong> — ${escapeHtml(ANTI_PHISHING_NOTE)}
       <br><br>
       ${b.replyToNote}
       <br><br>
@@ -1310,6 +1346,152 @@ export function scheduledReportTemplate(opts: ScheduledReportOpts): EmailTemplat
       dataBlock,
       body: body.map(escapeHtml),
       cta: { label: 'Open reports', url: opts.reportsUrl },
+      signatory: { kind: 'system' },
+      refId,
+    }),
+  };
+}
+
+/* ---------------- GENERIC (branded wrap for ad-hoc sends) ------ */
+
+export interface GenericNotificationOpts {
+  subject: string;
+  /** Plain prose. Blank lines split paragraphs; single newlines become
+   *  line breaks. Escaped here — pass raw text, never HTML. */
+  body: string;
+  /** Relative in-app path ("/onboarding/applications/123") or absolute URL. */
+  linkUrl?: string | null;
+  /** CTA label when linkUrl is set. */
+  linkLabel?: string;
+}
+
+/**
+ * Wraps arbitrary notification prose in the standard branded layout —
+ * header bar, corporate footer, confidentiality + anti-phishing block.
+ *
+ * This exists so NO email leaves the platform as bare unstyled text:
+ * the generic notify() fan-outs (time-off decisions, schedule changes,
+ * reviewer alerts, …) used to send plain text with no logo, no company
+ * information, and no way for an associate to tell them from a phishing
+ * attempt — the exact failure mode the footer exists to prevent.
+ */
+export function genericNotificationTemplate(
+  opts: GenericNotificationOpts,
+): EmailTemplate {
+  const refId = formatRef();
+  const paragraphs = opts.body
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => escapeHtml(p).replace(/\n/g, '<br>'));
+  const [intro = '', ...rest] = paragraphs;
+  const url = opts.linkUrl
+    ? /^https?:\/\//i.test(opts.linkUrl)
+      ? opts.linkUrl
+      : `${env.APP_BASE_URL}${opts.linkUrl}`
+    : null;
+  const cta = url ? { label: opts.linkLabel ?? 'Open in Alto HR', url } : undefined;
+  return {
+    subject: opts.subject,
+    text: composeText({
+      intro: opts.body,
+      cta,
+      signatory: { kind: 'system' },
+      refId,
+    }),
+    html: wrapHtml({
+      heading: opts.subject,
+      intro,
+      body: rest,
+      cta,
+      signatory: { kind: 'system' },
+      refId,
+    }),
+  };
+}
+
+/* ---------------- PAYROLL ------------------------------------- */
+
+export interface PaystubEmailOpts {
+  firstName: string;
+  /** Human period label, e.g. "Mar 1 – Mar 14, 2026". */
+  periodLabel: string;
+  /** Formatted net pay, e.g. "$1,234.56". */
+  netPay: string;
+  payrollUrl: string;
+}
+
+export function paystubTemplate(opts: PaystubEmailOpts): EmailTemplate {
+  const refId = formatRef();
+  const subject = `[For Your Records] Your paystub for ${opts.periodLabel}`;
+  const heading = 'Your paystub is ready';
+  const intro = `Hi ${opts.firstName}, your paystub for the period below is attached as a PDF. A copy is always available from your paystubs page.`;
+  const dataBlock: DataRow[] = [
+    { label: 'Pay period', value: opts.periodLabel },
+    { label: 'Net pay', value: opts.netPay },
+  ];
+  return {
+    subject,
+    text: composeText({
+      greeting: `Hi ${opts.firstName},`,
+      intro: `Your paystub for ${opts.periodLabel} is attached as a PDF.`,
+      dataBlock,
+      cta: { label: 'View your paystubs', url: opts.payrollUrl },
+      signatory: { kind: 'system' },
+      refId,
+    }),
+    html: wrapHtml({
+      heading,
+      intro: escapeHtml(intro),
+      dataBlock,
+      cta: { label: 'View your paystubs', url: opts.payrollUrl },
+      signatory: { kind: 'system' },
+      refId,
+    }),
+  };
+}
+
+/* ---------------- E-SIGN COPY ---------------------------------- */
+
+export interface EsignCopyOpts {
+  firstName: string;
+  agreementTitle: string;
+  /** ISO timestamp of the signature. */
+  signedAtIso: string;
+  /** SHA-256 of the rendered signed PDF. */
+  pdfHash: string;
+  downloadUrl: string;
+}
+
+export function esignCopyTemplate(opts: EsignCopyOpts): EmailTemplate {
+  const refId = formatRef();
+  const subject = `Signed: ${opts.agreementTitle}`;
+  const heading = `Your signed copy of "${opts.agreementTitle}"`;
+  const intro = `Hi ${opts.firstName}, thank you for signing the ${opts.agreementTitle}. A copy of the signed agreement is attached to this email and is available in your Documents at any time.`;
+  const dataBlock: DataRow[] = [
+    { label: 'Signed on', value: opts.signedAtIso },
+    { label: 'Fingerprint (SHA-256)', value: opts.pdfHash },
+  ];
+  const body = [
+    `If you did not sign this document, contact ${COMPANY_CONTACT_EMAIL} immediately.`,
+  ];
+  return {
+    subject,
+    text: composeText({
+      greeting: `Hi ${opts.firstName},`,
+      intro: `Thank you for signing the ${opts.agreementTitle}. A copy of the signed agreement is attached and available in your Documents at any time.`,
+      dataBlock,
+      body,
+      cta: { label: 'Download your signed copy', url: opts.downloadUrl },
+      signatory: { kind: 'system' },
+      refId,
+    }),
+    html: wrapHtml({
+      heading,
+      intro: escapeHtml(intro),
+      dataBlock,
+      body: body.map(escapeHtml),
+      cta: { label: 'Download your signed copy', url: opts.downloadUrl },
       signatory: { kind: 'system' },
       refId,
     }),
