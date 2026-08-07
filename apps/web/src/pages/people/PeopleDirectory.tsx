@@ -3122,6 +3122,7 @@ function PaymentsTab({ associateId }: { associateId: string }) {
         onOpenChange={setEditorOpen}
         associateId={associateId}
         payment={editing}
+        lastPayment={payments[0] ?? null}
         onSaved={() => {
           setEditorOpen(false);
           void refresh();
@@ -3291,17 +3292,38 @@ function PaymentCard({
   );
 }
 
+/** Calendar-date arithmetic on YYYY-MM-DD strings, at local midnight —
+ *  never through Date parsing of the raw string (that's UTC and shifts a
+ *  day west of Greenwich). */
+function addDaysYmd(ymd: string, days: number): string {
+  const d = parseYmd(ymd);
+  if (!d) return ymd;
+  d.setDate(d.getDate() + days);
+  return ymdLocal(d);
+}
+
+function daysBetweenYmd(a: string, b: string): number {
+  const da = parseYmd(a);
+  const db = parseYmd(b);
+  if (!da || !db) return 0;
+  return Math.round((db.getTime() - da.getTime()) / 86_400_000);
+}
+
 function PaymentEditorDialog({
   open,
   onOpenChange,
   associateId,
   payment,
+  lastPayment,
   onSaved,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   associateId: string;
   payment: ExternalPayment | null;
+  /** Most recent recorded period — seeds the next one so a routine entry
+   *  is "glance, attach, save" instead of typing five fields. */
+  lastPayment: ExternalPayment | null;
   onSaved: () => void;
 }) {
   const [periodStart, setPeriodStart] = useState('');
@@ -3312,22 +3334,55 @@ function PaymentEditorDialog({
   const [method, setMethod] = useState<ExternalPaymentMethod>('PAYROLL_PROVIDER');
   const [reference, setReference] = useState('');
   const [note, setNote] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
 
-  // Re-seed whenever the dialog opens for a different record (or blank).
+  // Re-seed whenever the dialog opens. Editing seeds from the record; a new
+  // entry continues from the last period — same cadence (period length),
+  // same pay-date offset, same method and amounts, since external payroll
+  // is overwhelmingly rhythmic. Everything stays editable.
   useEffect(() => {
     if (!open) return;
-    setPeriodStart(payment?.periodStart ?? '');
-    setPeriodEnd(payment?.periodEnd ?? '');
-    setPayDate(payment?.payDate ?? '');
-    setGross(payment?.grossAmount != null ? String(payment.grossAmount) : '');
-    setNet(payment?.netAmount != null ? String(payment.netAmount) : '');
-    setMethod(payment?.method ?? 'PAYROLL_PROVIDER');
-    setReference(payment?.reference ?? '');
-    setNote(payment?.note ?? '');
+    if (payment) {
+      setPeriodStart(payment.periodStart);
+      setPeriodEnd(payment.periodEnd);
+      setPayDate(payment.payDate ?? '');
+      setGross(payment.grossAmount != null ? String(payment.grossAmount) : '');
+      setNet(payment.netAmount != null ? String(payment.netAmount) : '');
+      setMethod(payment.method);
+      setReference(payment.reference ?? '');
+      setNote(payment.note ?? '');
+    } else if (lastPayment) {
+      const length = daysBetweenYmd(lastPayment.periodStart, lastPayment.periodEnd);
+      const start = addDaysYmd(lastPayment.periodEnd, 1);
+      const end = addDaysYmd(start, length);
+      setPeriodStart(start);
+      setPeriodEnd(end);
+      setPayDate(
+        lastPayment.payDate
+          ? addDaysYmd(end, daysBetweenYmd(lastPayment.periodEnd, lastPayment.payDate))
+          : '',
+      );
+      setGross(lastPayment.grossAmount != null ? String(lastPayment.grossAmount) : '');
+      setNet(lastPayment.netAmount != null ? String(lastPayment.netAmount) : '');
+      setMethod(lastPayment.method);
+      setReference('');
+      setNote('');
+    } else {
+      setPeriodStart('');
+      setPeriodEnd('');
+      setPayDate('');
+      setGross('');
+      setNet('');
+      setMethod('PAYROLL_PROVIDER');
+      setReference('');
+      setNote('');
+    }
+    setFiles([]);
     setError(null);
-  }, [open, payment]);
+  }, [open, payment, lastPayment]);
 
   const parseAmount = (raw: string): number | null | undefined => {
     if (raw.trim() === '') return null;
@@ -3365,12 +3420,33 @@ function PaymentEditorDialog({
     };
     setBusy(true);
     try {
-      if (payment) {
-        await updateExternalPayment(payment.id, input);
+      const saved = payment
+        ? await updateExternalPayment(payment.id, input)
+        : await createExternalPayment(associateId, input);
+      // Evidence rides the same save: the record lands first, then the
+      // files. A failed upload doesn't orphan anything — the period exists
+      // and the card offers a retry.
+      let uploaded = 0;
+      try {
+        for (const f of files) {
+          await uploadPaymentEvidence(saved.id, f);
+          uploaded += 1;
+        }
+      } catch (err) {
+        toast.error(
+          `${payment ? 'Saved' : 'Recorded'}, but ${files[uploaded].name} failed to upload — retry from the card. ${err instanceof Error ? err.message : ''}`,
+        );
+        onSaved();
+        return;
+      }
+      if (uploaded > 0) {
+        toast.success(
+          `Payment ${payment ? 'updated' : 'recorded'} with ${uploaded} evidence ${uploaded === 1 ? 'file' : 'files'}.`,
+        );
+      } else if (payment) {
         toast.success('Payment updated.');
       } else {
-        await createExternalPayment(associateId, input);
-        toast.success('Payment recorded — now attach the paystub.');
+        toast.success('Payment recorded — remember to attach the paystub.');
       }
       onSaved();
     } catch (err) {
@@ -3388,8 +3464,8 @@ function PaymentEditorDialog({
             {payment ? 'Edit payment' : 'Record external payment'}
           </DialogTitle>
           <DialogDescription>
-            Document a pay period processed outside Alto. Attach the paystub
-            or proof of payment after saving.
+            Document a pay period processed outside Alto and attach the
+            paystub or proof of payment — one save does both.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
@@ -3467,6 +3543,53 @@ function PaymentEditorDialog({
               onChange={(e) => setNote(e.target.value)}
             />
           </Field>
+
+          <Field
+            label="Paystub / evidence"
+            hint="PDF or photo — lands in the document vault under Tax & payroll"
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              {files.map((f, i) => (
+                <span
+                  key={`${f.name}-${i}`}
+                  className="inline-flex items-center gap-1.5 rounded border border-navy-secondary bg-navy-secondary/40 px-2 py-1 text-xs text-white"
+                >
+                  <span className="max-w-[180px] truncate">{f.name}</span>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${f.name}`}
+                    className="text-silver hover:text-white"
+                    onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                accept=".pdf,.png,.jpg,.jpeg,.webp"
+                className="hidden"
+                onChange={(e) => {
+                  const picked = Array.from(e.target.files ?? []);
+                  if (picked.length) setFiles((cur) => [...cur, ...picked]);
+                  if (fileRef.current) fileRef.current.value = '';
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="text-xs"
+                onClick={() => fileRef.current?.click()}
+              >
+                <Upload className="mr-1.5 h-3 w-3" />
+                {files.length === 0 ? 'Attach paystub' : 'Add another'}
+              </Button>
+            </div>
+          </Field>
+
           {error && (
             <p role="alert" className="text-sm text-alert">
               {error}
