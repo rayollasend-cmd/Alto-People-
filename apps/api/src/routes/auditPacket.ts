@@ -97,7 +97,7 @@ auditPacketRouter.post(
     });
     const locationName = new Map(locations.map((l) => [l.id, l.name]));
 
-    const [assignments, workedEntries] = await Promise.all([
+    const [assignments, workedEntries, completedShifts] = await Promise.all([
       prisma.associateAssignment.findMany({
         where: {
           locationId: { in: locations.map((l) => l.id) },
@@ -123,30 +123,50 @@ auditPacketRouter.post(
         orderBy: { clockInAt: 'asc' },
         take: 50_000,
       }),
+      // Third corroborating signal: shifts the client's schedule marked
+      // COMPLETED. Catches anyone whose punches were lost or never
+      // approved but whom scheduling confirms was on site.
+      prisma.shift.findMany({
+        where: {
+          clientId: client.id,
+          status: 'COMPLETED',
+          assignedAssociateId: { not: null },
+          startsAt: { gte: start, lt: endExcl },
+        },
+        select: { assignedAssociateId: true },
+      }),
     ]);
 
     const rosterIds = [
       ...new Set([
         ...assignments.map((a) => a.associateId),
         ...workedEntries.map((e) => e.associateId),
+        ...completedShifts.map((s) => s.assignedAssociateId!),
       ]),
     ];
     if (rosterIds.length === 0) {
       throw new HttpError(
         404,
         'empty_roster',
-        'No workers were assigned to (or worked approved time at) this client in the selected period.',
+        'No workers were assigned to, worked approved time at, or completed shifts for this client in the selected period.',
       );
     }
 
+    // NO deletedAt filter — the audit covers the PERIOD, so a worker who
+    // provided services in March and separated in June belongs on the
+    // list. Their current status is disclosed instead of the row being
+    // silently dropped. (Privacy-erased associates appear with their
+    // anonymized identity; the manifest notes this.)
     const associates = await prisma.associate.findMany({
-      where: { id: { in: rosterIds }, deletedAt: null },
+      where: { id: { in: rosterIds } },
       select: {
         id: true,
         firstName: true,
         lastName: true,
         email: true,
         employmentType: true,
+        deletedAt: true,
+        erasedAt: true,
         i9Verification: {
           select: {
             citizenshipStatus: true,
@@ -225,11 +245,51 @@ auditPacketRouter.post(
     const blobStore = getBlobStore();
 
     /* 01 — Worker roster --------------------------------------------------- */
+    // Every row carries its PROVENANCE: which signal(s) put the worker on
+    // this list, the assignment span, and the actually-worked footprint.
+    // An auditor (and the officer reviewing before transmission) can see
+    // the evidentiary basis per person instead of trusting a bare list.
+    const netMinutesOf = (e: (typeof workedEntries)[number]): number => {
+      if (!e.clockOutAt) return 0;
+      const end = e.clockOutAt.getTime();
+      let ms = end - e.clockInAt.getTime();
+      for (const b of e.breaks) {
+        const bEnd = b.endedAt ? b.endedAt.getTime() : end;
+        ms -= Math.max(0, bEnd - b.startedAt.getTime());
+      }
+      return Math.max(0, Math.round(ms / 60_000));
+    };
     const assignmentsByAssociate = new Map<string, typeof assignments>();
     for (const a of assignments) {
       const arr = assignmentsByAssociate.get(a.associateId) ?? [];
       arr.push(a);
       assignmentsByAssociate.set(a.associateId, arr);
+    }
+    const workByAssociate = new Map<
+      string,
+      { first: Date; last: Date; netMinutes: number; punches: number }
+    >();
+    for (const e of workedEntries) {
+      const w = workByAssociate.get(e.associateId);
+      const mins = netMinutesOf(e);
+      if (!w) {
+        workByAssociate.set(e.associateId, {
+          first: e.clockInAt,
+          last: e.clockInAt,
+          netMinutes: mins,
+          punches: 1,
+        });
+      } else {
+        if (e.clockInAt < w.first) w.first = e.clockInAt;
+        if (e.clockInAt > w.last) w.last = e.clockInAt;
+        w.netMinutes += mins;
+        w.punches += 1;
+      }
+    }
+    const shiftCountByAssociate = new Map<string, number>();
+    for (const s of completedShifts) {
+      const id = s.assignedAssociateId!;
+      shiftCountByAssociate.set(id, (shiftCountByAssociate.get(id) ?? 0) + 1);
     }
     const sitesFor = (associateId: string): string =>
       [
@@ -239,55 +299,93 @@ auditPacketRouter.post(
           ),
         ),
       ].join('; ');
-    const rosterRows = associates.map((a) => {
-      const app = a.applications[0];
-      const i9 = a.i9Verification;
-      return [
-        `${a.lastName}, ${a.firstName}`,
-        app?.position ?? '',
-        a.employmentType.replace(/_/g, ' '),
-        ymd(app?.startDate ?? null),
-        sitesFor(a.id),
-        i9?.section1CompletedAt && i9?.section2CompletedAt ? 'Complete' : 'Incomplete',
-        i9?.eVerifyCaseNumber ?? '—',
-      ];
-    });
+    const assignmentSpanFor = (associateId: string): string => {
+      const rows = assignmentsByAssociate.get(associateId) ?? [];
+      if (rows.length === 0) return '';
+      const from = rows.reduce((m, r) => (r.startedAt < m ? r.startedAt : m), rows[0].startedAt);
+      const open = rows.some((r) => r.endedAt === null);
+      const to = open
+        ? 'present'
+        : ymd(rows.reduce((m, r) => (r.endedAt! > m ? r.endedAt! : m), rows[0].endedAt!));
+      return `${ymd(from)} → ${to}`;
+    };
+    const basisFor = (associateId: string): string => {
+      const parts: string[] = [];
+      if (assignmentsByAssociate.has(associateId)) parts.push('Site assignment');
+      if (workByAssociate.has(associateId)) parts.push('Approved worked time');
+      if (shiftCountByAssociate.has(associateId)) parts.push('Completed shifts');
+      return parts.join(' · ');
+    };
+    const workedSummaryFor = (associateId: string): string => {
+      const w = workByAssociate.get(associateId);
+      if (!w) return '—';
+      return `${ymd(w.first)} → ${ymd(w.last)} · ${(w.netMinutes / 60).toFixed(1)}h`;
+    };
+    const statusOf = (a: { deletedAt: Date | null; erasedAt: Date | null }): string =>
+      a.erasedAt ? 'Separated (record anonymized)' : a.deletedAt ? 'Separated' : 'Active';
+    const separatedCount = associates.filter((a) => a.deletedAt !== null).length;
+
     {
       const pdf = new ReportPdf({
         title: 'Worker Roster',
-        subtitle: `Workers providing services on ${client.name} properties during the audit period — from site assignment records and approved worked time.`,
-        facts: facts([{ label: 'Workers', value: String(associates.length) }]),
+        subtitle: `Workers providing services on ${client.name} properties during the audit period. Inclusion is evidence-based — the union of site assignment records, approved worked time, and schedule-completed shifts; each row states its basis. Workers who separated after providing services in the period remain listed with their status.`,
+        facts: facts([
+          { label: 'Workers', value: String(associates.length) },
+          ...(separatedCount > 0
+            ? [{ label: 'Of which separated', value: String(separatedCount) }]
+            : []),
+        ]),
         reference: refId,
         confidentialityNote,
       });
       pdf.table(
         [
-          { label: 'Worker', width: 118 },
-          { label: 'Position', width: 80 },
-          { label: 'Type', width: 62 },
-          { label: 'Start date', width: 56 },
+          { label: 'Worker', width: 104 },
+          { label: 'Position', width: 66 },
+          { label: 'Status', width: 58 },
           { label: 'Site(s)' },
-          { label: 'I-9', width: 52 },
-          { label: 'E-Verify case', width: 78 },
+          { label: 'Inclusion basis', width: 92 },
+          { label: 'Worked (period)', width: 92 },
+          { label: 'I-9', width: 46 },
         ],
-        rosterRows,
+        associates.map((a) => {
+          const i9 = a.i9Verification;
+          return [
+            `${a.lastName}, ${a.firstName}`,
+            a.applications[0]?.position ?? '',
+            statusOf(a),
+            sitesFor(a.id) || '—',
+            basisFor(a.id),
+            workedSummaryFor(a.id),
+            i9?.section1CompletedAt && i9?.section2CompletedAt ? 'Complete' : 'Incomplete',
+          ];
+        }),
       );
       archive.append(await pdf.render(), { name: '01-worker-roster/worker-roster.pdf' });
     }
     archive.append(
       csv([
-        ['Last name', 'First name', 'Email', 'Position', 'Employment type', 'Client start date', 'Site(s)', 'I-9 complete', 'E-Verify case'],
+        ['Last name', 'First name', 'Email', 'Position', 'Employment type', 'Employment status', 'Client start date', 'Site(s)', 'Assignment span', 'Inclusion basis', 'First worked', 'Last worked', 'Net hours (period)', 'Approved punches', 'Completed shifts', 'I-9 complete', 'E-Verify case'],
         ...associates.map((a) => {
           const app = a.applications[0];
           const i9 = a.i9Verification;
+          const w = workByAssociate.get(a.id);
           return [
             a.lastName,
             a.firstName,
             a.email,
             app?.position ?? '',
             a.employmentType,
+            statusOf(a),
             ymd(app?.startDate ?? null),
             sitesFor(a.id),
+            assignmentSpanFor(a.id),
+            basisFor(a.id),
+            w ? ymd(w.first) : '',
+            w ? ymd(w.last) : '',
+            w ? (w.netMinutes / 60).toFixed(2) : '',
+            w?.punches ?? 0,
+            shiftCountByAssociate.get(a.id) ?? 0,
             i9?.section1CompletedAt && i9?.section2CompletedAt ? 'Yes' : 'No',
             i9?.eVerifyCaseNumber ?? '',
           ];
@@ -466,16 +564,7 @@ auditPacketRouter.post(
     }
 
     /* 05 — Pay-lawfulness records ------------------------------------------ */
-    const netMin = (e: (typeof workedEntries)[number]): number => {
-      if (!e.clockOutAt) return 0;
-      const end = e.clockOutAt.getTime();
-      let ms = end - e.clockInAt.getTime();
-      for (const b of e.breaks) {
-        const bEnd = b.endedAt ? b.endedAt.getTime() : end;
-        ms -= Math.max(0, bEnd - b.startedAt.getTime());
-      }
-      return Math.max(0, Math.round(ms / 60_000));
-    };
+    const netMin = netMinutesOf;
     const nameById = new Map(associates.map((a) => [a.id, `${a.lastName}, ${a.firstName}`]));
     archive.append(
       csv([
@@ -852,7 +941,11 @@ auditPacketRouter.post(
           { label: 'Contents', width: 168 },
         ],
         [
-          ['01-worker-roster', `Workers providing services on ${client.name} properties`, `${associates.length} workers (PDF + CSV)`],
+          [
+            '01-worker-roster',
+            `Workers providing services on ${client.name} properties`,
+            `${associates.length} workers${separatedCount > 0 ? ` (${separatedCount} since separated)` : ''} (PDF + CSV)`,
+          ],
           ['02-form-i9', 'Form I-9s and identity / eligibility documentation', `${associates.length} record sheets · ${i9Docs.length} documents`],
           ['03-e-verify', 'Confirmation of E-Verify', `${associates.length} workers (PDF + CSV)`],
           ['04-attestations', 'Immigration-enforcement, wage & hour, and back-wages history', '3 letters — officer signature REQUIRED'],
@@ -871,6 +964,9 @@ auditPacketRouter.post(
         'Folders 04 and 08 contain generated clean-history templates. An authorized officer must verify each statement is factually accurate, then sign and date them BEFORE this packet is transmitted.',
       );
       pdf.heading('Data integrity');
+      pdf.para(
+        'Roster inclusion is evidence-based: the union of site assignment records, approved worked time, and schedule-completed shifts for the period, with the basis stated per worker. Workers who separated after providing services in the period remain listed with their status; a worker whose record was privacy-erased appears with an anonymized identity, as noted on the roster.',
+      );
       pdf.para(
         missingBlobs > 0
           ? `${missingBlobs} document file(s) referenced by records could not be retrieved from storage and are absent from this packet; their records still appear in the registers.`
