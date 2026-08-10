@@ -100,6 +100,20 @@ const COMPANY_ADDRESS = '495 Grand Boulevard, Suite 206, Miramar Beach FL 32550'
 const COMPANY_PHONE = '(850) 805-3774';
 const COMPANY_CONTACT_EMAIL = 'info@altohr.com';
 const COMPANY_HOURS = 'Mon–Fri · 8 AM – 5 PM CT';
+/** Corporate identity block, exported for other letterheaded artifacts
+ *  (audit packets, generated attestations) so the address/phone/hours
+ *  live in exactly one place. */
+export const COMPANY_INFO = {
+  name: DEFAULT_COMPANY_NAME,
+  legalName: 'Alto HR LLC, doing business as Alto Etho LLC',
+  tagline: COMPANY_TAGLINE,
+  address: COMPANY_ADDRESS,
+  phone: COMPANY_PHONE,
+  email: COMPANY_CONTACT_EMAIL,
+  hours: COMPANY_HOURS,
+  web: COMPANY_WEB,
+} as const;
+
 // The anti-phishing line every associate-facing email carries. Scammers
 // imitate HR mail to harvest credentials and bank details; this states,
 // in every legitimate message, exactly what we will never ask for.

@@ -39,6 +39,7 @@ import { resendWebhookRouter } from './routes/resendWebhook.js';
 import { emailUnsubscribeRouter } from './routes/emailUnsubscribe.js';
 import { orgRouter } from './routes/org.js';
 import { externalPaymentsRouter } from './routes/externalPayments.js';
+import { auditPacketRouter } from './routes/auditPacket.js';
 import { directoryRouter } from './routes/directory.js';
 import { positionsRouter } from './routes/positions.js';
 import { teamRouter } from './routes/team.js';
@@ -303,6 +304,9 @@ export function createApp() {
   // External payroll documentation — pay periods + evidence uploads for the
   // directory drawer's Payments tab. Router self-gates on process:payroll.
   app.use('/external-payments', externalPaymentsRouter);
+  // Client-audit response packets (Walmart-scope ZIP). Self-gates on
+  // view:hr-admin + bulk-PII limiter; every generation is critical-audited.
+  app.use('/audit-packets', auditPacketRouter);
   // Phase 78 — positions / req-driven hiring.
   app.use('/positions', positionsRouter);
   // Phase 79 — manager-scoped approval queues.
