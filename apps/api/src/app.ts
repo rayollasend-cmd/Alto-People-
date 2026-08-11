@@ -148,6 +148,34 @@ export function createApp() {
   }
 
   app.use(stripApiPrefix);
+  // Browser PAGE navigations never reach JSON API routes. API routers are
+  // mounted at root paths that collide with SPA pages (GET /separations
+  // the API list vs /separations the page, plus /agreements, /holidays,
+  // /hr-cases, /reports, and a dozen more) — so refreshing or deep-linking
+  // those pages rendered raw JSON in the browser. A navigation
+  // (Sec-Fetch-Mode=navigate + Dest=document — address-bar loads and link
+  // clicks; never fetch()/XHR, images, or integration clients) gets the
+  // SPA shell instead, EXCEPT for file-download URLs, which are opened by
+  // <a href> navigation on purpose (document downloads, packet/paystub
+  // PDFs, CSV exports, calendar feeds). /api/*-tagged calls are exempt so
+  // API clients always get JSON.
+  const NAVIGABLE_FILE_PATTERN = /\.(pdf|zip|csv|ics)$|\/(download|pdf)(\/|$)/i;
+  app.use((req: Request & { isApiCall?: boolean }, res, next) => {
+    if (
+      env.NODE_ENV === 'production' &&
+      existsSync(WEB_DIST) &&
+      !req.isApiCall &&
+      isBrowserNavigation(req) &&
+      !NAVIGABLE_FILE_PATTERN.test(req.path)
+    ) {
+      const isKiosk = req.path === '/kiosk' || req.path.startsWith('/kiosk/');
+      res.sendFile(path.join(WEB_DIST, isKiosk ? 'kiosk.html' : 'index.html'), {
+        headers: { 'Cache-Control': 'no-cache' },
+      });
+      return;
+    }
+    next();
+  });
   // gzip everything compressible — API JSON and the SPA bundles alike.
   // Measured before this existed: the main JS chunk left the server as
   // 441 KB raw (Railway's proxy only gzips text/html), which dominated
