@@ -3,6 +3,7 @@ import { FileArchive, ShieldAlert } from 'lucide-react';
 import { useClients } from '@/lib/useClients';
 import { ymdLocal } from '@/lib/format';
 import {
+  AssociatePicker,
   Button,
   Card,
   CardContent,
@@ -10,7 +11,25 @@ import {
   Label,
   Select,
   Textarea,
+  type PickedAssociate,
 } from '@/components/ui';
+
+type PacketScope = 'CLIENT_PERIOD' | 'ALL_WORKFORCE' | 'INDIVIDUAL';
+
+const SCOPE_LABEL: Record<PacketScope, { label: string; blurb: string }> = {
+  CLIENT_PERIOD: {
+    label: 'Client audit',
+    blurb: 'Workers tied to one client during the period — vendor-compliance audits (e.g. Walmart).',
+  },
+  ALL_WORKFORCE: {
+    label: 'Entire workforce',
+    blurb: 'Everyone who has ever worked for us, current and separated — DOL / ICE / insurance audits. The period bounds the pay and time sections.',
+  },
+  INDIVIDUAL: {
+    label: 'Individual associate',
+    blurb: 'One worker\'s complete evidence file — wage claims, subpoenas, single-worker I-9 requests.',
+  },
+};
 
 /**
  * One-click client-audit response packet (built to Walmart's vendor-audit
@@ -22,7 +41,10 @@ import {
  */
 export function AuditPacketTab() {
   const { clients } = useClients();
+  const [scope, setScope] = useState<PacketScope>('CLIENT_PERIOD');
   const [clientId, setClientId] = useState('');
+  const [associate, setAssociate] = useState<PickedAssociate | null>(null);
+  const [workforceConfirmed, setWorkforceConfirmed] = useState(false);
   const today = ymdLocal();
   const yearAgo = (() => {
     const d = new Date();
@@ -37,8 +59,16 @@ export function AuditPacketTab() {
 
   const generate = async () => {
     setError(null);
-    if (!clientId) {
+    if (scope === 'CLIENT_PERIOD' && !clientId) {
       setError('Pick the auditing client.');
+      return;
+    }
+    if (scope === 'INDIVIDUAL' && !associate) {
+      setError('Pick the associate to audit.');
+      return;
+    }
+    if (scope === 'ALL_WORKFORCE' && !workforceConfirmed) {
+      setError('Confirm you understand the scope of a full-workforce export.');
       return;
     }
     if (!periodStart || !periodEnd || periodEnd < periodStart) {
@@ -57,7 +87,14 @@ export function AuditPacketTab() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, periodStart, periodEnd, reason: reason.trim() }),
+        body: JSON.stringify({
+          scope,
+          ...(scope === 'CLIENT_PERIOD' ? { clientId } : {}),
+          ...(scope === 'INDIVIDUAL' ? { associateId: associate!.id } : {}),
+          periodStart,
+          periodEnd,
+          reason: reason.trim(),
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -93,21 +130,70 @@ export function AuditPacketTab() {
       <Card>
         <CardContent className="space-y-4 p-5">
           <div>
-            <Label htmlFor="audit-client">Auditing client</Label>
+            <Label htmlFor="audit-scope">Audit scope</Label>
             <Select
-              id="audit-client"
+              id="audit-scope"
               className="mt-1"
-              value={clientId}
-              onChange={(e) => setClientId(e.target.value)}
+              value={scope}
+              onChange={(e) => {
+                setScope(e.target.value as PacketScope);
+                setWorkforceConfirmed(false);
+                setError(null);
+              }}
             >
-              <option value="">Select a client…</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
+              {(Object.keys(SCOPE_LABEL) as PacketScope[]).map((s) => (
+                <option key={s} value={s}>
+                  {SCOPE_LABEL[s].label}
                 </option>
               ))}
             </Select>
+            <p className="mt-1 text-2xs text-silver">{SCOPE_LABEL[scope].blurb}</p>
           </div>
+
+          {scope === 'CLIENT_PERIOD' && (
+            <div>
+              <Label htmlFor="audit-client">Auditing client</Label>
+              <Select
+                id="audit-client"
+                className="mt-1"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+              >
+                <option value="">Select a client…</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+
+          {scope === 'INDIVIDUAL' && (
+            <div>
+              <Label htmlFor="audit-associate">Associate</Label>
+              <div className="mt-1">
+                <AssociatePicker id="audit-associate" value={associate} onChange={setAssociate} />
+              </div>
+            </div>
+          )}
+
+          {scope === 'ALL_WORKFORCE' && (
+            <label className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/[0.07] p-3 text-xs text-silver">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={workforceConfirmed}
+                onChange={(e) => setWorkforceConfirmed(e.target.checked)}
+              />
+              <span>
+                I understand this exports the I-9 records, identity documents,
+                and pay data of <strong className="text-white">every worker the
+                company has ever employed</strong> in a single file, and that
+                this action is permanently recorded in the critical audit log.
+              </span>
+            </label>
+          )}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
@@ -162,12 +248,12 @@ export function AuditPacketTab() {
       <div className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/[0.07] p-3.5 text-xs text-silver">
         <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
         <div>
-          Before transmitting: the attestation letters (folder 04) and the
-          subcontractor statement (folder 08) are generated as clean-history
+          Before transmitting: any attestation letters and the subcontractor
+          statement included in the packet are generated as clean-history
           templates — an authorized officer must verify each statement is
           factually true, then sign and date them. The packet contains I-9
-          images, SSN cards, and pay data for the whole roster; send it only
-          through the channel the auditor specified in the MSA.
+          images, SSN cards, and pay data for everyone in scope; send it only
+          through the channel the requesting party specified.
         </div>
       </div>
     </div>
