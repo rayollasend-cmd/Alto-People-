@@ -263,14 +263,22 @@ async function inviteOneApplicant(
           ...(input.employmentType ? { employmentType: input.employmentType } : {}),
         },
       });
-    } else if (
-      input.employmentType &&
-      associate.employmentType !== input.employmentType
-    ) {
-      associate = await tx.associate.update({
-        where: { id: associate.id },
-        data: { employmentType: input.employmentType },
-      });
+    } else {
+      const rehireUpdates: Prisma.AssociateUpdateInput = {};
+      if (input.employmentType && associate.employmentType !== input.employmentType) {
+        rehireUpdates.employmentType = input.employmentType;
+      }
+      // Rehire clears the separation stamp — the fresh application drives
+      // status from here (PENDING while onboarding, ACTIVE at approval).
+      if (associate.separatedAt !== null) {
+        rehireUpdates.separatedAt = null;
+      }
+      if (Object.keys(rehireUpdates).length > 0) {
+        associate = await tx.associate.update({
+          where: { id: associate.id },
+          data: rehireUpdates,
+        });
+      }
     }
 
     const [client, template] = await Promise.all([
@@ -358,6 +366,12 @@ async function inviteOneApplicant(
         // somehow exists (e.g. invite-accept race), the next request fails
         // the JWT.ver check and they re-auth at the new role.
         updates.tokenVersion = { increment: 1 };
+      }
+      // Rehire: a separated associate's account was DISABLED at separation
+      // completion. Re-inviting them re-opens it as INVITED so the accept
+      // flow works exactly like a fresh hire's.
+      if (user.status === 'DISABLED') {
+        updates.status = 'INVITED';
       }
       if (Object.keys(updates).length > 0) {
         user = await tx.user.update({ where: { id: user.id }, data: updates });

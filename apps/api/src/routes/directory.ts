@@ -105,6 +105,7 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
         j1Status: true,
         createdAt: true,
         photoS3Key: true,
+        separatedAt: true,
         photoUpdatedAt: true,
         managerId: true,
         manager: { select: { firstName: true, lastName: true } },
@@ -121,6 +122,7 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
             position: true,
             startDate: true,
             invitedAt: true,
+            approvedAt: true,
             client: { select: { name: true } },
             checklist: {
               select: {
@@ -189,11 +191,27 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
           x.status === 'SUBMITTED' ||
           x.status === 'IN_REVIEW',
       );
-      const status: DirectoryStatus = approved
-        ? 'ACTIVE'
-        : inFlight
-          ? 'PENDING'
-          : 'INACTIVE';
+      // A completed separation makes the associate INACTIVE regardless of
+      // old approvals — UNLESS a newer approval exists (rehire) or a fresh
+      // application is in flight. Without this, "Active" derived purely
+      // from "has ever been approved" and separated people stayed active
+      // forever.
+      const separated =
+        a.separatedAt !== null &&
+        !apps.some(
+          (x) =>
+            x.status === 'APPROVED' &&
+            x.approvedAt !== null &&
+            x.approvedAt > a.separatedAt!,
+        ) &&
+        !inFlight;
+      const status: DirectoryStatus = separated
+        ? 'INACTIVE'
+        : approved
+          ? 'ACTIVE'
+          : inFlight
+            ? 'PENDING'
+            : 'INACTIVE';
 
       // Workplace = approved client first, then most-recent application.
       const workplaceApp = approved ?? inFlight ?? apps[0] ?? null;
@@ -248,6 +266,7 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
         jobProfileTitle: a.jobProfile?.title ?? null,
         onboardingPercent,
         applicationId: workplaceApp?.id ?? null,
+        separatedAt: separated && a.separatedAt ? a.separatedAt.toISOString() : null,
         createdAt: a.createdAt.toISOString(),
         photoUrl: profilePhotoUrlFor({
           id: a.id,

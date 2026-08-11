@@ -4257,6 +4257,9 @@ export const DirectoryEntrySchema = z.object({
   // could be derived. Used by the drawer to deep-link into the onboarding
   // detail and to drive the nudge action for PENDING associates.
   applicationId: UuidSchema.nullable(),
+  /** Set when a completed separation is what makes this associate
+   *  INACTIVE (null for rehires with a newer approval). */
+  separatedAt: z.string().datetime().nullable().optional(),
   // First time this associate's record was created — useful as a proxy
   // for tenure when no formal hire date is on file.
   createdAt: z.string().datetime(),

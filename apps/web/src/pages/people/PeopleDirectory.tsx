@@ -1349,6 +1349,30 @@ function ProfileTab({
           label="In Alto HR since"
           value={fmtDate(a.createdAt)}
         />
+        {a.separatedAt && (
+          <InfoRow
+            label="Separated"
+            value={
+              <span className="text-silver">
+                {fmtDate(a.separatedAt)} — deactivated (login disabled). Re-invite
+                to rehire.
+              </span>
+            }
+          />
+        )}
+        {!a.separatedAt && a.status === 'ACTIVE' && (
+          <InfoRow
+            label="Offboarding"
+            value={
+              <Link
+                to={`/separations?associateId=${a.id}`}
+                className="text-gold hover:text-gold-bright"
+              >
+                Start a separation to deactivate this associate
+              </Link>
+            }
+          />
+        )}
       </Section>
 
       <DangerZoneSection associate={a} />
