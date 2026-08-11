@@ -729,7 +729,10 @@ auditPacketRouter.post(
         periodStart: { lt: endExcl },
         periodEnd: { gte: start },
       },
-      include: { evidence: { where: { deletedAt: null } } },
+      include: {
+        evidence: { where: { deletedAt: null } },
+        createdBy: { select: { email: true } },
+      },
       orderBy: { periodEnd: 'asc' },
     });
     for (const p of externalPayments) {
@@ -812,6 +815,44 @@ auditPacketRouter.post(
         { name: '05-pay-records/external-payments/external-payments.csv' },
       );
       for (const p of externalPayments) {
+        const worker = nameById.get(p.associateId) ?? p.associateId;
+        const stem = `05-pay-records/external-payments/${safeName(worker)}-${ymd(p.periodEnd)}`;
+        // A letterheaded copy of the RECORD itself — the paystub-equivalent
+        // for a period processed by the external payroll provider. The raw
+        // evidence uploads accompany it under the same filename stem so an
+        // auditor can match record → proof at a glance.
+        const pdf = new ReportPdf({
+          title: 'External Payment Record',
+          subtitle:
+            'Compensation for this pay period was processed by the Company\'s external payroll provider and documented in the Alto People compliance system. Uploaded evidence of payment accompanies this record under the same filename stem.',
+          facts: facts(),
+          reference: refId,
+          confidentialityNote,
+        });
+        pdf.heading('Payment record');
+        pdf.kv([
+          { label: 'Worker', value: worker },
+          { label: 'Pay period', value: `${ymd(p.periodStart)} to ${ymd(p.periodEnd)}` },
+          { label: 'Pay date', value: ymd(p.payDate) || '—' },
+          { label: 'Gross amount', value: p.grossAmount === null ? '—' : money(p.grossAmount) },
+          { label: 'Net amount', value: p.netAmount === null ? '—' : money(p.netAmount) },
+          { label: 'Payment method', value: p.method.replace(/_/g, ' ') },
+          { label: 'Reference', value: p.reference ?? '—' },
+          ...(p.note ? [{ label: 'Note', value: p.note }] : []),
+          { label: 'Recorded by', value: p.createdBy?.email ?? '—' },
+          { label: 'Recorded at', value: iso(p.createdAt) },
+        ]);
+        pdf.heading('Evidence of payment on file');
+        if (p.evidence.length) {
+          pdf.table(
+            [{ label: 'File' }, { label: 'Uploaded', width: 96 }],
+            p.evidence.map((d) => [d.filename, iso(d.createdAt).slice(0, 16).replace('T', ' ')]),
+          );
+        } else {
+          pdf.para('No evidence file is attached to this payment record.', { muted: true });
+        }
+        archive.append(await pdf.render(), { name: `${stem}-payment-record.pdf` });
+
         for (const d of p.evidence) {
           if (!d.s3Key) continue;
           const blob = await blobStore.get(d.s3Key);
@@ -819,9 +860,7 @@ auditPacketRouter.post(
             missingBlobs += 1;
             continue;
           }
-          archive.append(blob, {
-            name: `05-pay-records/external-payments/${safeName(`${nameById.get(p.associateId) ?? p.associateId}`)}-${ymd(p.periodEnd)}-${safeName(d.filename)}`,
-          });
+          archive.append(blob, { name: `${stem}-${safeName(d.filename)}` });
         }
       }
     }
@@ -1045,7 +1084,7 @@ auditPacketRouter.post(
           [
             '05-pay-records',
             'Pay compliance: time punches, pay registers, paystubs',
-            `${workedEntries.length} punches · ${payItems.length} register lines · ${stubCount} paystubs${disbursed.length > PAYSTUB_CAP ? ` of ${disbursed.length} (capped)` : ''}${externalPayments.length ? ` · ${externalPayments.length} external payments` : ''}`,
+            `${workedEntries.length} punches · ${payItems.length} register lines · ${stubCount} paystubs${disbursed.length > PAYSTUB_CAP ? ` of ${disbursed.length} (capped)` : ''}${externalPayments.length ? ` · ${externalPayments.length} external-payment record sheets with evidence` : ''}`,
           ],
           ['06-harassment-reporting', 'Harassment / discrimination reporting process', `Process + policy + ${acks.length} acknowledgments`],
           ['07-background-checks', 'Background checks per the MSA', `Register + ${bgDocs.length} result documents`],
