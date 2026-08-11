@@ -310,6 +310,19 @@ auditPacketRouter.post(
     });
     archive.pipe(res);
 
+    // From here on, headers are SENT — an uncaught throw can no longer
+    // become a JSON error. The catch below aborts the stream so the
+    // client's download fails visibly instead of hanging forever, and the
+    // log names the failing section for ops.
+    const startedAtMs = Date.now();
+    console.log('[audit-packet] start', {
+      ref: refId,
+      scope: input.scope,
+      workers: associates.length,
+      period: periodLabel,
+    });
+    try {
+
     const blobStore = getBlobStore();
 
     /* 01 — Worker roster --------------------------------------------------- */
@@ -1118,5 +1131,22 @@ auditPacketRouter.post(
     }
 
     await archive.finalize();
+    console.log('[audit-packet] complete', {
+      ref: refId,
+      ms: Date.now() - startedAtMs,
+      workers: associates.length,
+      i9Docs: i9Docs.length,
+      paystubs: stubCount,
+      missingBlobs,
+    });
+    } catch (err) {
+      console.error('[audit-packet] generation failed mid-stream', {
+        ref: refId,
+        ms: Date.now() - startedAtMs,
+        err: err instanceof Error ? (err.stack ?? err.message) : String(err),
+      });
+      archive.abort();
+      res.destroy(err instanceof Error ? err : new Error(String(err)));
+    }
   },
 );
