@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { notifyAllAdmins, notifyManager } from '../lib/notify.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
@@ -231,15 +231,49 @@ separation119Router.post(
     }
     const next: 'IN_PROGRESS' | 'COMPLETE' =
       existing.status === 'PLANNED' ? 'IN_PROGRESS' : 'COMPLETE';
-    await prisma.separation.update({
-      where: { id },
-      data: {
-        status: next,
-        ...(next === 'COMPLETE'
-          ? { completedAt: new Date(), completedById: req.user!.id }
-          : {}),
-      },
+    // Completion DEACTIVATES the associate, atomically with the status
+    // flip. Before this transaction existed, completing a separation
+    // changed nothing outside the Separation row: the associate stayed
+    // "Active" in the directory forever (status derives from having an
+    // approved application) and their login kept working even though the
+    // completion notice claimed "access revoked".
+    const disabledUserIds: string[] = [];
+    await prisma.$transaction(async (tx) => {
+      await tx.separation.update({
+        where: { id },
+        data: {
+          status: next,
+          ...(next === 'COMPLETE'
+            ? { completedAt: new Date(), completedById: req.user!.id }
+            : {}),
+        },
+      });
+      if (next !== 'COMPLETE') return;
+      await tx.associate.update({
+        where: { id: existing.associateId },
+        data: { separatedAt: new Date() },
+      });
+      // Close any open site assignment as of the last day worked, so
+      // location rosters and the audit packet's assignment spans reflect
+      // reality.
+      await tx.associateAssignment.updateMany({
+        where: { associateId: existing.associateId, endedAt: null },
+        data: { endedAt: existing.lastDayWorked },
+      });
+      // Actually revoke access: disable the login and kill live sessions.
+      const users = await tx.user.findMany({
+        where: { associateId: existing.associateId, deletedAt: null, status: { not: 'DISABLED' } },
+        select: { id: true },
+      });
+      if (users.length > 0) {
+        await tx.user.updateMany({
+          where: { id: { in: users.map((u) => u.id) } },
+          data: { status: 'DISABLED', tokenVersion: { increment: 1 } },
+        });
+        disabledUserIds.push(...users.map((u) => u.id));
+      }
     });
+    for (const uid of disabledUserIds) invalidateUserCache(uid);
     // Phase 131 follow-up â€” when the offboarding completes, drop the
     // associate's selfies and face reference immediately rather than
     // waiting for the 90-day retention sweep. Punch rows stay for HR

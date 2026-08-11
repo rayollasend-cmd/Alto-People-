@@ -854,6 +854,11 @@ model Associate {
   // stay untouched (IRS 4-year / FLSA 3-year retention). erasedById is the
   // admin who ran it; the written reason + per-category scrub counts live
   // on the privacy.associate_erased AuditLog row.
+  // Stamped when a Separation completes (cleared on rehire re-invite).
+  // Drives the directory's INACTIVE status — without it, "Active" derived
+  // purely from "has an approved application" and separated associates
+  // stayed active forever.
+  separatedAt         DateTime?          @db.Timestamptz(6)
   erasedAt            DateTime?          @db.Timestamptz(6)
   erasedById          String?            @db.Uuid
   erasedBy            User?              @relation("AssociateEraser", fields: [erasedById], references: [id], onDelete: SetNull)
