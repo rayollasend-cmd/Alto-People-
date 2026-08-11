@@ -109,7 +109,16 @@ export function AuditPacketTab() {
       a.click();
       URL.revokeObjectURL(a.href);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Packet generation failed.');
+      // A TypeError from fetch/blob() means the connection died mid-
+      // generation — the server aborts the stream when a section fails,
+      // and it used to just hang here forever instead.
+      setError(
+        err instanceof TypeError
+          ? 'Packet generation failed partway through — the download was aborted. Try a shorter audit period; if it keeps failing, contact your administrator (the server log names the failing section).'
+          : err instanceof Error
+            ? err.message
+            : 'Packet generation failed.',
+      );
     } finally {
       setBusy(false);
     }

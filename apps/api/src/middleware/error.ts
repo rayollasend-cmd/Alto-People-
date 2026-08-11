@@ -36,6 +36,23 @@ export function errorHandler(
   // but should never happen in practice.
   const requestId = req.id;
 
+  // Streaming routes (ZIP/PDF downloads) can fail AFTER headers are sent.
+  // Attempting res.status().json() then throws "Cannot set headers after
+  // they are sent" INSIDE this handler, and the half-written response is
+  // left open forever — the browser sits on a download that never
+  // finishes. Destroy the socket instead: the client's fetch rejects
+  // immediately and the UI can show a real error.
+  if (res.headersSent) {
+    const e = err instanceof Error ? err : new Error(String(err));
+    (req.log ?? logger).error(
+      { err: e.message, requestId },
+      'error after headers sent — destroying streamed response',
+    );
+    captureException(e);
+    res.destroy(e);
+    return;
+  }
+
   if (err instanceof HttpError) {
     res.status(err.status).json({
       error: { code: err.code, message: err.message, details: err.details, requestId },
