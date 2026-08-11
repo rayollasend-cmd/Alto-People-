@@ -41,7 +41,16 @@ export const auditPacketRouter = Router();
 const HR_ADMIN = requireCapability('view:hr-admin');
 
 const GenerateInputSchema = z.object({
-  clientId: z.string().uuid(),
+  /**
+   * CLIENT_PERIOD — workers tied to one client during the period (vendor
+   * audits). ALL_WORKFORCE — every associate who has EVER worked for the
+   * company; the period still bounds the pay/time sections. INDIVIDUAL —
+   * one associate's complete evidence file for the period (wage claims,
+   * subpoenas, single-worker I-9 inspections).
+   */
+  scope: z.enum(['CLIENT_PERIOD', 'ALL_WORKFORCE', 'INDIVIDUAL']).default('CLIENT_PERIOD'),
+  clientId: z.string().uuid().optional(),
+  associateId: z.string().uuid().optional(),
   /** Calendar dates, YYYY-MM-DD, inclusive. */
   periodStart: z.string().date(),
   periodEnd: z.string().date(),
@@ -77,30 +86,55 @@ auditPacketRouter.post(
     if (input.periodEnd < input.periodStart) {
       throw new HttpError(400, 'invalid_period', 'periodEnd must be on or after periodStart.');
     }
+    if (input.scope === 'CLIENT_PERIOD' && !input.clientId) {
+      throw new HttpError(400, 'client_required', 'clientId is required for a client-scoped packet.');
+    }
+    if (input.scope === 'INDIVIDUAL' && !input.associateId) {
+      throw new HttpError(400, 'associate_required', 'associateId is required for an individual packet.');
+    }
     const start = new Date(`${input.periodStart}T00:00:00Z`);
     const endExcl = new Date(`${input.periodEnd}T00:00:00Z`);
     endExcl.setUTCDate(endExcl.getUTCDate() + 1);
 
-    const client = await prisma.client.findFirst({
-      where: { id: input.clientId, deletedAt: null },
-      select: { id: true, name: true },
-    });
-    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    const client =
+      input.scope === 'CLIENT_PERIOD'
+        ? await prisma.client.findFirst({
+            where: { id: input.clientId!, deletedAt: null },
+            select: { id: true, name: true },
+          })
+        : null;
+    if (input.scope === 'CLIENT_PERIOD' && !client) {
+      throw new HttpError(404, 'client_not_found', 'Client not found');
+    }
 
-    /* Roster: anyone assigned to one of the client's locations during the
-     * period, plus anyone with APPROVED worked time attributed to the
-     * client in the period. Union, because assignment records and time
-     * attribution can each exist without the other. */
+    /* Roster derivation per scope.
+     *
+     * CLIENT_PERIOD — the union of three corroborating signals tying a
+     * worker to the client during the period: site assignments, approved
+     * worked time (client snapshotted at clock-in), and schedule-COMPLETED
+     * shifts. Union, because each source catches the others' blind spots.
+     *
+     * ALL_WORKFORCE — every associate who has ever worked for the company,
+     * separated or not; the period bounds the transactional sections only.
+     *
+     * INDIVIDUAL — exactly one associate, whatever their current status.
+     *
+     * Assignment/time/shift context is loaded in every scope (client-
+     * filtered only for CLIENT_PERIOD) so the roster's sites and worked-
+     * footprint columns stay populated. */
     const locations = await prisma.location.findMany({
-      where: { clientId: client.id, deletedAt: null },
+      where: { ...(client ? { clientId: client.id } : {}), deletedAt: null },
       select: { id: true, name: true },
     });
     const locationName = new Map(locations.map((l) => [l.id, l.name]));
+    const associateFilter =
+      input.scope === 'INDIVIDUAL' ? { associateId: input.associateId! } : {};
 
     const [assignments, workedEntries, completedShifts] = await Promise.all([
       prisma.associateAssignment.findMany({
         where: {
-          locationId: { in: locations.map((l) => l.id) },
+          ...(client ? { locationId: { in: locations.map((l) => l.id) } } : {}),
+          ...associateFilter,
           startedAt: { lt: endExcl },
           OR: [{ endedAt: null }, { endedAt: { gte: start } }],
         },
@@ -108,7 +142,8 @@ auditPacketRouter.post(
       }),
       prisma.timeEntry.findMany({
         where: {
-          clientId: client.id,
+          ...(client ? { clientId: client.id } : {}),
+          ...associateFilter,
           status: 'APPROVED',
           clockInAt: { gte: start, lt: endExcl },
         },
@@ -123,32 +158,41 @@ auditPacketRouter.post(
         orderBy: { clockInAt: 'asc' },
         take: 50_000,
       }),
-      // Third corroborating signal: shifts the client's schedule marked
-      // COMPLETED. Catches anyone whose punches were lost or never
-      // approved but whom scheduling confirms was on site.
       prisma.shift.findMany({
         where: {
-          clientId: client.id,
+          ...(client ? { clientId: client.id } : {}),
+          ...(input.scope === 'INDIVIDUAL'
+            ? { assignedAssociateId: input.associateId! }
+            : { assignedAssociateId: { not: null } }),
           status: 'COMPLETED',
-          assignedAssociateId: { not: null },
           startsAt: { gte: start, lt: endExcl },
         },
         select: { assignedAssociateId: true },
       }),
     ]);
 
-    const rosterIds = [
-      ...new Set([
-        ...assignments.map((a) => a.associateId),
-        ...workedEntries.map((e) => e.associateId),
-        ...completedShifts.map((s) => s.assignedAssociateId!),
-      ]),
-    ];
+    let rosterIds: string[];
+    if (input.scope === 'INDIVIDUAL') {
+      rosterIds = [input.associateId!];
+    } else if (input.scope === 'ALL_WORKFORCE') {
+      const everyone = await prisma.associate.findMany({ select: { id: true } });
+      rosterIds = everyone.map((a) => a.id);
+    } else {
+      rosterIds = [
+        ...new Set([
+          ...assignments.map((a) => a.associateId),
+          ...workedEntries.map((e) => e.associateId),
+          ...completedShifts.map((s) => s.assignedAssociateId!),
+        ]),
+      ];
+    }
     if (rosterIds.length === 0) {
       throw new HttpError(
         404,
         'empty_roster',
-        'No workers were assigned to, worked approved time at, or completed shifts for this client in the selected period.',
+        input.scope === 'CLIENT_PERIOD'
+          ? 'No workers were assigned to, worked approved time at, or completed shifts for this client in the selected period.'
+          : 'No workers matched this scope.',
       );
     }
 
@@ -182,7 +226,9 @@ auditPacketRouter.post(
           },
         },
         applications: {
-          where: { deletedAt: null, clientId: client.id },
+          // Client scope: the position they held FOR that client. Other
+          // scopes: their most recent engagement, whichever client.
+          where: { deletedAt: null, ...(client ? { clientId: client.id } : {}) },
           orderBy: { invitedAt: 'desc' },
           take: 1,
           select: { position: true, startDate: true, status: true },
@@ -197,7 +243,16 @@ auditPacketRouter.post(
     const refId = formatRef();
     const generatedAt = new Date();
     const periodLabel = `${input.periodStart} to ${input.periodEnd}`;
-    const audience = `${client.name} vendor-compliance audit`;
+    const subjectAssociate = input.scope === 'INDIVIDUAL' ? associates[0] : null;
+    if (input.scope === 'INDIVIDUAL' && !subjectAssociate) {
+      throw new HttpError(404, 'associate_not_found', 'Associate not found');
+    }
+    const audience =
+      input.scope === 'CLIENT_PERIOD'
+        ? `${client!.name} vendor-compliance audit`
+        : input.scope === 'ALL_WORKFORCE'
+          ? 'company-wide workforce compliance audit'
+          : `individual personnel audit — ${subjectAssociate!.firstName} ${subjectAssociate!.lastName}`;
     /** Standard letterhead facts column, shared by every PDF in the packet. */
     const facts = (extra?: Array<{ label: string; value: string }>) => [
       { label: 'Prepared for', value: audience },
@@ -210,16 +265,23 @@ auditPacketRouter.post(
     // The audit row lands BEFORE any PII streams — same rule as the SSN
     // reveal: a missing row is the difference between an audited
     // disclosure and silent exfiltration.
+    // ALL_WORKFORCE gets its own action name — it is the maximum possible
+    // PII export and must be findable at a glance in the audit feed.
+    const auditAction =
+      input.scope === 'ALL_WORKFORCE'
+        ? 'compliance.audit_packet_generated_workforce'
+        : 'compliance.audit_packet_generated';
     await recordCriticalAudit(
       {
         actorUserId: req.user!.id,
-        clientId: client.id,
-        action: 'compliance.audit_packet_generated',
-        entityType: 'Client',
-        entityId: client.id,
+        clientId: client?.id ?? null,
+        action: auditAction,
+        entityType: client ? 'Client' : subjectAssociate ? 'Associate' : 'Organization',
+        entityId: client?.id ?? subjectAssociate?.id ?? 'ALL_WORKFORCE',
         metadata: {
           ip: req.ip ?? null,
           userAgent: req.headers['user-agent'] ?? null,
+          scope: input.scope,
           reason: input.reason,
           periodStart: input.periodStart,
           periodEnd: input.periodEnd,
@@ -227,11 +289,17 @@ auditPacketRouter.post(
           reference: refId,
         },
       },
-      'compliance.audit_packet_generated',
+      auditAction,
     );
 
     const { default: archiver } = await import('archiver');
-    const zipName = `audit-packet-${safeName(client.name)}-${input.periodStart}-to-${input.periodEnd}.zip`;
+    const zipStem =
+      input.scope === 'CLIENT_PERIOD'
+        ? safeName(client!.name)
+        : input.scope === 'ALL_WORKFORCE'
+          ? 'workforce'
+          : safeName(`${subjectAssociate!.lastName}-${subjectAssociate!.firstName}`);
+    const zipName = `audit-packet-${zipStem}-${input.periodStart}-to-${input.periodEnd}.zip`;
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
     res.setHeader('Cache-Control', 'private, no-store');
@@ -314,7 +382,9 @@ auditPacketRouter.post(
       if (assignmentsByAssociate.has(associateId)) parts.push('Site assignment');
       if (workByAssociate.has(associateId)) parts.push('Approved worked time');
       if (shiftCountByAssociate.has(associateId)) parts.push('Completed shifts');
-      return parts.join(' · ');
+      // Workforce/individual scopes include people with no period activity
+      // — their membership rests on the employment record itself.
+      return parts.join(' · ') || 'Employment record';
     };
     const workedSummaryFor = (associateId: string): string => {
       const w = workByAssociate.get(associateId);
@@ -328,7 +398,12 @@ auditPacketRouter.post(
     {
       const pdf = new ReportPdf({
         title: 'Worker Roster',
-        subtitle: `Workers providing services on ${client.name} properties during the audit period. Inclusion is evidence-based — the union of site assignment records, approved worked time, and schedule-completed shifts; each row states its basis. Workers who separated after providing services in the period remain listed with their status.`,
+        subtitle:
+          input.scope === 'CLIENT_PERIOD'
+            ? `Workers providing services on ${client!.name} properties during the audit period. Inclusion is evidence-based — the union of site assignment records, approved worked time, and schedule-completed shifts; each row states its basis. Workers who separated after providing services in the period remain listed with their status.`
+            : input.scope === 'ALL_WORKFORCE'
+              ? 'Every associate who has ever worked for the Company, current and separated. The worked-footprint columns reflect activity within the audit period; workers without period activity are included on the strength of their employment record.'
+              : `Complete personnel evidence file for ${subjectAssociate!.firstName} ${subjectAssociate!.lastName}, covering the audit period.`,
         facts: facts([
           { label: 'Workers', value: String(associates.length) },
           ...(separatedCount > 0
@@ -548,19 +623,24 @@ auditPacketRouter.post(
           'The Company has NOT paid back wages in connection with any civil or administrative proceeding (whether or not subject to a settlement agreement containing a confidentiality, non-admission-of-liability, or similar clause) due to failure to pay at least the minimum or prevailing wage, applicable overtime rates, or failure to allow workers to take meal and rest breaks as required by law.',
       },
     ];
-    for (const att of attestations) {
-      const pdf = new ReportPdf({
-        title: att.title,
-        facts: facts(),
-        reference: refId,
-        confidentialityNote,
-      });
-      pdf.para(attestationIntro);
-      pdf.para(att.body);
-      pdf.callout(reviewWarning);
-      pdf.para(attestationClose);
-      pdf.signatureBlock();
-      archive.append(await pdf.render(), { name: att.file });
+    // Company-level attestations belong in company-level packets; an
+    // individual evidence file (wage claim, subpoena) doesn't carry them.
+    const includeAttestations = input.scope !== 'INDIVIDUAL';
+    if (includeAttestations) {
+      for (const att of attestations) {
+        const pdf = new ReportPdf({
+          title: att.title,
+          facts: facts(),
+          reference: refId,
+          confidentialityNote,
+        });
+        pdf.para(attestationIntro);
+        pdf.para(att.body);
+        pdf.callout(reviewWarning);
+        pdf.para(attestationClose);
+        pdf.signatureBlock();
+        archive.append(await pdf.render(), { name: att.file });
+      }
     }
 
     /* 05 — Pay-lawfulness records ------------------------------------------ */
@@ -900,8 +980,9 @@ auditPacketRouter.post(
       });
     }
 
-    /* 08 — Subcontractors ---------------------------------------------------- */
-    {
+    /* 08 — Subcontractors (client-scoped packets only) ----------------------- */
+    const includeSubcontractor = input.scope === 'CLIENT_PERIOD';
+    if (includeSubcontractor) {
       const pdf = new ReportPdf({
         title: 'Subcontractor Statement',
         facts: facts(),
@@ -910,7 +991,7 @@ auditPacketRouter.post(
       });
       pdf.para(attestationIntro);
       pdf.para(
-        `The workers listed in this packet are direct associates of the Company. The Company does not engage subcontractors to provide services on ${client.name} properties. Should any subcontractor be engaged in the future, the Company will obtain and provide the subcontractor's worker roster, Form I-9 records with supporting eligibility and identity documentation, and E-Verify confirmations, as required by the audit scope.`,
+        `The workers listed in this packet are direct associates of the Company. The Company does not engage subcontractors to provide services on ${client!.name} properties. Should any subcontractor be engaged in the future, the Company will obtain and provide the subcontractor's worker roster, Form I-9 records with supporting eligibility and identity documentation, and E-Verify confirmations, as required by the audit scope.`,
       );
       pdf.callout(
         'REVIEW BEFORE SIGNING — if subcontractors ARE currently engaged, replace this statement with the subcontractor documentation described above.',
@@ -922,8 +1003,14 @@ auditPacketRouter.post(
 
     /* 00 — Cover manifest (added last so the counts are real) ---------------- */
     {
+      const packetTitle =
+        input.scope === 'CLIENT_PERIOD'
+          ? 'Audit Response Packet'
+          : input.scope === 'ALL_WORKFORCE'
+            ? 'Workforce Compliance File'
+            : `Individual Personnel Audit File`;
       const pdf = new ReportPdf({
-        title: `Audit Response Packet`,
+        title: packetTitle,
         subtitle: `Complete response to the ${audience}, assembled from the Alto People compliance platform. Folders are numbered to match the audit scope; each register is provided as a presentation PDF with a machine-readable CSV twin.`,
         facts: facts([
           { label: 'Workers in scope', value: String(associates.length) },
@@ -943,12 +1030,18 @@ auditPacketRouter.post(
         [
           [
             '01-worker-roster',
-            `Workers providing services on ${client.name} properties`,
-            `${associates.length} workers${separatedCount > 0 ? ` (${separatedCount} since separated)` : ''} (PDF + CSV)`,
+            input.scope === 'CLIENT_PERIOD'
+              ? `Workers providing services on ${client!.name} properties`
+              : input.scope === 'ALL_WORKFORCE'
+                ? 'Every worker ever employed by the Company'
+                : 'Subject worker',
+            `${associates.length} worker${associates.length === 1 ? '' : 's'}${separatedCount > 0 ? ` (${separatedCount} since separated)` : ''} (PDF + CSV)`,
           ],
           ['02-form-i9', 'Form I-9s and identity / eligibility documentation', `${associates.length} record sheets · ${i9Docs.length} documents`],
-          ['03-e-verify', 'Confirmation of E-Verify', `${associates.length} workers (PDF + CSV)`],
-          ['04-attestations', 'Immigration-enforcement, wage & hour, and back-wages history', '3 letters — officer signature REQUIRED'],
+          ['03-e-verify', 'Confirmation of E-Verify', `${associates.length} worker${associates.length === 1 ? '' : 's'} (PDF + CSV)`],
+          ...(includeAttestations
+            ? [['04-attestations', 'Immigration-enforcement, wage & hour, and back-wages history', '3 letters — officer signature REQUIRED']]
+            : []),
           [
             '05-pay-records',
             'Pay compliance: time punches, pay registers, paystubs',
@@ -956,13 +1049,19 @@ auditPacketRouter.post(
           ],
           ['06-harassment-reporting', 'Harassment / discrimination reporting process', `Process + policy + ${acks.length} acknowledgments`],
           ['07-background-checks', 'Background checks per the MSA', `Register + ${bgDocs.length} result documents`],
-          ['08-subcontractors', 'Subcontractor workers, I-9s, and E-Verify', 'Statement — officer signature REQUIRED'],
+          ...(includeSubcontractor
+            ? [['08-subcontractors', 'Subcontractor workers, I-9s, and E-Verify', 'Statement — officer signature REQUIRED']]
+            : []),
         ],
       );
-      pdf.heading('Signature requirements');
-      pdf.callout(
-        'Folders 04 and 08 contain generated clean-history templates. An authorized officer must verify each statement is factually accurate, then sign and date them BEFORE this packet is transmitted.',
-      );
+      if (includeAttestations || includeSubcontractor) {
+        pdf.heading('Signature requirements');
+        pdf.callout(
+          `${[includeAttestations ? 'Folder 04' : null, includeSubcontractor ? 'folder 08' : null]
+            .filter(Boolean)
+            .join(' and ')} contain${includeAttestations && includeSubcontractor ? '' : 's'} generated clean-history templates. An authorized officer must verify each statement is factually accurate, then sign and date them BEFORE this packet is transmitted.`,
+        );
+      }
       pdf.heading('Data integrity');
       pdf.para(
         'Roster inclusion is evidence-based: the union of site assignment records, approved worked time, and schedule-completed shifts for the period, with the basis stated per worker. Workers who separated after providing services in the period remain listed with their status; a worker whose record was privacy-erased appears with an anonymized identity, as noted on the roster.',
