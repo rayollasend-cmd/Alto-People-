@@ -17,6 +17,7 @@ import { RouteAnnouncer } from './RouteAnnouncer';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { moduleKeyForPath } from '@/lib/modules';
 import { recordRecentModule } from '@/lib/navPersonalization';
+import { useAuth } from '@/lib/auth';
 import { startLiveEvents, stopLiveEvents } from '@/lib/liveEvents';
 
 // Per-route Suspense fallback shown while a lazy-loaded page chunk streams
@@ -59,11 +60,16 @@ export function Layout() {
   const prevKey = useRef(location.key);
 
   // Feed the sidebar's "Recent" section — every module navigation bumps
-  // that module to the top of the recents list.
+  // that module to the top of the signed-in user's recents (per-user
+  // keys, so a shared tablet never shows one associate's trail to the
+  // next).
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
   useEffect(() => {
+    if (!userId) return;
     const key = moduleKeyForPath(location.pathname);
-    if (key) recordRecentModule(key);
-  }, [location.pathname]);
+    if (key) recordRecentModule(key, userId);
+  }, [location.pathname, userId]);
 
   // Live SSE channel for the authed shell — bell + approvals badge
   // refetch the instant a notification lands instead of on next poll.

@@ -384,6 +384,10 @@ model User {
   // and (later) email templates. Nullable — when null, the UI falls back
   // to the browser's locale, the email layer falls back to UTC.
   timezone           String?    @db.VarChar(64)
+  // Sidebar pins (module keys). Server-side so favorites follow the user
+  // across devices — localStorage pins were wiped by the sign-out sweep
+  // and by iOS storage eviction, and never synced anywhere.
+  pinnedModules      String[]   @default([])
   // TOTP MFA. The secret is encrypted with AES-256-GCM keyed off
   // MFA_SECRET_ENCRYPTION_KEY (falls back to PAYOUT_ENCRYPTION_KEY in dev).
   // mfaEnabledAt is the canonical "MFA is on" flag — set only after the

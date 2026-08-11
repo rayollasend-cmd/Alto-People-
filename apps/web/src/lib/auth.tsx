@@ -88,6 +88,11 @@ const DEVICE_SCOPED_PREFIXES = [
   'alto.pwa.',
   'alto.whatsnew',
   'alto.kiosk.',
+  // Nav personalization caches/recents are keyed PER USER inside the
+  // value keys (alto.nav.*.v2.<userId>), so surviving sign-out is safe —
+  // and wiping them here was exactly what made pins "disappear by
+  // themselves" on every sign-out before pins moved server-side.
+  'alto.nav.',
 ];
 
 /**
