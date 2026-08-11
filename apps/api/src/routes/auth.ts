@@ -1691,6 +1691,44 @@ authRouter.patch('/me/profile', requireAuth, async (req, res, next) => {
  * preference too. tokenVersion is NOT bumped — this is a cosmetic
  * setting, not a security boundary.
  */
+/**
+ * Sidebar pins — the user's favorited modules, server-side so they follow
+ * the user across devices and survive sign-out / mobile storage eviction
+ * (the localStorage-only version lost them on both). Cosmetic preference:
+ * no tokenVersion bump, no cache invalidation needed for correctness.
+ */
+const NavPinsInputSchema = z.object({
+  pinned: z.array(z.string().min(1).max(64)).max(60),
+});
+
+authRouter.get('/me/nav-pins', requireAuth, async (req, res, next) => {
+  try {
+    const u = await prisma.user.findUniqueOrThrow({
+      where: { id: req.user!.id },
+      select: { pinnedModules: true },
+    });
+    res.json({ pinned: u.pinnedModules });
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.put('/me/nav-pins', requireAuth, async (req, res, next) => {
+  try {
+    const parsed = NavPinsInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    await prisma.user.update({
+      where: { id: req.user!.id },
+      data: { pinnedModules: [...new Set(parsed.data.pinned)] },
+    });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
 authRouter.patch('/me/timezone', requireAuth, async (req, res, next) => {
   try {
     const parsed = UpdateTimezoneInputSchema.safeParse(req.body);
