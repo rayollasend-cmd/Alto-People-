@@ -787,3 +787,69 @@ describe('overtime chip on admin review lists', () => {
     expect(byName['Lia Light']).toBe(false);
   });
 });
+
+describe('associate login auto-link (published shifts were invisible to unlinked logins)', () => {
+  it('heals an unlinked ASSOCIATE login by email and returns their published shifts', async () => {
+    const client = await createClient();
+    const a = await createAssociate({ firstName: 'Una', lastName: 'Linked' });
+    const shift = await mkShift({ clientId: client.id, assignedAssociateId: a.id });
+    // The broken provisioning shape: same email, no associateId (what SCIM
+    // used to create, and what any manually-provisioned login looks like).
+    const { user } = await createUser({ role: 'ASSOCIATE', email: a.email });
+    expect(user.associateId).toBeNull();
+
+    const agent = await loginAs(user.email);
+    const res = await agent.get('/scheduling/me/shifts');
+    expect(res.status).toBe(200);
+    expect(res.body.unlinked).toBeUndefined();
+    expect(res.body.shifts.map((s: { id: string }) => s.id)).toContain(shift.id);
+
+    // The link is persisted, not just session-local.
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(after.associateId).toBe(a.id);
+  });
+
+  it('reports unlinked:true instead of a silent empty schedule when no match exists', async () => {
+    const { user } = await createUser({
+      role: 'ASSOCIATE',
+      email: 'no-such-worker@example.com',
+    });
+
+    const agent = await loginAs(user.email);
+    const res = await agent.get('/scheduling/me/shifts');
+    expect(res.status).toBe(200);
+    expect(res.body.shifts).toEqual([]);
+    // The provisioning fault is surfaced, not disguised as "no shifts".
+    expect(res.body.unlinked).toBe(true);
+  });
+
+  it('never links to an associate row already claimed by another login', async () => {
+    // Mixed-case on the Associate row so a second, lowercase login email can
+    // exist (User.email is unique) while still matching case-insensitively.
+    const a = await createAssociate({
+      firstName: 'Al',
+      lastName: 'Ready',
+      email: 'Al.Ready@Example.com',
+    });
+    // First login legitimately owns the row.
+    await createUser({
+      role: 'ASSOCIATE',
+      email: 'legit-owner@example.com',
+      associateId: a.id,
+    });
+    // Second login matches the associate's email case-insensitively but must
+    // NOT steal the claim — associateId is unique, ambiguity goes to a human.
+    const { user: impostor } = await createUser({
+      role: 'ASSOCIATE',
+      email: 'al.ready@example.com',
+    });
+
+    const agent = await loginAs(impostor.email);
+    const res = await agent.get('/scheduling/me/shifts');
+    expect(res.status).toBe(200);
+    expect(res.body.unlinked).toBe(true);
+
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: impostor.id } });
+    expect(after.associateId).toBeNull();
+  });
+});

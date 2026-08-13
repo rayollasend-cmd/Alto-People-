@@ -1677,7 +1677,13 @@ schedulingRouter.get('/me/shifts', async (req, res, next) => {
   try {
     const user = req.user!;
     if (!user.associateId) {
-      const empty: ShiftListResponse = { shifts: [] };
+      // No linked Associate row — the middleware's email auto-link already
+      // tried and found no unambiguous match, so this account genuinely
+      // cannot be resolved to an employment record. Say so: a silent empty
+      // list here reads as "no shifts" and hides the provisioning fault
+      // (reported 2026-08-13 — published shifts "invisible" to associates
+      // whose logins weren't linked).
+      const empty: ShiftListResponse = { shifts: [], unlinked: true };
       res.json(empty);
       return;
     }

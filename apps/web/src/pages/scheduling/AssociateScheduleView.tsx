@@ -82,6 +82,9 @@ export function AssociateScheduleView() {
   const { t } = useI18n();
   const [shifts, setShifts] = useState<Shift[] | null>(null);
   const [truncated, setTruncated] = useState(false);
+  // The login has no linked employee record — a provisioning fault, not an
+  // empty schedule. Rendered as a warning instead of the normal empty state.
+  const [unlinked, setUnlinked] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Set when rendering the cached copy because the network is down —
    *  the timestamp of that copy, shown in the offline banner. */
@@ -132,6 +135,7 @@ export function AssociateScheduleView() {
       const res = await listMyShifts();
       setShifts(res.shifts);
       setTruncated(res.truncated === true);
+      setUnlinked(res.unlinked === true);
       setOfflineAt(null);
       try {
         localStorage.setItem(
@@ -413,13 +417,21 @@ export function AssociateScheduleView() {
         <p className="mb-4 text-xs text-silver/70">{t('sched.truncated')}</p>
       )}
 
-      {isEmpty && (
-        <EmptyState
-          icon={CalendarDays}
-          title={t('sched.noShifts')}
-          description={t('sched.emptyDesc')}
-        />
-      )}
+      {isEmpty &&
+        (unlinked ? (
+          <div
+            role="alert"
+            className="mb-4 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning"
+          >
+            {t('sched.unlinked')}
+          </div>
+        ) : (
+          <EmptyState
+            icon={CalendarDays}
+            title={t('sched.noShifts')}
+            description={t('sched.emptyDesc')}
+          />
+        ))}
 
       {loaded && !isEmpty && view === 'week' && (
         <ScheduleWeekView

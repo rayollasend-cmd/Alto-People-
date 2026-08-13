@@ -1496,6 +1496,11 @@ export const ShiftListResponseSchema = z.object({
   // filter than were returned. The UI surfaces a "narrow your range" banner so
   // a truncated list never silently reads as complete. Optional for back-compat.
   truncated: z.boolean().optional(),
+  // /me only: the caller's login has no linked Associate record, so their
+  // schedule CANNOT be resolved — this is a provisioning problem, not "no
+  // shifts". The UI must say so instead of showing the ordinary empty state
+  // (which reads as "nothing scheduled" and hides the real fault from HR).
+  unlinked: z.boolean().optional(),
 });
 export type ShiftListResponse = z.infer<typeof ShiftListResponseSchema>;
 

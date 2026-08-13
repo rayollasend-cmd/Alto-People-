@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { HUMAN_ROLES, type Capability, hasCapability } from '@alto-people/shared';
 import { env } from '../config/env.js';
 import { prisma } from '../db.js';
+import { autoLinkAssociateByEmail } from '../lib/associateAutoLink.js';
 import { verifyMfaEnroll, verifySession } from '../lib/jwt.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
@@ -170,9 +171,37 @@ export async function attachUser(
       return next();
     }
 
-    const { associate, mfaEnabledAt, ...rest } = user;
+    // Self-healing associate link. An ASSOCIATE login with no linked
+    // Associate row sees an empty app — schedule, time, and pay all key off
+    // user.associateId, and it silently being null was how published shifts
+    // "disappeared" for SCIM-provisioned logins (which never set the link).
+    // Runs on cache-miss only (≤ once per TTL per user) and stops firing
+    // the moment a link exists.
+    let { associate, associateId } = user;
+    if (user.role === 'ASSOCIATE' && !associateId) {
+      const linked = await autoLinkAssociateByEmail({
+        id: user.id,
+        email: user.email,
+      });
+      if (linked) {
+        associateId = linked;
+        associate = await prisma.associate.findUnique({
+          where: { id: linked },
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            photoS3Key: true,
+            photoUpdatedAt: true,
+          },
+        });
+      }
+    }
+
+    const { associate: _a, associateId: _aid, mfaEnabledAt, ...rest } = user;
     const sessionUser: SessionUser = {
       ...rest,
+      associateId,
       firstName: associate?.firstName ?? null,
       lastName: associate?.lastName ?? null,
       photoUrl: associate ? profilePhotoUrlFor(associate) : null,

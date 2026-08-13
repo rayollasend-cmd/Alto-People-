@@ -121,6 +121,8 @@ const en = {
   'sched.noShifts': 'No shifts yet',
   'sched.emptyDesc':
     "When a manager publishes a shift for you, it'll show up here. Post your availability below to make scheduling easier.",
+  'sched.unlinked':
+    'Your login is not linked to an employee record, so no schedule can be shown. Ask HR to link your account — shifts assigned to you will appear here once that is fixed.',
   'sched.truncated':
     'Showing your next 100 shifts — anything scheduled beyond them will appear here as earlier shifts pass.',
   'sched.showRecent': 'Show recent shifts ({count})',
@@ -588,6 +590,8 @@ const es: Record<MessageKey, string> = {
   'sched.noShifts': 'Aún no hay turnos',
   'sched.emptyDesc':
     'Cuando un gerente publique un turno para ti, aparecerá aquí. Publica tu disponibilidad abajo para facilitar la programación.',
+  'sched.unlinked':
+    'Tu cuenta no está vinculada a un registro de empleado, así que no se puede mostrar tu horario. Pide a RR. HH. que vincule tu cuenta — los turnos asignados a ti aparecerán aquí cuando se corrija.',
   'sched.truncated':
     'Mostrando tus próximos 100 turnos — lo programado más allá aparecerá aquí a medida que pasen los anteriores.',
   'sched.showRecent': 'Mostrar turnos recientes ({count})',

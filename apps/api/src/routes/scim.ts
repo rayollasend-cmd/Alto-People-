@@ -11,6 +11,7 @@ import { ROLES, type Role } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { invalidateUserCache } from '../middleware/auth.js';
+import { autoLinkAssociateByEmail } from '../lib/associateAutoLink.js';
 import { recordCriticalAudit } from '../lib/audit.js';
 
 /**
@@ -534,6 +535,15 @@ scimRouter.post('/Users', async (req, res) => {
       data: { email: userName, role, status, scimExternalId: externalId },
       select: SCIM_USER_SELECT,
     });
+    // Point the new login at its employment record when the email matches
+    // exactly one Associate row. Without this, a SCIM-provisioned associate
+    // signs in to an empty app — schedule/time/pay all key off
+    // user.associateId (the attachUser middleware also self-heals this at
+    // first request, but linking here makes Users & access correct
+    // immediately). Best-effort: ambiguity is left for a human.
+    if (role === 'ASSOCIATE') {
+      await autoLinkAssociateByEmail({ id: created.id, email: userName });
+    }
   } catch (err) {
     // Unique-constraint race between the check above and the insert.
     if (

@@ -69,6 +69,48 @@ describe('SCIM auth gating', () => {
   });
 });
 
+describe('POST /scim/v2/Users — associate auto-link', () => {
+  it('links the new ASSOCIATE login to the matching employment record by email', async () => {
+    const associate = await prisma.associate.create({
+      data: {
+        firstName: 'Prov',
+        lastName: 'Isioned',
+        // Mixed case on the record; SCIM userName arrives in another case —
+        // the match is case-insensitive, like every other email entry point.
+        email: 'Prov.Isioned@Example.com',
+      },
+    });
+
+    const create = await authed(request(app()).post('/scim/v2/Users')).send({
+      schemas: [USER_SCHEMA],
+      userName: 'prov.isioned@example.com',
+      active: true,
+    });
+    expect(create.status).toBe(201);
+
+    // Without this link the person signs in to an empty app — schedule,
+    // time, and pay all key off user.associateId.
+    const row = await prisma.user.findUniqueOrThrow({
+      where: { id: create.body.id as string },
+    });
+    expect(row.role).toBe('ASSOCIATE');
+    expect(row.associateId).toBe(associate.id);
+  });
+
+  it('leaves the login unlinked when no employment record matches', async () => {
+    const create = await authed(request(app()).post('/scim/v2/Users')).send({
+      schemas: [USER_SCHEMA],
+      userName: 'nobody.matches@example.com',
+      active: true,
+    });
+    expect(create.status).toBe(201);
+    const row = await prisma.user.findUniqueOrThrow({
+      where: { id: create.body.id as string },
+    });
+    expect(row.associateId).toBeNull();
+  });
+});
+
 describe('POST /scim/v2/Users → GET → filter roundtrip', () => {
   it('creates an INVITED user, reads it back by id and by userName filter', async () => {
     const create = await authed(request(app()).post('/scim/v2/Users')).send({
