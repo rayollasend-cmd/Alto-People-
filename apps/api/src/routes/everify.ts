@@ -4,6 +4,7 @@ import {
   EVerifyCaseInputSchema,
   EVerifyIdentityInputSchema,
   EVerifyRosterResponseSchema,
+  IDENTITY_DOCUMENT_KINDS,
   type EVerifyStatus,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
@@ -49,13 +50,7 @@ const NONCONFIRMATION: EVerifyStatus[] = [
   'FINAL_NONCONFIRMATION',
 ];
 
-const IDENTITY_DOC_KINDS = [
-  'I9_SUPPORTING',
-  'ID',
-  'SSN_CARD',
-  'J1_VISA',
-  'J1_DS2019',
-] as const;
+const IDENTITY_DOC_KINDS: readonly string[] = IDENTITY_DOCUMENT_KINDS;
 
 /**
  * The packet E-Verify returns when a case closes. Reuses the existing
@@ -237,14 +232,17 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
     // signal (the deploy target's ephemeral disk can leave rows whose blobs
     // are gone, and a broken <img> in a compliance screen reads as "no
     // document on file").
-    // One query for both sets, partitioned below — the identity papers the
-    // verifier inspected, and the packet the government returned.
+    // Deliberately UNFILTERED by kind — one query, partitioned below into
+    // the identity papers the verifier inspected, the packet the government
+    // returned, and everything else. The last bucket is the misfiled-passport
+    // net: associates upload identity papers into the wrong checklist slot,
+    // and a kind-filtered query would conclude "no documents on file" while
+    // the passport sits on the record as OTHER.
     const docRows = await prisma.documentRecord.findMany({
       take: 500,
       where: {
         associateId: associate.id,
         deletedAt: null,
-        kind: { in: [...IDENTITY_DOC_KINDS, EVERIFY_PACKET_KIND] },
       },
       orderBy: { createdAt: 'asc' },
       select: {
@@ -282,10 +280,16 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
       };
     };
     const documents = docRows
-      .filter((d) => d.kind !== EVERIFY_PACKET_KIND)
+      .filter((d) => IDENTITY_DOC_KINDS.includes(d.kind))
       .map(toDoc);
     const packets = docRows
       .filter((d) => d.kind === EVERIFY_PACKET_KIND)
+      .map(toDoc);
+    const otherDocuments = docRows
+      .filter(
+        (d) =>
+          !IDENTITY_DOC_KINDS.includes(d.kind) && d.kind !== EVERIFY_PACKET_KIND,
+      )
       .map(toDoc);
 
     await recordComplianceEvent({
@@ -298,6 +302,7 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
         ssnDisclosed: ssn !== null,
         documentCount: documents.length,
         packetCount: packets.length,
+        otherDocumentCount: otherDocuments.length,
       },
       req,
     });
@@ -318,6 +323,7 @@ everifyRouter.get('/:associateId', MANAGE, async (req, res, next) => {
         documentList: i9?.documentList ?? null,
         documents,
         packets,
+        otherDocuments,
         section1CompletedAt: i9?.section1CompletedAt?.toISOString() ?? null,
         section2CompletedAt: i9?.section2CompletedAt?.toISOString() ?? null,
         section2VerifierEmail: i9?.section2Verifier?.email ?? null,

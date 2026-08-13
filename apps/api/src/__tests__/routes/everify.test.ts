@@ -250,6 +250,38 @@ describe('GET /compliance/everify/:associateId — aggregation', () => {
     ]);
   });
 
+  // The misfiled-passport net: an identity paper uploaded into the wrong
+  // slot lands under a non-identity kind, and used to be invisible to this
+  // screen entirely — the verifier concluded "no documents on file" while
+  // the passport sat on the profile as OTHER.
+  it('surfaces non-identity uploads as otherDocuments', async () => {
+    const client = await createClient();
+    const ready = await readyAssociate(client.id);
+    await prisma.documentRecord.create({
+      data: {
+        associateId: ready.id,
+        kind: 'OTHER',
+        filename: 'passport-uploaded-to-wrong-field.jpg',
+        mimeType: 'image/jpeg',
+        size: 10,
+        s3Key: null,
+        status: 'UPLOADED',
+      },
+    });
+
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(user.email);
+    const res = await a.get(`/compliance/everify/${ready.id}`);
+
+    expect(res.status).toBe(200);
+    // Not in the identity set…
+    expect(res.body.documents).toEqual([]);
+    // …but visible in the catch-all, so the verifier can find + reclassify it.
+    expect(
+      res.body.otherDocuments.map((d: { filename: string }) => d.filename),
+    ).toEqual(['passport-uploaded-to-wrong-field.jpg']);
+  });
+
   it('audits the disclosure', async () => {
     const client = await createClient();
     const ready = await readyAssociate(client.id);

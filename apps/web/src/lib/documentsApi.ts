@@ -162,3 +162,55 @@ export function rejectDocument(
     body,
   });
 }
+
+/** Human labels for every document kind bucket. */
+export const DOCUMENT_KIND_LABEL: Record<string, string> = {
+  ID: 'ID',
+  SSN_CARD: 'SSN card',
+  I9_SUPPORTING: 'I-9 supporting',
+  W4_PDF: 'W-4',
+  OFFER_LETTER: 'Offer letter',
+  POLICY: 'Policy',
+  HOUSING_AGREEMENT: 'Housing agreement',
+  TRANSPORT_AGREEMENT: 'Transport agreement',
+  J1_DS2019: 'DS-2019',
+  J1_VISA: 'J-1 visa',
+  SIGNED_AGREEMENT: 'Signed agreement',
+  BACKGROUND_CHECK_RESULT: 'Background check result',
+  DRUG_TEST_RESULT: 'Drug test result',
+  I9_VERIFICATION_RESULT: 'I-9 verification result',
+  PAYSTUB: 'Paystub / payment evidence',
+  OTHER: 'Other',
+};
+
+/**
+ * Kinds a misfiled document may be moved to. Everything except the
+ * system-written kinds (signed agreements, paystub evidence, the rendered
+ * W-4) — the API enforces the same rule (RECLASSIFY_LOCKED_KINDS).
+ */
+export const RECLASSIFY_TARGET_KINDS: readonly DocumentKind[] = [
+  'ID',
+  'SSN_CARD',
+  'I9_SUPPORTING',
+  'J1_VISA',
+  'J1_DS2019',
+  'OFFER_LETTER',
+  'POLICY',
+  'HOUSING_AGREEMENT',
+  'TRANSPORT_AGREEMENT',
+  'BACKGROUND_CHECK_RESULT',
+  'DRUG_TEST_RESULT',
+  'I9_VERIFICATION_RESULT',
+  'OTHER',
+];
+
+/** Fix a misfiled upload: move a document to a different kind bucket. */
+export function reclassifyDocument(
+  id: string,
+  kind: DocumentKind
+): Promise<DocumentRecord> {
+  return apiFetch<DocumentRecord>(`/documents/admin/${id}/reclassify`, {
+    method: 'POST',
+    body: { kind },
+  });
+}

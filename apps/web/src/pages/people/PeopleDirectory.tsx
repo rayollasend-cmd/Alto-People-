@@ -59,6 +59,7 @@ import {
   listRecords,
 } from '@/lib/compApi';
 import {
+  DOCUMENT_KIND_LABEL,
   downloadAllDocumentsUrl,
   downloadDocumentUrl,
   getDocumentVault,
@@ -3709,25 +3710,6 @@ function PaymentEditorDialog({
     </Dialog>
   );
 }
-
-const DOCUMENT_KIND_LABEL: Record<string, string> = {
-  ID: 'ID',
-  SSN_CARD: 'SSN card',
-  I9_SUPPORTING: 'I-9 supporting',
-  W4_PDF: 'W-4',
-  OFFER_LETTER: 'Offer letter',
-  POLICY: 'Policy',
-  HOUSING_AGREEMENT: 'Housing agreement',
-  TRANSPORT_AGREEMENT: 'Transport agreement',
-  J1_DS2019: 'DS-2019',
-  J1_VISA: 'J-1 visa',
-  SIGNED_AGREEMENT: 'Signed agreement',
-  BACKGROUND_CHECK_RESULT: 'Background check result',
-  DRUG_TEST_RESULT: 'Drug test result',
-  I9_VERIFICATION_RESULT: 'I-9 verification result',
-  PAYSTUB: 'Paystub / payment evidence',
-  OTHER: 'Other',
-};
 
 // HR-curated result kinds available in the upload dialog. Associate-uploaded
 // kinds (ID, SSN_CARD, etc.) are intentionally excluded — those come from

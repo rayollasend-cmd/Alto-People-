@@ -602,3 +602,110 @@ describe('GET /documents/admin/vault/:associateId', () => {
     expect(missing.status).toBe(404);
   });
 });
+
+describe('POST /documents/admin/:id/reclassify', () => {
+  async function seedDoc(kind: string, extra: Record<string, unknown> = {}) {
+    const { associate } = await seedAssociate();
+    const doc = await prisma.documentRecord.create({
+      data: {
+        associateId: associate.id,
+        kind: kind as never,
+        filename: 'misfiled.jpg',
+        mimeType: 'image/jpeg',
+        size: 10,
+        s3Key: null,
+        status: 'UPLOADED',
+        ...extra,
+      },
+    });
+    return { associate, doc };
+  }
+
+  it('moves a misfiled upload to the right kind and audits from/to', async () => {
+    const { doc } = await seedDoc('OTHER');
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const res = await a
+      .post(`/documents/admin/${doc.id}/reclassify`)
+      .send({ kind: 'ID' });
+    expect(res.status).toBe(200);
+    expect(res.body.kind).toBe('ID');
+
+    await flushPendingAudits();
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: 'document.reclassified', entityId: doc.id },
+    });
+    expect(audit).not.toBeNull();
+    const meta = audit!.metadata as Record<string, unknown>;
+    expect(meta.fromKind).toBe('OTHER');
+    expect(meta.toKind).toBe('ID');
+  });
+
+  it('clears the I-9 catalog labels when moving OUT of the identity kinds', async () => {
+    const { doc } = await seedDoc('ID', {
+      i9DocTitle: 'U.S. Passport',
+      i9List: 'A',
+      side: 'FRONT',
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const res = await a
+      .post(`/documents/admin/${doc.id}/reclassify`)
+      .send({ kind: 'OFFER_LETTER' });
+    expect(res.status).toBe(200);
+
+    const after = await prisma.documentRecord.findUniqueOrThrow({
+      where: { id: doc.id },
+    });
+    expect(after.kind).toBe('OFFER_LETTER');
+    // Stale identity labels must not survive on a non-identity document.
+    expect(after.i9DocTitle).toBeNull();
+    expect(after.i9List).toBeNull();
+    expect(after.side).toBeNull();
+  });
+
+  it('locks system-written kinds in both directions (409)', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    // FROM a locked kind: a signed agreement is an e-sign artifact.
+    const { doc: signed } = await seedDoc('SIGNED_AGREEMENT');
+    await a
+      .post(`/documents/admin/${signed.id}/reclassify`)
+      .send({ kind: 'OTHER' })
+      .expect(409);
+
+    // TO a locked kind: nothing may masquerade as payment evidence.
+    const { doc: other } = await seedDoc('OTHER');
+    await a
+      .post(`/documents/admin/${other.id}/reclassify`)
+      .send({ kind: 'PAYSTUB' })
+      .expect(409);
+
+    const unchanged = await prisma.documentRecord.findUniqueOrThrow({
+      where: { id: other.id },
+    });
+    expect(unchanged.kind).toBe('OTHER');
+  });
+
+  it('is idempotent for a same-kind request and forbidden without manage:documents', async () => {
+    const { doc, associate } = await seedDoc('OTHER');
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const same = await a
+      .post(`/documents/admin/${doc.id}/reclassify`)
+      .send({ kind: 'OTHER' });
+    expect(same.status).toBe(200);
+    expect(same.body.kind).toBe('OTHER');
+
+    // The associate who owns the document still can't relabel it.
+    const owner = await loginAs(associate.email);
+    await owner
+      .post(`/documents/admin/${doc.id}/reclassify`)
+      .send({ kind: 'ID' })
+      .expect(403);
+  });
+});

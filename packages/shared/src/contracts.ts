@@ -2613,6 +2613,35 @@ export const DocumentKindSchema = z.enum([
 ]);
 export type DocumentKind = z.infer<typeof DocumentKindSchema>;
 
+/** The kinds that make up an identity check — I-9 Section 2 and E-Verify.
+ *  Shared so the API's partitioning and the web's bulk-download scoping
+ *  can't drift apart. */
+export const IDENTITY_DOCUMENT_KINDS = [
+  'I9_SUPPORTING',
+  'ID',
+  'SSN_CARD',
+  'J1_VISA',
+  'J1_DS2019',
+] as const satisfies readonly DocumentKind[];
+
+/**
+ * Kinds a document can never be reclassified from or to. These are
+ * system-written artifacts whose kind encodes a linkage a relabel would
+ * silently corrupt: SIGNED_AGREEMENT ↔ e-sign Signature rows, PAYSTUB ↔
+ * ExternalPayment evidence, W4_PDF ↔ the rendered W-4 submission.
+ */
+export const RECLASSIFY_LOCKED_KINDS = [
+  'SIGNED_AGREEMENT',
+  'PAYSTUB',
+  'W4_PDF',
+] as const satisfies readonly DocumentKind[];
+
+/** Fix a misfiled upload: move a document to a different kind bucket. */
+export const DocumentReclassifyInputSchema = z.object({
+  kind: DocumentKindSchema,
+});
+export type DocumentReclassifyInput = z.infer<typeof DocumentReclassifyInputSchema>;
+
 export const DocumentStatusSchema = z.enum([
   'UPLOADED',
   'VERIFIED',
@@ -4498,6 +4527,15 @@ export const EVerifyCaseDetailSchema = z.object({
    * one is what was inspected, the other is what the government returned.
    */
   packets: z.array(EVerifyDocumentSchema),
+  /**
+   * Everything else on the associate's file — the misfiled-passport net.
+   * Associates regularly upload identity papers into the wrong checklist
+   * slot during onboarding; the record then carries a non-identity kind and
+   * the two arrays above can't see it, so the case view reads "no documents"
+   * while the passport sits on the profile as OTHER. Surfaced (collapsed in
+   * the UI) so the verifier can find and reclassify it instead.
+   */
+  otherDocuments: z.array(EVerifyDocumentSchema),
   section1CompletedAt: z.string().datetime().nullable(),
   section2CompletedAt: z.string().datetime().nullable(),
   section2VerifierEmail: z.string().nullable(),

@@ -1,10 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Check, Copy, ExternalLink, ShieldCheck } from 'lucide-react';
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  ExternalLink,
+  ShieldCheck,
+} from 'lucide-react';
 import { DirectorateHeader, Kpi, KpiStrip } from './DirectorateShell';
 import type {
+  DocumentKind,
   EVerifyBlocker,
   EVerifyCaseDetail,
+  EVerifyDocument,
   EVerifyRosterRow,
   EVerifyStatus,
 } from '@alto-people/shared';
@@ -15,8 +25,14 @@ import {
   updateEVerifyIdentity,
 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
-import { DocumentThumbnails } from '@/components/DocumentViewer';
-import { IDENTITY_DOC_KINDS, uploadAdminDocument } from '@/lib/documentsApi';
+import { DocumentThumbnails, DocumentViewer } from '@/components/DocumentViewer';
+import {
+  DOCUMENT_KIND_LABEL,
+  IDENTITY_DOC_KINDS,
+  RECLASSIFY_TARGET_KINDS,
+  reclassifyDocument,
+  uploadAdminDocument,
+} from '@/lib/documentsApi';
 import { cn } from '@/lib/cn';
 import { fmtDate } from '@/lib/format';
 import { statusTone } from '@/lib/status';
@@ -531,6 +547,15 @@ function CaseDrawer({
                   // Identity documents only — not the associate's whole file.
                   bulkDownloadKinds={IDENTITY_DOC_KINDS}
                 />
+                <OtherDocumentsSection
+                  documents={detail.otherDocuments}
+                  // Auto-expand when the identity set is empty but other
+                  // uploads exist — that combination is exactly the
+                  // misfiled-passport case this section exists to catch.
+                  defaultOpen={detail.documents.length === 0}
+                  canManage={canManage}
+                  onChanged={() => void load()}
+                />
               </div>
             </Section>
 
@@ -575,6 +600,152 @@ function Section({
       </h3>
       {children}
     </section>
+  );
+}
+
+/**
+ * Everything on the associate's file that is NOT filed under an identity
+ * kind. Exists for one failure mode: during onboarding people upload their
+ * passport or license into the wrong slot, the record lands as OTHER (or a
+ * policy, or an offer-letter slot), and the identity grid above reads "no
+ * documents uploaded" while the document sits on the profile two kinds away.
+ * Collapsed by default so the common case (everything filed right) stays
+ * quiet; managers can reclassify a misfile in place, which fixes it on every
+ * kind-filtered surface (I-9 panel, audit packet, expiry sweep) at once.
+ */
+function OtherDocumentsSection({
+  documents,
+  defaultOpen,
+  canManage,
+  onChanged,
+}: {
+  documents: EVerifyDocument[];
+  defaultOpen: boolean;
+  canManage: boolean;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const [viewAt, setViewAt] = useState<number | null>(null);
+
+  if (documents.length === 0) return null;
+
+  return (
+    <div className="mt-4">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="inline-flex items-center gap-1 text-2xs uppercase tracking-widest text-silver/80 transition-colors hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+      >
+        {open ? (
+          <ChevronDown className="h-3.5 w-3.5" />
+        ) : (
+          <ChevronRight className="h-3.5 w-3.5" />
+        )}
+        Other documents on file ({documents.length})
+      </button>
+      <p className="mt-0.5 text-2xs text-silver/60">
+        Uploads filed outside the identity slots. If a document you expected
+        above is missing, it may have been uploaded to the wrong field — find
+        it here{canManage ? ' and move it to the right one' : ''}.
+      </p>
+
+      {open && (
+        <ul className="mt-2 divide-y divide-navy-secondary rounded-md border border-navy-secondary">
+          {documents.map((d, i) => (
+            <li
+              key={d.id}
+              className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm text-white">{d.filename}</div>
+                <div className="text-2xs text-silver">
+                  Filed under: {DOCUMENT_KIND_LABEL[d.kind] ?? d.kind}
+                  {!d.fileAvailable && (
+                    <> · <span className="text-alert">file missing on server</span></>
+                  )}
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!d.fileAvailable}
+                onClick={() => setViewAt(i)}
+              >
+                View
+              </Button>
+              {canManage && <ReclassifyControl doc={d} onChanged={onChanged} />}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {viewAt !== null && (
+        <DocumentViewer
+          documents={documents}
+          startIndex={viewAt}
+          onClose={() => setViewAt(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Move one misfiled document to the kind bucket it belongs in. */
+function ReclassifyControl({
+  doc,
+  onChanged,
+}: {
+  doc: EVerifyDocument;
+  onChanged: () => void;
+}) {
+  const [kind, setKind] = useState<DocumentKind | ''>('');
+  const [busy, setBusy] = useState(false);
+
+  const move = async () => {
+    if (!kind) return;
+    setBusy(true);
+    try {
+      await reclassifyDocument(doc.id, kind);
+      toast.success(
+        `${doc.filename} moved to ${DOCUMENT_KIND_LABEL[kind] ?? kind}.`,
+      );
+      onChanged();
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not reclassify the document.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <Select
+        value={kind}
+        onChange={(e) => setKind(e.target.value as DocumentKind | '')}
+        size="sm"
+        className="w-auto"
+        aria-label={`Reclassify ${doc.filename}`}
+        disabled={busy}
+      >
+        <option value="">Move to…</option>
+        {RECLASSIFY_TARGET_KINDS.filter((k) => k !== doc.kind).map((k) => (
+          <option key={k} value={k}>
+            {DOCUMENT_KIND_LABEL[k] ?? k}
+          </option>
+        ))}
+      </Select>
+      <Button
+        size="sm"
+        onClick={() => void move()}
+        loading={busy}
+        disabled={busy || !kind}
+      >
+        Move
+      </Button>
+    </div>
   );
 }
 

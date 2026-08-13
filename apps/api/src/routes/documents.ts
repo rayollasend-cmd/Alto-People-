@@ -8,8 +8,11 @@ import {
   DocSideSchema,
   DocumentKindSchema,
   DocumentListResponseSchema,
+  DocumentReclassifyInputSchema,
   DocumentRejectInputSchema,
   DocumentVaultResponseSchema,
+  IDENTITY_DOCUMENT_KINDS,
+  RECLASSIFY_LOCKED_KINDS,
   i9CatalogEntry,
   type DocumentRecord,
 } from '@alto-people/shared';
@@ -793,6 +796,87 @@ documentsRouter.post('/admin/:id/verify', MANAGE, async (req, res, next) => {
       documentId: updated.id,
       associateId: updated.associateId,
       clientId: updated.clientId,
+      req,
+    });
+    res.json(toRecord(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Fix a misfiled upload: move a document to a different kind bucket.
+ *
+ * Exists because associates upload identity papers into the wrong checklist
+ * slot during onboarding, and every downstream surface (the I-9 Section 2
+ * panel, the E-Verify case view, the audit packet, expiry tracking) filters
+ * by kind — a passport filed under OTHER is invisible to all of them.
+ * Relabeling fixes the record once and every surface benefits.
+ *
+ * System-written kinds are locked in both directions (RECLASSIFY_LOCKED_KINDS)
+ * — their kind encodes a linkage a relabel would silently corrupt.
+ */
+documentsRouter.post('/admin/:id/reclassify', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const parsed = DocumentReclassifyInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const toKind = parsed.data.kind;
+
+    const doc = await prisma.documentRecord.findFirst({
+      where: { id: req.params.id, deletedAt: null },
+    });
+    if (!doc) throw new HttpError(404, 'document_not_found', 'Document not found');
+    if (doc.kind === toKind) {
+      // Idempotent — nothing to change, nothing to audit.
+      const r = await prisma.documentRecord.findUniqueOrThrow({
+        where: { id: doc.id },
+        include: DOC_INCLUDE,
+      });
+      res.json(toRecord(r));
+      return;
+    }
+    const locked: readonly string[] = RECLASSIFY_LOCKED_KINDS;
+    if (locked.includes(doc.kind)) {
+      throw new HttpError(
+        409,
+        'kind_locked',
+        `${doc.kind} documents are system-generated and cannot be reclassified.`,
+      );
+    }
+    if (locked.includes(toKind)) {
+      throw new HttpError(
+        409,
+        'kind_locked',
+        `Documents cannot be reclassified into ${toKind} — that kind is written by the system.`,
+      );
+    }
+
+    const identityKinds: readonly string[] = IDENTITY_DOCUMENT_KINDS;
+    const updated = await prisma.documentRecord.update({
+      where: { id: doc.id },
+      data: {
+        kind: toKind,
+        // The federal catalog title, A/B/C list, and front/back tag describe
+        // an identity document — moving OUT of the identity kinds would leave
+        // them as stale labels on an offer letter, so clear them. Moving IN
+        // leaves them null, same as a legacy upload, which every screen
+        // already tolerates.
+        ...(identityKinds.includes(toKind)
+          ? {}
+          : { i9DocTitle: null, i9List: null, side: null }),
+      },
+      include: DOC_INCLUDE,
+    });
+    await recordDocumentEvent({
+      actorUserId: user.id,
+      action: 'document.reclassified',
+      documentId: updated.id,
+      associateId: updated.associateId,
+      clientId: updated.clientId,
+      metadata: { fromKind: doc.kind, toKind, filename: doc.filename },
       req,
     });
     res.json(toRecord(updated));
