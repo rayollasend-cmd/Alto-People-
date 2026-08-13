@@ -169,7 +169,7 @@ describe('POST /onboarding/admin/import/preview', () => {
 });
 
 describe('POST /onboarding/admin/import/commit', () => {
-  it("mode 'create' creates Associate + Application only (no users, no emails), skips invalid rows, audits counts", async () => {
+  it("mode 'create' migrates Associate + APPROVED Application + open assignment (no users, no emails), skips invalid rows, audits counts", async () => {
     const client = await createClient('Acme Grocery');
     const a = await loginHr();
 
@@ -204,6 +204,16 @@ describe('POST /onboarding/admin/import/commit', () => {
     expect(app2.startDate?.toISOString().slice(0, 10)).toBe('2026-08-01');
     // Single-site client → the site picked itself (createClient seeds one).
     expect(app2.locationId).not.toBeNull();
+    // Migrated people were hired long before Alto People — the application
+    // lands APPROVED so they pass the scheduling roster's employment gate.
+    expect(app2.status).toBe('APPROVED');
+    expect(app2.approvedAt).not.toBeNull();
+    // …and the open assignment the normal approve flow would have created.
+    const assignment = await prisma.associateAssignment.findFirstOrThrow({
+      where: { associateId: alice.id, endedAt: null },
+    });
+    expect(assignment.locationId).toBe(app2.locationId);
+    expect(assignment.startedAt.toISOString().slice(0, 10)).toBe('2026-08-01');
 
     // Silent migration: no user accounts, no emails of any kind.
     expect(await prisma.user.count({ where: { email: { in: ['alice@example.com', 'dana@example.com'] } } })).toBe(0);
@@ -295,6 +305,49 @@ describe('POST /onboarding/admin/import/commit', () => {
     const second = await commit(a, file, 'invite');
     expect(second.status).toBe(200);
     expect(second.body.results[0]).toMatchObject({ status: 'skipped', reason: 'already_exists' });
+  });
+
+  it("mode 'create' requires manage:onboarding — an invite-only role (SHIFT_SUPERVISOR) gets 403 and writes nothing", async () => {
+    const client = await createClient('Acme Grocery');
+    const { user } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });
+    const a = await loginAs(user.email);
+    const file = csv([
+      'firstName,lastName,email,clientName',
+      'Alice,Hart,alice@example.com,Acme Grocery',
+    ]);
+
+    // 'create' now stamps an HR approval, which invite:onboarding alone
+    // must not be able to do.
+    const res = await commit(a, file, 'create');
+    expect(res.status).toBe(403);
+    expect(await prisma.associate.count()).toBe(0);
+    expect(await prisma.application.count()).toBe(0);
+  });
+
+  it('migrated workers are schedulable — the importing client\'s supervisor sees them in the roster', async () => {
+    const client = await createClient('Acme Grocery');
+    const hr = await loginHr();
+    const res = await commit(
+      hr,
+      csv([
+        'firstName,lastName,email,clientName,position',
+        'Alice,Hart,alice@example.com,Acme Grocery,Cashier',
+      ]),
+      'create',
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.summary.created).toBe(1);
+
+    // The original complaint: supervisors' rosters were empty because
+    // migrated DRAFT applications never passed the APPROVED-or-assigned
+    // schedulability gate.
+    const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });
+    const a = await loginAs(sup.email);
+    const roster = await a.get('/scheduling/associates');
+    expect(roster.status).toBe(200);
+    expect(
+      roster.body.associates.map((r: { email: string | null }) => r.email),
+    ).toContain('alice@example.com');
   });
 
   it("rejects a bad mode (400) and an intra-file duplicate is skipped as 'duplicate_in_file'", async () => {

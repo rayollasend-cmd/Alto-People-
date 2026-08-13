@@ -39,7 +39,7 @@ import {
   type TemplateTask,
 } from '@alto-people/shared';
 import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
-import { toDateOnly } from '@alto-people/shared';
+import { hasCapability, toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
@@ -923,8 +923,15 @@ onboardingRouter.post(
           `Application is already ${app.status}.`
         );
       }
-      const percent = computePercent(app.checklist?.tasks ?? []);
-      if (percent < 100) {
+      const tasks = app.checklist?.tasks ?? [];
+      const percent = computePercent(tasks);
+      // A checklist-less application (CSV silent migration, legacy rows)
+      // computes 0% forever — there are no tasks to finish, so this hard
+      // gate would make it permanently unapprovable (and its associate
+      // permanently unschedulable, since the scheduling roster only shows
+      // APPROVED-or-assigned people). Route it through the warning gate
+      // below instead, which demands an explicit acknowledgement.
+      if (tasks.length > 0 && percent < 100) {
         throw new HttpError(
           409,
           'checklist_incomplete',
@@ -938,7 +945,11 @@ onboardingRouter.post(
       // — a hire must not be silently activated with no I-9 on file and no
       // document ever opened by a human.
       const approvalWarnings: string[] = [];
-      const tasks = app.checklist?.tasks ?? [];
+      if (tasks.length === 0) {
+        approvalWarnings.push(
+          'This application has no onboarding checklist — approving records the hire with no completed onboarding tasks on file.',
+        );
+      }
       const skipped = tasks.filter((t) => t.status === 'SKIPPED');
       for (const t of skipped) {
         approvalWarnings.push(`Task skipped without completion: ${t.title}`);
@@ -4303,10 +4314,15 @@ onboardingRouter.post('/admin/import/preview', INVITE, csvUpload, async (req, re
 /**
  * POST /onboarding/admin/import/commit — same file re-uploaded plus a
  * `mode` field:
- *   - 'create': silent migration — Associate + Application rows only, no
- *     user accounts, no emails. For onboarding an existing client's roster.
- *   - 'invite': additionally mints an INVITED user and sends the standard
- *     invite email (same inviteOneApplicant helper as the JSON bulk path).
+ *   - 'create': silent migration — Associate + APPROVED Application (plus
+ *     an open AssociateAssignment when the client is single-site), no user
+ *     accounts, no emails. For migrating an existing client's roster of
+ *     already-employed people, who must come out schedulable. Because this
+ *     stamps an HR approval, it additionally requires manage:onboarding —
+ *     invite:onboarding (the route gate) alone gets 403 for this mode.
+ *   - 'invite': mints an INVITED user and sends the standard invite email
+ *     (same inviteOneApplicant helper as the JSON bulk path); the
+ *     application starts DRAFT and goes through normal HR review.
  *
  * Invalid rows are skipped, each row is isolated in try/catch, and rows
  * whose email already exists come back skipped/already_exists — which is
@@ -4319,6 +4335,13 @@ onboardingRouter.post('/admin/import/commit', INVITE, csvUpload, async (req, res
       throw new HttpError(400, 'invalid_mode', "mode must be 'create' or 'invite'.");
     }
     const mode = modeParsed.data;
+
+    // 'create' mode mints APPROVED applications — an HR sign-off, not just
+    // an invite — so the invite:onboarding capability that gates this
+    // route (SHIFT_SUPERVISOR holds it) is not enough for that mode.
+    if (mode === 'create' && !hasCapability(req.user!.role, 'manage:onboarding')) {
+      throw new HttpError(403, 'forbidden', 'Missing capability: manage:onboarding');
+    }
 
     const { rows } = await buildCsvImportPreview(req);
 
@@ -4427,10 +4450,20 @@ onboardingRouter.post('/admin/import/commit', INVITE, csvUpload, async (req, res
           results[idx] = { line: row.line, email, status: 'invited', reason: null };
           invited++;
         } else {
-          // 'create' — silent migration. Associate + Application only: no
-          // user account, no checklist, no email. The application records
-          // which client/site/position the migrated person belongs to.
+          // 'create' — silent migration of an already-employed roster.
+          // Associate + Application, no user account, no checklist, no
+          // email. The application lands APPROVED, not DRAFT: these people
+          // were hired before Alto People existed, and a DRAFT application
+          // with no checklist could never be approved (0% forever), which
+          // left migrated workers permanently invisible to scheduling —
+          // the roster only shows APPROVED-or-assigned associates. When
+          // the client's work-site is unambiguous we also open the
+          // AssociateAssignment the normal approve flow would have created.
           const locationId = await resolveLocationId(clientId);
+          const now = new Date();
+          const hireDateValue = hireDate
+            ? new Date(`${hireDate}T00:00:00.000Z`)
+            : null;
           await prisma.$transaction(async (tx) => {
             const associate = await tx.associate.create({
               data: {
@@ -4438,7 +4471,7 @@ onboardingRouter.post('/admin/import/commit', INVITE, csvUpload, async (req, res
                 firstName: row.data.firstName,
                 lastName: row.data.lastName,
                 phone: row.data.phone,
-                hireDate: hireDate ? new Date(`${hireDate}T00:00:00.000Z`) : null,
+                hireDate: hireDateValue,
               },
             });
             await tx.application.create({
@@ -4447,11 +4480,23 @@ onboardingRouter.post('/admin/import/commit', INVITE, csvUpload, async (req, res
                 clientId,
                 locationId,
                 onboardingTrack: 'STANDARD',
-                status: 'DRAFT',
+                status: 'APPROVED',
+                approvedAt: now,
                 position: row.data.position,
-                startDate: hireDate ? new Date(`${hireDate}T00:00:00.000Z`) : null,
+                startDate: hireDateValue,
               },
             });
+            if (locationId) {
+              await tx.associateAssignment.create({
+                data: {
+                  associateId: associate.id,
+                  locationId,
+                  startedAt: hireDateValue ?? now,
+                  reason: 'CSV migration import',
+                  notedById: req.user!.id,
+                },
+              });
+            }
           }, TX_OPTS);
           results[idx] = { line: row.line, email, status: 'created', reason: null };
           created++;

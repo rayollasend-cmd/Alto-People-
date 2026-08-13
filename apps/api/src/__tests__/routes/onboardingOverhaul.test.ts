@@ -105,6 +105,39 @@ describe('POST /onboarding/applications/:id/approve — verification gaps', () =
     expect(JSON.stringify(blocked.body)).toContain('none have been verified');
   });
 
+  it('a checklist-less application (pre-fix CSV migration) approves via the warning flow instead of being stuck at 0%', async () => {
+    const client = await createClient();
+    const assoc = await createAssociate({ firstName: 'Migrated', lastName: 'Worker' });
+    // Exactly what the old CSV 'create' mode wrote: DRAFT, no checklist.
+    const application = await prisma.application.create({
+      data: {
+        associateId: assoc.id,
+        clientId: client.id,
+        onboardingTrack: 'STANDARD',
+        status: 'DRAFT',
+      },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    // Not the checklist_incomplete dead end — the acknowledgeable warning.
+    const blocked = await a
+      .post(`/onboarding/applications/${application.id}/approve`)
+      .send({ hireDate: '2026-08-03' });
+    expect(blocked.status).toBe(409);
+    expect(blocked.body.error?.code).toBe('approval_warnings');
+    expect(JSON.stringify(blocked.body)).toContain('no onboarding checklist');
+
+    const ok = await a
+      .post(`/onboarding/applications/${application.id}/approve`)
+      .send({ hireDate: '2026-08-03', acknowledgeWarnings: true });
+    expect(ok.status).toBe(204);
+    const after = await prisma.application.findUniqueOrThrow({
+      where: { id: application.id },
+    });
+    expect(after.status).toBe('APPROVED');
+  });
+
   it('approves cleanly when everything is genuinely done and verified', async () => {
     const client = await createClient();
     const assoc = await createAssociate({ firstName: 'All', lastName: 'Clear' });

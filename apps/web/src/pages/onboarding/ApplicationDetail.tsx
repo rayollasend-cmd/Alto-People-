@@ -570,7 +570,11 @@ function DetailActions({
   // re-decisions with 409, but hiding them avoids a confusing dead button.
   // Approve also requires the checklist at 100%.
   const decided = detail.status === 'APPROVED' || detail.status === 'REJECTED';
-  const checklistComplete = detail.percentComplete === 100;
+  // Checklist-less applications (pre-fix CSV migrations, legacy rows) have
+  // nothing to complete — the API lets them through to the approve-anyway
+  // warning flow, so the button must not dead-end at a permanent 0%.
+  const checklistComplete =
+    detail.tasks.length === 0 || detail.percentComplete === 100;
 
   return (
     <div className="flex flex-wrap gap-2 shrink-0">
