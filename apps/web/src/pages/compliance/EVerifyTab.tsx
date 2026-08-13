@@ -103,6 +103,38 @@ const CITIZENSHIP_LABEL: Record<string, string> = {
 };
 
 type StatusFilter = 'all' | 'not_run' | 'pending' | 'authorized' | 'issue' | 'overdue';
+type HiredFilter = 'any' | 'today' | 'yesterday' | 'week' | 'month';
+type SortMode = 'name' | 'newest' | 'due';
+
+/** Local calendar date as YYYY-MM-DD — hireDate comparisons are date-only,
+ *  in the viewer's own day ("hired today" means today where HR sits). */
+function localYmd(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+function daysAgoYmd(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return localYmd(d);
+}
+
+function matchesHiredFilter(hireDate: string | null, f: HiredFilter): boolean {
+  if (f === 'any') return true;
+  // No hire date on file can't match a dated filter.
+  if (!hireDate) return false;
+  switch (f) {
+    case 'today':
+      return hireDate === localYmd(new Date());
+    case 'yesterday':
+      return hireDate === daysAgoYmd(1);
+    case 'week':
+      return hireDate >= daysAgoYmd(7);
+    case 'month':
+      return hireDate >= daysAgoYmd(30);
+  }
+}
 
 export function EVerifyTab({ canManage }: { canManage: boolean }) {
   const [rows, setRows] = useState<EVerifyRosterRow[] | null>(null);
@@ -119,6 +151,8 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<StatusFilter>('all');
+  const [hired, setHired] = useState<HiredFilter>('any');
+  const [sort, setSort] = useState<SortMode>('name');
   const [openFor, setOpenFor] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -141,11 +175,12 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   const visible = useMemo(() => {
     if (!rows) return [];
     const q = query.trim().toLowerCase();
-    return rows.filter((r) => {
+    const filtered = rows.filter((r) => {
       if (q && !r.associateName.toLowerCase().includes(q) &&
           !r.associateEmail.toLowerCase().includes(q)) {
         return false;
       }
+      if (!matchesHiredFilter(r.hireDate, hired)) return false;
       switch (filter) {
         case 'not_run':
           return r.status === null;
@@ -164,7 +199,26 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
           return true;
       }
     });
-  }, [rows, query, filter]);
+    // Server order is lastName A–Z ('name'). The other modes re-sort the
+    // page client-side; rows missing the sort key go last, not first — a
+    // blank hire date must never outrank an actual new hire.
+    if (sort === 'newest') {
+      filtered.sort((a, b) => {
+        if (a.hireDate === b.hireDate) return 0;
+        if (!a.hireDate) return 1;
+        if (!b.hireDate) return -1;
+        return b.hireDate < a.hireDate ? -1 : 1;
+      });
+    } else if (sort === 'due') {
+      filtered.sort((a, b) => {
+        if (a.dueBy === b.dueBy) return 0;
+        if (!a.dueBy) return 1;
+        if (!b.dueBy) return -1;
+        return a.dueBy < b.dueBy ? -1 : 1;
+      });
+    }
+    return filtered;
+  }, [rows, query, filter, hired, sort]);
 
   return (
     <div>
@@ -236,6 +290,30 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
           <option value="issue">Nonconfirmation</option>
           <option value="overdue">Overdue</option>
         </Select>
+        <Select
+          value={hired}
+          onChange={(e) => setHired(e.target.value as HiredFilter)}
+          size="sm"
+          className="w-auto"
+          aria-label="Filter by hire date"
+        >
+          <option value="any">Hired any time</option>
+          <option value="today">Hired today</option>
+          <option value="yesterday">Hired yesterday</option>
+          <option value="week">Hired in the last 7 days</option>
+          <option value="month">Hired in the last 30 days</option>
+        </Select>
+        <Select
+          value={sort}
+          onChange={(e) => setSort(e.target.value as SortMode)}
+          size="sm"
+          className="w-auto"
+          aria-label="Sort roster"
+        >
+          <option value="name">Sort: name A–Z</option>
+          <option value="newest">Sort: newest hires first</option>
+          <option value="due">Sort: deadline soonest</option>
+        </Select>
       </div>
 
       {rows === null ? (
@@ -244,7 +322,7 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
         <EmptyState
           icon={ShieldCheck}
           title="Nobody matches this filter"
-          description="Clear the search or switch the status filter to see the full roster."
+          description="Clear the search, status, or hire-date filter to see the full roster."
         />
       ) : (
         <Card className="overflow-hidden">
