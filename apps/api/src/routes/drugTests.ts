@@ -14,6 +14,10 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeDrugTests } from '../lib/scope.js';
+import {
+  clientNamesById,
+  primaryClientsForAssociates,
+} from '../lib/associateClients.js';
 import { blobExistsForListing } from '../lib/blobStore.js';
 import { recordComplianceEvent } from '../lib/audit.js';
 
@@ -47,12 +51,17 @@ const TEST_INCLUDE = {
   associate: { select: { firstName: true, lastName: true } },
 } as const;
 
-function toTest(row: RawTest, reportCount?: number): DrugTest {
+function toTest(
+  row: RawTest,
+  reportCount?: number,
+  client?: { clientId: string; clientName: string | null } | null,
+): DrugTest {
   return {
     id: row.id,
     associateId: row.associateId,
     associateName: `${row.associate.firstName} ${row.associate.lastName}`,
-    clientId: row.clientId,
+    clientId: client?.clientId ?? row.clientId,
+    clientName: client?.clientName ?? null,
     provider: row.provider,
     externalId: row.externalId,
     status: row.status,
@@ -86,9 +95,18 @@ drugTestsRouter.get('/', async (req, res, next) => {
       _count: { _all: true },
     });
     const reportsByAssociate = new Map(counts.map((c) => [c.associateId, c._count._all]));
+    // Client label per row for the tab's client filter: the test's own
+    // clientId wins when recorded, else the associate's current placement.
+    const placement = await primaryClientsForAssociates(rows.map((r) => r.associateId));
+    const ownNames = await clientNamesById(rows.map((r) => r.clientId));
     res.json(
       DrugTestListResponseSchema.parse({
-        tests: rows.map((r) => toTest(r, reportsByAssociate.get(r.associateId) ?? 0)),
+        tests: rows.map((r) => {
+          const ref = r.clientId
+            ? { clientId: r.clientId, clientName: ownNames.get(r.clientId) ?? null }
+            : placement.get(r.associateId) ?? null;
+          return toTest(r, reportsByAssociate.get(r.associateId) ?? 0, ref);
+        }),
       })
     );
   } catch (err) {

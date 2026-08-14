@@ -2910,6 +2910,10 @@ export const I9VerificationSchema = z.object({
   /** Work-authorization expiry (YYYY-MM-DD) — drives the reverification
    *  filter for time-limited statuses. */
   workAuthExpiresAt: z.string().nullable().optional(),
+  /** The associate's current client (open assignment, else latest approved
+   *  application) — feeds the client filter. Null mid-onboarding. */
+  clientId: UuidSchema.nullable().optional(),
+  clientName: z.string().nullable().optional(),
 });
 export type I9Verification = z.infer<typeof I9VerificationSchema>;
 
@@ -2948,6 +2952,9 @@ export const BackgroundCheckSchema = z.object({
   associateId: UuidSchema,
   associateName: z.string(),
   clientId: UuidSchema.nullable(),
+  /** Display name for clientId (the check's own client when recorded, else
+   *  the associate's current placement) — feeds the client filter. */
+  clientName: z.string().nullable().optional(),
   provider: z.string(),
   externalId: z.string().nullable(),
   status: BgCheckStatusSchema,
@@ -3062,6 +3069,9 @@ export const DrugTestSchema = z.object({
   associateId: UuidSchema,
   associateName: z.string(),
   clientId: UuidSchema.nullable(),
+  /** Display name for clientId (the test's own client when recorded, else
+   *  the associate's current placement) — feeds the client filter. */
+  clientName: z.string().nullable().optional(),
   provider: z.string(),
   externalId: z.string().nullable(),
   status: DrugTestStatusSchema,
@@ -4455,6 +4465,10 @@ export const EVerifyRosterRowSchema = z.object({
   associateId: UuidSchema,
   associateName: z.string(),
   associateEmail: z.string(),
+  /** The associate's current client (open assignment, else latest approved
+   *  application) — feeds the client filter. Null mid-onboarding. */
+  clientId: UuidSchema.nullable().optional(),
+  clientName: z.string().nullable().optional(),
   hireDate: z.string().nullable(),
   ssnLast4: z.string().nullable(),
   caseNumber: z.string().nullable(),

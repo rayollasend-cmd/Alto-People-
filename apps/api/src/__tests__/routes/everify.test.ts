@@ -115,6 +115,35 @@ describe('GET /compliance/everify — roster', () => {
     expect(row.dueBy).toBe('2026-06-09');
   });
 
+  it("labels each row with the associate's current client, for the client filter", async () => {
+    const client = await createClient('Sunset Resort');
+    const ready = await readyAssociate(client.id);
+    // Placement comes from an APPROVED application (or an open assignment) —
+    // the fixture's application starts DRAFT, so approve it.
+    await prisma.application.updateMany({
+      where: { associateId: ready.id },
+      data: { status: 'APPROVED', approvedAt: new Date() },
+    });
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(user.email);
+
+    const res = await a.get('/compliance/everify');
+    const row = res.body.rows.find(
+      (r: { associateId: string }) => r.associateId === ready.id,
+    );
+    expect(row.clientId).toBe(client.id);
+    expect(row.clientName).toBe('Sunset Resort');
+
+    // Mid-onboarding associates (no approval, no assignment) stay
+    // unattributed rather than guessing.
+    const fresh = await onboardingAssociate(client.id, 'Unplaced');
+    const res2 = await a.get('/compliance/everify');
+    const freshRow = res2.body.rows.find(
+      (r: { associateId: string }) => r.associateId === fresh.id,
+    );
+    expect(freshRow.clientId).toBeNull();
+  });
+
   it('excludes associates whose only application was rejected', async () => {
     const client = await createClient();
     const declined = await createAssociate({ firstName: 'Nope', lastName: 'Declined' });

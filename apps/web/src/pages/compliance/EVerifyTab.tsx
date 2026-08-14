@@ -153,6 +153,8 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [hired, setHired] = useState<HiredFilter>('any');
   const [sort, setSort] = useState<SortMode>('name');
+  // '' = all clients; 'none' = rows with no client attribution.
+  const [clientFilter, setClientFilter] = useState('');
   const [openFor, setOpenFor] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -181,6 +183,9 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
         return false;
       }
       if (!matchesHiredFilter(r.hireDate, hired)) return false;
+      if (clientFilter && (clientFilter === 'none' ? !!r.clientId : r.clientId !== clientFilter)) {
+        return false;
+      }
       switch (filter) {
         case 'not_run':
           return r.status === null;
@@ -218,7 +223,18 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
       });
     }
     return filtered;
-  }, [rows, query, filter, hired, sort]);
+  }, [rows, query, filter, hired, sort, clientFilter]);
+
+  // Distinct clients present in the roster, for the dropdown — derived from
+  // the rows themselves so no extra fetch (and no /clients dependency).
+  const clientOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of rows ?? []) {
+      if (r.clientId && r.clientName) m.set(r.clientId, r.clientName);
+    }
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [rows]);
+  const hasUnattributed = (rows ?? []).some((r) => !r.clientId);
 
   return (
     <div>
@@ -289,6 +305,21 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
           <option value="authorized">Authorized</option>
           <option value="issue">Nonconfirmation</option>
           <option value="overdue">Overdue</option>
+        </Select>
+        <Select
+          value={clientFilter}
+          onChange={(e) => setClientFilter(e.target.value)}
+          size="sm"
+          className="w-auto"
+          aria-label="Filter by client"
+        >
+          <option value="">All clients</option>
+          {clientOptions.map(([id, name]) => (
+            <option key={id} value={id}>
+              {name}
+            </option>
+          ))}
+          {hasUnattributed && <option value="none">No client on record</option>}
         </Select>
         <Select
           value={hired}
@@ -375,6 +406,7 @@ function RosterRow({ row, onOpen }: { row: EVerifyRosterRow; onOpen: () => void 
         </div>
         <div className="mt-0.5 truncate text-xs text-silver/70">
           {row.associateEmail}
+          {row.clientName ? ` · ${row.clientName}` : ''}
           {row.ssnLast4 ? ` · SSN ••••${row.ssnLast4}` : ''}
           {row.caseNumber ? ` · Case ${row.caseNumber}` : ''}
         </div>

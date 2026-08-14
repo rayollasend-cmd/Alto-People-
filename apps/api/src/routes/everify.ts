@@ -17,6 +17,7 @@ import {
   evaluateEVerifyReadiness,
   isEVerifyOverdue,
 } from '../lib/everifyReadiness.js';
+import { primaryClientsForAssociates } from '../lib/associateClients.js';
 
 /**
  * E-Verify directorate — a staging surface for the federal E-Verify portal.
@@ -107,6 +108,8 @@ everifyRouter.get('/', async (_req, res, next) => {
     const truncated = rows.length > EVERIFY_ROSTER_MAX;
     const page = truncated ? rows.slice(0, EVERIFY_ROSTER_MAX) : rows;
     const now = new Date();
+    // Current client per associate, for the roster's client filter.
+    const placement = await primaryClientsForAssociates(page.map((a) => a.id));
 
     const out = page.map((a) => {
       const i9 = a.i9Verification;
@@ -126,6 +129,8 @@ everifyRouter.get('/', async (_req, res, next) => {
         associateId: a.id,
         associateName: `${a.firstName} ${a.lastName}`,
         associateEmail: a.email,
+        clientId: placement.get(a.id)?.clientId ?? null,
+        clientName: placement.get(a.id)?.clientName ?? null,
         hireDate: a.hireDate ? ymd(a.hireDate) : null,
         ssnLast4: a.ssnLast4,
         caseNumber: i9?.eVerifyCaseNumber ?? null,

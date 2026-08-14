@@ -119,6 +119,8 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   const deepLinkOpened = useRef(false);
   const [filter, setFilter] = useState<I9Filter>(deepLinkAssociateId ? 'all' : 'pending');
   const [started, setStarted] = useState<StartedFilter>('any');
+  // '' = all clients; 'none' = rows with no client attribution.
+  const [clientFilter, setClientFilter] = useState('');
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<I9Verification[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -183,6 +185,11 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
       );
     }
     list = list.filter((r) => matchesStarted(r.startDate, started));
+    if (clientFilter) {
+      list = list.filter((r) =>
+        clientFilter === 'none' ? !r.clientId : r.clientId === clientFilter,
+      );
+    }
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter(
@@ -201,7 +208,18 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
       const [gb, kb] = rank(b);
       return ga - gb || ka - kb;
     });
-  }, [rows, filter, started, search]);
+  }, [rows, filter, started, clientFilter, search]);
+
+  // Distinct clients present in the list, for the dropdown — derived from
+  // the rows themselves so no extra fetch (and no /clients dependency).
+  const clientOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of rows ?? []) {
+      if (r.clientId && r.clientName) m.set(r.clientId, r.clientName);
+    }
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [rows]);
+  const hasUnattributed = (rows ?? []).some((r) => !r.clientId);
 
   // Whole-population stats (rows is always the full list).
   const kpi = useMemo(() => {
@@ -270,6 +288,21 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
           </FilterChip>
         ))}
         <Select
+          value={clientFilter}
+          onChange={(e) => setClientFilter(e.target.value)}
+          size="sm"
+          className="w-auto"
+          aria-label="Filter by client"
+        >
+          <option value="">All clients</option>
+          {clientOptions.map(([id, name]) => (
+            <option key={id} value={id}>
+              {name}
+            </option>
+          ))}
+          {hasUnattributed && <option value="none">No client on record</option>}
+        </Select>
+        <Select
           value={started}
           onChange={(e) => setStarted(e.target.value as StartedFilter)}
           size="sm"
@@ -337,6 +370,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
                           </div>
                           <div className="text-xs text-silver truncate">
                             {r.associateEmail}
+                            {r.clientName ? ` · ${r.clientName}` : ''}
                           </div>
                         </div>
                       </div>

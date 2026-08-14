@@ -22,6 +22,10 @@ import { requireCapability } from '../middleware/auth.js';
 import { scopeBackgroundChecks } from '../lib/scope.js';
 import { blobExistsForListing } from '../lib/blobStore.js';
 import { recordComplianceEvent } from '../lib/audit.js';
+import {
+  clientNamesById,
+  primaryClientsForAssociates,
+} from '../lib/associateClients.js';
 import { notifyHrOnApplicationComplete } from '../lib/notify.js';
 import { everifyRouter } from './everify.js';
 import { drugTestsRouter } from './drugTests.js';
@@ -63,12 +67,17 @@ type RawI9 = Prisma.I9VerificationGetPayload<{
   };
 }>;
 
-function toI9(row: RawI9): I9Verification {
+function toI9(
+  row: RawI9,
+  client?: { clientId: string; clientName: string } | null,
+): I9Verification {
   return {
     id: row.id,
     associateId: row.associateId,
     associateName: `${row.associate.firstName} ${row.associate.lastName}`,
     associateEmail: row.associate.email,
+    clientId: client?.clientId ?? null,
+    clientName: client?.clientName ?? null,
     applicationId: row.associate.applications[0]?.id ?? null,
     section1CompletedAt: row.section1CompletedAt ? row.section1CompletedAt.toISOString() : null,
     section2CompletedAt: row.section2CompletedAt ? row.section2CompletedAt.toISOString() : null,
@@ -118,7 +127,15 @@ complianceRouter.get('/i9', async (req, res, next) => {
       take: 200,
       include: I9_INCLUDE,
     });
-    res.json(I9ListResponseSchema.parse({ i9s: rows.map(toI9) }));
+    // Current client per associate, for the tab's client filter.
+    const placement = await primaryClientsForAssociates(
+      rows.map((r) => r.associateId),
+    );
+    res.json(
+      I9ListResponseSchema.parse({
+        i9s: rows.map((r) => toI9(r, placement.get(r.associateId))),
+      }),
+    );
   } catch (err) {
     next(err);
   }
@@ -213,12 +230,17 @@ type RawBg = Prisma.BackgroundCheckGetPayload<{
   include: { associate: { select: { firstName: true; lastName: true } } };
 }>;
 
-function toBg(row: RawBg, reportCount?: number): BackgroundCheck {
+function toBg(
+  row: RawBg,
+  reportCount?: number,
+  client?: { clientId: string; clientName: string | null } | null,
+): BackgroundCheck {
   return {
     id: row.id,
     associateId: row.associateId,
     associateName: `${row.associate.firstName} ${row.associate.lastName}`,
-    clientId: row.clientId,
+    clientId: client?.clientId ?? row.clientId,
+    clientName: client?.clientName ?? null,
     provider: row.provider,
     externalId: row.externalId,
     status: row.status,
@@ -261,9 +283,19 @@ complianceRouter.get('/background', async (req, res, next) => {
       _count: { _all: true },
     });
     const reportsByAssociate = new Map(counts.map((c) => [c.associateId, c._count._all]));
+    // Client label per row for the tab's client filter: the check's own
+    // clientId wins when recorded (the client the screen was FOR), else the
+    // associate's current placement.
+    const placement = await primaryClientsForAssociates(rows.map((r) => r.associateId));
+    const ownNames = await clientNamesById(rows.map((r) => r.clientId));
     res.json(
       BackgroundCheckListResponseSchema.parse({
-        checks: rows.map((r) => toBg(r, reportsByAssociate.get(r.associateId) ?? 0)),
+        checks: rows.map((r) => {
+          const ref = r.clientId
+            ? { clientId: r.clientId, clientName: ownNames.get(r.clientId) ?? null }
+            : placement.get(r.associateId) ?? null;
+          return toBg(r, reportsByAssociate.get(r.associateId) ?? 0, ref);
+        }),
       })
     );
   } catch (err) {

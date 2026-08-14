@@ -150,6 +150,8 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [initiatedFilter, setInitiatedFilter] = useState<InitiatedFilter>('any');
+  // '' = all clients; 'none' = rows with no client attribution.
+  const [clientFilter, setClientFilter] = useState('');
   // Reports for the open drawer — fetched on open (each read is an audited
   // FCRA disclosure server-side), null while loading.
   const [detail, setDetail] = useState<BackgroundCheckDetail | null>(null);
@@ -211,12 +213,26 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
       ) {
         return false;
       }
+      if (clientFilter && (clientFilter === 'none' ? !!c.clientId : c.clientId !== clientFilter)) {
+        return false;
+      }
       return (
         matchesStatus(c, statusFilter) &&
         matchesInitiated(c.initiatedAt, initiatedFilter)
       );
     });
-  }, [checks, query, statusFilter, initiatedFilter]);
+  }, [checks, query, statusFilter, initiatedFilter, clientFilter]);
+
+  // Distinct clients present in the ledger, for the dropdown — derived from
+  // the rows themselves so no extra fetch (and no /clients dependency).
+  const clientOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of checks ?? []) {
+      if (c.clientId && c.clientName) m.set(c.clientId, c.clientName);
+    }
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [checks]);
+  const hasUnattributed = (checks ?? []).some((c) => !c.clientId);
 
   // Snapshot strip — same at-a-glance idiom as the E-Verify directory.
   // Deliberately computed over ALL checks, not the filtered view: the KPIs
@@ -322,6 +338,21 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
             <option value="missing_report">Finalized, no report</option>
           </Select>
           <Select
+            value={clientFilter}
+            onChange={(e) => setClientFilter(e.target.value)}
+            size="sm"
+            className="w-auto"
+            aria-label="Filter by client"
+          >
+            <option value="">All clients</option>
+            {clientOptions.map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+            {hasUnattributed && <option value="none">No client on record</option>}
+          </Select>
+          <Select
             value={initiatedFilter}
             onChange={(e) => setInitiatedFilter(e.target.value as InitiatedFilter)}
             size="sm"
@@ -393,8 +424,14 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
                     <Avatar name={c.associateName} size="sm" />
                     <div className="min-w-0">
                       <div className="truncate">{c.associateName}</div>
+                      {c.clientName && (
+                        <div className="hidden sm:block text-2xs text-silver/60 truncate">
+                          {c.clientName}
+                        </div>
+                      )}
                       {/* Phone-only secondary line replacing the hidden cells. */}
                       <div className="sm:hidden text-xs2 text-silver/70 truncate">
+                        {c.clientName ? `${c.clientName} · ` : ''}
                         {c.provider}
                         {c.externalId ? ` · ${c.externalId}` : ''} · initiated{' '}
                         {fmtDate(c.initiatedAt)}

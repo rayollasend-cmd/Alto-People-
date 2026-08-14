@@ -157,6 +157,8 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [orderedFilter, setOrderedFilter] = useState<OrderedFilter>('any');
+  // '' = all clients; 'none' = rows with no client attribution.
+  const [clientFilter, setClientFilter] = useState('');
   // Results for the open drawer — fetched on open (each read is an audited
   // disclosure server-side), null while loading.
   const [detail, setDetail] = useState<DrugTestDetail | null>(null);
@@ -218,12 +220,26 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
       ) {
         return false;
       }
+      if (clientFilter && (clientFilter === 'none' ? !!t.clientId : t.clientId !== clientFilter)) {
+        return false;
+      }
       return (
         matchesStatus(t, statusFilter) &&
         matchesOrdered(t.initiatedAt, orderedFilter)
       );
     });
-  }, [tests, query, statusFilter, orderedFilter]);
+  }, [tests, query, statusFilter, orderedFilter, clientFilter]);
+
+  // Distinct clients present in the ledger, for the dropdown — derived from
+  // the rows themselves so no extra fetch (and no /clients dependency).
+  const clientOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const t of tests ?? []) {
+      if (t.clientId && t.clientName) m.set(t.clientId, t.clientName);
+    }
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [tests]);
+  const hasUnattributed = (tests ?? []).some((t) => !t.clientId);
 
   // Snapshot strip — same at-a-glance idiom as Background checks.
   // Computed over ALL tests, not the filtered view: the KPIs answer "how
@@ -329,6 +345,21 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
             <option value="missing_result">Finalized, no result</option>
           </Select>
           <Select
+            value={clientFilter}
+            onChange={(e) => setClientFilter(e.target.value)}
+            size="sm"
+            className="w-auto"
+            aria-label="Filter by client"
+          >
+            <option value="">All clients</option>
+            {clientOptions.map(([id, name]) => (
+              <option key={id} value={id}>
+                {name}
+              </option>
+            ))}
+            {hasUnattributed && <option value="none">No client on record</option>}
+          </Select>
+          <Select
             value={orderedFilter}
             onChange={(e) => setOrderedFilter(e.target.value as OrderedFilter)}
             size="sm"
@@ -400,8 +431,14 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
                     <Avatar name={t.associateName} size="sm" />
                     <div className="min-w-0">
                       <div className="truncate">{t.associateName}</div>
+                      {t.clientName && (
+                        <div className="hidden sm:block text-2xs text-silver/60 truncate">
+                          {t.clientName}
+                        </div>
+                      )}
                       {/* Phone-only secondary line replacing the hidden cells. */}
                       <div className="sm:hidden text-xs2 text-silver/70 truncate">
+                        {t.clientName ? `${t.clientName} · ` : ''}
                         {t.provider}
                         {t.externalId ? ` · ${t.externalId}` : ''} · ordered{' '}
                         {fmtDate(t.initiatedAt)}
