@@ -83,10 +83,26 @@ const WORK_AUTH_WINDOW_DAYS = 90;
 
 const I9_FILTERS = [
   { value: 'pending', label: 'Pending' },
+  // The KPI strip counts Section-2-overdue rows; this chip makes that
+  // number a reachable view instead of just an alarm.
+  { value: 'overdue', label: 'Overdue' },
   { value: 'complete', label: 'Complete' },
   { value: 'all', label: 'All' },
   { value: 'work_auth', label: 'Work auth expiring' },
 ] as const;
+
+// Start-date window — "the newest hires' I-9s" without scanning the list.
+// Deliberately keeps FUTURE start dates in every window: Section 2's
+// deadline hangs off the start date, so an imminent hire is exactly who
+// this filter is chasing. Rows with no start date only appear under "any".
+type StartedFilter = 'any' | 'week' | 'month' | 'quarter';
+
+function matchesStarted(startDate: string | null | undefined, f: StartedFilter): boolean {
+  if (f === 'any') return true;
+  if (!startDate) return false;
+  const days = f === 'week' ? 7 : f === 'month' ? 30 : 90;
+  return daysFromToday(parseLocalDate(startDate)) >= -days;
+}
 
 const DOC_LIST_LABELS: Record<I9DocumentList, string> = {
   LIST_A: 'List A',
@@ -102,6 +118,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   const deepLinkAssociateId = deepLinkParams.get('associateId');
   const deepLinkOpened = useRef(false);
   const [filter, setFilter] = useState<I9Filter>(deepLinkAssociateId ? 'all' : 'pending');
+  const [started, setStarted] = useState<StartedFilter>('any');
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<I9Verification[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -149,6 +166,15 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     let list = rows;
     if (filter === 'pending') list = list.filter((r) => !r.section2CompletedAt);
     if (filter === 'complete') list = list.filter((r) => !!r.section2CompletedAt);
+    if (filter === 'overdue') {
+      // Mirrors the KPI: Section 2 not done and its 3-business-day
+      // deadline already passed.
+      list = list.filter((r) => {
+        if (r.section2CompletedAt) return false;
+        const due = section2DueDate(r.startDate);
+        return due !== null && due.getTime() < Date.now();
+      });
+    }
     if (filter === 'work_auth') {
       list = list.filter(
         (r) =>
@@ -156,6 +182,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
           daysFromToday(parseLocalDate(r.workAuthExpiresAt)) <= WORK_AUTH_WINDOW_DAYS,
       );
     }
+    list = list.filter((r) => matchesStarted(r.startDate, started));
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter(
@@ -174,7 +201,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
       const [gb, kb] = rank(b);
       return ga - gb || ka - kb;
     });
-  }, [rows, filter, search]);
+  }, [rows, filter, started, search]);
 
   // Whole-population stats (rows is always the full list).
   const kpi = useMemo(() => {
@@ -242,6 +269,18 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
             {f.label}
           </FilterChip>
         ))}
+        <Select
+          value={started}
+          onChange={(e) => setStarted(e.target.value as StartedFilter)}
+          size="sm"
+          className="w-auto"
+          aria-label="Filter by start date"
+        >
+          <option value="any">Started any time</option>
+          <option value="week">Started in the last 7 days (or upcoming)</option>
+          <option value="month">Started in the last 30 days (or upcoming)</option>
+          <option value="quarter">Started in the last 90 days (or upcoming)</option>
+        </Select>
         <div className="w-full sm:w-64 sm:ml-auto">
           <SearchInput
             value={search}

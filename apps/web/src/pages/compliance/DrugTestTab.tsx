@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Download, ExternalLink, FileCheck2, Plus, FlaskConical } from 'lucide-react';
 import { DirectorateHeader, Kpi, KpiStrip, TableShell } from './DirectorateShell';
@@ -43,6 +43,7 @@ import {
   ErrorBanner,
   Field,
   Input,
+  Select,
   Skeleton,
   SkeletonRows,
   Table,
@@ -53,6 +54,7 @@ import {
   TableRow,
 } from '@/components/ui';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
+import { SearchInput } from '@/components/ui/FilterBar';
 
 /**
  * Drug-test directorate — mirrors the Background checks tab. The structural
@@ -119,12 +121,42 @@ function ageTone(days: number): string {
   return 'text-silver';
 }
 
+// Status buckets mirror the KPI strip so a number that alarms someone is
+// also a filter they can click through the dropdown — same idiom as the
+// Background checks tab.
+type StatusFilter = 'all' | 'in_flight' | 'stuck' | 'missing_result' | DrugTestStatus;
+type OrderedFilter = 'any' | 'week' | 'month' | 'quarter';
+
+function matchesOrdered(initiatedAt: string, f: OrderedFilter): boolean {
+  if (f === 'any') return true;
+  const days = f === 'week' ? 7 : f === 'month' ? 30 : 90;
+  return Date.now() - new Date(initiatedAt).getTime() <= days * 86_400_000;
+}
+
+function matchesStatus(t: DrugTest, f: StatusFilter): boolean {
+  switch (f) {
+    case 'all':
+      return true;
+    case 'in_flight':
+      return !isTerminal(t.status);
+    case 'stuck':
+      return !isTerminal(t.status) && ageInDays(t.initiatedAt) >= 7;
+    case 'missing_result':
+      return isTerminal(t.status) && (t.reportCount ?? 0) === 0;
+    default:
+      return t.status === f;
+  }
+}
+
 export function DrugTestTab({ canManage }: { canManage: boolean }) {
   const [tests, setTests] = useState<DrugTest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showInitiate, setShowInitiate] = useState(false);
   const [showBulkOrder, setShowBulkOrder] = useState(false);
   const [drawerTarget, setDrawerTarget] = useState<DrugTest | null>(null);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [orderedFilter, setOrderedFilter] = useState<OrderedFilter>('any');
   // Results for the open drawer — fetched on open (each read is an audited
   // disclosure server-side), null while loading.
   const [detail, setDetail] = useState<DrugTestDetail | null>(null);
@@ -174,7 +206,28 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
     }
   };
 
+  const visible = useMemo(() => {
+    if (!tests) return [];
+    const q = query.trim().toLowerCase();
+    return tests.filter((t) => {
+      if (
+        q &&
+        !t.associateName.toLowerCase().includes(q) &&
+        !t.provider.toLowerCase().includes(q) &&
+        !(t.externalId ?? '').toLowerCase().includes(q)
+      ) {
+        return false;
+      }
+      return (
+        matchesStatus(t, statusFilter) &&
+        matchesOrdered(t.initiatedAt, orderedFilter)
+      );
+    });
+  }, [tests, query, statusFilter, orderedFilter]);
+
   // Snapshot strip — same at-a-glance idiom as Background checks.
+  // Computed over ALL tests, not the filtered view: the KPIs answer "how
+  // are we doing overall", the filters narrow the table.
   const open = (tests ?? []).filter((t) => !isTerminal(t.status));
   const kpi = {
     inFlight: open.length,
@@ -250,6 +303,46 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
         </KpiStrip>
       )}
 
+      {tests && tests.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <SearchInput
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search name, provider, or reference…"
+            wrapperClassName="w-full sm:w-72"
+          />
+          <Select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+            size="sm"
+            className="w-auto"
+            aria-label="Filter by test status"
+          >
+            <option value="all">All statuses</option>
+            <option value="in_flight">In flight (not finalized)</option>
+            <option value="INITIATED">Ordered</option>
+            <option value="IN_PROGRESS">In progress</option>
+            <option value="NEEDS_REVIEW">Needs review</option>
+            <option value="PASSED">Passed</option>
+            <option value="FAILED">Failed</option>
+            <option value="stuck">Stuck 7d+</option>
+            <option value="missing_result">Finalized, no result</option>
+          </Select>
+          <Select
+            value={orderedFilter}
+            onChange={(e) => setOrderedFilter(e.target.value as OrderedFilter)}
+            size="sm"
+            className="w-auto"
+            aria-label="Filter by ordered date"
+          >
+            <option value="any">Ordered any time</option>
+            <option value="week">Ordered in the last 7 days</option>
+            <option value="month">Ordered in the last 30 days</option>
+            <option value="quarter">Ordered in the last 90 days</option>
+          </Select>
+        </div>
+      )}
+
       {!tests && <SkeletonRows count={4} rowHeight="h-12" />}
       {tests && tests.length === 0 && (
         <EmptyState
@@ -270,7 +363,14 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
           }
         />
       )}
-      {tests && tests.length > 0 && (
+      {tests && tests.length > 0 && visible.length === 0 && (
+        <EmptyState
+          icon={FlaskConical}
+          title="Nobody matches this filter"
+          description="Clear the search, status, or ordered-date filter to see every test."
+        />
+      )}
+      {tests && visible.length > 0 && (
         <TableShell>
         <Table>
           <TableHeader>
@@ -284,7 +384,7 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {tests.map((t) => (
+            {visible.map((t) => (
               <TableRow
                 key={t.id}
                 className="group cursor-pointer"
