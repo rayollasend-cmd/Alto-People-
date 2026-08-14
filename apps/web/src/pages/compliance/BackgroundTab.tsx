@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Download, ExternalLink, FileCheck2, FileSearch, Plus, ShieldCheck } from 'lucide-react';
 import { DirectorateHeader, Kpi, KpiStrip, TableShell } from './DirectorateShell';
@@ -43,6 +43,7 @@ import {
   ErrorBanner,
   Field,
   Input,
+  Select,
   Skeleton,
   SkeletonRows,
   Table,
@@ -53,6 +54,7 @@ import {
   TableRow,
 } from '@/components/ui';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
+import { SearchInput } from '@/components/ui/FilterBar';
 
 const TRANSITION_OPTIONS: BgCheckStatus[] = [
   'IN_PROGRESS',
@@ -104,6 +106,33 @@ function ageInDays(initiatedAt: string): number {
   );
 }
 
+// Status buckets mirror the KPI strip so a number that alarms someone is
+// also a filter they can click through the dropdown: the five raw statuses
+// plus the two derived buckets ("stuck 7d+", "finalized without a report").
+type StatusFilter = 'all' | 'in_flight' | 'stuck' | 'missing_report' | BgCheckStatus;
+type InitiatedFilter = 'any' | 'week' | 'month' | 'quarter';
+
+function matchesInitiated(initiatedAt: string, f: InitiatedFilter): boolean {
+  if (f === 'any') return true;
+  const days = f === 'week' ? 7 : f === 'month' ? 30 : 90;
+  return Date.now() - new Date(initiatedAt).getTime() <= days * 86_400_000;
+}
+
+function matchesStatus(c: BackgroundCheck, f: StatusFilter): boolean {
+  switch (f) {
+    case 'all':
+      return true;
+    case 'in_flight':
+      return !isTerminal(c.status);
+    case 'stuck':
+      return !isTerminal(c.status) && ageInDays(c.initiatedAt) >= 7;
+    case 'missing_report':
+      return isTerminal(c.status) && (c.reportCount ?? 0) === 0;
+    default:
+      return c.status === f;
+  }
+}
+
 // Stuck-check tone: a background check open 7+ days is worth a look,
 // 14+ days is a problem.
 function ageTone(days: number): string {
@@ -118,6 +147,9 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
   const [showInitiate, setShowInitiate] = useState(false);
   const [showBulkOrder, setShowBulkOrder] = useState(false);
   const [drawerTarget, setDrawerTarget] = useState<BackgroundCheck | null>(null);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [initiatedFilter, setInitiatedFilter] = useState<InitiatedFilter>('any');
   // Reports for the open drawer — fetched on open (each read is an audited
   // FCRA disclosure server-side), null while loading.
   const [detail, setDetail] = useState<BackgroundCheckDetail | null>(null);
@@ -167,7 +199,28 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
     }
   };
 
+  const visible = useMemo(() => {
+    if (!checks) return [];
+    const q = query.trim().toLowerCase();
+    return checks.filter((c) => {
+      if (
+        q &&
+        !c.associateName.toLowerCase().includes(q) &&
+        !c.provider.toLowerCase().includes(q) &&
+        !(c.externalId ?? '').toLowerCase().includes(q)
+      ) {
+        return false;
+      }
+      return (
+        matchesStatus(c, statusFilter) &&
+        matchesInitiated(c.initiatedAt, initiatedFilter)
+      );
+    });
+  }, [checks, query, statusFilter, initiatedFilter]);
+
   // Snapshot strip — same at-a-glance idiom as the E-Verify directory.
+  // Deliberately computed over ALL checks, not the filtered view: the KPIs
+  // answer "how are we doing overall", the filters narrow the table.
   const open = (checks ?? []).filter((c) => !isTerminal(c.status));
   const kpi = {
     inFlight: open.length,
@@ -243,6 +296,46 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
         </KpiStrip>
       )}
 
+      {checks && checks.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <SearchInput
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search name, provider, or reference…"
+            wrapperClassName="w-full sm:w-72"
+          />
+          <Select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+            size="sm"
+            className="w-auto"
+            aria-label="Filter by check status"
+          >
+            <option value="all">All statuses</option>
+            <option value="in_flight">In flight (not finalized)</option>
+            <option value="INITIATED">Initiated</option>
+            <option value="IN_PROGRESS">In progress</option>
+            <option value="NEEDS_REVIEW">Needs review</option>
+            <option value="PASSED">Passed</option>
+            <option value="FAILED">Failed</option>
+            <option value="stuck">Stuck 7d+</option>
+            <option value="missing_report">Finalized, no report</option>
+          </Select>
+          <Select
+            value={initiatedFilter}
+            onChange={(e) => setInitiatedFilter(e.target.value as InitiatedFilter)}
+            size="sm"
+            className="w-auto"
+            aria-label="Filter by initiated date"
+          >
+            <option value="any">Initiated any time</option>
+            <option value="week">Initiated in the last 7 days</option>
+            <option value="month">Initiated in the last 30 days</option>
+            <option value="quarter">Initiated in the last 90 days</option>
+          </Select>
+        </div>
+      )}
+
       {!checks && <SkeletonRows count={4} rowHeight="h-12" />}
       {checks && checks.length === 0 && (
         <EmptyState
@@ -263,7 +356,14 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
           }
         />
       )}
-      {checks && checks.length > 0 && (
+      {checks && checks.length > 0 && visible.length === 0 && (
+        <EmptyState
+          icon={ShieldCheck}
+          title="Nobody matches this filter"
+          description="Clear the search, status, or initiated-date filter to see every check."
+        />
+      )}
+      {checks && visible.length > 0 && (
         <TableShell>
         <Table>
           <TableHeader>
@@ -277,7 +377,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {checks.map((c) => (
+            {visible.map((c) => (
               <TableRow
                 key={c.id}
                 className="group cursor-pointer"
