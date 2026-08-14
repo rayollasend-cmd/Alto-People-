@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { AtSign, ChevronLeft, ShieldCheck, ShieldX } from 'lucide-react';
 import { ApiError, NetworkError } from '@/lib/api';
 import { confirmEmailChange } from '@/lib/settingsApi';
+import { Button } from '@/components/ui/Button';
 
 /**
  * Public — completes the two-step email change. The token comes from the
@@ -89,12 +90,12 @@ export function ConfirmEmailChange() {
                 has been signed out. Sign in again with your new email to
                 continue.
               </p>
-              <Link
-                to="/login"
-                className="inline-flex items-center gap-1.5 text-gold hover:text-gold/80 text-sm"
-              >
-                Go to sign in
-              </Link>
+              {/* Signing in again IS this page's next step — full-width
+                  button, not an easy-to-miss text link (same complaint as
+                  the invite page's hidden "Go to sign in"). */}
+              <Button asChild variant="secondary" className="w-full">
+                <Link to="/login">Go to sign in</Link>
+              </Button>
             </>
           )}
           {state === 'error' && (
@@ -104,13 +105,12 @@ export function ConfirmEmailChange() {
                 Couldn't confirm
               </h2>
               <p className="text-silver text-sm mb-6">{error}</p>
-              <Link
-                to="/login"
-                className="inline-flex items-center gap-1.5 text-silver hover:text-white text-sm"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-                Back to sign in
-              </Link>
+              <Button asChild variant="secondary" className="w-full">
+                <Link to="/login">
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                  Back to sign in
+                </Link>
+              </Button>
             </>
           )}
         </div>

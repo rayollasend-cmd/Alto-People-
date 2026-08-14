@@ -67,6 +67,9 @@ export function AcceptInvite() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // The "account already active" conflict: the error text says "try signing
+  // in instead", so the page must actually offer that action.
+  const [alreadyActive, setAlreadyActive] = useState(false);
 
   // Self-service renewal shown in the invalid/expired state.
   const [renewEmail, setRenewEmail] = useState('');
@@ -143,6 +146,7 @@ export function AcceptInvite() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         setError('This account is already active. Try signing in instead.');
+        setAlreadyActive(true);
       } else if (err instanceof ApiError && err.status === 404) {
         setError('Invitation expired. Ask HR to resend it.');
       } else {
@@ -217,7 +221,24 @@ export function AcceptInvite() {
                 </form>
               )}
 
-              <Button variant="ghost" onClick={() => navigate('/login')}>
+              {/* Equal-weight escape hatch, not a toolbar ghost: everyone who
+                  already accepted the invite and clicks the email link again
+                  lands in this state, and for them SIGN IN is the right
+                  action — renewal would demote their account back to
+                  INVITED. Reported 2026-08-14: the old bottom-left ghost
+                  button was "almost hidden". */}
+              <div className="flex items-center gap-3 mb-4" aria-hidden="true">
+                <div className="h-px flex-1 bg-navy-secondary" />
+                <span className="text-2xs uppercase tracking-widest text-silver/60">
+                  or
+                </span>
+                <div className="h-px flex-1 bg-navy-secondary" />
+              </div>
+              <Button
+                variant="secondary"
+                className="w-full"
+                onClick={() => navigate('/login')}
+              >
                 Go to sign in
               </Button>
             </>
@@ -302,6 +323,19 @@ export function AcceptInvite() {
               </Field>
 
               {error && <ErrorBanner className="mt-4">{error}</ErrorBanner>}
+              {alreadyActive && (
+                // The banner above tells them to sign in — give them the
+                // button to actually do it, at the same weight as the
+                // primary action it replaces.
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full mt-3"
+                  onClick={() => navigate('/login')}
+                >
+                  Go to sign in
+                </Button>
+              )}
 
               <Button
                 type="submit"
