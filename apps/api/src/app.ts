@@ -14,7 +14,7 @@ import { env } from './config/env.js';
 import { healthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
 import { oidcAuthRouter } from './routes/oidcAuth.js';
-import { clientsRouter } from './routes/clients.js';
+import { clientsAccessGate, clientsRouter } from './routes/clients.js';
 import { onboardingRouter } from './routes/onboarding.js';
 import { timeRouter } from './routes/time.js';
 import { timeOffRouter } from './routes/timeOff.js';
@@ -253,7 +253,10 @@ export function createApp() {
   // HMAC token in the URL is the authorization. Mounted before the
   // session-cookie chain so it doesn't get wrapped in view:scheduling.
   app.use('/calendar', calendarFeedRouter);
-  app.use('/clients', requireCapability('view:clients'), clientsRouter);
+  // Not a bare requireCapability: the gate lets client-bounded roles
+  // (SHIFT_SUPERVISOR, CLIENT_PORTAL) through to GET /:id/locations only —
+  // see clientsAccessGate for why.
+  app.use('/clients', clientsAccessGate, clientsRouter);
   app.use(
     '/onboarding',
     requireCapability('view:onboarding'),

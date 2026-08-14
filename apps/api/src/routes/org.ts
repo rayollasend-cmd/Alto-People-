@@ -25,7 +25,8 @@ import { toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { piiRevealLimiter, bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
+import { effectiveClientIdFilter } from '../lib/scope.js';
 import { asOf, recordChange } from '../lib/associateHistory.js';
 import { eraseAssociate } from '../lib/erasure.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
@@ -450,9 +451,26 @@ orgRouter.delete(
 // shifts keep the position name as plain text, so deleting a position just
 // removes it from the dropdown for future shifts.
 
-orgRouter.get('/shift-positions', VIEW, async (req: Request, res: Response) => {
-  const clientId =
+// Readable by org viewers AND anyone who schedules — SHIFT_SUPERVISOR
+// holds manage:scheduling but not view:org, and this list feeds the
+// position dropdown in every shift create/edit dialog (reported
+// 2026-08-14: supervisors couldn't pick a position). Client-bounded
+// callers are clamped to their own client's list below; writes stay
+// behind manage:org.
+orgRouter.get(
+  '/shift-positions',
+  requireAnyCapability('view:org', 'manage:scheduling'),
+  async (req: Request, res: Response) => {
+  const requested =
     typeof req.query.clientId === 'string' ? req.query.clientId : undefined;
+  // uuid → clamped/requested client; null → bounded caller with no client
+  // on file (fail closed to nothing); undefined → org-wide caller, no
+  // clientId restriction unless they asked for one.
+  const clientId = effectiveClientIdFilter(req.user!, requested);
+  if (clientId === null) {
+    res.json(ShiftPositionListResponseSchema.parse({ shiftPositions: [] }));
+    return;
+  }
   const rows = await prisma.shiftPosition.findMany({
     take: 1000,
     where: {

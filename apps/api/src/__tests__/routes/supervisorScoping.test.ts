@@ -540,3 +540,116 @@ describe('onboarding tenant boundary', () => {
     ).toBe(200);
   });
 });
+
+describe('supervisor scheduling cascade: locations, positions, teams', () => {
+  it('reads own-client locations through the /clients gate; other clients 404; admin area stays 403', async () => {
+    const { mine, other, sup } = await seedTwoClients();
+
+    // The location picker's source — used to 403 for supervisors, which
+    // dead-ended the Location → Team cascade on the scheduling grid.
+    const ownLocations = await sup.get(`/clients/${mine.id}/locations`);
+    expect(ownLocations.status).toBe(200);
+    expect(ownLocations.body.locations.length).toBeGreaterThan(0);
+    for (const l of ownLocations.body.locations) {
+      expect(l.clientId).toBe(mine.id);
+    }
+
+    // Cross-tenant read 404s (scopeClients clamp — no existence leak).
+    await sup.get(`/clients/${other.id}/locations`).expect(404);
+
+    // Only the locations read is open — the clients admin area is not.
+    await sup.get('/clients').expect(403);
+    await sup.get(`/clients/${mine.id}`).expect(403);
+    await sup
+      .post(`/clients/${mine.id}/locations`)
+      .send({ name: 'Sneaky new site' })
+      .expect(403);
+  });
+
+  it('does not open the locations read to ASSOCIATE logins', async () => {
+    const { mine } = await seedTwoClients();
+    const a = await createAssociate({ firstName: 'Just', lastName: 'AWorker' });
+    const { user } = await createUser({
+      role: 'ASSOCIATE',
+      email: a.email,
+      associateId: a.id,
+      clientId: mine.id,
+    });
+    const agent = await loginAs(user.email);
+    // ASSOCIATE is not clamped by scopeClients, so the gate must not admit
+    // it — that would be an org-wide location read.
+    await agent.get(`/clients/${mine.id}/locations`).expect(403);
+  });
+
+  it('reads shift positions clamped to own client, even when asking for another', async () => {
+    const { mine, other, sup } = await seedTwoClients();
+    await prisma.shiftPosition.create({
+      data: { clientId: mine.id, name: 'Line Cook', sortOrder: 1 },
+    });
+    await prisma.shiftPosition.create({
+      data: { clientId: other.id, name: 'Their Barista', sortOrder: 1 },
+    });
+
+    const res = await sup.get('/org/shift-positions');
+    expect(res.status).toBe(200);
+    expect(res.body.shiftPositions.map((p: { name: string }) => p.name)).toEqual([
+      'Line Cook',
+    ]);
+
+    // Requesting another tenant's list is silently clamped to their own.
+    const cross = await sup.get(`/org/shift-positions?clientId=${other.id}`);
+    expect(cross.status).toBe(200);
+    expect(cross.body.shiftPositions.map((p: { name: string }) => p.name)).toEqual([
+      'Line Cook',
+    ]);
+
+    // Org-wide admins keep the unclamped behavior.
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const admin = await loginAs(hr.email);
+    const all = await admin.get('/org/shift-positions');
+    expect(all.status).toBe(200);
+    expect(all.body.shiftPositions.length).toBe(2);
+    const theirs = await admin.get(`/org/shift-positions?clientId=${other.id}`);
+    expect(
+      theirs.body.shiftPositions.map((p: { name: string }) => p.name),
+    ).toEqual(['Their Barista']);
+  });
+
+  it('creates a shift team end-to-end for the own client, never across the boundary', async () => {
+    const { mine, other, sup } = await seedTwoClients();
+    const myLoc = await prisma.location.findFirstOrThrow({
+      where: { clientId: mine.id },
+    });
+    const theirLoc = await prisma.location.findFirstOrThrow({
+      where: { clientId: other.id },
+    });
+
+    const created = await sup
+      .post('/scheduling/teams')
+      .send({ clientId: mine.id, locationId: myLoc.id, name: 'Morning Crew' });
+    expect(created.status).toBe(201);
+    expect(created.body.name).toBe('Morning Crew');
+    expect(created.body.clientId).toBe(mine.id);
+
+    await sup
+      .post('/scheduling/teams')
+      .send({ clientId: other.id, locationId: theirLoc.id, name: 'Nope' })
+      .expect(403);
+    // Own client + someone else's location: rejected by the location check.
+    await sup
+      .post('/scheduling/teams')
+      .send({ clientId: mine.id, locationId: theirLoc.id, name: 'Nope' })
+      .expect(404);
+  });
+
+  it('lets CLIENT_PORTAL read its own client locations too', async () => {
+    const { mine } = await seedTwoClients();
+    const { user } = await createUser({ role: 'CLIENT_PORTAL', clientId: mine.id });
+    const portal = await loginAs(user.email);
+    const res = await portal.get(`/clients/${mine.id}/locations`);
+    expect(res.status).toBe(200);
+    for (const l of res.body.locations) {
+      expect(l.clientId).toBe(mine.id);
+    }
+  });
+});

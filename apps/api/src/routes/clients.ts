@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type { Request } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import {
   ClientCreateInputSchema,
   ClientStateInputSchema,
@@ -23,6 +23,44 @@ import { seedDefaultShiftPositions } from '../lib/shiftPositions.js';
 export const clientsRouter = Router();
 
 const MANAGE = requireCapability('manage:clients');
+const VIEW = requireCapability('view:clients');
+
+/**
+ * Mount-level gate for the /clients router (used in app.ts instead of a
+ * bare requireCapability).
+ *
+ * /clients is the client-accounts admin area, gated on view:clients — but
+ * ONE read inside it feeds operational UI everywhere: GET /:id/locations
+ * powers the location pickers on the scheduling grid, the time board,
+ * kiosk admin, and the onboarding invite dialog. SHIFT_SUPERVISOR and
+ * CLIENT_PORTAL hold none of the clients-area capabilities yet must see
+ * their OWN client's sites (reported 2026-08-14: supervisors couldn't pick
+ * a location or create shift teams — this gate 403'd the cascade's first
+ * link). The locations handler already clamps those two roles through
+ * scopeClients, which fails closed to exactly their own client, so letting
+ * them reach it grants nothing beyond their tenancy.
+ *
+ * Deliberately role-listed rather than capability-derived: scopeClients
+ * clamps exactly these two roles. ASSOCIATE holds view:scheduling too but
+ * is NOT clamped by scopeClients, so admitting by capability would open
+ * org-wide location reads. Every other method/path keeps requiring
+ * view:clients.
+ */
+export function clientsAccessGate(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  if (
+    req.method === 'GET' &&
+    /^\/[^/]+\/locations\/?$/.test(req.path) &&
+    (req.user?.role === 'SHIFT_SUPERVISOR' || req.user?.role === 'CLIENT_PORTAL')
+  ) {
+    next();
+    return;
+  }
+  VIEW(req, res, next);
+}
 
 function auditClient(
   req: Request,

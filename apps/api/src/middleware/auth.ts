@@ -380,3 +380,28 @@ export function requireCapability(...caps: Capability[]) {
     next();
   };
 }
+
+/**
+ * ANY-of variant of requireCapability — passes when the caller holds at
+ * least one of the listed capabilities. For routes that serve two
+ * audiences (e.g. org admins AND client-bounded schedulers); the handler
+ * remains responsible for tenant-clamping the bounded audience.
+ */
+export function requireAnyCapability(...caps: Capability[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      replyUnauthenticated(req, res);
+      return;
+    }
+    if (!caps.some((c) => hasCapability(req.user!.role, c))) {
+      res.status(403).json({
+        error: {
+          code: 'forbidden',
+          message: `Missing capability: one of ${caps.join(', ')}`,
+        },
+      });
+      return;
+    }
+    next();
+  };
+}
