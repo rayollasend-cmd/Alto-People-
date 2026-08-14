@@ -424,7 +424,16 @@ function parseDateParam(raw: string | undefined, name: string): Date | undefined
 schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
   try {
     const status = req.query.status?.toString();
-    const clientId = req.query.clientId?.toString();
+    // Tenant clamp FIRST — same fix as /kpis. Spreading the raw query param
+    // after scopeShifts let a bounded caller (SHIFT_SUPERVISOR) override
+    // the clamp's clientId key and read any client's schedule, drafts and
+    // rates included. effectiveClientIdFilter forces bounded callers onto
+    // their own client; admins keep whatever they requested.
+    const clampedClient = effectiveClientIdFilter(
+      req.user!,
+      req.query.clientId?.toString(),
+    );
+    const clientId = clampedClient === null ? NO_MATCH_ID : clampedClient;
     const locationId = req.query.locationId?.toString();
     const from = parseDateParam(req.query.from?.toString(), 'from');
     const to = parseDateParam(req.query.to?.toString(), 'to');
@@ -4342,11 +4351,17 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
     }
     const sourceEnd = new Date(source.getTime() + 7 * 86_400_000);
 
+    // Tenant clamp FIRST (same fix as /kpis): the raw body clientId used to
+    // override scopeShifts' clamp, letting a bounded caller copy ANOTHER
+    // client's week — a cross-tenant write, since copies inherit the source
+    // rows' clientId.
+    const copyClamped = effectiveClientIdFilter(req.user!, parsed.data.clientId);
+    const copyClientId = copyClamped === null ? NO_MATCH_ID : copyClamped;
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
       startsAt: { gte: source, lt: sourceEnd },
       status: { not: 'CANCELLED' },
-      ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
+      ...(copyClientId ? { clientId: copyClientId } : {}),
     };
     // Cap the batch but SAY so — the old take:100 silently dropped the rest
     // of a big week while reporting skipped: 0.
@@ -4468,11 +4483,16 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_window', 'weekEnd must be after weekStart.');
     }
 
+    // Tenant clamp FIRST (same fix as /kpis): the raw body clientId used to
+    // override scopeShifts' clamp — a bounded caller could publish ANOTHER
+    // client's drafts, notifying that client's associates.
+    const pubClamped = effectiveClientIdFilter(req.user!, parsed.data.clientId);
+    const pubClientId = pubClamped === null ? NO_MATCH_ID : pubClamped;
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
       status: 'DRAFT',
       startsAt: { gte: start, lt: end },
-      ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
+      ...(pubClientId ? { clientId: pubClientId } : {}),
     };
     // Cap+1 so a giant week can be REPORTED as truncated instead of
     // silently publishing the first N and leaving the rest DRAFT with no
@@ -4704,6 +4724,11 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_window', 'weekEnd must be after weekStart.');
     }
 
+    // Tenant clamp FIRST (same fix as /kpis): the raw body clientId used to
+    // override scopeShifts' clamp — a bounded caller could auto-fill
+    // ANOTHER client's open shifts.
+    const autoClamped = effectiveClientIdFilter(req.user!, parsed.data.clientId);
+    const autoClientId = autoClamped === null ? NO_MATCH_ID : autoClamped;
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
       // Unassigned DRAFTs are the normal state of a week being built (the
@@ -4714,7 +4739,7 @@ schedulingRouter.post('/auto-schedule-week', MANAGE, async (req, res, next) => {
       status: { in: ['OPEN', 'DRAFT'] },
       assignedAssociateId: null,
       startsAt: { gte: start, lt: end },
-      ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
+      ...(autoClientId ? { clientId: autoClientId } : {}),
     };
 
     // Earlier shifts go first so they get first pick of candidates.
@@ -5001,10 +5026,15 @@ schedulingRouter.post('/export.pdf', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_range', 'to must be after from');
     }
 
+    // Tenant clamp FIRST (same fix as /kpis): the raw body clientId used to
+    // override scopeShifts' clamp — a bounded caller could export ANOTHER
+    // client's schedule (names, positions, rates) as a PDF.
+    const pdfClamped = effectiveClientIdFilter(req.user!, parsed.data.clientId);
+    const pdfClientId = pdfClamped === null ? NO_MATCH_ID : pdfClamped;
     const where: Prisma.ShiftWhereInput = {
       ...scopeShifts(req.user!),
       startsAt: { gte: from, lt: to },
-      ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
+      ...(pdfClientId ? { clientId: pdfClientId } : {}),
     };
     const rows = await prisma.shift.findMany({
       where,

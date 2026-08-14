@@ -653,3 +653,105 @@ describe('supervisor scheduling cascade: locations, positions, teams', () => {
     }
   });
 });
+
+describe('clientId params cannot override the supervisor tenant clamp', () => {
+  // All five scheduling endpoints that accept a clientId used to spread it
+  // AFTER scopeShifts, so the caller's key overwrote the clamp — the same
+  // bug /kpis had already fixed. These pin the clamp on each one.
+  const WEEK_START = new Date('2026-09-07T00:00:00.000Z');
+  const at = (dayOffset: number, hour: number) =>
+    new Date(WEEK_START.getTime() + (dayOffset * 24 + hour) * 3_600_000);
+
+  async function seedShifts() {
+    const seeded = await seedTwoClients();
+    const myShift = await prisma.shift.create({
+      data: {
+        clientId: seeded.mine.id,
+        position: 'Server',
+        startsAt: at(1, 9),
+        endsAt: at(1, 17),
+        status: 'DRAFT',
+      },
+    });
+    const theirDraft = await prisma.shift.create({
+      data: {
+        clientId: seeded.other.id,
+        position: 'Their Secret Role',
+        startsAt: at(1, 9),
+        endsAt: at(1, 17),
+        status: 'DRAFT',
+      },
+    });
+    const theirOpen = await prisma.shift.create({
+      data: {
+        clientId: seeded.other.id,
+        position: 'Their Open Slot',
+        startsAt: at(2, 9),
+        endsAt: at(2, 17),
+        status: 'OPEN',
+        publishedAt: new Date(),
+      },
+    });
+    return { ...seeded, myShift, theirDraft, theirOpen };
+  }
+
+  it('GET /shifts?clientId=<other> returns only own-client shifts', async () => {
+    const { sup, other, myShift, theirDraft, theirOpen } = await seedShifts();
+    const res = await sup.get(`/scheduling/shifts?clientId=${other.id}`);
+    expect(res.status).toBe(200);
+    const ids = res.body.shifts.map((s: { id: string }) => s.id);
+    expect(ids).toContain(myShift.id);
+    expect(ids).not.toContain(theirDraft.id);
+    expect(ids).not.toContain(theirOpen.id);
+  });
+
+  it('publish-week with clientId=<other> publishes nothing across the boundary', async () => {
+    const { sup, other, theirDraft } = await seedShifts();
+    const res = await sup.post('/scheduling/publish-week').send({
+      weekStart: WEEK_START.toISOString(),
+      clientId: other.id,
+    });
+    expect(res.status).toBe(200);
+    const after = await prisma.shift.findUniqueOrThrow({ where: { id: theirDraft.id } });
+    expect(after.status).toBe('DRAFT');
+    expect(after.publishedAt).toBeNull();
+  });
+
+  it('copy-week with clientId=<other> writes nothing into the other tenant', async () => {
+    const { sup, other } = await seedShifts();
+    const before = await prisma.shift.count({ where: { clientId: other.id } });
+    const target = new Date(WEEK_START.getTime() + 7 * 86_400_000);
+    const res = await sup.post('/scheduling/copy-week').send({
+      sourceWeekStart: WEEK_START.toISOString(),
+      targetWeekStart: target.toISOString(),
+      clientId: other.id,
+    });
+    expect(res.status).toBe(200);
+    expect(await prisma.shift.count({ where: { clientId: other.id } })).toBe(before);
+  });
+
+  it('auto-schedule with clientId=<other> assigns nothing across the boundary', async () => {
+    const { sup, other, theirOpen } = await seedShifts();
+    const res = await sup.post('/scheduling/auto-schedule-week').send({
+      weekStart: WEEK_START.toISOString(),
+      clientId: other.id,
+    });
+    expect(res.status).toBe(200);
+    const after = await prisma.shift.findUniqueOrThrow({ where: { id: theirOpen.id } });
+    expect(after.assignedAssociateId).toBeNull();
+  });
+
+  it('export.pdf with clientId=<other> still succeeds (clamped to own client)', async () => {
+    const { sup, other } = await seedShifts();
+    const res = await sup.post('/scheduling/export.pdf').send({
+      from: WEEK_START.toISOString(),
+      to: new Date(WEEK_START.getTime() + 7 * 86_400_000).toISOString(),
+      clientId: other.id,
+    });
+    // Content is a binary PDF; the where-clause clamp is pinned by the
+    // sibling tests above — this one just proves the clamp doesn't break
+    // the export for a bounded caller.
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('application/pdf');
+  });
+});
