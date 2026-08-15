@@ -1838,6 +1838,10 @@ export const ShiftTemplateApplyInputSchema = z.object({
   weekStart: z.string().datetime(),
   /** Override the template's clientId (required if template is global). */
   clientId: UuidSchema.optional(),
+  /** Applying onto a week that already has an identical draft 409s
+   *  (duplicate_shift) unless this is set — a deliberate second slot at
+   *  the same time is legitimate, an accidental double-apply is not. */
+  allowDuplicate: z.boolean().optional(),
 });
 export type ShiftTemplateApplyInput = z.infer<typeof ShiftTemplateApplyInputSchema>;
 
@@ -1868,8 +1872,39 @@ export const CopyWeekResponseSchema = z.object({
   skipped: z.number().int().nonnegative(),
   /** How many of the copied shifts carried their associate assignment. */
   assigned: z.number().int().nonnegative().optional(),
+  /** Source shifts whose exact twin already sat in the target week —
+   *  skipped instead of duplicated, which makes copy-week idempotent
+   *  (re-clicks, timeout retries, and two-admin races no longer double
+   *  the week). Multiset-matched, so N legitimate identical slots still
+   *  copy as N. */
+  alreadyThere: z.number().int().nonnegative().optional(),
 });
 export type CopyWeekResponse = z.infer<typeof CopyWeekResponseSchema>;
+
+/* Draft dedupe ============================================================
+ * Cleanup for the duplicate-draft plague: exact-twin DRAFT shifts (same
+ * client, location, position, times, assignee-or-open) created by the
+ * pre-idempotency copy-week / double-applies. Removes all but the oldest
+ * of each group; DRAFTs only — published shifts are never touched.
+ */
+
+export const DedupeDraftsInputSchema = z.object({
+  from: z.string().datetime(),
+  /** Exclusive upper bound, like every other range endpoint. */
+  to: z.string().datetime(),
+  clientId: UuidSchema.optional(),
+});
+export type DedupeDraftsInput = z.infer<typeof DedupeDraftsInputSchema>;
+
+export const DedupeDraftsResponseSchema = z.object({
+  /** DRAFT shifts examined in the window. */
+  scanned: z.number().int().nonnegative(),
+  /** Twin groups that had extras. */
+  groups: z.number().int().nonnegative(),
+  /** Extra copies deleted (the oldest of each group is kept). */
+  removed: z.number().int().nonnegative(),
+});
+export type DedupeDraftsResponse = z.infer<typeof DedupeDraftsResponseSchema>;
 
 /* Shift teams ==============================================================
  * A standing crew at a work site ("Front Beach Morning"). Scheduling

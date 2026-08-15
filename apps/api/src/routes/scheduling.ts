@@ -17,6 +17,8 @@ import {
   CopyWeekInputSchema,
   MyShiftDetailResponseSchema,
   MyShiftHistoryResponseSchema,
+  DedupeDraftsInputSchema,
+  DedupeDraftsResponseSchema,
   OpenShiftClaimSchema,
   OpenShiftsResponseSchema,
   PublishWeekInputSchema,
@@ -4281,6 +4283,29 @@ schedulingRouter.post('/templates/:id/apply', MANAGE, async (req, res, next) => 
       );
     }
 
+    // Accidental double-apply guard (same duplicate plague as copy-week):
+    // an identical not-cancelled shift at this exact slot 409s unless the
+    // caller explicitly says a second slot is intentional.
+    if (!parsed.data.allowDuplicate) {
+      const twin = await prisma.shift.findFirst({
+        where: {
+          clientId,
+          position: tpl.position,
+          startsAt,
+          endsAt,
+          status: { not: 'CANCELLED' },
+        },
+        select: { id: true },
+      });
+      if (twin) {
+        throw new HttpError(
+          409,
+          'duplicate_shift',
+          'An identical shift already exists at this time. Confirm again if you want a second slot on purpose.',
+        );
+      }
+    }
+
     const created = await prisma.shift.create({
       data: {
         clientId,
@@ -4322,8 +4347,9 @@ schedulingRouter.post('/templates/:id/apply', MANAGE, async (req, res, next) => 
  * also keeps its associate assignment, so the whole roster carries forward
  * (pass preserveAssignments:false for blank drafts). New shifts always land
  * in DRAFT — publish-week is still the gate that flips them live and screens
- * double-bookings. Idempotency is on the user; calling twice produces
- * duplicates.
+ * double-bookings. Idempotent by content: a copy whose exact twin already
+ * exists in the target window is skipped (reported as alreadyThere), so
+ * re-clicks, timeout retries, and concurrent copies can't duplicate a week.
  */
 schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
   try {
@@ -4389,22 +4415,95 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
     // double-bookings are screened.
     const preserveAssignments = parsed.data.preserveAssignments ?? true;
     const assignedAt = new Date();
+
+    // Idempotency by content. This route used to say "idempotency is on
+    // the user; calling twice produces duplicates" — and users obliged:
+    // a re-click, a retry after a cold-start timeout (the server often
+    // HAD committed), or two admins copying the same week doubled every
+    // shift in the target as DRAFTs. Now each intended copy is checked
+    // against what's already in the target window and skipped when its
+    // exact twin exists. Multiset-matched (a counter per key, not a set)
+    // so N deliberately-identical open slots still copy as N.
+    const targetStart = new Date(source.getTime() + dayOffset * 86_400_000);
+    const existingTarget = await prisma.shift.findMany({
+      take: 2000,
+      where: {
+        ...scopeShifts(req.user!),
+        ...(copyClientId ? { clientId: copyClientId } : {}),
+        status: { not: 'CANCELLED' },
+        // Padded ±1 day: wall-clock-preserving copies across a DST change
+        // can land ±1h outside the plain-offset window. Keys are exact,
+        // so the padding can't cause a false match.
+        startsAt: {
+          gte: new Date(targetStart.getTime() - 86_400_000),
+          lt: new Date(targetStart.getTime() + 8 * 86_400_000),
+        },
+      },
+      select: {
+        clientId: true,
+        locationId: true,
+        position: true,
+        startsAt: true,
+        endsAt: true,
+        assignedAssociateId: true,
+      },
+    });
+    const twinKey = (s: {
+      clientId: string;
+      locationId: string | null;
+      position: string;
+      startsAt: Date;
+      endsAt: Date;
+      assignedAssociateId: string | null;
+    }) =>
+      [
+        s.clientId,
+        s.locationId ?? '',
+        s.position,
+        s.startsAt.toISOString(),
+        s.endsAt.toISOString(),
+        s.assignedAssociateId ?? 'open',
+      ].join('|');
+    const twinBudget = new Map<string, number>();
+    for (const s of existingTarget) {
+      const k = twinKey(s);
+      twinBudget.set(k, (twinBudget.get(k) ?? 0) + 1);
+    }
+
     let assigned = 0;
+    let alreadyThere = 0;
     // Phase 131 — preserve the source shift's locationId so copy-week
     // doesn't drop the FK. Source rows always have one (set by the PR
     // 1 backfill and by every writer since).
-    const data = sourceShifts.map((s) => {
+    const data: Prisma.ShiftCreateManyInput[] = [];
+    for (const s of sourceShifts) {
       const carry = preserveAssignments && s.assignedAssociateId != null;
-      if (carry) assigned += 1;
       // Calendar-day shift in the WORK SITE's zone so a copy across a DST
       // boundary keeps its wall-clock time (9am stays 9am).
       const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
-      return {
+      const startsAt = addDaysInZone(s.startsAt, dayOffset, tz);
+      const endsAt = addDaysInZone(s.endsAt, dayOffset, tz);
+      const k = twinKey({
         clientId: s.clientId,
         locationId: s.locationId,
         position: s.position,
-        startsAt: addDaysInZone(s.startsAt, dayOffset, tz),
-        endsAt: addDaysInZone(s.endsAt, dayOffset, tz),
+        startsAt,
+        endsAt,
+        assignedAssociateId: carry ? s.assignedAssociateId : null,
+      });
+      const budget = twinBudget.get(k) ?? 0;
+      if (budget > 0) {
+        twinBudget.set(k, budget - 1);
+        alreadyThere += 1;
+        continue;
+      }
+      if (carry) assigned += 1;
+      data.push({
+        clientId: s.clientId,
+        locationId: s.locationId,
+        position: s.position,
+        startsAt,
+        endsAt,
         location: s.location,
         hourlyRate: s.hourlyRate,
         payRate: s.payRate,
@@ -4414,9 +4513,10 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
         ...(carry
           ? { assignedAssociateId: s.assignedAssociateId, assignedAt }
           : {}),
-      };
-    });
-    const result = await prisma.shift.createMany({ data });
+      });
+    }
+    const result =
+      data.length > 0 ? await prisma.shift.createMany({ data }) : { count: 0 };
 
     enqueueAudit(
       {
@@ -4432,6 +4532,7 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
           createdCount: result.count,
           assignedCount: assigned,
           skippedCount: skipped,
+          alreadyThereCount: alreadyThere,
           preserveAssignments,
         },
       },
@@ -4442,8 +4543,111 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
       created: result.count,
       skipped,
       assigned,
+      alreadyThere,
     };
     res.json(body);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /scheduling/drafts/dedupe
+ * Body: { from, to (exclusive), clientId? }
+ *
+ * Cleanup for the duplicates the pre-idempotency copy-week left behind:
+ * groups DRAFT shifts in the window by exact twin key (client, location,
+ * position, start/end, assignee-or-open) and hard-deletes all but the
+ * OLDEST of each group — mirroring the single-shift DELETE route, which
+ * also hard-deletes. DRAFTs only, and only never-published rows: anything
+ * an associate may have seen stays untouched.
+ */
+schedulingRouter.post('/drafts/dedupe', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = DedupeDraftsInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const from = new Date(parsed.data.from);
+    const to = new Date(parsed.data.to);
+    if (to <= from) {
+      throw new HttpError(400, 'invalid_range', 'to must be after from');
+    }
+    // Tenant clamp first — same rule as every other clientId param here.
+    const clamped = effectiveClientIdFilter(req.user!, parsed.data.clientId);
+    const dedupeClientId = clamped === null ? NO_MATCH_ID : clamped;
+
+    const drafts = await prisma.shift.findMany({
+      take: 2000,
+      where: {
+        ...scopeShifts(req.user!),
+        ...(dedupeClientId ? { clientId: dedupeClientId } : {}),
+        status: 'DRAFT',
+        publishedAt: null,
+        startsAt: { gte: from, lt: to },
+      },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        clientId: true,
+        locationId: true,
+        position: true,
+        startsAt: true,
+        endsAt: true,
+        assignedAssociateId: true,
+      },
+    });
+
+    // Rows arrive oldest-first, so the first of each key is the keeper.
+    const seen = new Set<string>();
+    const dupGroups = new Set<string>();
+    const extras: string[] = [];
+    for (const s of drafts) {
+      const k = [
+        s.clientId,
+        s.locationId ?? '',
+        s.position,
+        s.startsAt.toISOString(),
+        s.endsAt.toISOString(),
+        s.assignedAssociateId ?? 'open',
+      ].join('|');
+      if (seen.has(k)) {
+        extras.push(s.id);
+        dupGroups.add(k);
+      } else {
+        seen.add(k);
+      }
+    }
+
+    if (extras.length > 0) {
+      await prisma.shift.deleteMany({ where: { id: { in: extras } } });
+      enqueueAudit(
+        {
+          actorUserId: req.user!.id,
+          action: 'scheduling.drafts_deduped',
+          entityType: 'Shift',
+          entityId: from.toISOString(),
+          metadata: {
+            from: from.toISOString(),
+            to: to.toISOString(),
+            scanned: drafts.length,
+            removed: extras.length,
+            // First 100 ids so a forensic "what exactly did it delete"
+            // stays answerable without a giant metadata blob.
+            removedIds: extras.slice(0, 100),
+          },
+        },
+        'scheduling.drafts_deduped',
+      );
+    }
+
+    res.json(
+      DedupeDraftsResponseSchema.parse({
+        scanned: drafts.length,
+        groups: dupGroups.size,
+        removed: extras.length,
+      }),
+    );
   } catch (err) {
     next(err);
   }

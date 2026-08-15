@@ -45,6 +45,7 @@ import {
   bulkCreateShifts,
   cancelShift,
   copyWeek,
+  dedupeDrafts,
   createShift,
   createShiftTemplate,
   deleteShiftTemplate,
@@ -759,6 +760,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       let created = 0;
       let assigned = 0;
       let skippedTotal = 0;
+      let alreadyTotal = 0;
       for (let i = 1; i <= n; i++) {
         const target = shiftWeek(weekStart, i);
         const r = await copyWeek({
@@ -769,13 +771,20 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         created += r.created;
         assigned += r.assigned ?? 0;
         skippedTotal += r.skipped;
+        alreadyTotal += r.alreadyThere ?? 0;
       }
       toast.success(
         created === 0
-          ? 'Nothing to copy — this week is empty.'
+          ? alreadyTotal > 0
+            ? `Nothing new to copy — ${alreadyTotal} shift${alreadyTotal === 1 ? '' : 's'} already existed in the target week${n === 1 ? '' : 's'}.`
+            : 'Nothing to copy — this week is empty.'
           : `Copied ${created} shift${created === 1 ? '' : 's'} across the next ${n} week${
               n === 1 ? '' : 's'
             }${assigned ? `, ${assigned} pre-assigned` : ''} (DRAFT).${
+              alreadyTotal
+                ? ` ${alreadyTotal} already existed and ${alreadyTotal === 1 ? 'was' : 'were'} not duplicated.`
+                : ''
+            }${
               skippedTotal
                 ? ` ${skippedTotal} shift${skippedTotal === 1 ? '' : 's'} exceeded the batch cap and did NOT copy.`
                 : ''
@@ -1338,6 +1347,38 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       toast.error(err instanceof ApiError ? err.message : 'Publish failed.');
     } finally {
       setPublishing(false);
+    }
+  };
+
+  // Cleanup for the duplicate-draft plague (pre-idempotency copy-week):
+  // exact-twin DRAFTs in the visible window, all but the oldest removed.
+  const [deduping, setDeduping] = useState(false);
+  const onDedupeDrafts = async () => {
+    if (deduping) return;
+    const ok = await confirm({
+      title: 'Remove duplicate draft shifts?',
+      description:
+        'Finds identical draft shifts in this week (same position, times, location, and assignee) and deletes all but the oldest of each. Published shifts are never touched.',
+      confirmLabel: 'Remove duplicates',
+    });
+    if (!ok) return;
+    setDeduping(true);
+    try {
+      const r = await dedupeDrafts({
+        from: publishWindow.from.toISOString(),
+        to: publishWindow.to.toISOString(),
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+      });
+      toast.success(
+        r.removed > 0
+          ? `Removed ${r.removed} duplicate draft${r.removed === 1 ? '' : 's'} across ${r.groups} slot${r.groups === 1 ? '' : 's'}.`
+          : 'No duplicate drafts in this week.',
+      );
+      if (r.removed > 0) await refresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not remove duplicates.');
+    } finally {
+      setDeduping(false);
     }
   };
 
@@ -2368,6 +2409,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               onPublish={onPublishWeek}
               loading={publishing}
             />
+            <div className="mt-1 flex justify-end">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void onDedupeDrafts()}
+                loading={deduping}
+                disabled={deduping}
+              >
+                Remove duplicate drafts
+              </Button>
+            </div>
           </div>
         )}
 
@@ -4817,6 +4869,30 @@ function TemplatesDialog({
       });
       onApplied();
     } catch (err) {
+      // Accidental double-apply guard: the server 409s when an identical
+      // shift already sits in this week. A deliberate second slot is
+      // legitimate — confirm and retry with allowDuplicate.
+      if (err instanceof ApiError && err.code === 'duplicate_shift') {
+        const ok = await confirmDialog({
+          title: 'Identical shift already exists',
+          description:
+            'This week already has a shift with the same position and times. Add a second slot on purpose?',
+          confirmLabel: 'Add another slot',
+        });
+        if (ok) {
+          try {
+            await applyShiftTemplate(id, {
+              weekStart: weekStart.toISOString(),
+              clientId,
+              allowDuplicate: true,
+            });
+            onApplied();
+          } catch (err2) {
+            toast.error(err2 instanceof ApiError ? err2.message : 'Apply failed.');
+          }
+        }
+        return;
+      }
       toast.error(err instanceof ApiError ? err.message : 'Apply failed.');
     } finally {
       setPendingId(null);

@@ -19,6 +19,8 @@ import type {
   CalendarFeedUrlResponse,
   CopyWeekInput,
   CopyWeekResponse,
+  DedupeDraftsInput,
+  DedupeDraftsResponse,
   MyShiftDetailResponse,
   PublishWeekInput,
   PublishWeekResponse,
@@ -348,6 +350,15 @@ export function applyShiftTemplate(
 
 export function copyWeek(body: CopyWeekInput): Promise<CopyWeekResponse> {
   return apiFetch<CopyWeekResponse>('/scheduling/copy-week', {
+    method: 'POST',
+    body,
+  });
+}
+
+/** Delete exact-twin DRAFT shifts in the window, keeping the oldest of
+ *  each group. Cleanup for pre-idempotency copy-week duplicates. */
+export function dedupeDrafts(body: DedupeDraftsInput): Promise<DedupeDraftsResponse> {
+  return apiFetch<DedupeDraftsResponse>('/scheduling/drafts/dedupe', {
     method: 'POST',
     body,
   });
