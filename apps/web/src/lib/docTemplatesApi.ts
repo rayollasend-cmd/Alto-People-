@@ -83,6 +83,21 @@ export const renderTemplate = (
     filedDocumentId?: string | null;
   }>(`/document-templates/${templateId}/render`, { method: 'POST', body: input });
 
+/** Backfill: render + file this offer-letter template for every approved
+ *  associate with no OFFER_LETTER document on file. Capped per run —
+ *  `remaining > 0` means run it again to continue. */
+export const bulkRenderMissing = (templateId: string) =>
+  apiFetch<{
+    missingBefore: number;
+    generated: number;
+    skippedCount: number;
+    skipped: Array<{ associateId: string; associateName: string; reason: string }>;
+    remaining: number;
+  }>(`/document-templates/${templateId}/bulk-render-missing`, {
+    method: 'POST',
+    body: {},
+  });
+
 export const listRenders = (templateId: string) =>
   apiFetch<{
     renders: Array<{

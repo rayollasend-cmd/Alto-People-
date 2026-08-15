@@ -228,6 +228,85 @@ docTemplatesRouter.post(
 
 // ----- Render ------------------------------------------------------------
 
+/** Associate fields exposed to templates — one definition for single and
+ *  bulk render so {{associate.*}} resolves identically in both. */
+const ASSOCIATE_CTX_SELECT = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  email: true,
+  phone: true,
+  state: true,
+  department: { select: { name: true } },
+  jobProfile: { select: { title: true } },
+} as const;
+
+type AssociateCtxRow = Prisma.AssociateGetPayload<{
+  select: typeof ASSOCIATE_CTX_SELECT;
+}>;
+
+function toAssociateCtx(a: AssociateCtxRow): Record<string, unknown> {
+  return {
+    ...a,
+    department: a.department?.name ?? null,
+    jobTitle: a.jobProfile?.title ?? null,
+  };
+}
+
+/** Render the letter to PDF, store the blob, file it in the associate's
+ *  vault as a VERIFIED OFFER_LETTER, and audit — returns the document id.
+ *  Shared by the single render route and the bulk generator. */
+async function fileOfferLetterPdf(opts: {
+  templateId: string;
+  templateClientId: string | null;
+  renderId: string;
+  title: string;
+  body: string;
+  associate: { id: string; firstName: string; lastName: string };
+  userId: string;
+  req: Parameters<typeof recordDocumentEvent>[0]['req'];
+}): Promise<string> {
+  const issuedAt = new Date();
+  const pdf = await renderLetterPdf({
+    title: opts.title,
+    body: opts.body,
+    issuedAt,
+    issuedTo: `${opts.associate.firstName} ${opts.associate.lastName}`,
+  });
+  const relativeKey = `letters/${opts.renderId}.pdf`;
+  await getBlobStore().put(relativeKey, pdf, 'application/pdf');
+  const filed = await prisma.documentRecord.create({
+    data: {
+      associateId: opts.associate.id,
+      clientId: opts.templateClientId,
+      kind: 'OFFER_LETTER',
+      s3Key: relativeKey,
+      filename: `${slugifyTitle(opts.title)}.pdf`,
+      mimeType: 'application/pdf',
+      size: pdf.byteLength,
+      // HR issued it from a curated template — same VERIFIED posture as
+      // the admin upload path.
+      status: 'VERIFIED',
+      verifiedById: opts.userId,
+      verifiedAt: issuedAt,
+    },
+  });
+  await recordDocumentEvent({
+    actorUserId: opts.userId,
+    action: 'document.generated_from_template',
+    documentId: filed.id,
+    associateId: opts.associate.id,
+    clientId: opts.templateClientId,
+    metadata: {
+      templateId: opts.templateId,
+      renderId: opts.renderId,
+      kind: 'OFFER_LETTER',
+    },
+    req: opts.req,
+  });
+  return filed.id;
+}
+
 const RenderSchema = z.object({
   associateId: z.string().uuid().optional().nullable(),
   // versionId optional: defaults to template.currentVersionId.
@@ -260,26 +339,15 @@ docTemplatesRouter.post(
 
     // Build render context: associate (if any) + custom data.
     let associate: unknown = null;
+    let associateRow: AssociateCtxRow | null = null;
     if (input.associateId) {
       const a = await prisma.associate.findUnique({
         where: { id: input.associateId },
-        select: {
-          id: true,
-          firstName: true,
-          lastName: true,
-          email: true,
-          phone: true,
-          state: true,
-          department: { select: { name: true } },
-          jobProfile: { select: { title: true } },
-        },
+        select: ASSOCIATE_CTX_SELECT,
       });
       if (!a) throw new HttpError(404, 'not_found', 'Associate not found.');
-      associate = {
-        ...a,
-        department: a.department?.name ?? null,
-        jobTitle: a.jobProfile?.title ?? null,
-      };
+      associateRow = a;
+      associate = toAssociateCtx(a);
     }
     const ctx = { associate, ...(input.data ?? {}) };
     const bodyResult = render(v.body, ctx);
@@ -318,44 +386,17 @@ docTemplatesRouter.post(
     let filedDocumentId: string | null = null;
     if (
       t.kind === 'OFFER_LETTER' &&
-      input.associateId &&
+      associateRow &&
       hasCapability(req.user!.role, 'manage:documents')
     ) {
-      const issuedAt = new Date();
-      const title = renderedSubject?.trim() || t.name;
-      const assoc = associate as { firstName: string; lastName: string } | null;
-      const pdf = await renderLetterPdf({
-        title,
+      filedDocumentId = await fileOfferLetterPdf({
+        templateId,
+        templateClientId: t.clientId,
+        renderId: created.id,
+        title: renderedSubject?.trim() || t.name,
         body: renderedBody,
-        issuedAt,
-        issuedTo: assoc ? `${assoc.firstName} ${assoc.lastName}` : null,
-      });
-      const relativeKey = `letters/${created.id}.pdf`;
-      await getBlobStore().put(relativeKey, pdf, 'application/pdf');
-      const filed = await prisma.documentRecord.create({
-        data: {
-          associateId: input.associateId,
-          clientId: t.clientId,
-          kind: 'OFFER_LETTER',
-          s3Key: relativeKey,
-          filename: `${slugifyTitle(title)}.pdf`,
-          mimeType: 'application/pdf',
-          size: pdf.byteLength,
-          // HR issued it from a curated template — same VERIFIED posture as
-          // the admin upload path.
-          status: 'VERIFIED',
-          verifiedById: req.user!.id,
-          verifiedAt: issuedAt,
-        },
-      });
-      filedDocumentId = filed.id;
-      await recordDocumentEvent({
-        actorUserId: req.user!.id,
-        action: 'document.generated_from_template',
-        documentId: filed.id,
-        associateId: input.associateId,
-        clientId: t.clientId,
-        metadata: { templateId, renderId: created.id, kind: 'OFFER_LETTER' },
+        associate: associateRow,
+        userId: req.user!.id,
         req,
       });
     }
@@ -381,6 +422,150 @@ function slugifyTitle(s: string): string {
     'offer-letter'
   );
 }
+
+/**
+ * POST /document-templates/:id/bulk-render-missing
+ *
+ * Backfill for the compliance scorecard's "Offer letter on file" signal:
+ * renders THIS offer-letter template for every associate in the
+ * scorecard's population (most-recent application APPROVED) who has no
+ * OFFER_LETTER document on file, filing each letter exactly like the
+ * single render does.
+ *
+ * Skips — never files — any associate whose render leaves unresolved
+ * tokens: mass-filing letters with blanked fields as VERIFIED compliance
+ * evidence would be worse than the 0% it fixes. The response names them
+ * (and the tokens) so HR can fix the data or the template and run again.
+ *
+ * MANAGE (manage:documents): this is a vault write, not a preview.
+ * Capped per run; re-running continues where it stopped (already-filed
+ * associates drop out of "missing").
+ */
+const BULK_RENDER_CAP = 200;
+
+docTemplatesRouter.post(
+  '/document-templates/:id/bulk-render-missing',
+  MANAGE,
+  async (req, res) => {
+    const templateId = req.params.id;
+    const t = await prisma.documentTemplate.findUnique({ where: { id: templateId } });
+    if (!t || t.deletedAt) throw new HttpError(404, 'not_found', 'Template not found.');
+    if (t.kind !== 'OFFER_LETTER') {
+      throw new HttpError(
+        400,
+        'not_offer_letter',
+        'Bulk generation is only for offer-letter templates.',
+      );
+    }
+    if (!t.currentVersionId) {
+      throw new HttpError(
+        400,
+        'no_version',
+        'Template has no current version. Publish a version first.',
+      );
+    }
+    const v = await prisma.documentTemplateVersion.findUniqueOrThrow({
+      where: { id: t.currentVersionId },
+    });
+
+    // Same population as the scorecard tile: most-recent-application
+    // APPROVED (deduped). Anyone else isn't counted by the signal, so
+    // generating for them wouldn't move the number HR is looking at.
+    const apps = await prisma.application.findMany({
+      take: 500,
+      where: { status: 'APPROVED', deletedAt: null, associate: { deletedAt: null } },
+      select: { associateId: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    const populationIds = [...new Set(apps.map((a) => a.associateId))];
+
+    const existing = await prisma.documentRecord.findMany({
+      take: 1000,
+      where: {
+        associateId: { in: populationIds },
+        kind: 'OFFER_LETTER',
+        deletedAt: null,
+      },
+      select: { associateId: true },
+    });
+    const hasLetter = new Set(existing.map((d) => d.associateId));
+    const missingIds = populationIds.filter((id) => !hasLetter.has(id));
+    const batch = missingIds.slice(0, BULK_RENDER_CAP);
+
+    let generated = 0;
+    const skipped: Array<{ associateId: string; associateName: string; reason: string }> = [];
+
+    // Sequential on purpose: each letter is a PDF render + blob write +
+    // two audited inserts, and a 200-wide Promise.all would spike the
+    // event loop and the DB for no user-visible win on an admin action.
+    for (const associateId of batch) {
+      const a = await prisma.associate.findUnique({
+        where: { id: associateId },
+        select: ASSOCIATE_CTX_SELECT,
+      });
+      if (!a) continue;
+      const name = `${a.firstName} ${a.lastName}`;
+      try {
+        const ctx = { associate: toAssociateCtx(a) };
+        const bodyResult = render(v.body, ctx);
+        const subjectResult = v.subject ? render(v.subject, ctx) : null;
+        const unresolved = [
+          ...new Set([
+            ...bodyResult.unresolvedTokens,
+            ...(subjectResult?.unresolvedTokens ?? []),
+          ]),
+        ];
+        if (unresolved.length > 0) {
+          skipped.push({
+            associateId,
+            associateName: name,
+            reason: `unresolved tokens: ${unresolved.join(', ')}`,
+          });
+          continue;
+        }
+        const createdRender = await prisma.documentRender.create({
+          data: {
+            templateId,
+            versionId: v.id,
+            associateId,
+            renderedSubject: subjectResult?.text ?? null,
+            renderedBody: bodyResult.text,
+            data: ctx as Prisma.InputJsonValue,
+            renderedById: req.user!.id,
+          },
+        });
+        await fileOfferLetterPdf({
+          templateId,
+          templateClientId: t.clientId,
+          renderId: createdRender.id,
+          title: subjectResult?.text.trim() || t.name,
+          body: bodyResult.text,
+          associate: a,
+          userId: req.user!.id,
+          req,
+        });
+        generated += 1;
+      } catch (err) {
+        // One bad row must not sink the batch — report and continue.
+        skipped.push({
+          associateId,
+          associateName: name,
+          reason: err instanceof Error ? err.message : 'failed',
+        });
+      }
+    }
+
+    res.json({
+      missingBefore: missingIds.length,
+      generated,
+      skippedCount: skipped.length,
+      // Capped detail — enough for HR to act on without a giant payload.
+      skipped: skipped.slice(0, 25),
+      // Missing rows beyond this run's cap — "run again" continues.
+      remaining: Math.max(0, missingIds.length - batch.length),
+    });
+  },
+);
 
 docTemplatesRouter.get(
   '/document-templates/:id/renders',

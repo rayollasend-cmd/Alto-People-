@@ -3,6 +3,7 @@ import { Check, Copy, Download, FileText, Plus } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
 import {
+  bulkRenderMissing,
   createTemplate,
   deleteTemplate,
   listTemplates,
@@ -292,7 +293,34 @@ function TemplateDrawer({
   const [renderTarget, setRenderTarget] = useState<PickedAssociate | null>(null);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Bulk backfill for the scorecard's offer-letter signal.
+  const [bulkConfirming, setBulkConfirming] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkResult, setBulkResult] = useState<Awaited<
+    ReturnType<typeof bulkRenderMissing>
+  > | null>(null);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
+
+  const onBulkGenerate = async () => {
+    setBulkConfirming(false);
+    setBulkBusy(true);
+    try {
+      const r = await bulkRenderMissing(template.id);
+      setBulkResult(r);
+      if (r.generated > 0) {
+        toast.success(
+          `Generated ${r.generated} offer letter${r.generated === 1 ? '' : 's'}.`,
+        );
+        onChanged();
+      } else if (r.missingBefore === 0) {
+        toast.success('Nobody is missing an offer letter.');
+      }
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Bulk generation failed.');
+    } finally {
+      setBulkBusy(false);
+    }
+  };
 
   const insertToken = (path: string) => {
     const token = `{{ ${path} }}`;
@@ -541,7 +569,60 @@ function TemplateDrawer({
                 <AssociatePicker value={renderTarget} onChange={setRenderTarget} />
               </div>
             </div>
-            <Button onClick={onRender}>Render preview</Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={onRender}>Render preview</Button>
+              {template.kind === 'OFFER_LETTER' && template.currentVersionId && (
+                // The scorecard backfill: file this letter for every approved
+                // associate who has none. Two-step confirm — this writes real
+                // compliance documents, not previews.
+                <Button
+                  variant="secondary"
+                  onClick={() =>
+                    bulkConfirming ? void onBulkGenerate() : setBulkConfirming(true)
+                  }
+                  onBlur={() => setBulkConfirming(false)}
+                  loading={bulkBusy}
+                  disabled={bulkBusy}
+                >
+                  {bulkConfirming
+                    ? 'Confirm: file letters for everyone missing one'
+                    : 'Generate for everyone missing one'}
+                </Button>
+              )}
+            </div>
+            {bulkResult !== null && (
+              <div
+                role="status"
+                className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-xs text-silver space-y-1"
+              >
+                <p className="text-white">
+                  {bulkResult.missingBefore} missing before this run ·{' '}
+                  <span className="text-success">{bulkResult.generated} generated</span>
+                  {bulkResult.skippedCount > 0 && (
+                    <> · <span className="text-warning">{bulkResult.skippedCount} skipped</span></>
+                  )}
+                  {bulkResult.remaining > 0 && (
+                    <> · {bulkResult.remaining} beyond this run&rsquo;s cap — run again to continue</>
+                  )}
+                </p>
+                {bulkResult.skipped.length > 0 && (
+                  <ul className="list-disc pl-4">
+                    {bulkResult.skipped.map((s) => (
+                      <li key={s.associateId}>
+                        {s.associateName} — {s.reason}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {bulkResult.skippedCount > 0 && (
+                  <p>
+                    Skipped letters had template tokens with no value for that
+                    person — fix the missing data (or the template) and run
+                    again. Nothing incomplete was filed.
+                  </p>
+                )}
+              </div>
+            )}
             {renderResult !== null && (
               <div className="mt-2 space-y-2">
                 {renderResult.filedDocumentId && (

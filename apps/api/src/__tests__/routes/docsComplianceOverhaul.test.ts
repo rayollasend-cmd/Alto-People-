@@ -277,6 +277,109 @@ describe('document template render — offer letters file to the vault', () => {
     expect(await prisma.documentRecord.count()).toBe(0);
   });
 
+  it('bulk-generates letters for approved associates missing one — and only them', async () => {
+    const client = await createClient();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const approveFor = async (associateId: string) =>
+      prisma.application.create({
+        data: {
+          associateId,
+          clientId: client.id,
+          onboardingTrack: 'STANDARD',
+          status: 'APPROVED',
+          approvedAt: new Date(),
+        },
+      });
+
+    // In population, missing a letter → should be generated for.
+    const missing = await createAssociate({ firstName: 'Miss', lastName: 'Ing' });
+    await approveFor(missing.id);
+    // In population, letter already on file → not "missing".
+    const covered = await createAssociate({ firstName: 'Cov', lastName: 'Ered' });
+    await approveFor(covered.id);
+    await prisma.documentRecord.create({
+      data: {
+        associateId: covered.id,
+        kind: 'OFFER_LETTER',
+        filename: 'existing-offer.pdf',
+        mimeType: 'application/pdf',
+        size: 10,
+        s3Key: null,
+        status: 'VERIFIED',
+      },
+    });
+    // DRAFT application → outside the scorecard population entirely.
+    const drafting = await createAssociate({ firstName: 'Still', lastName: 'Drafting' });
+    await prisma.application.create({
+      data: {
+        associateId: drafting.id,
+        clientId: client.id,
+        onboardingTrack: 'STANDARD',
+        status: 'DRAFT',
+      },
+    });
+
+    const tplId = await publishedTemplate(a, 'OFFER_LETTER');
+    const run = await a.post(`/document-templates/${tplId}/bulk-render-missing`).send({});
+    expect(run.status).toBe(200);
+    expect(run.body.missingBefore).toBe(1);
+    expect(run.body.generated).toBe(1);
+    expect(run.body.skippedCount).toBe(0);
+    expect(run.body.remaining).toBe(0);
+
+    const doc = await prisma.documentRecord.findFirstOrThrow({
+      where: { associateId: missing.id, kind: 'OFFER_LETTER' },
+    });
+    expect(doc.status).toBe('VERIFIED');
+    expect(
+      await prisma.documentRecord.count({ where: { associateId: drafting.id } }),
+    ).toBe(0);
+
+    // Idempotent: the second run finds nobody missing.
+    const again = await a.post(`/document-templates/${tplId}/bulk-render-missing`).send({});
+    expect(again.body.missingBefore).toBe(0);
+    expect(again.body.generated).toBe(0);
+  });
+
+  it('bulk skips (never files) letters whose tokens have no value for that person', async () => {
+    const client = await createClient();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const assoc = await createAssociate({ firstName: 'No', lastName: 'Title' });
+    await prisma.application.create({
+      data: {
+        associateId: assoc.id,
+        clientId: client.id,
+        onboardingTrack: 'STANDARD',
+        status: 'APPROVED',
+        approvedAt: new Date(),
+      },
+    });
+
+    // jobTitle resolves to nothing (no job profile) — a mass-filed letter
+    // with a blanked field must be reported, not silently VERIFIED.
+    const tpl = await a
+      .post('/document-templates')
+      .send({ name: 'Letter', kind: 'OFFER_LETTER' });
+    const version = await a
+      .post(`/document-templates/${tpl.body.id}/versions`)
+      .send({ body: 'Dear {{associate.firstName}}, your role: {{associate.jobTitle}}.' });
+    await a
+      .post(`/document-templates/${tpl.body.id}/versions/${version.body.id}/publish`)
+      .expect(200);
+
+    const run = await a
+      .post(`/document-templates/${tpl.body.id}/bulk-render-missing`)
+      .send({});
+    expect(run.status).toBe(200);
+    expect(run.body.generated).toBe(0);
+    expect(run.body.skippedCount).toBe(1);
+    expect(run.body.skipped[0].reason).toContain('associate.jobTitle');
+    expect(await prisma.documentRecord.count()).toBe(0);
+  });
+
   it('a read-only role can render but must not create vault documents', async () => {
     // EXECUTIVE_CHAIRMAN holds view:hr-admin (this route's gate) but not
     // manage:documents — the render succeeds, the filing is skipped.
