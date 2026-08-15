@@ -49,6 +49,7 @@ import { runWithConcurrency } from '../lib/concurrency.js';
 import { sendReminderForUser } from '../lib/inviteReminder.js';
 import { send } from '../lib/notifications.js';
 import { hashSignedPdf, renderSignedAgreement } from '../lib/esign.js';
+import { autoFileOfferLetter } from '../lib/offerLetters.js';
 import { blobExistsForListing, getBlobStore } from '../lib/blobStore.js';
 import {
   assertCanModifyApplication,
@@ -1040,6 +1041,23 @@ onboardingRouter.post(
         metadata: { hireDate, percentComplete: percent },
         req,
       });
+
+      // Approval IS the hire moment — file the offer letter now so the
+      // compliance scorecard's "Offer letter on file" signal tracks hires
+      // automatically. Non-fatal by design: a missing template or a data
+      // gap (unresolved tokens are never filed) must not block the
+      // approval — the periodic sweep in lib/offerLetters.ts retries those
+      // once the template/data is fixed.
+      try {
+        await autoFileOfferLetter({
+          associateId: app.associateId,
+          clientId: app.clientId,
+          actorUserId: req.user!.id,
+          req,
+        });
+      } catch (err) {
+        console.error('[alto-people/api] offer-letter auto-file at approval failed:', err);
+      }
 
       // Outbound webhooks — approval is both "onboarding done" and the
       // hire moment (hireDate lands, the User activates). Ids + dates

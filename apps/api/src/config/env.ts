@@ -170,6 +170,12 @@ const EnvSchema = z.object({
   // want on by default; set to 0 only if a downstream job handles purges.
   // The DocumentRecord row stays for audit — only the file leaves disk.
   DOCUMENT_MAINTENANCE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
+  // Offer-letter backfill sweep (lib/offerLetters.ts): files the published
+  // offer-letter template for every APPROVED associate with no OFFER_LETTER
+  // document — the catch-all behind the approval hook, and the automatic
+  // backfill for people approved before the hook existed. Letters with
+  // unresolved template tokens are never filed. Default 6h; 0 disables.
+  OFFER_LETTER_SWEEP_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
   // Scheduled-report delivery sweep (lib/reportScheduleRunner.ts): runs
   // ReportSchedule rows whose nextRunAt has passed and emails the CSV to
   // the stored recipients. Ticks every N seconds; each tick only touches

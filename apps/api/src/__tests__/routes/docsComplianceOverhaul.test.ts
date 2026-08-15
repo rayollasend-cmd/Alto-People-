@@ -4,6 +4,7 @@ import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import { expireLapsedDocs } from '../../lib/documentMaintenance.js';
 import { runAgreementSweep } from '../../lib/expirationDigest.js';
+import { runOfferLetterSweep } from '../../lib/offerLetters.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -378,6 +379,79 @@ describe('document template render — offer letters file to the vault', () => {
     expect(run.body.skippedCount).toBe(1);
     expect(run.body.skipped[0].reason).toContain('associate.jobTitle');
     expect(await prisma.documentRecord.count()).toBe(0);
+  });
+
+  it('approving an application auto-files the offer letter', async () => {
+    const client = await createClient();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    await publishedTemplate(a, 'OFFER_LETTER', 'Welcome {{associate.firstName}}');
+
+    const assoc = await createAssociate({ firstName: 'Auto', lastName: 'Filed' });
+    // Checklist-less application — approval goes through the
+    // acknowledgeable-warnings path.
+    const application = await prisma.application.create({
+      data: {
+        associateId: assoc.id,
+        clientId: client.id,
+        onboardingTrack: 'STANDARD',
+        status: 'DRAFT',
+      },
+    });
+
+    await a
+      .post(`/onboarding/applications/${application.id}/approve`)
+      .send({ hireDate: '2026-08-14', acknowledgeWarnings: true })
+      .expect(204);
+
+    // The hire moment filed the letter — no extra click, the scorecard's
+    // "Offer letter on file" signal counts this person immediately.
+    const doc = await prisma.documentRecord.findFirstOrThrow({
+      where: { associateId: assoc.id, kind: 'OFFER_LETTER' },
+    });
+    expect(doc.status).toBe('VERIFIED');
+    expect(doc.mimeType).toBe('application/pdf');
+  });
+
+  it('approval survives a missing offer template; the sweep backfills later', async () => {
+    const client = await createClient();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const assoc = await createAssociate({ firstName: 'Later', lastName: 'Swept' });
+    const application = await prisma.application.create({
+      data: {
+        associateId: assoc.id,
+        clientId: client.id,
+        onboardingTrack: 'STANDARD',
+        status: 'DRAFT',
+      },
+    });
+
+    // No template exists yet — approval must still succeed, letter-less.
+    await a
+      .post(`/onboarding/applications/${application.id}/approve`)
+      .send({ hireDate: '2026-08-14', acknowledgeWarnings: true })
+      .expect(204);
+    expect(
+      await prisma.documentRecord.count({
+        where: { associateId: assoc.id, kind: 'OFFER_LETTER' },
+      }),
+    ).toBe(0);
+
+    // Template published afterwards → the periodic sweep closes the gap.
+    await publishedTemplate(a, 'OFFER_LETTER');
+    const swept = await runOfferLetterSweep();
+    expect(swept.filed).toBe(1);
+    expect(
+      await prisma.documentRecord.count({
+        where: { associateId: assoc.id, kind: 'OFFER_LETTER' },
+      }),
+    ).toBe(1);
+
+    // Idempotent: the next tick files nothing.
+    const again = await runOfferLetterSweep();
+    expect(again.filed).toBe(0);
   });
 
   it('a read-only role can render but must not create vault documents', async () => {

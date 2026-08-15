@@ -5,9 +5,13 @@ import { hasCapability } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { getBlobStore } from '../lib/blobStore.js';
-import { renderLetterPdf } from '../lib/letterPdf.js';
-import { recordDocumentEvent } from '../lib/audit.js';
+import {
+  ASSOCIATE_CTX_SELECT,
+  fileOfferLetterPdf,
+  renderTemplateTokens as render,
+  toAssociateCtx,
+  type AssociateCtxRow,
+} from '../lib/offerLetters.js';
 
 /**
  * Phase 89 — Mail-merge document templates with versioned snapshots.
@@ -28,39 +32,8 @@ export const docTemplatesRouter = Router();
 const VIEW = requireCapability('view:hr-admin');
 const MANAGE = requireCapability('manage:documents');
 
-// Token regex: {{ x }} or {{x}}. Whitespace OK; no nested braces.
-const TOKEN_RE = /\{\{\s*([\w$.[\]]+)\s*\}\}/g;
-
-function pathLookup(data: unknown, path: string): unknown {
-  // Support dot + bracket index: a.b[0].c
-  const parts = path.split(/\.|\[|\]/).filter(Boolean);
-  let cur: unknown = data;
-  for (const p of parts) {
-    if (cur == null) return undefined;
-    if (typeof cur !== 'object') return undefined;
-    cur = (cur as Record<string, unknown>)[p];
-  }
-  return cur;
-}
-
-function render(
-  template: string,
-  data: unknown,
-): { text: string; unresolvedTokens: string[] } {
-  // Track every token that resolved to nothing — a typo'd
-  // {{associate.firstname}} used to silently produce an offer letter
-  // with a blank name.
-  const unresolved = new Set<string>();
-  const text = template.replace(TOKEN_RE, (_full, path: string) => {
-    const v = pathLookup(data, path);
-    if (v == null) {
-      unresolved.add(path.trim());
-      return '';
-    }
-    return String(v);
-  });
-  return { text, unresolvedTokens: [...unresolved] };
-}
+// Token renderer lives in lib/offerLetters.ts (shared with the approval
+// hook and the backfill sweep) — imported above as `render`.
 
 // ----- Templates ---------------------------------------------------------
 
@@ -228,85 +201,6 @@ docTemplatesRouter.post(
 
 // ----- Render ------------------------------------------------------------
 
-/** Associate fields exposed to templates — one definition for single and
- *  bulk render so {{associate.*}} resolves identically in both. */
-const ASSOCIATE_CTX_SELECT = {
-  id: true,
-  firstName: true,
-  lastName: true,
-  email: true,
-  phone: true,
-  state: true,
-  department: { select: { name: true } },
-  jobProfile: { select: { title: true } },
-} as const;
-
-type AssociateCtxRow = Prisma.AssociateGetPayload<{
-  select: typeof ASSOCIATE_CTX_SELECT;
-}>;
-
-function toAssociateCtx(a: AssociateCtxRow): Record<string, unknown> {
-  return {
-    ...a,
-    department: a.department?.name ?? null,
-    jobTitle: a.jobProfile?.title ?? null,
-  };
-}
-
-/** Render the letter to PDF, store the blob, file it in the associate's
- *  vault as a VERIFIED OFFER_LETTER, and audit — returns the document id.
- *  Shared by the single render route and the bulk generator. */
-async function fileOfferLetterPdf(opts: {
-  templateId: string;
-  templateClientId: string | null;
-  renderId: string;
-  title: string;
-  body: string;
-  associate: { id: string; firstName: string; lastName: string };
-  userId: string;
-  req: Parameters<typeof recordDocumentEvent>[0]['req'];
-}): Promise<string> {
-  const issuedAt = new Date();
-  const pdf = await renderLetterPdf({
-    title: opts.title,
-    body: opts.body,
-    issuedAt,
-    issuedTo: `${opts.associate.firstName} ${opts.associate.lastName}`,
-  });
-  const relativeKey = `letters/${opts.renderId}.pdf`;
-  await getBlobStore().put(relativeKey, pdf, 'application/pdf');
-  const filed = await prisma.documentRecord.create({
-    data: {
-      associateId: opts.associate.id,
-      clientId: opts.templateClientId,
-      kind: 'OFFER_LETTER',
-      s3Key: relativeKey,
-      filename: `${slugifyTitle(opts.title)}.pdf`,
-      mimeType: 'application/pdf',
-      size: pdf.byteLength,
-      // HR issued it from a curated template — same VERIFIED posture as
-      // the admin upload path.
-      status: 'VERIFIED',
-      verifiedById: opts.userId,
-      verifiedAt: issuedAt,
-    },
-  });
-  await recordDocumentEvent({
-    actorUserId: opts.userId,
-    action: 'document.generated_from_template',
-    documentId: filed.id,
-    associateId: opts.associate.id,
-    clientId: opts.templateClientId,
-    metadata: {
-      templateId: opts.templateId,
-      renderId: opts.renderId,
-      kind: 'OFFER_LETTER',
-    },
-    req: opts.req,
-  });
-  return filed.id;
-}
-
 const RenderSchema = z.object({
   associateId: z.string().uuid().optional().nullable(),
   // versionId optional: defaults to template.currentVersionId.
@@ -415,13 +309,6 @@ docTemplatesRouter.post(
     });
   },
 );
-
-function slugifyTitle(s: string): string {
-  return (
-    s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) ||
-    'offer-letter'
-  );
-}
 
 /**
  * POST /document-templates/:id/bulk-render-missing
