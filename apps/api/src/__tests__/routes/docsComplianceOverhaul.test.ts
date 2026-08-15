@@ -208,3 +208,90 @@ describe('document template render — unresolved tokens', () => {
     expect(render.body.unresolvedTokens).toEqual(['associate.firstname']);
   });
 });
+
+describe('document template render — offer letters file to the vault', () => {
+  async function publishedTemplate(
+    a: Awaited<ReturnType<typeof loginAs>>,
+    kind: string,
+    subject?: string,
+  ) {
+    const tpl = await a.post('/document-templates').send({ name: 'Letter', kind });
+    expect(tpl.status).toBe(201);
+    const version = await a
+      .post(`/document-templates/${tpl.body.id}/versions`)
+      .send({
+        ...(subject ? { subject } : {}),
+        body: 'Dear {{associate.firstName}}, we are pleased to offer you a position.',
+      });
+    expect(version.status).toBe(201);
+    await a
+      .post(`/document-templates/${tpl.body.id}/versions/${version.body.id}/publish`)
+      .expect(200);
+    return tpl.body.id as string;
+  }
+
+  it('rendering an OFFER_LETTER template files a PDF the scorecard can count', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const assoc = await createAssociate({ firstName: 'Offer', lastName: 'Ee' });
+    const tplId = await publishedTemplate(a, 'OFFER_LETTER', 'Offer — {{associate.firstName}}');
+
+    const render = await a
+      .post(`/document-templates/${tplId}/render`)
+      .send({ associateId: assoc.id });
+    expect(render.status).toBe(201);
+    expect(render.body.filedDocumentId).toBeTruthy();
+
+    // The letter is now real evidence: a VERIFIED OFFER_LETTER document in
+    // the associate's vault — exactly what the compliance scorecard's
+    // "Offer letter on file" signal counts (it used to be permanently 0%
+    // because renders never filed anything).
+    const doc = await prisma.documentRecord.findUniqueOrThrow({
+      where: { id: render.body.filedDocumentId },
+    });
+    expect(doc.associateId).toBe(assoc.id);
+    expect(doc.kind).toBe('OFFER_LETTER');
+    expect(doc.status).toBe('VERIFIED');
+    expect(doc.mimeType).toBe('application/pdf');
+    expect(doc.s3Key).toBeTruthy();
+    expect(doc.filename).toContain('offer');
+  });
+
+  it('non-offer templates and associate-less renders file nothing', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const assoc = await createAssociate({ firstName: 'Gen', lastName: 'Eric' });
+
+    const genericId = await publishedTemplate(a, 'GENERIC');
+    const generic = await a
+      .post(`/document-templates/${genericId}/render`)
+      .send({ associateId: assoc.id });
+    expect(generic.status).toBe(201);
+    expect(generic.body.filedDocumentId).toBeNull();
+
+    const offerId = await publishedTemplate(a, 'OFFER_LETTER');
+    const noTarget = await a.post(`/document-templates/${offerId}/render`).send({});
+    expect(noTarget.status).toBe(201);
+    expect(noTarget.body.filedDocumentId).toBeNull();
+
+    expect(await prisma.documentRecord.count()).toBe(0);
+  });
+
+  it('a read-only role can render but must not create vault documents', async () => {
+    // EXECUTIVE_CHAIRMAN holds view:hr-admin (this route's gate) but not
+    // manage:documents — the render succeeds, the filing is skipped.
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const admin = await loginAs(hr.email);
+    const assoc = await createAssociate({ firstName: 'Read', lastName: 'Only' });
+    const tplId = await publishedTemplate(admin, 'OFFER_LETTER');
+
+    const { user: chairman } = await createUser({ role: 'EXECUTIVE_CHAIRMAN' });
+    const a = await loginAs(chairman.email);
+    const render = await a
+      .post(`/document-templates/${tplId}/render`)
+      .send({ associateId: assoc.id });
+    expect(render.status).toBe(201);
+    expect(render.body.filedDocumentId).toBeNull();
+    expect(await prisma.documentRecord.count()).toBe(0);
+  });
+});

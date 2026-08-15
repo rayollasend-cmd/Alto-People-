@@ -78,6 +78,9 @@ export const renderTemplate = (
     renderedBody: string;
     /** Token paths that resolved to nothing (typos would silently blank a field). */
     unresolvedTokens?: string[];
+    /** Non-null when the render was also filed to the associate's document
+     *  vault (offer letters) — feeds the compliance scorecard + audit packet. */
+    filedDocumentId?: string | null;
   }>(`/document-templates/${templateId}/render`, { method: 'POST', body: input });
 
 export const listRenders = (templateId: string) =>

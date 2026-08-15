@@ -286,6 +286,8 @@ function TemplateDrawer({
   const [renderResult, setRenderResult] = useState<{
     body: string;
     unresolvedTokens: string[];
+    /** Set when the render was also filed to the associate's vault. */
+    filedDocumentId: string | null;
   } | null>(null);
   const [renderTarget, setRenderTarget] = useState<PickedAssociate | null>(null);
   const [saving, setSaving] = useState(false);
@@ -370,6 +372,7 @@ function TemplateDrawer({
       setRenderResult({
         body: r.renderedBody,
         unresolvedTokens: r.unresolvedTokens ?? [],
+        filedDocumentId: r.filedDocumentId ?? null,
       });
       setCopied(false);
       onChanged();
@@ -541,6 +544,17 @@ function TemplateDrawer({
             <Button onClick={onRender}>Render preview</Button>
             {renderResult !== null && (
               <div className="mt-2 space-y-2">
+                {renderResult.filedDocumentId && (
+                  <p
+                    role="status"
+                    className="rounded-md border border-success/40 bg-success/10 p-3 text-xs text-success"
+                  >
+                    Offer letter filed as a PDF on the associate&rsquo;s
+                    Documents — it now counts toward the compliance
+                    scorecard&rsquo;s &ldquo;Offer letter on file&rdquo;
+                    signal and travels with the audit packet.
+                  </p>
+                )}
                 {renderResult.unresolvedTokens.length > 0 && (
                   <div
                     role="alert"

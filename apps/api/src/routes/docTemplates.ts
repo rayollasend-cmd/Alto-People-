@@ -1,9 +1,13 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
+import { hasCapability } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { getBlobStore } from '../lib/blobStore.js';
+import { renderLetterPdf } from '../lib/letterPdf.js';
+import { recordDocumentEvent } from '../lib/audit.js';
 
 /**
  * Phase 89 — Mail-merge document templates with versioned snapshots.
@@ -300,6 +304,62 @@ docTemplatesRouter.post(
         renderedById: req.user!.id,
       },
     });
+
+    // Close the loop for offer letters: the render used to live only in the
+    // template's history — no file was ever placed on the associate's
+    // record, so the compliance scorecard's "Offer letter on file" signal
+    // (which counts filed OFFER_LETTER documents, per the Walmart MSA
+    // clause) sat at 0% forever even for orgs generating letters here.
+    // Rendering an OFFER_LETTER template against an associate now also
+    // files the letter as a PDF in their vault. Vault writes stay behind
+    // manage:documents — this route's VIEW gate admits read-only roles
+    // (EXECUTIVE_CHAIRMAN), who keep the render but must not create
+    // documents.
+    let filedDocumentId: string | null = null;
+    if (
+      t.kind === 'OFFER_LETTER' &&
+      input.associateId &&
+      hasCapability(req.user!.role, 'manage:documents')
+    ) {
+      const issuedAt = new Date();
+      const title = renderedSubject?.trim() || t.name;
+      const assoc = associate as { firstName: string; lastName: string } | null;
+      const pdf = await renderLetterPdf({
+        title,
+        body: renderedBody,
+        issuedAt,
+        issuedTo: assoc ? `${assoc.firstName} ${assoc.lastName}` : null,
+      });
+      const relativeKey = `letters/${created.id}.pdf`;
+      await getBlobStore().put(relativeKey, pdf, 'application/pdf');
+      const filed = await prisma.documentRecord.create({
+        data: {
+          associateId: input.associateId,
+          clientId: t.clientId,
+          kind: 'OFFER_LETTER',
+          s3Key: relativeKey,
+          filename: `${slugifyTitle(title)}.pdf`,
+          mimeType: 'application/pdf',
+          size: pdf.byteLength,
+          // HR issued it from a curated template — same VERIFIED posture as
+          // the admin upload path.
+          status: 'VERIFIED',
+          verifiedById: req.user!.id,
+          verifiedAt: issuedAt,
+        },
+      });
+      filedDocumentId = filed.id;
+      await recordDocumentEvent({
+        actorUserId: req.user!.id,
+        action: 'document.generated_from_template',
+        documentId: filed.id,
+        associateId: input.associateId,
+        clientId: t.clientId,
+        metadata: { templateId, renderId: created.id, kind: 'OFFER_LETTER' },
+        req,
+      });
+    }
+
     res.status(201).json({
       id: created.id,
       renderedSubject,
@@ -307,9 +367,20 @@ docTemplatesRouter.post(
       // Tokens that resolved to NOTHING — the UI must show these so a
       // typo'd path can't silently blank a field in an offer letter.
       unresolvedTokens,
+      // Non-null when the render was also filed to the associate's vault
+      // (offer letters) — the UI confirms it so HR knows the scorecard and
+      // audit packet now carry the letter.
+      filedDocumentId,
     });
   },
 );
+
+function slugifyTitle(s: string): string {
+  return (
+    s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) ||
+    'offer-letter'
+  );
+}
 
 docTemplatesRouter.get(
   '/document-templates/:id/renders',
