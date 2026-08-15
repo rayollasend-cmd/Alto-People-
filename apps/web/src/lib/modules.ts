@@ -13,6 +13,7 @@ export type ModuleKey =
   | 'payroll-tax'
   | 'payroll-compliance'
   | 'documents'
+  | 'doc-templates'
   | 'communications'
   | 'clients'
   | 'analytics'
@@ -544,6 +545,18 @@ export const MODULES: ModuleNav[] = [
     description:
       'Centralized storage, e-signatures, expiration alerts, and audit trails.',
     requires: 'view:documents',
+    group: 'compliance',
+  },
+  {
+    key: 'doc-templates',
+    path: '/templates',
+    label: 'Document templates',
+    description:
+      'Mail-merge letter templates — offer letters, promotion and warning letters — rendered per associate and filed to their documents.',
+    // Matches the /templates route gate in App.tsx. The page existed for a
+    // while with NO nav entry (only a small link inside Documents), which
+    // made the offer-letter workflow effectively undiscoverable.
+    requires: 'view:hr-admin',
     group: 'compliance',
   },
   {
