@@ -109,10 +109,18 @@ auditPacketRouter.post(
 
     /* Roster derivation per scope.
      *
-     * CLIENT_PERIOD — the union of three corroborating signals tying a
-     * worker to the client during the period: site assignments, approved
-     * worked time (client snapshotted at clock-in), and schedule-COMPLETED
-     * shifts. Union, because each source catches the others' blind spots.
+     * CLIENT_PERIOD — the union of four corroborating signals tying a
+     * worker to the client: site assignments, worked time (approved OR
+     * recorded — client snapshotted at clock-in), scheduled shifts, and
+     * the hiring record itself (an approved application for the client).
+     * Union, because each source catches the others' blind spots — and
+     * the original three-signal version starved in practice: shifts were
+     * never transitioned to COMPLETED anywhere in the product, and time
+     * entries sit at COMPLETED forever unless a manager runs timesheet
+     * approval, so a client whose workers were onboarded by migration and
+     * paid externally produced a near-empty roster (reported 2026-08-16,
+     * "the packet only had limited information"). Every row still states
+     * its basis, so the widened roster stays auditor-defensible.
      *
      * ALL_WORKFORCE — every associate who has ever worked for the company,
      * separated or not; the period bounds the transactional sections only.
@@ -130,46 +138,80 @@ auditPacketRouter.post(
     const associateFilter =
       input.scope === 'INDIVIDUAL' ? { associateId: input.associateId! } : {};
 
-    const [assignments, workedEntries, completedShifts] = await Promise.all([
-      prisma.associateAssignment.findMany({
-        where: {
-          ...(client ? { locationId: { in: locations.map((l) => l.id) } } : {}),
-          ...associateFilter,
-          startedAt: { lt: endExcl },
-          OR: [{ endedAt: null }, { endedAt: { gte: start } }],
-        },
-        select: { associateId: true, locationId: true, startedAt: true, endedAt: true },
-      }),
-      prisma.timeEntry.findMany({
-        where: {
-          ...(client ? { clientId: client.id } : {}),
-          ...associateFilter,
-          status: 'APPROVED',
-          clockInAt: { gte: start, lt: endExcl },
-        },
-        select: {
-          associateId: true,
-          clockInAt: true,
-          clockOutAt: true,
-          status: true,
-          locationId: true,
-          breaks: { select: { startedAt: true, endedAt: true } },
-        },
-        orderBy: { clockInAt: 'asc' },
-        take: 50_000,
-      }),
-      prisma.shift.findMany({
-        where: {
-          ...(client ? { clientId: client.id } : {}),
-          ...(input.scope === 'INDIVIDUAL'
-            ? { assignedAssociateId: input.associateId! }
-            : { assignedAssociateId: { not: null } }),
-          status: 'COMPLETED',
-          startsAt: { gte: start, lt: endExcl },
-        },
-        select: { assignedAssociateId: true },
-      }),
-    ]);
+    const [assignments, workedEntries, completedShifts, hiredForClient] =
+      await Promise.all([
+        prisma.associateAssignment.findMany({
+          where: {
+            ...(client ? { locationId: { in: locations.map((l) => l.id) } } : {}),
+            ...associateFilter,
+            startedAt: { lt: endExcl },
+            OR: [{ endedAt: null }, { endedAt: { gte: start } }],
+          },
+          select: { associateId: true, locationId: true, startedAt: true, endedAt: true },
+        }),
+        prisma.timeEntry.findMany({
+          where: {
+            ...(client ? { clientId: client.id } : {}),
+            ...associateFilter,
+            // APPROVED and COMPLETED both: kiosk clock-outs land COMPLETED
+            // and only become APPROVED via the timesheet-approval flow,
+            // which not every org runs. A punch is evidence either way —
+            // the CSV's Status column and each roster row's basis say
+            // which. PENDING/DISPUTED stay excluded.
+            status: { in: ['APPROVED', 'COMPLETED'] },
+            clockInAt: { gte: start, lt: endExcl },
+          },
+          select: {
+            associateId: true,
+            clockInAt: true,
+            clockOutAt: true,
+            status: true,
+            locationId: true,
+            breaks: { select: { startedAt: true, endedAt: true } },
+          },
+          orderBy: { clockInAt: 'asc' },
+          take: 50_000,
+        }),
+        prisma.shift.findMany({
+          where: {
+            ...(client ? { clientId: client.id } : {}),
+            ...(input.scope === 'INDIVIDUAL'
+              ? { assignedAssociateId: input.associateId! }
+              : { assignedAssociateId: { not: null } }),
+            // COMPLETED plus past published-and-assigned: nothing in the
+            // product ever flips a shift to COMPLETED, so the old
+            // COMPLETED-only check matched nobody. A published assignment
+            // whose date has passed is the schedule's own record that the
+            // worker was engaged.
+            OR: [
+              { status: 'COMPLETED' },
+              {
+                status: 'ASSIGNED',
+                publishedAt: { not: null },
+                startsAt: { lt: new Date() },
+              },
+            ],
+            startsAt: { gte: start, lt: endExcl },
+          },
+          select: { assignedAssociateId: true },
+        }),
+        // The hiring record itself — an approved application for this
+        // client. The signal that works even before scheduling/time
+        // adoption: migrated or externally-paid workers appear because
+        // they were HIRED for the client, with the basis saying exactly
+        // that. Client scope only; the other scopes have their own rules.
+        client
+          ? prisma.application.findMany({
+              where: {
+                clientId: client.id,
+                status: 'APPROVED',
+                deletedAt: null,
+                ...associateFilter,
+              },
+              select: { associateId: true },
+            })
+          : Promise.resolve([] as Array<{ associateId: string }>),
+      ]);
 
     let rosterIds: string[];
     if (input.scope === 'INDIVIDUAL') {
@@ -183,6 +225,7 @@ auditPacketRouter.post(
           ...assignments.map((a) => a.associateId),
           ...workedEntries.map((e) => e.associateId),
           ...completedShifts.map((s) => s.assignedAssociateId!),
+          ...hiredForClient.map((h) => h.associateId),
         ]),
       ];
     }
@@ -191,7 +234,7 @@ auditPacketRouter.post(
         404,
         'empty_roster',
         input.scope === 'CLIENT_PERIOD'
-          ? 'No workers were assigned to, worked approved time at, or completed shifts for this client in the selected period.'
+          ? 'No workers were hired for, assigned to, worked time at, or scheduled for this client in the selected period.'
           : 'No workers matched this scope.',
       );
     }
@@ -350,7 +393,11 @@ auditPacketRouter.post(
       string,
       { first: Date; last: Date; netMinutes: number; punches: number }
     >();
+    // Whether any of an associate's period punches went through timesheet
+    // approval — drives the "(approved)" vs "(recorded)" basis label.
+    const approvedTimeAssociates = new Set<string>();
     for (const e of workedEntries) {
+      if (e.status === 'APPROVED') approvedTimeAssociates.add(e.associateId);
       const w = workByAssociate.get(e.associateId);
       const mins = netMinutesOf(e);
       if (!w) {
@@ -390,11 +437,19 @@ auditPacketRouter.post(
         : ymd(rows.reduce((m, r) => (r.endedAt! > m ? r.endedAt! : m), rows[0].endedAt!));
       return `${ymd(from)} → ${to}`;
     };
+    const hiredSet = new Set(hiredForClient.map((h) => h.associateId));
     const basisFor = (associateId: string): string => {
       const parts: string[] = [];
       if (assignmentsByAssociate.has(associateId)) parts.push('Site assignment');
-      if (workByAssociate.has(associateId)) parts.push('Approved worked time');
-      if (shiftCountByAssociate.has(associateId)) parts.push('Completed shifts');
+      if (workByAssociate.has(associateId)) {
+        parts.push(
+          approvedTimeAssociates.has(associateId)
+            ? 'Worked time (approved)'
+            : 'Worked time (recorded)',
+        );
+      }
+      if (shiftCountByAssociate.has(associateId)) parts.push('Scheduled shifts');
+      if (hiredSet.has(associateId)) parts.push('Hired for client');
       // Workforce/individual scopes include people with no period activity
       // — their membership rests on the employment record itself.
       return parts.join(' · ') || 'Employment record';
@@ -413,7 +468,7 @@ auditPacketRouter.post(
         title: 'Worker Roster',
         subtitle:
           input.scope === 'CLIENT_PERIOD'
-            ? `Workers providing services on ${client!.name} properties during the audit period. Inclusion is evidence-based — the union of site assignment records, approved worked time, and schedule-completed shifts; each row states its basis. Workers who separated after providing services in the period remain listed with their status.`
+            ? `Workers engaged for ${client!.name} during the audit period. Inclusion is evidence-based — the union of hiring records for the client, site assignment records, worked time (approved or recorded), and scheduled shifts; each row states its basis. Workers who separated after providing services in the period remain listed with their status.`
             : input.scope === 'ALL_WORKFORCE'
               ? 'Every associate who has ever worked for the Company, current and separated. The worked-footprint columns reflect activity within the audit period; workers without period activity are included on the strength of their employment record.'
               : `Complete personnel evidence file for ${subjectAssociate!.firstName} ${subjectAssociate!.lastName}, covering the audit period.`,
