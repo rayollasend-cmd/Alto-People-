@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, DollarSign, Download } from 'lucide-react';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  LabelList,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip as ChartTooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import type { LaborCostRow } from '@alto-people/shared';
 import { laborCosts } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
@@ -54,7 +66,263 @@ const addDaysYmd = (ymd: string, days: number): string => {
 
 const money = (v: number): string =>
   `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const moneyCompact = (v: number): string =>
+  v >= 1000
+    ? `$${(v / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}k`
+    : `$${Math.round(v).toLocaleString('en-US')}`;
 const hours = (minutes: number): string => `${(minutes / 60).toFixed(1)}h`;
+
+/* ----- Chart tokens -------------------------------------------------------
+ * Series colors ride the design-system CSS variables, so they follow the
+ * light/dark theme at paint time with no re-render (same idiom as
+ * DonutChart). Two categorical series, fixed assignment (never re-ordered):
+ * Scheduled = gold, Worked = steel. Palette validated with the dataviz
+ * six-check script against both surfaces: light (#B8860B/#2563EB on white)
+ * passes all six; dark (#D9B967/#60A5FA on #0B1832) passes chroma, CVD
+ * (ΔE 24), normal-vision (ΔE 26) and contrast — the brand tokens sit a
+ * step above the generic dark lightness band on purpose (this navy is far
+ * darker than a typical dark surface), and the legend + direct labels +
+ * table views below carry identity beyond color everywhere.
+ */
+const SCHED_COLOR = 'rgb(var(--color-gold-fill))';
+const WORKED_COLOR = 'rgb(var(--color-steel))';
+const GRID_COLOR = 'rgb(var(--color-navy-secondary))';
+const TICK_COLOR = 'rgb(var(--color-silver) / 0.75)';
+const SURFACE_COLOR = 'rgb(var(--color-navy))';
+
+const SERIES = [
+  { key: 'scheduled', name: 'Scheduled', color: SCHED_COLOR },
+  { key: 'worked', name: 'Worked', color: WORKED_COLOR },
+] as const;
+
+function ChartLegend({ marks }: { marks: 'line' | 'bar' }) {
+  return (
+    <div className="flex items-center gap-4 text-xs text-silver">
+      {SERIES.map((s) => (
+        <span key={s.key} className="inline-flex items-center gap-1.5">
+          {marks === 'line' ? (
+            <span
+              aria-hidden="true"
+              className="inline-block h-0.5 w-4 rounded-full"
+              style={{ background: s.color }}
+            />
+          ) : (
+            <span
+              aria-hidden="true"
+              className="inline-block h-2.5 w-2.5 rounded-sm"
+              style={{ background: s.color }}
+            />
+          )}
+          {s.name}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** One tooltip, every series at the hovered X — values lead, names follow. */
+function CostTooltip({
+  active,
+  payload,
+  label,
+  labelText,
+}: {
+  active?: boolean;
+  payload?: Array<{ dataKey?: string | number; value?: number | string; color?: string }>;
+  label?: string | number;
+  labelText?: (label: string) => string;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  const heading = labelText ? labelText(String(label)) : String(label);
+  return (
+    <div className="rounded-md border border-navy-secondary bg-navy px-3 py-2 elev-2 text-xs">
+      <div className="mb-1 text-silver/80">{heading}</div>
+      {payload.map((p) => {
+        const s = SERIES.find((x) => x.key === p.dataKey);
+        return (
+          <div key={String(p.dataKey)} className="flex items-center gap-2 py-0.5">
+            <span
+              aria-hidden="true"
+              className="inline-block h-0.5 w-3.5 rounded-full"
+              style={{ background: s?.color ?? p.color }}
+            />
+            <span className="font-semibold tabular-nums text-white">
+              {money(Number(p.value ?? 0))}
+            </span>
+            <span className="text-silver/80">{s?.name ?? String(p.dataKey)}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function StatTile({
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: 'success' | 'alert';
+}) {
+  return (
+    <div className="rounded-lg border border-navy-secondary bg-navy/60 px-4 py-3">
+      <div className="text-2xs uppercase tracking-widest text-silver/70">{label}</div>
+      <div
+        className={
+          tone === 'success'
+            ? 'mt-1 text-2xl font-semibold text-success'
+            : tone === 'alert'
+              ? 'mt-1 text-2xl font-semibold text-alert'
+              : 'mt-1 text-2xl font-semibold text-white'
+        }
+      >
+        {value}
+      </div>
+      {sub && <div className="mt-0.5 text-xs text-silver/70">{sub}</div>}
+    </div>
+  );
+}
+
+/** Daily trend — two 2px lines, ringed markers, crosshair tooltip. */
+function CostTrendCard({
+  data,
+}: {
+  data: Array<{ date: string; scheduled: number; worked: number }>;
+}) {
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-medium text-white">Daily labor cost</div>
+          <ChartLegend marks="line" />
+        </div>
+        <div style={{ height: 240 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={data} margin={{ top: 8, right: 16, bottom: 0, left: 4 }}>
+              <CartesianGrid stroke={GRID_COLOR} strokeWidth={1} vertical={false} />
+              <XAxis
+                dataKey="date"
+                tickFormatter={(d: string) => d.slice(5).replace('-', '/')}
+                tick={{ fill: TICK_COLOR, fontSize: 10 }}
+                axisLine={{ stroke: GRID_COLOR }}
+                tickLine={false}
+              />
+              <YAxis
+                tickFormatter={(v: number) => moneyCompact(v)}
+                tick={{ fill: TICK_COLOR, fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+                width={52}
+              />
+              <ChartTooltip
+                cursor={{ stroke: GRID_COLOR, strokeWidth: 1 }}
+                content={<CostTooltip labelText={(l) => fmtDate(l)} />}
+              />
+              {SERIES.map((s) => (
+                <Line
+                  key={s.key}
+                  dataKey={s.key}
+                  name={s.name}
+                  stroke={s.color}
+                  strokeWidth={2}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                  // ≥8px marker with a 2px surface ring, so dots stay
+                  // legible where the two lines cross.
+                  dot={{ r: 4, fill: s.color, stroke: SURFACE_COLOR, strokeWidth: 2 }}
+                  activeDot={{ r: 5, stroke: SURFACE_COLOR, strokeWidth: 2 }}
+                  isAnimationActive={false}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Horizontal grouped bars — scheduled vs worked per client (or store). */
+function CostByGroupCard({
+  title,
+  data,
+}: {
+  title: string;
+  data: Array<{ name: string; scheduled: number; worked: number }>;
+}) {
+  // Thin marks: 12px bars, 2px surface gap inside each pair, air between
+  // groups. Height grows with the rows so the axis band always fits.
+  const height = Math.max(120, data.length * 44 + 40);
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-medium text-white">{title}</div>
+          <ChartLegend marks="bar" />
+        </div>
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              layout="vertical"
+              data={data}
+              margin={{ top: 0, right: 56, bottom: 0, left: 8 }}
+              barGap={2}
+              barCategoryGap="28%"
+            >
+              <CartesianGrid stroke={GRID_COLOR} strokeWidth={1} horizontal={false} />
+              <XAxis
+                type="number"
+                tickFormatter={(v: number) => moneyCompact(v)}
+                tick={{ fill: TICK_COLOR, fontSize: 10 }}
+                axisLine={{ stroke: GRID_COLOR }}
+                tickLine={false}
+              />
+              <YAxis
+                type="category"
+                dataKey="name"
+                tick={{ fill: TICK_COLOR, fontSize: 11 }}
+                axisLine={false}
+                tickLine={false}
+                width={130}
+              />
+              <ChartTooltip
+                cursor={{ fill: 'rgb(var(--color-navy-secondary) / 0.35)' }}
+                content={<CostTooltip />}
+              />
+              {SERIES.map((s) => (
+                <Bar
+                  key={s.key}
+                  dataKey={s.key}
+                  name={s.name}
+                  fill={s.color}
+                  barSize={12}
+                  // Rounded data-end (right, since bars grow rightward),
+                  // square at the baseline.
+                  radius={[0, 4, 4, 0]}
+                  isAnimationActive={false}
+                >
+                  <LabelList
+                    dataKey={s.key}
+                    position="right"
+                    formatter={(v) => {
+                      const n = Number(v);
+                      return Number.isFinite(n) && n > 0 ? moneyCompact(n) : '';
+                    }}
+                    style={{ fill: 'rgb(var(--color-silver))', fontSize: 10 }}
+                  />
+                </Bar>
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 interface Totals {
   scheduledMinutes: number;
@@ -171,6 +439,49 @@ export function LaborCostsHome() {
     for (const r of visible) addRow(t, r);
     return t;
   }, [visible]);
+
+  const trendData = useMemo(
+    () =>
+      byDay.map(([date, d]) => ({
+        date,
+        scheduled: Math.round(d.totals.scheduledCost * 100) / 100,
+        worked: Math.round(d.totals.workedCost * 100) / 100,
+      })),
+    [byDay],
+  );
+
+  // Client breakdown normally; store breakdown once a client is picked.
+  const groupData = useMemo(() => {
+    const byKey = new Map<string, { name: string; scheduled: number; worked: number }>();
+    for (const r of visible) {
+      const key = clientFilter ? r.locationId ?? 'none' : r.clientId ?? 'none';
+      const name = clientFilter
+        ? r.locationName ?? 'No store'
+        : r.clientName ?? 'No client';
+      const g = byKey.get(key) ?? { name, scheduled: 0, worked: 0 };
+      g.scheduled += r.scheduledCost;
+      g.worked += r.workedCost;
+      byKey.set(key, g);
+    }
+    const round2 = (v: number) => Math.round(v * 100) / 100;
+    const sorted = [...byKey.values()]
+      .map((g) => ({ ...g, scheduled: round2(g.scheduled), worked: round2(g.worked) }))
+      .sort((a, b) => b.scheduled - a.scheduled || b.worked - a.worked);
+    // Fold the tail past 8 rows into "Other" — never more hues or endless bars.
+    if (sorted.length > 8) {
+      const head = sorted.slice(0, 7);
+      const tail = sorted.slice(7);
+      head.push({
+        name: `Other (${tail.length})`,
+        scheduled: round2(tail.reduce((s, g) => s + g.scheduled, 0)),
+        worked: round2(tail.reduce((s, g) => s + g.worked, 0)),
+      });
+      return head;
+    }
+    return sorted;
+  }, [visible, clientFilter]);
+
+  const variance = grand.workedCost - grand.scheduledCost;
 
   const exportCsv = () => {
     downloadCsv(`labor-costs-${from}-to-${toInclusive}.csv`, [
@@ -328,6 +639,45 @@ export function LaborCostsHome() {
         />
       ) : (
         <div className="space-y-5">
+          {/* Headline numbers — the KPI row every reader scans first. */}
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatTile
+              label="Scheduled cost"
+              value={money(grand.scheduledCost)}
+              sub={`${hours(grand.scheduledMinutes)} · ${grand.scheduledShifts} shift${grand.scheduledShifts === 1 ? '' : 's'}`}
+            />
+            <StatTile
+              label="Worked cost"
+              value={money(grand.workedCost)}
+              sub={`${hours(grand.workedMinutes)} · ${grand.workedPunches} punch${grand.workedPunches === 1 ? '' : 'es'}`}
+            />
+            <StatTile
+              label="Worked vs scheduled"
+              value={`${variance >= 0 ? '+' : '−'}${money(Math.abs(variance))}`}
+              sub={
+                grand.scheduledCost > 0
+                  ? `${((grand.workedCost / grand.scheduledCost) * 100).toFixed(0)}% of scheduled`
+                  : 'no scheduled cost in range'
+              }
+              // Over-plan spend is the alarming direction.
+              tone={variance > 0.005 ? 'alert' : variance < -0.005 ? 'success' : undefined}
+            />
+            <StatTile
+              label="Average per day"
+              value={money(byDay.length ? grand.scheduledCost / byDay.length : 0)}
+              sub={`${byDay.length} day${byDay.length === 1 ? '' : 's'} with activity`}
+            />
+          </div>
+
+          {/* Trend needs at least two days to be a trend. */}
+          {trendData.length > 1 && <CostTrendCard data={trendData} />}
+          {groupData.length > 0 && (
+            <CostByGroupCard
+              title={clientFilter ? 'Cost by store' : 'Cost by client'}
+              data={groupData}
+            />
+          )}
+
           {byDay.map(([date, day]) => (
             <Card key={date} className="overflow-hidden">
               <CardContent className="p-0">
@@ -401,20 +751,6 @@ export function LaborCostsHome() {
               </CardContent>
             </Card>
           ))}
-
-          <Card>
-            <CardContent className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-              <div className="text-sm font-medium text-white">
-                Range total ({visible.length} row{visible.length === 1 ? '' : 's'})
-              </div>
-              <div className="text-sm text-silver tabular-nums">
-                Scheduled {hours(grand.scheduledMinutes)} ·{' '}
-                <span className="text-white">{money(grand.scheduledCost)}</span>
-                {'  ·  '}Worked {hours(grand.workedMinutes)} ·{' '}
-                <span className="text-white">{money(grand.workedCost)}</span>
-              </div>
-            </CardContent>
-          </Card>
 
           <p className="text-2xs text-silver/60">
             Scheduled cost prices each shift at its own rate, else the client's
