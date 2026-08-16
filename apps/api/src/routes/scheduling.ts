@@ -19,6 +19,7 @@ import {
   MyShiftHistoryResponseSchema,
   DedupeDraftsInputSchema,
   DedupeDraftsResponseSchema,
+  LaborCostReportResponseSchema,
   OpenShiftClaimSchema,
   OpenShiftsResponseSchema,
   PublishWeekInputSchema,
@@ -64,7 +65,12 @@ import {
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
-import { associatesOfClient, scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
+import {
+  associatesOfClient,
+  effectiveClientIdFilter,
+  scopeShifts,
+  scopeTimeEntries,
+} from '../lib/scope.js';
 
 // Impossible id used to fail a mis-provisioned client-bounded caller CLOSED.
 const NO_MATCH_ID = '00000000-0000-0000-0000-000000000000';
@@ -610,6 +616,227 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
       projectedLaborCost,
       shiftsWithoutRate,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /scheduling/labor-costs?from=ISO&to=ISO&clientId?&locationId?
+ *
+ * Day-by-day labor cost, one row per (site-local day, client, store):
+ * the SCHEDULED side prices each non-cancelled shift at its explicit
+ * payRate else the (client, position) rate default — identical resolution
+ * to the KPI strip above — and the WORKED side prices each COMPLETED or
+ * APPROVED time entry (net of breaks) at the payRate snapshotted at
+ * clock-in. Rows with no resolvable rate are counted per bucket so a $0
+ * cell reads as "rates missing", never as "free labor".
+ *
+ * MANAGE + the usual tenant clamp: supervisors get their own client only
+ * (they already see per-shift rates), org roles see everything.
+ */
+schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
+  try {
+    const from = parseDateParam(req.query.from?.toString(), 'from');
+    const to = parseDateParam(req.query.to?.toString(), 'to');
+    if (!from || !to || to <= from) {
+      throw new HttpError(400, 'invalid_range', 'from and to (exclusive, after from) are required.');
+    }
+    if (to.getTime() - from.getTime() > 92 * 86_400_000) {
+      throw new HttpError(400, 'range_too_wide', 'Limit the report to 92 days or fewer.');
+    }
+    const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+    const costClientId = clamped === null ? NO_MATCH_ID : clamped;
+    const locationId = req.query.locationId?.toString();
+
+    const SHIFT_CAP = 10_000;
+    const PUNCH_CAP = 20_000;
+    const [shiftRows, entryRows] = await Promise.all([
+      prisma.shift.findMany({
+        take: SHIFT_CAP + 1,
+        where: {
+          ...scopeShifts(req.user!),
+          ...(costClientId ? { clientId: costClientId } : {}),
+          ...(locationId ? { locationId } : {}),
+          status: { not: 'CANCELLED' },
+          startsAt: { gte: from, lt: to },
+        },
+        select: {
+          clientId: true,
+          locationId: true,
+          position: true,
+          startsAt: true,
+          endsAt: true,
+          payRate: true,
+          client: { select: { name: true } },
+          locationRel: { select: { name: true, timezone: true } },
+        },
+      }),
+      prisma.timeEntry.findMany({
+        take: PUNCH_CAP + 1,
+        where: {
+          ...scopeTimeEntries(req.user!),
+          ...(costClientId ? { clientId: costClientId } : {}),
+          ...(locationId ? { locationId } : {}),
+          status: { in: ['COMPLETED', 'APPROVED'] },
+          clockInAt: { gte: from, lt: to },
+        },
+        select: {
+          clientId: true,
+          locationId: true,
+          clockInAt: true,
+          clockOutAt: true,
+          payRate: true,
+          breaks: { select: { startedAt: true, endedAt: true } },
+        },
+      }),
+    ]);
+    const truncated = shiftRows.length > SHIFT_CAP || entryRows.length > PUNCH_CAP;
+    const shifts = shiftRows.slice(0, SHIFT_CAP);
+    const entries = entryRows.slice(0, PUNCH_CAP);
+
+    // Rate defaults for the scheduled fallback.
+    const shiftClientIds = [...new Set(shifts.map((s) => s.clientId))];
+    const rateDefaults = shiftClientIds.length
+      ? await prisma.shiftRateDefault.findMany({
+          where: { clientId: { in: shiftClientIds } },
+          select: { clientId: true, position: true, payRate: true },
+        })
+      : [];
+    const defaultRate = new Map(
+      rateDefaults.map((d) => [`${d.clientId}|${d.position}`, Number(d.payRate)]),
+    );
+
+    // Names + timezones for the entries' clients/locations (shifts carry
+    // their own joins).
+    const entryClientIds = [...new Set(entries.map((e) => e.clientId).filter((c): c is string => !!c))];
+    const entryLocationIds = [...new Set(entries.map((e) => e.locationId).filter((l): l is string => !!l))];
+    const [entryClients, entryLocations] = await Promise.all([
+      entryClientIds.length
+        ? prisma.client.findMany({
+            where: { id: { in: entryClientIds } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      entryLocationIds.length
+        ? prisma.location.findMany({
+            where: { id: { in: entryLocationIds } },
+            select: { id: true, name: true, timezone: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const clientNameById = new Map(entryClients.map((c) => [c.id, c.name]));
+    const locationById = new Map(entryLocations.map((l) => [l.id, l]));
+
+    interface Bucket {
+      date: string;
+      clientId: string | null;
+      clientName: string | null;
+      locationId: string | null;
+      locationName: string | null;
+      scheduledShifts: number;
+      scheduledMinutes: number;
+      scheduledCost: number;
+      scheduledNoRate: number;
+      workedPunches: number;
+      workedMinutes: number;
+      workedCost: number;
+      workedNoRate: number;
+    }
+    const buckets = new Map<string, Bucket>();
+    const bucketFor = (
+      date: string,
+      clientId: string | null,
+      clientName: string | null,
+      locId: string | null,
+      locName: string | null,
+    ): Bucket => {
+      const key = `${date}|${clientId ?? ''}|${locId ?? ''}`;
+      let b = buckets.get(key);
+      if (!b) {
+        b = {
+          date,
+          clientId,
+          clientName,
+          locationId: locId,
+          locationName: locName,
+          scheduledShifts: 0,
+          scheduledMinutes: 0,
+          scheduledCost: 0,
+          scheduledNoRate: 0,
+          workedPunches: 0,
+          workedMinutes: 0,
+          workedCost: 0,
+          workedNoRate: 0,
+        };
+        buckets.set(key, b);
+      }
+      return b;
+    };
+
+    for (const s of shifts) {
+      const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+      const b = bucketFor(
+        localDateKey(s.startsAt, tz),
+        s.clientId,
+        s.client?.name ?? null,
+        s.locationId,
+        s.locationRel?.name ?? null,
+      );
+      const minutes = Math.max(
+        0,
+        Math.round((s.endsAt.getTime() - s.startsAt.getTime()) / 60_000),
+      );
+      const rate =
+        s.payRate != null
+          ? Number(s.payRate)
+          : defaultRate.get(`${s.clientId}|${s.position}`);
+      b.scheduledShifts += 1;
+      b.scheduledMinutes += minutes;
+      if (rate != null) b.scheduledCost += (minutes / 60) * rate;
+      else b.scheduledNoRate += 1;
+    }
+
+    for (const e of entries) {
+      const loc = e.locationId ? locationById.get(e.locationId) : undefined;
+      const tz = loc?.timezone ?? DEFAULT_TIMEZONE;
+      const b = bucketFor(
+        localDateKey(e.clockInAt, tz),
+        e.clientId,
+        e.clientId ? clientNameById.get(e.clientId) ?? null : null,
+        e.locationId,
+        loc?.name ?? null,
+      );
+      let minutes = 0;
+      if (e.clockOutAt) {
+        const end = e.clockOutAt.getTime();
+        let ms = end - e.clockInAt.getTime();
+        for (const br of e.breaks) {
+          const brEnd = br.endedAt ? br.endedAt.getTime() : end;
+          ms -= Math.max(0, brEnd - br.startedAt.getTime());
+        }
+        minutes = Math.max(0, Math.round(ms / 60_000));
+      }
+      b.workedPunches += 1;
+      b.workedMinutes += minutes;
+      if (e.payRate != null) b.workedCost += (minutes / 60) * Number(e.payRate);
+      else b.workedNoRate += 1;
+    }
+
+    const rows = [...buckets.values()]
+      .map((b) => ({
+        ...b,
+        scheduledCost: Math.round(b.scheduledCost * 100) / 100,
+        workedCost: Math.round(b.workedCost * 100) / 100,
+      }))
+      .sort(
+        (a, z) =>
+          a.date.localeCompare(z.date) ||
+          (a.clientName ?? '').localeCompare(z.clientName ?? '') ||
+          (a.locationName ?? '').localeCompare(z.locationName ?? ''),
+      );
+
+    res.json(LaborCostReportResponseSchema.parse({ rows, truncated }));
   } catch (err) {
     next(err);
   }

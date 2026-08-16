@@ -8,6 +8,7 @@ export type ModuleKey =
   | 'kiosk'
   | 'time-off'
   | 'scheduling'
+  | 'labor-costs'
   | 'approvals'
   | 'payroll'
   | 'payroll-tax'
@@ -450,6 +451,17 @@ export const MODULES: ModuleNav[] = [
     description:
       'Shift planning, fill rate tracking, and assignment management.',
     requires: 'view:scheduling',
+    group: 'time-and-pay',
+  },
+  {
+    key: 'labor-costs',
+    path: '/labor-costs',
+    label: 'Labor costs',
+    description:
+      'Daily scheduled vs worked labor spend, broken down by client and store.',
+    // Same audience as the scheduling KPI strip that already shows cost —
+    // supervisors see their own client, org roles see everything.
+    requires: 'manage:scheduling',
     group: 'time-and-pay',
   },
   {

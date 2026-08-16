@@ -79,6 +79,7 @@ const TimesheetsView = lazyNamed(
 );
 const TimeOffHome = lazyNamed(() => import('@/pages/timeoff/TimeOffHome'), 'TimeOffHome');
 const SchedulingHome = lazyNamed(() => import('@/pages/scheduling/SchedulingHome'), 'SchedulingHome');
+const LaborCostsHome = lazyNamed(() => import('@/pages/scheduling/LaborCostsHome'), 'LaborCostsHome');
 const ApprovalsHome = lazyNamed(() => import('@/pages/approvals/ApprovalsHome'), 'ApprovalsHome');
 const PayrollHome = lazyNamed(() => import('@/pages/payroll/PayrollHome'), 'PayrollHome');
 const PayrollConfigView = lazyNamed(
@@ -342,6 +343,7 @@ const LAYOUT_ROUTES = [
   { path: 'clients/:id', element: <RequireCapability cap="view:clients"><ClientDetail /></RequireCapability> },
   { path: 'scheduling', element: <SchedulingHome /> },
   { path: 'approvals', element: <RequireCapability cap="manage:scheduling"><ApprovalsHome /></RequireCapability> },
+  { path: 'labor-costs', element: <RequireCapability cap="manage:scheduling"><LaborCostsHome /></RequireCapability> },
   { path: 'payroll', element: <RequireCapability cap="view:payroll"><PayrollHome /></RequireCapability> },
   { path: 'documents', element: <RequireCapability cap="view:documents"><DocumentsHome /></RequireCapability> },
   { path: 'compliance', element: <RequireCapability cap="view:compliance"><ComplianceHome /></RequireCapability> },

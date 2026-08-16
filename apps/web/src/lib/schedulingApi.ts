@@ -21,6 +21,7 @@ import type {
   CopyWeekResponse,
   DedupeDraftsInput,
   DedupeDraftsResponse,
+  LaborCostReportResponse,
   MyShiftDetailResponse,
   PublishWeekInput,
   PublishWeekResponse,
@@ -353,6 +354,19 @@ export function copyWeek(body: CopyWeekInput): Promise<CopyWeekResponse> {
     method: 'POST',
     body,
   });
+}
+
+/** Day-by-day scheduled + worked labor cost per client and store. */
+export function laborCosts(params: {
+  from: string;
+  to: string;
+  clientId?: string;
+  locationId?: string;
+}): Promise<LaborCostReportResponse> {
+  const p = new URLSearchParams({ from: params.from, to: params.to });
+  if (params.clientId) p.set('clientId', params.clientId);
+  if (params.locationId) p.set('locationId', params.locationId);
+  return apiFetch<LaborCostReportResponse>(`/scheduling/labor-costs?${p.toString()}`);
 }
 
 /** Delete exact-twin DRAFT shifts in the window, keeping the oldest of

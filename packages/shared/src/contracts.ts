@@ -1881,6 +1881,42 @@ export const CopyWeekResponseSchema = z.object({
 });
 export type CopyWeekResponse = z.infer<typeof CopyWeekResponseSchema>;
 
+/* Labor cost report =======================================================
+ * Day-by-day scheduled + worked labor cost, grouped client → store. The
+ * scheduled side prices each shift at its explicit payRate, else the
+ * (client, position) ShiftRateDefault — the same resolution the KPI strip
+ * uses. The worked side prices each COMPLETED/APPROVED time entry at the
+ * payRate snapshotted at clock-in. Rows with no resolvable rate are
+ * counted (noRate) instead of silently contributing $0-and-invisible.
+ */
+
+export const LaborCostRowSchema = z.object({
+  /** Site-local calendar day (YYYY-MM-DD). */
+  date: z.string(),
+  clientId: UuidSchema.nullable(),
+  clientName: z.string().nullable(),
+  locationId: UuidSchema.nullable(),
+  locationName: z.string().nullable(),
+  scheduledShifts: z.number().int().nonnegative(),
+  scheduledMinutes: z.number().int().nonnegative(),
+  scheduledCost: z.number().nonnegative(),
+  /** Shifts with neither an explicit payRate nor a rate default. */
+  scheduledNoRate: z.number().int().nonnegative(),
+  workedPunches: z.number().int().nonnegative(),
+  workedMinutes: z.number().int().nonnegative(),
+  workedCost: z.number().nonnegative(),
+  /** Punches without a snapshotted payRate. */
+  workedNoRate: z.number().int().nonnegative(),
+});
+export type LaborCostRow = z.infer<typeof LaborCostRowSchema>;
+
+export const LaborCostReportResponseSchema = z.object({
+  rows: z.array(LaborCostRowSchema),
+  /** True when the shift or punch caps were hit — totals are a floor. */
+  truncated: z.boolean(),
+});
+export type LaborCostReportResponse = z.infer<typeof LaborCostReportResponseSchema>;
+
 /* Draft dedupe ============================================================
  * Cleanup for the duplicate-draft plague: exact-twin DRAFT shifts (same
  * client, location, position, times, assignee-or-open) created by the

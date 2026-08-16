@@ -84,6 +84,7 @@ export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'benefits': HeartPulse,
   'documents': FileText,
   'doc-templates': ScrollText,
+  'labor-costs': DollarSign,
   'compliance': ShieldCheck,
   'audit': ScrollText,
   'users': UsersIcon,
