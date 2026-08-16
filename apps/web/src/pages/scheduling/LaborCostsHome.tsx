@@ -14,6 +14,7 @@ import {
   YAxis,
 } from 'recharts';
 import type { LaborCostRow } from '@alto-people/shared';
+import { DonutChart } from '@/components/ui/DonutChart';
 import { laborCosts } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';
@@ -94,6 +95,17 @@ const SERIES = [
   { key: 'scheduled', name: 'Scheduled', color: SCHED_COLOR },
   { key: 'worked', name: 'Worked', color: WORKED_COLOR },
 ] as const;
+
+/* Donut slices: three categorical hues (fixed order — gold, steel, teal;
+ * validated all-pairs against both surfaces) + the muted de-emphasis gray
+ * reserved for the folded "Other" tail. Never more hues — past three named
+ * slices the tail folds. */
+const SLICE_COLORS = [
+  'rgb(var(--color-gold-fill))',
+  'rgb(var(--color-steel))',
+  'rgb(var(--color-chart-teal))',
+];
+const OTHER_SLICE_COLOR = 'rgb(var(--color-silver) / 0.45)';
 
 function ChartLegend({ marks }: { marks: 'line' | 'bar' }) {
   return (
@@ -451,7 +463,7 @@ export function LaborCostsHome() {
   );
 
   // Client breakdown normally; store breakdown once a client is picked.
-  const groupData = useMemo(() => {
+  const groupDataAll = useMemo(() => {
     const byKey = new Map<string, { name: string; scheduled: number; worked: number }>();
     for (const r of visible) {
       const key = clientFilter ? r.locationId ?? 'none' : r.clientId ?? 'none';
@@ -464,24 +476,49 @@ export function LaborCostsHome() {
       byKey.set(key, g);
     }
     const round2 = (v: number) => Math.round(v * 100) / 100;
-    const sorted = [...byKey.values()]
+    return [...byKey.values()]
       .map((g) => ({ ...g, scheduled: round2(g.scheduled), worked: round2(g.worked) }))
       .sort((a, b) => b.scheduled - a.scheduled || b.worked - a.worked);
-    // Fold the tail past 8 rows into "Other" — never more hues or endless bars.
-    if (sorted.length > 8) {
-      const head = sorted.slice(0, 7);
-      const tail = sorted.slice(7);
-      head.push({
+  }, [visible, clientFilter]);
+
+  // Bars: fold the tail past 8 rows into "Other" — never endless bars.
+  const groupData = useMemo(() => {
+    const round2 = (v: number) => Math.round(v * 100) / 100;
+    if (groupDataAll.length <= 8) return groupDataAll;
+    const head = groupDataAll.slice(0, 7);
+    const tail = groupDataAll.slice(7);
+    return [
+      ...head,
+      {
         name: `Other (${tail.length})`,
         scheduled: round2(tail.reduce((s, g) => s + g.scheduled, 0)),
         worked: round2(tail.reduce((s, g) => s + g.worked, 0)),
-      });
-      return head;
-    }
-    return sorted;
-  }, [visible, clientFilter]);
+      },
+    ];
+  }, [groupDataAll]);
 
   const variance = grand.workedCost - grand.scheduledCost;
+
+  // Part-to-whole: where the scheduled spend goes. Top 3 slices in the
+  // fixed hue order; everything past them folds into a muted "Other".
+  const shareData = useMemo(() => {
+    const positive = groupDataAll.filter((g) => g.scheduled > 0);
+    if (positive.length < 2) return [];
+    const head = positive.slice(0, 3).map((g, i) => ({
+      name: g.name,
+      value: g.scheduled,
+      color: SLICE_COLORS[i],
+    }));
+    const tail = positive.slice(3);
+    if (tail.length > 0) {
+      head.push({
+        name: tail.length === 1 ? tail[0].name : `Other (${tail.length})`,
+        value: Math.round(tail.reduce((s, g) => s + g.scheduled, 0) * 100) / 100,
+        color: OTHER_SLICE_COLOR,
+      });
+    }
+    return head;
+  }, [groupDataAll]);
 
   const exportCsv = () => {
     downloadCsv(`labor-costs-${from}-to-${toInclusive}.csv`, [
@@ -671,12 +708,33 @@ export function LaborCostsHome() {
 
           {/* Trend needs at least two days to be a trend. */}
           {trendData.length > 1 && <CostTrendCard data={trendData} />}
-          {groupData.length > 0 && (
-            <CostByGroupCard
-              title={clientFilter ? 'Cost by store' : 'Cost by client'}
-              data={groupData}
-            />
-          )}
+          <div className="grid gap-5 xl:grid-cols-2">
+            {groupData.length > 0 && (
+              <CostByGroupCard
+                title={clientFilter ? 'Cost by store' : 'Cost by client'}
+                data={groupData}
+              />
+            )}
+            {/* Part-to-whole share — only meaningful with 2+ groups. */}
+            {shareData.length >= 2 && (
+              <Card>
+                <CardContent className="p-4">
+                  <div className="mb-2 text-sm font-medium text-white">
+                    {clientFilter
+                      ? 'Share of scheduled cost by store'
+                      : 'Share of scheduled cost by client'}
+                  </div>
+                  <DonutChart
+                    data={shareData}
+                    size={200}
+                    centerLabel={moneyCompact(grand.scheduledCost)}
+                    centerSublabel="scheduled"
+                    valueFormatter={moneyCompact}
+                  />
+                </CardContent>
+              </Card>
+            )}
+          </div>
 
           {byDay.map(([date, day]) => (
             <Card key={date} className="overflow-hidden">

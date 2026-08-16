@@ -19,6 +19,9 @@ interface DonutChartProps {
   centerLabel?: string;
   /** Center sublabel — sits beneath the center value. */
   centerSublabel?: string;
+  /** Formats slice values in the tooltip + legend (e.g. money). Defaults
+   *  to toLocaleString. */
+  valueFormatter?: (n: number) => string;
   className?: string;
 }
 
@@ -40,8 +43,10 @@ export function DonutChart({
   gap = 2,
   centerLabel,
   centerSublabel,
+  valueFormatter,
   className,
 }: DonutChartProps) {
+  const fmt = valueFormatter ?? ((n: number) => n.toLocaleString());
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
 
   const { total, withColors } = useMemo(() => {
@@ -108,7 +113,7 @@ export function DonutChart({
               formatter={(value, name) => {
                 const n = typeof value === 'number' ? value : Number(value) || 0;
                 return [
-                  `${n.toLocaleString()} (${Math.round((n / total) * 100)}%)`,
+                  `${fmt(n)} (${Math.round((n / total) * 100)}%)`,
                   String(name ?? ''),
                 ];
               }}
@@ -153,8 +158,8 @@ export function DonutChart({
               <span className="text-xs tabular-nums text-silver/80 w-10 text-right">
                 {pct}%
               </span>
-              <span className="text-sm tabular-nums text-white w-12 text-right">
-                {d.value.toLocaleString()}
+              <span className="text-sm tabular-nums text-white min-w-12 text-right">
+                {fmt(d.value)}
               </span>
             </li>
           );

@@ -76,6 +76,11 @@
   --color-steel:           96 165 250;  /* #60A5FA — 6.9:1 on navy (AA) */
   --color-sky:            230 241 251;  /* #E6F1FB */
   --color-teal:            15 110  86;  /* #0F6E56 */
+  /* Chart-only third categorical hue: --color-teal is tuned as a subtle
+     surface tint and reads gray (chroma 0.09) / sub-3:1 as a data mark on
+     navy. This step passes the chart checks (chroma, CVD pairs vs gold +
+     steel, contrast) in both themes. Not for text or UI chrome. */
+  --color-chart-teal:      45 212 191;  /* #2DD4BF */
   --color-alert:          233  98  85;  /* #E96255 — brightened for safer AA margin on navy (≈5.3:1) */
   --color-success:         52 168 116;  /* #34A874 */
   --color-warning:        237 178  60;  /* #EDB23C */
@@ -124,6 +129,7 @@
      invisible. In light mode it has to be the ink, not the wash. */
   --color-sky:             29  78 216;  /* #1D4ED8 — 5.4:1 on a steel/8 tint */
   --color-teal:            15 118 110;  /* #0F766E — teal-700, 4.8:1 on white */
+  --color-chart-teal:      13 148 136;  /* #0D9488 — chart mark step, see dark block */
   /* red-600 was 4.83:1 bare and only 3.82:1 once it sat on its own tint
      (every destructive badge). red-700 clears both. */
   --color-alert:          185  28  28;  /* #B91C1C — 6.5:1 on white (AA) */
