@@ -1932,15 +1932,27 @@ export type LaborCostRow = z.infer<typeof LaborCostRowSchema>;
 
 /* Staffing targets ======================================================== */
 
+export const StaffingWindowTargetSchema = z.object({
+  label: z.string(),
+  /** Site-local wall-clock minutes; end <= start wraps past midnight. */
+  startMinute: z.number().int().min(0).max(1439),
+  endMinute: z.number().int().min(0).max(1439),
+  targetCount: z.number().int().nonnegative(),
+  effectiveFrom: z.string(),
+});
+export type StaffingWindowTarget = z.infer<typeof StaffingWindowTargetSchema>;
+
 export const StaffingTargetLocationSchema = z.object({
   locationId: UuidSchema,
   locationName: z.string(),
   clientId: UuidSchema,
   clientName: z.string(),
-  /** Current effective target, null when never set. */
+  /** Current effective TOTAL floor target, null when never set. */
   targetCount: z.number().int().nonnegative().nullable(),
-  /** When the current target took effect (YYYY-MM-DD). */
+  /** When the current total target took effect (YYYY-MM-DD). */
   effectiveFrom: z.string().nullable(),
+  /** Current per-shift window targets (latest per label). */
+  windows: z.array(StaffingWindowTargetSchema),
 });
 export type StaffingTargetLocation = z.infer<typeof StaffingTargetLocationSchema>;
 
@@ -1949,14 +1961,50 @@ export const StaffingTargetsResponseSchema = z.object({
 });
 export type StaffingTargetsResponse = z.infer<typeof StaffingTargetsResponseSchema>;
 
-export const StaffingTargetInputSchema = z.object({
-  locationId: UuidSchema,
-  targetCount: z.number().int().min(0).max(999),
-  /** YYYY-MM-DD; defaults to today on the server when omitted. */
-  effectiveFrom: z.string().date().optional(),
-  note: z.string().max(300).optional(),
-});
+export const StaffingTargetInputSchema = z
+  .object({
+    locationId: UuidSchema,
+    targetCount: z.number().int().min(0).max(999),
+    /** YYYY-MM-DD; defaults to today on the server when omitted. */
+    effectiveFrom: z.string().date().optional(),
+    note: z.string().max(300).optional(),
+    /** Omit all three for the TOTAL floor target; provide all three for a
+     *  per-shift window target ("Morning", 360, 840). */
+    label: z.string().trim().min(1).max(60).optional(),
+    startMinute: z.number().int().min(0).max(1439).optional(),
+    endMinute: z.number().int().min(0).max(1439).optional(),
+  })
+  .refine(
+    (v) =>
+      (v.label === undefined && v.startMinute === undefined && v.endMinute === undefined) ||
+      (v.label !== undefined && v.startMinute !== undefined && v.endMinute !== undefined),
+    { message: 'label, startMinute, and endMinute must be provided together.' },
+  );
 export type StaffingTargetInput = z.infer<typeof StaffingTargetInputSchema>;
+
+/* Live floor board: clocked-in right now vs the expected headcount. */
+
+export const FloorNowRowSchema = z.object({
+  locationId: UuidSchema,
+  locationName: z.string(),
+  clientId: UuidSchema,
+  clientName: z.string(),
+  /** ACTIVE (clocked-in, not out) time entries at this store right now. */
+  clockedIn: z.number().int().nonnegative(),
+  /** The expectation being compared against: the shift window covering the
+   *  store's local time right now, else the total floor target. */
+  expected: z.number().int().nonnegative().nullable(),
+  /** Which window matched ("Morning"), or null when the total applies. */
+  windowLabel: z.string().nullable(),
+  totalTarget: z.number().int().nonnegative().nullable(),
+});
+export type FloorNowRow = z.infer<typeof FloorNowRowSchema>;
+
+export const FloorNowResponseSchema = z.object({
+  rows: z.array(FloorNowRowSchema),
+  generatedAt: z.string().datetime(),
+});
+export type FloorNowResponse = z.infer<typeof FloorNowResponseSchema>;
 
 export const LaborCostReportResponseSchema = z.object({
   rows: z.array(LaborCostRowSchema),

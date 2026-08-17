@@ -20,6 +20,7 @@ import {
   DedupeDraftsInputSchema,
   DedupeDraftsResponseSchema,
   LaborCostReportResponseSchema,
+  FloorNowResponseSchema,
   StaffingTargetInputSchema,
   StaffingTargetsResponseSchema,
   OpenShiftClaimSchema,
@@ -960,16 +961,45 @@ schedulingRouter.get('/staffing-targets', MANAGE, async (req, res, next) => {
             effectiveFrom: { lte: new Date() },
           },
           orderBy: { effectiveFrom: 'desc' },
-          select: { locationId: true, targetCount: true, effectiveFrom: true },
+          select: {
+            locationId: true,
+            targetCount: true,
+            effectiveFrom: true,
+            label: true,
+            startMinute: true,
+            endMinute: true,
+          },
         })
       : [];
+    // Effective-dating applies PER LABEL (null label = the total floor
+    // target): rows arrive newest-first, first hit per (location, label)
+    // wins.
     const currentByLocation = new Map<string, { targetCount: number; effectiveFrom: string }>();
+    const windowsByLocation = new Map<
+      string,
+      Map<string, { label: string; startMinute: number; endMinute: number; targetCount: number; effectiveFrom: string }>
+    >();
     for (const t of targets) {
-      if (!currentByLocation.has(t.locationId)) {
-        currentByLocation.set(t.locationId, {
-          targetCount: t.targetCount,
-          effectiveFrom: t.effectiveFrom.toISOString().slice(0, 10),
-        });
+      const ymdFrom = t.effectiveFrom.toISOString().slice(0, 10);
+      if (t.label === null) {
+        if (!currentByLocation.has(t.locationId)) {
+          currentByLocation.set(t.locationId, {
+            targetCount: t.targetCount,
+            effectiveFrom: ymdFrom,
+          });
+        }
+      } else if (t.startMinute !== null && t.endMinute !== null) {
+        const m = windowsByLocation.get(t.locationId) ?? new Map();
+        if (!m.has(t.label)) {
+          m.set(t.label, {
+            label: t.label,
+            startMinute: t.startMinute,
+            endMinute: t.endMinute,
+            targetCount: t.targetCount,
+            effectiveFrom: ymdFrom,
+          });
+        }
+        windowsByLocation.set(t.locationId, m);
       }
     }
     res.json(
@@ -981,6 +1011,9 @@ schedulingRouter.get('/staffing-targets', MANAGE, async (req, res, next) => {
           clientName: l.client.name,
           targetCount: currentByLocation.get(l.id)?.targetCount ?? null,
           effectiveFrom: currentByLocation.get(l.id)?.effectiveFrom ?? null,
+          windows: [...(windowsByLocation.get(l.id)?.values() ?? [])].sort(
+            (a, b) => a.startMinute - b.startMinute,
+          ),
         })),
       }),
     );
@@ -1022,6 +1055,9 @@ schedulingRouter.post('/staffing-targets', MANAGE, async (req, res, next) => {
         locationId: location.id,
         targetCount: parsed.data.targetCount,
         effectiveFrom,
+        label: parsed.data.label ?? null,
+        startMinute: parsed.data.startMinute ?? null,
+        endMinute: parsed.data.endMinute ?? null,
         note: parsed.data.note ?? null,
         createdById: req.user!.id,
       },
@@ -1037,6 +1073,13 @@ schedulingRouter.post('/staffing-targets', MANAGE, async (req, res, next) => {
           locationId: location.id,
           locationName: location.name,
           targetCount: created.targetCount,
+          ...(created.label
+            ? {
+                window: created.label,
+                startMinute: created.startMinute,
+                endMinute: created.endMinute,
+              }
+            : {}),
           effectiveFrom: created.effectiveFrom.toISOString().slice(0, 10),
         },
       },
@@ -1048,6 +1091,129 @@ schedulingRouter.post('/staffing-targets', MANAGE, async (req, res, next) => {
       targetCount: created.targetCount,
       effectiveFrom: created.effectiveFrom.toISOString().slice(0, 10),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /scheduling/floor-now
+ *
+ * The live comparison the targets exist for: how many people are clocked
+ * in at each store RIGHT NOW (ACTIVE time entries) versus the expected
+ * headcount — the shift window covering the store's local time when one
+ * is defined, else the total floor target. Tenant-clamped like everything
+ * else here.
+ */
+schedulingRouter.get('/floor-now', MANAGE, async (req, res, next) => {
+  try {
+    const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+    const fnClientId = clamped === null ? NO_MATCH_ID : clamped;
+    const locations = await prisma.location.findMany({
+      where: {
+        deletedAt: null,
+        isActive: true,
+        ...(fnClientId ? { clientId: fnClientId } : {}),
+      },
+      select: {
+        id: true,
+        name: true,
+        clientId: true,
+        timezone: true,
+        client: { select: { name: true } },
+      },
+      orderBy: [{ client: { name: 'asc' } }, { name: 'asc' }],
+      take: 500,
+    });
+    if (locations.length === 0) {
+      res.json(
+        FloorNowResponseSchema.parse({ rows: [], generatedAt: new Date().toISOString() }),
+      );
+      return;
+    }
+    const ids = locations.map((l) => l.id);
+    const now = new Date();
+    const [active, targets] = await Promise.all([
+      prisma.timeEntry.groupBy({
+        by: ['locationId'],
+        where: {
+          status: 'ACTIVE',
+          locationId: { in: ids },
+          ...scopeTimeEntries(req.user!),
+        },
+        _count: { _all: true },
+      }),
+      prisma.staffingTarget.findMany({
+        where: { locationId: { in: ids }, effectiveFrom: { lte: now } },
+        orderBy: { effectiveFrom: 'desc' },
+        select: {
+          locationId: true,
+          targetCount: true,
+          label: true,
+          startMinute: true,
+          endMinute: true,
+        },
+      }),
+    ]);
+    const clockedByLocation = new Map(
+      active.map((a) => [a.locationId as string, a._count._all]),
+    );
+    const totalByLocation = new Map<string, number>();
+    const windowsByLocation = new Map<
+      string,
+      Map<string, { label: string; startMinute: number; endMinute: number; targetCount: number }>
+    >();
+    for (const t of targets) {
+      if (t.label === null) {
+        if (!totalByLocation.has(t.locationId)) {
+          totalByLocation.set(t.locationId, t.targetCount);
+        }
+      } else if (t.startMinute !== null && t.endMinute !== null) {
+        const m = windowsByLocation.get(t.locationId) ?? new Map();
+        if (!m.has(t.label)) {
+          m.set(t.label, {
+            label: t.label,
+            startMinute: t.startMinute,
+            endMinute: t.endMinute,
+            targetCount: t.targetCount,
+          });
+        }
+        windowsByLocation.set(t.locationId, m);
+      }
+    }
+    // end <= start wraps past midnight (ShiftTemplate convention).
+    const inWindow = (
+      minute: number,
+      w: { startMinute: number; endMinute: number },
+    ): boolean =>
+      w.endMinute > w.startMinute
+        ? minute >= w.startMinute && minute < w.endMinute
+        : minute >= w.startMinute || minute < w.endMinute;
+
+    const rows = locations
+      .map((l) => {
+        const minute = zonedMinutes(now, l.timezone ?? DEFAULT_TIMEZONE);
+        const windows = [...(windowsByLocation.get(l.id)?.values() ?? [])].sort(
+          (a, b) => a.startMinute - b.startMinute,
+        );
+        const hit = windows.find((w) => inWindow(minute, w)) ?? null;
+        const total = totalByLocation.get(l.id) ?? null;
+        return {
+          locationId: l.id,
+          locationName: l.name,
+          clientId: l.clientId,
+          clientName: l.client.name,
+          clockedIn: clockedByLocation.get(l.id) ?? 0,
+          expected: hit ? hit.targetCount : total,
+          windowLabel: hit ? hit.label : null,
+          totalTarget: total,
+        };
+      })
+      // Quiet stores with no expectation and nobody in stay off the board.
+      .filter((r) => r.clockedIn > 0 || r.expected !== null);
+    res.json(
+      FloorNowResponseSchema.parse({ rows, generatedAt: now.toISOString() }),
+    );
   } catch (err) {
     next(err);
   }

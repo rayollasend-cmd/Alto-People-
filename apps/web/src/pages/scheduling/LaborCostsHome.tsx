@@ -13,9 +13,14 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { LaborCostRow, StaffingTargetLocation } from '@alto-people/shared';
+import type {
+  FloorNowResponse,
+  LaborCostRow,
+  StaffingTargetLocation,
+} from '@alto-people/shared';
 import { DonutChart } from '@/components/ui/DonutChart';
 import {
+  floorNow,
   laborCosts,
   listStaffingTargets,
   setStaffingTarget,
@@ -362,6 +367,100 @@ function CostByGroupCard({
   );
 }
 
+const minuteToHhmm = (m: number): string =>
+  `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+const hhmmToMinute = (s: string): number | null => {
+  const [h, m] = s.split(':').map(Number);
+  if (!Number.isInteger(h) || !Number.isInteger(m)) return null;
+  return h * 60 + m;
+};
+
+/**
+ * Live floor board — clocked-in RIGHT NOW vs the expected headcount (the
+ * shift window covering the store's local time, else the total floor
+ * target). Polls every 60s while the page is open.
+ */
+function FloorNowCard() {
+  const [data, setData] = useState<FloorNowResponse | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const r = await floorNow();
+        if (!cancelled) {
+          setData(r);
+          setFailed(false);
+        }
+      } catch {
+        if (!cancelled) setFailed(true);
+      }
+    };
+    void tick();
+    const t = setInterval(() => void tick(), 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
+  if (failed || data === null || data.rows.length === 0) return null;
+
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-medium text-white">On the floor right now</div>
+          <div className="text-2xs text-silver/60">
+            clocked in vs expected · refreshes every minute
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+          {data.rows.map((r) => {
+            const over = r.expected !== null && r.clockedIn > r.expected;
+            const under = r.expected !== null && r.clockedIn < r.expected;
+            return (
+              <div
+                key={r.locationId}
+                className={`rounded-md border px-3 py-2 ${
+                  over
+                    ? 'border-alert/50 bg-alert/[0.07]'
+                    : under
+                      ? 'border-warning/50 bg-warning/[0.07]'
+                      : 'border-navy-secondary bg-navy/60'
+                }`}
+                title={
+                  r.windowLabel
+                    ? `Expected from the "${r.windowLabel}" shift window`
+                    : r.totalTarget !== null
+                      ? 'Expected from the total floor target'
+                      : 'No target set for this store'
+                }
+              >
+                <div className="truncate text-xs text-silver/80">{r.locationName}</div>
+                <div className="mt-0.5 text-lg font-semibold tabular-nums">
+                  <span className={over ? 'text-alert' : under ? 'text-warning' : 'text-white'}>
+                    {r.clockedIn}
+                  </span>
+                  <span className="text-silver/60">
+                    {' '}/ {r.expected !== null ? r.expected : '—'}
+                  </span>
+                </div>
+                <div className="truncate text-2xs text-silver/60">
+                  {r.windowLabel ?? (r.expected !== null ? 'floor total' : 'no target')}
+                  {' · '}
+                  {r.clientName}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 /**
  * Expected floor headcount per store — "we should run 6 at Destin".
  * Effective-dated on the server: saving records a NEW row from the chosen
@@ -460,16 +559,143 @@ function TargetRow({
   };
 
   return (
-    <li className="flex flex-wrap items-center gap-2 py-2.5">
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm text-white">{location.locationName}</div>
-        <div className="truncate text-xs text-silver/70">
-          {location.clientName}
-          {location.targetCount !== null && location.effectiveFrom
-            ? ` · current: ${location.targetCount} since ${location.effectiveFrom}`
-            : ' · no target set'}
+    <li className="py-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm text-white">{location.locationName}</div>
+          <div className="truncate text-xs text-silver/70">
+            {location.clientName}
+            {location.targetCount !== null && location.effectiveFrom
+              ? ` · floor total: ${location.targetCount} since ${location.effectiveFrom}`
+              : ' · no total target set'}
+          </div>
         </div>
+        <Input
+          type="number"
+          min={0}
+          step={1}
+          value={count}
+          onChange={(e) => setCount(e.target.value)}
+          placeholder="Heads"
+          className="h-9 w-20"
+          aria-label={`Expected associates at ${location.locationName}`}
+        />
+        <Input
+          type="date"
+          value={from}
+          onChange={(e) => setFrom(e.target.value)}
+          className="h-9 w-36"
+          aria-label={`Effective from date for ${location.locationName}`}
+        />
+        <Button size="sm" onClick={() => void save()} loading={busy} disabled={busy || !dirty}>
+          Save
+        </Button>
       </div>
+
+      {/* Per-shift windows — what the live board compares clock-ins to
+          while the window covers the store's local time. */}
+      <div className="mt-1.5 pl-3 border-l border-navy-secondary/60">
+        {location.windows.map((w) => (
+          <div key={w.label} className="flex items-center gap-2 py-0.5 text-xs text-silver">
+            <span className="text-white">{w.label}</span>
+            <span className="tabular-nums">
+              {minuteToHhmm(w.startMinute)}–{minuteToHhmm(w.endMinute)}
+            </span>
+            <span className="tabular-nums text-white">{w.targetCount} heads</span>
+            <span className="text-silver/50">since {w.effectiveFrom}</span>
+          </div>
+        ))}
+        <WindowForm location={location} onSaved={onSaved} />
+      </div>
+    </li>
+  );
+}
+
+/** Add (or re-date) a per-shift window target: label + times + heads. */
+function WindowForm({
+  location,
+  onSaved,
+}: {
+  location: StaffingTargetLocation;
+  onSaved: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [label, setLabel] = useState('');
+  const [start, setStart] = useState('06:00');
+  const [end, setEnd] = useState('14:00');
+  const [count, setCount] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-0.5 text-2xs uppercase tracking-wider text-silver/60 underline underline-offset-2 hover:text-gold"
+      >
+        + shift window
+      </button>
+    );
+  }
+
+  const save = async () => {
+    const n = Number(count);
+    const startMinute = hhmmToMinute(start);
+    const endMinute = hhmmToMinute(end);
+    if (!label.trim() || startMinute === null || endMinute === null) {
+      toast.error('Give the window a name and both times.');
+      return;
+    }
+    if (!count || !Number.isInteger(n) || n < 0) {
+      toast.error('Enter a whole number of heads.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await setStaffingTarget({
+        locationId: location.locationId,
+        targetCount: n,
+        label: label.trim(),
+        startMinute,
+        endMinute,
+      });
+      toast.success(`${location.locationName}: "${label.trim()}" → ${n} heads.`);
+      setOpen(false);
+      setLabel('');
+      setCount('');
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not save the window.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+      <Input
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+        placeholder="Morning"
+        maxLength={60}
+        className="h-8 w-28 text-xs"
+        aria-label="Shift window name"
+      />
+      <Input
+        type="time"
+        value={start}
+        onChange={(e) => setStart(e.target.value)}
+        className="h-8 w-24 text-xs"
+        aria-label="Window start"
+      />
+      <span className="text-xs text-silver/60">to</span>
+      <Input
+        type="time"
+        value={end}
+        onChange={(e) => setEnd(e.target.value)}
+        className="h-8 w-24 text-xs"
+        aria-label="Window end (past-midnight wraps)"
+      />
       <Input
         type="number"
         min={0}
@@ -477,20 +703,16 @@ function TargetRow({
         value={count}
         onChange={(e) => setCount(e.target.value)}
         placeholder="Heads"
-        className="h-9 w-20"
-        aria-label={`Expected associates at ${location.locationName}`}
+        className="h-8 w-18 text-xs"
+        aria-label="Expected heads in this window"
       />
-      <Input
-        type="date"
-        value={from}
-        onChange={(e) => setFrom(e.target.value)}
-        className="h-9 w-36"
-        aria-label={`Effective from date for ${location.locationName}`}
-      />
-      <Button size="sm" onClick={() => void save()} loading={busy} disabled={busy || !dirty}>
+      <Button size="sm" onClick={() => void save()} loading={busy} disabled={busy}>
         Save
       </Button>
-    </li>
+      <Button size="sm" variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
+        Cancel
+      </Button>
+    </div>
   );
 }
 
@@ -760,6 +982,12 @@ export function LaborCostsHome() {
         title="Labor costs"
         subtitle="Scheduled vs worked labor spend, per client and store, day by day"
       />
+
+      {/* Live board — deliberately ABOVE the filter row: it is "right now",
+          not scoped by the date range below. */}
+      <div className="mb-4">
+        <FloorNowCard />
+      </div>
 
       <div className="mb-3 flex flex-wrap items-end gap-2">
         <div>

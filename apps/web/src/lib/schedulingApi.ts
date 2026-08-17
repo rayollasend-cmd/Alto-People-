@@ -21,6 +21,7 @@ import type {
   CopyWeekResponse,
   DedupeDraftsInput,
   DedupeDraftsResponse,
+  FloorNowResponse,
   LaborCostReportResponse,
   MyShiftDetailResponse,
   StaffingTargetInput,
@@ -384,6 +385,11 @@ export function setStaffingTarget(body: StaffingTargetInput): Promise<{
   effectiveFrom: string;
 }> {
   return apiFetch('/scheduling/staffing-targets', { method: 'POST', body });
+}
+
+/** Clocked-in right now vs the expected headcount per store. */
+export function floorNow(): Promise<FloorNowResponse> {
+  return apiFetch<FloorNowResponse>('/scheduling/floor-now');
 }
 
 /** Delete exact-twin DRAFT shifts in the window, keeping the oldest of

@@ -184,7 +184,20 @@ describe('GET /scheduling/labor-costs', () => {
       .send({ locationId: loc.id, targetCount: 4, effectiveFrom: '2026-03-04' })
       .expect(201);
 
-    // The listing shows the CURRENT target (both are in the past → 4 wins).
+    // A per-shift window rides alongside the totals.
+    await a
+      .post('/scheduling/staffing-targets')
+      .send({
+        locationId: loc.id,
+        targetCount: 2,
+        label: 'Morning',
+        startMinute: 360,
+        endMinute: 840,
+      })
+      .expect(201);
+
+    // The listing shows the CURRENT target (both are in the past → 4 wins)
+    // plus the window.
     const list = await a.get('/scheduling/staffing-targets');
     expect(list.status).toBe(200);
     const row = list.body.locations.find(
@@ -192,6 +205,13 @@ describe('GET /scheduling/labor-costs', () => {
     );
     expect(row.targetCount).toBe(4);
     expect(row.effectiveFrom).toBe('2026-03-04');
+    expect(row.windows).toHaveLength(1);
+    expect(row.windows[0]).toMatchObject({
+      label: 'Morning',
+      startMinute: 360,
+      endMinute: 840,
+      targetCount: 2,
+    });
 
     // But the report judges 2026-03-03 by the target that applied THEN.
     const assoc = await createAssociate();
@@ -212,6 +232,60 @@ describe('GET /scheduling/labor-costs', () => {
       `/scheduling/labor-costs?from=${RANGE.from}&to=${RANGE.to}`,
     );
     expect(report.body.rows[0].targetHeads).toBe(6);
+  });
+
+  it('floor-now compares clocked-in against the current shift window, else the total', async () => {
+    const client = await createClient('LiveCo');
+    const loc = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    await prisma.staffingTarget.create({
+      data: { locationId: loc.id, targetCount: 5, effectiveFrom: new Date('2026-01-01T00:00:00Z') },
+    });
+    // A window straddling the store's local time RIGHT NOW (±60 min, wrap-
+    // safe) so the live board must pick it over the total.
+    const tz = loc.timezone ?? 'America/New_York';
+    const hm = new Intl.DateTimeFormat('en-GB', {
+      timeZone: tz,
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(new Date());
+    const [hh, mm] = hm.split(':').map(Number);
+    const cur = hh * 60 + mm;
+    await prisma.staffingTarget.create({
+      data: {
+        locationId: loc.id,
+        targetCount: 2,
+        effectiveFrom: new Date('2026-01-02T00:00:00Z'),
+        label: 'Now',
+        startMinute: (cur - 60 + 1440) % 1440,
+        endMinute: (cur + 60) % 1440,
+      },
+    });
+    const a1 = await createAssociate();
+    const a2 = await createAssociate();
+    for (const assoc of [a1, a2]) {
+      await prisma.timeEntry.create({
+        data: {
+          associateId: assoc.id,
+          clientId: client.id,
+          locationId: loc.id,
+          clockInAt: new Date(),
+          status: 'ACTIVE',
+        },
+      });
+    }
+
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(user.email);
+    const res = await a.get('/scheduling/floor-now');
+    expect(res.status).toBe(200);
+    const row = res.body.rows.find(
+      (r: { locationId: string }) => r.locationId === loc.id,
+    );
+    expect(row.clockedIn).toBe(2);
+    expect(row.windowLabel).toBe('Now');
+    expect(row.expected).toBe(2);
+    expect(row.totalTarget).toBe(5);
   });
 
   it('staffing targets clamp: a supervisor sees and sets only their own client', async () => {

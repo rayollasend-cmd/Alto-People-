@@ -755,6 +755,14 @@ model StaffingTarget {
   locationId    String   @db.Uuid
   targetCount   Int
   effectiveFrom DateTime @db.Date
+  // NULL label/window = the store's TOTAL floor target. A labeled row with
+  // start/end minutes (site-local wall clock; end <= start wraps past
+  // midnight, same convention as ShiftTemplate) is the expected headcount
+  // for that shift window — what the live floor board compares clock-ins
+  // against. Effective-dating applies per (location, label).
+  label         String?
+  startMinute   Int?
+  endMinute     Int?
   note          String?
   createdById   String?  @db.Uuid
   createdAt     DateTime @default(now()) @db.Timestamptz(6)
