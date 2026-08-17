@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, DollarSign, Download } from 'lucide-react';
 import {
@@ -1037,38 +1037,70 @@ export function LaborCostsHome() {
   const exportCsv = () => {
     downloadCsv(`labor-costs-${from}-to-${toInclusive}.csv`, [
       [
-        'Date', 'Client', 'Store', 'Heads', 'Target heads', 'Overstaff cost',
+        'Date', 'Client', 'Store', 'Shift window', 'Heads', 'Target heads', 'Overstaff cost',
         'Lead heads', 'Associate heads', 'Lead cost', 'Associate cost',
         'Shifts', 'Scheduled hours', 'Scheduled cost', 'Shifts without rate',
         'Billable value', 'Margin', 'Shifts without bill rate',
         'Punches', 'Worked hours', 'Worked cost', 'Punches without rate',
         'Approved hours', 'Approved cost', 'Unapproved hours',
       ],
-      ...visible.map((r) => [
-        r.date,
-        r.clientName ?? '',
-        r.locationName ?? '',
-        r.scheduledHeads,
-        r.targetHeads ?? '',
-        overstaffCostOf(r).toFixed(2),
-        r.leadHeads,
-        r.associateHeads,
-        r.leadCost.toFixed(2),
-        r.associateCost.toFixed(2),
-        r.scheduledShifts,
-        (r.scheduledMinutes / 60).toFixed(2),
-        r.scheduledCost.toFixed(2),
-        r.scheduledNoRate,
-        r.scheduledRevenue.toFixed(2),
-        (r.scheduledRevenue - r.scheduledCost).toFixed(2),
-        r.revenueNoRate,
-        r.workedPunches,
-        (r.workedMinutes / 60).toFixed(2),
-        r.workedCost.toFixed(2),
-        r.workedNoRate,
-        ((r.approvedMinutes ?? 0) / 60).toFixed(2),
-        (r.approvedCost ?? 0).toFixed(2),
-        ((r.workedMinutes - (r.approvedMinutes ?? 0)) / 60).toFixed(2),
+      ...visible.flatMap((r) => [
+        [
+          r.date,
+          r.clientName ?? '',
+          r.locationName ?? '',
+          '',
+          r.scheduledHeads,
+          r.targetHeads ?? '',
+          overstaffCostOf(r).toFixed(2),
+          r.leadHeads,
+          r.associateHeads,
+          r.leadCost.toFixed(2),
+          r.associateCost.toFixed(2),
+          r.scheduledShifts,
+          (r.scheduledMinutes / 60).toFixed(2),
+          r.scheduledCost.toFixed(2),
+          r.scheduledNoRate,
+          r.scheduledRevenue.toFixed(2),
+          (r.scheduledRevenue - r.scheduledCost).toFixed(2),
+          r.revenueNoRate,
+          r.workedPunches,
+          (r.workedMinutes / 60).toFixed(2),
+          r.workedCost.toFixed(2),
+          r.workedNoRate,
+          ((r.approvedMinutes ?? 0) / 60).toFixed(2),
+          (r.approvedCost ?? 0).toFixed(2),
+          ((r.workedMinutes - (r.approvedMinutes ?? 0)) / 60).toFixed(2),
+        ],
+        ...(r.windows ?? []).map((w) => [
+          r.date,
+          r.clientName ?? '',
+          r.locationName ?? '',
+          w.startMinute !== null && w.endMinute !== null
+            ? `${w.label} ${minuteToHhmm(w.startMinute)}-${minuteToHhmm(w.endMinute)}`
+            : w.label,
+          w.scheduledHeads,
+          w.targetHeads ?? '',
+          '',
+          '',
+          '',
+          '',
+          '',
+          w.scheduledShifts,
+          (w.scheduledMinutes / 60).toFixed(2),
+          w.scheduledCost.toFixed(2),
+          '',
+          w.scheduledRevenue.toFixed(2),
+          (w.scheduledRevenue - w.scheduledCost).toFixed(2),
+          '',
+          w.workedPunches,
+          (w.workedMinutes / 60).toFixed(2),
+          w.workedCost.toFixed(2),
+          '',
+          '',
+          '',
+          '',
+        ]),
       ]),
     ]);
   };
@@ -1367,7 +1399,8 @@ export function LaborCostsHome() {
                       const overCost = overstaffCostOf(r);
                       const rowMargin = r.scheduledRevenue - r.scheduledCost;
                       return (
-                        <TableRow key={`${r.date}|${r.clientId}|${r.locationId}`}>
+                        <Fragment key={`${r.date}|${r.clientId}|${r.locationId}`}>
+                        <TableRow>
                           <TableCell className="text-white">
                             {r.clientName ?? '—'}
                           </TableCell>
@@ -1450,6 +1483,75 @@ export function LaborCostsHome() {
                             )}
                           </TableCell>
                         </TableRow>
+                        {/* Per-shift-window sub-rows — same columns, one
+                            line per window, judged against that WINDOW's
+                            own target. */}
+                        {(r.windows ?? []).map((w) => {
+                          const wOver =
+                            w.targetHeads !== null && w.scheduledHeads > w.targetHeads;
+                          const wMargin = w.scheduledRevenue - w.scheduledCost;
+                          return (
+                            <TableRow
+                              key={`${r.date}|${r.locationId}|${w.label}`}
+                              className="bg-navy-secondary/[0.15]"
+                            >
+                              <TableCell className="text-2xs text-silver/40" />
+                              <TableCell className="text-xs text-silver/80 pl-6">
+                                ↳ {w.label}
+                                {w.startMinute !== null && w.endMinute !== null && (
+                                  <span className="ml-1 text-2xs text-silver/50 tabular-nums">
+                                    {minuteToHhmm(w.startMinute)}–{minuteToHhmm(w.endMinute)}
+                                  </span>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-xs">
+                                <span
+                                  className={wOver ? 'text-alert font-medium' : 'text-silver'}
+                                  title={
+                                    wOver
+                                      ? `${w.scheduledHeads - w.targetHeads!} above this window's target`
+                                      : undefined
+                                  }
+                                >
+                                  {w.scheduledHeads}
+                                  {w.targetHeads !== null ? ` / ${w.targetHeads}` : ''}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-xs text-silver hidden sm:table-cell">
+                                {w.scheduledShifts}
+                              </TableCell>
+                              <TableCell
+                                className="text-right tabular-nums text-xs text-silver"
+                                title={hours(w.scheduledMinutes)}
+                              >
+                                {money(w.scheduledCost)}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums text-xs text-silver hidden md:table-cell">
+                                {money(w.scheduledRevenue)}
+                              </TableCell>
+                              <TableCell
+                                className={`text-right tabular-nums text-xs hidden md:table-cell ${
+                                  w.scheduledRevenue > 0
+                                    ? wMargin >= 0
+                                      ? 'text-success/80'
+                                      : 'text-alert/80'
+                                    : 'text-silver/40'
+                                }`}
+                              >
+                                {w.scheduledRevenue > 0
+                                  ? `${wMargin >= 0 ? '+' : '−'}${money(Math.abs(wMargin))}`
+                                  : '—'}
+                              </TableCell>
+                              <TableCell
+                                className="text-right tabular-nums text-xs text-silver hidden sm:table-cell"
+                                title={`${hours(w.workedMinutes)} · ${w.workedPunches} punches`}
+                              >
+                                {money(w.workedCost)}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                        </Fragment>
                       );
                     })}
                   </TableBody>

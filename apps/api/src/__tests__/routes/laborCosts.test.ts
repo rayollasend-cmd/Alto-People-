@@ -60,6 +60,21 @@ describe('GET /scheduling/labor-costs', () => {
         effectiveFrom: new Date('2026-03-01T00:00:00.000Z'),
       },
     });
+    // A shift WINDOW with a NEWER effectiveFrom — must not override the
+    // daily total (the label-split fix) and drives the per-window rows.
+    // 06:00–14:00 site-local (America/New_York, EST on 2026-03-03): every
+    // shift/punch at 12:00–14:00 UTC (07:00–09:00 local) falls inside;
+    // the 08:00 UTC punch (03:00 local) lands in "Other times".
+    await prisma.staffingTarget.create({
+      data: {
+        locationId: loc.id,
+        targetCount: 1,
+        effectiveFrom: new Date('2026-03-02T00:00:00.000Z'),
+        label: 'Morning',
+        startMinute: 360,
+        endMinute: 840,
+      },
+    });
     const lead = await createAssociate({ firstName: 'Lead', lastName: 'Head' });
     const worker = await createAssociate({ firstName: 'Reg', lastName: 'Head' });
 
@@ -208,6 +223,28 @@ describe('GET /scheduling/labor-costs', () => {
     // Lead 3h × $24.24 (SOW lead fallback).
     expect(row.scheduledRevenue).toBe(361.14);
     expect(row.revenueNoRate).toBe(0);
+    // Per-shift-window breakdown: everything scheduled sits in Morning
+    // (07:00–09:00 local starts); the 03:00-local punch falls outside.
+    expect(row.windows).toHaveLength(2);
+    const morning = row.windows.find((w: { label: string }) => w.label === 'Morning');
+    expect(morning).toMatchObject({
+      targetHeads: 1,
+      scheduledShifts: 4,
+      scheduledHeads: 2,
+      scheduledMinutes: 900,
+      scheduledCost: 224,
+      scheduledRevenue: 361.14,
+      workedPunches: 1,
+      workedMinutes: 270,
+      workedCost: 67.5,
+    });
+    const other = row.windows.find((w: { label: string }) => w.label === 'Other times');
+    expect(other).toMatchObject({
+      scheduledShifts: 0,
+      workedPunches: 1,
+      workedMinutes: 240,
+      workedCost: 60,
+    });
   });
 
   it('staffing targets: set + read current, effective-dated per day', async () => {

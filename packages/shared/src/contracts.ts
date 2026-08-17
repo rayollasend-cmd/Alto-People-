@@ -1933,6 +1933,28 @@ export const LaborCostRowSchema = z.object({
   scheduledRevenue: z.number().nonnegative(),
   /** Shifts with no resolvable bill rate — unbillable until rates are set. */
   revenueNoRate: z.number().int().nonnegative(),
+  /** Per-shift-window breakdown of this store's day, when the store has
+   *  staffing windows defined. A shift/punch belongs to the window
+   *  containing its site-local start time; the catch-all "Other times"
+   *  row (null minutes) collects the rest. Optional for back-compat. */
+  windows: z
+    .array(
+      z.object({
+        label: z.string(),
+        startMinute: z.number().int().nullable(),
+        endMinute: z.number().int().nullable(),
+        targetHeads: z.number().int().nonnegative().nullable(),
+        scheduledShifts: z.number().int().nonnegative(),
+        scheduledHeads: z.number().int().nonnegative(),
+        scheduledMinutes: z.number().int().nonnegative(),
+        scheduledCost: z.number().nonnegative(),
+        scheduledRevenue: z.number().nonnegative(),
+        workedPunches: z.number().int().nonnegative(),
+        workedMinutes: z.number().int().nonnegative(),
+        workedCost: z.number().nonnegative(),
+      }),
+    )
+    .optional(),
 });
 export type LaborCostRow = z.infer<typeof LaborCostRowSchema>;
 

@@ -751,7 +751,14 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
         ? prisma.staffingTarget.findMany({
             where: { locationId: { in: shiftLocationIds }, effectiveFrom: { lt: to } },
             orderBy: { effectiveFrom: 'desc' },
-            select: { locationId: true, targetCount: true, effectiveFrom: true },
+            select: {
+              locationId: true,
+              targetCount: true,
+              effectiveFrom: true,
+              label: true,
+              startMinute: true,
+              endMinute: true,
+            },
           })
         : Promise.resolve([]),
     ]);
@@ -764,24 +771,73 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
         .map((d) => [`${d.clientId}|${d.position}`, Number(d.billRate)]),
     );
     const leadSet = new Set(leadPositions.map((p) => `${p.clientId}|${p.name}`));
-    // Targets per location, newest-first — the effective target for a day
-    // is the first row whose effectiveFrom (a plain date) is <= that day.
-    const targetsByLocation = new Map<
+    // Targets per location, newest-first — the effective row for a day is
+    // the first whose effectiveFrom (a plain date) is <= that day, PER
+    // LABEL: null-label rows are the daily floor total, labeled rows are
+    // shift windows. Mixing them (the original bug) would let a window's
+    // small count silently replace the day target the moment its
+    // effectiveFrom was newer.
+    const totalsByLocation = new Map<string, Array<{ from: string; count: number }>>();
+    const windowDefsByLocation = new Map<
       string,
-      Array<{ from: string; count: number }>
+      Map<string, Array<{ from: string; count: number; startMinute: number; endMinute: number }>>
     >();
     for (const t of targetRows) {
-      const arr = targetsByLocation.get(t.locationId) ?? [];
-      arr.push({ from: t.effectiveFrom.toISOString().slice(0, 10), count: t.targetCount });
-      targetsByLocation.set(t.locationId, arr);
+      const from = t.effectiveFrom.toISOString().slice(0, 10);
+      if (t.label === null) {
+        const arr = totalsByLocation.get(t.locationId) ?? [];
+        arr.push({ from, count: t.targetCount });
+        totalsByLocation.set(t.locationId, arr);
+      } else if (t.startMinute !== null && t.endMinute !== null) {
+        const byLabel = windowDefsByLocation.get(t.locationId) ?? new Map();
+        const arr = byLabel.get(t.label) ?? [];
+        arr.push({
+          from,
+          count: t.targetCount,
+          startMinute: t.startMinute,
+          endMinute: t.endMinute,
+        });
+        byLabel.set(t.label, arr);
+        windowDefsByLocation.set(t.locationId, byLabel);
+      }
     }
     const targetFor = (locationId: string | null, date: string): number | null => {
       if (!locationId) return null;
-      const arr = targetsByLocation.get(locationId);
+      const arr = totalsByLocation.get(locationId);
       if (!arr) return null;
       const hit = arr.find((t) => t.from <= date);
       return hit ? hit.count : null;
     };
+    /** The store's windows effective ON a given day (latest per label). */
+    const windowsFor = (
+      locationId: string | null,
+      date: string,
+    ): Array<{ label: string; startMinute: number; endMinute: number; count: number }> => {
+      if (!locationId) return [];
+      const byLabel = windowDefsByLocation.get(locationId);
+      if (!byLabel) return [];
+      const out: Array<{ label: string; startMinute: number; endMinute: number; count: number }> = [];
+      for (const [label, arr] of byLabel) {
+        const hit = arr.find((t) => t.from <= date);
+        if (hit) {
+          out.push({
+            label,
+            startMinute: hit.startMinute,
+            endMinute: hit.endMinute,
+            count: hit.count,
+          });
+        }
+      }
+      return out.sort((a, b) => a.startMinute - b.startMinute);
+    };
+    // end <= start wraps past midnight (ShiftTemplate convention).
+    const minuteInWindow = (
+      minute: number,
+      w: { startMinute: number; endMinute: number },
+    ): boolean =>
+      w.endMinute > w.startMinute
+        ? minute >= w.startMinute && minute < w.endMinute
+        : minute >= w.startMinute || minute < w.endMinute;
 
     // Names + timezones for the entries' clients/locations (shifts carry
     // their own joins).
@@ -828,7 +884,39 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
       associateCost: number;
       scheduledRevenue: number;
       revenueNoRate: number;
+      /** Per-shift-window sub-totals, keyed by window label ('__other'
+       *  catches activity outside every defined window). */
+      windowAgg: Map<
+        string,
+        {
+          scheduledShifts: number;
+          heads: Set<string>;
+          scheduledMinutes: number;
+          scheduledCost: number;
+          scheduledRevenue: number;
+          workedPunches: number;
+          workedMinutes: number;
+          workedCost: number;
+        }
+      >;
     }
+    const windowAggFor = (b: Bucket, label: string) => {
+      let w = b.windowAgg.get(label);
+      if (!w) {
+        w = {
+          scheduledShifts: 0,
+          heads: new Set<string>(),
+          scheduledMinutes: 0,
+          scheduledCost: 0,
+          scheduledRevenue: 0,
+          workedPunches: 0,
+          workedMinutes: 0,
+          workedCost: 0,
+        };
+        b.windowAgg.set(label, w);
+      }
+      return w;
+    };
     const buckets = new Map<string, Bucket>();
     const bucketFor = (
       date: string,
@@ -864,6 +952,7 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
           associateCost: 0,
           scheduledRevenue: 0,
           revenueNoRate: 0,
+          windowAgg: new Map(),
         };
         buckets.set(key, b);
       }
@@ -872,13 +961,25 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
 
     for (const s of shifts) {
       const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+      const day = localDateKey(s.startsAt, tz);
       const b = bucketFor(
-        localDateKey(s.startsAt, tz),
+        day,
         s.clientId,
         s.client?.name ?? null,
         s.locationId,
         s.locationRel?.name ?? null,
       );
+      // Per-window bucketing: a shift belongs to the window containing its
+      // site-local start minute. Only stores WITH windows get sub-rows.
+      const dayWindows = windowsFor(s.locationId, day);
+      const winHit =
+        dayWindows.length > 0
+          ? dayWindows.find((w) => minuteInWindow(zonedMinutes(s.startsAt, tz), w))
+          : undefined;
+      const winAgg =
+        dayWindows.length > 0
+          ? windowAggFor(b, winHit ? winHit.label : '__other')
+          : null;
       const minutes = Math.max(
         0,
         Math.round((s.endsAt.getTime() - s.startsAt.getTime()) / 60_000),
@@ -920,18 +1021,35 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
         b.heads.add(s.assignedAssociateId);
         if (isLead) b.leadHeadIds.add(s.assignedAssociateId);
       }
+      if (winAgg) {
+        winAgg.scheduledShifts += 1;
+        winAgg.scheduledMinutes += minutes;
+        winAgg.scheduledCost += cost;
+        if (billRate != null) winAgg.scheduledRevenue += (minutes / 60) * billRate;
+        if (s.assignedAssociateId) winAgg.heads.add(s.assignedAssociateId);
+      }
     }
 
     for (const e of entries) {
       const loc = e.locationId ? locationById.get(e.locationId) : undefined;
       const tz = loc?.timezone ?? DEFAULT_TIMEZONE;
+      const day = localDateKey(e.clockInAt, tz);
       const b = bucketFor(
-        localDateKey(e.clockInAt, tz),
+        day,
         e.clientId,
         e.clientId ? clientNameById.get(e.clientId) ?? null : null,
         e.locationId,
         loc?.name ?? null,
       );
+      const dayWindows = windowsFor(e.locationId, day);
+      const winHit =
+        dayWindows.length > 0
+          ? dayWindows.find((w) => minuteInWindow(zonedMinutes(e.clockInAt, tz), w))
+          : undefined;
+      const winAgg =
+        dayWindows.length > 0
+          ? windowAggFor(b, winHit ? winHit.label : '__other')
+          : null;
       let minutes = 0;
       if (e.clockOutAt) {
         const end = e.clockOutAt.getTime();
@@ -962,24 +1080,79 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
         b.approvedMinutes += minutes;
         b.approvedCost += entryCost;
       }
+      if (winAgg) {
+        winAgg.workedPunches += 1;
+        winAgg.workedMinutes += minutes;
+        winAgg.workedCost += entryCost;
+      }
     }
 
+    const round2 = (v: number) => Math.round(v * 100) / 100;
     const rows = [...buckets.values()]
-      .map(({ heads, leadHeadIds, ...b }) => ({
-        ...b,
-        scheduledCost: Math.round(b.scheduledCost * 100) / 100,
-        workedCost: Math.round(b.workedCost * 100) / 100,
-        approvedCost: Math.round(b.approvedCost * 100) / 100,
-        leadCost: Math.round(b.leadCost * 100) / 100,
-        associateCost: Math.round(b.associateCost * 100) / 100,
-        scheduledRevenue: Math.round(b.scheduledRevenue * 100) / 100,
-        scheduledHeads: heads.size,
-        leadHeads: leadHeadIds.size,
-        // "Lead if ANY of their day's shifts is a lead shift" — leadHeadIds
-        // is a subset of heads, so the remainder are regular associates.
-        associateHeads: heads.size - leadHeadIds.size,
-        targetHeads: targetFor(b.locationId, b.date),
-      }))
+      .map(({ heads, leadHeadIds, windowAgg, ...b }) => {
+        // Per-window sub-rows: one per defined window (with its own
+        // target), plus "Other times" when activity fell outside them.
+        const defs = windowsFor(b.locationId, b.date);
+        const windows =
+          defs.length > 0
+            ? [
+                ...defs.map((d) => {
+                  const w = windowAgg.get(d.label);
+                  return {
+                    label: d.label,
+                    startMinute: d.startMinute,
+                    endMinute: d.endMinute,
+                    targetHeads: d.count,
+                    scheduledShifts: w?.scheduledShifts ?? 0,
+                    scheduledHeads: w?.heads.size ?? 0,
+                    scheduledMinutes: w?.scheduledMinutes ?? 0,
+                    scheduledCost: round2(w?.scheduledCost ?? 0),
+                    scheduledRevenue: round2(w?.scheduledRevenue ?? 0),
+                    workedPunches: w?.workedPunches ?? 0,
+                    workedMinutes: w?.workedMinutes ?? 0,
+                    workedCost: round2(w?.workedCost ?? 0),
+                  };
+                }),
+                ...(() => {
+                  const o = windowAgg.get('__other');
+                  if (!o || (o.scheduledShifts === 0 && o.workedPunches === 0)) return [];
+                  return [
+                    {
+                      label: 'Other times',
+                      startMinute: null,
+                      endMinute: null,
+                      targetHeads: null,
+                      scheduledShifts: o.scheduledShifts,
+                      scheduledHeads: o.heads.size,
+                      scheduledMinutes: o.scheduledMinutes,
+                      scheduledCost: round2(o.scheduledCost),
+                      scheduledRevenue: round2(o.scheduledRevenue),
+                      workedPunches: o.workedPunches,
+                      workedMinutes: o.workedMinutes,
+                      workedCost: round2(o.workedCost),
+                    },
+                  ];
+                })(),
+              ]
+            : undefined;
+        return {
+          ...b,
+          scheduledCost: round2(b.scheduledCost),
+          workedCost: round2(b.workedCost),
+          approvedCost: round2(b.approvedCost),
+          leadCost: round2(b.leadCost),
+          associateCost: round2(b.associateCost),
+          scheduledRevenue: round2(b.scheduledRevenue),
+          scheduledHeads: heads.size,
+          leadHeads: leadHeadIds.size,
+          // "Lead if ANY of their day's shifts is a lead shift" —
+          // leadHeadIds is a subset of heads, so the remainder are
+          // regular associates.
+          associateHeads: heads.size - leadHeadIds.size,
+          targetHeads: targetFor(b.locationId, b.date),
+          ...(windows ? { windows } : {}),
+        };
+      })
       .sort(
         (a, z) =>
           a.date.localeCompare(z.date) ||
