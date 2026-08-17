@@ -1907,6 +1907,12 @@ export const LaborCostRowSchema = z.object({
   workedCost: z.number().nonnegative(),
   /** Punches without a snapshotted payRate. */
   workedNoRate: z.number().int().nonnegative(),
+  /** The APPROVED subset of worked time — the in-system record of
+   *  Fieldglass-approved (billable) hours. workedMinutes −
+   *  approvedMinutes is the billed-vs-worked gap: hours worked but not
+   *  yet approved, where margin leaks. Optional for back-compat. */
+  approvedMinutes: z.number().int().nonnegative().optional(),
+  approvedCost: z.number().nonnegative().optional(),
   /** Distinct assigned associates among the bucket's shifts — "heads on
    *  the floor". Open (unassigned) slots cost money but aren't heads. */
   scheduledHeads: z.number().int().nonnegative(),

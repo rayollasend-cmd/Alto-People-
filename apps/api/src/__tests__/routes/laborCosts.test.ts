@@ -136,7 +136,8 @@ describe('GET /scheduling/labor-costs', () => {
       },
     });
     // Worked punch: 5h minus 30m break = 4.5h × $15 = $67.50 (COMPLETED,
-    // never approved — recorded time still costs money).
+    // never approved — recorded time still costs money, but it is NOT
+    // billable: the billed-vs-worked gap).
     const assoc = await createAssociate();
     await prisma.timeEntry.create({
       data: {
@@ -148,6 +149,20 @@ describe('GET /scheduling/labor-costs', () => {
         status: 'COMPLETED',
         payRate: 15,
         breaks: { create: { startedAt: at(16), endedAt: at(16, 30) } },
+      },
+    });
+    // An APPROVED punch (4h, no snapshot → $15 org fallback) — the
+    // in-system Fieldglass-approved record; counts toward the approved
+    // (billable) subset.
+    const assoc2 = await createAssociate();
+    await prisma.timeEntry.create({
+      data: {
+        associateId: assoc2.id,
+        clientId: client.id,
+        locationId: loc.id,
+        clockInAt: at(8),
+        clockOutAt: at(12),
+        status: 'APPROVED',
       },
     });
 
@@ -169,10 +184,14 @@ describe('GET /scheduling/labor-costs', () => {
     // Lead $54 ($18 lead fallback) — nothing is unpriced.
     expect(row.scheduledCost).toBe(224);
     expect(row.scheduledNoRate).toBe(0);
-    expect(row.workedPunches).toBe(1);
-    expect(row.workedMinutes).toBe(270);
-    expect(row.workedCost).toBe(67.5);
+    expect(row.workedPunches).toBe(2);
+    expect(row.workedMinutes).toBe(510);
+    expect(row.workedCost).toBe(127.5);
     expect(row.workedNoRate).toBe(0);
+    // Billed-vs-worked: only the APPROVED punch is billable; the 4.5h
+    // COMPLETED punch is the gap.
+    expect(row.approvedMinutes).toBe(240);
+    expect(row.approvedCost).toBe(60);
     // Heads vs the store's effective-dated target.
     expect(row.scheduledHeads).toBe(2);
     expect(row.targetHeads).toBe(1);

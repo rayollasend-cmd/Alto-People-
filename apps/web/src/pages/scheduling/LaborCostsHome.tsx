@@ -207,7 +207,7 @@ function StatTile({
   label: string;
   value: string;
   sub?: string;
-  tone?: 'success' | 'alert';
+  tone?: 'success' | 'alert' | 'warning';
 }) {
   return (
     <div className="rounded-lg border border-navy-secondary bg-navy/60 px-4 py-3">
@@ -218,7 +218,9 @@ function StatTile({
             ? 'mt-1 text-2xl font-semibold text-success'
             : tone === 'alert'
               ? 'mt-1 text-2xl font-semibold text-alert'
-              : 'mt-1 text-2xl font-semibold text-white'
+              : tone === 'warning'
+                ? 'mt-1 text-2xl font-semibold text-warning'
+                : 'mt-1 text-2xl font-semibold text-white'
         }
       >
         {value}
@@ -805,6 +807,8 @@ interface Totals {
   workedCost: number;
   workedPunches: number;
   workedNoRate: number;
+  approvedMinutes: number;
+  approvedCost: number;
   scheduledRevenue: number;
   revenueNoRate: number;
   scheduledHeads: number;
@@ -825,6 +829,8 @@ const emptyTotals = (): Totals => ({
   workedCost: 0,
   workedPunches: 0,
   workedNoRate: 0,
+  approvedMinutes: 0,
+  approvedCost: 0,
   scheduledRevenue: 0,
   revenueNoRate: 0,
   scheduledHeads: 0,
@@ -851,6 +857,8 @@ const addRow = (t: Totals, r: LaborCostRow): void => {
   t.workedCost += r.workedCost;
   t.workedPunches += r.workedPunches;
   t.workedNoRate += r.workedNoRate;
+  t.approvedMinutes += r.approvedMinutes ?? 0;
+  t.approvedCost += r.approvedCost ?? 0;
   t.scheduledRevenue += r.scheduledRevenue;
   t.revenueNoRate += r.revenueNoRate;
   t.scheduledHeads += r.scheduledHeads;
@@ -1034,6 +1042,7 @@ export function LaborCostsHome() {
         'Shifts', 'Scheduled hours', 'Scheduled cost', 'Shifts without rate',
         'Billable value', 'Margin', 'Shifts without bill rate',
         'Punches', 'Worked hours', 'Worked cost', 'Punches without rate',
+        'Approved hours', 'Approved cost', 'Unapproved hours',
       ],
       ...visible.map((r) => [
         r.date,
@@ -1057,6 +1066,9 @@ export function LaborCostsHome() {
         (r.workedMinutes / 60).toFixed(2),
         r.workedCost.toFixed(2),
         r.workedNoRate,
+        ((r.approvedMinutes ?? 0) / 60).toFixed(2),
+        (r.approvedCost ?? 0).toFixed(2),
+        ((r.workedMinutes - (r.approvedMinutes ?? 0)) / 60).toFixed(2),
       ]),
     ]);
   };
@@ -1221,7 +1233,21 @@ export function LaborCostsHome() {
             <StatTile
               label="Worked cost"
               value={money(grand.workedCost)}
-              sub={`${hours(grand.workedMinutes)} · ${grand.workedPunches} punch${grand.workedPunches === 1 ? '' : 'es'}`}
+              sub={`${hours(grand.workedMinutes)} · ${grand.workedPunches} punch${grand.workedPunches === 1 ? '' : 'es'} · ${hours(grand.approvedMinutes)} approved`}
+            />
+            <StatTile
+              label="Worked, not yet approved"
+              value={money(
+                ((grand.workedMinutes - grand.approvedMinutes) / 60) *
+                  (fallbacks?.associateBillRate ?? 0),
+              )}
+              sub={
+                grand.workedMinutes - grand.approvedMinutes > 0
+                  ? `${hours(grand.workedMinutes - grand.approvedMinutes)} awaiting timesheet approval — unbillable until approved (est. at the SOW rate)`
+                  : 'every worked hour is approved — nothing unbillable'
+              }
+              // The billed-vs-worked gap: where margin leaks.
+              tone={grand.workedMinutes - grand.approvedMinutes > 0 ? 'warning' : 'success'}
             />
             <StatTile
               label="Worked vs scheduled"
@@ -1414,9 +1440,14 @@ export function LaborCostsHome() {
                           </TableCell>
                           <TableCell
                             className="text-right tabular-nums text-silver hidden sm:table-cell"
-                            title={`${hours(r.workedMinutes)} · ${r.workedPunches} punches`}
+                            title={`${hours(r.workedMinutes)} · ${r.workedPunches} punches · ${hours(r.approvedMinutes ?? 0)} approved`}
                           >
                             {money(r.workedCost)}
+                            {r.workedMinutes - (r.approvedMinutes ?? 0) > 0 && (
+                              <div className="text-2xs text-warning">
+                                {hours(r.workedMinutes - (r.approvedMinutes ?? 0))} unapproved
+                              </div>
+                            )}
                           </TableCell>
                         </TableRow>
                       );

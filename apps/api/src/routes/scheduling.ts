@@ -718,6 +718,7 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
           clockInAt: true,
           clockOutAt: true,
           payRate: true,
+          status: true,
           breaks: { select: { startedAt: true, endedAt: true } },
         },
       }),
@@ -817,6 +818,8 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
       workedMinutes: number;
       workedCost: number;
       workedNoRate: number;
+      approvedMinutes: number;
+      approvedCost: number;
       heads: Set<string>;
       leadHeadIds: Set<string>;
       leadMinutes: number;
@@ -851,6 +854,8 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
           workedMinutes: 0,
           workedCost: 0,
           workedNoRate: 0,
+          approvedMinutes: 0,
+          approvedCost: 0,
           heads: new Set<string>(),
           leadHeadIds: new Set<string>(),
           leadMinutes: 0,
@@ -937,10 +942,26 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
         }
         minutes = Math.max(0, Math.round(ms / 60_000));
       }
+      // Snapshot rate else the org associate standard (live punches carry
+      // no position, so leads are priced at the associate rate here —
+      // cost understated, never inflated).
+      const entryRate =
+        e.payRate != null
+          ? Number(e.payRate)
+          : env.DEFAULT_ASSOCIATE_PAY_RATE > 0
+            ? env.DEFAULT_ASSOCIATE_PAY_RATE
+            : undefined;
+      const entryCost = entryRate != null ? (minutes / 60) * entryRate : 0;
       b.workedPunches += 1;
       b.workedMinutes += minutes;
-      if (e.payRate != null) b.workedCost += (minutes / 60) * Number(e.payRate);
+      if (entryRate != null) b.workedCost += entryCost;
       else b.workedNoRate += 1;
+      // APPROVED = the in-system record of Fieldglass-approved (billable)
+      // hours. worked − approved is the billed-vs-worked gap.
+      if (e.status === 'APPROVED') {
+        b.approvedMinutes += minutes;
+        b.approvedCost += entryCost;
+      }
     }
 
     const rows = [...buckets.values()]
@@ -948,6 +969,7 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
         ...b,
         scheduledCost: Math.round(b.scheduledCost * 100) / 100,
         workedCost: Math.round(b.workedCost * 100) / 100,
+        approvedCost: Math.round(b.approvedCost * 100) / 100,
         leadCost: Math.round(b.leadCost * 100) / 100,
         associateCost: Math.round(b.associateCost * 100) / 100,
         scheduledRevenue: Math.round(b.scheduledRevenue * 100) / 100,
