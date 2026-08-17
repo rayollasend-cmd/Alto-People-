@@ -10,6 +10,7 @@ import {
   prisma,
   truncateAll,
 } from '../../../test/db.js';
+import { startOfWeekUTC } from '../../lib/timeAnomalies.js';
 
 const app = () => createApp();
 
@@ -285,7 +286,21 @@ describe('GET /scheduling/labor-costs', () => {
     });
     const a1 = await createAssociate();
     const a2 = await createAssociate();
-    for (const assoc of [a1, a2]) {
+    // Third person already 45h into the week at ANOTHER client — the
+    // cross-client weekly OT trap: their live rate must run at 1.5×.
+    const otWorker = await createAssociate({ firstName: 'Over', lastName: 'Time' });
+    const otherClient = await createClient('Elsewhere LLC');
+    const weekStart = startOfWeekUTC(new Date());
+    await prisma.timeEntry.create({
+      data: {
+        associateId: otWorker.id,
+        clientId: otherClient.id,
+        clockInAt: weekStart,
+        clockOutAt: new Date(weekStart.getTime() + 45 * 3_600_000),
+        status: 'COMPLETED',
+      },
+    });
+    for (const assoc of [a1, a2, otWorker]) {
       await prisma.timeEntry.create({
         data: {
           associateId: assoc.id,
@@ -304,10 +319,20 @@ describe('GET /scheduling/labor-costs', () => {
     const row = res.body.rows.find(
       (r: { locationId: string }) => r.locationId === loc.id,
     );
-    expect(row.clockedIn).toBe(2);
+    expect(row.clockedIn).toBe(3);
     expect(row.windowLabel).toBe('Now');
     expect(row.expected).toBe(2);
     expect(row.totalTarget).toBe(5);
+    // Live burn: two fresh punches at the $15 standard + the OT worker at
+    // 1.5× = $52.50/hr wages, ×1.12 burden = $58.80/hr loaded. Billing at
+    // the SOW rate, OT billed 1.5× ($31.82 on $21.21).
+    expect(row.otHeads).toBe(1);
+    expect(row.wagePerHour).toBeCloseTo(52.5, 2);
+    expect(row.loadedPerHour).toBeCloseTo(58.8, 2);
+    expect(row.billedPerHour).toBeCloseTo(74.24, 1);
+    // Everyone just clocked in — negligible accrual so far.
+    expect(row.wageSoFar).toBeLessThan(2);
+    expect(res.body.burden.percent).toBe(12);
   });
 
   it('staffing targets clamp: a supervisor sees and sets only their own client', async () => {

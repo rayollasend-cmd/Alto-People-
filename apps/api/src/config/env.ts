@@ -184,6 +184,15 @@ const EnvSchema = z.object({
   DEFAULT_LEAD_PAY_RATE: z.coerce.number().min(0).default(18),
   DEFAULT_ASSOCIATE_BILL_RATE: z.coerce.number().min(0).default(21.21),
   DEFAULT_LEAD_BILL_RATE: z.coerce.number().min(0).default(24.24),
+  // Fully-loaded labor: employer-side statutory burden as a percentage on
+  // top of wages (FICA 7.65 + FUTA ~0.6 + FL SUTA ~2.7 + workers' comp —
+  // one knob, per the live-cost design; default 12) and an allocated
+  // overhead per WORKED hour (housing + transport + supervision ÷ hours;
+  // default 0 until the owner supplies it). Both drive the live floor
+  // board's loaded cost. OT (past 40h/week, ALL clients combined) pays and
+  // bills at 1.5× — $31.82 billed on the $21.21 SOW rate.
+  LABOR_BURDEN_PERCENT: z.coerce.number().min(0).max(100).default(12),
+  LABOR_OVERHEAD_PER_HOUR: z.coerce.number().min(0).default(0),
   // Scheduled-report delivery sweep (lib/reportScheduleRunner.ts): runs
   // ReportSchedule rows whose nextRunAt has passed and emails the CSV to
   // the stored recipients. Ticks every N seconds; each tick only touches

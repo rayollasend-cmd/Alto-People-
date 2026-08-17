@@ -407,19 +407,83 @@ function FloorNowCard() {
 
   if (failed || data === null || data.rows.length === 0) return null;
 
+  // Per-client rollup — the "live labor cost for a particular client"
+  // number: loaded burn rate vs billing rate, and the margin between them.
+  const clients = new Map<
+    string,
+    { name: string; clockedIn: number; loadedPerHour: number; billedPerHour: number; loadedSoFar: number; billedSoFar: number; otHeads: number }
+  >();
+  for (const r of data.rows) {
+    const c = clients.get(r.clientId) ?? {
+      name: r.clientName,
+      clockedIn: 0,
+      loadedPerHour: 0,
+      billedPerHour: 0,
+      loadedSoFar: 0,
+      billedSoFar: 0,
+      otHeads: 0,
+    };
+    c.clockedIn += r.clockedIn;
+    c.loadedPerHour += r.loadedPerHour ?? 0;
+    c.billedPerHour += r.billedPerHour ?? 0;
+    c.loadedSoFar += r.loadedSoFar ?? 0;
+    c.billedSoFar += r.billedSoFar ?? 0;
+    c.otHeads += r.otHeads ?? 0;
+    clients.set(r.clientId, c);
+  }
+
   return (
     <Card>
       <CardContent className="p-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div className="text-sm font-medium text-white">On the floor right now</div>
           <div className="text-2xs text-silver/60">
-            clocked in vs expected · refreshes every minute
+            clocked in vs expected · live loaded cost
+            {data.burden ? ` (wages + ${data.burden.percent}% burden${data.burden.overheadPerHour > 0 ? ` + ${money(data.burden.overheadPerHour)}/hr overhead` : ''})` : ''}
+            {' '}vs billed · OT past 40h/wk at 1.5× · refreshes every minute
           </div>
         </div>
+
+        {/* Client rollups first — the per-client live margin. */}
+        <div className="mb-3 space-y-1">
+          {[...clients.values()]
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((c) => {
+              const marginPerHour = c.billedPerHour - c.loadedPerHour;
+              return (
+                <div
+                  key={c.name}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-0.5 rounded-md bg-navy-secondary/30 px-3 py-1.5 text-xs"
+                >
+                  <span className="font-medium text-white">{c.name}</span>
+                  <span className="tabular-nums text-silver">
+                    {c.clockedIn} in
+                    {c.otHeads > 0 && (
+                      <span className="text-warning"> · {c.otHeads} in OT</span>
+                    )}
+                  </span>
+                  <span className="tabular-nums text-silver">
+                    burning {money(c.loadedPerHour)}/hr → billing {money(c.billedPerHour)}/hr
+                  </span>
+                  <span
+                    className={`tabular-nums font-medium ${marginPerHour >= 0 ? 'text-success' : 'text-alert'}`}
+                  >
+                    {marginPerHour >= 0 ? '+' : '−'}
+                    {money(Math.abs(marginPerHour))}/hr
+                  </span>
+                  <span className="tabular-nums text-silver/70">
+                    shift so far: {money(c.loadedSoFar)} cost · {money(c.billedSoFar)} billed
+                  </span>
+                </div>
+              );
+            })}
+        </div>
+
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
           {data.rows.map((r) => {
             const over = r.expected !== null && r.clockedIn > r.expected;
             const under = r.expected !== null && r.clockedIn < r.expected;
+            const margin = (r.billedPerHour ?? 0) - (r.loadedPerHour ?? 0);
             return (
               <div
                 key={r.locationId}
@@ -431,11 +495,12 @@ function FloorNowCard() {
                       : 'border-navy-secondary bg-navy/60'
                 }`}
                 title={
-                  r.windowLabel
-                    ? `Expected from the "${r.windowLabel}" shift window`
+                  (r.windowLabel
+                    ? `Expected from the "${r.windowLabel}" shift window. `
                     : r.totalTarget !== null
-                      ? 'Expected from the total floor target'
-                      : 'No target set for this store'
+                      ? 'Expected from the total floor target. '
+                      : 'No target set for this store. ') +
+                  `Shift so far: ${money(r.loadedSoFar ?? 0)} loaded cost · ${money(r.billedSoFar ?? 0)} billed.`
                 }
               >
                 <div className="truncate text-xs text-silver/80">{r.locationName}</div>
@@ -446,7 +511,22 @@ function FloorNowCard() {
                   <span className="text-silver/60">
                     {' '}/ {r.expected !== null ? r.expected : '—'}
                   </span>
+                  {(r.otHeads ?? 0) > 0 && (
+                    <span className="ml-1 align-middle text-2xs text-warning">
+                      {r.otHeads} OT
+                    </span>
+                  )}
                 </div>
+                {r.clockedIn > 0 && (
+                  <div className="tabular-nums text-2xs text-silver">
+                    {money(r.loadedPerHour ?? 0)}/hr →{' '}
+                    {money(r.billedPerHour ?? 0)}/hr{' '}
+                    <span className={margin >= 0 ? 'text-success' : 'text-alert'}>
+                      ({margin >= 0 ? '+' : '−'}
+                      {money(Math.abs(margin))})
+                    </span>
+                  </div>
+                )}
                 <div className="truncate text-2xs text-silver/60">
                   {r.windowLabel ?? (r.expected !== null ? 'floor total' : 'no target')}
                   {' · '}

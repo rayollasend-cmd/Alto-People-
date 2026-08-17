@@ -1185,15 +1185,21 @@ schedulingRouter.get('/floor-now', MANAGE, async (req, res, next) => {
     }
     const ids = locations.map((l) => l.id);
     const now = new Date();
-    const [active, targets] = await Promise.all([
-      prisma.timeEntry.groupBy({
-        by: ['locationId'],
+    const [activeEntries, targets] = await Promise.all([
+      prisma.timeEntry.findMany({
         where: {
           status: 'ACTIVE',
           locationId: { in: ids },
           ...scopeTimeEntries(req.user!),
         },
-        _count: { _all: true },
+        select: {
+          associateId: true,
+          locationId: true,
+          clockInAt: true,
+          payRate: true,
+          breaks: { select: { startedAt: true, endedAt: true } },
+        },
+        take: 2000,
       }),
       prisma.staffingTarget.findMany({
         where: { locationId: { in: ids }, effectiveFrom: { lte: now } },
@@ -1207,8 +1213,104 @@ schedulingRouter.get('/floor-now', MANAGE, async (req, res, next) => {
         },
       }),
     ]);
+
+    /* Live labor accrual. Elapsed minutes per clocked-in person (net of
+     * breaks, open break counted to now) × their snapshotted pay rate
+     * (else the org standard), with OT at 1.5×. The OT check is WEEKLY
+     * and CROSS-CLIENT on purpose — the classic trap: Destin Mon–Wed +
+     * PCB Thu–Sat puts Saturday in OT wherever it's worked, so week-to-
+     * date sums every site's hours, deliberately unclamped by tenant
+     * (it only feeds a multiplier; no other tenant's data is exposed).
+     * Billing uses the associate SOW rate (live punches carry no
+     * position, so lead billing upside is understated, never overstated);
+     * OT bills at 1.5× too ($31.82 on $21.21). */
+    const netElapsedMinutes = (e: {
+      clockInAt: Date;
+      clockOutAt?: Date | null;
+      breaks: Array<{ startedAt: Date; endedAt: Date | null }>;
+    }): number => {
+      const end = (e.clockOutAt ?? now).getTime();
+      let ms = end - e.clockInAt.getTime();
+      for (const b of e.breaks) {
+        const bEnd = b.endedAt ? b.endedAt.getTime() : end;
+        ms -= Math.max(0, bEnd - b.startedAt.getTime());
+      }
+      return Math.max(0, ms / 60_000);
+    };
+    const activeAssociateIds = [...new Set(activeEntries.map((e) => e.associateId))];
+    const weekEntries = activeAssociateIds.length
+      ? await prisma.timeEntry.findMany({
+          where: {
+            associateId: { in: activeAssociateIds },
+            status: { in: ['ACTIVE', 'COMPLETED', 'APPROVED'] },
+            clockInAt: { gte: startOfWeekUTC(now) },
+          },
+          select: {
+            associateId: true,
+            clockInAt: true,
+            clockOutAt: true,
+            breaks: { select: { startedAt: true, endedAt: true } },
+          },
+          take: 20_000,
+        })
+      : [];
+    const weekMinutes = new Map<string, number>();
+    for (const e of weekEntries) {
+      weekMinutes.set(
+        e.associateId,
+        (weekMinutes.get(e.associateId) ?? 0) + netElapsedMinutes(e),
+      );
+    }
+    const OT_THRESHOLD_MIN = 40 * 60;
+    const burdenMult = 1 + env.LABOR_BURDEN_PERCENT / 100;
+    const overhead = env.LABOR_OVERHEAD_PER_HOUR;
+
+    interface LiveAgg {
+      count: number;
+      wagePerHour: number;
+      billedPerHour: number;
+      wageSoFar: number;
+      billedSoFar: number;
+      elapsedHours: number;
+      otHeads: number;
+    }
+    const liveByLocation = new Map<string, LiveAgg>();
+    for (const e of activeEntries) {
+      if (!e.locationId) continue;
+      const agg = liveByLocation.get(e.locationId) ?? {
+        count: 0,
+        wagePerHour: 0,
+        billedPerHour: 0,
+        wageSoFar: 0,
+        billedSoFar: 0,
+        elapsedHours: 0,
+        otHeads: 0,
+      };
+      const elapsed = netElapsedMinutes(e);
+      const wtd = weekMinutes.get(e.associateId) ?? elapsed;
+      // The tail of THIS punch that sits past the weekly threshold.
+      const otMin = Math.max(0, Math.min(elapsed, wtd - OT_THRESHOLD_MIN));
+      const regMin = elapsed - otMin;
+      const rate =
+        e.payRate != null
+          ? Number(e.payRate)
+          : env.DEFAULT_ASSOCIATE_PAY_RATE > 0
+            ? env.DEFAULT_ASSOCIATE_PAY_RATE
+            : 0;
+      const billRate =
+        env.DEFAULT_ASSOCIATE_BILL_RATE > 0 ? env.DEFAULT_ASSOCIATE_BILL_RATE : 0;
+      const inOtNow = wtd >= OT_THRESHOLD_MIN;
+      agg.count += 1;
+      agg.elapsedHours += elapsed / 60;
+      agg.wageSoFar += (regMin / 60) * rate + (otMin / 60) * rate * 1.5;
+      agg.billedSoFar += (regMin / 60) * billRate + (otMin / 60) * billRate * 1.5;
+      agg.wagePerHour += rate * (inOtNow ? 1.5 : 1);
+      agg.billedPerHour += billRate * (inOtNow ? 1.5 : 1);
+      if (inOtNow) agg.otHeads += 1;
+      liveByLocation.set(e.locationId, agg);
+    }
     const clockedByLocation = new Map(
-      active.map((a) => [a.locationId as string, a._count._all]),
+      [...liveByLocation.entries()].map(([k, v]) => [k, v.count]),
     );
     const totalByLocation = new Map<string, number>();
     const windowsByLocation = new Map<
@@ -1250,6 +1352,8 @@ schedulingRouter.get('/floor-now', MANAGE, async (req, res, next) => {
         );
         const hit = windows.find((w) => inWindow(minute, w)) ?? null;
         const total = totalByLocation.get(l.id) ?? null;
+        const live = liveByLocation.get(l.id);
+        const round2 = (v: number) => Math.round(v * 100) / 100;
         return {
           locationId: l.id,
           locationName: l.name,
@@ -1259,12 +1363,30 @@ schedulingRouter.get('/floor-now', MANAGE, async (req, res, next) => {
           expected: hit ? hit.targetCount : total,
           windowLabel: hit ? hit.label : null,
           totalTarget: total,
+          wagePerHour: round2(live?.wagePerHour ?? 0),
+          loadedPerHour: round2(
+            (live?.wagePerHour ?? 0) * burdenMult + overhead * (live?.count ?? 0),
+          ),
+          billedPerHour: round2(live?.billedPerHour ?? 0),
+          wageSoFar: round2(live?.wageSoFar ?? 0),
+          loadedSoFar: round2(
+            (live?.wageSoFar ?? 0) * burdenMult + overhead * (live?.elapsedHours ?? 0),
+          ),
+          billedSoFar: round2(live?.billedSoFar ?? 0),
+          otHeads: live?.otHeads ?? 0,
         };
       })
       // Quiet stores with no expectation and nobody in stay off the board.
       .filter((r) => r.clockedIn > 0 || r.expected !== null);
     res.json(
-      FloorNowResponseSchema.parse({ rows, generatedAt: now.toISOString() }),
+      FloorNowResponseSchema.parse({
+        rows,
+        generatedAt: now.toISOString(),
+        burden: {
+          percent: env.LABOR_BURDEN_PERCENT,
+          overheadPerHour: env.LABOR_OVERHEAD_PER_HOUR,
+        },
+      }),
     );
   } catch (err) {
     next(err);

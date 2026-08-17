@@ -1997,12 +1997,35 @@ export const FloorNowRowSchema = z.object({
   /** Which window matched ("Morning"), or null when the total applies. */
   windowLabel: z.string().nullable(),
   totalTarget: z.number().int().nonnegative().nullable(),
+  /* Live labor cost — accrues per clocked-in person from their punch-in
+   * (net of breaks), at the snapshotted pay rate else the org standard,
+   * with OT (past 40h this week, ALL clients combined) at 1.5×. All
+   * optional for back-compat. */
+  /** Current burn rate: direct wages, $/hr. */
+  wagePerHour: z.number().nonnegative().optional(),
+  /** Burn rate fully loaded (burden % + overhead per hour), $/hr. */
+  loadedPerHour: z.number().nonnegative().optional(),
+  /** Current billing rate at the applicable bill rates, $/hr. */
+  billedPerHour: z.number().nonnegative().optional(),
+  /** Accrued this shift so far (everyone currently on the floor). */
+  wageSoFar: z.number().nonnegative().optional(),
+  loadedSoFar: z.number().nonnegative().optional(),
+  billedSoFar: z.number().nonnegative().optional(),
+  /** Clocked-in people currently past 40 weekly hours (paying 1.5×). */
+  otHeads: z.number().int().nonnegative().optional(),
 });
 export type FloorNowRow = z.infer<typeof FloorNowRowSchema>;
 
 export const FloorNowResponseSchema = z.object({
   rows: z.array(FloorNowRowSchema),
   generatedAt: z.string().datetime(),
+  /** The loaded-cost knobs in force, for honest labeling. */
+  burden: z
+    .object({
+      percent: z.number().nonnegative(),
+      overheadPerHour: z.number().nonnegative(),
+    })
+    .optional(),
 });
 export type FloorNowResponse = z.infer<typeof FloorNowResponseSchema>;
 
