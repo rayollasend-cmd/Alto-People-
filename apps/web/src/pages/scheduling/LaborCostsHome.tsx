@@ -1,6 +1,16 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, DollarSign, Download } from 'lucide-react';
+import {
+  AlertTriangle,
+  BadgeDollarSign,
+  CalendarClock,
+  DollarSign,
+  Download,
+  Hourglass,
+  Scale,
+  Timer,
+  Users,
+} from 'lucide-react';
 import {
   Bar,
   BarChart,
@@ -198,34 +208,52 @@ function CostTooltip({
   );
 }
 
+/** Small uppercase section label — the page's visual table of contents. */
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="mb-2 text-2xs font-medium uppercase tracking-[0.18em] text-silver/60">
+      {children}
+    </div>
+  );
+}
+
 function StatTile({
+  icon: Icon,
   label,
   value,
   sub,
+  delta,
   tone,
 }: {
+  icon: typeof DollarSign;
   label: string;
   value: string;
   sub?: string;
+  /** Optional second line rendered in the tone color (e.g. a variance). */
+  delta?: string;
   tone?: 'success' | 'alert' | 'warning';
 }) {
+  const toneText =
+    tone === 'success'
+      ? 'text-success'
+      : tone === 'alert'
+        ? 'text-alert'
+        : tone === 'warning'
+          ? 'text-warning'
+          : 'text-white';
   return (
-    <div className="rounded-lg border border-navy-secondary bg-navy/60 px-4 py-3">
-      <div className="text-2xs uppercase tracking-widest text-silver/70">{label}</div>
-      <div
-        className={
-          tone === 'success'
-            ? 'mt-1 text-2xl font-semibold text-success'
-            : tone === 'alert'
-              ? 'mt-1 text-2xl font-semibold text-alert'
-              : tone === 'warning'
-                ? 'mt-1 text-2xl font-semibold text-warning'
-                : 'mt-1 text-2xl font-semibold text-white'
-        }
-      >
+    <div className="rounded-lg border border-navy-secondary bg-navy/60 px-4 py-3.5 transition-colors hover:border-silver/30">
+      <div className="flex items-center gap-1.5 text-2xs uppercase tracking-widest text-silver/70">
+        <Icon className="h-3.5 w-3.5 text-gold/80" aria-hidden="true" />
+        {label}
+      </div>
+      <div className={`mt-1.5 text-2xl font-semibold leading-none ${delta ? 'text-white' : toneText}`}>
         {value}
       </div>
-      {sub && <div className="mt-0.5 text-xs text-silver/70">{sub}</div>}
+      {delta && (
+        <div className={`mt-1 text-xs font-medium tabular-nums ${toneText}`}>{delta}</div>
+      )}
+      {sub && <div className="mt-1 text-xs leading-snug text-silver/70">{sub}</div>}
     </div>
   );
 }
@@ -437,17 +465,28 @@ function FloorNowCard() {
   return (
     <Card>
       <CardContent className="p-4">
-        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <div className="text-sm font-medium text-white">On the floor right now</div>
-          <div className="text-2xs text-silver/60">
-            clocked in vs expected · live loaded cost
-            {data.burden ? ` (wages + ${data.burden.percent}% burden${data.burden.overheadPerHour > 0 ? ` + ${money(data.burden.overheadPerHour)}/hr overhead` : ''})` : ''}
-            {' '}vs billed · OT past 40h/wk at 1.5× · refreshes every minute
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2 w-2" aria-hidden="true">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success/60" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+            </span>
+            <span className="text-sm font-medium text-white">On the floor right now</span>
+          </div>
+          <div
+            className="text-2xs text-silver/60"
+            title={
+              data.burden
+                ? `Loaded cost = wages × (1 + ${data.burden.percent}% burden)${data.burden.overheadPerHour > 0 ? ` + ${money(data.burden.overheadPerHour)}/hr overhead` : ''}. OT past 40h/week (all sites) at 1.5×.`
+                : undefined
+            }
+          >
+            clocked in vs expected · loaded cost vs billed · refreshes every minute
           </div>
         </div>
 
         {/* Client rollups first — the per-client live margin. */}
-        <div className="mb-3 space-y-1">
+        <div className="mb-3 space-y-1.5">
           {[...clients.values()]
             .sort((a, b) => a.name.localeCompare(b.name))
             .map((c) => {
@@ -455,26 +494,30 @@ function FloorNowCard() {
               return (
                 <div
                   key={c.name}
-                  className="flex flex-wrap items-center gap-x-3 gap-y-0.5 rounded-md bg-navy-secondary/30 px-3 py-1.5 text-xs"
+                  className="grid grid-cols-2 items-center gap-x-4 gap-y-1 rounded-md border border-navy-secondary/60 bg-navy-secondary/25 px-3 py-2 text-xs sm:grid-cols-[minmax(8rem,1.2fr)_auto_1fr_auto_auto]"
                 >
-                  <span className="font-medium text-white">{c.name}</span>
+                  <span className="truncate font-medium text-white">{c.name}</span>
                   <span className="tabular-nums text-silver">
-                    {c.clockedIn} in
+                    {c.clockedIn} on the floor
                     {c.otHeads > 0 && (
-                      <span className="text-warning"> · {c.otHeads} in OT</span>
+                      <span className="ml-1.5 rounded bg-warning/15 px-1.5 py-0.5 text-2xs font-medium text-warning">
+                        {c.otHeads} OT
+                      </span>
                     )}
                   </span>
                   <span className="tabular-nums text-silver">
-                    burning {money(c.loadedPerHour)}/hr → billing {money(c.billedPerHour)}/hr
+                    {money(c.loadedPerHour)}/hr cost
+                    <span className="mx-1.5 text-silver/40">→</span>
+                    {money(c.billedPerHour)}/hr billed
                   </span>
                   <span
-                    className={`tabular-nums font-medium ${marginPerHour >= 0 ? 'text-success' : 'text-alert'}`}
+                    className={`tabular-nums font-semibold ${marginPerHour >= 0 ? 'text-success' : 'text-alert'}`}
                   >
                     {marginPerHour >= 0 ? '+' : '−'}
                     {money(Math.abs(marginPerHour))}/hr
                   </span>
-                  <span className="tabular-nums text-silver/70">
-                    shift so far: {money(c.loadedSoFar)} cost · {money(c.billedSoFar)} billed
+                  <span className="tabular-nums text-silver/60">
+                    so far {money(c.loadedSoFar)} · billed {money(c.billedSoFar)}
                   </span>
                 </div>
               );
@@ -514,7 +557,7 @@ function FloorNowCard() {
                     {' '}/ {r.expected !== null ? r.expected : '—'}
                   </span>
                   {(r.otHeads ?? 0) > 0 && (
-                    <span className="ml-1 align-middle text-2xs text-warning">
+                    <span className="ml-1.5 rounded bg-warning/15 px-1.5 py-0.5 align-middle text-2xs font-medium text-warning">
                       {r.otHeads} OT
                     </span>
                   )}
@@ -1120,9 +1163,9 @@ export function LaborCostsHome() {
         <FloorNowCard />
       </div>
 
-      <div className="mb-3 flex flex-wrap items-end gap-2">
+      <div className="mb-4 flex flex-wrap items-end gap-x-3 gap-y-2 rounded-lg border border-navy-secondary bg-navy/40 px-3 py-2.5">
         <div>
-          <label className="block text-2xs uppercase tracking-widest text-silver/80 mb-1">
+          <label className="block text-2xs uppercase tracking-widest text-silver/70 mb-1">
             From
           </label>
           <Input
@@ -1134,7 +1177,7 @@ export function LaborCostsHome() {
           />
         </div>
         <div>
-          <label className="block text-2xs uppercase tracking-widest text-silver/80 mb-1">
+          <label className="block text-2xs uppercase tracking-widest text-silver/70 mb-1">
             To
           </label>
           <Input
@@ -1145,16 +1188,25 @@ export function LaborCostsHome() {
             className="h-9 w-40"
           />
         </div>
-        <div className="flex gap-1.5">
-          <Button size="sm" variant="outline" onClick={() => preset(0)}>
-            Today
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => preset(7)}>
-            Last 7 days
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => preset(30)}>
-            Last 30 days
-          </Button>
+        <div className="inline-flex overflow-hidden rounded-md border border-navy-secondary">
+          {(
+            [
+              { label: 'Today', days: 0 },
+              { label: '7 days', days: 7 },
+              { label: '30 days', days: 30 },
+            ] as const
+          ).map((p, i) => (
+            <button
+              key={p.label}
+              type="button"
+              onClick={() => preset(p.days)}
+              className={`h-9 px-3 text-xs text-silver transition-colors hover:bg-navy-secondary/60 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright ${
+                i > 0 ? 'border-l border-navy-secondary' : ''
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
         </div>
         <Select
           value={clientFilter}
@@ -1256,80 +1308,88 @@ export function LaborCostsHome() {
       ) : (
         <div className="space-y-5">
           {/* Headline numbers — the KPI row every reader scans first. */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-            <StatTile
-              label="Scheduled cost"
-              value={money(grand.scheduledCost)}
-              sub={`${hours(grand.scheduledMinutes)} · ${grand.scheduledShifts} shift${grand.scheduledShifts === 1 ? '' : 's'} · ${grand.leadHeads} lead / ${grand.associateHeads} assoc. head-days`}
-            />
-            <StatTile
-              label="Worked cost"
-              value={money(grand.workedCost)}
-              sub={`${hours(grand.workedMinutes)} · ${grand.workedPunches} punch${grand.workedPunches === 1 ? '' : 'es'} · ${hours(grand.approvedMinutes)} approved`}
-            />
-            <StatTile
-              label="Worked, not yet approved"
-              value={money(
-                ((grand.workedMinutes - grand.approvedMinutes) / 60) *
-                  (fallbacks?.associateBillRate ?? 0),
-              )}
-              sub={
-                grand.workedMinutes - grand.approvedMinutes > 0
-                  ? `${hours(grand.workedMinutes - grand.approvedMinutes)} awaiting timesheet approval — unbillable until approved (est. at the SOW rate)`
-                  : 'every worked hour is approved — nothing unbillable'
-              }
-              // The billed-vs-worked gap: where margin leaks.
-              tone={grand.workedMinutes - grand.approvedMinutes > 0 ? 'warning' : 'success'}
-            />
-            <StatTile
-              label="Worked vs scheduled"
-              value={`${variance >= 0 ? '+' : '−'}${money(Math.abs(variance))}`}
-              sub={
-                grand.scheduledCost > 0
-                  ? `${((grand.workedCost / grand.scheduledCost) * 100).toFixed(0)}% of scheduled`
-                  : 'no scheduled cost in range'
-              }
-              // Over-plan spend is the alarming direction.
-              tone={variance > 0.005 ? 'alert' : variance < -0.005 ? 'success' : undefined}
-            />
-            <StatTile
-              label="Billable value"
-              value={money(grand.scheduledRevenue)}
-              sub={
-                grand.revenueNoRate > 0
-                  ? `${grand.revenueNoRate} shift${grand.revenueNoRate === 1 ? '' : 's'} without a bill rate`
-                  : 'scheduled hours × bill rate'
-              }
-            />
-            <StatTile
-              label="Margin (billable − cost)"
-              value={`${grand.scheduledRevenue - grand.scheduledCost >= 0 ? '+' : '−'}${money(Math.abs(grand.scheduledRevenue - grand.scheduledCost))}`}
-              sub={
-                grand.scheduledRevenue > 0
-                  ? `${(((grand.scheduledRevenue - grand.scheduledCost) / grand.scheduledRevenue) * 100).toFixed(0)}% of billable`
-                  : 'set bill rates to see margin'
-              }
-              tone={
-                grand.scheduledRevenue > 0
-                  ? grand.scheduledRevenue - grand.scheduledCost >= 0
-                    ? 'success'
-                    : 'alert'
-                  : undefined
-              }
-            />
-            <StatTile
-              label="Overstaffing cost"
-              value={money(grand.overstaffCost)}
-              sub={
-                grand.overstaffHeads > 0
-                  ? `${grand.overstaffHeads} head-day${grand.overstaffHeads === 1 ? '' : 's'} above target`
-                  : 'no days above the floor targets'
-              }
-              tone={grand.overstaffCost > 0.005 ? 'alert' : undefined}
-            />
-          </div>
+          <section>
+            <SectionLabel>Range summary</SectionLabel>
+            <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
+              <StatTile
+                icon={CalendarClock}
+                label="Scheduled cost"
+                value={money(grand.scheduledCost)}
+                sub={`${hours(grand.scheduledMinutes)} · ${grand.scheduledShifts} shift${grand.scheduledShifts === 1 ? '' : 's'} · ${grand.leadHeads} lead / ${grand.associateHeads} associate head-days`}
+              />
+              <StatTile
+                icon={Timer}
+                label="Worked cost"
+                value={money(grand.workedCost)}
+                delta={
+                  grand.scheduledCost > 0
+                    ? `${variance >= 0 ? '+' : '−'}${money(Math.abs(variance))} vs scheduled (${((grand.workedCost / grand.scheduledCost) * 100).toFixed(0)}%)`
+                    : undefined
+                }
+                sub={`${hours(grand.workedMinutes)} · ${grand.workedPunches} punch${grand.workedPunches === 1 ? '' : 'es'} · ${hours(grand.approvedMinutes)} approved`}
+                // Over-plan spend is the alarming direction.
+                tone={variance > 0.005 ? 'alert' : variance < -0.005 ? 'success' : undefined}
+              />
+              <StatTile
+                icon={Hourglass}
+                label="Awaiting approval"
+                value={money(
+                  ((grand.workedMinutes - grand.approvedMinutes) / 60) *
+                    (fallbacks?.associateBillRate ?? 0),
+                )}
+                sub={
+                  grand.workedMinutes - grand.approvedMinutes > 0
+                    ? `${hours(grand.workedMinutes - grand.approvedMinutes)} worked but unapproved — unbillable until timesheets clear (est. at the SOW rate)`
+                    : 'every worked hour is approved — nothing unbillable'
+                }
+                // The billed-vs-worked gap: where margin leaks.
+                tone={grand.workedMinutes - grand.approvedMinutes > 0 ? 'warning' : 'success'}
+              />
+              <StatTile
+                icon={BadgeDollarSign}
+                label="Billable value"
+                value={money(grand.scheduledRevenue)}
+                sub={
+                  grand.revenueNoRate > 0
+                    ? `${grand.revenueNoRate} shift${grand.revenueNoRate === 1 ? '' : 's'} without a bill rate`
+                    : 'scheduled hours × contract bill rates'
+                }
+              />
+              <StatTile
+                icon={Scale}
+                label="Margin"
+                value={`${grand.scheduledRevenue - grand.scheduledCost >= 0 ? '+' : '−'}${money(Math.abs(grand.scheduledRevenue - grand.scheduledCost))}`}
+                sub={
+                  grand.scheduledRevenue > 0
+                    ? `${(((grand.scheduledRevenue - grand.scheduledCost) / grand.scheduledRevenue) * 100).toFixed(0)}% of billable value`
+                    : 'set bill rates to see margin'
+                }
+                tone={
+                  grand.scheduledRevenue > 0
+                    ? grand.scheduledRevenue - grand.scheduledCost >= 0
+                      ? 'success'
+                      : 'alert'
+                    : undefined
+                }
+              />
+              <StatTile
+                icon={Users}
+                label="Overstaffing cost"
+                value={money(grand.overstaffCost)}
+                sub={
+                  grand.overstaffHeads > 0
+                    ? `${grand.overstaffHeads} head-day${grand.overstaffHeads === 1 ? '' : 's'} above the floor targets`
+                    : 'no days above the floor targets'
+                }
+                tone={grand.overstaffCost > 0.005 ? 'alert' : undefined}
+              />
+            </div>
+          </section>
 
           {/* Trend needs at least two days to be a trend. */}
+          {(trendData.length > 1 || groupData.length > 0) && (
+            <SectionLabel>Trends &amp; breakdown</SectionLabel>
+          )}
           {trendData.length > 1 && <CostTrendCard data={trendData} />}
           <div className="grid gap-5 xl:grid-cols-2">
             {groupData.length > 0 && (
@@ -1359,6 +1419,7 @@ export function LaborCostsHome() {
             )}
           </div>
 
+          <SectionLabel>Daily detail</SectionLabel>
           {byDay.map(([date, day]) => (
             <Card key={date} className="overflow-hidden">
               <CardContent className="p-0">
@@ -1423,8 +1484,11 @@ export function LaborCostsHome() {
                               {r.targetHeads !== null ? ` / ${r.targetHeads}` : ''}
                             </span>
                             {(r.leadHeads > 0 || r.associateHeads > 0) && (
-                              <div className="text-2xs text-silver/60">
-                                {r.leadHeads}L + {r.associateHeads}A
+                              <div
+                                className="text-2xs text-silver/60"
+                                title={`${r.leadHeads} lead${r.leadHeads === 1 ? '' : 's'} · ${r.associateHeads} associate${r.associateHeads === 1 ? '' : 's'}`}
+                              >
+                                {r.leadHeads} L · {r.associateHeads} A
                               </div>
                             )}
                           </TableCell>
@@ -1432,10 +1496,10 @@ export function LaborCostsHome() {
                             {r.scheduledShifts}
                             {r.scheduledNoRate > 0 && (
                               <span
-                                className="ml-1 text-warning"
-                                title={`${r.scheduledNoRate} without a pay rate`}
+                                className="ml-1.5 rounded bg-warning/15 px-1.5 py-0.5 text-2xs font-medium text-warning"
+                                title={`${r.scheduledNoRate} shift${r.scheduledNoRate === 1 ? '' : 's'} without a pay rate`}
                               >
-                                ({r.scheduledNoRate}!)
+                                {r.scheduledNoRate} unpriced
                               </span>
                             )}
                           </TableCell>
@@ -1455,7 +1519,12 @@ export function LaborCostsHome() {
                           >
                             {money(r.scheduledRevenue)}
                             {r.revenueNoRate > 0 && (
-                              <span className="ml-1 text-warning">!</span>
+                              <span
+                                className="ml-1 text-warning"
+                                aria-label={`${r.revenueNoRate} shifts without a bill rate`}
+                              >
+                                •
+                              </span>
                             )}
                           </TableCell>
                           <TableCell
@@ -1560,25 +1629,51 @@ export function LaborCostsHome() {
             </Card>
           ))}
 
-          <p className="text-2xs text-silver/60">
-            Scheduled cost prices each shift at its own rate, else the client's
-            per-position default
-            {fallbacks?.associatePayRate
-              ? `, else the standard rates (${money(fallbacks.associatePayRate)}/hr associates${fallbacks.leadPayRate ? ` · ${money(fallbacks.leadPayRate)}/hr leads` : ''})`
-              : ''}
-            . Billable value uses the shift's bill rate, else the client's
-            default
-            {fallbacks?.associateBillRate && fallbacks?.leadBillRate
-              ? `, else the SOW rates (${money(fallbacks.associateBillRate)}/hr associates · ${money(fallbacks.leadBillRate)}/hr leads)`
-              : ''}
-            . Worked cost prices each clocked-out punch (net of breaks) at the
-            rate captured at clock-in. Per-shift rates are visible on each
-            shift in{' '}
-            <Link to="/scheduling" className="text-gold hover:underline">
-              Scheduling
-            </Link>
-            .
-          </p>
+          <div className="rounded-lg border border-navy-secondary/60 bg-navy/40 px-4 py-3">
+            <div className="mb-1.5 text-2xs font-medium uppercase tracking-widest text-silver/60">
+              How these numbers are calculated
+            </div>
+            <dl className="grid gap-x-6 gap-y-1.5 text-2xs text-silver/70 sm:grid-cols-2">
+              <div>
+                <dt className="inline font-medium text-silver">Scheduled cost — </dt>
+                <dd className="inline">
+                  each shift at its own pay rate, else the client&rsquo;s
+                  per-position default
+                  {fallbacks?.associatePayRate
+                    ? `, else the company standards (${money(fallbacks.associatePayRate)}/hr associates${fallbacks.leadPayRate ? ` · ${money(fallbacks.leadPayRate)}/hr leads` : ''})`
+                    : ''}
+                  .
+                </dd>
+              </div>
+              <div>
+                <dt className="inline font-medium text-silver">Billable value — </dt>
+                <dd className="inline">
+                  the shift&rsquo;s bill rate, else the client&rsquo;s default
+                  {fallbacks?.associateBillRate && fallbacks?.leadBillRate
+                    ? `, else the SOW rates (${money(fallbacks.associateBillRate)}/hr associates · ${money(fallbacks.leadBillRate)}/hr leads)`
+                    : ''}
+                  .
+                </dd>
+              </div>
+              <div>
+                <dt className="inline font-medium text-silver">Worked cost — </dt>
+                <dd className="inline">
+                  each clocked-out punch, net of breaks, at the rate captured at
+                  clock-in; approved hours are the billable subset.
+                </dd>
+              </div>
+              <div>
+                <dt className="inline font-medium text-silver">Per-shift rates — </dt>
+                <dd className="inline">
+                  visible on each shift in{' '}
+                  <Link to="/scheduling" className="text-gold hover:underline">
+                    Scheduling
+                  </Link>
+                  ; defaults live in Clients&nbsp;→&nbsp;Rate defaults.
+                </dd>
+              </div>
+            </dl>
+          </div>
         </div>
       )}
     </div>
