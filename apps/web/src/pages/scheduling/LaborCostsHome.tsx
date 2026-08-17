@@ -791,6 +791,7 @@ export function LaborCostsHome() {
   const [truncated, setTruncated] = useState(false);
   const [fallbacks, setFallbacks] = useState<{
     associatePayRate: number | null;
+    leadPayRate?: number | null;
     associateBillRate: number | null;
     leadBillRate: number | null;
   } | null>(null);
@@ -1350,7 +1351,7 @@ export function LaborCostsHome() {
             Scheduled cost prices each shift at its own rate, else the client's
             per-position default
             {fallbacks?.associatePayRate
-              ? `, else the standard associate rate (${money(fallbacks.associatePayRate)}/hr — lead positions have no pay fallback and stay flagged until a rate is set)`
+              ? `, else the standard rates (${money(fallbacks.associatePayRate)}/hr associates${fallbacks.leadPayRate ? ` · ${money(fallbacks.leadPayRate)}/hr leads` : ''})`
               : ''}
             . Billable value uses the shift's bill rate, else the client's
             default

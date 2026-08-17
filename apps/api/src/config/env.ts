@@ -178,11 +178,10 @@ const EnvSchema = z.object({
   OFFER_LETTER_SWEEP_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
   // Org-wide labor-rate fallbacks, applied AFTER a shift's own rate and the
   // per-(client, position) defaults. Product owner (2026-08-17): standard
-  // associate pay is $15/hr; the Walmart SOW bill rates are $21.21
-  // (associate) / $24.24 (lead). Lead PAY has no org-wide standard, so
-  // lead shifts without a set pay rate stay flagged instead of being
-  // silently priced at the associate rate. Set to 0 to disable a fallback.
+  // pay is $15/hr associates and $18/hr leads; the Walmart SOW bill rates
+  // are $21.21 (associate) / $24.24 (lead). Set to 0 to disable a fallback.
   DEFAULT_ASSOCIATE_PAY_RATE: z.coerce.number().min(0).default(15),
+  DEFAULT_LEAD_PAY_RATE: z.coerce.number().min(0).default(18),
   DEFAULT_ASSOCIATE_BILL_RATE: z.coerce.number().min(0).default(21.21),
   DEFAULT_LEAD_BILL_RATE: z.coerce.number().min(0).default(24.24),
   // Scheduled-report delivery sweep (lib/reportScheduleRunner.ts): runs

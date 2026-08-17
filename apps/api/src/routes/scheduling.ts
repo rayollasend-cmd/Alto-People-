@@ -570,10 +570,10 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
       }),
       // Labor cost resolves each shift's rate as: explicit payRate, else
       // the (client, position) ShiftRateDefault, else the org-wide
-      // associate fallback — NON-LEAD positions only, so a supervisor
-      // shift is never silently priced at the associate rate. Identical
-      // resolution to /labor-costs, so the strip and the report agree.
-      // `norate` counts only shifts nothing covers.
+      // standard ($15/hr associate, $18/hr lead by position flag).
+      // Identical resolution to /labor-costs, so the strip and the report
+      // agree. `norate` counts only shifts nothing covers (fallbacks
+      // disabled via env = 0).
       prisma.$queryRaw<
         [{ minutes: bigint | null; cost: number | null; norate: bigint | null }]
       >(Prisma.sql`
@@ -581,19 +581,25 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
           COALESCE(SUM(GREATEST(0, ROUND(EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt")) / 60))), 0)::bigint AS minutes,
           COALESCE(SUM(
             CASE WHEN COALESCE(s."payRate", d."payRate",
-                CASE WHEN COALESCE(p."isLead", false) THEN NULL ELSE ${
+                CASE WHEN COALESCE(p."isLead", false) THEN ${
+                  env.DEFAULT_LEAD_PAY_RATE > 0 ? env.DEFAULT_LEAD_PAY_RATE : null
+                }::numeric ELSE ${
                   env.DEFAULT_ASSOCIATE_PAY_RATE > 0 ? env.DEFAULT_ASSOCIATE_PAY_RATE : null
                 }::numeric END
               ) IS NOT NULL
               THEN COALESCE(s."payRate", d."payRate",
-                CASE WHEN COALESCE(p."isLead", false) THEN NULL ELSE ${
+                CASE WHEN COALESCE(p."isLead", false) THEN ${
+                  env.DEFAULT_LEAD_PAY_RATE > 0 ? env.DEFAULT_LEAD_PAY_RATE : null
+                }::numeric ELSE ${
                   env.DEFAULT_ASSOCIATE_PAY_RATE > 0 ? env.DEFAULT_ASSOCIATE_PAY_RATE : null
                 }::numeric END
               ) * GREATEST(0, ROUND(EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt")) / 60)) / 60
               ELSE 0 END
           ), 0)::float8 AS cost,
           COUNT(*) FILTER (WHERE COALESCE(s."payRate", d."payRate",
-            CASE WHEN COALESCE(p."isLead", false) THEN NULL ELSE ${
+            CASE WHEN COALESCE(p."isLead", false) THEN ${
+              env.DEFAULT_LEAD_PAY_RATE > 0 ? env.DEFAULT_LEAD_PAY_RATE : null
+            }::numeric ELSE ${
               env.DEFAULT_ASSOCIATE_PAY_RATE > 0 ? env.DEFAULT_ASSOCIATE_PAY_RATE : null
             }::numeric END
           ) IS NULL)::bigint AS norate
@@ -875,17 +881,15 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
       const posKey = `${s.clientId}|${s.position}`;
       const isLead = leadSet.has(posKey);
       // Resolution order: the shift's own rate → the (client, position)
-      // default → the org-wide fallback ($15 associate pay; SOW bill rates
-      // $21.21 associate / $24.24 lead). Lead PAY deliberately has no
-      // org-wide fallback — pricing a supervisor at the associate rate
-      // would understate cost, so those stay flagged until set.
+      // default → the org-wide standards ($15/hr associate, $18/hr lead
+      // pay; SOW bill rates $21.21 associate / $24.24 lead).
+      const fallbackPay = isLead
+        ? env.DEFAULT_LEAD_PAY_RATE
+        : env.DEFAULT_ASSOCIATE_PAY_RATE;
       const rate =
         s.payRate != null
           ? Number(s.payRate)
-          : defaultRate.get(posKey) ??
-            (!isLead && env.DEFAULT_ASSOCIATE_PAY_RATE > 0
-              ? env.DEFAULT_ASSOCIATE_PAY_RATE
-              : undefined);
+          : defaultRate.get(posKey) ?? (fallbackPay > 0 ? fallbackPay : undefined);
       const fallbackBill = isLead
         ? env.DEFAULT_LEAD_BILL_RATE
         : env.DEFAULT_ASSOCIATE_BILL_RATE;
@@ -968,6 +972,7 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
         fallbacks: {
           associatePayRate:
             env.DEFAULT_ASSOCIATE_PAY_RATE > 0 ? env.DEFAULT_ASSOCIATE_PAY_RATE : null,
+          leadPayRate: env.DEFAULT_LEAD_PAY_RATE > 0 ? env.DEFAULT_LEAD_PAY_RATE : null,
           associateBillRate:
             env.DEFAULT_ASSOCIATE_BILL_RATE > 0 ? env.DEFAULT_ASSOCIATE_BILL_RATE : null,
           leadBillRate:

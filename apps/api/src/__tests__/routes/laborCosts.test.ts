@@ -105,9 +105,9 @@ describe('GET /scheduling/labor-costs', () => {
         assignedAssociateId: worker.id,
       },
     });
-    // A LEAD position without rates: pay stays UNPRICED (no fallback —
-    // supervisors must never be silently costed at the associate rate),
-    // but billing falls back to the SOW lead rate ($24.24 × 3h = $72.72).
+    // A LEAD position without rates: pay falls back to the org lead
+    // standard ($18 × 3h = $54 — never the associate rate), and billing
+    // to the SOW lead rate ($24.24 × 3h = $72.72).
     await prisma.shiftPosition.create({
       data: { clientId: client.id, name: 'Shift Lead', sortOrder: 2, isLead: true },
     });
@@ -164,10 +164,10 @@ describe('GET /scheduling/labor-costs', () => {
     expect(row.locationId).toBe(loc.id);
     expect(row.scheduledShifts).toBe(4);
     expect(row.scheduledMinutes).toBe(900);
-    // Server $80 + Cashier $60 + Greeter $30 (org fallback); the rate-less
-    // LEAD shift contributes $0 and the only no-rate flag.
-    expect(row.scheduledCost).toBe(170);
-    expect(row.scheduledNoRate).toBe(1);
+    // Server $80 + Cashier $60 + Greeter $30 ($15 org fallback) + Shift
+    // Lead $54 ($18 lead fallback) — nothing is unpriced.
+    expect(row.scheduledCost).toBe(224);
+    expect(row.scheduledNoRate).toBe(0);
     expect(row.workedPunches).toBe(1);
     expect(row.workedMinutes).toBe(270);
     expect(row.workedCost).toBe(67.5);
@@ -175,12 +175,12 @@ describe('GET /scheduling/labor-costs', () => {
     // Heads vs the store's effective-dated target.
     expect(row.scheduledHeads).toBe(2);
     expect(row.targetHeads).toBe(1);
-    // Lead/associate split by position flag: Server + Shift Lead (4h+3h,
-    // $80 costed) vs Cashier + Greeter (6h/$60 + 2h/$30).
+    // Lead/associate split by position flag: Server + Shift Lead
+    // (4h/$80 + 3h/$54) vs Cashier + Greeter (6h/$60 + 2h/$30).
     expect(row.leadHeads).toBe(1);
     expect(row.associateHeads).toBe(1);
     expect(row.leadMinutes).toBe(420);
-    expect(row.leadCost).toBe(80);
+    expect(row.leadCost).toBe(134);
     expect(row.associateMinutes).toBe(480);
     expect(row.associateCost).toBe(90);
     // Revenue: Server 4h × $30 (own bill rate) + Cashier 6h × $21 (default
