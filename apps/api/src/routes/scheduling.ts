@@ -261,6 +261,7 @@ const DB_SCHEMA = (() => {
 })();
 const SHIFT_TBL = Prisma.raw(`"${DB_SCHEMA}"."Shift"`);
 const RATE_DEFAULT_TBL = Prisma.raw(`"${DB_SCHEMA}"."ShiftRateDefault"`);
+const SHIFT_POSITION_TBL = Prisma.raw(`"${DB_SCHEMA}"."ShiftPosition"`);
 // The enum TYPE lives in the same schema — an unqualified cast resolves
 // against search_path and mismatches the column's qualified type.
 const SHIFT_STATUS_ENUM = Prisma.raw(`"${DB_SCHEMA}"."ShiftStatus"`);
@@ -568,22 +569,39 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
         _count: { _all: true },
       }),
       // Labor cost resolves each shift's rate as: explicit payRate, else
-      // the (client, position) ShiftRateDefault. `norate` counts only
-      // shifts NEITHER covers — those genuinely contribute $0.
+      // the (client, position) ShiftRateDefault, else the org-wide
+      // associate fallback — NON-LEAD positions only, so a supervisor
+      // shift is never silently priced at the associate rate. Identical
+      // resolution to /labor-costs, so the strip and the report agree.
+      // `norate` counts only shifts nothing covers.
       prisma.$queryRaw<
         [{ minutes: bigint | null; cost: number | null; norate: bigint | null }]
       >(Prisma.sql`
         SELECT
           COALESCE(SUM(GREATEST(0, ROUND(EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt")) / 60))), 0)::bigint AS minutes,
           COALESCE(SUM(
-            CASE WHEN COALESCE(s."payRate", d."payRate") IS NOT NULL
-              THEN COALESCE(s."payRate", d."payRate") * GREATEST(0, ROUND(EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt")) / 60)) / 60
+            CASE WHEN COALESCE(s."payRate", d."payRate",
+                CASE WHEN COALESCE(p."isLead", false) THEN NULL ELSE ${
+                  env.DEFAULT_ASSOCIATE_PAY_RATE > 0 ? env.DEFAULT_ASSOCIATE_PAY_RATE : null
+                }::numeric END
+              ) IS NOT NULL
+              THEN COALESCE(s."payRate", d."payRate",
+                CASE WHEN COALESCE(p."isLead", false) THEN NULL ELSE ${
+                  env.DEFAULT_ASSOCIATE_PAY_RATE > 0 ? env.DEFAULT_ASSOCIATE_PAY_RATE : null
+                }::numeric END
+              ) * GREATEST(0, ROUND(EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt")) / 60)) / 60
               ELSE 0 END
           ), 0)::float8 AS cost,
-          COUNT(*) FILTER (WHERE COALESCE(s."payRate", d."payRate") IS NULL)::bigint AS norate
+          COUNT(*) FILTER (WHERE COALESCE(s."payRate", d."payRate",
+            CASE WHEN COALESCE(p."isLead", false) THEN NULL ELSE ${
+              env.DEFAULT_ASSOCIATE_PAY_RATE > 0 ? env.DEFAULT_ASSOCIATE_PAY_RATE : null
+            }::numeric END
+          ) IS NULL)::bigint AS norate
         FROM ${SHIFT_TBL} s
         LEFT JOIN ${RATE_DEFAULT_TBL} d
           ON d."clientId" = s."clientId" AND d."position" = s."position"
+        LEFT JOIN ${SHIFT_POSITION_TBL} p
+          ON p."clientId" = s."clientId" AND p."name" = s."position" AND p."deletedAt" IS NULL
         WHERE ${Prisma.join(conds, ' AND ')}
       `),
     ]);
@@ -855,10 +873,26 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
         Math.round((s.endsAt.getTime() - s.startsAt.getTime()) / 60_000),
       );
       const posKey = `${s.clientId}|${s.position}`;
-      const rate = s.payRate != null ? Number(s.payRate) : defaultRate.get(posKey);
-      const billRate =
-        s.hourlyRate != null ? Number(s.hourlyRate) : defaultBillRate.get(posKey);
       const isLead = leadSet.has(posKey);
+      // Resolution order: the shift's own rate → the (client, position)
+      // default → the org-wide fallback ($15 associate pay; SOW bill rates
+      // $21.21 associate / $24.24 lead). Lead PAY deliberately has no
+      // org-wide fallback — pricing a supervisor at the associate rate
+      // would understate cost, so those stay flagged until set.
+      const rate =
+        s.payRate != null
+          ? Number(s.payRate)
+          : defaultRate.get(posKey) ??
+            (!isLead && env.DEFAULT_ASSOCIATE_PAY_RATE > 0
+              ? env.DEFAULT_ASSOCIATE_PAY_RATE
+              : undefined);
+      const fallbackBill = isLead
+        ? env.DEFAULT_LEAD_BILL_RATE
+        : env.DEFAULT_ASSOCIATE_BILL_RATE;
+      const billRate =
+        s.hourlyRate != null
+          ? Number(s.hourlyRate)
+          : defaultBillRate.get(posKey) ?? (fallbackBill > 0 ? fallbackBill : undefined);
       const cost = rate != null ? (minutes / 60) * rate : 0;
       b.scheduledShifts += 1;
       b.scheduledMinutes += minutes;
@@ -927,7 +961,20 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
           (a.locationName ?? '').localeCompare(z.locationName ?? ''),
       );
 
-    res.json(LaborCostReportResponseSchema.parse({ rows, truncated }));
+    res.json(
+      LaborCostReportResponseSchema.parse({
+        rows,
+        truncated,
+        fallbacks: {
+          associatePayRate:
+            env.DEFAULT_ASSOCIATE_PAY_RATE > 0 ? env.DEFAULT_ASSOCIATE_PAY_RATE : null,
+          associateBillRate:
+            env.DEFAULT_ASSOCIATE_BILL_RATE > 0 ? env.DEFAULT_ASSOCIATE_BILL_RATE : null,
+          leadBillRate:
+            env.DEFAULT_LEAD_BILL_RATE > 0 ? env.DEFAULT_LEAD_BILL_RATE : null,
+        },
+      }),
+    );
   } catch (err) {
     next(err);
   }

@@ -2010,6 +2010,16 @@ export const LaborCostReportResponseSchema = z.object({
   rows: z.array(LaborCostRowSchema),
   /** True when the shift or punch caps were hit — totals are a floor. */
   truncated: z.boolean(),
+  /** Org-wide rates applied when neither the shift nor the (client,
+   *  position) default sets one; null = disabled. Lead PAY has no
+   *  fallback by design. Surfaced so the UI can state pricing sources. */
+  fallbacks: z
+    .object({
+      associatePayRate: z.number().nullable(),
+      associateBillRate: z.number().nullable(),
+      leadBillRate: z.number().nullable(),
+    })
+    .optional(),
 });
 export type LaborCostReportResponse = z.infer<typeof LaborCostReportResponseSchema>;
 

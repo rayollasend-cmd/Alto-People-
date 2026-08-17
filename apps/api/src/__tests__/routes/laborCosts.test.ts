@@ -89,8 +89,10 @@ describe('GET /scheduling/labor-costs', () => {
         status: 'DRAFT',
       },
     });
-    // No rate anywhere: 2h, contributes $0 and a warning count. Assigned →
-    // one regular-associate head; heads total 2 vs target 1 = over by 1.
+    // No explicit or default rates: a NON-lead position falls back to the
+    // org-wide $15 associate pay and $21.21 SOW bill rate (2h → $30 pay,
+    // $42.42 bill). Assigned → one regular-associate head; heads 2 vs
+    // target 1 = over by 1.
     await prisma.shift.create({
       data: {
         clientId: client.id,
@@ -101,6 +103,23 @@ describe('GET /scheduling/labor-costs', () => {
         status: 'OPEN',
         publishedAt: new Date(),
         assignedAssociateId: worker.id,
+      },
+    });
+    // A LEAD position without rates: pay stays UNPRICED (no fallback —
+    // supervisors must never be silently costed at the associate rate),
+    // but billing falls back to the SOW lead rate ($24.24 × 3h = $72.72).
+    await prisma.shiftPosition.create({
+      data: { clientId: client.id, name: 'Shift Lead', sortOrder: 2, isLead: true },
+    });
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        locationId: loc.id,
+        position: 'Shift Lead',
+        startsAt: at(14),
+        endsAt: at(17),
+        status: 'OPEN',
+        publishedAt: new Date(),
       },
     });
     // Cancelled: invisible to cost.
@@ -143,9 +162,11 @@ describe('GET /scheduling/labor-costs', () => {
     expect(row.date).toBe(DAY);
     expect(row.clientName).toBe('Costed LLC');
     expect(row.locationId).toBe(loc.id);
-    expect(row.scheduledShifts).toBe(3);
-    expect(row.scheduledMinutes).toBe(720);
-    expect(row.scheduledCost).toBe(140);
+    expect(row.scheduledShifts).toBe(4);
+    expect(row.scheduledMinutes).toBe(900);
+    // Server $80 + Cashier $60 + Greeter $30 (org fallback); the rate-less
+    // LEAD shift contributes $0 and the only no-rate flag.
+    expect(row.scheduledCost).toBe(170);
     expect(row.scheduledNoRate).toBe(1);
     expect(row.workedPunches).toBe(1);
     expect(row.workedMinutes).toBe(270);
@@ -154,18 +175,19 @@ describe('GET /scheduling/labor-costs', () => {
     // Heads vs the store's effective-dated target.
     expect(row.scheduledHeads).toBe(2);
     expect(row.targetHeads).toBe(1);
-    // Lead/associate split by position flag: Server (lead, 4h/$80) vs
-    // Cashier + Greeter (6h/$60 + 2h/$0).
+    // Lead/associate split by position flag: Server + Shift Lead (4h+3h,
+    // $80 costed) vs Cashier + Greeter (6h/$60 + 2h/$30).
     expect(row.leadHeads).toBe(1);
     expect(row.associateHeads).toBe(1);
-    expect(row.leadMinutes).toBe(240);
+    expect(row.leadMinutes).toBe(420);
     expect(row.leadCost).toBe(80);
     expect(row.associateMinutes).toBe(480);
-    expect(row.associateCost).toBe(60);
-    // Revenue: Server 4h × $30 (shift's own bill rate) + Cashier 6h × $21
-    // (default billRate); Greeter has neither.
-    expect(row.scheduledRevenue).toBe(246);
-    expect(row.revenueNoRate).toBe(1);
+    expect(row.associateCost).toBe(90);
+    // Revenue: Server 4h × $30 (own bill rate) + Cashier 6h × $21 (default
+    // billRate) + Greeter 2h × $21.21 (SOW associate fallback) + Shift
+    // Lead 3h × $24.24 (SOW lead fallback).
+    expect(row.scheduledRevenue).toBe(361.14);
+    expect(row.revenueNoRate).toBe(0);
   });
 
   it('staffing targets: set + read current, effective-dated per day', async () => {

@@ -789,6 +789,11 @@ export function LaborCostsHome() {
   const [toInclusive, setToInclusive] = useState(todayYmd);
   const [rows, setRows] = useState<LaborCostRow[] | null>(null);
   const [truncated, setTruncated] = useState(false);
+  const [fallbacks, setFallbacks] = useState<{
+    associatePayRate: number | null;
+    associateBillRate: number | null;
+    leadBillRate: number | null;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [clientFilter, setClientFilter] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
@@ -806,6 +811,7 @@ export function LaborCostsHome() {
       });
       setRows(res.rows);
       setTruncated(res.truncated);
+      setFallbacks(res.fallbacks ?? null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load labor costs.');
       setRows([]);
@@ -1342,9 +1348,18 @@ export function LaborCostsHome() {
 
           <p className="text-2xs text-silver/60">
             Scheduled cost prices each shift at its own rate, else the client's
-            per-position default. Worked cost prices each clocked-out punch (net
-            of breaks) at the rate captured at clock-in. Per-shift rates are
-            visible on each shift in{' '}
+            per-position default
+            {fallbacks?.associatePayRate
+              ? `, else the standard associate rate (${money(fallbacks.associatePayRate)}/hr — lead positions have no pay fallback and stay flagged until a rate is set)`
+              : ''}
+            . Billable value uses the shift's bill rate, else the client's
+            default
+            {fallbacks?.associateBillRate && fallbacks?.leadBillRate
+              ? `, else the SOW rates (${money(fallbacks.associateBillRate)}/hr associates · ${money(fallbacks.leadBillRate)}/hr leads)`
+              : ''}
+            . Worked cost prices each clocked-out punch (net of breaks) at the
+            rate captured at clock-in. Per-shift rates are visible on each
+            shift in{' '}
             <Link to="/scheduling" className="text-gold hover:underline">
               Scheduling
             </Link>
