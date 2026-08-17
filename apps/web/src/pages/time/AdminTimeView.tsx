@@ -348,6 +348,45 @@ interface AdminTimeViewProps {
   canManage: boolean;
 }
 
+// ── Shift-window lens ─────────────────────────────────────────────────────
+// Key = the matched shift's start/end as minutes-from-midnight in the SITE
+// timezone (UTC fallback), so Monday's and Tuesday's 6–2 collapse into one
+// option and DST weeks don't split into two. Must stay in lockstep with the
+// server's siteLocalMinutes (time.ts) — the export re-derives the same key.
+function siteMinutes(iso: string, tz: string | null): number {
+  const opts = { hourCycle: 'h23', hour: '2-digit', minute: '2-digit' } as const;
+  let parts: Intl.DateTimeFormatPart[];
+  try {
+    parts = new Intl.DateTimeFormat('en-US', { ...opts, timeZone: tz ?? 'UTC' }).formatToParts(new Date(iso));
+  } catch {
+    parts = new Intl.DateTimeFormat('en-US', { ...opts, timeZone: 'UTC' }).formatToParts(new Date(iso));
+  }
+  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
+  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+  return (h % 24) * 60 + m;
+}
+
+function minutesLabel(min: number): string {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+}
+
+function shiftWindowOf(
+  e: TimeEntry,
+): { key: string; label: string; sort: number } | null {
+  if (!e.shiftStartsAt || !e.shiftEndsAt) return null;
+  const tz = e.locationTimezone ?? null;
+  const startMin = siteMinutes(e.shiftStartsAt, tz);
+  const endMin = siteMinutes(e.shiftEndsAt, tz);
+  return {
+    key: `${startMin}-${endMin}`,
+    label: `${minutesLabel(startMin)} – ${minutesLabel(endMin)}`,
+    sort: startMin * 1440 + endMin,
+  };
+}
+
 type Tab = 'live' | 'queue';
 
 // The live dashboard carries a lightweight ActiveDashboardEntry; widen it to
@@ -491,6 +530,10 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     false,
     (v): v is boolean => typeof v === 'boolean',
   );
+  // Shift lens: narrow the queue to one shift window (e.g. the 6–2), same
+  // client-side scope as the anomalies lens. '' = all; 'none' = entries
+  // with no matched shift; otherwise a "<startMin>-<endMin>" window key.
+  const [shiftFilter, setShiftFilter] = useState('');
   // Server hit its row cap — the window has MORE rows than shown.
   const [truncated, setTruncated] = useState(false);
   const [exportBusy, setExportBusy] = useState<null | 'csv' | 'pdf'>(null);
@@ -838,6 +881,9 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         ...(clientFilter ? { clientId: clientFilter } : {}),
         ...(locationFilter ? { locationId: locationFilter } : {}),
         ...(anomaliesOnly ? { anomaliesOnly: true } : {}),
+        // Same lockstep rule as anomaliesOnly: the shift lens narrows the
+        // screen, so the file must narrow too (server re-derives the key).
+        ...(shiftFilter ? { shiftWindow: shiftFilter } : {}),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Export failed.');
@@ -881,13 +927,55 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   }, [filteredActive]);
   const showLiveGroups = !clientFilter && (liveGroups?.length ?? 0) > 1;
 
-  // What the queue actually renders — the anomalies-only lens applies here
-  // so select-all and the empty state follow what's on screen.
+  // Shift dropdown options come from the loaded page itself — the org's
+  // real windows for the picked range/client, not a hardcoded list.
+  const shiftOptions = useMemo(() => {
+    const windows = new Map<
+      string,
+      { key: string; label: string; count: number; sort: number }
+    >();
+    let unmatched = 0;
+    for (const e of entries ?? []) {
+      const w = shiftWindowOf(e);
+      if (!w) {
+        unmatched += 1;
+        continue;
+      }
+      const cur = windows.get(w.key);
+      if (cur) cur.count += 1;
+      else windows.set(w.key, { ...w, count: 1 });
+    }
+    return {
+      windows: [...windows.values()].sort((a, b) => a.sort - b.sort),
+      unmatched,
+    };
+  }, [entries]);
+
+  // A picked window that vanished from the refreshed page (range/client
+  // changed) would silently render an empty queue — reset to All shifts.
+  useEffect(() => {
+    if (!entries || !shiftFilter) return;
+    const stillThere =
+      shiftFilter === 'none'
+        ? shiftOptions.unmatched > 0
+        : shiftOptions.windows.some((w) => w.key === shiftFilter);
+    if (!stillThere) setShiftFilter('');
+  }, [entries, shiftFilter, shiftOptions]);
+
+  // What the queue actually renders — the shift + anomalies lenses apply
+  // here so select-all and the empty state follow what's on screen.
   const visibleEntries = useMemo(() => {
     if (!entries) return null;
-    if (!anomaliesOnly) return entries;
-    return entries.filter((e) => (e.anomalies?.length ?? 0) > 0);
-  }, [entries, anomaliesOnly]);
+    let list = entries;
+    if (shiftFilter) {
+      list = list.filter((e) => {
+        const w = shiftWindowOf(e);
+        return shiftFilter === 'none' ? w === null : w?.key === shiftFilter;
+      });
+    }
+    if (!anomaliesOnly) return list;
+    return list.filter((e) => (e.anomalies?.length ?? 0) > 0);
+  }, [entries, anomaliesOnly, shiftFilter]);
 
   // Click-to-sort for the queue's desktop table. Sorts the filtered page
   // the table renders; the md:hidden card stack keeps server order.
@@ -1256,6 +1344,32 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                     locationOptions={locationOptions}
                   />
                 </div>
+              </div>
+              <div>
+                <label
+                  htmlFor="shift-window-picker"
+                  className="block text-2xs uppercase tracking-wider text-silver mb-1"
+                >
+                  Shift
+                </label>
+                <Select
+                  id="shift-window-picker"
+                  value={shiftFilter}
+                  onChange={(e) => setShiftFilter(e.target.value)}
+                  className="h-9 text-sm w-48"
+                >
+                  <option value="">All shifts</option>
+                  {shiftOptions.windows.map((w) => (
+                    <option key={w.key} value={w.key}>
+                      {w.label} ({w.count})
+                    </option>
+                  ))}
+                  {shiftOptions.unmatched > 0 && (
+                    <option value="none">
+                      No matched shift ({shiftOptions.unmatched})
+                    </option>
+                  )}
+                </Select>
               </div>
               {payPeriods !== null && payPeriods.length > 0 && (
                 <div>

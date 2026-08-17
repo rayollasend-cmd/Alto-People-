@@ -1861,6 +1861,44 @@ function csvEscape(v: string): string {
   return sharedCsvCell(v);
 }
 
+// Site-local minutes-from-midnight for a shift boundary. Must produce the
+// exact same key the queue computes in the browser (AdminTimeView's
+// siteMinutes): tz falls back to UTC, bad tz strings fall back to UTC.
+function siteLocalMinutes(d: Date, tz: string | null): number {
+  const opts = {
+    hourCycle: 'h23',
+    hour: '2-digit',
+    minute: '2-digit',
+  } as const;
+  let parts: Intl.DateTimeFormatPart[];
+  try {
+    parts = new Intl.DateTimeFormat('en-US', { ...opts, timeZone: tz ?? 'UTC' }).formatToParts(d);
+  } catch {
+    parts = new Intl.DateTimeFormat('en-US', { ...opts, timeZone: 'UTC' }).formatToParts(d);
+  }
+  const h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
+  const m = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
+  return (h % 24) * 60 + m;
+}
+
+/**
+ * The queue's "Shift" filter is a client-side lens over the loaded page, but
+ * exports cover the whole range server-side — so the same window key is
+ * re-derived here per row. Post-filter (not SQL): the key depends on the
+ * matched shift's time-of-day in the site's timezone.
+ */
+function matchesShiftWindow(
+  row: { shift: { startsAt: Date; endsAt: Date } | null; location: { timezone: string | null } | null },
+  shiftWindow: string | undefined,
+): boolean {
+  if (!shiftWindow) return true;
+  if (shiftWindow === 'none') return row.shift === null;
+  if (!row.shift) return false;
+  const tz = row.location?.timezone ?? null;
+  const key = `${siteLocalMinutes(row.shift.startsAt, tz)}-${siteLocalMinutes(row.shift.endsAt, tz)}`;
+  return key === shiftWindow;
+}
+
 async function loadExportRows(
   user: TimeUser,
   input: import('@alto-people/shared').TimeExportInput,
@@ -1885,13 +1923,16 @@ async function loadExportRows(
       ...anomaliesOnlyClauses(input.anomaliesOnly),
     ],
   };
-  const rows = await prisma.timeEntry.findMany({
+  const fetched = await prisma.timeEntry.findMany({
     where,
     orderBy: { clockInAt: 'asc' },
     include: ENTRY_INCLUDE,
     take: TIME_EXPORT_MAX_ROWS,
   });
-  return { from, to, rows, truncated: rows.length === TIME_EXPORT_MAX_ROWS };
+  const rows = input.shiftWindow
+    ? fetched.filter((r) => matchesShiftWindow(r, input.shiftWindow))
+    : fetched;
+  return { from, to, rows, truncated: fetched.length === TIME_EXPORT_MAX_ROWS };
 }
 
 // Federal weekly overtime threshold (40h) — matches payrollAggregator's

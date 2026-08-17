@@ -394,6 +394,105 @@ describe('<AdminTimeView> export scope', () => {
   });
 });
 
+describe('<AdminTimeView> shift-window filter', () => {
+  const base = {
+    associateId: 'a1',
+    clientId: null,
+    clientName: 'Walmart',
+    status: 'COMPLETED' as const,
+    notes: null,
+    rejectionReason: null,
+    approvedById: null,
+    approverEmail: null,
+    approvedAt: null,
+    minutesElapsed: 480,
+    netMinutes: 480,
+  };
+  // No locationTimezone → the window key falls back to UTC, so these are
+  // deterministic in any test-runner timezone. Two mornings (6–2), one
+  // afternoon (2–10), one punch with no matched shift.
+  const ENTRIES = [
+    {
+      ...base,
+      id: 's1',
+      associateName: 'Ana Morning',
+      clockInAt: '2026-06-24T06:02:00.000Z',
+      clockOutAt: '2026-06-24T14:00:00.000Z',
+      shiftStartsAt: '2026-06-24T06:00:00.000Z',
+      shiftEndsAt: '2026-06-24T14:00:00.000Z',
+    },
+    {
+      ...base,
+      id: 's2',
+      associateName: 'Amy Morning',
+      clockInAt: '2026-06-25T05:58:00.000Z',
+      clockOutAt: '2026-06-25T14:05:00.000Z',
+      shiftStartsAt: '2026-06-25T06:00:00.000Z',
+      shiftEndsAt: '2026-06-25T14:00:00.000Z',
+    },
+    {
+      ...base,
+      id: 's3',
+      associateName: 'Ben Afternoon',
+      clockInAt: '2026-06-24T14:00:00.000Z',
+      clockOutAt: '2026-06-24T22:00:00.000Z',
+      shiftStartsAt: '2026-06-24T14:00:00.000Z',
+      shiftEndsAt: '2026-06-24T22:00:00.000Z',
+    },
+    {
+      ...base,
+      id: 's4',
+      associateName: 'Cara Walkin',
+      clockInAt: '2026-06-24T09:00:00.000Z',
+      clockOutAt: '2026-06-24T13:00:00.000Z',
+      shiftStartsAt: null,
+      shiftEndsAt: null,
+    },
+  ];
+
+  it('offers the page’s real windows and narrows the queue to one shift', async () => {
+    vi.mocked(listAdminTimeEntries).mockResolvedValue({ entries: ENTRIES } as never);
+    const user = renderQueueTab();
+    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
+    await screen.findAllByText('Ben Afternoon');
+
+    const select = screen.getByLabelText(/^shift$/i);
+    const labels = [...select.querySelectorAll('option')].map((o) => o.textContent);
+    expect(labels).toEqual([
+      'All shifts',
+      '6:00 AM – 2:00 PM (2)',
+      '2:00 PM – 10:00 PM (1)',
+      'No matched shift (1)',
+    ]);
+
+    await user.selectOptions(select, '360-840');
+    expect(screen.getAllByText('Ana Morning').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Amy Morning').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Ben Afternoon')).not.toBeInTheDocument();
+    expect(screen.queryByText('Cara Walkin')).not.toBeInTheDocument();
+
+    // 'none' = the punches with no matched shift.
+    await user.selectOptions(select, 'none');
+    expect(screen.getAllByText('Cara Walkin').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Ana Morning')).not.toBeInTheDocument();
+  });
+
+  it('carries the picked window into the download', async () => {
+    vi.mocked(listAdminTimeEntries).mockResolvedValue({ entries: ENTRIES } as never);
+    const user = renderQueueTab();
+    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
+    await screen.findAllByText('Ben Afternoon');
+
+    await user.selectOptions(screen.getByLabelText(/^shift$/i), '360-840');
+    await user.click(screen.getByRole('button', { name: /^csv$/i }));
+
+    await waitFor(() => expect(exportTimeEntries).toHaveBeenCalled());
+    expect(
+      vi.mocked(exportTimeEntries).mock.calls.at(-1)![1].shiftWindow,
+    ).toBe('360-840');
+  });
+});
+
 describe('<AdminTimeView> individual timesheet (focus mode)', () => {
   const baseEntry = {
     associateId: 'a1',

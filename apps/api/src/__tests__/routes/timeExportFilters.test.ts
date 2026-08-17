@@ -59,11 +59,12 @@ async function entryFor(
 let cookie: string;
 let maria: { id: string };
 let john: { id: string };
+let client: { id: string };
 
 beforeEach(async () => {
   await truncateAll();
   cookie = await adminCookie();
-  const client = await createClient();
+  client = await createClient();
   maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
   john = await createAssociate({ firstName: 'John', lastName: 'Smith' });
 
@@ -123,6 +124,65 @@ describe('POST /time/admin/export.csv filters', () => {
     const csv = await exportCsv({ search: 'maria lopez' });
     expect(rows(csv)).toHaveLength(2);
     expect(csv).not.toContain('John Smith');
+  });
+
+  it('shiftWindow narrows to one shift window, and "none" to unmatched punches', async () => {
+    // Today at a fixed UTC hour — always inside the FROM..TO range, and
+    // with no Location on the entries the window key falls back to UTC,
+    // so the expected keys are deterministic year-round.
+    const utcToday = (h: number) => {
+      const d = new Date();
+      d.setUTCHours(h, 0, 0, 0);
+      return d;
+    };
+    const morning = await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        position: 'Associate',
+        startsAt: utcToday(6),
+        endsAt: utcToday(14),
+        status: 'PUBLISHED',
+      },
+    });
+    const afternoon = await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        position: 'Associate',
+        startsAt: utcToday(14),
+        endsAt: utcToday(22),
+        status: 'PUBLISHED',
+      },
+    });
+    await prisma.timeEntry.create({
+      data: {
+        associateId: maria.id,
+        clientId: client.id,
+        shiftId: morning.id,
+        clockInAt: utcToday(6),
+        clockOutAt: utcToday(14),
+        status: 'COMPLETED',
+      },
+    });
+    await prisma.timeEntry.create({
+      data: {
+        associateId: john.id,
+        clientId: client.id,
+        shiftId: afternoon.id,
+        clockInAt: utcToday(14),
+        clockOutAt: utcToday(22),
+        status: 'COMPLETED',
+      },
+    });
+
+    // 6:00–14:00 UTC = the "360-840" window: only Maria's shift-tied punch.
+    const morningCsv = await exportCsv({ shiftWindow: '360-840' });
+    expect(rows(morningCsv)).toHaveLength(1);
+    expect(morningCsv).toContain('Maria Lopez');
+    expect(morningCsv).not.toContain('John Smith');
+
+    // "none" = punches with no matched shift: exactly the 4 base fixtures.
+    const noneCsv = await exportCsv({ shiftWindow: 'none' });
+    expect(rows(noneCsv)).toHaveLength(4);
   });
 
   it('composes search AND anomaliesOnly instead of dropping one', async () => {

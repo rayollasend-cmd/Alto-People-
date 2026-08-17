@@ -1212,6 +1212,17 @@ export const TimeExportInputSchema = z.object({
    * range, so the file isn't limited to the page the screen had loaded.
    */
   anomaliesOnly: z.boolean().optional(),
+  /**
+   * Shift-window lens, mirroring the queue's "Shift" filter. Either "none"
+   * (entries with no matched shift) or "<startMin>-<endMin>" — the matched
+   * shift's start/end as minutes-from-midnight in the SITE's timezone (UTC
+   * when the location has none), so Monday's and Tuesday's 6–2 are one
+   * window and DST weeks don't split into two.
+   */
+  shiftWindow: z
+    .string()
+    .regex(/^(none|\d{1,4}-\d{1,4})$/)
+    .optional(),
 });
 export type TimeExportInput = z.infer<typeof TimeExportInputSchema>;
 
