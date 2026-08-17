@@ -437,30 +437,38 @@ function FloorNowCard() {
 
   if (failed || data === null || data.rows.length === 0) return null;
 
-  // Per-client rollup — the "live labor cost for a particular client"
-  // number: loaded burn rate vs billing rate, and the margin between them.
-  const clients = new Map<
-    string,
-    { name: string; clockedIn: number; loadedPerHour: number; billedPerHour: number; loadedSoFar: number; billedSoFar: number; otHeads: number }
-  >();
-  for (const r of data.rows) {
-    const c = clients.get(r.clientId) ?? {
-      name: r.clientName,
+  // Company-wide totals for the hero strip, and per-client rollups that
+  // only render when a client actually spans multiple stores — with
+  // one-store clients (this org's shape) a rollup would just repeat the
+  // store row.
+  const total = data.rows.reduce(
+    (t, r) => ({
+      clockedIn: t.clockedIn + r.clockedIn,
+      expected: t.expected + (r.expected ?? 0),
+      hasExpected: t.hasExpected || r.expected !== null,
+      loadedPerHour: t.loadedPerHour + (r.loadedPerHour ?? 0),
+      billedPerHour: t.billedPerHour + (r.billedPerHour ?? 0),
+      loadedSoFar: t.loadedSoFar + (r.loadedSoFar ?? 0),
+      billedSoFar: t.billedSoFar + (r.billedSoFar ?? 0),
+      otHeads: t.otHeads + (r.otHeads ?? 0),
+    }),
+    {
       clockedIn: 0,
+      expected: 0,
+      hasExpected: false,
       loadedPerHour: 0,
       billedPerHour: 0,
       loadedSoFar: 0,
       billedSoFar: 0,
       otHeads: 0,
-    };
-    c.clockedIn += r.clockedIn;
-    c.loadedPerHour += r.loadedPerHour ?? 0;
-    c.billedPerHour += r.billedPerHour ?? 0;
-    c.loadedSoFar += r.loadedSoFar ?? 0;
-    c.billedSoFar += r.billedSoFar ?? 0;
-    c.otHeads += r.otHeads ?? 0;
-    clients.set(r.clientId, c);
+    },
+  );
+  const totalMarginPerHour = total.billedPerHour - total.loadedPerHour;
+  const storesPerClient = new Map<string, number>();
+  for (const r of data.rows) {
+    storesPerClient.set(r.clientId, (storesPerClient.get(r.clientId) ?? 0) + 1);
   }
+  const anyMultiStoreClient = [...storesPerClient.values()].some((n) => n > 1);
 
   return (
     <Card>
@@ -485,101 +493,168 @@ function FloorNowCard() {
           </div>
         </div>
 
-        {/* Client rollups first — the per-client live margin. */}
-        <div className="mb-3 space-y-1.5">
-          {[...clients.values()]
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map((c) => {
-              const marginPerHour = c.billedPerHour - c.loadedPerHour;
-              return (
-                <div
-                  key={c.name}
-                  className="grid grid-cols-2 items-center gap-x-4 gap-y-1 rounded-md border border-navy-secondary/60 bg-navy-secondary/25 px-3 py-2 text-xs sm:grid-cols-[minmax(8rem,1.2fr)_auto_1fr_auto_auto]"
-                >
-                  <span className="truncate font-medium text-white">{c.name}</span>
-                  <span className="tabular-nums text-silver">
-                    {c.clockedIn} on the floor
-                    {c.otHeads > 0 && (
-                      <span className="ml-1.5 rounded bg-warning/15 px-1.5 py-0.5 text-2xs font-medium text-warning">
-                        {c.otHeads} OT
-                      </span>
-                    )}
+        {/* Company hero strip — the four numbers an executive reads first. */}
+        <div className="mb-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-navy-secondary bg-navy-secondary/60 sm:grid-cols-4">
+          {[
+            {
+              label: 'On the floor',
+              value: total.hasExpected
+                ? `${total.clockedIn} / ${total.expected}`
+                : String(total.clockedIn),
+              extra:
+                total.otHeads > 0 ? (
+                  <span className="ml-1.5 rounded bg-warning/15 px-1.5 py-0.5 align-middle text-2xs font-medium text-warning">
+                    {total.otHeads} OT
                   </span>
-                  <span className="tabular-nums text-silver">
-                    {money(c.loadedPerHour)}/hr cost
-                    <span className="mx-1.5 text-silver/40">→</span>
-                    {money(c.billedPerHour)}/hr billed
-                  </span>
-                  <span
-                    className={`tabular-nums font-semibold ${marginPerHour >= 0 ? 'text-success' : 'text-alert'}`}
-                  >
-                    {marginPerHour >= 0 ? '+' : '−'}
-                    {money(Math.abs(marginPerHour))}/hr
-                  </span>
-                  <span className="tabular-nums text-silver/60">
-                    so far {money(c.loadedSoFar)} · billed {money(c.billedSoFar)}
-                  </span>
+                ) : null,
+              tone: 'text-white',
+            },
+            {
+              label: 'Burn rate',
+              value: `${money(total.loadedPerHour)}/hr`,
+              extra: null,
+              tone: 'text-white',
+            },
+            {
+              label: 'Billing rate',
+              value: `${money(total.billedPerHour)}/hr`,
+              extra: null,
+              tone: 'text-white',
+            },
+            {
+              label: 'Live margin',
+              value: `${totalMarginPerHour >= 0 ? '+' : '−'}${money(Math.abs(totalMarginPerHour))}/hr`,
+              extra: (
+                <div className="mt-0.5 text-2xs tabular-nums text-silver/60">
+                  so far {money(total.loadedSoFar)} · billed {money(total.billedSoFar)}
                 </div>
-              );
-            })}
+              ),
+              tone: totalMarginPerHour >= 0 ? 'text-success' : 'text-alert',
+            },
+          ].map((s) => (
+            <div key={s.label} className="bg-navy px-4 py-3">
+              <div className="text-2xs uppercase tracking-widest text-silver/60">
+                {s.label}
+              </div>
+              <div className={`mt-1 text-xl font-semibold tabular-nums leading-none ${s.tone}`}>
+                {s.value}
+                {s.label === 'On the floor' ? s.extra : null}
+              </div>
+              {s.label !== 'On the floor' ? s.extra : null}
+            </div>
+          ))}
         </div>
 
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-          {data.rows.map((r) => {
-            const over = r.expected !== null && r.clockedIn > r.expected;
-            const under = r.expected !== null && r.clockedIn < r.expected;
-            const margin = (r.billedPerHour ?? 0) - (r.loadedPerHour ?? 0);
-            return (
-              <div
-                key={r.locationId}
-                className={`rounded-md border px-3 py-2 ${
-                  over
-                    ? 'border-alert/50 bg-alert/[0.07]'
-                    : under
-                      ? 'border-warning/50 bg-warning/[0.07]'
-                      : 'border-navy-secondary bg-navy/60'
-                }`}
-                title={
-                  (r.windowLabel
-                    ? `Expected from the "${r.windowLabel}" shift window. `
-                    : r.totalTarget !== null
-                      ? 'Expected from the total floor target. '
-                      : 'No target set for this store. ') +
-                  `Shift so far: ${money(r.loadedSoFar ?? 0)} loaded cost · ${money(r.billedSoFar ?? 0)} billed.`
-                }
-              >
-                <div className="truncate text-xs text-silver/80">{r.locationName}</div>
-                <div className="mt-0.5 text-lg font-semibold tabular-nums">
-                  <span className={over ? 'text-alert' : under ? 'text-warning' : 'text-white'}>
-                    {r.clockedIn}
-                  </span>
-                  <span className="text-silver/60">
-                    {' '}/ {r.expected !== null ? r.expected : '—'}
-                  </span>
-                  {(r.otHeads ?? 0) > 0 && (
-                    <span className="ml-1.5 rounded bg-warning/15 px-1.5 py-0.5 align-middle text-2xs font-medium text-warning">
-                      {r.otHeads} OT
-                    </span>
-                  )}
-                </div>
-                {r.clockedIn > 0 && (
-                  <div className="tabular-nums text-2xs text-silver">
-                    {money(r.loadedPerHour ?? 0)}/hr →{' '}
-                    {money(r.billedPerHour ?? 0)}/hr{' '}
-                    <span className={margin >= 0 ? 'text-success' : 'text-alert'}>
-                      ({margin >= 0 ? '+' : '−'}
-                      {money(Math.abs(margin))})
-                    </span>
-                  </div>
-                )}
-                <div className="truncate text-2xs text-silver/60">
-                  {r.windowLabel ?? (r.expected !== null ? 'floor total' : 'no target')}
-                  {' · '}
-                  {r.clientName}
-                </div>
-              </div>
-            );
-          })}
+        {/* Store ledger — one row per store; client subtotals only when a
+            client actually spans multiple stores. */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-navy-secondary text-2xs uppercase tracking-wider text-silver/60">
+                <th className="py-1.5 pr-3 text-left font-medium">Store</th>
+                <th className="py-1.5 px-3 text-left font-medium hidden md:table-cell">
+                  Window
+                </th>
+                <th className="py-1.5 px-3 text-right font-medium">On floor</th>
+                <th className="py-1.5 px-3 text-right font-medium hidden sm:table-cell">
+                  Cost / hr
+                </th>
+                <th className="py-1.5 px-3 text-right font-medium hidden sm:table-cell">
+                  Billed / hr
+                </th>
+                <th className="py-1.5 px-3 text-right font-medium">Margin / hr</th>
+                <th className="py-1.5 pl-3 text-right font-medium hidden lg:table-cell">
+                  Shift so far
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-navy-secondary/50">
+              {[...data.rows]
+                .sort(
+                  (a, b) =>
+                    a.clientName.localeCompare(b.clientName) ||
+                    a.locationName.localeCompare(b.locationName),
+                )
+                .map((r) => {
+                  const over = r.expected !== null && r.clockedIn > r.expected;
+                  const under = r.expected !== null && r.clockedIn < r.expected;
+                  const margin = (r.billedPerHour ?? 0) - (r.loadedPerHour ?? 0);
+                  return (
+                    <tr key={r.locationId}>
+                      <td className="py-2 pr-3">
+                        <div className="text-white">{r.locationName}</div>
+                        {anyMultiStoreClient && r.clientName !== r.locationName && (
+                          <div className="text-2xs text-silver/50">{r.clientName}</div>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 hidden md:table-cell">
+                        {r.windowLabel ? (
+                          <span className="rounded bg-navy-secondary/50 px-1.5 py-0.5 text-2xs text-silver">
+                            {r.windowLabel}
+                          </span>
+                        ) : r.expected !== null ? (
+                          <span className="text-2xs text-silver/50">floor total</span>
+                        ) : (
+                          <span className="text-2xs text-silver/40">no target</span>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 text-right tabular-nums">
+                        <span
+                          className={
+                            over
+                              ? 'font-semibold text-alert'
+                              : under
+                                ? 'font-semibold text-warning'
+                                : 'text-white'
+                          }
+                          title={
+                            over
+                              ? `${r.clockedIn - r.expected!} above the expected headcount`
+                              : under
+                                ? `${r.expected! - r.clockedIn} below the expected headcount`
+                                : undefined
+                          }
+                        >
+                          {r.clockedIn}
+                          <span className="text-silver/50">
+                            {' '}/ {r.expected !== null ? r.expected : '—'}
+                          </span>
+                        </span>
+                        {(r.otHeads ?? 0) > 0 && (
+                          <span className="ml-1.5 rounded bg-warning/15 px-1.5 py-0.5 text-2xs font-medium text-warning">
+                            {r.otHeads} OT
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 text-right tabular-nums text-silver hidden sm:table-cell">
+                        {r.clockedIn > 0 ? money(r.loadedPerHour ?? 0) : '—'}
+                      </td>
+                      <td className="py-2 px-3 text-right tabular-nums text-silver hidden sm:table-cell">
+                        {r.clockedIn > 0 ? money(r.billedPerHour ?? 0) : '—'}
+                      </td>
+                      <td
+                        className={`py-2 px-3 text-right tabular-nums font-medium ${
+                          r.clockedIn > 0
+                            ? margin >= 0
+                              ? 'text-success'
+                              : 'text-alert'
+                            : 'text-silver/40'
+                        }`}
+                      >
+                        {r.clockedIn > 0
+                          ? `${margin >= 0 ? '+' : '−'}${money(Math.abs(margin))}`
+                          : '—'}
+                      </td>
+                      <td className="py-2 pl-3 text-right tabular-nums text-2xs text-silver/60 hidden lg:table-cell">
+                        {r.clockedIn > 0
+                          ? `${money(r.loadedSoFar ?? 0)} · billed ${money(r.billedSoFar ?? 0)}`
+                          : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
         </div>
       </CardContent>
     </Card>
