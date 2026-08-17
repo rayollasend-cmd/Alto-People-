@@ -705,6 +705,9 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
         associate: { select: { firstName: true, lastName: true } },
         job: { select: { name: true } },
         breaks: { where: { endedAt: null } },
+        // Matched shift bounds — the live board's shift-window filter
+        // groups on these the same way the approval queue does.
+        shift: { select: { startsAt: true, endsAt: true } },
       },
     });
     const clientIds = Array.from(new Set(rows.map((r) => r.clientId).filter(Boolean) as string[]));
@@ -766,6 +769,8 @@ timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
         clockInLat: r.clockInLat ? Number(r.clockInLat) : null,
         clockInLng: r.clockInLng ? Number(r.clockInLng) : null,
         locationTimezone: l?.timezone ?? null,
+        shiftStartsAt: r.shift?.startsAt ? r.shift.startsAt.toISOString() : null,
+        shiftEndsAt: r.shift?.endsAt ? r.shift.endsAt.toISOString() : null,
       };
     });
     res.json(ActiveDashboardResponseSchema.parse({ entries }));

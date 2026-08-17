@@ -44,6 +44,7 @@ import {
   addTimeEntryBreak,
   adminCreateTimeEntry,
   exportTimeEntries,
+  getActiveDashboard,
   listAdminTimeEntries,
   listPayPeriods,
 } from '@/lib/timeApi';
@@ -108,6 +109,9 @@ beforeEach(() => {
   vi.mocked(listPayPeriods).mockResolvedValue({ periods: PERIODS });
   vi.mocked(listAdminTimeEntries).mockClear();
   vi.mocked(exportTimeEntries).mockClear();
+  // Reset per test — a live-board fixture from one test must not leak an
+  // occupied floor into the next.
+  vi.mocked(getActiveDashboard).mockResolvedValue({ entries: [] } as never);
   vi.mocked(listDirectory).mockResolvedValue({ associates: [] } as never);
 });
 
@@ -490,6 +494,74 @@ describe('<AdminTimeView> shift-window filter', () => {
     expect(
       vi.mocked(exportTimeEntries).mock.calls.at(-1)![1].shiftWindow,
     ).toBe('360-840');
+  });
+});
+
+describe('<AdminTimeView> live board shift filter', () => {
+  const liveBase = {
+    clientId: null,
+    clientName: 'Walmart',
+    jobId: null,
+    jobName: null,
+    onBreak: false,
+    geofenceOk: null,
+    clockInLat: null,
+    clockInLng: null,
+    minutesElapsed: 60,
+  };
+  // No locationTimezone → UTC-keyed windows, deterministic in any runner tz.
+  const ACTIVE = [
+    {
+      ...liveBase,
+      id: 'l1',
+      associateId: 'a1',
+      associateName: 'Ana Morning',
+      clockInAt: '2026-06-24T06:00:00.000Z',
+      shiftStartsAt: '2026-06-24T06:00:00.000Z',
+      shiftEndsAt: '2026-06-24T14:00:00.000Z',
+    },
+    {
+      ...liveBase,
+      id: 'l2',
+      associateId: 'a2',
+      associateName: 'Ben Afternoon',
+      clockInAt: '2026-06-24T14:00:00.000Z',
+      shiftStartsAt: '2026-06-24T14:00:00.000Z',
+      shiftEndsAt: '2026-06-24T22:00:00.000Z',
+    },
+    {
+      ...liveBase,
+      id: 'l3',
+      associateId: 'a3',
+      associateName: 'Cara Walkin',
+      clockInAt: '2026-06-24T09:00:00.000Z',
+      shiftStartsAt: null,
+      shiftEndsAt: null,
+    },
+  ];
+
+  it('narrows who is on the board to one shift window', async () => {
+    vi.mocked(getActiveDashboard).mockResolvedValue({ entries: ACTIVE } as never);
+    const user = renderQueueTab();
+    await screen.findAllByText('Ana Morning');
+
+    const select = screen.getByLabelText(/^shift$/i);
+    const labels = [...select.querySelectorAll('option')].map((o) => o.textContent);
+    expect(labels).toEqual([
+      'All shifts',
+      '6:00 AM – 2:00 PM (1)',
+      '2:00 PM – 10:00 PM (1)',
+      'No matched shift (1)',
+    ]);
+
+    await user.selectOptions(select, '360-840');
+    expect(screen.getAllByText('Ana Morning').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Ben Afternoon')).not.toBeInTheDocument();
+    expect(screen.queryByText('Cara Walkin')).not.toBeInTheDocument();
+
+    await user.selectOptions(select, 'none');
+    expect(screen.getAllByText('Cara Walkin').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Ana Morning')).not.toBeInTheDocument();
   });
 });
 

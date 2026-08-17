@@ -373,9 +373,13 @@ function minutesLabel(min: number): string {
   return `${h12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
 }
 
-function shiftWindowOf(
-  e: TimeEntry,
-): { key: string; label: string; sort: number } | null {
+// Structural param — both the queue's TimeEntry and the live board's
+// ActiveDashboardEntry qualify.
+function shiftWindowOf(e: {
+  shiftStartsAt?: string | null;
+  shiftEndsAt?: string | null;
+  locationTimezone?: string | null;
+}): { key: string; label: string; sort: number } | null {
   if (!e.shiftStartsAt || !e.shiftEndsAt) return null;
   const tz = e.locationTimezone ?? null;
   const startMin = siteMinutes(e.shiftStartsAt, tz);
@@ -385,6 +389,85 @@ function shiftWindowOf(
     label: `${minutesLabel(startMin)} – ${minutesLabel(endMin)}`,
     sort: startMin * 1440 + endMin,
   };
+}
+
+type ShiftWindowOptions = {
+  windows: Array<{ key: string; label: string; count: number; sort: number }>;
+  unmatched: number;
+};
+
+// Dropdown options from whatever list is on screen — the org's real
+// windows, not a hardcoded list. Shared by the queue and the live board.
+function collectShiftWindows(
+  list: ReadonlyArray<Parameters<typeof shiftWindowOf>[0]> | null,
+): ShiftWindowOptions {
+  const windows = new Map<string, { key: string; label: string; count: number; sort: number }>();
+  let unmatched = 0;
+  for (const e of list ?? []) {
+    const w = shiftWindowOf(e);
+    if (!w) {
+      unmatched += 1;
+      continue;
+    }
+    const cur = windows.get(w.key);
+    if (cur) cur.count += 1;
+    else windows.set(w.key, { ...w, count: 1 });
+  }
+  return {
+    windows: [...windows.values()].sort((a, b) => a.sort - b.sort),
+    unmatched,
+  };
+}
+
+function ShiftWindowSelect({
+  id,
+  value,
+  onChange,
+  options,
+  className,
+  'aria-label': ariaLabel,
+}: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: ShiftWindowOptions;
+  className?: string;
+  'aria-label'?: string;
+}) {
+  return (
+    <Select
+      id={id}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className={className ?? 'h-9 text-sm w-48'}
+      aria-label={ariaLabel}
+    >
+      <option value="">All shifts</option>
+      {options.windows.map((w) => (
+        <option key={w.key} value={w.key}>
+          {w.label} ({w.count})
+        </option>
+      ))}
+      {options.unmatched > 0 && (
+        <option value="none">No matched shift ({options.unmatched})</option>
+      )}
+    </Select>
+  );
+}
+
+// True while `pick` still corresponds to something in the refreshed list.
+function shiftPickStillThere(pick: string, options: ShiftWindowOptions): boolean {
+  return pick === 'none'
+    ? options.unmatched > 0
+    : options.windows.some((w) => w.key === pick);
+}
+
+function matchesShiftPick(
+  e: Parameters<typeof shiftWindowOf>[0],
+  pick: string,
+): boolean {
+  const w = shiftWindowOf(e);
+  return pick === 'none' ? w === null : w?.key === pick;
 }
 
 type Tab = 'live' | 'queue';
@@ -533,7 +616,10 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   // Shift lens: narrow the queue to one shift window (e.g. the 6–2), same
   // client-side scope as the anomalies lens. '' = all; 'none' = entries
   // with no matched shift; otherwise a "<startMin>-<endMin>" window key.
+  // The live board gets its own pick — the two tabs cover different rosters
+  // (right now vs a date range), so one shared value would cross-reset.
   const [shiftFilter, setShiftFilter] = useState('');
+  const [liveShiftFilter, setLiveShiftFilter] = useState('');
   // Server hit its row cap — the window has MORE rows than shown.
   const [truncated, setTruncated] = useState(false);
   const [exportBusy, setExportBusy] = useState<null | 'csv' | 'pdf'>(null);
@@ -899,17 +985,33 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     return { total: active.length, onBreak, offSite };
   }, [active]);
 
+  // Live board's shift options track who is on the clock right now.
+  const liveShiftOptions = useMemo(() => collectShiftWindows(active), [active]);
+
+  // Same guard as the queue: a window everyone has clocked out of would
+  // silently render an empty board — reset to All shifts.
+  useEffect(() => {
+    if (!active || !liveShiftFilter) return;
+    if (!shiftPickStillThere(liveShiftFilter, liveShiftOptions)) {
+      setLiveShiftFilter('');
+    }
+  }, [active, liveShiftFilter, liveShiftOptions]);
+
   const filteredActive = useMemo(() => {
     if (!active) return null;
+    let list = active;
+    if (liveShiftFilter) {
+      list = list.filter((e) => matchesShiftPick(e, liveShiftFilter));
+    }
     const q = liveSearch.trim().toLowerCase();
-    if (!q) return active;
-    return active.filter(
+    if (!q) return list;
+    return list.filter(
       (e) =>
         e.associateName.toLowerCase().includes(q) ||
         (e.clientName ?? '').toLowerCase().includes(q) ||
         (e.jobName ?? '').toLowerCase().includes(q)
     );
-  }, [active, liveSearch]);
+  }, [active, liveSearch, liveShiftFilter]);
 
   // Group the live board by client when viewing all clients — the one big
   // pile reads as organized places, each with a headcount. A single client
@@ -929,37 +1031,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
 
   // Shift dropdown options come from the loaded page itself — the org's
   // real windows for the picked range/client, not a hardcoded list.
-  const shiftOptions = useMemo(() => {
-    const windows = new Map<
-      string,
-      { key: string; label: string; count: number; sort: number }
-    >();
-    let unmatched = 0;
-    for (const e of entries ?? []) {
-      const w = shiftWindowOf(e);
-      if (!w) {
-        unmatched += 1;
-        continue;
-      }
-      const cur = windows.get(w.key);
-      if (cur) cur.count += 1;
-      else windows.set(w.key, { ...w, count: 1 });
-    }
-    return {
-      windows: [...windows.values()].sort((a, b) => a.sort - b.sort),
-      unmatched,
-    };
-  }, [entries]);
+  const shiftOptions = useMemo(() => collectShiftWindows(entries), [entries]);
 
   // A picked window that vanished from the refreshed page (range/client
   // changed) would silently render an empty queue — reset to All shifts.
   useEffect(() => {
     if (!entries || !shiftFilter) return;
-    const stillThere =
-      shiftFilter === 'none'
-        ? shiftOptions.unmatched > 0
-        : shiftOptions.windows.some((w) => w.key === shiftFilter);
-    if (!stillThere) setShiftFilter('');
+    if (!shiftPickStillThere(shiftFilter, shiftOptions)) setShiftFilter('');
   }, [entries, shiftFilter, shiftOptions]);
 
   // What the queue actually renders — the shift + anomalies lenses apply
@@ -967,12 +1045,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
   const visibleEntries = useMemo(() => {
     if (!entries) return null;
     let list = entries;
-    if (shiftFilter) {
-      list = list.filter((e) => {
-        const w = shiftWindowOf(e);
-        return shiftFilter === 'none' ? w === null : w?.key === shiftFilter;
-      });
-    }
+    if (shiftFilter) list = list.filter((e) => matchesShiftPick(e, shiftFilter));
     if (!anomaliesOnly) return list;
     return list.filter((e) => (e.anomalies?.length ?? 0) > 0);
   }, [entries, anomaliesOnly, shiftFilter]);
@@ -1115,6 +1188,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 locationFilter={locationFilter}
                 onLocationChange={setLocationFilter}
                 locationOptions={locationOptions}
+              />
+              <ShiftWindowSelect
+                id="live-shift-window-picker"
+                value={liveShiftFilter}
+                onChange={setLiveShiftFilter}
+                options={liveShiftOptions}
+                aria-label="Shift"
               />
               <div className="relative w-64">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-silver/70 pointer-events-none" />
@@ -1352,24 +1432,12 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 >
                   Shift
                 </label>
-                <Select
+                <ShiftWindowSelect
                   id="shift-window-picker"
                   value={shiftFilter}
-                  onChange={(e) => setShiftFilter(e.target.value)}
-                  className="h-9 text-sm w-48"
-                >
-                  <option value="">All shifts</option>
-                  {shiftOptions.windows.map((w) => (
-                    <option key={w.key} value={w.key}>
-                      {w.label} ({w.count})
-                    </option>
-                  ))}
-                  {shiftOptions.unmatched > 0 && (
-                    <option value="none">
-                      No matched shift ({shiftOptions.unmatched})
-                    </option>
-                  )}
-                </Select>
+                  onChange={setShiftFilter}
+                  options={shiftOptions}
+                />
               </div>
               {payPeriods !== null && payPeriods.length > 0 && (
                 <div>
