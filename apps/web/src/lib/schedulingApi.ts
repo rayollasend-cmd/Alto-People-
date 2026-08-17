@@ -23,6 +23,8 @@ import type {
   DedupeDraftsResponse,
   LaborCostReportResponse,
   MyShiftDetailResponse,
+  StaffingTargetInput,
+  StaffingTargetsResponse,
   PublishWeekInput,
   PublishWeekResponse,
   Shift,
@@ -367,6 +369,21 @@ export function laborCosts(params: {
   if (params.clientId) p.set('clientId', params.clientId);
   if (params.locationId) p.set('locationId', params.locationId);
   return apiFetch<LaborCostReportResponse>(`/scheduling/labor-costs?${p.toString()}`);
+}
+
+/** Every in-scope store with its current expected floor headcount. */
+export function listStaffingTargets(): Promise<StaffingTargetsResponse> {
+  return apiFetch<StaffingTargetsResponse>('/scheduling/staffing-targets');
+}
+
+/** Record a new effective-dated target — history is never edited. */
+export function setStaffingTarget(body: StaffingTargetInput): Promise<{
+  id: string;
+  locationId: string;
+  targetCount: number;
+  effectiveFrom: string;
+}> {
+  return apiFetch('/scheduling/staffing-targets', { method: 'POST', body });
 }
 
 /** Delete exact-twin DRAFT shifts in the window, keeping the oldest of

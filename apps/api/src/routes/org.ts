@@ -484,6 +484,7 @@ orgRouter.get(
     clientId: r.clientId,
     name: r.name,
     sortOrder: r.sortOrder,
+    isLead: r.isLead,
   }));
   const body = ShiftPositionListResponseSchema.parse({ shiftPositions });
   res.json(body);
@@ -509,7 +510,7 @@ orgRouter.post('/shift-positions', MANAGE, async (req: Request, res: Response) =
     sortOrder = (last?.sortOrder ?? -1) + 1;
   }
   const created = await prisma.shiftPosition.create({
-    data: { clientId: input.clientId, name, sortOrder },
+    data: { clientId: input.clientId, name, sortOrder, isLead: input.isLead ?? false },
   });
   await audit(req, 'shift_position.create', 'ShiftPosition', created.id, {});
   res.status(201).json({
@@ -517,6 +518,7 @@ orgRouter.post('/shift-positions', MANAGE, async (req: Request, res: Response) =
     clientId: created.clientId,
     name: created.name,
     sortOrder: created.sortOrder,
+    isLead: created.isLead,
   });
 });
 
@@ -546,14 +548,18 @@ orgRouter.put('/shift-positions/:id', MANAGE, async (req: Request, res: Response
     data: {
       name: name ?? undefined,
       sortOrder: input.sortOrder ?? undefined,
+      isLead: input.isLead ?? undefined,
     },
   });
-  await audit(req, 'shift_position.update', 'ShiftPosition', id, {});
+  await audit(req, 'shift_position.update', 'ShiftPosition', id, {
+    ...(input.isLead !== undefined ? { isLead: input.isLead } : {}),
+  });
   res.json({
     id: updated.id,
     clientId: updated.clientId,
     name: updated.name,
     sortOrder: updated.sortOrder,
+    isLead: updated.isLead,
   });
 });
 

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DollarSign, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { ShiftRateDefault } from '@alto-people/shared';
+import type { ShiftPosition, ShiftRateDefault } from '@alto-people/shared';
 import {
   deleteRateDefault,
   listRateDefaults,
   upsertRateDefault,
 } from '@/lib/schedulingApi';
+import { listShiftPositions, updateShiftPosition } from '@/lib/orgApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Button } from '@/components/ui/Button';
@@ -33,9 +34,13 @@ export function RateDefaultsSection({ clientId }: { clientId: string }) {
   const { can } = useAuth();
   const [defaults, setDefaults] = useState<ShiftRateDefault[] | null>(null);
   const [positions, setPositions] = useState<string[]>([]);
+  // Catalog rows (id + isLead) for the supervisor/lead flag — drives the
+  // labor-cost report's lead-vs-associate split.
+  const [catalogRows, setCatalogRows] = useState<ShiftPosition[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [newPosition, setNewPosition] = useState('');
   const canManage = can('manage:scheduling');
+  const canFlagLead = can('manage:org');
 
   const refresh = useCallback(async () => {
     try {
@@ -45,6 +50,13 @@ export function RateDefaultsSection({ clientId }: { clientId: string }) {
       setError(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load rate defaults.');
+    }
+    try {
+      const p = await listShiftPositions(clientId);
+      setCatalogRows(p.shiftPositions);
+    } catch {
+      // Lead flags are an enhancement — rates still work without them.
+      setCatalogRows([]);
     }
   }, [clientId]);
 
@@ -107,6 +119,8 @@ export function RateDefaultsSection({ clientId }: { clientId: string }) {
                 clientId={clientId}
                 position={r.position}
                 saved={r.saved}
+                catalogRow={catalogRows.find((c) => c.name === r.position)}
+                canFlagLead={canFlagLead}
                 onChanged={refresh}
               />
             ))}
@@ -136,16 +150,38 @@ function RateRow({
   clientId,
   position,
   saved,
+  catalogRow,
+  canFlagLead,
   onChanged,
 }: {
   clientId: string;
   position: string;
   saved: ShiftRateDefault | undefined;
+  /** The catalog row behind this position, when it still exists — carries
+   *  the supervisor/lead flag. */
+  catalogRow: ShiftPosition | undefined;
+  canFlagLead: boolean;
   onChanged: () => Promise<void>;
 }) {
   const [pay, setPay] = useState(saved ? String(saved.payRate) : '');
   const [bill, setBill] = useState(saved?.billRate != null ? String(saved.billRate) : '');
   const [busy, setBusy] = useState(false);
+  const [leadBusy, setLeadBusy] = useState(false);
+
+  const toggleLead = async () => {
+    if (!catalogRow || leadBusy) return;
+    setLeadBusy(true);
+    try {
+      await updateShiftPosition(catalogRow.id, { isLead: !catalogRow.isLead });
+      await onChanged();
+    } catch (err) {
+      toast.error('Could not update the lead flag.', {
+        description: err instanceof ApiError ? err.message : undefined,
+      });
+    } finally {
+      setLeadBusy(false);
+    }
+  };
 
   // Re-sync when a refresh lands new server truth for this row.
   useEffect(() => {
@@ -229,6 +265,25 @@ function RateRow({
         className="w-28"
         aria-label={`Default bill rate for ${position}`}
       />
+      {catalogRow && (
+        <label
+          className={
+            canFlagLead
+              ? 'flex cursor-pointer items-center gap-1.5 text-xs text-silver'
+              : 'flex items-center gap-1.5 text-xs text-silver/60'
+          }
+          title="Supervisor/lead position — splits the labor-cost report into leads vs regular associates"
+        >
+          <input
+            type="checkbox"
+            checked={catalogRow.isLead ?? false}
+            onChange={() => void toggleLead()}
+            disabled={!canFlagLead || leadBusy}
+            className="h-4 w-4 rounded border-navy-secondary bg-navy-secondary/40 text-gold focus:ring-gold"
+          />
+          Lead
+        </label>
+      )}
       <Button type="submit" size="sm" loading={busy} disabled={!dirty || busy}>
         Save
       </Button>

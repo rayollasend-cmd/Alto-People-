@@ -1907,8 +1907,56 @@ export const LaborCostRowSchema = z.object({
   workedCost: z.number().nonnegative(),
   /** Punches without a snapshotted payRate. */
   workedNoRate: z.number().int().nonnegative(),
+  /** Distinct assigned associates among the bucket's shifts — "heads on
+   *  the floor". Open (unassigned) slots cost money but aren't heads. */
+  scheduledHeads: z.number().int().nonnegative(),
+  /** The store's effective-dated staffing target for this day; null when
+   *  the store has none set (or the bucket has no store). */
+  targetHeads: z.number().int().nonnegative().nullable(),
+  /** Lead-vs-associate split, classified by the shift position's isLead
+   *  flag. A person is a lead head if ANY of their day's shifts is a lead
+   *  shift; minutes/cost split per shift. */
+  leadHeads: z.number().int().nonnegative(),
+  leadMinutes: z.number().int().nonnegative(),
+  leadCost: z.number().nonnegative(),
+  associateHeads: z.number().int().nonnegative(),
+  associateMinutes: z.number().int().nonnegative(),
+  associateCost: z.number().nonnegative(),
+  /** Billable value: shift minutes × (the shift's own bill rate, else the
+   *  (client, position) default billRate). The revenue side of the SOW. */
+  scheduledRevenue: z.number().nonnegative(),
+  /** Shifts with no resolvable bill rate — unbillable until rates are set. */
+  revenueNoRate: z.number().int().nonnegative(),
 });
 export type LaborCostRow = z.infer<typeof LaborCostRowSchema>;
+
+/* Staffing targets ======================================================== */
+
+export const StaffingTargetLocationSchema = z.object({
+  locationId: UuidSchema,
+  locationName: z.string(),
+  clientId: UuidSchema,
+  clientName: z.string(),
+  /** Current effective target, null when never set. */
+  targetCount: z.number().int().nonnegative().nullable(),
+  /** When the current target took effect (YYYY-MM-DD). */
+  effectiveFrom: z.string().nullable(),
+});
+export type StaffingTargetLocation = z.infer<typeof StaffingTargetLocationSchema>;
+
+export const StaffingTargetsResponseSchema = z.object({
+  locations: z.array(StaffingTargetLocationSchema),
+});
+export type StaffingTargetsResponse = z.infer<typeof StaffingTargetsResponseSchema>;
+
+export const StaffingTargetInputSchema = z.object({
+  locationId: UuidSchema,
+  targetCount: z.number().int().min(0).max(999),
+  /** YYYY-MM-DD; defaults to today on the server when omitted. */
+  effectiveFrom: z.string().date().optional(),
+  note: z.string().max(300).optional(),
+});
+export type StaffingTargetInput = z.infer<typeof StaffingTargetInputSchema>;
 
 export const LaborCostReportResponseSchema = z.object({
   rows: z.array(LaborCostRowSchema),
@@ -4266,6 +4314,9 @@ export const ShiftPositionSchema = z.object({
   clientId: UuidSchema,
   name: z.string(),
   sortOrder: z.number().int(),
+  /** Supervisor/lead position — drives the labor-cost report's
+   *  lead-vs-associate split. Optional for back-compat. */
+  isLead: z.boolean().optional(),
 });
 export type ShiftPosition = z.infer<typeof ShiftPositionSchema>;
 
@@ -4280,6 +4331,7 @@ export const ShiftPositionInputSchema = z.object({
   clientId: UuidSchema,
   name: z.string().min(1).max(120),
   sortOrder: z.number().int().min(0).max(9999).optional(),
+  isLead: z.boolean().optional(),
 });
 export type ShiftPositionInput = z.infer<typeof ShiftPositionInputSchema>;
 

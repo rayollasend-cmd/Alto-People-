@@ -13,9 +13,20 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import type { LaborCostRow } from '@alto-people/shared';
+import type { LaborCostRow, StaffingTargetLocation } from '@alto-people/shared';
 import { DonutChart } from '@/components/ui/DonutChart';
-import { laborCosts } from '@/lib/schedulingApi';
+import {
+  laborCosts,
+  listStaffingTargets,
+  setStaffingTarget,
+} from '@/lib/schedulingApi';
+import { toast } from 'sonner';
+import {
+  Drawer,
+  DrawerBody,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate } from '@/lib/format';
@@ -96,6 +107,13 @@ const SERIES = [
   { key: 'worked', name: 'Worked', color: WORKED_COLOR },
 ] as const;
 
+// The trend adds the revenue side. Three hues max — the same validated
+// gold/steel/teal trio the donut uses, in the same fixed order.
+const LINE_SERIES = [
+  ...SERIES,
+  { key: 'revenue', name: 'Billable', color: 'rgb(var(--color-chart-teal))' },
+] as const;
+
 /* Donut slices: three categorical hues (fixed order — gold, steel, teal;
  * validated all-pairs against both surfaces) + the muted de-emphasis gray
  * reserved for the folded "Other" tail. Never more hues — past three named
@@ -107,10 +125,16 @@ const SLICE_COLORS = [
 ];
 const OTHER_SLICE_COLOR = 'rgb(var(--color-silver) / 0.45)';
 
-function ChartLegend({ marks }: { marks: 'line' | 'bar' }) {
+function ChartLegend({
+  marks,
+  series = SERIES,
+}: {
+  marks: 'line' | 'bar';
+  series?: ReadonlyArray<{ key: string; name: string; color: string }>;
+}) {
   return (
     <div className="flex items-center gap-4 text-xs text-silver">
-      {SERIES.map((s) => (
+      {series.map((s) => (
         <span key={s.key} className="inline-flex items-center gap-1.5">
           {marks === 'line' ? (
             <span
@@ -150,7 +174,7 @@ function CostTooltip({
     <div className="rounded-md border border-navy-secondary bg-navy px-3 py-2 elev-2 text-xs">
       <div className="mb-1 text-silver/80">{heading}</div>
       {payload.map((p) => {
-        const s = SERIES.find((x) => x.key === p.dataKey);
+        const s = LINE_SERIES.find((x) => x.key === p.dataKey);
         return (
           <div key={String(p.dataKey)} className="flex items-center gap-2 py-0.5">
             <span
@@ -199,18 +223,20 @@ function StatTile({
   );
 }
 
-/** Daily trend — two 2px lines, ringed markers, crosshair tooltip. */
+/** Daily trend — three 2px lines, ringed markers, crosshair tooltip. */
 function CostTrendCard({
   data,
 }: {
-  data: Array<{ date: string; scheduled: number; worked: number }>;
+  data: Array<{ date: string; scheduled: number; worked: number; revenue: number }>;
 }) {
   return (
     <Card>
       <CardContent className="p-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-          <div className="text-sm font-medium text-white">Daily labor cost</div>
-          <ChartLegend marks="line" />
+          <div className="text-sm font-medium text-white">
+            Daily labor cost vs billable value
+          </div>
+          <ChartLegend marks="line" series={LINE_SERIES} />
         </div>
         <div style={{ height: 240 }}>
           <ResponsiveContainer width="100%" height="100%">
@@ -234,7 +260,7 @@ function CostTrendCard({
                 cursor={{ stroke: GRID_COLOR, strokeWidth: 1 }}
                 content={<CostTooltip labelText={(l) => fmtDate(l)} />}
               />
-              {SERIES.map((s) => (
+              {LINE_SERIES.map((s) => (
                 <Line
                   key={s.key}
                   dataKey={s.key}
@@ -336,6 +362,138 @@ function CostByGroupCard({
   );
 }
 
+/**
+ * Expected floor headcount per store — "we should run 6 at Destin".
+ * Effective-dated on the server: saving records a NEW row from the chosen
+ * date, so past days keep being judged by the target that applied then.
+ */
+function TargetsDrawer({
+  onClose,
+  onChanged,
+}: {
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const [locations, setLocations] = useState<StaffingTargetLocation[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadTargets = useCallback(async () => {
+    try {
+      setError(null);
+      const r = await listStaffingTargets();
+      setLocations(r.locations);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not load targets.');
+      setLocations([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadTargets();
+  }, [loadTargets]);
+
+  return (
+    <Drawer open onOpenChange={(o) => !o && onClose()} width="max-w-xl">
+      <DrawerHeader>
+        <DrawerTitle>Floor targets</DrawerTitle>
+      </DrawerHeader>
+      <DrawerBody>
+        <p className="mb-3 text-xs text-silver">
+          The number of associates each store is expected to run. Saving takes
+          effect from the chosen date forward — history is kept, so past days
+          stay measured against the target that applied then.
+        </p>
+        {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
+        {locations === null ? (
+          <SkeletonRows count={4} />
+        ) : locations.length === 0 ? (
+          <p className="text-sm text-silver">No active stores in your scope.</p>
+        ) : (
+          <ul className="divide-y divide-navy-secondary">
+            {locations.map((l) => (
+              <TargetRow key={l.locationId} location={l} onSaved={() => {
+                void loadTargets();
+                onChanged();
+              }} />
+            ))}
+          </ul>
+        )}
+      </DrawerBody>
+    </Drawer>
+  );
+}
+
+function TargetRow({
+  location,
+  onSaved,
+}: {
+  location: StaffingTargetLocation;
+  onSaved: () => void;
+}) {
+  const [count, setCount] = useState(
+    location.targetCount !== null ? String(location.targetCount) : '',
+  );
+  const [from, setFrom] = useState(todayYmd());
+  const [busy, setBusy] = useState(false);
+  const dirty = count !== (location.targetCount !== null ? String(location.targetCount) : '');
+
+  const save = async () => {
+    const n = Number(count);
+    if (!count || !Number.isInteger(n) || n < 0) {
+      toast.error('Enter a whole number of associates.');
+      return;
+    }
+    setBusy(true);
+    try {
+      await setStaffingTarget({
+        locationId: location.locationId,
+        targetCount: n,
+        effectiveFrom: from,
+      });
+      toast.success(`${location.locationName}: target ${n} from ${from}.`);
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not save the target.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <li className="flex flex-wrap items-center gap-2 py-2.5">
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm text-white">{location.locationName}</div>
+        <div className="truncate text-xs text-silver/70">
+          {location.clientName}
+          {location.targetCount !== null && location.effectiveFrom
+            ? ` · current: ${location.targetCount} since ${location.effectiveFrom}`
+            : ' · no target set'}
+        </div>
+      </div>
+      <Input
+        type="number"
+        min={0}
+        step={1}
+        value={count}
+        onChange={(e) => setCount(e.target.value)}
+        placeholder="Heads"
+        className="h-9 w-20"
+        aria-label={`Expected associates at ${location.locationName}`}
+      />
+      <Input
+        type="date"
+        value={from}
+        onChange={(e) => setFrom(e.target.value)}
+        className="h-9 w-36"
+        aria-label={`Effective from date for ${location.locationName}`}
+      />
+      <Button size="sm" onClick={() => void save()} loading={busy} disabled={busy || !dirty}>
+        Save
+      </Button>
+    </li>
+  );
+}
+
 interface Totals {
   scheduledMinutes: number;
   scheduledCost: number;
@@ -345,6 +503,16 @@ interface Totals {
   workedCost: number;
   workedPunches: number;
   workedNoRate: number;
+  scheduledRevenue: number;
+  revenueNoRate: number;
+  scheduledHeads: number;
+  leadHeads: number;
+  associateHeads: number;
+  leadCost: number;
+  associateCost: number;
+  /** Extra-heads cost, priced at each row's own average cost per head. */
+  overstaffCost: number;
+  overstaffHeads: number;
 }
 const emptyTotals = (): Totals => ({
   scheduledMinutes: 0,
@@ -355,7 +523,23 @@ const emptyTotals = (): Totals => ({
   workedCost: 0,
   workedPunches: 0,
   workedNoRate: 0,
+  scheduledRevenue: 0,
+  revenueNoRate: 0,
+  scheduledHeads: 0,
+  leadHeads: 0,
+  associateHeads: 0,
+  leadCost: 0,
+  associateCost: 0,
+  overstaffCost: 0,
+  overstaffHeads: 0,
 });
+/** Cost of the heads above target: extras × the row's avg cost per head. */
+const overstaffCostOf = (r: LaborCostRow): number => {
+  if (r.targetHeads === null || r.scheduledHeads <= r.targetHeads) return 0;
+  if (r.scheduledHeads === 0) return 0;
+  const extras = r.scheduledHeads - r.targetHeads;
+  return (r.scheduledCost / r.scheduledHeads) * extras;
+};
 const addRow = (t: Totals, r: LaborCostRow): void => {
   t.scheduledMinutes += r.scheduledMinutes;
   t.scheduledCost += r.scheduledCost;
@@ -365,6 +549,17 @@ const addRow = (t: Totals, r: LaborCostRow): void => {
   t.workedCost += r.workedCost;
   t.workedPunches += r.workedPunches;
   t.workedNoRate += r.workedNoRate;
+  t.scheduledRevenue += r.scheduledRevenue;
+  t.revenueNoRate += r.revenueNoRate;
+  t.scheduledHeads += r.scheduledHeads;
+  t.leadHeads += r.leadHeads;
+  t.associateHeads += r.associateHeads;
+  t.leadCost += r.leadCost;
+  t.associateCost += r.associateCost;
+  t.overstaffCost += overstaffCostOf(r);
+  if (r.targetHeads !== null && r.scheduledHeads > r.targetHeads) {
+    t.overstaffHeads += r.scheduledHeads - r.targetHeads;
+  }
 };
 
 export function LaborCostsHome() {
@@ -375,6 +570,7 @@ export function LaborCostsHome() {
   const [error, setError] = useState<string | null>(null);
   const [clientFilter, setClientFilter] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
+  const [targetsOpen, setTargetsOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!from || !toInclusive || toInclusive < from) return;
@@ -458,6 +654,7 @@ export function LaborCostsHome() {
         date,
         scheduled: Math.round(d.totals.scheduledCost * 100) / 100,
         worked: Math.round(d.totals.workedCost * 100) / 100,
+        revenue: Math.round(d.totals.scheduledRevenue * 100) / 100,
       })),
     [byDay],
   );
@@ -523,18 +720,30 @@ export function LaborCostsHome() {
   const exportCsv = () => {
     downloadCsv(`labor-costs-${from}-to-${toInclusive}.csv`, [
       [
-        'Date', 'Client', 'Store', 'Shifts', 'Scheduled hours', 'Scheduled cost',
-        'Shifts without rate', 'Punches', 'Worked hours', 'Worked cost',
-        'Punches without rate',
+        'Date', 'Client', 'Store', 'Heads', 'Target heads', 'Overstaff cost',
+        'Lead heads', 'Associate heads', 'Lead cost', 'Associate cost',
+        'Shifts', 'Scheduled hours', 'Scheduled cost', 'Shifts without rate',
+        'Billable value', 'Margin', 'Shifts without bill rate',
+        'Punches', 'Worked hours', 'Worked cost', 'Punches without rate',
       ],
       ...visible.map((r) => [
         r.date,
         r.clientName ?? '',
         r.locationName ?? '',
+        r.scheduledHeads,
+        r.targetHeads ?? '',
+        overstaffCostOf(r).toFixed(2),
+        r.leadHeads,
+        r.associateHeads,
+        r.leadCost.toFixed(2),
+        r.associateCost.toFixed(2),
         r.scheduledShifts,
         (r.scheduledMinutes / 60).toFixed(2),
         r.scheduledCost.toFixed(2),
         r.scheduledNoRate,
+        r.scheduledRevenue.toFixed(2),
+        (r.scheduledRevenue - r.scheduledCost).toFixed(2),
+        r.revenueNoRate,
         r.workedPunches,
         (r.workedMinutes / 60).toFixed(2),
         r.workedCost.toFixed(2),
@@ -619,17 +828,28 @@ export function LaborCostsHome() {
             </option>
           ))}
         </Select>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={exportCsv}
-          disabled={visible.length === 0}
-          className="ml-auto"
-        >
-          <Download className="h-4 w-4" />
-          Export CSV
-        </Button>
+        <div className="ml-auto flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => setTargetsOpen(true)}>
+            Floor targets
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={exportCsv}
+            disabled={visible.length === 0}
+          >
+            <Download className="h-4 w-4" />
+            Export CSV
+          </Button>
+        </div>
       </div>
+
+      {targetsOpen && (
+        <TargetsDrawer
+          onClose={() => setTargetsOpen(false)}
+          onChanged={() => void load()}
+        />
+      )}
 
       {error && <ErrorBanner className="mb-3">{error}</ErrorBanner>}
 
@@ -677,11 +897,11 @@ export function LaborCostsHome() {
       ) : (
         <div className="space-y-5">
           {/* Headline numbers — the KPI row every reader scans first. */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
             <StatTile
               label="Scheduled cost"
               value={money(grand.scheduledCost)}
-              sub={`${hours(grand.scheduledMinutes)} · ${grand.scheduledShifts} shift${grand.scheduledShifts === 1 ? '' : 's'}`}
+              sub={`${hours(grand.scheduledMinutes)} · ${grand.scheduledShifts} shift${grand.scheduledShifts === 1 ? '' : 's'} · ${grand.leadHeads} lead / ${grand.associateHeads} assoc. head-days`}
             />
             <StatTile
               label="Worked cost"
@@ -700,9 +920,39 @@ export function LaborCostsHome() {
               tone={variance > 0.005 ? 'alert' : variance < -0.005 ? 'success' : undefined}
             />
             <StatTile
-              label="Average per day"
-              value={money(byDay.length ? grand.scheduledCost / byDay.length : 0)}
-              sub={`${byDay.length} day${byDay.length === 1 ? '' : 's'} with activity`}
+              label="Billable value"
+              value={money(grand.scheduledRevenue)}
+              sub={
+                grand.revenueNoRate > 0
+                  ? `${grand.revenueNoRate} shift${grand.revenueNoRate === 1 ? '' : 's'} without a bill rate`
+                  : 'scheduled hours × bill rate'
+              }
+            />
+            <StatTile
+              label="Margin (billable − cost)"
+              value={`${grand.scheduledRevenue - grand.scheduledCost >= 0 ? '+' : '−'}${money(Math.abs(grand.scheduledRevenue - grand.scheduledCost))}`}
+              sub={
+                grand.scheduledRevenue > 0
+                  ? `${(((grand.scheduledRevenue - grand.scheduledCost) / grand.scheduledRevenue) * 100).toFixed(0)}% of billable`
+                  : 'set bill rates to see margin'
+              }
+              tone={
+                grand.scheduledRevenue > 0
+                  ? grand.scheduledRevenue - grand.scheduledCost >= 0
+                    ? 'success'
+                    : 'alert'
+                  : undefined
+              }
+            />
+            <StatTile
+              label="Overstaffing cost"
+              value={money(grand.overstaffCost)}
+              sub={
+                grand.overstaffHeads > 0
+                  ? `${grand.overstaffHeads} head-day${grand.overstaffHeads === 1 ? '' : 's'} above target`
+                  : 'no days above the floor targets'
+              }
+              tone={grand.overstaffCost > 0.005 ? 'alert' : undefined}
             />
           </div>
 
@@ -753,57 +1003,109 @@ export function LaborCostsHome() {
                     <TableRow>
                       <TableHead>Client</TableHead>
                       <TableHead>Store</TableHead>
-                      <TableHead className="text-right">Shifts</TableHead>
+                      <TableHead className="text-right">Heads</TableHead>
                       <TableHead className="text-right hidden sm:table-cell">
-                        Sched. hours
+                        Shifts
                       </TableHead>
                       <TableHead className="text-right">Sched. cost</TableHead>
                       <TableHead className="text-right hidden md:table-cell">
-                        Punches
+                        Billable
+                      </TableHead>
+                      <TableHead className="text-right hidden md:table-cell">
+                        Margin
                       </TableHead>
                       <TableHead className="text-right hidden sm:table-cell">
-                        Worked hours
+                        Worked cost
                       </TableHead>
-                      <TableHead className="text-right">Worked cost</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {day.rows.map((r) => (
-                      <TableRow key={`${r.date}|${r.clientId}|${r.locationId}`}>
-                        <TableCell className="text-white">
-                          {r.clientName ?? '—'}
-                        </TableCell>
-                        <TableCell className="text-silver">
-                          {r.locationName ?? '—'}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-silver">
-                          {r.scheduledShifts}
-                          {r.scheduledNoRate > 0 && (
+                    {day.rows.map((r) => {
+                      const over =
+                        r.targetHeads !== null && r.scheduledHeads > r.targetHeads;
+                      const overCost = overstaffCostOf(r);
+                      const rowMargin = r.scheduledRevenue - r.scheduledCost;
+                      return (
+                        <TableRow key={`${r.date}|${r.clientId}|${r.locationId}`}>
+                          <TableCell className="text-white">
+                            {r.clientName ?? '—'}
+                          </TableCell>
+                          <TableCell className="text-silver">
+                            {r.locationName ?? '—'}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
                             <span
-                              className="ml-1 text-warning"
-                              title={`${r.scheduledNoRate} without a pay rate`}
+                              className={over ? 'text-alert font-medium' : 'text-white'}
+                              title={
+                                over
+                                  ? `${r.scheduledHeads - r.targetHeads!} above target — ≈${money(overCost)} extra`
+                                  : r.targetHeads !== null &&
+                                      r.scheduledHeads < r.targetHeads
+                                    ? `${r.targetHeads - r.scheduledHeads} below target`
+                                    : undefined
+                              }
                             >
-                              ({r.scheduledNoRate}!)
+                              {r.scheduledHeads}
+                              {r.targetHeads !== null ? ` / ${r.targetHeads}` : ''}
                             </span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-silver hidden sm:table-cell">
-                          {hours(r.scheduledMinutes)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-white">
-                          {money(r.scheduledCost)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-silver hidden md:table-cell">
-                          {r.workedPunches}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-silver hidden sm:table-cell">
-                          {hours(r.workedMinutes)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums text-white">
-                          {money(r.workedCost)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                            {(r.leadHeads > 0 || r.associateHeads > 0) && (
+                              <div className="text-2xs text-silver/60">
+                                {r.leadHeads}L + {r.associateHeads}A
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-silver hidden sm:table-cell">
+                            {r.scheduledShifts}
+                            {r.scheduledNoRate > 0 && (
+                              <span
+                                className="ml-1 text-warning"
+                                title={`${r.scheduledNoRate} without a pay rate`}
+                              >
+                                ({r.scheduledNoRate}!)
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell
+                            className="text-right tabular-nums text-white"
+                            title={`${hours(r.scheduledMinutes)} · leads ${money(r.leadCost)} / associates ${money(r.associateCost)}`}
+                          >
+                            {money(r.scheduledCost)}
+                          </TableCell>
+                          <TableCell
+                            className="text-right tabular-nums text-silver hidden md:table-cell"
+                            title={
+                              r.revenueNoRate > 0
+                                ? `${r.revenueNoRate} shift(s) without a bill rate`
+                                : undefined
+                            }
+                          >
+                            {money(r.scheduledRevenue)}
+                            {r.revenueNoRate > 0 && (
+                              <span className="ml-1 text-warning">!</span>
+                            )}
+                          </TableCell>
+                          <TableCell
+                            className={`text-right tabular-nums hidden md:table-cell ${
+                              r.scheduledRevenue > 0
+                                ? rowMargin >= 0
+                                  ? 'text-success'
+                                  : 'text-alert'
+                                : 'text-silver/50'
+                            }`}
+                          >
+                            {r.scheduledRevenue > 0
+                              ? `${rowMargin >= 0 ? '+' : '−'}${money(Math.abs(rowMargin))}`
+                              : '—'}
+                          </TableCell>
+                          <TableCell
+                            className="text-right tabular-nums text-silver hidden sm:table-cell"
+                            title={`${hours(r.workedMinutes)} · ${r.workedPunches} punches`}
+                          >
+                            {money(r.workedCost)}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </CardContent>

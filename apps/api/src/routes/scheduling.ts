@@ -20,6 +20,8 @@ import {
   DedupeDraftsInputSchema,
   DedupeDraftsResponseSchema,
   LaborCostReportResponseSchema,
+  StaffingTargetInputSchema,
+  StaffingTargetsResponseSchema,
   OpenShiftClaimSchema,
   OpenShiftsResponseSchema,
   PublishWeekInputSchema,
@@ -668,6 +670,10 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
           startsAt: true,
           endsAt: true,
           payRate: true,
+          // Bill rate for the revenue side — the create dialog labels
+          // hourlyRate "Bill rate /hr".
+          hourlyRate: true,
+          assignedAssociateId: true,
           client: { select: { name: true } },
           locationRel: { select: { name: true, timezone: true } },
         },
@@ -695,17 +701,61 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
     const shifts = shiftRows.slice(0, SHIFT_CAP);
     const entries = entryRows.slice(0, PUNCH_CAP);
 
-    // Rate defaults for the scheduled fallback.
+    // Rate defaults for the scheduled fallback — pay (cost) AND bill
+    // (revenue) sides — plus the positions' lead flags for the
+    // lead-vs-associate split, and each store's effective staffing target.
     const shiftClientIds = [...new Set(shifts.map((s) => s.clientId))];
-    const rateDefaults = shiftClientIds.length
-      ? await prisma.shiftRateDefault.findMany({
-          where: { clientId: { in: shiftClientIds } },
-          select: { clientId: true, position: true, payRate: true },
-        })
-      : [];
+    const shiftLocationIds = [
+      ...new Set(shifts.map((s) => s.locationId).filter((l): l is string => !!l)),
+    ];
+    const [rateDefaults, leadPositions, targetRows] = await Promise.all([
+      shiftClientIds.length
+        ? prisma.shiftRateDefault.findMany({
+            where: { clientId: { in: shiftClientIds } },
+            select: { clientId: true, position: true, payRate: true, billRate: true },
+          })
+        : Promise.resolve([]),
+      shiftClientIds.length
+        ? prisma.shiftPosition.findMany({
+            where: { clientId: { in: shiftClientIds }, deletedAt: null, isLead: true },
+            select: { clientId: true, name: true },
+          })
+        : Promise.resolve([]),
+      shiftLocationIds.length
+        ? prisma.staffingTarget.findMany({
+            where: { locationId: { in: shiftLocationIds }, effectiveFrom: { lt: to } },
+            orderBy: { effectiveFrom: 'desc' },
+            select: { locationId: true, targetCount: true, effectiveFrom: true },
+          })
+        : Promise.resolve([]),
+    ]);
     const defaultRate = new Map(
       rateDefaults.map((d) => [`${d.clientId}|${d.position}`, Number(d.payRate)]),
     );
+    const defaultBillRate = new Map(
+      rateDefaults
+        .filter((d) => d.billRate != null)
+        .map((d) => [`${d.clientId}|${d.position}`, Number(d.billRate)]),
+    );
+    const leadSet = new Set(leadPositions.map((p) => `${p.clientId}|${p.name}`));
+    // Targets per location, newest-first — the effective target for a day
+    // is the first row whose effectiveFrom (a plain date) is <= that day.
+    const targetsByLocation = new Map<
+      string,
+      Array<{ from: string; count: number }>
+    >();
+    for (const t of targetRows) {
+      const arr = targetsByLocation.get(t.locationId) ?? [];
+      arr.push({ from: t.effectiveFrom.toISOString().slice(0, 10), count: t.targetCount });
+      targetsByLocation.set(t.locationId, arr);
+    }
+    const targetFor = (locationId: string | null, date: string): number | null => {
+      if (!locationId) return null;
+      const arr = targetsByLocation.get(locationId);
+      if (!arr) return null;
+      const hit = arr.find((t) => t.from <= date);
+      return hit ? hit.count : null;
+    };
 
     // Names + timezones for the entries' clients/locations (shifts carry
     // their own joins).
@@ -742,6 +792,14 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
       workedMinutes: number;
       workedCost: number;
       workedNoRate: number;
+      heads: Set<string>;
+      leadHeadIds: Set<string>;
+      leadMinutes: number;
+      leadCost: number;
+      associateMinutes: number;
+      associateCost: number;
+      scheduledRevenue: number;
+      revenueNoRate: number;
     }
     const buckets = new Map<string, Bucket>();
     const bucketFor = (
@@ -768,6 +826,14 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
           workedMinutes: 0,
           workedCost: 0,
           workedNoRate: 0,
+          heads: new Set<string>(),
+          leadHeadIds: new Set<string>(),
+          leadMinutes: 0,
+          leadCost: 0,
+          associateMinutes: 0,
+          associateCost: 0,
+          scheduledRevenue: 0,
+          revenueNoRate: 0,
         };
         buckets.set(key, b);
       }
@@ -787,14 +853,29 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
         0,
         Math.round((s.endsAt.getTime() - s.startsAt.getTime()) / 60_000),
       );
-      const rate =
-        s.payRate != null
-          ? Number(s.payRate)
-          : defaultRate.get(`${s.clientId}|${s.position}`);
+      const posKey = `${s.clientId}|${s.position}`;
+      const rate = s.payRate != null ? Number(s.payRate) : defaultRate.get(posKey);
+      const billRate =
+        s.hourlyRate != null ? Number(s.hourlyRate) : defaultBillRate.get(posKey);
+      const isLead = leadSet.has(posKey);
+      const cost = rate != null ? (minutes / 60) * rate : 0;
       b.scheduledShifts += 1;
       b.scheduledMinutes += minutes;
-      if (rate != null) b.scheduledCost += (minutes / 60) * rate;
+      if (rate != null) b.scheduledCost += cost;
       else b.scheduledNoRate += 1;
+      if (billRate != null) b.scheduledRevenue += (minutes / 60) * billRate;
+      else b.revenueNoRate += 1;
+      if (isLead) {
+        b.leadMinutes += minutes;
+        b.leadCost += cost;
+      } else {
+        b.associateMinutes += minutes;
+        b.associateCost += cost;
+      }
+      if (s.assignedAssociateId) {
+        b.heads.add(s.assignedAssociateId);
+        if (isLead) b.leadHeadIds.add(s.assignedAssociateId);
+      }
     }
 
     for (const e of entries) {
@@ -824,10 +905,19 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
     }
 
     const rows = [...buckets.values()]
-      .map((b) => ({
+      .map(({ heads, leadHeadIds, ...b }) => ({
         ...b,
         scheduledCost: Math.round(b.scheduledCost * 100) / 100,
         workedCost: Math.round(b.workedCost * 100) / 100,
+        leadCost: Math.round(b.leadCost * 100) / 100,
+        associateCost: Math.round(b.associateCost * 100) / 100,
+        scheduledRevenue: Math.round(b.scheduledRevenue * 100) / 100,
+        scheduledHeads: heads.size,
+        leadHeads: leadHeadIds.size,
+        // "Lead if ANY of their day's shifts is a lead shift" — leadHeadIds
+        // is a subset of heads, so the remainder are regular associates.
+        associateHeads: heads.size - leadHeadIds.size,
+        targetHeads: targetFor(b.locationId, b.date),
       }))
       .sort(
         (a, z) =>
@@ -837,6 +927,127 @@ schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
       );
 
     res.json(LaborCostReportResponseSchema.parse({ rows, truncated }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Staffing targets (expected floor headcount per store) ============ */
+
+/**
+ * GET /scheduling/staffing-targets
+ * Every in-scope store with its CURRENT effective target (null when never
+ * set). Bounded roles see their own client's stores only.
+ */
+schedulingRouter.get('/staffing-targets', MANAGE, async (req, res, next) => {
+  try {
+    const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+    const stClientId = clamped === null ? NO_MATCH_ID : clamped;
+    const locations = await prisma.location.findMany({
+      where: {
+        deletedAt: null,
+        isActive: true,
+        ...(stClientId ? { clientId: stClientId } : {}),
+      },
+      select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
+      orderBy: [{ client: { name: 'asc' } }, { name: 'asc' }],
+      take: 500,
+    });
+    const targets = locations.length
+      ? await prisma.staffingTarget.findMany({
+          where: {
+            locationId: { in: locations.map((l) => l.id) },
+            effectiveFrom: { lte: new Date() },
+          },
+          orderBy: { effectiveFrom: 'desc' },
+          select: { locationId: true, targetCount: true, effectiveFrom: true },
+        })
+      : [];
+    const currentByLocation = new Map<string, { targetCount: number; effectiveFrom: string }>();
+    for (const t of targets) {
+      if (!currentByLocation.has(t.locationId)) {
+        currentByLocation.set(t.locationId, {
+          targetCount: t.targetCount,
+          effectiveFrom: t.effectiveFrom.toISOString().slice(0, 10),
+        });
+      }
+    }
+    res.json(
+      StaffingTargetsResponseSchema.parse({
+        locations: locations.map((l) => ({
+          locationId: l.id,
+          locationName: l.name,
+          clientId: l.clientId,
+          clientName: l.client.name,
+          targetCount: currentByLocation.get(l.id)?.targetCount ?? null,
+          effectiveFrom: currentByLocation.get(l.id)?.effectiveFrom ?? null,
+        })),
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /scheduling/staffing-targets
+ * Records a NEW effective-dated target row — never edits history, so past
+ * days keep being judged by the target that applied then, and the row
+ * trail is the audit of when coverage expectations changed.
+ */
+schedulingRouter.post('/staffing-targets', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = StaffingTargetInputSchema.safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const clamped = effectiveClientIdFilter(req.user!, undefined);
+    const location = await prisma.location.findFirst({
+      where: {
+        id: parsed.data.locationId,
+        deletedAt: null,
+        ...(clamped !== undefined
+          ? { clientId: clamped ?? NO_MATCH_ID }
+          : {}),
+      },
+      select: { id: true, clientId: true, name: true },
+    });
+    if (!location) throw new HttpError(404, 'location_not_found', 'Location not found');
+
+    const effectiveFrom = parsed.data.effectiveFrom
+      ? new Date(`${parsed.data.effectiveFrom}T00:00:00.000Z`)
+      : new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00.000Z');
+    const created = await prisma.staffingTarget.create({
+      data: {
+        locationId: location.id,
+        targetCount: parsed.data.targetCount,
+        effectiveFrom,
+        note: parsed.data.note ?? null,
+        createdById: req.user!.id,
+      },
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: location.clientId,
+        action: 'scheduling.staffing_target_set',
+        entityType: 'StaffingTarget',
+        entityId: created.id,
+        metadata: {
+          locationId: location.id,
+          locationName: location.name,
+          targetCount: created.targetCount,
+          effectiveFrom: created.effectiveFrom.toISOString().slice(0, 10),
+        },
+      },
+      'scheduling.staffing_target_set',
+    );
+    res.status(201).json({
+      id: created.id,
+      locationId: created.locationId,
+      targetCount: created.targetCount,
+      effectiveFrom: created.effectiveFrom.toISOString().slice(0, 10),
+    });
   } catch (err) {
     next(err);
   }

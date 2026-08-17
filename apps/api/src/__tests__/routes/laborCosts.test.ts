@@ -45,10 +45,25 @@ describe('GET /scheduling/labor-costs', () => {
     const client = await createClient('Costed LLC');
     const loc = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
     await prisma.shiftRateDefault.create({
-      data: { clientId: client.id, position: 'Cashier', payRate: 10 },
+      data: { clientId: client.id, position: 'Cashier', payRate: 10, billRate: 21 },
     });
+    // Server is a LEAD position — drives the lead/associate split.
+    await prisma.shiftPosition.create({
+      data: { clientId: client.id, name: 'Server', sortOrder: 1, isLead: true },
+    });
+    // Floor target: 1 expected head, effective before the day under test.
+    await prisma.staffingTarget.create({
+      data: {
+        locationId: loc.id,
+        targetCount: 1,
+        effectiveFrom: new Date('2026-03-01T00:00:00.000Z'),
+      },
+    });
+    const lead = await createAssociate({ firstName: 'Lead', lastName: 'Head' });
+    const worker = await createAssociate({ firstName: 'Reg', lastName: 'Head' });
 
-    // Explicit rate: 4h × $20 = $80.
+    // Explicit rates: 4h × $20 pay = $80; 4h × $30 bill = $120. Assigned →
+    // one lead head.
     await prisma.shift.create({
       data: {
         clientId: client.id,
@@ -59,6 +74,8 @@ describe('GET /scheduling/labor-costs', () => {
         status: 'OPEN',
         publishedAt: new Date(),
         payRate: 20,
+        hourlyRate: 30,
+        assignedAssociateId: lead.id,
       },
     });
     // Default rate (and DRAFT — planned cost counts): 6h × $10 = $60.
@@ -72,7 +89,8 @@ describe('GET /scheduling/labor-costs', () => {
         status: 'DRAFT',
       },
     });
-    // No rate anywhere: 2h, contributes $0 and a warning count.
+    // No rate anywhere: 2h, contributes $0 and a warning count. Assigned →
+    // one regular-associate head; heads total 2 vs target 1 = over by 1.
     await prisma.shift.create({
       data: {
         clientId: client.id,
@@ -82,6 +100,7 @@ describe('GET /scheduling/labor-costs', () => {
         endsAt: at(16),
         status: 'OPEN',
         publishedAt: new Date(),
+        assignedAssociateId: worker.id,
       },
     });
     // Cancelled: invisible to cost.
@@ -132,6 +151,87 @@ describe('GET /scheduling/labor-costs', () => {
     expect(row.workedMinutes).toBe(270);
     expect(row.workedCost).toBe(67.5);
     expect(row.workedNoRate).toBe(0);
+    // Heads vs the store's effective-dated target.
+    expect(row.scheduledHeads).toBe(2);
+    expect(row.targetHeads).toBe(1);
+    // Lead/associate split by position flag: Server (lead, 4h/$80) vs
+    // Cashier + Greeter (6h/$60 + 2h/$0).
+    expect(row.leadHeads).toBe(1);
+    expect(row.associateHeads).toBe(1);
+    expect(row.leadMinutes).toBe(240);
+    expect(row.leadCost).toBe(80);
+    expect(row.associateMinutes).toBe(480);
+    expect(row.associateCost).toBe(60);
+    // Revenue: Server 4h × $30 (shift's own bill rate) + Cashier 6h × $21
+    // (default billRate); Greeter has neither.
+    expect(row.scheduledRevenue).toBe(246);
+    expect(row.revenueNoRate).toBe(1);
+  });
+
+  it('staffing targets: set + read current, effective-dated per day', async () => {
+    const client = await createClient('Targeted LLC');
+    const loc = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(user.email);
+
+    // Set 6 effective the day under test; then 4 effective the day after.
+    await a
+      .post('/scheduling/staffing-targets')
+      .send({ locationId: loc.id, targetCount: 6, effectiveFrom: DAY })
+      .expect(201);
+    await a
+      .post('/scheduling/staffing-targets')
+      .send({ locationId: loc.id, targetCount: 4, effectiveFrom: '2026-03-04' })
+      .expect(201);
+
+    // The listing shows the CURRENT target (both are in the past → 4 wins).
+    const list = await a.get('/scheduling/staffing-targets');
+    expect(list.status).toBe(200);
+    const row = list.body.locations.find(
+      (l: { locationId: string }) => l.locationId === loc.id,
+    );
+    expect(row.targetCount).toBe(4);
+    expect(row.effectiveFrom).toBe('2026-03-04');
+
+    // But the report judges 2026-03-03 by the target that applied THEN.
+    const assoc = await createAssociate();
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        locationId: loc.id,
+        position: 'Server',
+        startsAt: at(14),
+        endsAt: at(18),
+        status: 'OPEN',
+        publishedAt: new Date(),
+        payRate: 20,
+        assignedAssociateId: assoc.id,
+      },
+    });
+    const report = await a.get(
+      `/scheduling/labor-costs?from=${RANGE.from}&to=${RANGE.to}`,
+    );
+    expect(report.body.rows[0].targetHeads).toBe(6);
+  });
+
+  it('staffing targets clamp: a supervisor sees and sets only their own client', async () => {
+    const mine = await createClient('Mine LLC');
+    const other = await createClient('Other Corp');
+    const otherLoc = await prisma.location.findFirstOrThrow({ where: { clientId: other.id } });
+    const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: mine.id });
+    const a = await loginAs(sup.email);
+
+    const list = await a.get('/scheduling/staffing-targets');
+    expect(list.status).toBe(200);
+    expect(
+      list.body.locations.every((l: { clientId: string }) => l.clientId === mine.id),
+    ).toBe(true);
+
+    await a
+      .post('/scheduling/staffing-targets')
+      .send({ locationId: otherLoc.id, targetCount: 3 })
+      .expect(404);
+    expect(await prisma.staffingTarget.count()).toBe(0);
   });
 
   it('clamps a supervisor to their own client, whatever clientId they request', async () => {
