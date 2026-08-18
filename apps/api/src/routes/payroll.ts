@@ -57,7 +57,8 @@ import {
   accrueRemittancesForRun,
   renderRemittanceAdvicePdf,
 } from '../lib/garnishmentRemittance.js';
-import { decryptString } from '../lib/crypto.js';
+import { decryptString, tryDecryptString } from '../lib/crypto.js';
+import { readRoutingNumber } from '../lib/payoutMethod.js';
 import type { PayoutMethod } from '@prisma/client';
 import { enqueueAudit, recordCriticalAudit, recordPayrollEvent } from '../lib/audit.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
@@ -2718,14 +2719,24 @@ function recipientFromPayoutMethod(
     };
   }
   if (pm.routingNumberEnc && pm.accountNumberEnc) {
-    return {
-      associateId: associate.id,
-      fullName,
-      routingNumber: decryptString(pm.routingNumberEnc),
-      accountNumber: decryptString(pm.accountNumberEnc),
-      accountType: pm.accountType === 'SAVINGS' ? 'SAVINGS' : 'CHECKING',
-      ...address,
-    };
+    // readRoutingNumber accepts both storage formats (onboarding writes
+    // plain UTF-8, legacy self-service rows are ciphertext) — the throwing
+    // decryptString here 500'd the recipient build for every
+    // onboarding-entered account. An unreadable account number (pre-key-
+    // rotation ciphertext) falls through to address-only, which routes the
+    // person to the check register instead of aborting the whole run.
+    const routingNumber = readRoutingNumber(Buffer.from(pm.routingNumberEnc));
+    const accountNumber = tryDecryptString(Buffer.from(pm.accountNumberEnc));
+    if (routingNumber && accountNumber) {
+      return {
+        associateId: associate.id,
+        fullName,
+        routingNumber,
+        accountNumber,
+        accountType: pm.accountType === 'SAVINGS' ? 'SAVINGS' : 'CHECKING',
+        ...address,
+      };
+    }
   }
   return { associateId: associate.id, fullName, ...address };
 }

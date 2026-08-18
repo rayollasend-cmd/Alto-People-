@@ -1518,10 +1518,11 @@ orgRouter.post(
       let account = '';
       if (payout) {
         try {
-          // Routing is stored as plain UTF-8 (see the onboarding POST + the
-          // masked GET above); the account number is AES-GCM encrypted.
+          // readRoutingNumber accepts both storage formats — plain UTF-8
+          // (onboarding) and legacy self-service ciphertext. The raw
+          // toString here emitted mojibake for the latter.
           if (payout.routingNumberEnc) {
-            routing = payout.routingNumberEnc.toString('utf8');
+            routing = readRoutingNumber(Buffer.from(payout.routingNumberEnc));
           }
           if (payout.accountNumberEnc) {
             account = decryptString(payout.accountNumberEnc);

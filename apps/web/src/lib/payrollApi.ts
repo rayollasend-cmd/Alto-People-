@@ -581,8 +581,11 @@ export interface MyW4 {
   updatedAt: string;
 }
 
+// These four live on the self-service router, mounted at /self — the
+// unprefixed /me/w4 and /me/payout-method paths 404'd on every call, which
+// surfaced as "error saving banking details" for every associate.
 export function getMyW4(): Promise<MyW4> {
-  return apiFetch<MyW4>('/me/w4');
+  return apiFetch<MyW4>('/self/me/w4');
 }
 
 export function updateMyW4(body: {
@@ -593,7 +596,7 @@ export function updateMyW4(body: {
   deductions?: number;
   extraWithholding?: number;
 }): Promise<{ ok: boolean; effectiveNote: string }> {
-  return apiFetch<{ ok: boolean; effectiveNote: string }>('/me/w4', {
+  return apiFetch<{ ok: boolean; effectiveNote: string }>('/self/me/w4', {
     method: 'POST',
     body,
   });
@@ -609,7 +612,7 @@ export interface MyPayoutMethod {
 }
 
 export function getMyPayoutMethod(): Promise<{ method: MyPayoutMethod | null }> {
-  return apiFetch<{ method: MyPayoutMethod | null }>('/me/payout-method');
+  return apiFetch<{ method: MyPayoutMethod | null }>('/self/me/payout-method');
 }
 
 export function updateMyPayoutMethod(body: {
@@ -617,7 +620,7 @@ export function updateMyPayoutMethod(body: {
   accountNumber: string;
   accountType: 'CHECKING' | 'SAVINGS';
 }): Promise<{ ok: boolean; accountLast4: string }> {
-  return apiFetch<{ ok: boolean; accountLast4: string }>('/me/payout-method', {
+  return apiFetch<{ ok: boolean; accountLast4: string }>('/self/me/payout-method', {
     method: 'POST',
     body,
   });

@@ -6,7 +6,7 @@ import { HttpError } from '../middleware/error.js';
 import { recordChange } from '../lib/associateHistory.js';
 import { emit as emitWorkflow } from '../lib/workflow.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
-import { decryptString, encryptString } from '../lib/crypto.js';
+import { decryptString, encryptString, tryDecryptString } from '../lib/crypto.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { send } from '../lib/notifications.js';
 import { notifyAllAdmins } from '../lib/notify.js';
@@ -690,7 +690,11 @@ selfServiceRouter.get('/me/payout-method', async (req, res) => {
     res.json({ method: null });
     return;
   }
-  const account = pm.accountNumberEnc ? decryptString(pm.accountNumberEnc) : null;
+  // Non-throwing: rows encrypted before the 2026-06-11 key rotation can't be
+  // read under the current key, and a throwing decrypt 500'd this page for
+  // exactly the associates who most need to re-enter their account. A null
+  // last4 renders as "••••" and the replace flow still works.
+  const account = pm.accountNumberEnc ? tryDecryptString(pm.accountNumberEnc) : null;
   res.json({
     method: {
       type: pm.type,
@@ -726,13 +730,20 @@ selfServiceRouter.post('/me/payout-method', async (req, res) => {
   });
   const data = {
     type: 'BANK_ACCOUNT' as const,
-    routingNumberEnc: encryptString(input.routingNumber),
+    // Plain UTF-8, matching the onboarding writer (routing numbers are
+    // public — printed on every cheque). This route used to write AES-GCM
+    // ciphertext here, which raw readers decoded as mojibake; readers now
+    // accept both (lib/payoutMethod.ts), but new rows use the one format.
+    routingNumberEnc: Buffer.from(input.routingNumber, 'utf8'),
     accountNumberEnc: encryptString(input.accountNumber),
     accountType: input.accountType,
     // This replaces the whole account, so a bank name carried over from the
     // previous one would name the wrong institution on the payroll file.
     // Take the new value, or clear it.
     bankName: input.bankName ?? null,
+    // Replacing a Branch card with a bank account must clear the card link,
+    // or the record reads as both at once.
+    branchCardId: null,
     verifiedAt: null,
     isPrimary: true,
   };
