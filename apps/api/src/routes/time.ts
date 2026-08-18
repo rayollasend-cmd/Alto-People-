@@ -689,7 +689,15 @@ timeRouter.post('/me/break/end', async (req, res, next) => {
 
 timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
   try {
-    const clientId = req.query.clientId?.toString();
+    // Tenant clamp FIRST (same bug class as scheduling /shifts): spreading
+    // the raw query param after scopeTimeEntries would let a bounded
+    // caller (SHIFT_SUPERVISOR holds manage:time) override the clamp's
+    // clientId key and watch any client's live floor. null (bounded, no
+    // client on file) maps to undefined so the scope's fail-closed
+    // NO_CLIENT clamp stays in charge.
+    const clientId =
+      effectiveClientIdFilter(req.user!, req.query.clientId?.toString()) ??
+      undefined;
     const locationId = req.query.locationId?.toString();
     const where: Prisma.TimeEntryWhereInput = {
       ...scopeTimeEntries(req.user!),
@@ -846,8 +854,12 @@ timeRouter.get('/admin/entries/count', MANAGE, async (req, res, next) => {
     // Optional client/site scoping so the pending-review badge can follow
     // the page's filters — an org-wide "47 pending" over a client-filtered
     // queue showing 3 read as a bug. Deliberately still all-time: the KPI
-    // is the total backlog, not the visible date window.
-    const clientId = req.query.clientId?.toString();
+    // is the total backlog, not the visible date window. Clamped (tenant
+    // clamp FIRST) — the spread below would let a bounded caller override
+    // scopeTimeEntries' clientId key.
+    const clientId =
+      effectiveClientIdFilter(req.user!, req.query.clientId?.toString()) ??
+      undefined;
     const locationId = req.query.locationId?.toString();
     const count = await prisma.timeEntry.count({
       where: {
@@ -867,7 +879,11 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
   try {
     const status = req.query.status?.toString();
     const associateId = req.query.associateId?.toString();
-    const clientId = req.query.clientId?.toString();
+    // Tenant clamp FIRST — the spread below would let a bounded caller
+    // override scopeTimeEntries' clientId key and read any client's queue.
+    const clientId =
+      effectiveClientIdFilter(req.user!, req.query.clientId?.toString()) ??
+      undefined;
     // Narrow to one work-site within the client (cascading filter, same
     // as scheduling). locationId is denormalized on TimeEntry.
     const locationId = req.query.locationId?.toString();
@@ -1916,11 +1932,14 @@ async function loadExportRows(
   if (to <= from) {
     throw new HttpError(400, 'invalid_range', 'to must be after from');
   }
+  // Tenant clamp FIRST — same bug class as the list routes: a bounded
+  // caller's requested clientId must never override scopeTimeEntries.
+  const exportClientId = effectiveClientIdFilter(user, input.clientId) ?? undefined;
   const where: Prisma.TimeEntryWhereInput = {
     ...scopeTimeEntries(user),
     clockInAt: { gte: from, lt: to },
     ...(input.status ? { status: input.status } : {}),
-    ...(input.clientId ? { clientId: input.clientId } : {}),
+    ...(exportClientId ? { clientId: exportClientId } : {}),
     ...(input.locationId ? { locationId: input.locationId } : {}),
     ...(input.associateId ? { associateId: input.associateId } : {}),
     AND: [
@@ -1960,12 +1979,15 @@ timeRouter.post('/admin/export-summary.csv', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_range', 'from / to must be valid, to after from');
     }
 
+    // Tenant clamp FIRST — bounded callers must not override the scope.
+    const summaryClientId =
+      effectiveClientIdFilter(req.user!, parsed.data.clientId) ?? undefined;
     const where: Prisma.TimeEntryWhereInput = {
       ...scopeTimeEntries(req.user!),
       status: 'APPROVED',
       clockInAt: { gte: from, lt: to },
       ...(parsed.data.locationId ? { locationId: parsed.data.locationId } : {}),
-      ...(parsed.data.clientId ? { clientId: parsed.data.clientId } : {}),
+      ...(summaryClientId ? { clientId: summaryClientId } : {}),
       ...(parsed.data.associateId ? { associateId: parsed.data.associateId } : {}),
     };
     // Same filters, COMPLETED instead of APPROVED: anything still pending
@@ -2270,11 +2292,13 @@ async function loadPayrollSheet(
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || to <= from) {
     throw new HttpError(400, 'invalid_range', 'from / to must be valid, to after from');
   }
+  // Tenant clamp FIRST — bounded callers must not override the scope.
+  const sheetClientId = effectiveClientIdFilter(user, input.clientId) ?? undefined;
   const where: Prisma.TimeEntryWhereInput = {
     ...scopeTimeEntries(user),
     status: 'APPROVED',
     clockInAt: { gte: from, lt: to },
-    ...(input.clientId ? { clientId: input.clientId } : {}),
+    ...(sheetClientId ? { clientId: sheetClientId } : {}),
     ...(input.locationId ? { locationId: input.locationId } : {}),
     ...(input.associateId ? { associateId: input.associateId } : {}),
   };
@@ -2295,7 +2319,7 @@ async function loadPayrollSheet(
     // has no open assignment and no job was picked. Count them so the
     // caller can say "N approved entries were left out" instead of the
     // sheet silently reading as complete.
-    input.clientId
+    sheetClientId
       ? prisma.timeEntry.count({
           where: {
             ...scopeTimeEntries(user),
@@ -2328,7 +2352,7 @@ async function loadPayrollSheet(
         assignedAssociateId: { in: hoursSheet.associates.map((a) => a.associateId) },
         status: { in: ['ASSIGNED', 'COMPLETED'] },
         startsAt: { gte: from, lt: to },
-        ...(input.clientId ? { clientId: input.clientId } : {}),
+        ...(sheetClientId ? { clientId: sheetClientId } : {}),
         ...(input.locationId ? { locationId: input.locationId } : {}),
       },
       select: { assignedAssociateId: true, startsAt: true, endsAt: true },

@@ -66,6 +66,61 @@ async function seedTwoClients() {
   return { mine, other, myAssoc, otherAssoc, sup };
 }
 
+describe('time admin tenant boundary: clientId override', () => {
+  // Spread-order bug class ("tenant clamp FIRST"): scopeTimeEntries clamps
+  // SHIFT_SUPERVISOR via `clientId`, and spreading the raw query param after
+  // it let a supervisor pass ?clientId=<other> to read any client's punches.
+  it('supervisor asking for another client still gets only their own entries', async () => {
+    const { mine, other, myAssoc, otherAssoc, sup } = await seedTwoClients();
+    await prisma.timeEntry.create({
+      data: {
+        associateId: myAssoc.id,
+        clientId: mine.id,
+        clockInAt: new Date(Date.now() - 4 * 3600_000),
+        clockOutAt: new Date(Date.now() - 1 * 3600_000),
+        status: 'COMPLETED',
+      },
+    });
+    await prisma.timeEntry.create({
+      data: {
+        associateId: otherAssoc.id,
+        clientId: other.id,
+        clockInAt: new Date(Date.now() - 4 * 3600_000),
+        clockOutAt: new Date(Date.now() - 1 * 3600_000),
+        status: 'COMPLETED',
+      },
+    });
+    await prisma.timeEntry.create({
+      data: {
+        associateId: otherAssoc.id,
+        clientId: other.id,
+        clockInAt: new Date(Date.now() - 2 * 3600_000),
+        status: 'ACTIVE',
+      },
+    });
+
+    // Queue list: the override must be ignored, not honored.
+    const list = await sup.get(`/time/admin/entries?clientId=${other.id}`);
+    expect(list.status).toBe(200);
+    for (const e of list.body.entries) {
+      expect(e.clientId).toBe(mine.id);
+    }
+    expect(list.body.entries).toHaveLength(1);
+
+    // Pending badge follows the same clamp.
+    const count = await sup.get(
+      `/time/admin/entries/count?status=COMPLETED&clientId=${other.id}`,
+    );
+    expect(count.status).toBe(200);
+    expect(count.body.count).toBe(1);
+
+    // Live board too — the other client's ACTIVE punch stays invisible.
+    const active = await sup.get(`/time/admin/active?clientId=${other.id}`);
+    expect(active.status).toBe(200);
+    expect(active.body.entries).toHaveLength(0);
+  });
+});
+
 describe('time-off tenant boundary', () => {
   it('supervisor sees only their client, and cannot decide across it', async () => {
     const { myAssoc, otherAssoc, sup } = await seedTwoClients();

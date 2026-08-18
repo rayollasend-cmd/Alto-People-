@@ -391,9 +391,10 @@ describe('POST /compliance/everify/:associateId/case', () => {
     );
     expect(row.caseNumber).toBe('2026-1');
     expect(row.status).toBe('EMPLOYMENT_AUTHORIZED');
-    // The shell must not fabricate compliance: sections stay unsigned.
-    expect(row.section1CompletedAt).toBeNull();
-    expect(row.section2CompletedAt).toBeNull();
+    // The shell must not fabricate compliance: the roster still reports
+    // both I-9 sections as blockers until HR backfills the paper dates.
+    expect(row.blockers).toContain('SECTION1_INCOMPLETE');
+    expect(row.blockers).toContain('SECTION2_INCOMPLETE');
   });
 });
 

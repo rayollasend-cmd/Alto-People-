@@ -172,15 +172,18 @@ describe('effectivePayRate resolution', () => {
     );
     expect(bare.effectivePayRate).toBeNull();
 
-    // KPI: cost = 8h*30 + 8h*20 = 400; only the Cart Pusher shift lacks a rate.
+    // KPI: cost = 8h*30 + 8h*20 + 8h*15 = 520. The Cart Pusher shift has
+    // no explicit rate and no default, but org standard rates
+    // (DEFAULT_ASSOCIATE_PAY_RATE=15) now price it — so nothing counts as
+    // "without rate" unless even the env fallback is unset.
     const kpis = await a.get(
       `/scheduling/kpis?from=${new Date(Date.now() - 3600_000).toISOString()}&to=${new Date(
         Date.now() + 48 * 3600_000,
       ).toISOString()}`,
     );
     expect(kpis.status).toBe(200);
-    expect(kpis.body.projectedLaborCost).toBe(400);
-    expect(kpis.body.shiftsWithoutRate).toBe(1);
+    expect(kpis.body.projectedLaborCost).toBe(520);
+    expect(kpis.body.shiftsWithoutRate).toBe(0);
   });
 
   it('create/update shift responses carry the resolved rate', async () => {

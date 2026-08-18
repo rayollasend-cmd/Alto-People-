@@ -163,7 +163,7 @@ describe('GET /scheduling/labor-costs', () => {
         clockOutAt: at(19),
         status: 'COMPLETED',
         payRate: 15,
-        breaks: { create: { startedAt: at(16), endedAt: at(16, 30) } },
+        breaks: { create: { type: 'MEAL', startedAt: at(16), endedAt: at(16, 30) } },
       },
     });
     // An APPROVED punch (4h, no snapshot → $15 org fallback) — the

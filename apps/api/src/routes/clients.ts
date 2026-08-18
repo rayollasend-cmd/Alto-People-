@@ -349,8 +349,13 @@ clientsRouter.get('/:id', async (req, res, next) => {
 // transfer picker and kiosk device registration only see live sites.
 clientsRouter.get('/:id/locations', async (req, res, next) => {
   try {
+    // AND, not spread: scopeClients clamps SHIFT_SUPERVISOR/CLIENT_PORTAL
+    // via `id: ownClientId`, and a spread would let `id: req.params.id`
+    // OVERRIDE the clamp — any supervisor could read any client's sites.
+    // This is the one /clients handler reachable by clamped roles (the
+    // gate above admits them for exactly this path).
     const client = await prisma.client.findFirst({
-      where: { ...scopeClients(req.user!), id: req.params.id },
+      where: { AND: [scopeClients(req.user!), { id: req.params.id }] },
       select: { id: true },
     });
     if (!client) {

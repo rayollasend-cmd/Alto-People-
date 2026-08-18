@@ -141,7 +141,7 @@ describe('POST /time/admin/export.csv filters', () => {
         position: 'Associate',
         startsAt: utcToday(6),
         endsAt: utcToday(14),
-        status: 'PUBLISHED',
+        status: 'OPEN',
       },
     });
     const afternoon = await prisma.shift.create({
@@ -150,7 +150,7 @@ describe('POST /time/admin/export.csv filters', () => {
         position: 'Associate',
         startsAt: utcToday(14),
         endsAt: utcToday(22),
-        status: 'PUBLISHED',
+        status: 'OPEN',
       },
     });
     await prisma.timeEntry.create({
