@@ -29,6 +29,9 @@ import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { send } from '../lib/notifications.js';
 import { associatesOfClient, effectiveClientIdFilter } from '../lib/scope.js';
+import { emitLiveEvent } from '../lib/liveEvents.js';
+import { env } from '../config/env.js';
+import { ROLE_CAPABILITIES, type Role } from '@alto-people/shared';
 
 /**
  * Tenant clamp for kiosk admin surfaces. Client-bounded roles
@@ -1658,6 +1661,107 @@ kiosk99Router.post('/kiosk/config', async (req, res) => {
   });
 });
 
+/* ===== Schedule gate ====================================================== *
+ * A fresh CLOCK_IN requires an ASSIGNED shift covering the punch (with
+ * matchShiftForPunch's 2h early allowance). A blocked walk-in parks as a
+ * ClockInRequest for a supervisor to approve (backdated ACTIVE entry — see
+ * time.ts) or deny, mirroring the shift-swap decision flow. Clock-outs,
+ * break toggles, and quick-return rejoins are never gated: no one already
+ * working can get stranded mid-shift.
+ * ========================================================================== */
+
+// Who hears about a blocked walk-in: bounded supervisors of THAT client,
+// plus every org-wide manage:time role. Derived from ROLE_CAPABILITIES so
+// new admin roles auto-include.
+const TIME_ADMIN_ROLES = (
+  Object.entries(ROLE_CAPABILITIES) as Array<[Role, ReadonlySet<string>]>
+)
+  .filter(([role, caps]) => caps.has('manage:time') && role !== 'SHIFT_SUPERVISOR')
+  .map(([role]) => role);
+
+const NOT_ON_SCHEDULE_MSG =
+  "You're not on today's schedule. A clock-in request was sent to your " +
+  'supervisor — once approved, you are clocked in from right now, so no ' +
+  'need to punch again.';
+
+async function fileClockInRequest(opts: {
+  device: { id: string; clientId: string; locationId: string | null };
+  pinRowId: string;
+  associateId: string;
+  associateName: string;
+  at: Date;
+  stage: 'preflight' | 'punch';
+}): Promise<void> {
+  // Always log the refused punch (same table the wrong-PIN rejections use)
+  // so the attempt has an audit trail even when the request already exists.
+  await prisma.kioskPunch.create({
+    data: {
+      kioskDeviceId: opts.device.id,
+      kioskPinId: opts.pinRowId,
+      associateId: opts.associateId,
+      action: 'REJECTED',
+      rejectReason:
+        opts.stage === 'preflight' ? 'not_scheduled_preflight' : 'not_scheduled',
+      clientPunchedAt: opts.at,
+    },
+  });
+  // One PENDING request per associate per working window — retrying the
+  // keypad while waiting must not spam the supervisor's queue.
+  const existing = await prisma.clockInRequest.findFirst({
+    where: {
+      associateId: opts.associateId,
+      status: 'PENDING',
+      requestedAt: { gte: new Date(opts.at.getTime() - 12 * 3_600_000) },
+    },
+    select: { id: true },
+  });
+  if (existing) return;
+  await prisma.clockInRequest.create({
+    data: {
+      associateId: opts.associateId,
+      clientId: opts.device.clientId,
+      locationId: opts.device.locationId,
+      requestedAt: opts.at,
+    },
+  });
+  // Bell the deciders (fire-and-forget — the request row is the source of
+  // truth; a notification hiccup must not fail the kiosk response).
+  void (async () => {
+    const locationName = opts.device.locationId
+      ? (
+          await prisma.location.findUnique({
+            where: { id: opts.device.locationId },
+            select: { name: true },
+          })
+        )?.name ?? null
+      : null;
+    const recipients = await prisma.user.findMany({
+      where: {
+        status: 'ACTIVE',
+        OR: [
+          { role: 'SHIFT_SUPERVISOR', clientId: opts.device.clientId },
+          { role: { in: TIME_ADMIN_ROLES } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (recipients.length === 0) return;
+    const now = new Date();
+    await prisma.notification.createMany({
+      data: recipients.map((u) => ({
+        channel: 'IN_APP' as const,
+        status: 'SENT' as const,
+        recipientUserId: u.id,
+        subject: 'Walk-in clock-in needs a decision',
+        body: `${opts.associateName} is at ${locationName ?? 'the kiosk'} but is not on today's schedule. Approve or deny their clock-in on the Approvals page.`,
+        linkUrl: '/approvals',
+        sentAt: now,
+      })),
+    });
+    for (const u of recipients) emitLiveEvent(u.id, 'notification');
+  })().catch(() => {});
+}
+
 kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
   const input = VerifyPinInputSchema.parse(req.body);
 
@@ -1759,6 +1863,23 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
       'not_clocked_in',
       'You need to clock in before starting a break.',
     );
+  }
+
+  // Schedule gate, surfaced at the keypad — before the selfie, not after.
+  if (predictedAction === 'CLOCK_IN' && env.KIOSK_REQUIRE_SCHEDULED_SHIFT) {
+    const now = new Date();
+    const shiftId = await matchShiftForPunch(prisma, pinRow.associateId, now);
+    if (!shiftId) {
+      await fileClockInRequest({
+        device,
+        pinRowId: pinRow.id,
+        associateId: pinRow.associateId,
+        associateName: `${pinRow.associate.firstName} ${pinRow.associate.lastName}`,
+        at: now,
+        stage: 'preflight',
+      });
+      throw new HttpError(409, 'not_on_schedule', NOT_ON_SCHEDULE_MSG);
+    }
   }
 
   res.json({
@@ -2079,6 +2200,46 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
 
   // Correct PIN — clear the failure streak (see the preflight handler).
   clearPinFailures(device.id);
+
+  // Schedule gate — mirror of the preflight check, enforced at the punch
+  // itself so offline-queue replays and preflight-skipping clients can't
+  // slip past it. Runs OUTSIDE the punch transaction deliberately: the
+  // gate files a ClockInRequest, and a throw inside the txn would roll
+  // that row back. The tiny preflight↔punch race this leaves (an entry
+  // opening in between) resolves safely — the txn re-derives open-entry
+  // state and treats the punch as a clock-out.
+  if (env.KIOSK_REQUIRE_SCHEDULED_SHIFT && input.intent !== 'BREAK') {
+    const gateAt = clientPunchedAt ?? new Date();
+    const openNow = await prisma.timeEntry.findFirst({
+      where: { associateId: pinRow.associateId, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    if (!openNow) {
+      const rejoin = await findRejoinableEntry(prisma, pinRow.associateId, gateAt);
+      if (!rejoin) {
+        const gateShiftId = await matchShiftForPunch(
+          prisma,
+          pinRow.associateId,
+          gateAt,
+        );
+        if (!gateShiftId) {
+          await fileClockInRequest({
+            device,
+            pinRowId: pinRow.id,
+            associateId: pinRow.associateId,
+            associateName: `${pinRow.associate.firstName} ${pinRow.associate.lastName}`,
+            at: gateAt,
+            stage: 'punch',
+          });
+          await prisma.kioskDevice.update({
+            where: { id: device.id },
+            data: { lastSeenAt: new Date() },
+          });
+          throw new HttpError(409, 'not_on_schedule', NOT_ON_SCHEDULE_MSG);
+        }
+      }
+    }
+  }
 
   // Photos are stored ONLY with recorded consent. This used to be
   // `DECLINED ? null : selfie`, which quietly stored photos for the

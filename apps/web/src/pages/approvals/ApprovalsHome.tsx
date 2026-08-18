@@ -21,7 +21,13 @@ import {
   managerRejectSwap,
   rejectOpenShiftClaim,
 } from '@/lib/schedulingApi';
-import { countAdminTimeEntries } from '@/lib/timeApi';
+import {
+  approveClockInRequest,
+  countAdminTimeEntries,
+  denyClockInRequest,
+  listClockInRequests,
+} from '@/lib/timeApi';
+import type { ClockInRequestRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, parseYmd } from '@/lib/format';
 import { useSelection } from '@/lib/useSelection';
@@ -149,6 +155,9 @@ export function ApprovalsHome() {
         />
       </div>
 
+      {/* First in the stack — someone is physically standing at a kiosk
+          waiting on this decision. */}
+      <WalkInClockInsPanel />
       <PendingTimeOffPanel
         items={timeOffError ? null : timeOff}
         error={timeOffError}
@@ -193,6 +202,189 @@ async function approveAllSettled(
   if (failed > 0) {
     toast.error(`${failed} ${noun}${failed === 1 ? '' : 's'} could not be approved.`);
   }
+}
+
+/* --------------------------------------------- walk-in clock-ins panel */
+
+const CLOCK_INS_KEY = ['approvals', 'clockIns'] as const;
+
+/** "8:02 AM · waiting 14m" — how long they've been standing at the kiosk. */
+function waitingSince(iso: string): string {
+  const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000));
+  if (min < 60) return `waiting ${min}m`;
+  return `waiting ${Math.floor(min / 60)}h ${min % 60}m`;
+}
+
+function WalkInClockInsPanel() {
+  const queryClient = useQueryClient();
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [denyTarget, setDenyTarget] = useState<ClockInRequestRow | null>(null);
+  const [denyReason, setDenyReason] = useState('');
+
+  const query = useQuery({
+    queryKey: CLOCK_INS_KEY,
+    queryFn: async () => {
+      try {
+        return (await listClockInRequests('PENDING')).requests;
+      } catch (err) {
+        // 403 = not permitted — an honest empty list, not an error.
+        if (err instanceof ApiError && err.status === 403) return [];
+        throw err;
+      }
+    },
+    // Someone is at the kiosk — keep this fresher than the other panels.
+    refetchInterval: 60_000,
+  });
+  const items = query.data ?? null;
+  const error = query.isError
+    ? query.error instanceof Error
+      ? query.error.message
+      : 'Could not load clock-in requests.'
+    : null;
+
+  const decide = async (id: string, fn: () => Promise<unknown>, successMsg: string) => {
+    setPendingId(id);
+    try {
+      await fn();
+      hapticConfirm();
+      toast.success(successMsg);
+      await queryClient.invalidateQueries({ queryKey: CLOCK_INS_KEY });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Action failed.');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  return (
+    <Card className="mt-8">
+      <CardHeader>
+        <CardTitle>Walk-in clock-ins waiting at the kiosk</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {error && (
+          <div className="space-y-3">
+            <ErrorBanner>{error}</ErrorBanner>
+            <Button size="sm" variant="secondary" onClick={() => query.refetch()}>
+              Retry
+            </Button>
+          </div>
+        )}
+        {!error && !items && <Skeleton className="h-16" />}
+        {!error && items && items.length === 0 && (
+          <p className="text-silver text-sm">
+            No one is waiting. Unscheduled associates who try to clock in
+            appear here for your decision.
+          </p>
+        )}
+        {!error && items && items.length > 0 && (
+          <ul className="divide-y divide-navy-secondary/60">
+            {items.map((r) => (
+              <li
+                key={r.id}
+                className="flex flex-wrap items-center justify-between gap-3 py-2.5"
+              >
+                <div className="min-w-0">
+                  <div className="font-medium text-white">
+                    <AssociateLink associateId={r.associateId}>
+                      {r.associateName}
+                    </AssociateLink>
+                  </div>
+                  <div className="text-xs text-silver">
+                    {r.locationName ?? r.clientName ?? 'Kiosk'}
+                    {' · punched '}
+                    {fmtDateTime(r.requestedAt)}
+                    {' · '}
+                    <span className="text-warning">{waitingSince(r.requestedAt)}</span>
+                  </div>
+                  <div className="text-2xs text-silver/60">
+                    Approving clocks them in from the punch time; they do not
+                    need to punch again.
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      decide(
+                        r.id,
+                        () => approveClockInRequest(r.id),
+                        `${r.associateName} is clocked in.`,
+                      )
+                    }
+                    loading={pendingId === r.id}
+                    disabled={pendingId !== null}
+                  >
+                    <Check className="h-4 w-4" />
+                    Approve
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setDenyReason('');
+                      setDenyTarget(r);
+                    }}
+                    disabled={pendingId !== null}
+                  >
+                    <X className="h-4 w-4" />
+                    Deny
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+
+      <Dialog
+        open={denyTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDenyTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Deny this clock-in?</DialogTitle>
+            <DialogDescription>
+              {denyTarget?.associateName} will be notified that their clock-in
+              was not approved. No time entry is created.
+            </DialogDescription>
+          </DialogHeader>
+          <Field label="Reason (optional, shared with the associate)">
+            <Textarea
+              value={denyReason}
+              onChange={(e) => setDenyReason(e.target.value)}
+              rows={2}
+              maxLength={300}
+              placeholder="Not scheduled today — check next week's schedule."
+            />
+          </Field>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDenyTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const target = denyTarget;
+                setDenyTarget(null);
+                if (target) {
+                  void decide(
+                    target.id,
+                    () => denyClockInRequest(target.id, denyReason.trim() || undefined),
+                    'Clock-in denied.',
+                  );
+                }
+              }}
+            >
+              Deny clock-in
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
 }
 
 /* --------------------------------------------------- time-off panel */

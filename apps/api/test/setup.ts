@@ -28,6 +28,11 @@ process.env.SCIM_TOKEN = 'test-scim-token-do-not-use-outside-tests';
 process.env.RESEND_WEBHOOK_SECRET =
   'whsec_dGVzdC1yZXNlbmQtd2ViaG9vay1zZWNyZXQtZG8tbm90LXVzZQ==';
 
+// The kiosk schedule gate defaults ON in prod. Off for the suite — dozens
+// of kiosk tests punch unscheduled associates; the gate's own tests flip
+// the parsed env flag on explicitly.
+process.env.KIOSK_REQUIRE_SCHEDULED_SHIFT = 'false';
+
 // Preload the payroll tax config cache from the alto_test DB. Route-level
 // tests that drive the payroll engine (paystub, disbursement, payroll)
 // would otherwise throw "config cache empty" at compute time. Test files

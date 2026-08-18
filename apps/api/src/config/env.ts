@@ -193,6 +193,18 @@ const EnvSchema = z.object({
   // bills at 1.5× — $31.82 billed on the $21.21 SOW rate.
   LABOR_BURDEN_PERCENT: z.coerce.number().min(0).max(100).default(12),
   LABOR_OVERHEAD_PER_HOUR: z.coerce.number().min(0).default(0),
+  // Schedule gate on kiosk clock-ins (product owner, 2026-08-19): a fresh
+  // CLOCK_IN requires an ASSIGNED shift covering the punch (2h early
+  // allowance). Blocked punches park as a ClockInRequest for a supervisor
+  // to approve (backdated entry) or deny. Clock-outs, breaks, and rejoins
+  // are never gated. Explicit string parse — z.coerce.boolean() would
+  // treat the string "false" as true.
+  KIOSK_REQUIRE_SCHEDULED_SHIFT: z
+    .string()
+    .optional()
+    .transform((v) =>
+      v === undefined ? true : v === '1' || v.toLowerCase() === 'true',
+    ),
   // Scheduled-report delivery sweep (lib/reportScheduleRunner.ts): runs
   // ReportSchedule rows whose nextRunAt has passed and emails the CSV to
   // the stored recipients. Ticks every N seconds; each tick only touches

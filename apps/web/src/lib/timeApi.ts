@@ -23,6 +23,7 @@ import type {
   TimesheetWeekResponse,
   TimesheetAssociateDetailInput,
   TimesheetAssociateDetailResponse,
+  ClockInRequestListResponse,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 import { announceTimeEntriesChanged } from './timeEntriesChannel';
@@ -157,6 +158,33 @@ export function listAdminTimeEntries(filters: {
   return apiFetch<TimeEntryListResponse>(
     `/time/admin/entries${qs ? `?${qs}` : ''}`
   );
+}
+
+/* ----- Walk-in clock-in requests (schedule gate) ------------------------- */
+
+export function listClockInRequests(
+  status: 'PENDING' | 'APPROVED' | 'DENIED' | 'ALL' = 'PENDING',
+): Promise<ClockInRequestListResponse> {
+  return apiFetch(`/time/admin/clock-in-requests?status=${status}`);
+}
+
+export function approveClockInRequest(
+  id: string,
+): Promise<{ ok: boolean; timeEntryId: string }> {
+  return apiFetch(`/time/admin/clock-in-requests/${id}/approve`, {
+    method: 'POST',
+    body: {},
+  });
+}
+
+export function denyClockInRequest(
+  id: string,
+  reason?: string,
+): Promise<{ ok: boolean }> {
+  return apiFetch(`/time/admin/clock-in-requests/${id}/deny`, {
+    method: 'POST',
+    body: reason ? { reason } : {},
+  });
 }
 
 export function approveTimeEntry(

@@ -8,6 +8,8 @@ interface ApprovalsCount {
   pickups: number;
   timeOff: number;
   timesheets: number;
+  /** Walk-in clock-ins parked by the kiosk schedule gate. */
+  clockIns: number;
   total: number;
 }
 

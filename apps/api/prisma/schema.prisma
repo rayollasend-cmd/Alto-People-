@@ -526,6 +526,7 @@ model User {
   // associate to which location, and why).
   associateAssignmentsNoted         AssociateAssignment[]         @relation("AssociateAssignmentNoter")
   staffingTargetsSet                StaffingTarget[]              @relation("StaffingTargetAuthor")
+  clockInRequestsDecided            ClockInRequest[]              @relation("ClockInRequestDecider")
   // Privacy erasures this admin performed (Associate.erasedById).
   associatesErased                  Associate[]                   @relation("AssociateEraser")
 
@@ -773,6 +774,40 @@ model StaffingTarget {
   @@index([locationId, effectiveFrom])
 }
 
+enum ClockInRequestStatus {
+  PENDING // waiting on a supervisor's decision
+  APPROVED // decision created a backdated ACTIVE time entry
+  DENIED // turned away; no entry created
+}
+
+// A kiosk clock-in the schedule gate refused (associate not on the
+// schedule) — parked here for a supervisor to approve or deny, mirroring
+// the shift-swap decision flow. Approval clocks the associate in from the
+// ORIGINAL punch instant so waiting on the decision never shorts them.
+model ClockInRequest {
+  id          String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String               @db.Uuid
+  clientId    String               @db.Uuid
+  locationId  String?              @db.Uuid
+  // The refused punch instant — what an approval backdates the entry to.
+  requestedAt DateTime             @db.Timestamptz(6)
+  status      ClockInRequestStatus @default(PENDING)
+  decidedById String?              @db.Uuid
+  decidedAt   DateTime?            @db.Timestamptz(6)
+  denyReason  String?
+  // The entry an approval created, for the audit trail.
+  timeEntryId String?              @db.Uuid
+  createdAt   DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime             @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  decidedBy User?     @relation("ClockInRequestDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([status, requestedAt])
+  @@index([associateId, status])
+  @@index([clientId, status])
+}
+
 model AssociateAssignment {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   associateId String    @db.Uuid
@@ -1012,6 +1047,8 @@ model Associate {
   equityGrants             EquityGrant[]
   // Phase 130 — volunteer time off entries.
   volunteerEntries         VolunteerEntry[]
+  // Schedule-gated kiosk clock-ins awaiting a supervisor's decision.
+  clockInRequests          ClockInRequest[]
   // Phase 131 — location-assignment history. The open row (endedAt IS
   // NULL) is the associate's current work site.
   assignments              AssociateAssignment[]

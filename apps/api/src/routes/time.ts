@@ -18,6 +18,8 @@ import {
   TimesheetWeekInputSchema,
   TimesheetAssociateDetailInputSchema,
   TimeRejectInputSchema,
+  ClockInRequestDenyInputSchema,
+  ClockInRequestListResponseSchema,
   type ActiveDashboardEntry,
   type ActiveTimeEntryResponse,
   type BulkTimeResponse,
@@ -34,7 +36,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { scopeTimeEntries, scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
 import { runWithConcurrency } from '../lib/concurrency.js';
 import { z } from 'zod';
-import { recordTimeEvent, recordCriticalAudit } from '../lib/audit.js';
+import { enqueueAudit, recordTimeEvent, recordCriticalAudit } from '../lib/audit.js';
 import { buildExternalPayrollSheet } from '../lib/externalPayrollSheet.js';
 import { renderExternalPayrollSheetXlsx } from '../lib/externalPayrollSheetXlsx.js';
 import { renderExternalPayrollSheetPdf } from '../lib/externalPayrollSheetPdf.js';
@@ -923,6 +925,212 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
     const entries = await toEntries(page);
     const payload = TimeEntryListResponseSchema.parse({ entries, truncated });
     res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ===== Walk-in clock-in requests (schedule gate) ========================= *
+ * Kiosk punches the schedule gate refused, parked for a decision. Approval
+ * clocks the associate in from the ORIGINAL punch instant; denial notifies
+ * them. Mirrors the shift-swap decision flow; MANAGE (manage:time) reaches
+ * SHIFT_SUPERVISOR, clamped to their own client below.
+ * ========================================================================= */
+
+// Fail-closed sentinel for a bounded caller with no client on file.
+const NO_CLIENT_SENTINEL = '00000000-0000-0000-0000-000000000000';
+
+function clockInRequestClientClamp(user: NonNullable<Express.Request['user']>) {
+  const clamped = effectiveClientIdFilter(user, undefined);
+  if (clamped === null) return { clientId: NO_CLIENT_SENTINEL };
+  return clamped ? { clientId: clamped } : {};
+}
+
+// Approving a stale request would materialize an ACTIVE entry that has
+// silently accrued for hours (or days). Past this window the honest tool
+// is a manual time entry with explicit in/out times.
+const CLOCK_IN_REQUEST_MAX_AGE_MS = 14 * 3_600_000;
+
+timeRouter.get('/admin/clock-in-requests', MANAGE, async (req, res, next) => {
+  try {
+    const status = req.query.status?.toString() ?? 'PENDING';
+    if (!['PENDING', 'APPROVED', 'DENIED', 'ALL'].includes(status)) {
+      throw new HttpError(400, 'invalid_query', 'status must be PENDING | APPROVED | DENIED | ALL');
+    }
+    const rows = await prisma.clockInRequest.findMany({
+      where: {
+        ...clockInRequestClientClamp(req.user!),
+        ...(status === 'ALL' ? {} : { status: status as 'PENDING' | 'APPROVED' | 'DENIED' }),
+      },
+      orderBy: { requestedAt: 'desc' },
+      take: 200,
+      include: {
+        associate: { select: { firstName: true, lastName: true } },
+        decidedBy: { select: { email: true } },
+      },
+    });
+    const clientIds = [...new Set(rows.map((r) => r.clientId))];
+    const locationIds = [
+      ...new Set(rows.map((r) => r.locationId).filter((id): id is string => !!id)),
+    ];
+    const [clients, locations] = await Promise.all([
+      prisma.client.findMany({
+        where: { id: { in: clientIds } },
+        select: { id: true, name: true },
+      }),
+      prisma.location.findMany({
+        where: { id: { in: locationIds } },
+        select: { id: true, name: true },
+      }),
+    ]);
+    const clientName = new Map(clients.map((c) => [c.id, c.name]));
+    const locationName = new Map(locations.map((l) => [l.id, l.name]));
+    res.json(
+      ClockInRequestListResponseSchema.parse({
+        requests: rows.map((r) => ({
+          id: r.id,
+          associateId: r.associateId,
+          associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+          clientId: r.clientId,
+          clientName: clientName.get(r.clientId) ?? null,
+          locationId: r.locationId,
+          locationName: r.locationId ? locationName.get(r.locationId) ?? null : null,
+          requestedAt: r.requestedAt.toISOString(),
+          status: r.status,
+          decidedAt: r.decidedAt?.toISOString() ?? null,
+          deciderEmail: r.decidedBy?.email ?? null,
+          denyReason: r.denyReason,
+        })),
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+timeRouter.post('/admin/clock-in-requests/:id/approve', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const request = await prisma.clockInRequest.findFirst({
+      where: { id: req.params.id, ...clockInRequestClientClamp(user) },
+    });
+    if (!request) {
+      throw new HttpError(404, 'not_found', 'Clock-in request not found.');
+    }
+    if (request.status !== 'PENDING') {
+      throw new HttpError(409, 'already_decided', 'This request was already decided.');
+    }
+    if (Date.now() - request.requestedAt.getTime() > CLOCK_IN_REQUEST_MAX_AGE_MS) {
+      throw new HttpError(
+        409,
+        'too_old',
+        'This request is too old to approve — the entry would have been running for hours. Add a manual time entry with explicit times instead.',
+      );
+    }
+    const open = await prisma.timeEntry.findFirst({
+      where: { associateId: request.associateId, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    if (open) {
+      throw new HttpError(
+        409,
+        'already_clocked_in',
+        'This associate is already clocked in — nothing to approve.',
+      );
+    }
+
+    const entry = await prisma.$transaction(async (tx) => {
+      const created = await tx.timeEntry.create({
+        data: {
+          associateId: request.associateId,
+          clientId: request.clientId,
+          locationId: request.locationId,
+          // Backdated to the refused punch — waiting on the decision never
+          // shorts the associate. Re-match in case the supervisor also
+          // scheduled them since.
+          shiftId: await matchShiftForPunch(tx, request.associateId, request.requestedAt),
+          clockInAt: request.requestedAt,
+          status: 'ACTIVE',
+        },
+      });
+      await tx.clockInRequest.update({
+        where: { id: request.id },
+        data: {
+          status: 'APPROVED',
+          decidedById: user.id,
+          decidedAt: new Date(),
+          timeEntryId: created.id,
+        },
+      });
+      return created;
+    });
+
+    await recordTimeEvent({
+      actorUserId: user.id,
+      action: 'time.clock_in_request_approved',
+      timeEntryId: entry.id,
+      associateId: request.associateId,
+      metadata: { clockInRequestId: request.id, backdatedTo: request.requestedAt.toISOString() },
+      req,
+    });
+    void notifyAssociate(request.associateId, {
+      subject: "You're clocked in",
+      body: `Your supervisor approved your clock-in — you are on the clock as of ${formatTimeInZone(request.requestedAt, DEFAULT_TIMEZONE)}. No need to punch again; clock out at the kiosk as usual.`,
+      category: 'time_entry',
+      linkUrl: '/time-attendance',
+    });
+    res.json({ ok: true, timeEntryId: entry.id });
+  } catch (err) {
+    next(err);
+  }
+});
+
+timeRouter.post('/admin/clock-in-requests/:id/deny', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const parsed = ClockInRequestDenyInputSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const request = await prisma.clockInRequest.findFirst({
+      where: { id: req.params.id, ...clockInRequestClientClamp(user) },
+    });
+    if (!request) {
+      throw new HttpError(404, 'not_found', 'Clock-in request not found.');
+    }
+    if (request.status !== 'PENDING') {
+      throw new HttpError(409, 'already_decided', 'This request was already decided.');
+    }
+    await prisma.clockInRequest.update({
+      where: { id: request.id },
+      data: {
+        status: 'DENIED',
+        decidedById: user.id,
+        decidedAt: new Date(),
+        denyReason: parsed.data.reason?.trim() || null,
+      },
+    });
+    enqueueAudit(
+      {
+        actorUserId: user.id,
+        clientId: request.clientId,
+        action: 'time.clock_in_request_denied',
+        entityType: 'ClockInRequest',
+        entityId: request.id,
+        metadata: {
+          associateId: request.associateId,
+          reason: parsed.data.reason ?? null,
+        },
+      },
+      'time.clock_in_request_denied',
+    );
+    void notifyAssociate(request.associateId, {
+      subject: 'Clock-in not approved',
+      body: `Your supervisor did not approve your clock-in${parsed.data.reason ? `: "${parsed.data.reason.trim()}"` : ''}. Talk to them if this looks wrong.`,
+      category: 'time_entry',
+      linkUrl: '/time-attendance',
+    });
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

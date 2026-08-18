@@ -1089,6 +1089,43 @@ export const TimeEntryListResponseSchema = z.object({
 });
 export type TimeEntryListResponse = z.infer<typeof TimeEntryListResponseSchema>;
 
+/* -------------------------------------------------------------------------- *
+ *  Walk-in clock-in requests — kiosk punches the schedule gate refused,
+ *  parked for a supervisor to approve (backdated ACTIVE entry) or deny.
+ * -------------------------------------------------------------------------- */
+
+export const ClockInRequestStatusSchema = z.enum(['PENDING', 'APPROVED', 'DENIED']);
+export type ClockInRequestStatus = z.infer<typeof ClockInRequestStatusSchema>;
+
+export const ClockInRequestRowSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string(),
+  clientId: UuidSchema,
+  clientName: z.string().nullable(),
+  locationId: UuidSchema.nullable(),
+  locationName: z.string().nullable(),
+  /** The refused punch instant — what an approval backdates the entry to. */
+  requestedAt: z.string().datetime(),
+  status: ClockInRequestStatusSchema,
+  decidedAt: z.string().datetime().nullable(),
+  deciderEmail: z.string().nullable(),
+  denyReason: z.string().nullable(),
+});
+export type ClockInRequestRow = z.infer<typeof ClockInRequestRowSchema>;
+
+export const ClockInRequestListResponseSchema = z.object({
+  requests: z.array(ClockInRequestRowSchema),
+});
+export type ClockInRequestListResponse = z.infer<
+  typeof ClockInRequestListResponseSchema
+>;
+
+export const ClockInRequestDenyInputSchema = z.object({
+  reason: z.string().trim().max(300).optional(),
+});
+export type ClockInRequestDenyInput = z.infer<typeof ClockInRequestDenyInputSchema>;
+
 export const ClockInInputSchema = z.object({
   notes: z.string().max(500).optional(),
 });

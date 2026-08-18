@@ -27,6 +27,9 @@ vi.mock('@/lib/schedulingApi', () => ({
 }));
 vi.mock('@/lib/timeApi', () => ({
   countAdminTimeEntries: vi.fn(),
+  listClockInRequests: vi.fn(async () => ({ requests: [] })),
+  approveClockInRequest: vi.fn(),
+  denyClockInRequest: vi.fn(),
 }));
 
 import {
