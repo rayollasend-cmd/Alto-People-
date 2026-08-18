@@ -366,19 +366,24 @@ everifyRouter.post('/:associateId/case', MANAGE, async (req, res, next) => {
     if (!associate) {
       throw new HttpError(404, 'not_found', 'Associate not found.');
     }
-    if (!associate.i9Verification) {
-      // E-Verify is downstream of Form I-9 by law — a case with no I-9 behind
-      // it would be unauditable, and the scorecard signal would be meaningless.
-      throw new HttpError(
-        409,
-        'no_i9',
-        'This associate has no I-9 on file — complete Form I-9 before recording an E-Verify case.',
-      );
-    }
+    // CSV-migrated associates were I-9'd and E-Verified on paper before the
+    // system existed, so they have no I9Verification row — refusing the case
+    // here (the old 409) locked out exactly the people whose verification is
+    // already done. Create an empty shell instead: the case lands, while the
+    // roster still honestly shows Section 1/2 as incomplete until HR
+    // backfills the paper I-9 dates on the I-9 tab.
+    const i9Id =
+      associate.i9Verification?.id ??
+      (
+        await prisma.i9Verification.create({
+          data: { associateId: associate.id },
+          select: { id: true },
+        })
+      ).id;
 
     const d = parsed.data;
     const row = await prisma.i9Verification.update({
-      where: { id: associate.i9Verification.id },
+      where: { id: i9Id },
       data: {
         ...(d.caseNumber !== undefined ? { eVerifyCaseNumber: d.caseNumber } : {}),
         ...(d.status !== undefined ? { eVerifyStatus: d.status } : {}),
@@ -401,9 +406,15 @@ everifyRouter.post('/:associateId/case', MANAGE, async (req, res, next) => {
       actorUserId: req.user!.id,
       action: 'compliance.everify_case_recorded',
       entityType: 'I9Verification',
-      entityId: associate.i9Verification.id,
+      entityId: i9Id,
       associateId: associate.id,
-      metadata: { caseNumber: row.eVerifyCaseNumber, status: row.eVerifyStatus },
+      metadata: {
+        caseNumber: row.eVerifyCaseNumber,
+        status: row.eVerifyStatus,
+        // Flag when the shell was created by this very call — the audit
+        // trail should say the I-9 record began life as a case backfill.
+        ...(associate.i9Verification ? {} : { i9CreatedByCaseBackfill: true }),
+      },
       req,
     });
 

@@ -560,6 +560,15 @@ function CaseDrawer({
                   <div className="mt-0.5 text-silver">
                     {detail.blockers.map((b) => BLOCKER_LABEL[b]).join(' · ')}
                   </div>
+                  {/* The warning used to read as a lock — users assumed the
+                      case/packet sections below were disabled. They aren't:
+                      paper-era associates already have a completed case to
+                      record even though their I-9 was never entered here. */}
+                  <div className="mt-1 text-silver/70">
+                    If this associate was already verified (for example, on
+                    paper before Alto People), you can still record the case
+                    and upload the packet below.
+                  </div>
                 </div>
               </div>
             )}

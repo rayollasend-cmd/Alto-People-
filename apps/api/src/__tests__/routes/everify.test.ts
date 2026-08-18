@@ -369,17 +369,31 @@ describe('POST /compliance/everify/:associateId/case', () => {
       .expect(400);
   });
 
-  // E-Verify is downstream of Form I-9 by law.
-  it('409s when the associate has no I-9', async () => {
+  // CSV-migrated associates were verified on paper before the system
+  // existed and have no I9Verification row. The old 409 locked out exactly
+  // those people; now the case lands on a shell record, and the roster
+  // still honestly reports the I-9 sections as incomplete.
+  it('creates the I-9 shell when the associate has none, without faking the sections', async () => {
     const client = await createClient();
     const fresh = await onboardingAssociate(client.id);
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(user.email);
 
-    await a
+    const res = await a
       .post(`/compliance/everify/${fresh.id}/case`)
-      .send({ caseNumber: '2026-1', status: 'PENDING' })
-      .expect(409);
+      .send({ caseNumber: '2026-1', status: 'EMPLOYMENT_AUTHORIZED' });
+    expect(res.status).toBe(200);
+    expect(res.body.caseNumber).toBe('2026-1');
+
+    const roster = await a.get('/compliance/everify');
+    const row = roster.body.rows.find(
+      (r: { associateId: string }) => r.associateId === fresh.id,
+    );
+    expect(row.caseNumber).toBe('2026-1');
+    expect(row.status).toBe('EMPLOYMENT_AUTHORIZED');
+    // The shell must not fabricate compliance: sections stay unsigned.
+    expect(row.section1CompletedAt).toBeNull();
+    expect(row.section2CompletedAt).toBeNull();
   });
 });
 
