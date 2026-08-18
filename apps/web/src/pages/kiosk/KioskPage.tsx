@@ -365,12 +365,6 @@ export function KioskPage() {
     });
   }, []);
 
-  // Live clock for the idle screen.
-  useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(t);
-  }, []);
-
   // Self-update. A wall tablet keeps this tab open for weeks and the page
   // deliberately blocks pull-to-refresh — so without this, every deploy
   // (including bug fixes to THIS page) only arrives when someone walks
@@ -382,6 +376,18 @@ export function KioskPage() {
   useEffect(() => {
     stageRef.current = stage;
   }, [stage]);
+
+  // Live clock for the idle screen. Gated on stage: only the idle screen
+  // renders `now`, and the ungated version re-rendered this entire page —
+  // camera preview and face-match included — once per second on low-power
+  // wall tablets, all the way through a punch.
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (stageRef.current !== 'idle') return;
+      setNow(new Date());
+    }, 1000);
+    return () => clearInterval(t);
+  }, []);
   const knownVersionRef = useRef<string | null>(null);
   const pendingReloadRef = useRef(false);
   useEffect(() => {

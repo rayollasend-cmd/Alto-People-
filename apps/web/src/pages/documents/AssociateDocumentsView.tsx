@@ -251,7 +251,7 @@ export function AssociateDocumentsView() {
       </form>
 
       <h2 className="text-2xl text-white mb-3">Your documents</h2>
-      {!docs && <SkeletonRows count={4} rowHeight="h-14" />}
+      {!docs && !error && <SkeletonRows count={4} rowHeight="h-14" />}
       {docs && docs.length === 0 && (
         <EmptyState
           icon={FileText}

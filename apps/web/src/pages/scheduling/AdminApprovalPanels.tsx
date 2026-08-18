@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { toast } from '@/components/ui/Toaster';
 import { fmtDateTime } from '@/lib/format';
 import { statusTone } from '@/lib/status';
@@ -98,7 +99,20 @@ export function AdminSwapsPanel() {
         <CardTitle>Swap requests awaiting your approval</CardTitle>
       </CardHeader>
       <CardContent>
-        {!items && <Skeleton className="h-16" />}
+        {/* Gate the skeleton on the error — a failed load used to shimmer
+            forever with only a transient toast. */}
+        {loadError != null && (
+          <ErrorBanner
+            action={
+              <Button size="sm" variant="secondary" onClick={() => void swapsQuery.refetch()}>
+                Retry
+              </Button>
+            }
+          >
+            Could not load swap requests.
+          </ErrorBanner>
+        )}
+        {!items && loadError == null && <Skeleton className="h-16" />}
         {items && items.length === 0 && (
           <p className="text-silver text-sm">
             No swap requests need your approval.
@@ -220,7 +234,18 @@ export function AdminPickupPanel() {
         <CardTitle>Open-shift pickup requests</CardTitle>
       </CardHeader>
       <CardContent>
-        {!items && <Skeleton className="h-16" />}
+        {loadError != null && (
+          <ErrorBanner
+            action={
+              <Button size="sm" variant="secondary" onClick={() => void pickupsQuery.refetch()}>
+                Retry
+              </Button>
+            }
+          >
+            Could not load pickup requests.
+          </ErrorBanner>
+        )}
+        {!items && loadError == null && <Skeleton className="h-16" />}
         {items && items.length === 0 && (
           <p className="text-silver text-sm">
             No pickup requests waiting. Associates see published open shifts

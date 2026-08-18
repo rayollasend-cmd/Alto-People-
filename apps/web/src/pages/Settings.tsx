@@ -470,6 +470,7 @@ function MfaCard() {
                     </code>
                     <Button
                       variant="ghost"
+                      aria-label="Copy secret"
                       onClick={() => copy(enroll.secret, 'Secret')}
                       type="button"
                     >

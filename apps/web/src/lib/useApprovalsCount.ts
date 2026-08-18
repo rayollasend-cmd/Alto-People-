@@ -40,7 +40,11 @@ export function useApprovalsCount(): number | null {
       }
     };
     void load();
-    const timer = setInterval(load, POLL_MS);
+    // Skip polls while the tab is hidden — the SSE nudge below and the
+    // focus handler cover "something changed while I was away".
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') void load();
+    }, POLL_MS);
     const onFocus = () => void load();
     window.addEventListener('focus', onFocus);
     // New pending items notify admins in-app, so the same live nudge

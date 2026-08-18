@@ -260,6 +260,7 @@ export function VaccinationsHome() {
                       <TableCell className="text-right">
                         {canManage && (
                           <button
+                            aria-label="Delete vaccination record"
                             onClick={async () => {
                               if (!(await confirm({ title: 'Delete this record?', destructive: true }))) return;
                               try {

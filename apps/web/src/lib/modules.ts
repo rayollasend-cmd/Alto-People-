@@ -420,7 +420,7 @@ export const MODULES: ModuleNav[] = [
   {
     key: 'time-attendance',
     path: '/time-attendance',
-    label: 'Time & Attendance',
+    label: 'Time & attendance',
     description:
       'Geofenced clock-in, timesheet approvals, and attendance auditing.',
     requires: 'view:time',

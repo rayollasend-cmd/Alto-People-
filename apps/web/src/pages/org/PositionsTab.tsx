@@ -139,7 +139,7 @@ export function PositionsTab({
           </div>
         </ErrorBanner>
       )}
-      {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
+      {!rows && !error && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
           icon={Briefcase}

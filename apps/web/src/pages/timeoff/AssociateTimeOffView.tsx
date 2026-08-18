@@ -20,6 +20,7 @@ import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import { performWithUndo } from '@/lib/undoToast';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { PageHeader } from '@/components/ui/PageHeader';
 import {
   Card,
@@ -207,7 +208,22 @@ export function AssociateTimeOffView() {
         }
       />
 
-      <BalanceGrid balances={balances} />
+      {/* A failed load used to leave the balance tiles + request rows
+          shimmering forever with only a transient toast — no way back
+          short of a full reload. */}
+      {loadError && (
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              {t('common.retry')}
+            </Button>
+          }
+        >
+          {t('timeoff.loadFailed')}
+        </ErrorBanner>
+      )}
+
+      {!loadError && <BalanceGrid balances={balances} />}
 
       <Card>
         <CardHeader>
@@ -215,7 +231,7 @@ export function AssociateTimeOffView() {
           <CardDescription>{t('timeoff.mostRecentFirst')}</CardDescription>
         </CardHeader>
         <CardContent>
-          {!requests && <SkeletonRows count={3} />}
+          {!requests && !loadError && <SkeletonRows count={3} />}
           {requests && requests.length === 0 && (
             <EmptyState
               icon={CalendarOff}

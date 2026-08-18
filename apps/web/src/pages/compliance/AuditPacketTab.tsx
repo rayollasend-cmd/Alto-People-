@@ -27,7 +27,7 @@ const SCOPE_LABEL: Record<PacketScope, { label: string; blurb: string }> = {
   },
   INDIVIDUAL: {
     label: 'Individual associate',
-    blurb: 'One worker\'s complete evidence file — wage claims, subpoenas, single-worker I-9 requests.',
+    blurb: 'One associate\'s complete evidence file — wage claims, subpoenas, single-associate I-9 requests.',
   },
 };
 

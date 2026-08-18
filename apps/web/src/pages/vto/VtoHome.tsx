@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { safeHref } from '@alto-people/shared';
 import { Heart, Plus } from 'lucide-react';
 import { toast } from 'sonner';
@@ -125,27 +125,34 @@ export function VtoHome() {
     if (canManage) refreshSummary();
   }, [canManage]);
 
+  // Memoized: these four passes over the full queue used to re-run on
+  // EVERY render — including each keystroke in the search box.
   const term = search.trim().toLowerCase();
-  const filteredQueue =
-    queue === null
-      ? null
-      : term
-        ? queue.filter(
-            (e) =>
-              e.associateName.toLowerCase().includes(term) ||
-              e.associateEmail.toLowerCase().includes(term),
-          )
-        : queue;
+  const filteredQueue = useMemo(
+    () =>
+      queue === null
+        ? null
+        : term
+          ? queue.filter(
+              (e) =>
+                e.associateName.toLowerCase().includes(term) ||
+                e.associateEmail.toLowerCase().includes(term),
+            )
+          : queue,
+    [queue, term],
+  );
 
-  const selectedRows = (filteredQueue ?? []).filter((e) => selected.has(e.id));
-  const decidableIds = selectedRows
-    .filter((e) => e.status === 'PENDING')
-    .map((e) => e.id);
-  const matchableIds = selectedRows
-    .filter(
-      (e) => e.status === 'APPROVED' && e.matchRequested && !e.matchAmount,
-    )
-    .map((e) => e.id);
+  const { decidableIds, matchableIds } = useMemo(() => {
+    const rows = (filteredQueue ?? []).filter((e) => selected.has(e.id));
+    return {
+      decidableIds: rows.filter((e) => e.status === 'PENDING').map((e) => e.id),
+      matchableIds: rows
+        .filter(
+          (e) => e.status === 'APPROVED' && e.matchRequested && !e.matchAmount,
+        )
+        .map((e) => e.id),
+    };
+  }, [filteredQueue, selected]);
 
   const toggleSelected = (id: string) => {
     setSelected((prev) => {

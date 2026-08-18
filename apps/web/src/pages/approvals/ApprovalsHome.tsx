@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -142,7 +142,7 @@ export function ApprovalsHome() {
                 </Button>
               </span>
             ) : (
-              'Review on Time & Attendance'
+              'Review on Time & attendance'
             )
           }
           // A retry button inside a link is invalid markup — drop the link
@@ -401,8 +401,11 @@ function PendingTimeOffPanel({
   const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [denyTarget, setDenyTarget] = useState<TimeOffRequest | null>(null);
+  // Memoized: a fresh array identity on every render defeats memoization
+  // inside useSelection, and this page refetches itself every minute.
+  const itemIds = useMemo(() => items?.map((r) => r.id) ?? [], [items]);
   const { selected, toggle, clear, allSelected, someSelected, toggleAll } =
-    useSelection(items?.map((r) => r.id) ?? []);
+    useSelection(itemIds);
   const [bulkBusy, setBulkBusy] = useState(false);
 
   // Optimistically drop the row from the cached list the moment a
@@ -682,8 +685,9 @@ function SwapsPanel() {
     queryFn: () => listAdminSwaps({ status: 'PEER_ACCEPTED' }),
   });
   const items = swapsQuery.data?.requests ?? null;
+  const itemIds = useMemo(() => items?.map((s) => s.id) ?? [], [items]);
   const { selected, toggle, clear, allSelected, someSelected, toggleAll } =
-    useSelection(items?.map((s) => s.id) ?? []);
+    useSelection(itemIds);
   const error = swapsQuery.isError
     ? swapsQuery.error instanceof ApiError
       ? swapsQuery.error.message
@@ -845,8 +849,9 @@ function PickupsPanel() {
     queryFn: () => listOpenShiftClaims(),
   });
   const items = pickupsQuery.data?.claims ?? null;
+  const itemIds = useMemo(() => items?.map((c) => c.id) ?? [], [items]);
   const { selected, toggle, clear, allSelected, someSelected, toggleAll } =
-    useSelection(items?.map((c) => c.id) ?? []);
+    useSelection(itemIds);
   const error = pickupsQuery.isError
     ? pickupsQuery.error instanceof ApiError
       ? pickupsQuery.error.message

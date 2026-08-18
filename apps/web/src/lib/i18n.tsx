@@ -233,7 +233,7 @@ const en = {
   'swap.stCancelled': 'Cancelled',
 
   // Time & attendance — associate kiosk-only explainer
-  'time.title': 'Time & Attendance',
+  'time.title': 'Time & attendance',
   'time.subtitle': 'Clock in at the worksite kiosk.',
   'time.kioskHeading': 'Use the time-clock tablet at your worksite',
   'time.kioskBody':

@@ -232,7 +232,7 @@ export function AssociateTimeView() {
   return (
     <div className="mx-auto">
       <PageHeader
-        title="Time & Attendance"
+        title="Time & attendance"
         subtitle="Clock in when you start. Clock out when you stop."
       />
 
@@ -403,7 +403,7 @@ export function AssociateTimeView() {
             </div>
           </div>
         </div>
-        {!entries && <SkeletonRows count={4} rowHeight="h-20" />}
+        {!entries && !error && <SkeletonRows count={4} rowHeight="h-20" />}
         {entries && entries.length === 0 && (() => {
           const isDefaultRange =
             historyFromYmd === defaultHistoryFromYmd() &&

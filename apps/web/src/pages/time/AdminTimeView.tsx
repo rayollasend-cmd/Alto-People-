@@ -1090,7 +1090,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
     <div className="mx-auto">
       <PullToRefreshIndicator state={pullState} />
       <PageHeader
-        title="Time & Attendance"
+        title="Time & attendance"
         subtitle={
           canManage
             ? 'Review, approve, or reject time entries from associates.'
@@ -1208,7 +1208,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
             </div>
           </CardHeader>
           <CardContent className="pt-0">
-            {!active && <SkeletonRows count={5} rowHeight="h-12" />}
+            {!active && !error && <SkeletonRows count={5} rowHeight="h-12" />}
             {active && active.length === 0 && (
               <EmptyState
                 title="No one is clocked in"
@@ -1658,7 +1658,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 Narrow the date range to see (and bulk-act on) everything.
               </div>
             )}
-            {!visibleEntries && <SkeletonRows count={6} rowHeight="h-12" />}
+            {!visibleEntries && !error && <SkeletonRows count={6} rowHeight="h-12" />}
             {visibleEntries && visibleEntries.length === 0 && (
               <EmptyState
                 title={anomaliesOnly ? 'No flagged entries' : 'Nothing to review'}

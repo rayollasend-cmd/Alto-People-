@@ -10,6 +10,7 @@ import {
 import { listShiftPositions, updateShiftPosition } from '@/lib/orgApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useConfirm } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -163,6 +164,7 @@ function RateRow({
   canFlagLead: boolean;
   onChanged: () => Promise<void>;
 }) {
+  const confirm = useConfirm();
   const [pay, setPay] = useState(saved ? String(saved.payRate) : '');
   const [bill, setBill] = useState(saved?.billRate != null ? String(saved.billRate) : '');
   const [busy, setBusy] = useState(false);
@@ -220,6 +222,17 @@ function RateRow({
 
   const clear = async () => {
     if (!saved) return;
+    // Wipes the client's default bill/pay rate for this position — every
+    // future shift falls back to org standards. One tap shouldn't do that.
+    if (
+      !(await confirm({
+        title: `Clear the default rate for ${position}?`,
+        description: 'New shifts fall back to the org-standard rates until a new default is saved.',
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
     setBusy(true);
     try {
       await deleteRateDefault(saved.id);

@@ -24,6 +24,7 @@ import {
   UserPlus,
   Wand2,
   X,
+  Trash2,
 } from 'lucide-react';
 import type {
   AssociateLite,
@@ -4972,10 +4973,13 @@ function TemplatesDialog({
                   <Button
                     size="sm"
                     variant="destructive"
+                    aria-label={`Delete template ${t.name}`}
                     onClick={() => onDelete(t.id)}
                     disabled={pendingId === t.id}
                   >
-                    <X className="h-3.5 w-3.5" />
+                    {/* Trash2, matching every other delete affordance — X
+                        reads as "close". */}
+                    <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>
               </li>

@@ -9,6 +9,7 @@ import {
   type OrgBranding,
 } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
+import { useConfirm } from '@/lib/confirm';
 import { fmtDateTime } from '@/lib/format';
 import {
   deleteOrgLogo,
@@ -39,6 +40,7 @@ const MFA_REQUIREMENT_LABELS: Record<MfaRequirement, string> = {
  * very next email rendered.
  */
 export function BrandingHome() {
+  const confirm = useConfirm();
   const [branding, setBranding] = useState<OrgBranding | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -134,6 +136,16 @@ export function BrandingHome() {
   };
 
   const onRemoveLogo = async () => {
+    // The logo heads every outbound email — deleting it deserves a pause.
+    if (
+      !(await confirm({
+        title: 'Remove the org logo?',
+        description: 'Emails and letterheads fall back to the default header until a new logo is uploaded.',
+        destructive: true,
+      }))
+    ) {
+      return;
+    }
     setSaving(true);
     try {
       await deleteOrgLogo();

@@ -454,6 +454,7 @@ function PlanDetailDrawer({
                       )}
                       {canManage && (
                         <button
+                          aria-label={`Delete milestone ${m.title}`}
                           onClick={async () => {
                             if (!(await confirm({ title: `Delete "${m.title}"?`, destructive: true }))) return;
                             try {

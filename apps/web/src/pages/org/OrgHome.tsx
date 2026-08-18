@@ -144,6 +144,7 @@ export function OrgHome() {
           <Select
             ref={clientSelectRef}
             size="sm"
+            aria-label="Filter by client"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
           >
@@ -286,7 +287,7 @@ function DepartmentsTab({
           </div>
         </ErrorBanner>
       )}
-      {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
+      {!rows && !error && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
           icon={FolderTree}
@@ -605,7 +606,7 @@ function CostCentersTab({
           </div>
         </ErrorBanner>
       )}
-      {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
+      {!rows && !error && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
           icon={Hash}
@@ -894,7 +895,7 @@ function ShiftPositionsTab({
           </div>
         </ErrorBanner>
       )}
-      {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
+      {!rows && !error && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
           icon={CalendarClock}
@@ -1159,7 +1160,7 @@ function JobProfilesTab({
           </div>
         </ErrorBanner>
       )}
-      {!rows && <SkeletonRows count={4} rowHeight="h-12" />}
+      {!rows && !error && <SkeletonRows count={4} rowHeight="h-12" />}
       {rows && rows.length === 0 && (
         <EmptyState
           icon={Building2}
@@ -1552,7 +1553,7 @@ function PeopleTab({
           </div>
         </ErrorBanner>
       )}
-      {!rows && <SkeletonRows count={6} rowHeight="h-14" />}
+      {!rows && !error && <SkeletonRows count={6} rowHeight="h-14" />}
       {rows && rows.length === 0 && (
         <EmptyState
           icon={Users}

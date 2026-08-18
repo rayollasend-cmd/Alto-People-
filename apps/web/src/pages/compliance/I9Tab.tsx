@@ -336,7 +336,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
           {error}
         </ErrorBanner>
       )}
-      {!displayRows && <SkeletonRows count={4} rowHeight="h-20" />}
+      {!displayRows && !error && <SkeletonRows count={4} rowHeight="h-20" />}
       {displayRows && displayRows.length === 0 && (
         <EmptyState
           icon={FileCheck}

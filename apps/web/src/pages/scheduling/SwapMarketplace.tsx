@@ -164,7 +164,7 @@ export function SwapMarketplace({
           {error}
         </ErrorBanner>
       )}
-      {!items && <SkeletonRows count={3} rowHeight="h-16" />}
+      {!items && !error && <SkeletonRows count={3} rowHeight="h-16" />}
       {items && items.length === 0 && (
         <EmptyState
           icon={ArrowLeftRight}

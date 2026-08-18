@@ -821,6 +821,7 @@ function EmergencyPanel({
                     <TableCell className="text-right">
                       <button
                         data-no-row-click
+                        aria-label="Delete"
                         onClick={(e) => {
                           e.stopPropagation();
                           onDelete(row.id);
@@ -1071,6 +1072,7 @@ function DependentsPanel({
                     <TableCell className="text-right">
                       <button
                         data-no-row-click
+                        aria-label="Delete"
                         onClick={(e) => {
                           e.stopPropagation();
                           onDelete(row.id);
@@ -1379,6 +1381,7 @@ function BeneficiariesPanel({
                     <TableCell className="text-right">
                       <button
                         data-no-row-click
+                        aria-label="Delete"
                         onClick={(e) => {
                           e.stopPropagation();
                           onDelete(row.id);

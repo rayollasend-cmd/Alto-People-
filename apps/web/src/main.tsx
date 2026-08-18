@@ -112,6 +112,20 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
             }
           });
         });
+        // The browser only re-checks sw.js on a NAVIGATION (or ~daily) —
+        // and this is a PWA people keep open all day with SPA routing
+        // that never navigates. Post-deploy, a long-lived session never
+        // learned an update existed and looked stale until a manual
+        // hard-refresh. Actively check: every 15 minutes, and whenever
+        // the tab regains focus/visibility (the "back from lunch" case).
+        const check = () => {
+          reg.update().catch(() => {});
+        };
+        setInterval(check, 15 * 60_000);
+        window.addEventListener('focus', check);
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') check();
+        });
       })
       .catch(() => {
         // Silent fail — SW is best-effort enhancement.

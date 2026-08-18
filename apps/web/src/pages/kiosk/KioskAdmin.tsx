@@ -498,8 +498,13 @@ function DevicesTab({
                           onClick={async () => {
                             if (!(await confirm({ title: 'Revoke this kiosk?', description: 'It will stop accepting punches.', destructive: true })))
                               return;
-                            await revokeKioskDevice(d.id);
-                            refresh();
+                            try {
+                              await revokeKioskDevice(d.id);
+                              toast.success('Kiosk revoked.');
+                              refresh();
+                            } catch (err) {
+                              toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                            }
                           }}
                         >
                           Revoke
@@ -650,6 +655,7 @@ function NewDeviceDrawer({
           ) : (
             <Select
               className="mt-1"
+              aria-label="Client"
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
             >
@@ -1070,6 +1076,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
           ) : (
             <Select
               className="mt-1"
+              aria-label="Filter by client"
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
             >
@@ -1293,6 +1300,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder="Search name, email, or number"
+                aria-label="Search associates by name, email, or number"
                 className="pl-9"
               />
             </div>
@@ -1401,7 +1409,10 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredRows.map((p) => (
+                {/* Render cap — the fetch can return 500 rows × 8 columns;
+                    painting all of it froze the tab. Search narrows to the
+                    rest; the count line above says what's hidden. */}
+                {filteredRows.slice(0, 150).map((p) => (
                   <TableRow key={p.id} className="group">
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
@@ -1529,6 +1540,12 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                 ))}
               </TableBody>
             </Table>
+          )}
+          {filteredRows.length > 150 && (
+            <div className="border-t border-navy-secondary px-4 py-2.5 text-xs text-silver">
+              Showing the first 150 of {filteredRows.length} — use the search
+              box to find anyone else.
+            </div>
           )}
         </CardContent>
       </Card>

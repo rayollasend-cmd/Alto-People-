@@ -380,6 +380,7 @@ function BandsTab({ clientId, canManage }: { clientId: string; canManage: boolea
                       {canManage && (
                         <button
                           data-no-row-click
+                          aria-label="Delete pay band"
                           onClick={(e) => {
                             e.stopPropagation();
                             onDelete(b.id);

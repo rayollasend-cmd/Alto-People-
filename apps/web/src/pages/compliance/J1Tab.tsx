@@ -148,7 +148,7 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
           {error}
         </ErrorBanner>
       )}
-      {!profiles && <SkeletonRows count={4} rowHeight="h-12" />}
+      {!profiles && !error && <SkeletonRows count={4} rowHeight="h-12" />}
       {profiles && profiles.length === 0 && (
         <EmptyState
           icon={Globe}

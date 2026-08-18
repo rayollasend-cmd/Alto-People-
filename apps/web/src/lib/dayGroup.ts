@@ -36,7 +36,10 @@ export function dayHeading(key: string): string {
   const [y, m, d] = key.split('-').map(Number);
   const date = new Date(y, m - 1, d, 12, 0, 0);
   const sameYear = y === today.getFullYear();
-  return date.toLocaleDateString(undefined, {
+  // 'en-US' pinned to match lib/format.ts — `undefined` used the browser
+  // locale, so on a non-US browser these day headings rendered in another
+  // language beside en-US dates elsewhere on the same page.
+  return date.toLocaleDateString('en-US', {
     weekday: 'long',
     month: 'short',
     day: 'numeric',
@@ -44,9 +47,9 @@ export function dayHeading(key: string): string {
   });
 }
 
-/** Time-only formatter (HH:MM:SS) for use inside a day-grouped table. */
+/** Time-only formatter for use inside a day-grouped table. */
 export function fmtTimeOnly(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, {
+  return new Date(iso).toLocaleTimeString('en-US', {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',

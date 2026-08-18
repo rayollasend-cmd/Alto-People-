@@ -22,6 +22,7 @@ import {
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
+  EmptyState,
   ErrorBanner,
   PageHeader,
   SearchInput,
@@ -282,10 +283,16 @@ function BreakdownCard({
           loading ? (
             <SkeletonRows count={3} />
           ) : (
-            <div className="text-sm text-silver">Not loaded.</div>
+            // Load failed (the page-level banner says so) — a quiet dash
+            // beats "Not loaded.", which read as developer language.
+            <div className="text-sm text-silver">—</div>
           )
         ) : rows.length === 0 ? (
-          <div className="text-sm text-silver">No data.</div>
+          <EmptyState
+            icon={Users}
+            title="Nothing in this window"
+            description="Widen the date range or pick a different client."
+          />
         ) : (
           <div className="space-y-2">
             {visible!.map((r) => {

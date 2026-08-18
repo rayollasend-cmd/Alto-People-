@@ -367,7 +367,7 @@ export function BackgroundTab({ canManage }: { canManage: boolean }) {
         </div>
       )}
 
-      {!checks && <SkeletonRows count={4} rowHeight="h-12" />}
+      {!checks && !error && <SkeletonRows count={4} rowHeight="h-12" />}
       {checks && checks.length === 0 && (
         <EmptyState
           icon={ShieldCheck}

@@ -174,6 +174,11 @@ export function DirCommsHome() {
   );
 }
 
+// Render cap for the directory table — the endpoint has no limit param,
+// and painting a whole 1000-person org into one table froze the tab on
+// first open. The CSV export still covers the full result.
+const DIRECTORY_RENDER_CAP = 200;
+
 function DirectoryTab() {
   const [q, setQ] = useState('');
   const [people, setPeople] = useState<Person[] | null>(null);
@@ -260,7 +265,7 @@ function DirectoryTab() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {people.map((p) => (
+                {people.slice(0, DIRECTORY_RENDER_CAP).map((p) => (
                   <TableRow key={p.id}>
                     <TableCell className="font-medium text-white">
                       <div className="truncate">{p.name}</div>
@@ -312,6 +317,12 @@ function DirectoryTab() {
                 ))}
               </TableBody>
             </Table>
+          )}
+          {people !== null && people.length > DIRECTORY_RENDER_CAP && (
+            <div className="border-t border-navy-secondary px-4 py-2.5 text-xs text-silver">
+              Showing the first {DIRECTORY_RENDER_CAP} of {people.length} —
+              search to narrow the list. The CSV export includes everyone.
+            </div>
           )}
         </CardContent>
       </Card>

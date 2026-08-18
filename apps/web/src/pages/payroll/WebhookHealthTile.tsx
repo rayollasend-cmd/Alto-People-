@@ -96,10 +96,18 @@ export function WebhookHealthTile() {
         });
     };
     tick();
-    const id = window.setInterval(tick, POLL_INTERVAL_MS);
+    // Skip polls in a backgrounded tab; catch up as soon as it returns.
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'visible') tick();
+    }, POLL_INTERVAL_MS);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') tick();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
 

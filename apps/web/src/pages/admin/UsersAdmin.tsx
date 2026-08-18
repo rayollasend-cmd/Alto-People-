@@ -16,7 +16,7 @@ import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';
-import { fmtDate, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtDateTime, ymdLocal } from '@/lib/format';
 import {
   forcePasswordReset,
   listAdminUsers,
@@ -734,6 +734,7 @@ export function UsersAdmin() {
                       <TableCell>
                         <Select
                           size="sm"
+                          aria-label="Change role"
                           value={draftRole[u.id] ?? u.role}
                           onChange={(e) => onChangeRole(u, e.target.value as Role)}
                           disabled={isMe || busy}
@@ -754,7 +755,7 @@ export function UsersAdmin() {
                             <Badge
                               variant="destructive"
                               withDot={false}
-                              title={`Too many failed sign-in attempts — locked until ${new Date(u.lockedUntil).toLocaleTimeString()}`}
+                              title={`Too many failed sign-in attempts — locked until ${fmtDateTime(u.lockedUntil)}`}
                             >
                               <Lock className="h-3 w-3" aria-hidden="true" />
                               Locked

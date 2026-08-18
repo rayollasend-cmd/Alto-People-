@@ -18,9 +18,14 @@ export interface TableProps extends React.HTMLAttributes<HTMLTableElement> {
   caption?: string;
 }
 
+// overflow-x only: `overflow-auto` made the wrapper div the sticky
+// scrollport with no height bound, so TableHeader's sticky top-0 never
+// engaged anywhere in the app — column labels scrolled away on every long
+// table. With x-only overflow the page (or an outer max-h wrapper) is the
+// vertical scrollport and the sticky header actually sticks.
 export const Table = React.forwardRef<HTMLTableElement, TableProps>(
   ({ className, caption, children, ...props }, ref) => (
-    <div className="relative w-full overflow-auto">
+    <div className="relative w-full overflow-x-auto">
       <table
         ref={ref}
         className={cn('w-full caption-bottom text-sm', className)}

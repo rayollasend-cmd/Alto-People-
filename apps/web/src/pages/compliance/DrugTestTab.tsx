@@ -374,7 +374,7 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
         </div>
       )}
 
-      {!tests && <SkeletonRows count={4} rowHeight="h-12" />}
+      {!tests && !error && <SkeletonRows count={4} rowHeight="h-12" />}
       {tests && tests.length === 0 && (
         <EmptyState
           icon={FlaskConical}

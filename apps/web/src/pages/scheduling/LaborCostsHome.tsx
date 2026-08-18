@@ -428,12 +428,34 @@ function FloorNowCard() {
       }
     };
     void tick();
-    const t = setInterval(() => void tick(), 60_000);
+    // Pause in backgrounded tabs (this poll kept firing all night in a
+    // hidden tab); refresh immediately when the tab comes back.
+    const t = setInterval(() => {
+      if (document.visibilityState === 'visible') void tick();
+    }, 60_000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void tick();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
       clearInterval(t);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, []);
+
+  // Memoized above the early return (hooks can't follow it): this
+  // component re-renders itself every 60s, so the sort shouldn't re-run
+  // on unrelated state changes too.
+  const sortedRows = useMemo(
+    () =>
+      [...(data?.rows ?? [])].sort(
+        (a, b) =>
+          a.clientName.localeCompare(b.clientName) ||
+          a.locationName.localeCompare(b.locationName),
+      ),
+    [data],
+  );
 
   if (failed || data === null || data.rows.length === 0) return null;
 
@@ -569,13 +591,7 @@ function FloorNowCard() {
               </tr>
             </thead>
             <tbody className="divide-y divide-navy-secondary/50">
-              {[...data.rows]
-                .sort(
-                  (a, b) =>
-                    a.clientName.localeCompare(b.clientName) ||
-                    a.locationName.localeCompare(b.locationName),
-                )
-                .map((r) => {
+              {sortedRows.map((r) => {
                   const over = r.expected !== null && r.clockedIn > r.expected;
                   const under = r.expected !== null && r.clockedIn < r.expected;
                   const margin = (r.billedPerHour ?? 0) - (r.loadedPerHour ?? 0);

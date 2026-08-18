@@ -1047,6 +1047,7 @@ function DefinitionDrawer({
                         <Button
                           size="sm"
                           variant="ghost"
+                          aria-label="Remove action"
                           onClick={() => removeAction(idx)}
                           className="text-alert hover:text-alert ml-auto"
                         >

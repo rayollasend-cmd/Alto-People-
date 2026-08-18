@@ -83,6 +83,7 @@ export function OshaWcEeoHome() {
           <span className="text-xs2 uppercase tracking-wider text-silver">Client</span>
           <Select
             size="sm"
+            aria-label="Filter by client"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
           >
