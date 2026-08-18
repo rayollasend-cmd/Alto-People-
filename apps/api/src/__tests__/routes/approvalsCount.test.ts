@@ -16,7 +16,7 @@ afterAll(async () => {
 });
 
 describe('GET /approvals/count', () => {
-  it('sums the four manager queues', async () => {
+  it('sums the manager queues', async () => {
     const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const associate = await prisma.associate.create({
       data: {
@@ -53,6 +53,7 @@ describe('GET /approvals/count', () => {
       pickups: 0,
       timeOff: 1,
       timesheets: 1,
+      clockIns: 0,
       total: 2,
     });
   });
