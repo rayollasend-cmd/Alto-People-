@@ -4,10 +4,13 @@ import {
   AlertTriangle,
   BadgeDollarSign,
   CalendarClock,
+  ChevronDown,
   DollarSign,
   Download,
   Hourglass,
+  RefreshCw,
   Scale,
+  Search,
   Timer,
   Users,
 } from 'lucide-react';
@@ -46,7 +49,9 @@ import {
 } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtTime } from '@/lib/format';
+import { cn } from '@/lib/cn';
+import { usePersistentState } from '@/lib/usePersistentState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import {
   Button,
@@ -414,43 +419,181 @@ const hhmmToMinute = (s: string): number | null => {
  */
 function OtOutlookCard() {
   const [data, setData] = useState<OtOutlookResponse | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  // Collapsed state survives visits — a supervisor who works from the
+  // daily tables can keep the radar folded to its one-line summary.
+  const [open, setOpen] = usePersistentState<boolean>(
+    'alto:laborcosts.otOutlook.open.v1',
+    true,
+    (v): v is boolean => typeof v === 'boolean',
+  );
+  const [q, setQ] = useState('');
+  const [clientFilter, setClientFilter] = useState('');
+  const [minOtHours, setMinOtHours] = useState(0);
+
+  const load = async () => {
+    try {
+      setData(await otOutlook());
+    } catch {
+      // A failed load renders nothing — this card is an extra lens, and
+      // the floor board above still shows the aggregate chips.
+    }
+  };
   useEffect(() => {
-    let cancelled = false;
-    otOutlook()
-      .then((r) => {
-        if (!cancelled) setData(r);
-      })
-      .catch(() => {
-        // A failed load renders nothing — this card is an extra lens, and
-        // the floor board above still shows the aggregate chips.
-      });
-    return () => {
-      cancelled = true;
-    };
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Client options come from the rows themselves (an associate can span
+  // clients within the week — they match any of theirs).
+  const clientOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of data?.rows ?? []) {
+      for (const name of r.clientNames.split(' · ')) set.add(name);
+    }
+    return [...set].sort();
+  }, [data]);
+
+  const filtered = useMemo(() => {
+    let list = data?.rows ?? [];
+    if (clientFilter) {
+      list = list.filter((r) => r.clientNames.split(' · ').includes(clientFilter));
+    }
+    const term = q.trim().toLowerCase();
+    if (term) list = list.filter((r) => r.associateName.toLowerCase().includes(term));
+    if (minOtHours > 0) {
+      list = list.filter((r) => r.projectedOtMinutes >= minOtHours * 60);
+    }
+    return list;
+  }, [data, clientFilter, q, minOtHours]);
+
   if (!data || data.rows.length === 0) return null;
   const h = (min: number) => (min / 60).toFixed(1);
   const totalOtMin = data.rows.reduce((s, r) => s + r.projectedOtMinutes, 0);
   const totalBilled = data.rows.reduce((s, r) => s + (r.estOtBilled ?? 0), 0);
+  const anyFilter = clientFilter !== '' || q.trim() !== '' || minOtHours > 0;
+
   return (
-    <div className="rounded-lg border border-warning/40 bg-warning/[0.04] p-4">
-      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-sm font-semibold text-white">
-          Overtime ahead this week
-        </h2>
-        <span className="text-xs tabular-nums text-warning">
-          {h(totalOtMin)} h projected OT · ≈ {money(totalBilled)} billed at 1.5×
-        </span>
+    <div className="rounded-lg border border-warning/40 bg-warning/[0.04]">
+      {/* Header doubles as the collapse toggle; the one-line summary stays
+          readable either way. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex min-w-0 items-center gap-2 text-left"
+        >
+          <ChevronDown
+            className={cn(
+              'h-4 w-4 shrink-0 text-warning/70 transition-transform',
+              !open && '-rotate-90',
+            )}
+          />
+          <h2 className="text-sm font-semibold text-white">
+            Overtime ahead this week
+          </h2>
+          <span className="rounded-full bg-warning/15 px-2 py-0.5 text-2xs font-medium tabular-nums text-warning">
+            {data.rows.length} {data.rows.length === 1 ? 'person' : 'people'} ·{' '}
+            {h(totalOtMin)} h · ≈ {money(totalBilled)}
+          </span>
+        </button>
+        <div className="flex items-center gap-2">
+          <span className="text-2xs text-silver/60">
+            as of {fmtTime(data.generatedAt)}
+          </span>
+          <Button
+            size="xs"
+            variant="ghost"
+            aria-label="Refresh overtime outlook"
+            loading={refreshing}
+            onClick={async () => {
+              setRefreshing(true);
+              await load();
+              setRefreshing(false);
+            }}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </div>
-      <p className="mb-2 text-xs text-silver">
-        Worked so far plus remaining scheduled shifts crosses 40 hours.
-        Trimming or reassigning a shift on the{' '}
-        <Link to="/scheduling" className="text-gold hover:underline">
-          schedule
-        </Link>{' '}
-        removes the overtime before it exists.
-      </p>
-      <div className="overflow-x-auto">
+
+      {open && (
+        <div className="border-t border-warning/20 px-4 pb-4 pt-3">
+          <p className="mb-3 text-xs text-silver">
+            Worked so far plus remaining scheduled shifts crosses 40 hours.
+            Trimming or reassigning a shift on the{' '}
+            <Link to="/scheduling" className="text-gold hover:underline">
+              schedule
+            </Link>{' '}
+            removes the overtime before it exists.
+          </p>
+
+          {/* Filters — client-side lenses over the fetched week. */}
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            {clientOptions.length > 1 && (
+              <Select
+                size="sm"
+                aria-label="Filter by client"
+                value={clientFilter}
+                onChange={(e) => setClientFilter(e.target.value)}
+                className="w-44"
+              >
+                <option value="">All clients</option>
+                {clientOptions.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </Select>
+            )}
+            <Select
+              size="sm"
+              aria-label="Minimum projected overtime"
+              value={String(minOtHours)}
+              onChange={(e) => setMinOtHours(Number(e.target.value))}
+              className="w-36"
+            >
+              <option value="0">Any OT</option>
+              <option value="1">≥ 1 h OT</option>
+              <option value="4">≥ 4 h OT</option>
+              <option value="8">≥ 8 h OT</option>
+            </Select>
+            <div className="relative w-full sm:w-56">
+              <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-silver/60" />
+              <Input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Find an associate…"
+                aria-label="Search at-risk associates by name"
+                className="h-8 pl-8 text-sm"
+              />
+            </div>
+            {anyFilter && (
+              <span className="text-2xs tabular-nums text-silver/60">
+                {filtered.length} of {data.rows.length} shown
+              </span>
+            )}
+          </div>
+
+          {filtered.length === 0 ? (
+            <p className="text-sm text-silver">
+              No one matches those filters — clear them to see all{' '}
+              {data.rows.length} at-risk {data.rows.length === 1 ? 'person' : 'people'}.
+            </p>
+          ) : (
+            <OtOutlookTable rows={filtered} />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OtOutlookTable({ rows }: { rows: OtOutlookResponse['rows'] }) {
+  const h = (min: number) => (min / 60).toFixed(1);
+  return (
+    <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-navy-secondary text-2xs uppercase tracking-wider text-silver/60">
@@ -467,7 +610,7 @@ function OtOutlookCard() {
             </tr>
           </thead>
           <tbody className="divide-y divide-navy-secondary/50">
-            {data.rows.map((r) => (
+            {rows.map((r) => (
               <tr key={r.associateId}>
                 <td className="py-1.5 pr-3 text-white">{r.associateName}</td>
                 <td className="py-1.5 px-3 text-silver hidden md:table-cell">
@@ -491,8 +634,7 @@ function OtOutlookCard() {
               </tr>
             ))}
           </tbody>
-        </table>
-      </div>
+      </table>
     </div>
   );
 }
@@ -505,6 +647,11 @@ function OtOutlookCard() {
 function FloorNowCard() {
   const [data, setData] = useState<FloorNowResponse | null>(null);
   const [failed, setFailed] = useState(false);
+  const [open, setOpen] = usePersistentState<boolean>(
+    'alto:laborcosts.floor.open.v1',
+    true,
+    (v): v is boolean => typeof v === 'boolean',
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -589,14 +736,38 @@ function FloorNowCard() {
   return (
     <Card>
       <CardContent className="p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
+        <div className={cn('flex flex-wrap items-center justify-between gap-2', open && 'mb-3')}>
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="flex min-w-0 items-center gap-2 text-left"
+          >
+            <ChevronDown
+              className={cn(
+                'h-4 w-4 shrink-0 text-silver/60 transition-transform',
+                !open && '-rotate-90',
+              )}
+            />
             <span className="relative flex h-2 w-2" aria-hidden="true">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success/60" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
             </span>
             <span className="text-sm font-medium text-white">On the floor right now</span>
-          </div>
+            {/* Folded: the four hero numbers compress into one chip. */}
+            {!open && (
+              <span className="rounded-full bg-navy-secondary/60 px-2 py-0.5 text-2xs tabular-nums text-silver">
+                {total.hasExpected
+                  ? `${total.clockedIn}/${total.expected}`
+                  : total.clockedIn}{' '}
+                on floor ·{' '}
+                <span className={totalMarginPerHour >= 0 ? 'text-success' : 'text-alert'}>
+                  {totalMarginPerHour >= 0 ? '+' : '−'}
+                  {money(Math.abs(totalMarginPerHour))}/hr
+                </span>
+              </span>
+            )}
+          </button>
           <div
             className="text-2xs text-silver/60"
             title={
@@ -608,6 +779,8 @@ function FloorNowCard() {
             clocked in vs expected · loaded cost vs billed · refreshes every minute
           </div>
         </div>
+        {open && (
+        <>
 
         {/* Company hero strip — the four numbers an executive reads first. */}
         <div className="mb-3 grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-navy-secondary bg-navy-secondary/60 sm:grid-cols-4">
@@ -786,6 +959,8 @@ function FloorNowCard() {
             </tbody>
           </table>
         </div>
+        </>
+        )}
       </CardContent>
     </Card>
   );
@@ -1362,15 +1537,12 @@ export function LaborCostsHome() {
         subtitle="Scheduled vs worked labor spend, per client and store, day by day"
       />
 
-      {/* Live board — deliberately ABOVE the filter row: it is "right now",
-          not scoped by the date range below. */}
-      <div className="mb-4">
+      {/* Live operations — deliberately ABOVE the filter row: both cards
+          are "right now / this week", not scoped by the date range below.
+          Each collapses to a one-line summary and remembers its state. */}
+      <SectionLabel>Live operations</SectionLabel>
+      <div className="mb-6 space-y-3">
         <FloorNowCard />
-      </div>
-
-      {/* Names behind the "OT risk" chips — who, by how much, at what cost.
-          Renders nothing when the week is clean. */}
-      <div className="mb-4">
         <OtOutlookCard />
       </div>
 
