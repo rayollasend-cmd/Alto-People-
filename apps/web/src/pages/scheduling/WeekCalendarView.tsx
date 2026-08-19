@@ -1052,10 +1052,13 @@ function ShiftChip({
 
 /* ===== Week-navigation helpers (exported for the parent page) ============ */
 
-/** Get the Monday at 00:00 local for the week containing `d`. */
+/** Start of the ORG workweek (Saturday 00:00 local) containing `d` — the
+ *  same Sat→Fri week payroll, the Fieldglass timesheet, and the OT math
+ *  run on. The grid defaults to the week supervisors actually plan; the
+ *  exported name is kept to avoid churning every caller. */
 export function startOfWeekMonday(d: Date): Date {
   const x = startOfDay(d);
-  const dayOfWeek = (x.getDay() + 6) % 7; // Mon=0 ... Sun=6
+  const dayOfWeek = (x.getDay() + 1) % 7; // Sat=0 ... Fri=6
   return addDays(x, -dayOfWeek);
 }
 

@@ -147,26 +147,87 @@ export function detectAnomalies(input: DetectAnomaliesInput): TimeAnomaly[] {
   return Array.from(new Set(out));
 }
 
-/** UTC ISO week-start (Sunday 00:00) for the given instant. */
 /**
- * UTC start-of-week — MONDAY-anchored (ISO), matching the payroll
- * engine's splitWeeklyOvertime. There is exactly one FLSA workweek in
- * this codebase; this helper used to anchor on Sunday while payroll paid
- * Mon–Sun, so the payroll-prep CSV, OT anomaly warnings, and the payroll
- * sheet (whose comment already claimed Monday) could all disagree with
- * what the run actually paid — 10h/day Wed–Sun showed 10h OT in payroll
- * and 0h in the prep sheet.
+ * THE org workweek: Saturday 00:00 → Friday 24:00, in the org's home
+ * timezone (America/New_York — every store is in Florida). This is the
+ * employer-defined FLSA workweek, and it matches the Fieldglass
+ * timesheet builder's `saturdayWeek` exactly.
+ *
+ * History: this helper was Monday-anchored in raw UTC, which was wrong
+ * on two axes at once — wrong day (the real week starts Saturday) and
+ * wrong clock (Monday 00:00 UTC is Sunday evening in Florida), so
+ * weekend hours could split into the wrong week and mis-state overtime
+ * in payroll, exports, statements, and the OT radar.
+ *
+ * Attribution note: every consumer buckets a punch by its CLOCK-IN
+ * instant, never splitting a shift at midnight — so the overnight crew's
+ * Friday 10 PM → Saturday 7 AM shift belongs wholly to the week ending
+ * that Friday, per policy.
+ *
+ * The functions still RETURN UTC instants (hence the names): the exact
+ * moment the local Saturday begins, DST-correct.
  */
-export function startOfWeekUTC(d: Date): Date {
-  const c = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  c.setUTCDate(c.getUTCDate() - ((c.getUTCDay() + 6) % 7));
-  return c;
+const WEEK_TZ_FALLBACK = 'America/New_York';
+
+/** UTC instant of local midnight for a YYYY-MM-DD in `tz`, DST-correct.
+ *  Classic two-pass correction: guess, measure the local rendering of the
+ *  guess, shift by the difference. */
+function utcInstantOfLocalMidnight(ymdKey: string, tz: string): Date {
+  const [y, m, d] = ymdKey.split('-').map(Number);
+  const target = Date.UTC(y, m - 1, d, 0, 0, 0);
+  let guess = new Date(target);
+  for (let i = 0; i < 3; i++) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).formatToParts(guess);
+    const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? '0');
+    const localAsUtc = Date.UTC(
+      get('year'),
+      get('month') - 1,
+      get('day'),
+      get('hour'),
+      get('minute'),
+    );
+    if (localAsUtc === target) break;
+    guess = new Date(guess.getTime() + (target - localAsUtc));
+  }
+  return guess;
 }
 
-/** UTC end-of-week (next Monday 00:00) for the given instant. */
+/** YYYY-MM-DD of the instant in the org zone, without importing
+ *  timezone.ts (kept dependency-free; en-CA renders ISO order). */
+function orgDateKey(d: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: WEEK_TZ_FALLBACK,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+/** UTC instant of the Saturday 00:00 (org-local) beginning the workweek
+ *  that contains `d`. */
+export function startOfWeekUTC(d: Date): Date {
+  const localKey = orgDateKey(d);
+  // Noon-UTC anchor keeps the weekday stable across DST edges — same
+  // trick as timesheetWeek.saturdayWeek.
+  const anchor = new Date(`${localKey}T12:00:00Z`);
+  const back = (anchor.getUTCDay() + 1) % 7; // Sat→0, Sun→1, … Fri→6
+  anchor.setUTCDate(anchor.getUTCDate() - back);
+  return utcInstantOfLocalMidnight(anchor.toISOString().slice(0, 10), WEEK_TZ_FALLBACK);
+}
+
+/** UTC instant of the NEXT Saturday 00:00 (org-local) — the exclusive end
+ *  of the workweek containing `d`. DST weeks are 167/169 real hours. */
 export function endOfWeekUTC(d: Date): Date {
   const start = startOfWeekUTC(d);
-  const end = new Date(start);
-  end.setUTCDate(end.getUTCDate() + 7);
-  return end;
+  const anchor = new Date(`${orgDateKey(start)}T12:00:00Z`);
+  anchor.setUTCDate(anchor.getUTCDate() + 7);
+  return utcInstantOfLocalMidnight(anchor.toISOString().slice(0, 10), WEEK_TZ_FALLBACK);
 }

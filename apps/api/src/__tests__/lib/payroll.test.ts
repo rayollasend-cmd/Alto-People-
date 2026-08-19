@@ -195,15 +195,32 @@ describe('splitWeeklyOvertime — FLSA weekly OT (40h/week threshold)', () => {
     expect(r.overtimeHours).toBe(10);
   });
 
-  it('Sunday and Monday belong to different weeks (Mon-anchored UTC)', () => {
-    // 2026-01-04 is a Sunday → belongs to the prior workweek (Dec 29 - Jan 4).
-    // 2026-01-05 is a Monday → starts a new workweek.
-    // 35h on Sun + 35h on Mon = neither week tops 40 → zero OT.
-    const sunday = new Date(Date.UTC(2026, 0, 4, 0, 0));
-    const entries = [e(sunday, 35), e(monday(0), 35)];
-    const r = splitWeeklyOvertime(entries);
-    expect(r.regularHours).toBe(70);
+  it('Friday and Saturday belong to different weeks (Sat-anchored, org-local)', () => {
+    // The org workweek is Saturday → Friday, Florida time. Friday
+    // 2026-01-09 closes one week; Saturday 2026-01-10 opens the next.
+    // 35h ending Friday + 35h starting Saturday = neither week tops 40.
+    const friday = new Date(Date.UTC(2026, 0, 9, 14, 0)); // Fri 9 AM ET
+    const saturday = new Date(Date.UTC(2026, 0, 10, 14, 0)); // Sat 9 AM ET
+    const r = splitWeeklyOvertime([e(friday, 5), e(saturday, 35)]);
+    expect(r.regularHours).toBe(40);
     expect(r.overtimeHours).toBe(0);
+  });
+
+  it("the overnight crew's Friday 10 PM punch stays in the ending week", () => {
+    // Fri 10 PM ET = Sat 03:00 UTC. Attribution is by clock-in, so the
+    // whole 9h overnight shift lands in the week ENDING that Friday —
+    // stacked on 36h earlier that week it produces 5h OT there, and the
+    // following week stays clean.
+    const weekHours = [
+      e(new Date(Date.UTC(2026, 0, 5, 14, 0)), 9), // Mon
+      e(new Date(Date.UTC(2026, 0, 6, 14, 0)), 9), // Tue
+      e(new Date(Date.UTC(2026, 0, 7, 14, 0)), 9), // Wed
+      e(new Date(Date.UTC(2026, 0, 8, 14, 0)), 9), // Thu — 36h so far
+      e(new Date(Date.UTC(2026, 0, 10, 3, 0)), 9), // Fri 10 PM ET overnight
+    ];
+    const r = splitWeeklyOvertime(weekHours);
+    expect(r.regularHours).toBe(40);
+    expect(r.overtimeHours).toBe(5);
   });
 
   it('rounds outputs to 2 decimals', () => {

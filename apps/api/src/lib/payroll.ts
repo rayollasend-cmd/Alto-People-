@@ -1,4 +1,5 @@
 import { Prisma, type W4FilingStatus } from '@prisma/client';
+import { startOfWeekUTC } from './timeAnomalies.js';
 
 /**
  * PHASE 8 PLACEHOLDER WITHHOLDING.
@@ -120,13 +121,16 @@ export function pickHourlyRate(
 export function splitWeeklyOvertime(
   entries: PayableEntry[]
 ): { regularHours: number; overtimeHours: number } {
-  // Bucket APPROVED net-of-break hours by ISO week (Mon-anchored UTC).
+  // Bucket APPROVED net-of-break hours by the ORG workweek — Saturday →
+  // Friday, Florida-local (startOfWeekUTC). One convention everywhere:
+  // payroll, exports, statements, and the OT radar must never disagree
+  // on which week an hour belongs to.
   const weeks = new Map<string, number>();
   for (const e of entries) {
     if (e.status !== 'APPROVED' || !e.clockOutAt) continue;
     const ms = payableMs(e);
     if (ms <= 0) continue;
-    const key = isoWeekKeyUtc(e.clockInAt);
+    const key = String(startOfWeekUTC(e.clockInAt).getTime());
     weeks.set(key, (weeks.get(key) ?? 0) + ms);
   }
   let reg = 0;
@@ -139,11 +143,3 @@ export function splitWeeklyOvertime(
   return { regularHours: round2(reg), overtimeHours: round2(ot) };
 }
 
-function isoWeekKeyUtc(d: Date): string {
-  // Find the Monday of the UTC week containing d.
-  const utc = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  const dow = utc.getUTCDay(); // 0=Sun..6=Sat
-  const offsetToMonday = (dow + 6) % 7; // Mon→0, Tue→1, ..., Sun→6
-  utc.setUTCDate(utc.getUTCDate() - offsetToMonday);
-  return utc.toISOString().slice(0, 10);
-}
