@@ -217,9 +217,10 @@ describe('OT radar', () => {
     const client = await createClient();
     const assoc = await createAssociate({ firstName: 'Over', lastName: 'Time' });
     await createUser({ role: 'HR_ADMINISTRATOR' }); // digest recipient
-    // A Wednesday noon; three 16h shifts Thu–Sat = 48h remaining.
-    const now = new Date('2026-09-02T12:00:00.000Z');
-    for (const day of ['03', '04', '05']) {
+    // A Tuesday noon; three 16h shifts Wed–Fri = 48h remaining, all inside
+    // the org's Sat→Fri week (Sat Aug 29 → Fri Sep 4, Florida time).
+    const now = new Date('2026-09-01T12:00:00.000Z');
+    for (const day of ['02', '03', '04']) {
       await prisma.shift.create({
         data: {
           clientId: client.id,

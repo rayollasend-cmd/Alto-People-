@@ -186,20 +186,42 @@ describe('detectAnomalies', () => {
   });
 });
 
-describe('week boundaries', () => {
-  it('startOfWeekUTC returns Monday 00:00 UTC (ISO — matches the payroll workweek)', () => {
-    // 2026-04-15 is a Wednesday. ISO week starts 2026-04-13 (Mon) —
-    // Monday-anchored to match splitWeeklyOvertime, so the OT the
-    // anomaly warnings and exports report is the OT payroll pays.
+describe('week boundaries — org workweek (Sat→Fri, Florida-local)', () => {
+  it('startOfWeekUTC returns Saturday 00:00 America/New_York as a UTC instant', () => {
+    // 2026-04-15 is a Wednesday. The org week containing it starts
+    // Saturday 2026-04-11 00:00 EDT = 04:00 UTC.
     const wed = new Date('2026-04-15T15:30:00Z');
     const start = startOfWeekUTC(wed);
-    expect(start.getUTCDay()).toBe(1);
-    expect(start.toISOString()).toBe('2026-04-13T00:00:00.000Z');
+    expect(start.toISOString()).toBe('2026-04-11T04:00:00.000Z');
   });
 
-  it('endOfWeekUTC is exactly 7 days after start', () => {
+  it('a Friday-night overnight punch belongs to the week ENDING that Friday', () => {
+    // Friday 2026-04-17 10 PM EDT (= Sat 02:00 UTC) — the overnight crew.
+    // Local-clock anchoring keeps it in the Sat Apr 11 → Fri Apr 17 week;
+    // the old UTC math would have pushed it into the next week.
+    const fridayNight = new Date('2026-04-18T02:00:00Z');
+    expect(startOfWeekUTC(fridayNight).toISOString()).toBe(
+      '2026-04-11T04:00:00.000Z',
+    );
+    // One hour later, Saturday 00:30 local = the NEW week.
+    const saturdayNight = new Date('2026-04-18T04:30:00Z');
+    expect(startOfWeekUTC(saturdayNight).toISOString()).toBe(
+      '2026-04-18T04:00:00.000Z',
+    );
+  });
+
+  it('endOfWeekUTC is the next local Saturday midnight (7 local days)', () => {
     const wed = new Date('2026-04-15T15:30:00Z');
-    const end = endOfWeekUTC(wed);
-    expect(end.toISOString()).toBe('2026-04-20T00:00:00.000Z');
+    expect(endOfWeekUTC(wed).toISOString()).toBe('2026-04-18T04:00:00.000Z');
+  });
+
+  it('handles the DST fall-back week (169 real hours) without drifting', () => {
+    // 2026-11-01 (Sun) is the fall-back date in America/New_York. The week
+    // Sat Oct 31 → Fri Nov 6: starts at 04:00 UTC (EDT), ends the next
+    // Saturday at 05:00 UTC (EST) — 169 hours, both boundaries at local
+    // midnight.
+    const midWeek = new Date('2026-11-03T12:00:00Z');
+    expect(startOfWeekUTC(midWeek).toISOString()).toBe('2026-10-31T04:00:00.000Z');
+    expect(endOfWeekUTC(midWeek).toISOString()).toBe('2026-11-07T05:00:00.000Z');
   });
 });

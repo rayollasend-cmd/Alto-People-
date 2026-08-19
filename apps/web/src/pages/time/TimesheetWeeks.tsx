@@ -40,11 +40,14 @@ function dayKeyLabel(key: string): string {
   return `${fmtWeekdayTz(date)}, ${fmtDateTz(date)}`;
 }
 
-/** Sunday-based week start (ms) for a YYYY-MM-DD day key. */
+/** Org-workweek start (ms) for a YYYY-MM-DD day key — Saturday-anchored,
+ *  matching payroll, the Fieldglass sheet, and the OT math. This view
+ *  used to group Sunday-first, so an associate's "week" disagreed with
+ *  what they were actually paid on. */
 function weekStartOfDayKey(key: string): number {
   const [y, m, d] = key.split('-').map(Number);
   const date = new Date(y, m - 1, d);
-  date.setDate(date.getDate() - date.getDay());
+  date.setDate(date.getDate() - ((date.getDay() + 1) % 7)); // Sat→0 … Fri→6
   return date.getTime();
 }
 
