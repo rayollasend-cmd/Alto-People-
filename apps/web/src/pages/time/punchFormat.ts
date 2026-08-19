@@ -30,11 +30,15 @@ export function fmtPunchDateTime(iso: string, tz: string | null | undefined): st
   return `${fmtDateTz(iso, tz)}, ${fmtPunchTime(iso, tz)}`;
 }
 
+/**
+ * Worked-time duration as DECIMAL hours — "7.50h", the payroll and
+ * Fieldglass convention. This used to render "7h 30m" while the
+ * Fieldglass sheet and payroll exports showed 7.50, and users read the
+ * two as different numbers. One convention now: every computed duration
+ * on a time surface is decimal hours to two places.
+ */
 export function formatHM(mins: number): string {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  if (h === 0) return `${m}m`;
-  return `${h}h ${m.toString().padStart(2, '0')}m`;
+  return `${(mins / 60).toFixed(2)}h`;
 }
 
 /**

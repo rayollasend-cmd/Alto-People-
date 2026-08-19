@@ -80,8 +80,9 @@ function weekStartMs(input: string | Date): number {
   return d.getTime();
 }
 
+// Two decimals, matching formatHM and the Fieldglass/payroll convention.
 function fmtH(minutes: number): string {
-  return `${(minutes / 60).toFixed(1)}h`;
+  return `${(minutes / 60).toFixed(2)}h`;
 }
 
 /** "Wed, Jul 2" — house weekday+date formatting (browser-local). */
@@ -364,7 +365,8 @@ export function MyTimesheet() {
                                 {' – '}
                                 {e.clockOutAt ? fmtTime(e.clockOutAt) : t('time.stillOn')}
                                 {breakMin > 0 &&
-                                  ` · ${t('time.breakMinutes', { minutes: breakMin })}`}
+                                  // Decimal hours like every other duration.
+                                  ` · ${t('time.breakMinutes', { minutes: (breakMin / 60).toFixed(2) })}`}
                               </div>
                               {e.shiftStartsAt && e.shiftEndsAt && (
                                 <div className="text-xs2 text-silver/60 mt-0.5 tabular-nums">

@@ -226,7 +226,7 @@ describe('<AdminTimeView> add-entry drawer', () => {
       target: { value: '17:30' },
     });
     // Live summary appears before saving anything.
-    expect(screen.getByText(/total 8h 30m/i)).toBeInTheDocument();
+    expect(screen.getByText(/total 8\.50h/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /create entry/i }));
     await waitFor(() => expect(adminCreateTimeEntry).toHaveBeenCalledTimes(1));
@@ -259,7 +259,7 @@ describe('<AdminTimeView> add-entry drawer', () => {
     expect(screen.getByLabelText<HTMLInputElement>('Break 1 end').value).toBe(
       '13:30',
     );
-    expect(screen.getByText(/paid 8h 00m/i)).toBeInTheDocument();
+    expect(screen.getByText(/paid 8\.00h/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /create entry/i }));
     await waitFor(() => expect(addTimeEntryBreak).toHaveBeenCalledTimes(1));
@@ -281,7 +281,7 @@ describe('<AdminTimeView> add-entry drawer', () => {
       target: { value: '06:00' },
     });
     expect(screen.getByText(/ends the next day/i)).toBeInTheDocument();
-    expect(screen.getByText(/total 8h 00m/i)).toBeInTheDocument();
+    expect(screen.getByText(/total 8\.00h/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /create entry/i }));
     await waitFor(() => expect(adminCreateTimeEntry).toHaveBeenCalledTimes(1));
@@ -318,7 +318,7 @@ describe('<AdminTimeView> add-entry drawer', () => {
     expect(
       screen.getByLabelText<HTMLInputElement>('Clock-out time').value,
     ).toBe('16:30');
-    expect(screen.getByText(/total 8h 30m/i)).toBeInTheDocument();
+    expect(screen.getByText(/total 8\.50h/i)).toBeInTheDocument();
   });
 });
 
@@ -624,9 +624,9 @@ describe('<AdminTimeView> individual timesheet (focus mode)', () => {
 
     expect(await screen.findByText('2 shifts')).toBeInTheDocument();
     expect(screen.getByText(/back in 40m later/i)).toBeInTheDocument();
-    // Week section with the summed net total: 240 + 260 + 480 = 980m = 16h 20m.
+    // Week section with the summed net total: 240 + 260 + 480 = 980m = 16.33h.
     expect(screen.getByText(/week of/i)).toBeInTheDocument();
-    expect(screen.getByText('16h 20m')).toBeInTheDocument();
+    expect(screen.getByText('16.33h')).toBeInTheDocument();
   });
 
   it('flags a second entry that starts before the first ended as an overlap', async () => {

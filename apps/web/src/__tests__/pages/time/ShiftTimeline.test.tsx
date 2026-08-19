@@ -55,9 +55,9 @@ describe('<ShiftTimeline>', () => {
   it('shows the totals as one plain-English equation', () => {
     render(<ShiftTimeline entry={entryWith({})} />);
     const card = screen.getByText(/on site/).textContent ?? '';
-    expect(card).toContain('9h 00m on site');
-    expect(card).toContain('30m break');
-    expect(card).toContain('8h 30m paid');
+    expect(card).toContain('9.00h on site');
+    expect(card).toContain('0.50h break');
+    expect(card).toContain('8.50h paid');
   });
 
   it('marks a next-day clock-out with +1d', () => {
@@ -88,7 +88,7 @@ describe('<ShiftTimeline>', () => {
       />,
     );
     expect(screen.getByText(/still on the clock/i)).toBeInTheDocument();
-    expect(screen.getByText(/2h 00m elapsed/)).toBeInTheDocument();
+    expect(screen.getByText(/2\.00h elapsed/)).toBeInTheDocument();
   });
 
   it('flags an open break instead of pretending it ended', () => {

@@ -79,11 +79,11 @@ describe('<MyTimesheet>', () => {
 
     // Approved: hours appear in the summary band AND on the row; the
     // status word appears as the band label AND the row badge.
-    expect(await screen.findAllByText('7.5h')).toHaveLength(2);
+    expect(await screen.findAllByText('7.53h')).toHaveLength(2);
     expect(screen.getAllByText('Approved')).toHaveLength(2);
-    expect(screen.getByText(/30m break/)).toBeInTheDocument();
+    expect(screen.getByText(/0\.50h break/)).toBeInTheDocument();
     // Pending: same duality.
-    expect(screen.getAllByText('4.0h')).toHaveLength(2);
+    expect(screen.getAllByText('4.00h')).toHaveLength(2);
     expect(screen.getAllByText('Pending review')).toHaveLength(2);
     // Gross estimate stat (7.533h × $20 = $150.67). Cents are shown: this
     // used to render "$151" via a local formatter that rounded whole-dollar,

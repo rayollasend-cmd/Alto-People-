@@ -89,14 +89,10 @@ function mondayOfIsoWeek(fridayIso: string): string {
 const hoursCell = (n: number) => (n === 0 ? '0.00' : n.toFixed(2));
 
 /**
- * "7h 30m" alongside decimal hours. The approval queue speaks h:mm while
- * Fieldglass speaks decimals — users read "7.50" vs "7h 30m" as different
- * numbers, so the drawer shows both.
+ * Every time surface now speaks decimal hours (the payroll/Fieldglass
+ * convention) — the old dual "7.50h (7h 30m)" display is gone with the
+ * h:mm format that made it necessary.
  */
-const hoursHM = (n: number) => {
-  const mins = Math.round(n * 60);
-  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, '0')}m`;
-};
 
 const ISSUE_LABEL: Record<TimesheetIssueKind, string> = {
   MISSING_CLOCKOUT: 'Missing clock-out',
@@ -757,9 +753,6 @@ export function TimesheetsView() {
                   <span className="text-silver/60">Total worked: </span>
                   <span className="font-semibold text-white tabular-nums">
                     {detail.totalHours.toFixed(2)}h
-                  </span>{' '}
-                  <span className="text-xs2 tabular-nums text-silver/60">
-                    ({hoursHM(detail.totalHours)})
                   </span>
                 </span>
               </div>

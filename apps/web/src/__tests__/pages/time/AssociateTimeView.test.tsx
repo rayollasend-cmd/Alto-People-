@@ -237,7 +237,7 @@ describe('<AssociateTimeView> grouped history', () => {
     expect(await screen.findByText('2 shifts')).toBeInTheDocument();
     expect(screen.getByText(/back in 40m later/i)).toBeInTheDocument();
     expect(screen.getByText(/week of/i)).toBeInTheDocument();
-    // 240 + 260 = 500m = 8h 20m — shown as both the week and the day total.
-    expect(screen.getAllByText('8h 20m').length).toBeGreaterThanOrEqual(2);
+    // 240 + 260 = 500m = 8.33h — shown as both the week and the day total.
+    expect(screen.getAllByText('8.33h').length).toBeGreaterThanOrEqual(2);
   });
 });

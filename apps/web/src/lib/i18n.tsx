@@ -244,7 +244,7 @@ const en = {
   'time.approvedTotal': '{hours} approved',
   'time.pendingTotal': '{hours} pending review',
   'time.stillOn': 'still on the clock',
-  'time.breakMinutes': '{minutes}m break',
+  'time.breakMinutes': '{minutes}h break',
   'time.noEntries': 'No punches in this range',
   'time.noEntriesDesc':
     'Punches from the worksite kiosk will show up here the moment you clock in.',
@@ -711,7 +711,7 @@ const es: Record<MessageKey, string> = {
   'time.approvedTotal': '{hours} aprobadas',
   'time.pendingTotal': '{hours} por revisar',
   'time.stillOn': 'aún en turno',
-  'time.breakMinutes': '{minutes}m de descanso',
+  'time.breakMinutes': '{minutes}h de descanso',
   'time.noEntries': 'No hay marcajes en este rango',
   'time.noEntriesDesc':
     'Los marcajes del quiosco de tu sitio aparecerán aquí en cuanto marques entrada.',

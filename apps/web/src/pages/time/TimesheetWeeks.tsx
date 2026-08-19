@@ -158,11 +158,15 @@ export function TimesheetWeeks({
                             new Date(prev.clockOutAt).getTime()) /
                             60_000,
                         );
+                        // Gaps are conversational offsets, not paid time —
+                        // "back in 40m later" reads better than "0.67h".
+                        const gapText = (m: number) =>
+                          m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
                         gapNote =
                           gapMin >= 0
-                            ? { text: `back in ${formatHM(gapMin)} later`, overlap: false }
+                            ? { text: `back in ${gapText(gapMin)} later`, overlap: false }
                             : {
-                                text: `overlaps previous entry by ${formatHM(Math.abs(gapMin))}`,
+                                text: `overlaps previous entry by ${gapText(Math.abs(gapMin))}`,
                                 overlap: true,
                               };
                       }

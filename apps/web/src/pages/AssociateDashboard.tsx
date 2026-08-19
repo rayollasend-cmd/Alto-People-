@@ -426,13 +426,14 @@ function pickNextShift(shifts: Shift[]): Shift | null {
   return upcoming[0] ?? null;
 }
 
+// Decimal hours, matching every other time surface (the time page's live
+// counter, the queue, the Fieldglass sheet). Sub-hour stays in minutes —
+// "12m on the clock" is clearer than "0.20h".
 function fmtElapsed(sinceIso: string): string {
   const ms = Date.now() - new Date(sinceIso).getTime();
   const totalMin = Math.max(0, Math.floor(ms / 60_000));
-  const h = Math.floor(totalMin / 60);
-  const m = totalMin % 60;
-  if (h === 0) return `${m}m`;
-  return `${h}h ${m}m`;
+  if (totalMin < 60) return `${totalMin}m`;
+  return `${(totalMin / 60).toFixed(2)}h`;
 }
 
 /**

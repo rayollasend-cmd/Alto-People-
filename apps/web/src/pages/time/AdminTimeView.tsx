@@ -219,7 +219,10 @@ function LateChip({ entry }: { entry: TimeEntry }) {
       className="text-2xs uppercase tracking-widest px-1.5 py-0.5 rounded border border-alert/40 bg-alert/10 text-alert whitespace-nowrap"
       title={`Scheduled ${fmtTime(entry.shiftStartsAt)}${entry.shiftPosition ? ` · ${entry.shiftPosition}` : ''}`}
     >
-      Late {lateMin >= 60 ? `${Math.floor(lateMin / 60)}h ${lateMin % 60}m` : `${lateMin}m`}
+      {/* Lateness stays in minutes below the hour (an offset, not paid
+          time); an hour-plus lateness reads as decimal hours like every
+          other duration. */}
+      Late {lateMin >= 60 ? `${(lateMin / 60).toFixed(1)}h` : `${lateMin}m`}
     </span>
   );
 }
@@ -2496,11 +2499,9 @@ function pad2(n: number): string {
 // module-level browser-local copies are gone: they were the bug (a CT
 // admin typing "9:00" for an ET entry stored 9:00 CT).
 
+// Decimal hours, matching formatHM and the payroll convention.
 function fmtDurMin(min: number): string {
-  const whole = Math.round(min);
-  const h = Math.floor(whole / 60);
-  const m = whole % 60;
-  return h > 0 ? `${h}h ${pad2(m)}m` : `${m}m`;
+  return `${(min / 60).toFixed(2)}h`;
 }
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
