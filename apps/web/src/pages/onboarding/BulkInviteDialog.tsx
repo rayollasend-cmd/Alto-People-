@@ -169,6 +169,7 @@ interface Props {
  */
 export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
   const [clients, setClients] = useState<ClientSummary[] | null>(null);
+  const [clientsFailed, setClientsFailed] = useState(false);
   const [templates, setTemplates] = useState<OnboardingTemplate[] | null>(null);
   const [clientId, setClientId] = useState('');
   const [locationId, setLocationId] = useState('');
@@ -207,7 +208,13 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
           // question with one possible answer. The server clamps this anyway.
           if (r.clients.length === 1) setClientId(r.clients[0].id);
         })
-        .catch(() => !cancelled && setClients([]));
+        .catch(() => {
+          if (cancelled) return;
+          // Failure ≠ "no clients exist" — say so instead of rendering an
+          // unsubmittable empty picker.
+          setClients([]);
+          setClientsFailed(true);
+        });
     }
     if (!templates) {
       listTemplates()
@@ -364,22 +371,39 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
             <div className="grid grid-cols-2 gap-3">
               <Field label="Client" required>
                 {(p) => (
-                  <Select
-                    value={clientId}
-                    onChange={(e) => setClientId(e.target.value)}
-                    disabled={clients === null}
-                    {...p}
-                  >
-                    <option value="">
-                      {clients === null ? 'Loading…' : 'Pick a client'}
-                    </option>
-                    {clients?.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                        {c.state ? ` · ${c.state}` : ''}
+                  <>
+                    <Select
+                      value={clientId}
+                      onChange={(e) => setClientId(e.target.value)}
+                      disabled={clients === null || clientsFailed}
+                      {...p}
+                    >
+                      <option value="">
+                        {clients === null ? 'Loading…' : 'Pick a client'}
                       </option>
-                    ))}
-                  </Select>
+                      {clients?.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                          {c.state ? ` · ${c.state}` : ''}
+                        </option>
+                      ))}
+                    </Select>
+                    {clientsFailed && (
+                      <p className="mt-1 text-xs text-alert">
+                        Couldn&apos;t load the client list.{' '}
+                        <button
+                          type="button"
+                          className="underline"
+                          onClick={() => {
+                            setClientsFailed(false);
+                            setClients(null); // re-triggers the load effect
+                          }}
+                        >
+                          Retry
+                        </button>
+                      </p>
+                    )}
+                  </>
                 )}
               </Field>
               <Field label="Template" required>

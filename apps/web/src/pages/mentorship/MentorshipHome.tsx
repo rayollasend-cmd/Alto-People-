@@ -79,6 +79,18 @@ export function MentorshipHome() {
   const [completing, setCompleting] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<MentorshipStatus | ''>('');
+  // One in-flight action at a time — a double-click on Activate/Decline
+  // used to fire the write twice.
+  const [actionKey, setActionKey] = useState<string | null>(null);
+  const act = async (key: string, fn: () => Promise<void>) => {
+    if (actionKey) return;
+    setActionKey(key);
+    try {
+      await fn();
+    } finally {
+      setActionKey(null);
+    }
+  };
 
   const refresh = () => {
     setRows(null);
@@ -233,30 +245,38 @@ export function MentorshipHome() {
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={async () => {
-                              try {
-                                await transitionMentorship(m.id, { status: 'ACTIVE' });
-                                toast.success('Pairing activated.');
-                                refresh();
-                              } catch (err) {
-                                toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                              }
-                            }}
+                            loading={actionKey === `activate-${m.id}`}
+                            disabled={actionKey !== null}
+                            onClick={() =>
+                              void act(`activate-${m.id}`, async () => {
+                                try {
+                                  await transitionMentorship(m.id, { status: 'ACTIVE' });
+                                  toast.success('Pairing activated.');
+                                  refresh();
+                                } catch (err) {
+                                  toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                }
+                              })
+                            }
                           >
                             Activate
                           </Button>
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={async () => {
-                              try {
-                                await transitionMentorship(m.id, { status: 'DECLINED' });
-                                toast.success('Pairing declined.');
-                                refresh();
-                              } catch (err) {
-                                toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                              }
-                            }}
+                            loading={actionKey === `decline-${m.id}`}
+                            disabled={actionKey !== null}
+                            onClick={() =>
+                              void act(`decline-${m.id}`, async () => {
+                                try {
+                                  await transitionMentorship(m.id, { status: 'DECLINED' });
+                                  toast.success('Pairing declined.');
+                                  refresh();
+                                } catch (err) {
+                                  toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                }
+                              })
+                            }
                           >
                             Decline
                           </Button>

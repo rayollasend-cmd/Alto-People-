@@ -5,7 +5,7 @@ import type { ClientStatement } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDate, fmtRelativeDate } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import {
   clientStatementCsvUrl,
@@ -28,8 +28,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
  * Gated on process:payroll — hidden entirely for everyone else.
  */
 
-const money = (v: number) =>
-  `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Delegates to the shared formatter — private money formatters drift.
+const money = (v: number) => fmtMoney(v);
 
 /** Last 12 month options as {label, start, end} in YYYY-MM-DD. */
 function monthOptions(): Array<{ key: string; label: string; start: string; end: string }> {
@@ -162,6 +162,28 @@ export function StatementsSection({ clientId }: { clientId: string }) {
     }
   };
 
+  // Fetch-then-save instead of a bare <a download>: an auth failure or 500
+  // on a raw link dumps the user on a JSON error page with no way back.
+  const download = async (url: string, fallbackName: string) => {
+    try {
+      const res = await fetch(url, { credentials: 'include' });
+      if (!res.ok) throw new Error(String(res.status));
+      const blob = await res.blob();
+      const cd = res.headers.get('content-disposition') ?? '';
+      const m = /filename="([^"]+)"/.exec(cd);
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = m?.[1] ?? fallbackName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+    } catch {
+      toast.error('Download failed — try again.');
+    }
+  };
+
   const finalize = async (s: ClientStatement) => {
     if (
       !(await confirm({
@@ -203,7 +225,12 @@ export function StatementsSection({ clientId }: { clientId: string }) {
                 </option>
               ))}
             </Select>
-            <Button size="sm" onClick={generate} loading={busy === 'generate'}>
+            <Button
+              size="sm"
+              onClick={generate}
+              loading={busy === 'generate'}
+              disabled={busy !== null}
+            >
               <RefreshCw className="h-3.5 w-3.5" />
               Generate / refresh draft
             </Button>
@@ -216,7 +243,17 @@ export function StatementsSection({ clientId }: { clientId: string }) {
         </p>
       </CardHeader>
       <CardContent>
-        {error && <ErrorBanner>{error}</ErrorBanner>}
+        {error && (
+          <ErrorBanner
+            action={
+              <Button size="sm" variant="secondary" onClick={() => void load()}>
+                Retry
+              </Button>
+            }
+          >
+            {error}
+          </ErrorBanner>
+        )}
         {!rows && !error && <Skeleton className="h-16" />}
         {rows && rows.length === 0 && (
           <p className="text-sm text-silver">
@@ -275,17 +312,31 @@ export function StatementsSection({ clientId }: { clientId: string }) {
                       </div>
                     </button>
                     <div className="flex gap-2">
-                      <Button size="sm" variant="outline" asChild>
-                        <a href={clientStatementPdfUrl(clientId, s.id)} download>
-                          <FileText className="h-3.5 w-3.5" />
-                          PDF
-                        </a>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          void download(
+                            clientStatementPdfUrl(clientId, s.id),
+                            `statement-${s.periodStart}.pdf`,
+                          )
+                        }
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                        PDF
                       </Button>
-                      <Button size="sm" variant="outline" asChild>
-                        <a href={clientStatementCsvUrl(clientId, s.id)} download>
-                          <Download className="h-3.5 w-3.5" />
-                          CSV
-                        </a>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          void download(
+                            clientStatementCsvUrl(clientId, s.id),
+                            `statement-${s.periodStart}.csv`,
+                          )
+                        }
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        CSV
                       </Button>
                       {s.status === 'DRAFT' && (
                         <Button

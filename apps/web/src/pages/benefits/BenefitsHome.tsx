@@ -328,7 +328,7 @@ function EnrollmentRow({
       onTerminated();
     } catch (err) {
       toast.error('Could not stop enrollment.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setBusy(false);
@@ -445,7 +445,7 @@ function EnrollDialog({
       onEnrolled();
     } catch (err) {
       toast.error('Could not enroll.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setSubmitting(false);

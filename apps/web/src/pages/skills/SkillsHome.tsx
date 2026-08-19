@@ -335,6 +335,18 @@ function CatalogTab({ canManage }: { canManage: boolean }) {
   const [showNew, setShowNew] = useState(false);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
+  // One in-flight action at a time — a double-click on Delete used to
+  // fire the write twice.
+  const [actionKey, setActionKey] = useState<string | null>(null);
+  const act = async (key: string, fn: () => Promise<void>) => {
+    if (actionKey) return;
+    setActionKey(key);
+    try {
+      await fn();
+    } finally {
+      setActionKey(null);
+    }
+  };
 
   const refresh = () => {
     setRows(null);
@@ -443,17 +455,21 @@ function CatalogTab({ canManage }: { canManage: boolean }) {
                     {canManage && (
                       <TableCell className="text-right">
                         <button
+                          disabled={actionKey !== null}
                           onClick={async () => {
                             if (!(await confirm({ title: 'Delete this skill?', description: 'Associate claims will be removed.', destructive: true })))
                               return;
-                            try {
-                              await deleteSkill(s.id);
-                              refresh();
-                            } catch (err) {
-                              toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                            }
+                            await act(`del-${s.id}`, async () => {
+                              try {
+                                await deleteSkill(s.id);
+                                toast.success('Skill deleted.');
+                                refresh();
+                              } catch (err) {
+                                toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                              }
+                            });
                           }}
-                          className="can-hover:opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition text-xs"
+                          className="can-hover:opacity-60 group-hover:opacity-100 text-silver hover:text-alert transition text-xs disabled:opacity-40"
                         >
                           Delete
                         </button>

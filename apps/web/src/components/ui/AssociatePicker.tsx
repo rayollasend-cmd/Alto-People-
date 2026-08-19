@@ -35,6 +35,7 @@ export function AssociatePicker({
   const [term, setTerm] = useState('');
   const [results, setResults] = useState<PickedAssociate[]>([]);
   const [open, setOpen] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
 
   useEffect(() => {
     if (value || term.trim().length < 2) {
@@ -48,6 +49,7 @@ export function AssociatePicker({
       listDirectory({ q: term.trim(), limit: 8 })
         .then((r) => {
           if (!live) return;
+          setSearchFailed(false);
           setResults(
             r.associates.slice(0, 8).map((a) => ({
               id: a.id,
@@ -56,7 +58,15 @@ export function AssociatePicker({
           );
           setOpen(true);
         })
-        .catch(() => setResults([]));
+        .catch(() => {
+          if (!live) return;
+          // A failed search must not masquerade as "no matches" — this
+          // picker is embedded on a dozen pages and silently lied on all
+          // of them when the directory call failed.
+          setResults([]);
+          setSearchFailed(true);
+          setOpen(true);
+        });
     }, 250);
     return () => {
       live = false;
@@ -98,7 +108,12 @@ export function AssociatePicker({
         onFocus={() => results.length > 0 && setOpen(true)}
         className={className}
       />
-      {open && results.length > 0 && (
+      {open && searchFailed && (
+        <div className="absolute z-20 mt-1 w-full rounded-md border border-warning/40 bg-navy px-3 py-2 text-xs text-warning elev-2">
+          Search unavailable — check your connection and keep typing to retry.
+        </div>
+      )}
+      {open && !searchFailed && results.length > 0 && (
         <div className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-navy-secondary bg-navy elev-2">
           {results.map((r) => (
             <button

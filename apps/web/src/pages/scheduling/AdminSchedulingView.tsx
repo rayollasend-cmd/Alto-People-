@@ -4831,16 +4831,22 @@ function TemplatesDialog({
   onApplied: () => void;
 }) {
   const [templates, setTemplates] = useState<ShiftTemplate[] | null>(null);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const confirmDialog = useConfirm();
 
   const refresh = useCallback(async () => {
+    setTemplatesError(null);
     try {
       const res = await listShiftTemplates();
       setTemplates(res.templates);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to load templates.');
+      // A toast alone left the skeleton shimmering forever inside an
+      // otherwise-interactive dialog; the banner + Retry replaces it.
+      setTemplatesError(
+        err instanceof ApiError ? err.message : 'Failed to load templates.',
+      );
     }
   }, []);
 
@@ -4937,11 +4943,30 @@ function TemplatesDialog({
           </Button>
         </div>
 
-        {!templates && <Skeleton className="h-32" />}
+        {templatesError && (
+          <ErrorBanner
+            action={
+              <Button size="sm" variant="secondary" onClick={() => void refresh()}>
+                Retry
+              </Button>
+            }
+          >
+            {templatesError}
+          </ErrorBanner>
+        )}
+        {!templates && !templatesError && <Skeleton className="h-32" />}
         {templates && templates.length === 0 && (
-          <p className="text-silver text-sm py-4 text-center">
-            No templates yet — create one to get started.
-          </p>
+          <EmptyState
+            icon={LayoutTemplate}
+            title="No shift templates"
+            description="Save a recurring shift as a template once, then apply it to any week in one click."
+            action={
+              <Button size="sm" onClick={() => setShowCreate(true)}>
+                <Plus className="h-3.5 w-3.5" />
+                New template
+              </Button>
+            }
+          />
         )}
         {templates && templates.length > 0 && (
           <ul className="space-y-2">

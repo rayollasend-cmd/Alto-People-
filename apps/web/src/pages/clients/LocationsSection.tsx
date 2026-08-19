@@ -95,7 +95,7 @@ export function LocationsSection({ clientId }: Props) {
       refresh();
     } catch (err) {
       toast.error('Could not archive.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setBusy(false);
@@ -384,7 +384,7 @@ function LocationDialog({ open, onOpenChange, clientId, existing, onSaved }: Dia
       onSaved();
     } catch (err) {
       toast.error('Could not save.', {
-        description: err instanceof ApiError ? err.message : String(err),
+        description: err instanceof ApiError ? err.message : 'Something went wrong.',
       });
     } finally {
       setSubmitting(false);

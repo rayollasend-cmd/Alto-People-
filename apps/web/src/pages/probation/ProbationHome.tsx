@@ -33,6 +33,7 @@ import {
   Input,
   PageHeader,
   SegmentedControl,
+  Skeleton,
   SkeletonRows,
   Table,
   TableBody,
@@ -64,6 +65,7 @@ export function ProbationHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
   const [summary, setSummary] = useState<ProbationSummary | null>(null);
+  const [summaryFailed, setSummaryFailed] = useState(false);
   const [rows, setRows] = useState<ProbationRow[] | null>(null);
   const [filter, setFilter] = useState<ProbationStatus | 'ALL'>('ACTIVE');
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +86,10 @@ export function ProbationHome() {
       });
     getProbationSummary()
       .then(setSummary)
-      .catch(() => setSummary(null));
+      .catch(() => {
+        setSummary(null);
+        setSummaryFailed(true);
+      });
   };
   useEffect(() => {
     refresh();
@@ -98,6 +103,21 @@ export function ProbationHome() {
         breadcrumbs={[{ label: 'Workforce' }, { label: 'Probation' }]}
       />
 
+      {/* Reserve the strip while loading (it used to pop in and shove the
+          page down); on failure say so quietly instead of vanishing —
+          an absent row read as "zero probations". */}
+      {!summary && !summaryFailed && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-[76px] rounded-lg" />
+          ))}
+        </div>
+      )}
+      {summaryFailed && !summary && (
+        <p className="text-xs text-silver/70">
+          Couldn&apos;t load the summary counts — the list below is unaffected.
+        </p>
+      )}
       {summary && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           <KpiCard label="Active" value={String(summary.active)} icon={Clock} />

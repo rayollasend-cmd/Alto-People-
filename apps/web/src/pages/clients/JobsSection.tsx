@@ -82,7 +82,7 @@ export function JobsSection({ clientId }: Props) {
       refresh();
     } catch (err) {
       toast.error('Could not archive.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setBusy(false);
@@ -332,7 +332,7 @@ function JobDialog({ open, onOpenChange, clientId, existing, onSaved }: JobDialo
         toast.error('A job with that name already exists for this client.');
       } else {
         toast.error('Could not save.', {
-          description: err instanceof Error ? err.message : String(err),
+          description: err instanceof Error ? err.message : 'Something went wrong.',
         });
       }
     } finally {

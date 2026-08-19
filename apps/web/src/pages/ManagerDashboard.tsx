@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
@@ -34,6 +34,7 @@ import {
 } from '@/lib/teamApi';
 import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
+import { LiveNow } from '@/components/ui/LiveNow';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -64,12 +65,8 @@ export function ManagerDashboard() {
   const pullQueryClient = useQueryClient();
   const pullState = usePullToRefresh(() => pullQueryClient.invalidateQueries());
   const { user } = useAuth();
-  const [now, setNow] = useState(() => new Date());
-
-  useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 60_000);
-    return () => clearInterval(t);
-  }, []);
+  // Header clock lives in <LiveNow> below — a page-level ticker used to
+  // re-render the whole dashboard every minute for a greeting.
 
   // The five team queries run in parallel via useQuery — same wire shape
   // as the previous Promise.all, but each result is independently cached
@@ -132,8 +129,6 @@ export function ManagerDashboard() {
   const greetingName =
     user?.firstName?.trim() ||
     (user?.email ? firstNameFromEmail(user.email) : 'there');
-  const greeting = greetingFor(now.getHours());
-  const dateLabel = fmtDate(now);
 
   // Index of associateId → active time entry (so we can mark "on the
   // clock" badges in the team list).
@@ -151,14 +146,15 @@ export function ManagerDashboard() {
         <div className="flex items-center gap-2 flex-wrap">
           <div className="text-xs2 uppercase tracking-[0.18em] text-silver flex items-center gap-2">
             <Calendar className="h-3 w-3" aria-hidden="true" />
-            {dateLabel}
+            <LiveNow render={(now) => fmtDate(now)} />
           </div>
           <span className="inline-flex items-center gap-1 rounded-full border border-steel/60 bg-steel/20 px-2 py-0.5 text-2xs uppercase tracking-widest text-white">
             Manager view
           </span>
         </div>
         <h1 className="font-display text-3xl md:text-4xl text-white mt-2 leading-tight">
-          {greeting}, <span className="text-gold">{greetingName}</span>.
+          <LiveNow render={(now) => greetingFor(now.getHours())} />,{' '}
+          <span className="text-gold">{greetingName}</span>.
         </h1>
         <p className="text-silver mt-2 text-sm md:text-base">
           {summary && summary.directReports > 0

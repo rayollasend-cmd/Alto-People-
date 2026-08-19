@@ -491,7 +491,7 @@ function DisputeDialog({
       onClose();
     } catch (err) {
       toast.error(t('time.reportFailed'), {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setSubmitting(false);

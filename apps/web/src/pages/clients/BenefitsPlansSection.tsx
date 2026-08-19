@@ -319,7 +319,7 @@ function PlanDialog({ open, onOpenChange, clientId, existing, onSaved }: PlanDia
       onSaved();
     } catch (err) {
       toast.error('Could not save.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setSubmitting(false);

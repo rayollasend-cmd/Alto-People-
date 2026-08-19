@@ -116,6 +116,18 @@ export function KbHome() {
   const [adminSearch, setAdminSearch] = useState('');
   const [openSlug, setOpenSlug] = useState<string | null>(null);
   const [editing, setEditing] = useState<KbAdminRow | 'new' | null>(null);
+  // One in-flight action at a time — a double-click on Publish/Delete
+  // used to fire the write twice.
+  const [actionKey, setActionKey] = useState<string | null>(null);
+  const act = async (key: string, fn: () => Promise<void>) => {
+    if (actionKey) return;
+    setActionKey(key);
+    try {
+      await fn();
+    } finally {
+      setActionKey(null);
+    }
+  };
 
   const loadCategories = () => {
     setCategoriesError(null);
@@ -395,19 +407,23 @@ export function KbHome() {
                             <Button
                               size="sm"
                               variant="ghost"
-                              onClick={async () => {
-                                try {
-                                  await publishKbArticle(a.id);
-                                  toast.success('Article published.');
-                                  refresh();
-                                } catch (err) {
-                                  toast.error(
-                                    err instanceof ApiError
-                                      ? err.message
-                                      : 'Failed.',
-                                  );
-                                }
-                              }}
+                              loading={actionKey === `pub-${a.id}`}
+                              disabled={actionKey !== null}
+                              onClick={() =>
+                                void act(`pub-${a.id}`, async () => {
+                                  try {
+                                    await publishKbArticle(a.id);
+                                    toast.success('Article published.');
+                                    refresh();
+                                  } catch (err) {
+                                    toast.error(
+                                      err instanceof ApiError
+                                        ? err.message
+                                        : 'Failed.',
+                                    );
+                                  }
+                                })
+                              }
                             >
                               Publish
                             </Button>
@@ -424,18 +440,23 @@ export function KbHome() {
                             variant="ghost"
                             aria-label={`Delete ${a.title}`}
                             className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 hover:text-alert"
+                            loading={actionKey === `del-${a.id}`}
+                            disabled={actionKey !== null}
                             onClick={async () => {
                               if (!(await confirm({ title: `Delete "${a.title}"?`, destructive: true }))) return;
-                              try {
-                                await deleteKbArticle(a.id);
-                                refresh();
-                              } catch (err) {
-                                toast.error(
-                                  err instanceof ApiError
-                                    ? err.message
-                                    : 'Failed.',
-                                );
-                              }
+                              await act(`del-${a.id}`, async () => {
+                                try {
+                                  await deleteKbArticle(a.id);
+                                  toast.success('Article deleted.');
+                                  refresh();
+                                } catch (err) {
+                                  toast.error(
+                                    err instanceof ApiError
+                                      ? err.message
+                                      : 'Failed.',
+                                  );
+                                }
+                              });
                             }}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -743,14 +764,19 @@ function EditDrawer({
           <Button
             size="sm"
             variant="ghost"
+            disabled={saving}
             onClick={async () => {
               if (!(await confirm({ title: 'Archive this article?', destructive: true }))) return;
+              if (saving) return;
+              setSaving(true);
               try {
                 await archiveKbArticle(article.id);
                 toast.success('Article archived.');
                 onSaved();
               } catch (err) {
                 toast.error(err instanceof ApiError ? err.message : 'Failed.');
+              } finally {
+                setSaving(false);
               }
             }}
           >

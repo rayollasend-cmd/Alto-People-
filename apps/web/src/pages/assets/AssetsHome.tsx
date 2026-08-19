@@ -90,6 +90,18 @@ export function AssetsHome() {
   const [search, setSearch] = useState('');
   const [kindFilter, setKindFilter] = useState<AssetKind | 'ALL'>('ALL');
   const [statusFilter, setStatusFilter] = useState<AssetStatus | 'ALL'>('ALL');
+  // One in-flight action at a time — a double-click on Delete used to
+  // fire the write twice.
+  const [actionKey, setActionKey] = useState<string | null>(null);
+  const act = async (key: string, fn: () => Promise<void>) => {
+    if (actionKey) return;
+    setActionKey(key);
+    try {
+      await fn();
+    } finally {
+      setActionKey(null);
+    }
+  };
 
   const refresh = () => {
     setRows(null);
@@ -295,18 +307,21 @@ export function AssetsHome() {
                         )}
                         {canManage && (
                           <button
+                            disabled={actionKey !== null}
                             onClick={async () => {
                               if (!(await confirm({ title: 'Delete this asset? Assignment history will be removed.', destructive: true })))
                                 return;
-                              try {
-                                await deleteAsset(a.id);
-                                toast.success('Asset deleted.');
-                                refresh();
-                              } catch (err) {
-                                toast.error(err instanceof ApiError ? err.message : 'Failed.');
-                              }
+                              await act(`del-${a.id}`, async () => {
+                                try {
+                                  await deleteAsset(a.id);
+                                  toast.success('Asset deleted.');
+                                  refresh();
+                                } catch (err) {
+                                  toast.error(err instanceof ApiError ? err.message : 'Failed.');
+                                }
+                              });
                             }}
-                            className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs coarse:py-2 coarse:px-1.5"
+                            className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs coarse:py-2 coarse:px-1.5 disabled:opacity-40"
                           >
                             Delete
                           </button>

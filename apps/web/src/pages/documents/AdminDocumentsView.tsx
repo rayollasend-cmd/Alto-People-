@@ -35,7 +35,7 @@ import {
   rejectDocument,
   verifyDocument,
 } from '@/lib/documentsApi';
-import { fmtDate, fmtSize } from '@/lib/format';
+import { fmtDate, fmtRelativeDate, fmtSize } from '@/lib/format';
 import { ApiError } from '@/lib/api';
 import { DocumentPreview } from '@/components/DocumentPreview';
 import { Avatar } from '@/components/ui/Avatar';
@@ -122,12 +122,10 @@ const fmtKind = (k: string): string =>
   k.replace(/_/g, ' ').replace(/\bPDF\b/i, 'PDF');
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const fmtAge = (iso: string, now: number): string => {
-  const d = Math.floor((now - new Date(iso).getTime()) / ONE_DAY_MS);
-  if (d === 0) return 'today';
-  if (d === 1) return '1d ago';
-  return `${d}d ago`;
-};
+// Shared relative formatter — one "time ago" dialect across the app.
+// (The `now` param is kept for call-site compatibility; freshness comes
+// from render time like every other fmtRelativeDate consumer.)
+const fmtAge = (iso: string, _now: number): string => fmtRelativeDate(iso);
 
 interface AdminDocumentsViewProps {
   canManage: boolean;

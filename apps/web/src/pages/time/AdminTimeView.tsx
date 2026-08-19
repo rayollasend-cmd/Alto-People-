@@ -357,13 +357,29 @@ interface AdminTimeViewProps {
 // timezone (UTC fallback), so Monday's and Tuesday's 6–2 collapse into one
 // option and DST weeks don't split into two. Must stay in lockstep with the
 // server's siteLocalMinutes (time.ts) — the export re-derives the same key.
+// Formatter cache — Intl.DateTimeFormat construction is the expensive
+// part, and the shift-window predicates below run this over up to 500
+// rows per filter pass (twice per row). Same idiom as lib/format.ts.
+const SITE_MIN_FMT_CACHE = new Map<string, Intl.DateTimeFormat>();
+function siteMinutesFormatter(tz: string): Intl.DateTimeFormat {
+  let fmt = SITE_MIN_FMT_CACHE.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      hourCycle: 'h23',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: tz,
+    });
+    SITE_MIN_FMT_CACHE.set(tz, fmt);
+  }
+  return fmt;
+}
 function siteMinutes(iso: string, tz: string | null): number {
-  const opts = { hourCycle: 'h23', hour: '2-digit', minute: '2-digit' } as const;
   let parts: Intl.DateTimeFormatPart[];
   try {
-    parts = new Intl.DateTimeFormat('en-US', { ...opts, timeZone: tz ?? 'UTC' }).formatToParts(new Date(iso));
+    parts = siteMinutesFormatter(tz ?? 'UTC').formatToParts(new Date(iso));
   } catch {
-    parts = new Intl.DateTimeFormat('en-US', { ...opts, timeZone: 'UTC' }).formatToParts(new Date(iso));
+    parts = siteMinutesFormatter('UTC').formatToParts(new Date(iso));
   }
   const h = Number(parts.find((p) => p.type === 'hour')?.value ?? '0');
   const m = Number(parts.find((p) => p.type === 'minute')?.value ?? '0');
@@ -1204,6 +1220,7 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-silver/70 pointer-events-none" />
                 <Input
                   placeholder="Search associate, client, job…"
+                  aria-label="Search the live board by associate, client, or job"
                   value={liveSearch}
                   onChange={(e) => setLiveSearch(e.target.value)}
                   className="pl-8 h-9 text-sm"
@@ -1371,9 +1388,27 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 </ul>
                 )}
                 {filteredActive.length === 0 && (
-                  <p className="text-sm text-silver mt-3">
-                    No matches for &ldquo;{liveSearch}&rdquo;.
-                  </p>
+                  <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-silver">
+                    {/* Name the filter that actually emptied the board —
+                        blaming an empty search box for the shift filter's
+                        work read as a bug. */}
+                    <span>
+                      {liveSearch.trim()
+                        ? `No matches for "${liveSearch.trim()}".`
+                        : liveShiftFilter
+                          ? 'No one on the clock in that shift window.'
+                          : 'No one is clocked in.'}
+                    </span>
+                    {liveShiftFilter && (
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => setLiveShiftFilter('')}
+                      >
+                        Show all shifts
+                      </Button>
+                    )}
+                  </div>
                 )}
                 <div className="mt-3 text-2xs uppercase tracking-widest text-silver/70">
                   Auto-refreshes every 30s
@@ -1443,12 +1478,20 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
                 >
                   Shift
                 </label>
-                <ShiftWindowSelect
-                  id="shift-window-picker"
-                  value={shiftFilter}
-                  onChange={setShiftFilter}
-                  options={shiftOptions}
-                />
+                <div
+                  title={
+                    truncated
+                      ? 'Options come from the first 500 loaded entries — narrow the date range to see every window. Exports apply the pick across the whole range.'
+                      : undefined
+                  }
+                >
+                  <ShiftWindowSelect
+                    id="shift-window-picker"
+                    value={shiftFilter}
+                    onChange={setShiftFilter}
+                    options={shiftOptions}
+                  />
+                </div>
               </div>
               {payPeriods !== null && payPeriods.length > 0 && (
                 <div>

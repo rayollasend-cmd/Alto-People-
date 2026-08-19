@@ -15,6 +15,7 @@ import {
 import type { ClientListItem, ClientStatus } from '@alto-people/shared';
 import { listClients } from '@/lib/clientsApi';
 import { ApiError } from '@/lib/api';
+import { fmtRelativeDate } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { StatusBadge } from '@/lib/status';
@@ -47,16 +48,8 @@ const STATUS_FILTERS: Array<{ value: ClientStatus | 'ALL'; label: string }> = [
 const VIEW_OPTIONS = ['cards', 'table'] as const;
 type ClientsView = (typeof VIEW_OPTIONS)[number];
 
-function fmtRelative(iso: string | null): string {
-  if (!iso) return '—';
-  const then = new Date(iso).getTime();
-  const days = Math.floor((Date.now() - then) / 86_400_000);
-  if (days <= 0) return 'today';
-  if (days === 1) return '1 day ago';
-  if (days < 30) return `${days} days ago`;
-  if (days < 365) return `${Math.floor(days / 30)} mo ago`;
-  return `${Math.floor(days / 365)} yr ago`;
-}
+// Shared relative formatter — one "time ago" dialect across the app.
+const fmtRelative = (iso: string | null): string => fmtRelativeDate(iso);
 
 export function ClientsHome() {
   const { can } = useAuth();
@@ -104,7 +97,7 @@ export function ClientsHome() {
     } catch (err) {
       // The "Load more" button stays visible, so pressing it again retries.
       toast.error('Could not load more clients.', {
-        description: err instanceof ApiError ? err.message : String(err),
+        description: err instanceof ApiError ? err.message : 'Something went wrong.',
       });
     } finally {
       setLoadingMore(false);

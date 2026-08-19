@@ -39,6 +39,7 @@ import {
   PageHeader,
   SegmentedControl,
   Select,
+  Skeleton,
   SkeletonRows,
   Table,
   TableBody,
@@ -65,6 +66,7 @@ export function SeparationHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
   const [summary, setSummary] = useState<SeparationSummary | null>(null);
+  const [summaryFailed, setSummaryFailed] = useState(false);
   const [rows, setRows] = useState<SeparationRow[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<SeparationStatus | 'ALL'>('PLANNED');
@@ -85,7 +87,10 @@ export function SeparationHome() {
       );
     getSeparationSummary(90)
       .then(setSummary)
-      .catch(() => setSummary(null));
+      .catch(() => {
+        setSummary(null);
+        setSummaryFailed(true);
+      });
   };
   useEffect(() => {
     refresh();
@@ -135,6 +140,20 @@ export function SeparationHome() {
         breadcrumbs={[{ label: 'Workforce' }, { label: 'Separations' }]}
       />
 
+      {/* Reserved while loading; explicit note on failure — an absent KPI
+          row read as "zero separations". */}
+      {!summary && !summaryFailed && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-[76px] rounded-lg" />
+          ))}
+        </div>
+      )}
+      {summaryFailed && !summary && (
+        <p className="text-xs text-silver/70">
+          Couldn&apos;t load the summary counts — the list below is unaffected.
+        </p>
+      )}
       {summary && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           <KpiCard label="Planned" value={String(summary.planned)} />

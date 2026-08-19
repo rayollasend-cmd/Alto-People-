@@ -184,7 +184,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
       refresh();
     } catch (err) {
       toast.error('Could not approve the selected requests.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setBulkBusy(false);
@@ -202,7 +202,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
       refresh();
     } catch (err) {
       toast.error('Could not deny the selected requests.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setBulkBusy(false);
@@ -226,7 +226,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
         return;
       }
       toast.error('Could not approve.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setDeciding(false);
@@ -243,7 +243,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
       refresh();
     } catch (err) {
       toast.error('Could not deny.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setDeciding(false);

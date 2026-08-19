@@ -180,7 +180,8 @@ export function ShiftTeamsDialog({
   };
 
   const onAddMember = async (associateId: string) => {
-    if (!selectedId) return;
+    if (!selectedId || busy) return;
+    setBusy(true);
     try {
       await addShiftTeamMember(selectedId, associateId);
       await loadDetail(selectedId);
@@ -188,11 +189,14 @@ export function ShiftTeamsDialog({
       onChanged();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not add member.');
+    } finally {
+      setBusy(false);
     }
   };
 
   const onRemoveMember = async (associateId: string) => {
-    if (!selectedId) return;
+    if (!selectedId || busy) return;
+    setBusy(true);
     try {
       await removeShiftTeamMember(selectedId, associateId);
       await loadDetail(selectedId);
@@ -200,6 +204,8 @@ export function ShiftTeamsDialog({
       onChanged();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not remove member.');
+    } finally {
+      setBusy(false);
     }
   };
 

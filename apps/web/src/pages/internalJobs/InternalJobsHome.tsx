@@ -98,6 +98,18 @@ export function InternalJobsHome() {
   const [reviewJob, setReviewJob] = useState<JobRow | null>(null);
   const [search, setSearch] = useState('');
   const [locationFilter, setLocationFilter] = useState<string | null>(null);
+  // One in-flight action at a time — a double-click on Withdraw used to
+  // fire the write twice.
+  const [actionKey, setActionKey] = useState<string | null>(null);
+  const act = async (key: string, fn: () => Promise<void>) => {
+    if (actionKey) return;
+    setActionKey(key);
+    try {
+      await fn();
+    } finally {
+      setActionKey(null);
+    }
+  };
 
   const refresh = () => {
     setJobs(null);
@@ -278,23 +290,28 @@ export function InternalJobsHome() {
                       <Button
                         size="sm"
                         variant="ghost"
+                        loading={actionKey === `withdraw-${j.myApplication.id}`}
                         disabled={
+                          actionKey !== null ||
                           j.myApplication.status === 'WITHDRAWN' ||
                           j.myApplication.status === 'HIRED' ||
                           j.myApplication.status === 'REJECTED'
                         }
                         onClick={async () => {
                           if (!j.myApplication) return;
+                          const appId = j.myApplication.id;
                           if (!(await confirm({ title: 'Withdraw your application?', destructive: true }))) return;
-                          try {
-                            await withdrawApplication(j.myApplication.id);
-                            toast.success('Withdrawn.');
-                            refresh();
-                          } catch (err) {
-                            toast.error(
-                              err instanceof ApiError ? err.message : 'Failed.',
-                            );
-                          }
+                          await act(`withdraw-${appId}`, async () => {
+                            try {
+                              await withdrawApplication(appId);
+                              toast.success('Withdrawn.');
+                              refresh();
+                            } catch (err) {
+                              toast.error(
+                                err instanceof ApiError ? err.message : 'Failed.',
+                              );
+                            }
+                          });
                         }}
                       >
                         Withdraw
@@ -368,17 +385,21 @@ export function InternalJobsHome() {
                       <Button
                         size="sm"
                         variant="ghost"
+                        loading={actionKey === `withdraw-${a.id}`}
+                        disabled={actionKey !== null}
                         onClick={async () => {
                           if (!(await confirm({ title: 'Withdraw your application?', destructive: true }))) return;
-                          try {
-                            await withdrawApplication(a.id);
-                            toast.success('Withdrawn.');
-                            refresh();
-                          } catch (err) {
-                            toast.error(
-                              err instanceof ApiError ? err.message : 'Failed.',
-                            );
-                          }
+                          await act(`withdraw-${a.id}`, async () => {
+                            try {
+                              await withdrawApplication(a.id);
+                              toast.success('Withdrawn.');
+                              refresh();
+                            } catch (err) {
+                              toast.error(
+                                err instanceof ApiError ? err.message : 'Failed.',
+                              );
+                            }
+                          });
                         }}
                       >
                         Withdraw

@@ -35,6 +35,7 @@ import {
   PageHeader,
   SegmentedControl,
   Select,
+  Skeleton,
   SkeletonRows,
   Table,
   TableBody,
@@ -57,8 +58,21 @@ export function VaccinationsHome() {
   const [expiring, setExpiring] = useState<ExpiringRecord[] | null>(null);
   const [expiringError, setExpiringError] = useState<string | null>(null);
   const [coverage, setCoverage] = useState<CoverageReport | null>(null);
+  const [coverageFailed, setCoverageFailed] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [filterKind, setFilterKind] = useState<VaccinationKind | 'ALL'>('ALL');
+  // One in-flight action at a time — a double-click on Delete used to
+  // fire the write twice.
+  const [actionKey, setActionKey] = useState<string | null>(null);
+  const act = async (key: string, fn: () => Promise<void>) => {
+    if (actionKey) return;
+    setActionKey(key);
+    try {
+      await fn();
+    } finally {
+      setActionKey(null);
+    }
+  };
 
   // Filtered list only — depends on the kind filter.
   const refreshRecords = () => {
@@ -90,7 +104,10 @@ export function VaccinationsHome() {
       );
     getCoverage()
       .then(setCoverage)
-      .catch(() => setCoverage(null));
+      .catch(() => {
+        setCoverage(null);
+        setCoverageFailed(true);
+      });
   };
   const refresh = () => {
     refreshRecords();
@@ -111,6 +128,20 @@ export function VaccinationsHome() {
         breadcrumbs={[{ label: 'Compliance' }, { label: 'Vaccinations' }]}
       />
 
+      {/* Reserve the strip while loading; note failure instead of quietly
+          vanishing (an absent row read as "no coverage data exists"). */}
+      {!coverage && !coverageFailed && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+          {Array.from({ length: 7 }).map((_, i) => (
+            <Skeleton key={i} className="h-[76px] rounded-lg" />
+          ))}
+        </div>
+      )}
+      {coverageFailed && !coverage && (
+        <p className="text-xs text-silver/70">
+          Couldn&apos;t load coverage — the records below are unaffected.
+        </p>
+      )}
       {coverage && (
         <div className="space-y-2">
           <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
@@ -261,20 +292,24 @@ export function VaccinationsHome() {
                         {canManage && (
                           <button
                             aria-label="Delete vaccination record"
+                            disabled={actionKey !== null}
                             onClick={async () => {
                               if (!(await confirm({ title: 'Delete this record?', destructive: true }))) return;
-                              try {
-                                await deleteVaccination(r.id);
-                                refresh();
-                              } catch (err) {
-                                toast.error(
-                                  err instanceof ApiError
-                                    ? err.message
-                                    : 'Failed.',
-                                );
-                              }
+                              await act(`del-${r.id}`, async () => {
+                                try {
+                                  await deleteVaccination(r.id);
+                                  toast.success('Record deleted.');
+                                  refresh();
+                                } catch (err) {
+                                  toast.error(
+                                    err instanceof ApiError
+                                      ? err.message
+                                      : 'Failed.',
+                                  );
+                                }
+                              });
                             }}
-                            className="can-hover:opacity-60 group-hover:opacity-100 text-silver hover:text-alert"
+                            className="can-hover:opacity-60 group-hover:opacity-100 text-silver hover:text-alert disabled:opacity-40"
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>

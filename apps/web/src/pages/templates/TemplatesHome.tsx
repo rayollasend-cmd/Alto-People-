@@ -74,6 +74,18 @@ export function TemplatesHome() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [active, setActive] = useState<DocumentTemplate | null>(null);
+  // One in-flight action at a time — a double-click on Delete used to
+  // fire the write twice.
+  const [actionKey, setActionKey] = useState<string | null>(null);
+  const act = async (key: string, fn: () => Promise<void>) => {
+    if (actionKey) return;
+    setActionKey(key);
+    try {
+      await fn();
+    } finally {
+      setActionKey(null);
+    }
+  };
 
   const refresh = () => {
     setRows(null);
@@ -92,12 +104,15 @@ export function TemplatesHome() {
 
   const onDelete = async (id: string) => {
     if (!(await confirm({ title: 'Delete this template?', destructive: true }))) return;
-    try {
-      await deleteTemplate(id);
-      refresh();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
-    }
+    await act(`del-${id}`, async () => {
+      try {
+        await deleteTemplate(id);
+        toast.success('Template deleted.');
+        refresh();
+      } catch (err) {
+        toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      }
+    });
   };
 
   return (

@@ -9,6 +9,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Unlock,
+  Users,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ROLE_LABELS, ROLES, type Role } from '@/lib/roles';
@@ -29,6 +30,7 @@ import { listClients } from '@/lib/clientsApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Field } from '@/components/ui/Field';
 import { SearchInput } from '@/components/ui/FilterBar';
@@ -644,7 +646,30 @@ export function UsersAdmin() {
               ))}
             </div>
           ) : rows.length === 0 ? (
-            <div className="p-6 text-sm text-silver">No users match those filters.</div>
+            <EmptyState
+              icon={Users}
+              title={q || role || status ? 'No users match those filters' : 'No users yet'}
+              description={
+                q || role || status
+                  ? 'Loosen the search or filters to see more accounts.'
+                  : 'Accounts appear here as people are invited.'
+              }
+              action={
+                q || role || status ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setQ('');
+                      setRole('');
+                      setStatus('');
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                ) : undefined
+              }
+            />
           ) : (
             <Table caption="User accounts">
               <TableHeader>

@@ -2405,6 +2405,7 @@ function Form940BuilderDrawer({
 function SubmitterProfileDrawer({ onClose }: { onClose: () => void }) {
   const [profile, setProfile] = useState<SubmitterProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<SubmitterProfileInput>({
     ein: '',
@@ -2444,10 +2445,19 @@ function SubmitterProfileDrawer({ onClose }: { onClose: () => void }) {
           });
         }
       })
+      .catch(() => {
+        // Without this, a failed load rendered a silently BLANK form that
+        // would overwrite the real SSA submitter profile on save.
+        setLoadFailed(true);
+      })
       .finally(() => setLoading(false));
   }, []);
 
   const onSave = async () => {
+    if (loadFailed) {
+      toast.error('The saved profile could not be loaded — reload the page before saving, or you would overwrite it with a blank form.');
+      return;
+    }
     setSaving(true);
     try {
       const r = await saveSubmitterProfile({

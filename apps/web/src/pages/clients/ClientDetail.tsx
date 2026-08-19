@@ -86,7 +86,7 @@ export function ClientDetail() {
       navigate('/clients');
     } catch (err) {
       toast.error('Could not archive.', {
-        description: err instanceof ApiError ? err.message : String(err),
+        description: err instanceof ApiError ? err.message : 'Something went wrong.',
       });
       setArchiving(false);
     }
@@ -272,7 +272,7 @@ function BasicsEditor({
       toast.success('Client saved.');
     } catch (err) {
       toast.error('Could not save.', {
-        description: err instanceof ApiError ? err.message : String(err),
+        description: err instanceof ApiError ? err.message : 'Something went wrong.',
       });
     } finally {
       setSaving(false);
@@ -442,7 +442,7 @@ function StateEditor({
       toast.success('Work-site state saved.');
     } catch (err) {
       toast.error('Could not save.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setSaving(false);

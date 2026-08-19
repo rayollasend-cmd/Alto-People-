@@ -49,7 +49,7 @@ import {
 } from '@/components/ui';
 import { ApiError } from '@/lib/api';
 import { downloadCsv } from '@/lib/csv';
-import { fmtDate, fmtTime } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtMoneyCompact, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -61,6 +61,7 @@ import {
   ErrorBanner,
   Input,
   Select,
+  Skeleton,
   SkeletonRows,
   Table,
   TableBody,
@@ -98,12 +99,10 @@ const addDaysYmd = (ymd: string, days: number): string => {
   return `${dt.getFullYear()}-${mm}-${dd}`;
 };
 
-const money = (v: number): string =>
-  `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const moneyCompact = (v: number): string =>
-  v >= 1000
-    ? `$${(v / 1000).toLocaleString('en-US', { maximumFractionDigits: 1 })}k`
-    : `$${Math.round(v).toLocaleString('en-US')}`;
+// Delegates to the shared formatters — the private copies here had drifted
+// from fmtMoneyCompact's tiering ($24.4k here vs $24k elsewhere).
+const money = (v: number): string => fmtMoney(v);
+const moneyCompact = (v: number): string => fmtMoneyCompact(v);
 const hours = (minutes: number): string => `${(minutes / 60).toFixed(1)}h`;
 
 /* ----- Chart tokens -------------------------------------------------------
@@ -431,12 +430,15 @@ function OtOutlookCard() {
   const [clientFilter, setClientFilter] = useState('');
   const [minOtHours, setMinOtHours] = useState(0);
 
-  const load = async () => {
+  const load = async (): Promise<boolean> => {
     try {
       setData(await otOutlook());
+      return true;
     } catch {
-      // A failed load renders nothing — this card is an extra lens, and
-      // the floor board above still shows the aggregate chips.
+      // Initial-load failure renders nothing — this card is an extra lens
+      // and the floor board above shows the aggregate chips. An explicit
+      // REFRESH failure must speak, though (handled at the button).
+      return false;
     }
   };
   useEffect(() => {
@@ -509,8 +511,10 @@ function OtOutlookCard() {
             loading={refreshing}
             onClick={async () => {
               setRefreshing(true);
-              await load();
+              const ok = await load();
               setRefreshing(false);
+              // Silent failure left the "as of" time lying about freshness.
+              if (!ok) toast.error('Could not refresh the overtime outlook.');
             }}
           >
             <RefreshCw className="h-3.5 w-3.5" />
@@ -647,6 +651,7 @@ function OtOutlookTable({ rows }: { rows: OtOutlookResponse['rows'] }) {
 function FloorNowCard() {
   const [data, setData] = useState<FloorNowResponse | null>(null);
   const [failed, setFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [open, setOpen] = usePersistentState<boolean>(
     'alto:laborcosts.floor.open.v1',
     true,
@@ -681,7 +686,7 @@ function FloorNowCard() {
       clearInterval(t);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, []);
+  }, [reloadKey]);
 
   // Memoized above the early return (hooks can't follow it): this
   // component re-renders itself every 60s, so the sort shouldn't re-run
@@ -696,7 +701,25 @@ function FloorNowCard() {
     [data],
   );
 
-  if (failed || data === null || data.rows.length === 0) return null;
+  // A failed board must SAY so — silently unmounting the page's headline
+  // surface reads as "nobody's working", which is worse than an error.
+  if (failed && data === null) {
+    return (
+      <ErrorBanner
+        severity="warning"
+        action={
+          <Button size="sm" variant="secondary" onClick={() => setReloadKey((k) => k + 1)}>
+            Retry
+          </Button>
+        }
+      >
+        Couldn&apos;t load the live floor board.
+      </ErrorBanner>
+    );
+  }
+  // First load: reserve the card's rough height instead of popping in.
+  if (data === null) return <Skeleton className="h-40" />;
+  if (data.rows.length === 0) return null;
 
   // Company-wide totals for the hero strip, and per-client rollups that
   // only render when a client actually spans multiple stores — with

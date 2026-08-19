@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   CartesianGrid,
   Line,
@@ -11,6 +11,8 @@ import {
 import type { RetentionResponse } from '@alto-people/shared';
 import { getRetention } from '@/lib/analyticsApi';
 import { ApiError } from '@/lib/api';
+import { fmtPercent } from '@/lib/format';
+import { Button } from '@/components/ui/Button';
 import {
   Card,
   CardContent,
@@ -28,46 +30,67 @@ import { Skeleton } from '@/components/ui/Skeleton';
 
 const SMALL_COHORT = 5;
 
-function pct(v: number | null): string {
-  return v === null ? '—' : `${v}%`;
-}
+const pct = (v: number | null): string => fmtPercent(v);
 
 export function RetentionSection() {
   const [data, setData] = useState<RetentionResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = useCallback(() => {
+    setError(null);
     getRetention()
-      .then((r) => {
-        if (!cancelled) setData(r);
-      })
+      .then((r) => setData(r))
       .catch((err) => {
-        if (!cancelled) {
-          setError(
-            err instanceof ApiError ? err.message : 'Could not load retention data.',
-          );
-        }
+        setError(
+          err instanceof ApiError ? err.message : 'Could not load retention data.',
+        );
       });
-    return () => {
-      cancelled = true;
-    };
   }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
 
-  const trend = (data?.monthly ?? []).map((m) => ({
-    month: m.month.slice(5),
-    turnover: m.turnoverPct,
-    hires: m.hires,
-    separations: m.separations,
-  }));
+  // Memoized — recharts re-renders whenever the array identity changes.
+  const trend = useMemo(
+    () =>
+      (data?.monthly ?? []).map((m) => ({
+        month: m.month.slice(5),
+        turnover: m.turnoverPct,
+        hires: m.hires,
+        separations: m.separations,
+      })),
+    [data],
+  );
+  const hasTrend = trend.some((t) => t.turnover !== null || t.hires > 0);
+  const anySmallCohort = (data?.cohorts ?? []).some((c) => c.hires < SMALL_COHORT);
 
   return (
     <div className="mt-8 space-y-4">
       <h2 className="text-sm font-medium uppercase tracking-wider text-silver">
         Retention
       </h2>
-      {error && <ErrorBanner>{error}</ErrorBanner>}
-      {!data && !error && <Skeleton className="h-48" />}
+      {error && (
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={load}>
+              Retry
+            </Button>
+          }
+        >
+          {error}
+        </ErrorBanner>
+      )}
+      {/* Reserve roughly the settled height (chart card + two tables) so
+          the page doesn't jump when data lands. */}
+      {!data && !error && (
+        <div className="space-y-4">
+          <Skeleton className="h-72" />
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Skeleton className="h-64" />
+            <Skeleton className="h-64" />
+          </div>
+        </div>
+      )}
       {data && (
         <>
           <Card>
@@ -79,6 +102,13 @@ export function RetentionSection() {
               </p>
             </CardHeader>
             <CardContent>
+              {!hasTrend && (
+                <p className="py-8 text-center text-sm text-silver">
+                  Not enough history yet — the trend appears once a month has
+                  hires or separations.
+                </p>
+              )}
+              {hasTrend && (
               <div className="h-56">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={trend} margin={{ top: 8, right: 12, bottom: 0, left: -18 }}>
@@ -120,6 +150,7 @@ export function RetentionSection() {
                   </LineChart>
                 </ResponsiveContainer>
               </div>
+              )}
             </CardContent>
           </Card>
 
@@ -171,6 +202,14 @@ export function RetentionSection() {
                     })}
                   </tbody>
                 </table>
+                {/* Visible (keyboard/touch-reachable) version of what used
+                    to live only in a hover tooltip. */}
+                {anySmallCohort && (
+                  <p className="mt-2 text-2xs text-silver/60">
+                    Greyed months have fewer than {SMALL_COHORT} hires — too
+                    small to read as a rate.
+                  </p>
+                )}
               </CardContent>
             </Card>
 

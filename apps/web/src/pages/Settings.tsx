@@ -761,7 +761,7 @@ function EmailCard() {
         toast.error('That is already your email.');
       } else {
         toast.error('Could not request email change.', {
-          description: err instanceof Error ? err.message : String(err),
+          description: err instanceof Error ? err.message : 'Something went wrong.',
         });
       }
     } finally {
@@ -1191,7 +1191,7 @@ function ProfileCard() {
       await refreshUser();
     } catch (err) {
       toast.error('Could not update profile.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setSubmitting(false);
@@ -1377,7 +1377,7 @@ function PasswordCard() {
         toast.error('Password does not meet requirements.');
       } else {
         toast.error('Could not change password.', {
-          description: err instanceof Error ? err.message : String(err),
+          description: err instanceof Error ? err.message : 'Something went wrong.',
         });
       }
     } finally {

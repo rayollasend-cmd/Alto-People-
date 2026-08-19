@@ -109,7 +109,7 @@ export function QuickbooksSection({ clientId }: Props) {
     } catch (err) {
       setConnecting(false);
       toast.error('Could not start QuickBooks connect.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     }
   };
@@ -133,7 +133,7 @@ export function QuickbooksSection({ clientId }: Props) {
       await refresh();
     } catch (err) {
       toast.error('Could not disconnect.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setDisconnecting(false);
@@ -278,7 +278,7 @@ function JeModeToggle({
       await onSaved();
     } catch (err) {
       toast.error('Could not change JE mode.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setSaving(false);
@@ -337,7 +337,7 @@ function AssociateSyncSection({ clientId }: { clientId: string }) {
       }
     } catch (err) {
       toast.error('Sync failed.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setBusy(false);
@@ -458,7 +458,7 @@ function AccountMappingForm({
       await onSaved();
     } catch (err) {
       toast.error('Could not save account mapping.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setSaving(false);

@@ -576,6 +576,15 @@ export function PeopleDirectory() {
           />
         </div>
       )}
+      {/* Reserve the strip's height on first load — the row used to be
+          absent and then shove the FilterBar + table ~90px down. */}
+      {!stats && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-[88px] rounded-lg" />
+          ))}
+        </div>
+      )}
 
       {/* Filter row */}
       <FilterBar>

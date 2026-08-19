@@ -423,6 +423,18 @@ function PositionDrawer({
   const [data, setData] = useState<SuccessionPositionDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  // One in-flight action at a time — a double-click on Remove used to
+  // fire the write twice.
+  const [actionKey, setActionKey] = useState<string | null>(null);
+  const act = async (key: string, fn: () => Promise<void>) => {
+    if (actionKey) return;
+    setActionKey(key);
+    try {
+      await fn();
+    } finally {
+      setActionKey(null);
+    }
+  };
 
   const refresh = () => {
     setData(null);
@@ -464,21 +476,22 @@ function PositionDrawer({
     }
   };
 
-  const removeCandidate = async (candidateId: string) => {
-    const prev = data;
-    setData((d) =>
-      d
-        ? { ...d, candidates: d.candidates.filter((c) => c.id !== candidateId) }
-        : d,
-    );
-    try {
-      await deleteSuccessionCandidate(candidateId);
-      toast.success('Successor removed.');
-    } catch (err) {
-      setData(prev);
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
-    }
-  };
+  const removeCandidate = async (candidateId: string) =>
+    act(`remove-${candidateId}`, async () => {
+      const prev = data;
+      setData((d) =>
+        d
+          ? { ...d, candidates: d.candidates.filter((c) => c.id !== candidateId) }
+          : d,
+      );
+      try {
+        await deleteSuccessionCandidate(candidateId);
+        toast.success('Successor removed.');
+      } catch (err) {
+        setData(prev);
+        toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      }
+    });
 
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>

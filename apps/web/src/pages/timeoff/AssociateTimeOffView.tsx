@@ -146,7 +146,7 @@ export function AssociateTimeOffView() {
   useEffect(() => {
     if (loadError) {
       toast.error(t('timeoff.loadFailed'), {
-        description: loadError instanceof Error ? loadError.message : String(loadError),
+        description: loadError instanceof Error ? loadError.message : 'Something went wrong.',
       });
     }
   }, [loadError, t]);
@@ -522,7 +522,7 @@ function CreateRequestDialog({
       onCreated();
     } catch (err) {
       toast.error(t('timeoff.submitFailed'), {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setSubmitting(false);

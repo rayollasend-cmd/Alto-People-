@@ -915,7 +915,7 @@ function AskPaycheckDialog({
       onClose();
     } catch (err) {
       toast.error(t('pay.askSendFailed'), {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setSubmitting(false);

@@ -22,7 +22,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { fmtDate, fmtWeekdayTz, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtRelativeDate, fmtWeekdayTz, parseYmd, ymdLocal } from '@/lib/format';
 import {
   hasCapability,
   type ApplicationDetail as ApplicationDetailType,
@@ -238,7 +238,7 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
         return;
       }
       toast.error('Could not resend the invite.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     }
   };
@@ -1331,13 +1331,8 @@ function I9Card({
 }
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-function fmtAgo(iso: string): string {
-  const t = new Date(iso).getTime();
-  const days = Math.floor((Date.now() - t) / ONE_DAY_MS);
-  if (days === 0) return 'today';
-  if (days === 1) return '1 day ago';
-  return `${days} days ago`;
-}
+// Shared relative formatter — one "time ago" dialect across the app.
+const fmtAgo = (iso: string): string => fmtRelativeDate(iso);
 
 function DeliverabilityStrip({ info }: { info: InviteDeliveryInfo }) {
   const isFailed = info.status === 'FAILED';

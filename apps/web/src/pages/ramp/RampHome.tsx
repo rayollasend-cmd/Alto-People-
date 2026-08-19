@@ -342,6 +342,18 @@ function PlanDetailDrawer({
   const [plan, setPlan] = useState<RampPlan | null | undefined>(undefined);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  // One in-flight action at a time — a double-click on Delete/Archive
+  // used to fire the write twice.
+  const [actionKey, setActionKey] = useState<string | null>(null);
+  const act = async (key: string, fn: () => Promise<void>) => {
+    if (actionKey) return;
+    setActionKey(key);
+    try {
+      await fn();
+    } finally {
+      setActionKey(null);
+    }
+  };
 
   const refresh = () => {
     setPlan(undefined);
@@ -455,21 +467,24 @@ function PlanDetailDrawer({
                       {canManage && (
                         <button
                           aria-label={`Delete milestone ${m.title}`}
+                          disabled={actionKey !== null}
                           onClick={async () => {
                             if (!(await confirm({ title: `Delete "${m.title}"?`, destructive: true }))) return;
-                            try {
-                              await deleteMilestone(m.id);
-                              toast.success('Milestone deleted.');
-                              refresh();
-                            } catch (err) {
-                              toast.error(
-                                err instanceof ApiError
-                                  ? err.message
-                                  : 'Could not delete the milestone.',
-                              );
-                            }
+                            await act(`del-${m.id}`, async () => {
+                              try {
+                                await deleteMilestone(m.id);
+                                toast.success('Milestone deleted.');
+                                refresh();
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof ApiError
+                                    ? err.message
+                                    : 'Could not delete the milestone.',
+                                );
+                              }
+                            });
                           }}
-                          className="text-silver hover:text-alert"
+                          className="text-silver hover:text-alert disabled:opacity-40"
                         >
                           <Trash2 className="h-3 w-3" />
                         </button>
@@ -499,19 +514,23 @@ function PlanDetailDrawer({
                 <Button
                   size="sm"
                   variant="ghost"
+                  loading={actionKey === 'archive'}
+                  disabled={actionKey !== null}
                   onClick={async () => {
                     if (!(await confirm({ title: 'Archive this plan?', destructive: true }))) return;
-                    try {
-                      await archiveRampPlan(plan.id);
-                      toast.success('Plan archived.');
-                      onClose();
-                    } catch (err) {
-                      toast.error(
-                        err instanceof ApiError
-                          ? err.message
-                          : 'Could not archive the plan.',
-                      );
-                    }
+                    await act('archive', async () => {
+                      try {
+                        await archiveRampPlan(plan.id);
+                        toast.success('Plan archived.');
+                        onClose();
+                      } catch (err) {
+                        toast.error(
+                          err instanceof ApiError
+                            ? err.message
+                            : 'Could not archive the plan.',
+                        );
+                      }
+                    });
                   }}
                 >
                   Archive plan

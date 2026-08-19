@@ -518,6 +518,7 @@ function DevicesTab({
                             if (!(await confirm({ title: 'Permanently delete?', destructive: true }))) return;
                             try {
                               await deleteKioskDevice(d.id);
+                              toast.success('Kiosk deleted.');
                               refresh();
                             } catch (err) {
                               toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -1524,6 +1525,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                               if (!(await confirm({ title: 'Revoke this employee number?', destructive: true }))) return;
                               try {
                                 await deleteKioskPin(p.id);
+                                toast.success('Code revoked.');
                                 refresh();
                               } catch (err) {
                                 toast.error(err instanceof ApiError ? err.message : 'Failed.');

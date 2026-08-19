@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -40,6 +40,7 @@ import { ApiError } from '@/lib/api';
 import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { LiveNow } from '@/components/ui/LiveNow';
 import { Card, CardContent } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -131,13 +132,8 @@ export function AdminDashboard() {
   const pullQueryClient = useQueryClient();
   const pullState = usePullToRefresh(() => pullQueryClient.invalidateQueries());
   const { user, role, can } = useAuth();
-  const [now, setNow] = useState(() => new Date());
-
-  // Live header time, ticking every minute. Cheap.
-  useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 60_000);
-    return () => clearInterval(t);
-  }, []);
+  // Header clock lives in <LiveNow> below — a page-level 60s ticker used
+  // to re-render this entire dashboard every minute for a date label.
 
   // Audit feed only loads when the user has audit access. Saves a
   // pointless 403 round-trip and keeps the section out of view entirely
@@ -181,8 +177,6 @@ export function AdminDashboard() {
   const greetingName =
     user?.firstName?.trim() ||
     (user?.email ? firstNameFromEmail(user.email) : 'there');
-  const greeting = greetingFor(now.getHours());
-  const dateLabel = fmtDate(now);
 
   return (
     <div className="mx-auto space-y-8">
@@ -192,7 +186,7 @@ export function AdminDashboard() {
         <div className="flex items-center gap-2 flex-wrap">
           <div className="text-xs2 uppercase tracking-[0.18em] text-silver flex items-center gap-2">
             <Calendar className="h-3 w-3" aria-hidden="true" />
-            {dateLabel}
+            <LiveNow render={(now) => fmtDate(now)} />
           </div>
           {role && (
             <Badge variant="accent" className="uppercase tracking-widest">
@@ -201,7 +195,8 @@ export function AdminDashboard() {
           )}
         </div>
         <h1 className="font-display text-3xl md:text-4xl text-white mt-2 leading-tight">
-          {greeting}, <span className="text-gold">{greetingName}</span>.
+          <LiveNow render={(now) => greetingFor(now.getHours())} />,{' '}
+          <span className="text-gold">{greetingName}</span>.
         </h1>
         <p className="text-silver mt-2 text-sm md:text-base">
           {(role && SUBTITLE_BY_ROLE[role]) ??

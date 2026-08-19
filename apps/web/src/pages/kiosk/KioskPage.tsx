@@ -69,7 +69,11 @@ type Stage =
   | 'selfie'
   | 'submitting'
   | 'result'
-  | 'error';
+  | 'error'
+  // Neutral outcome screen (e.g. "not on today's schedule — supervisor
+  // notified"): informational, not a failure, so it must not wear the
+  // red alert dress.
+  | 'notice';
 
 interface PunchResult {
   action: 'CLOCK_IN' | 'CLOCK_OUT' | 'BREAK_START' | 'BREAK_END';
@@ -106,6 +110,8 @@ interface KioskStrings {
   wrongPin: string;
   oneAtATime: string;
   notClockedIn: string;
+  notOnScheduleTitle: string;
+  notOnScheduleBody: string;
   consentTitle: string;
   consentBody1: string;
   consentBody2: string;
@@ -152,6 +158,9 @@ const STRINGS: Record<Lang, KioskStrings> = {
     wrongPin: 'Wrong PIN. Try again.',
     oneAtATime: 'One at a time — wait a second, then tap Try again.',
     notClockedIn: "You're not clocked in — turn off break to clock in.",
+    notOnScheduleTitle: "You're not on today's schedule",
+    notOnScheduleBody:
+      'Your supervisor was just notified. Once they approve, you are clocked in from right now — no need to punch again.',
     consentTitle: 'Quick question,',
     consentBody1:
       "This kiosk can take a quick photo at each punch to confirm it's really you (it stops anyone else clocking in with your number).",
@@ -213,6 +222,9 @@ const STRINGS: Record<Lang, KioskStrings> = {
     wrongPin: 'PIN incorrecto. Intenta de nuevo.',
     oneAtATime: 'Uno a la vez — espera un segundo y toca Reintentar.',
     notClockedIn: 'No has marcado entrada — desactiva el descanso para entrar.',
+    notOnScheduleTitle: 'No estás en el horario de hoy',
+    notOnScheduleBody:
+      'Tu supervisor acaba de ser notificado. Cuando apruebe, quedas marcado desde este momento — no necesitas marcar de nuevo.',
     consentTitle: 'Una pregunta rápida,',
     consentBody1:
       'Este quiosco puede tomar una foto rápida en cada marcación para confirmar que realmente eres tú (evita que otra persona marque con tu número).',
@@ -728,6 +740,14 @@ export function KioskPage() {
           setStage('pin');
           return;
         }
+        // Schedule gate: the punch filed a supervisor request — a normal
+        // outcome for the associate, shown calm and localized, never as a
+        // red failure in server English.
+        if (err.code === 'not_on_schedule') {
+          setStage('notice');
+          scheduleReset(12_000);
+          return;
+        }
         setError(err.message);
         setStage('error');
         scheduleReset(errorDwellMs(err.message));
@@ -930,6 +950,12 @@ export function KioskPage() {
                   setPinError(t.oneAtATime);
                   return;
                 }
+                // Schedule gate caught at the keypad — before the selfie.
+                if (err.code === 'not_on_schedule') {
+                  setStage('notice');
+                  scheduleReset(12_000);
+                  return;
+                }
                 setError(err.message);
                 setStage('error');
                 scheduleReset(errorDwellMs(err.message));
@@ -1065,7 +1091,26 @@ export function KioskPage() {
           <div className="mb-6 text-alert">
             <AlertTriangle className="h-16 w-16" strokeWidth={2} aria-hidden="true" />
           </div>
-          <div className="text-3xl text-alert max-w-2xl px-8">{error}</div>
+          <div role="alert" className="text-3xl text-alert max-w-2xl px-8">{error}</div>
+          <div className="mt-8 text-base text-silver/80">{t.tapToDismiss}</div>
+        </button>
+      )}
+      {/* Neutral outcome — the schedule gate filing a request is a normal
+          result for the associate, not their mistake. Info tone, localized,
+          calmer type than the alert screen. */}
+      {stage === 'notice' && (
+        <button
+          type="button"
+          onClick={reset}
+          className="fixed inset-0 flex flex-col items-center justify-center text-center focus:outline-none"
+        >
+          <div className="mb-6 text-gold">
+            <Timer className="h-16 w-16" strokeWidth={2} aria-hidden="true" />
+          </div>
+          <div role="status" className="max-w-2xl px-8">
+            <div className="text-3xl text-white">{t.notOnScheduleTitle}</div>
+            <div className="mt-4 text-xl text-silver">{t.notOnScheduleBody}</div>
+          </div>
           <div className="mt-8 text-base text-silver/80">{t.tapToDismiss}</div>
         </button>
       )}

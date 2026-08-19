@@ -33,7 +33,7 @@ export function performWithUndo(opts: {
     if (undone) return;
     void opts.onCommit().catch((err: unknown) => {
       toast.error(opts.commitFailedMessage, {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     });
   }, UNDO_WINDOW_MS);

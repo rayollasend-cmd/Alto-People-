@@ -102,12 +102,22 @@ export function AttendanceCard({
         </p>
       </CardHeader>
       <CardContent>
-        {error && <ErrorBanner>{error}</ErrorBanner>}
+        {error && (
+          <ErrorBanner
+            action={
+              <Button size="sm" variant="secondary" onClick={() => void load()}>
+                Retry
+              </Button>
+            }
+          >
+            {error}
+          </ErrorBanner>
+        )}
         {!data && !error && <Skeleton className="h-16" />}
         {data && data.events.length === 0 && (
           <p className="flex items-center gap-2 text-sm text-silver">
             <CalendarX2 className="h-4 w-4" />
-            No attendance events in the last 6 months.
+            No attendance events on record — a clean 180-day history.
           </p>
         )}
         {data && data.events.length > 0 && (

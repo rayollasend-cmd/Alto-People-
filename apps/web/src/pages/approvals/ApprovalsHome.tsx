@@ -29,7 +29,7 @@ import {
 } from '@/lib/timeApi';
 import type { ClockInRequestRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtDateTime, parseYmd } from '@/lib/format';
+import { fmtDate, fmtDateTime, fmtTime, parseYmd } from '@/lib/format';
 import { useSelection } from '@/lib/useSelection';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -227,8 +227,9 @@ function WalkInClockInsPanel() {
       try {
         return (await listClockInRequests('PENDING')).requests;
       } catch (err) {
-        // 403 = not permitted — an honest empty list, not an error.
-        if (err instanceof ApiError && err.status === 403) return [];
+        // 403 = not permitted — hide the whole panel (null), never an
+        // asserted "no one is waiting" the caller can't actually know.
+        if (err instanceof ApiError && err.status === 403) return null;
         throw err;
       }
     },
@@ -236,25 +237,36 @@ function WalkInClockInsPanel() {
     refetchInterval: 60_000,
   });
   const items = query.data ?? null;
+  const forbidden = query.data === null && !query.isLoading && !query.isError;
   const error = query.isError
     ? query.error instanceof Error
       ? query.error.message
       : 'Could not load clock-in requests.'
     : null;
 
+  // Optimistic removal, matching PendingTimeOffPanel directly below —
+  // two panels in one stack must not behave differently under the same tap.
   const decide = async (id: string, fn: () => Promise<unknown>, successMsg: string) => {
     setPendingId(id);
+    await queryClient.cancelQueries({ queryKey: CLOCK_INS_KEY });
+    const previous = queryClient.getQueryData<ClockInRequestRow[] | null>(CLOCK_INS_KEY);
+    queryClient.setQueryData<ClockInRequestRow[] | null>(CLOCK_INS_KEY, (old) =>
+      old ? old.filter((r) => r.id !== id) : old,
+    );
     try {
       await fn();
       hapticConfirm();
       toast.success(successMsg);
-      await queryClient.invalidateQueries({ queryKey: CLOCK_INS_KEY });
     } catch (err) {
+      queryClient.setQueryData(CLOCK_INS_KEY, previous);
       toast.error(err instanceof ApiError ? err.message : 'Action failed.');
     } finally {
       setPendingId(null);
+      void queryClient.invalidateQueries({ queryKey: CLOCK_INS_KEY });
     }
   };
+
+  if (forbidden) return null;
 
   return (
     <Card className="mt-8">
@@ -292,10 +304,14 @@ function WalkInClockInsPanel() {
                   </div>
                   <div className="text-xs text-silver">
                     {r.locationName ?? r.clientName ?? 'Kiosk'}
+                    {/* Time-only: these are minutes old — a full date reads
+                        like paperwork, not a person at a kiosk. */}
                     {' · punched '}
-                    {fmtDateTime(r.requestedAt)}
+                    {fmtTime(r.requestedAt)}
                     {' · '}
-                    <span className="text-warning">{waitingSince(r.requestedAt)}</span>
+                    <span className="tabular-nums text-warning">
+                      {waitingSince(r.requestedAt)}
+                    </span>
                   </div>
                   <div className="text-2xs text-silver/60">
                     Approving clocks them in from the punch time; they do not
@@ -438,7 +454,7 @@ function PendingTimeOffPanel({
         return;
       }
       toast.error('Could not approve.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     },
     onSuccess: (_res, r) => {
@@ -455,7 +471,7 @@ function PendingTimeOffPanel({
     onError: (err, _vars, ctx) => {
       rollback(ctx);
       toast.error('Could not deny.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     },
     onSuccess: () => {
@@ -492,7 +508,7 @@ function PendingTimeOffPanel({
       clear();
     } catch (err) {
       toast.error('Could not approve selected.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setBulkBusy(false);

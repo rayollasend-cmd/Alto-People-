@@ -86,7 +86,7 @@ export function NewClientDialog({ open, onOpenChange, onCreated }: Props) {
       onOpenChange(false);
     } catch (err) {
       toast.error('Could not create client.', {
-        description: err instanceof ApiError ? err.message : String(err),
+        description: err instanceof ApiError ? err.message : 'Something went wrong.',
       });
     } finally {
       setSubmitting(false);

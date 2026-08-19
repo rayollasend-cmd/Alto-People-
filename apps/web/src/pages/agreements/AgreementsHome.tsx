@@ -387,6 +387,7 @@ export function AgreementsHome() {
                               setPendingKey(`delete:${a.id}`);
                               try {
                                 await deleteAgreement(a.id);
+                                toast.success('Agreement deleted.');
                                 refresh();
                               } catch (err) {
                                 toast.error(

@@ -57,7 +57,7 @@ import type {
 } from '@alto-people/shared';
 import { Input, Textarea, Label } from '@/components/ui';
 import { downloadDocumentUrl } from '@/lib/documentsApi';
-import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtRelativeDate, parseYmd, ymdLocal } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { ApiError } from '@/lib/api';
@@ -1287,10 +1287,5 @@ function liveSeverity(value: number, target: number): ScorecardSeverity {
   return 'critical';
 }
 
-function fmtTimeAgo(d: Date): string {
-  const sec = Math.floor((Date.now() - d.getTime()) / 1000);
-  if (sec < 30) return 'just now';
-  if (sec < 60) return `${sec}s ago`;
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
-  return `${Math.floor(sec / 3600)}h ago`;
-}
+// Shared relative formatter — one "time ago" dialect across the app.
+const fmtTimeAgo = (d: Date): string => fmtRelativeDate(d);

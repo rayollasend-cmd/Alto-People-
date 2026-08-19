@@ -50,7 +50,10 @@ function useTicker(active: boolean): number {
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!active) return;
-    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    // 15s, not 1s: the elapsed display is decimal hours (0.01h = 36s of
+    // resolution), and a 1s tick re-rendered this whole page for an
+    // entire shift on the associate's phone.
+    const id = setInterval(() => setTick((t) => t + 1), 15_000);
     return () => clearInterval(id);
   }, [active]);
   return Date.now();

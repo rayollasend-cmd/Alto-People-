@@ -399,7 +399,7 @@ function EntitlementDialog({ open, onOpenChange, existing, onSaved }: DialogProp
       onSaved();
     } catch (err) {
       toast.error('Could not save.', {
-        description: err instanceof Error ? err.message : String(err),
+        description: err instanceof Error ? err.message : 'Something went wrong.',
       });
     } finally {
       setSubmitting(false);

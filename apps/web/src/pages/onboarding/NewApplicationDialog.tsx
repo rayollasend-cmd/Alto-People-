@@ -79,6 +79,7 @@ interface Props {
  */
 export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
   const [clients, setClients] = useState<ClientSummary[] | null>(null);
+  const [clientsFailed, setClientsFailed] = useState(false);
   const [templates, setTemplates] = useState<OnboardingTemplate[] | null>(null);
 
   const [firstName, setFirstName] = useState('');
@@ -131,8 +132,19 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
     let cancelled = false;
     if (!clients) {
       listClients()
-        .then((r) => !cancelled && setClients(r.clients))
-        .catch(() => !cancelled && setClients([]));
+        .then((r) => {
+          if (cancelled) return;
+          setClients(r.clients);
+          setClientsFailed(false);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          // Distinguish "load failed" from "no clients exist" — an empty
+          // Select with no explanation made the dialog unsubmittable for
+          // no visible reason.
+          setClients([]);
+          setClientsFailed(true);
+        });
     }
     if (!templates) {
       listTemplates()
@@ -376,22 +388,39 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
               }
             >
               {(p) => (
-                <Select
-                  value={clientId}
-                  onChange={(e) => setClientId(e.target.value)}
-                  disabled={clients === null}
-                  {...p}
-                >
-                  <option value="">
-                    {clients === null ? 'Loading…' : 'Pick a client'}
-                  </option>
-                  {clients?.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                      {c.state ? ` · ${c.state}` : ''}
+                <>
+                  <Select
+                    value={clientId}
+                    onChange={(e) => setClientId(e.target.value)}
+                    disabled={clients === null || clientsFailed}
+                    {...p}
+                  >
+                    <option value="">
+                      {clients === null ? 'Loading…' : 'Pick a client'}
                     </option>
-                  ))}
-                </Select>
+                    {clients?.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                        {c.state ? ` · ${c.state}` : ''}
+                      </option>
+                    ))}
+                  </Select>
+                  {clientsFailed && (
+                    <p className="mt-1 text-xs text-alert">
+                      Couldn&apos;t load the client list.{' '}
+                      <button
+                        type="button"
+                        className="underline"
+                        onClick={() => {
+                          setClientsFailed(false);
+                          setClients(null); // re-triggers the load effect
+                        }}
+                      >
+                        Retry
+                      </button>
+                    </p>
+                  )}
+                </>
               )}
             </Field>
 

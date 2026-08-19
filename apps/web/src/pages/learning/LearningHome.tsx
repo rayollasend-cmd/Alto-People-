@@ -118,6 +118,18 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
   const [statusFilter, setStatusFilter] = useState<CourseStatus | 'ALL'>('ALL');
   const [showNew, setShowNew] = useState(false);
   const [enrollFor, setEnrollFor] = useState<Course | null>(null);
+  // One in-flight action at a time — a double-click on Publish/Archive/
+  // Delete used to fire the write twice.
+  const [actionKey, setActionKey] = useState<string | null>(null);
+  const act = async (key: string, fn: () => Promise<void>) => {
+    if (actionKey) return;
+    setActionKey(key);
+    try {
+      await fn();
+    } finally {
+      setActionKey(null);
+    }
+  };
 
   const refresh = () => {
     setRows(null);
@@ -228,17 +240,21 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                       {canManage && c.status === 'DRAFT' && (
                         <Button
                           size="sm"
-                          onClick={async () => {
-                            try {
-                              await publishCourse(c.id);
-                              toast.success(`Published "${c.title}".`);
-                              refresh();
-                            } catch (err) {
-                              toast.error(
-                                err instanceof ApiError ? err.message : 'Failed to publish.',
-                              );
-                            }
-                          }}
+                          loading={actionKey === `pub-${c.id}`}
+                          disabled={actionKey !== null}
+                          onClick={() =>
+                            void act(`pub-${c.id}`, async () => {
+                              try {
+                                await publishCourse(c.id);
+                                toast.success(`Published "${c.title}".`);
+                                refresh();
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof ApiError ? err.message : 'Failed to publish.',
+                                );
+                              }
+                            })
+                          }
                         >
                           Publish
                         </Button>
@@ -251,6 +267,8 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                           <Button
                             size="sm"
                             variant="ghost"
+                            loading={actionKey === `arch-${c.id}`}
+                            disabled={actionKey !== null}
                             onClick={async () => {
                               if (
                                 !(await confirm({
@@ -261,15 +279,17 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                                 }))
                               )
                                 return;
-                              try {
-                                await archiveCourse(c.id);
-                                toast.success(`Archived "${c.title}".`);
-                                refresh();
-                              } catch (err) {
-                                toast.error(
-                                  err instanceof ApiError ? err.message : 'Failed to archive.',
-                                );
-                              }
+                              await act(`arch-${c.id}`, async () => {
+                                try {
+                                  await archiveCourse(c.id);
+                                  toast.success(`Archived "${c.title}".`);
+                                  refresh();
+                                } catch (err) {
+                                  toast.error(
+                                    err instanceof ApiError ? err.message : 'Failed to archive.',
+                                  );
+                                }
+                              });
                             }}
                           >
                             Archive
@@ -278,20 +298,24 @@ function CoursesTab({ canManage }: { canManage: boolean }) {
                       )}
                       {canManage && (
                         <button
+                          disabled={actionKey !== null}
                           onClick={async () => {
                             if (!(await confirm({ title: 'Delete this course?', destructive: true }))) return;
-                            try {
-                              await deleteCourse(c.id);
-                              refresh();
-                            } catch (err) {
-                              toast.error(
-                                err instanceof ApiError
-                                  ? err.message
-                                  : 'Could not delete the course.',
-                              );
-                            }
+                            await act(`del-${c.id}`, async () => {
+                              try {
+                                await deleteCourse(c.id);
+                                toast.success(`Deleted "${c.title}".`);
+                                refresh();
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof ApiError
+                                    ? err.message
+                                    : 'Could not delete the course.',
+                                );
+                              }
+                            });
                           }}
-                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs"
+                          className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 text-silver hover:text-alert transition text-xs disabled:opacity-40"
                         >
                           Delete
                         </button>
