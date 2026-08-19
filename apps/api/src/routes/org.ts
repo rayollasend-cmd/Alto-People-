@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import {
+  AssociateDeactivateInputSchema,
   AssociateOrgAssignmentInputSchema,
   AssociateProfilePatchInputSchema,
   AssociateTransferInputSchema,
@@ -25,7 +26,7 @@ import { toDateOnly } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { piiRevealLimiter, bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
-import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
+import { invalidateUserCache, requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { effectiveClientIdFilter } from '../lib/scope.js';
 import { asOf, recordChange } from '../lib/associateHistory.js';
 import { eraseAssociate } from '../lib/erasure.js';
@@ -836,6 +837,144 @@ orgRouter.patch(
       phoneChanged: input.phone !== undefined,
     });
     res.json(updated);
+  },
+);
+
+// ----- Deactivate / reactivate (temporary pause) --------------------------
+//
+// The lightweight sibling of a Separation: someone leaves for a couple of
+// weeks or months and is expected back. One transaction takes them fully
+// out of circulation — login DISABLED with live sessions killed, future
+// assigned shifts released back to OPEN (so the no-show engine can't
+// accrue points against someone who isn't supposed to be there), pending
+// open-shift claims expired, directory flipped to INACTIVE, kiosk
+// clock-ins rejected (gate in kiosk99). Reactivate undoes it in one click
+// with the whole record — I-9, E-Verify, banking, training, kiosk PIN —
+// intact. Nobody restarts onboarding for a two-week absence.
+
+orgRouter.post(
+  '/associates/:id/deactivate',
+  MANAGE,
+  async (req: Request, res: Response) => {
+    const id = z.string().uuid().parse(req.params.id);
+    const input = AssociateDeactivateInputSchema.parse(req.body);
+    const existing = await prisma.associate.findUnique({
+      where: { id },
+      select: { id: true, deletedAt: true, separatedAt: true, deactivatedAt: true },
+    });
+    if (!existing || existing.deletedAt) {
+      throw new HttpError(404, 'not_found', 'Associate not found.');
+    }
+    if (existing.deactivatedAt) {
+      throw new HttpError(409, 'already_deactivated', 'Associate is already deactivated.');
+    }
+    if (existing.separatedAt) {
+      throw new HttpError(
+        409,
+        'already_separated',
+        'Associate is separated — re-invite them to rehire instead.',
+      );
+    }
+    const now = new Date();
+    const disabledUserIds: string[] = [];
+    let releasedShifts = 0;
+    let expiredClaims = 0;
+    await prisma.$transaction(async (tx) => {
+      await tx.associate.update({
+        where: { id },
+        data: {
+          deactivatedAt: now,
+          deactivatedById: req.user!.id,
+          deactivationReason: input.reason,
+        },
+      });
+      // Release their future shifts so supervisors can re-cover them and
+      // the reminder/no-show sweeps stop targeting someone who's out.
+      const released = await tx.shift.updateMany({
+        where: {
+          assignedAssociateId: id,
+          status: 'ASSIGNED',
+          startsAt: { gt: now },
+        },
+        data: { status: 'OPEN', assignedAssociateId: null },
+      });
+      releasedShifts = released.count;
+      const expired = await tx.openShiftClaim.updateMany({
+        where: { associateId: id, status: 'PENDING' },
+        data: { status: 'EXPIRED', decisionNote: 'Associate deactivated.' },
+      });
+      expiredClaims = expired.count;
+      // Same access-revocation pattern as separation completion.
+      const users = await tx.user.findMany({
+        where: { associateId: id, deletedAt: null, status: { not: 'DISABLED' } },
+        select: { id: true },
+      });
+      if (users.length > 0) {
+        await tx.user.updateMany({
+          where: { id: { in: users.map((u) => u.id) } },
+          data: { status: 'DISABLED', tokenVersion: { increment: 1 } },
+        });
+        disabledUserIds.push(...users.map((u) => u.id));
+      }
+    });
+    for (const uid of disabledUserIds) invalidateUserCache(uid);
+    audit(req, 'associate.deactivated', 'Associate', id, {
+      reason: input.reason,
+      releasedShifts,
+      expiredClaims,
+      disabledLogins: disabledUserIds.length,
+    });
+    res.json({
+      ok: true,
+      deactivatedAt: now.toISOString(),
+      releasedShifts,
+      expiredClaims,
+      loginDisabled: disabledUserIds.length > 0,
+    });
+  },
+);
+
+orgRouter.post(
+  '/associates/:id/reactivate',
+  MANAGE,
+  async (req: Request, res: Response) => {
+    const id = z.string().uuid().parse(req.params.id);
+    const existing = await prisma.associate.findUnique({
+      where: { id },
+      select: { id: true, deletedAt: true, deactivatedAt: true },
+    });
+    if (!existing || existing.deletedAt) {
+      throw new HttpError(404, 'not_found', 'Associate not found.');
+    }
+    if (!existing.deactivatedAt) {
+      throw new HttpError(409, 'not_deactivated', 'Associate is not deactivated.');
+    }
+    const enabledUserIds: string[] = [];
+    await prisma.$transaction(async (tx) => {
+      await tx.associate.update({
+        where: { id },
+        data: { deactivatedAt: null, deactivatedById: null, deactivationReason: null },
+      });
+      // Re-enable exactly what deactivation disabled. INVITED accounts
+      // stay INVITED — reactivation never mints login ability that
+      // didn't exist before the pause.
+      const users = await tx.user.findMany({
+        where: { associateId: id, deletedAt: null, status: 'DISABLED' },
+        select: { id: true },
+      });
+      if (users.length > 0) {
+        await tx.user.updateMany({
+          where: { id: { in: users.map((u) => u.id) } },
+          data: { status: 'ACTIVE' },
+        });
+        enabledUserIds.push(...users.map((u) => u.id));
+      }
+    });
+    for (const uid of enabledUserIds) invalidateUserCache(uid);
+    audit(req, 'associate.reactivated', 'Associate', id, {
+      enabledLogins: enabledUserIds.length,
+    });
+    res.json({ ok: true });
   },
 );
 

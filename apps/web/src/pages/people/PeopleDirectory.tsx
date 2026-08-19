@@ -32,6 +32,8 @@ import {
   Send,
   ShieldAlert,
   Upload,
+  UserCheck,
+  UserX,
   Users,
   X,
   type LucideIcon,
@@ -88,9 +90,11 @@ import {
   getAssociatePayoutMethod,
   getAssociatePersonalInfo,
   getAssociateSsn,
+  deactivateAssociate,
   getAssociateW4,
   listDepartments,
   patchAssociateProfile,
+  reactivateAssociate,
   revealAssociatePayoutMethod,
   revealAssociateSsn,
   setAssociateBankName,
@@ -1370,6 +1374,17 @@ function ProfileTab({
             }
           />
         )}
+        {a.deactivatedAt && (
+          <InfoRow
+            label="Deactivated"
+            value={
+              <span className="text-silver">
+                {fmtDate(a.deactivatedAt)}
+                {a.deactivationReason ? ` — ${a.deactivationReason}` : ''}
+              </span>
+            }
+          />
+        )}
         {!a.separatedAt && a.status === 'ACTIVE' && (
           <InfoRow
             label="Offboarding"
@@ -1378,15 +1393,184 @@ function ProfileTab({
                 to={`/separations?associateId=${a.id}`}
                 className="text-gold hover:text-gold-bright"
               >
-                Start a separation to deactivate this associate
+                Start a separation to permanently offboard this associate
               </Link>
             }
           />
         )}
       </Section>
 
+      <DeactivationSection associate={a} onAssociateChange={onAssociateChange} />
+
       <DangerZoneSection associate={a} />
     </div>
+  );
+}
+
+/**
+ * Temporary deactivation — the light sibling of a Separation, for people
+ * who leave for a couple of weeks or months and come back. Deactivate
+ * takes them fully out of circulation (login disabled, kiosk clock-ins
+ * rejected, out of the scheduling pool, future shifts released to open,
+ * directory INACTIVE); Reactivate restores everything in one click with
+ * the whole record — I-9, E-Verify, banking, training, kiosk PIN —
+ * intact. Nobody restarts onboarding after a short absence.
+ */
+function DeactivationSection({
+  associate: a,
+  onAssociateChange,
+}: {
+  associate: DirectoryEntry;
+  onAssociateChange: (patch: Partial<DirectoryEntry>) => void;
+}) {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const canManage = user ? hasCapability(user.role, 'manage:org') : false;
+  const isDeactivated = Boolean(a.deactivatedAt);
+  // Separated people are the separation flow's business (re-invite to
+  // rehire); people who never finished onboarding have nothing to pause.
+  if (!canManage || a.separatedAt || (!isDeactivated && a.status !== 'ACTIVE')) {
+    return null;
+  }
+
+  const deactivate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await deactivateAssociate(a.id, reason.trim());
+      toast.success(
+        r.releasedShifts > 0
+          ? `Deactivated — login disabled, ${r.releasedShifts} upcoming shift${r.releasedShifts === 1 ? '' : 's'} released to open.`
+          : 'Deactivated — login disabled and kiosk clock-ins blocked.',
+      );
+      setOpen(false);
+      onAssociateChange({
+        status: 'INACTIVE',
+        deactivatedAt: r.deactivatedAt,
+        deactivationReason: reason.trim(),
+      });
+      void qc.invalidateQueries({ queryKey: ['directory'] });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not deactivate.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reactivate = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await reactivateAssociate(a.id);
+      toast.success('Reactivated — login restored, back in the scheduling pool.');
+      onAssociateChange({
+        status: 'ACTIVE',
+        deactivatedAt: null,
+        deactivationReason: null,
+      });
+      void qc.invalidateQueries({ queryKey: ['directory'] });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not reactivate.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Section title="Temporary deactivation">
+      {isDeactivated ? (
+        <>
+          <p className="text-xs text-silver/80">
+            Deactivated {fmtDate(a.deactivatedAt!)}
+            {a.deactivationReason ? ` — ${a.deactivationReason}` : ''}. Login is
+            disabled, the kiosk rejects new clock-ins, and they are out of the
+            scheduling pool. Their record — I-9, E-Verify, banking, training,
+            kiosk PIN — stays intact for their return.
+          </p>
+          <div className="pt-2">
+            <Button size="sm" onClick={() => void reactivate()} loading={busy} disabled={busy}>
+              <UserCheck className="mr-2 h-3.5 w-3.5" />
+              Reactivate
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-silver/80">
+            Away for a while but expected back? Deactivate instead of
+            separating: access pauses everywhere, nothing is lost, and
+            Reactivate brings them straight back — no re-onboarding.
+          </p>
+          <div className="pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setReason('');
+                setOpen(true);
+              }}
+            >
+              <UserX className="mr-2 h-3.5 w-3.5" />
+              Deactivate associate
+            </Button>
+          </div>
+
+          <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>
+                  Deactivate {a.firstName} {a.lastName}
+                </DialogTitle>
+                <DialogDescription>
+                  Their login is disabled, the kiosk rejects new clock-ins,
+                  upcoming assigned shifts are released back to open, and the
+                  directory shows them as Inactive. Everything on their record
+                  is kept — Reactivate restores them in one click.
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={deactivate} className="grid gap-3">
+                <div className="grid gap-1">
+                  <Label htmlFor="deactivate-reason">Reason (shown on the profile and in audit packets)</Label>
+                  <Textarea
+                    id="deactivate-reason"
+                    autoFocus
+                    required
+                    minLength={3}
+                    maxLength={300}
+                    rows={2}
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder='e.g. "Personal leave — expected back mid-October"'
+                  />
+                </div>
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => setOpen(false)}
+                    disabled={busy}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    loading={busy}
+                    disabled={busy || reason.trim().length < 3}
+                  >
+                    Deactivate
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </>
+      )}
+    </Section>
   );
 }
 

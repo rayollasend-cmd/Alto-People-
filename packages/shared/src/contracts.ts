@@ -4553,6 +4553,26 @@ export const AssociateProfilePatchInputSchema = z.object({
 });
 export type AssociateProfilePatchInput = z.infer<typeof AssociateProfilePatchInputSchema>;
 
+// Manual deactivate/reactivate — the temporary pause, distinct from a
+// Separation. The reason is required: it prints in the inactive-workforce
+// audit packet and the drawer, so "personal leave — expected back Oct"
+// beats a bare timestamp.
+export const AssociateDeactivateInputSchema = z.object({
+  reason: z.string().trim().min(3).max(300),
+});
+export type AssociateDeactivateInput = z.infer<typeof AssociateDeactivateInputSchema>;
+
+export const AssociateDeactivateResponseSchema = z.object({
+  ok: z.literal(true),
+  deactivatedAt: z.string().datetime(),
+  /** Future ASSIGNED shifts released back to OPEN so they can be re-covered. */
+  releasedShifts: z.number().int(),
+  /** PENDING open-shift claims expired alongside. */
+  expiredClaims: z.number().int(),
+  loginDisabled: z.boolean(),
+});
+export type AssociateDeactivateResponse = z.infer<typeof AssociateDeactivateResponseSchema>;
+
 export const AssociateOrgSummarySchema = z.object({
   id: UuidSchema,
   firstName: z.string(),
@@ -4626,6 +4646,11 @@ export const DirectoryEntrySchema = z.object({
   /** Set when a completed separation is what makes this associate
    *  INACTIVE (null for rehires with a newer approval). */
   separatedAt: z.string().datetime().nullable().optional(),
+  /** Manual pause — set by POST /associates/:id/deactivate. While set the
+   *  associate is INACTIVE, their login is disabled, and the kiosk rejects
+   *  new clock-ins; Reactivate clears it with the record intact. */
+  deactivatedAt: z.string().datetime().nullable().optional(),
+  deactivationReason: z.string().nullable().optional(),
   // First time this associate's record was created — useful as a proxy
   // for tenure when no formal hire date is on file.
   createdAt: z.string().datetime(),

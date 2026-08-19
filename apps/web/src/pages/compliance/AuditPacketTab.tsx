@@ -14,7 +14,12 @@ import {
   type PickedAssociate,
 } from '@/components/ui';
 
-type PacketScope = 'CLIENT_PERIOD' | 'ALL_WORKFORCE' | 'INDIVIDUAL';
+type PacketScope =
+  | 'CLIENT_PERIOD'
+  | 'ALL_WORKFORCE'
+  | 'ACTIVE_WORKFORCE'
+  | 'INACTIVE_WORKFORCE'
+  | 'INDIVIDUAL';
 
 const SCOPE_LABEL: Record<PacketScope, { label: string; blurb: string }> = {
   CLIENT_PERIOD: {
@@ -25,11 +30,25 @@ const SCOPE_LABEL: Record<PacketScope, { label: string; blurb: string }> = {
     label: 'Entire workforce',
     blurb: 'Everyone who has ever worked for us, current and separated — DOL / ICE / insurance audits. The period bounds the pay and time sections.',
   },
+  ACTIVE_WORKFORCE: {
+    label: 'Active workforce only',
+    blurb: 'Only currently active associates — no separated or deactivated people. The day-to-day workforce review; the cover states how many inactive records were excluded.',
+  },
+  INACTIVE_WORKFORCE: {
+    label: 'Inactive workforce only',
+    blurb: 'Only separated and temporarily deactivated associates, each labeled with which, since when, the reason, and who recorded it. Never mixes with the active roster.',
+  },
   INDIVIDUAL: {
     label: 'Individual associate',
     blurb: 'One associate\'s complete evidence file — wage claims, subpoenas, single-associate I-9 requests.',
   },
 };
+
+const WORKFORCE_SCOPES: ReadonlyArray<PacketScope> = [
+  'ALL_WORKFORCE',
+  'ACTIVE_WORKFORCE',
+  'INACTIVE_WORKFORCE',
+];
 
 /**
  * One-click client-audit response packet (built to Walmart's vendor-audit
@@ -67,7 +86,7 @@ export function AuditPacketTab() {
       setError('Pick the associate to audit.');
       return;
     }
-    if (scope === 'ALL_WORKFORCE' && !workforceConfirmed) {
+    if (WORKFORCE_SCOPES.includes(scope) && !workforceConfirmed) {
       setError('Confirm you understand the scope of a full-workforce export.');
       return;
     }
@@ -187,7 +206,7 @@ export function AuditPacketTab() {
             </div>
           )}
 
-          {scope === 'ALL_WORKFORCE' && (
+          {WORKFORCE_SCOPES.includes(scope) && (
             <label className="flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/[0.07] p-3 text-xs text-silver">
               <input
                 type="checkbox"
@@ -197,9 +216,16 @@ export function AuditPacketTab() {
               />
               <span>
                 I understand this exports the I-9 records, identity documents,
-                and pay data of <strong className="text-white">every worker the
-                company has ever employed</strong> in a single file, and that
-                this action is permanently recorded in the critical audit log.
+                and pay data of{' '}
+                <strong className="text-white">
+                  {scope === 'ALL_WORKFORCE'
+                    ? 'every worker the company has ever employed'
+                    : scope === 'ACTIVE_WORKFORCE'
+                      ? 'every currently active worker'
+                      : 'every separated or deactivated worker'}
+                </strong>{' '}
+                in a single file, and that this action is permanently recorded
+                in the critical audit log.
               </span>
             </label>
           )}

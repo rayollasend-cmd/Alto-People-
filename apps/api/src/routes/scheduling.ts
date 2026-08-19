@@ -139,6 +139,13 @@ const SCHEDULABLE_USER_FILTER: Prisma.AssociateWhereInput = {
 
 const ACTIVE_ASSOCIATE_FILTER: Prisma.AssociateWhereInput = {
   deletedAt: null,
+  // Employment-state stamps beat everything: a separated or manually-
+  // deactivated associate is out of the pool even when they have no
+  // portal account at all (the { user: null } arm below would otherwise
+  // keep them schedulable forever). Rehire (re-invite) clears separatedAt;
+  // Reactivate clears deactivatedAt.
+  separatedAt: null,
+  deactivatedAt: null,
   AND: [SCHEDULABLE_USER_FILTER],
   OR: [
     { applications: { some: { status: 'APPROVED' } } },

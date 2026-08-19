@@ -112,6 +112,7 @@ interface KioskStrings {
   notClockedIn: string;
   notOnScheduleTitle: string;
   notOnScheduleBody: string;
+  inactiveBadge: string;
   consentTitle: string;
   consentBody1: string;
   consentBody2: string;
@@ -161,6 +162,8 @@ const STRINGS: Record<Lang, KioskStrings> = {
     notOnScheduleTitle: "You're not on today's schedule",
     notOnScheduleBody:
       'Your supervisor was just notified. Once they approve, you are clocked in from right now — no need to punch again.',
+    inactiveBadge:
+      'This badge is not active right now. Please see your supervisor.',
     consentTitle: 'Quick question,',
     consentBody1:
       "This kiosk can take a quick photo at each punch to confirm it's really you (it stops anyone else clocking in with your number).",
@@ -225,6 +228,8 @@ const STRINGS: Record<Lang, KioskStrings> = {
     notOnScheduleTitle: 'No estás en el horario de hoy',
     notOnScheduleBody:
       'Tu supervisor acaba de ser notificado. Cuando apruebe, quedas marcado desde este momento — no necesitas marcar de nuevo.',
+    inactiveBadge:
+      'Tu credencial no está activa en este momento. Por favor habla con tu supervisor.',
     consentTitle: 'Una pregunta rápida,',
     consentBody1:
       'Este quiosco puede tomar una foto rápida en cada marcación para confirmar que realmente eres tú (evita que otra persona marque con tu número).',
@@ -748,6 +753,13 @@ export function KioskPage() {
           scheduleReset(12_000);
           return;
         }
+        // Deactivated/separated badge — localized, no server English.
+        if (err.code === 'inactive_associate') {
+          setError(t.inactiveBadge);
+          setStage('error');
+          scheduleReset(errorDwellMs(t.inactiveBadge));
+          return;
+        }
         setError(err.message);
         setStage('error');
         scheduleReset(errorDwellMs(err.message));
@@ -954,6 +966,13 @@ export function KioskPage() {
                 if (err.code === 'not_on_schedule') {
                   setStage('notice');
                   scheduleReset(12_000);
+                  return;
+                }
+                // Deactivated/separated badge — localized, no server English.
+                if (err.code === 'inactive_associate') {
+                  setError(t.inactiveBadge);
+                  setStage('error');
+                  scheduleReset(errorDwellMs(t.inactiveBadge));
                   return;
                 }
                 setError(err.message);

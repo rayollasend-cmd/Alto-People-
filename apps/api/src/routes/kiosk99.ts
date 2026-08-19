@@ -1680,6 +1680,9 @@ const TIME_ADMIN_ROLES = (
   .filter(([role, caps]) => caps.has('manage:time') && role !== 'SHIFT_SUPERVISOR')
   .map(([role]) => role);
 
+const INACTIVE_ASSOCIATE_MSG =
+  'This badge is not active right now. Please see your supervisor.';
+
 const NOT_ON_SCHEDULE_MSG =
   "You're not on today's schedule. A clock-in request was sent to your " +
   'supervisor — once approved, you are clocked in from right now, so no ' +
@@ -1807,6 +1810,9 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
           firstName: true,
           lastName: true,
           faceConsentStatus: true,
+          deletedAt: true,
+          separatedAt: true,
+          deactivatedAt: true,
         },
       },
     },
@@ -1864,6 +1870,32 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
       'not_clocked_in',
       'You need to clock in before starting a break.',
     );
+  }
+
+  // Employment gate — a separated or manually-deactivated associate's PIN
+  // must not open a NEW entry. (Clock-outs and breaks on an already-open
+  // entry stay allowed so someone deactivated mid-shift can finish their
+  // day cleanly.) The PIN row survives separation on purpose — history
+  // stays attributable — so the gate lives here, not at issuance.
+  if (
+    predictedAction === 'CLOCK_IN' &&
+    (pinRow.associate.deletedAt ||
+      pinRow.associate.separatedAt ||
+      pinRow.associate.deactivatedAt)
+  ) {
+    await prisma.kioskPunch.create({
+      data: {
+        kioskDeviceId: device.id,
+        action: 'REJECTED',
+        rejectReason: 'associate_inactive_preflight',
+        clientPunchedAt: new Date(),
+      },
+    });
+    await prisma.kioskDevice.update({
+      where: { id: device.id },
+      data: { lastSeenAt: new Date() },
+    });
+    throw new HttpError(403, 'inactive_associate', INACTIVE_ASSOCIATE_MSG);
   }
 
   // Schedule gate, surfaced at the keypad — before the selfie, not after.
@@ -2158,6 +2190,9 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
           firstName: true,
           lastName: true,
           faceConsentStatus: true,
+          deletedAt: true,
+          separatedAt: true,
+          deactivatedAt: true,
         },
       },
     },
@@ -2201,6 +2236,41 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
 
   // Correct PIN — clear the failure streak (see the preflight handler).
   clearPinFailures(device.id);
+
+  // Employment gate — mirror of the preflight check, enforced at the
+  // punch itself so offline-queue replays and preflight-skipping clients
+  // can't slip past it. Blocks only punches that would OPEN a new entry:
+  // an associate deactivated mid-shift can still clock out / end a break.
+  if (
+    pinRow.associate.deletedAt ||
+    pinRow.associate.separatedAt ||
+    pinRow.associate.deactivatedAt
+  ) {
+    const openNow = await prisma.timeEntry.findFirst({
+      where: { associateId: pinRow.associateId, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    if (!openNow) {
+      await prisma.kioskPunch.create({
+        data: {
+          kioskDeviceId: device.id,
+          action: 'REJECTED',
+          rejectReason: 'associate_inactive',
+          selfie,
+          punchLat,
+          punchLng,
+          distanceMeters: dist,
+          idempotencyKey: input.idempotencyKey ?? null,
+          clientPunchedAt,
+        },
+      });
+      await prisma.kioskDevice.update({
+        where: { id: device.id },
+        data: { lastSeenAt: new Date() },
+      });
+      throw new HttpError(403, 'inactive_associate', INACTIVE_ASSOCIATE_MSG);
+    }
+  }
 
   // Schedule gate — mirror of the preflight check, enforced at the punch
   // itself so offline-queue replays and preflight-skipping clients can't

@@ -531,6 +531,7 @@ model User {
   statementsFinalized               ClientStatement[]             @relation("StatementFinalizer")
   // Privacy erasures this admin performed (Associate.erasedById).
   associatesErased                  Associate[]                   @relation("AssociateEraser")
+  associatesDeactivated             Associate[]                   @relation("AssociateDeactivator")
 
   @@index([role])
   @@index([clientId])
@@ -1000,6 +1001,17 @@ model Associate {
   // purely from "has an approved application" and separated associates
   // stayed active forever.
   separatedAt         DateTime?          @db.Timestamptz(6)
+  // Manual pause — "Deactivate" on the People profile. Distinct from a
+  // completed Separation (formal offboarding): a deactivated associate is
+  // expected back, and Reactivate restores them in one click with their
+  // whole record (I-9, E-Verify, banking, training, kiosk PIN) intact.
+  // While set: login DISABLED (same transaction), kiosk punches that
+  // would open a new entry rejected, excluded from the schedulable pool,
+  // directory shows INACTIVE.
+  deactivatedAt       DateTime?          @db.Timestamptz(6)
+  deactivatedById     String?            @db.Uuid
+  deactivatedBy       User?              @relation("AssociateDeactivator", fields: [deactivatedById], references: [id], onDelete: SetNull)
+  deactivationReason  String?
   erasedAt            DateTime?          @db.Timestamptz(6)
   erasedById          String?            @db.Uuid
   erasedBy            User?              @relation("AssociateEraser", fields: [erasedById], references: [id], onDelete: SetNull)

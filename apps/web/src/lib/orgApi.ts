@@ -1,4 +1,5 @@
 import type {
+  AssociateDeactivateResponse,
   AssociateOrgAssignmentInput,
   AssociateOrgListResponse,
   AssociateProfilePatchInput,
@@ -26,6 +27,24 @@ export function patchAssociateProfile(
   return apiFetch(`/org/associates/${associateId}`, {
     method: 'PATCH',
     body: input,
+  });
+}
+
+/** Temporary pause — login disabled, kiosk blocked, future shifts released. */
+export function deactivateAssociate(
+  associateId: string,
+  reason: string,
+): Promise<AssociateDeactivateResponse> {
+  return apiFetch(`/org/associates/${associateId}/deactivate`, {
+    method: 'POST',
+    body: { reason },
+  });
+}
+
+/** Undoes deactivateAssociate — record intact, login restored. */
+export function reactivateAssociate(associateId: string): Promise<{ ok: true }> {
+  return apiFetch(`/org/associates/${associateId}/reactivate`, {
+    method: 'POST',
   });
 }
 

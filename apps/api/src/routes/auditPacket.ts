@@ -44,11 +44,18 @@ const GenerateInputSchema = z.object({
   /**
    * CLIENT_PERIOD — workers tied to one client during the period (vendor
    * audits). ALL_WORKFORCE — every associate who has EVER worked for the
-   * company; the period still bounds the pay/time sections. INDIVIDUAL —
-   * one associate's complete evidence file for the period (wage claims,
+   * company; the period still bounds the pay/time sections.
+   * ACTIVE_WORKFORCE — only currently active associates (hired, not
+   * separated/deactivated as of generation) so the day-to-day workforce
+   * review can't be polluted by inactive people. INACTIVE_WORKFORCE — the
+   * mirror: only separated or deactivated associates, each row labeled
+   * with which, since when, and the recorded reason. INDIVIDUAL — one
+   * associate's complete evidence file for the period (wage claims,
    * subpoenas, single-worker I-9 inspections).
    */
-  scope: z.enum(['CLIENT_PERIOD', 'ALL_WORKFORCE', 'INDIVIDUAL']).default('CLIENT_PERIOD'),
+  scope: z
+    .enum(['CLIENT_PERIOD', 'ALL_WORKFORCE', 'ACTIVE_WORKFORCE', 'INACTIVE_WORKFORCE', 'INDIVIDUAL'])
+    .default('CLIENT_PERIOD'),
   clientId: z.string().uuid().optional(),
   associateId: z.string().uuid().optional(),
   /** Calendar dates, YYYY-MM-DD, inclusive. */
@@ -213,12 +220,41 @@ auditPacketRouter.post(
           : Promise.resolve([] as Array<{ associateId: string }>),
       ]);
 
+    // "Inactive" = the OR of every deactivation-flavored stamp. Kept in
+    // one place so ACTIVE_WORKFORCE is exactly its complement.
+    const INACTIVE_WHERE = {
+      OR: [
+        { separatedAt: { not: null } },
+        { deactivatedAt: { not: null } },
+        { deletedAt: { not: null } },
+        { erasedAt: { not: null } },
+      ],
+    };
+
     let rosterIds: string[];
     if (input.scope === 'INDIVIDUAL') {
       rosterIds = [input.associateId!];
     } else if (input.scope === 'ALL_WORKFORCE') {
       const everyone = await prisma.associate.findMany({ select: { id: true } });
       rosterIds = everyone.map((a) => a.id);
+    } else if (input.scope === 'ACTIVE_WORKFORCE') {
+      const active = await prisma.associate.findMany({
+        where: {
+          deletedAt: null,
+          erasedAt: null,
+          separatedAt: null,
+          deactivatedAt: null,
+          applications: { some: { status: 'APPROVED', deletedAt: null } },
+        },
+        select: { id: true },
+      });
+      rosterIds = active.map((a) => a.id);
+    } else if (input.scope === 'INACTIVE_WORKFORCE') {
+      const inactive = await prisma.associate.findMany({
+        where: INACTIVE_WHERE,
+        select: { id: true },
+      });
+      rosterIds = inactive.map((a) => a.id);
     } else {
       rosterIds = [
         ...new Set([
@@ -235,7 +271,9 @@ auditPacketRouter.post(
         'empty_roster',
         input.scope === 'CLIENT_PERIOD'
           ? 'No workers were hired for, assigned to, worked time at, or scheduled for this client in the selected period.'
-          : 'No workers matched this scope.',
+          : input.scope === 'INACTIVE_WORKFORCE'
+            ? 'No separated or deactivated associates on record — the inactive-workforce packet is empty.'
+            : 'No workers matched this scope.',
       );
     }
 
@@ -254,6 +292,18 @@ auditPacketRouter.post(
         employmentType: true,
         deletedAt: true,
         erasedAt: true,
+        separatedAt: true,
+        deactivatedAt: true,
+        deactivationReason: true,
+        deactivatedBy: { select: { email: true } },
+        // Latest completed separation — its reason/date label the row in
+        // the roster status columns.
+        separations: {
+          where: { status: 'COMPLETE' },
+          orderBy: { completedAt: 'desc' },
+          take: 1,
+          select: { reason: true, completedAt: true },
+        },
         i9Verification: {
           select: {
             citizenshipStatus: true,
@@ -295,7 +345,11 @@ auditPacketRouter.post(
         ? `${client!.name} vendor-compliance audit`
         : input.scope === 'ALL_WORKFORCE'
           ? 'company-wide workforce compliance audit'
-          : `individual personnel audit — ${subjectAssociate!.firstName} ${subjectAssociate!.lastName}`;
+          : input.scope === 'ACTIVE_WORKFORCE'
+            ? 'active-workforce compliance review'
+            : input.scope === 'INACTIVE_WORKFORCE'
+              ? 'inactive-workforce (separated & deactivated) review'
+              : `individual personnel audit — ${subjectAssociate!.firstName} ${subjectAssociate!.lastName}`;
     /** Standard letterhead facts column, shared by every PDF in the packet. */
     const facts = (extra?: Array<{ label: string; value: string }>) => [
       { label: 'Prepared for', value: audience },
@@ -311,7 +365,9 @@ auditPacketRouter.post(
     // ALL_WORKFORCE gets its own action name — it is the maximum possible
     // PII export and must be findable at a glance in the audit feed.
     const auditAction =
-      input.scope === 'ALL_WORKFORCE'
+      input.scope === 'ALL_WORKFORCE' ||
+      input.scope === 'ACTIVE_WORKFORCE' ||
+      input.scope === 'INACTIVE_WORKFORCE'
         ? 'compliance.audit_packet_generated_workforce'
         : 'compliance.audit_packet_generated';
     await recordCriticalAudit(
@@ -320,7 +376,7 @@ auditPacketRouter.post(
         clientId: client?.id ?? null,
         action: auditAction,
         entityType: client ? 'Client' : subjectAssociate ? 'Associate' : 'Organization',
-        entityId: client?.id ?? subjectAssociate?.id ?? 'ALL_WORKFORCE',
+        entityId: client?.id ?? subjectAssociate?.id ?? input.scope,
         metadata: {
           ip: req.ip ?? null,
           userAgent: req.headers['user-agent'] ?? null,
@@ -341,7 +397,11 @@ auditPacketRouter.post(
         ? safeName(client!.name)
         : input.scope === 'ALL_WORKFORCE'
           ? 'workforce'
-          : safeName(`${subjectAssociate!.lastName}-${subjectAssociate!.firstName}`);
+          : input.scope === 'ACTIVE_WORKFORCE'
+            ? 'active-workforce'
+            : input.scope === 'INACTIVE_WORKFORCE'
+              ? 'inactive-workforce'
+              : safeName(`${subjectAssociate!.lastName}-${subjectAssociate!.firstName}`);
     const zipName = `audit-packet-${zipStem}-${input.periodStart}-to-${input.periodEnd}.zip`;
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
@@ -459,9 +519,41 @@ auditPacketRouter.post(
       if (!w) return '—';
       return `${ymd(w.first)} → ${ymd(w.last)} · ${(w.netMinutes / 60).toFixed(1)}h`;
     };
-    const statusOf = (a: { deletedAt: Date | null; erasedAt: Date | null }): string =>
-      a.erasedAt ? 'Separated (record anonymized)' : a.deletedAt ? 'Separated' : 'Active';
-    const separatedCount = associates.filter((a) => a.deletedAt !== null).length;
+    // Employment-status labels — read every deactivation-flavored stamp,
+    // not just deletedAt (the old check printed normally-separated
+    // associates as "Active" in the roster). A completed separation
+    // outranks a deactivation if somehow both are set.
+    type RosterAssociate = (typeof associates)[number];
+    const statusOf = (a: RosterAssociate): string =>
+      a.erasedAt
+        ? 'Separated (record anonymized)'
+        : a.deletedAt || a.separatedAt
+          ? 'Separated'
+          : a.deactivatedAt
+            ? 'Deactivated (temporary)'
+            : 'Active';
+    const statusSinceOf = (a: RosterAssociate): Date | null =>
+      a.erasedAt ??
+      a.separatedAt ??
+      a.separations[0]?.completedAt ??
+      a.deletedAt ??
+      a.deactivatedAt ??
+      null;
+    const statusReasonOf = (a: RosterAssociate): string =>
+      a.deactivatedAt && !a.separatedAt && !a.deletedAt && !a.erasedAt
+        ? (a.deactivationReason ?? '')
+        : (a.separations[0]?.reason ?? '');
+    const statusSetByOf = (a: RosterAssociate): string =>
+      a.deactivatedAt && !a.separatedAt && !a.deletedAt && !a.erasedAt
+        ? (a.deactivatedBy?.email ?? '')
+        : '';
+    const inactiveCount = associates.filter((a) => statusOf(a) !== 'Active').length;
+    // Stated exclusion on the active-workforce cover — an auditor should
+    // see the packet KNOWS about the inactive people it left out.
+    const excludedInactive =
+      input.scope === 'ACTIVE_WORKFORCE'
+        ? await prisma.associate.count({ where: INACTIVE_WHERE })
+        : 0;
 
     {
       const pdf = new ReportPdf({
@@ -471,11 +563,18 @@ auditPacketRouter.post(
             ? `Workers engaged for ${client!.name} during the audit period. Inclusion is evidence-based — the union of hiring records for the client, site assignment records, worked time (approved or recorded), and scheduled shifts; each row states its basis. Workers who separated after providing services in the period remain listed with their status.`
             : input.scope === 'ALL_WORKFORCE'
               ? 'Every associate who has ever worked for the Company, current and separated. The worked-footprint columns reflect activity within the audit period; workers without period activity are included on the strength of their employment record.'
-              : `Complete personnel evidence file for ${subjectAssociate!.firstName} ${subjectAssociate!.lastName}, covering the audit period.`,
+              : input.scope === 'ACTIVE_WORKFORCE'
+                ? `The Company's ACTIVE workforce as of generation: hired associates who are not separated, deactivated, or removed. Inactive associates are deliberately excluded from this packet — request the inactive-workforce or full-workforce packet for their records. The worked-footprint columns reflect activity within the audit period.`
+                : input.scope === 'INACTIVE_WORKFORCE'
+                  ? 'The Company\'s INACTIVE workforce as of generation: every separated or temporarily deactivated associate. The Status columns state which, since when, and the recorded reason. Workers listed here also appear in period-scoped packets for any period they worked.'
+                  : `Complete personnel evidence file for ${subjectAssociate!.firstName} ${subjectAssociate!.lastName}, covering the audit period.`,
         facts: facts([
           { label: 'Workers', value: String(associates.length) },
-          ...(separatedCount > 0
-            ? [{ label: 'Of which separated', value: String(separatedCount) }]
+          ...(input.scope !== 'INACTIVE_WORKFORCE' && inactiveCount > 0
+            ? [{ label: 'Of which inactive', value: String(inactiveCount) }]
+            : []),
+          ...(input.scope === 'ACTIVE_WORKFORCE'
+            ? [{ label: 'Inactive excluded', value: String(excludedInactive) }]
             : []),
         ]),
         reference: refId,
@@ -508,7 +607,7 @@ auditPacketRouter.post(
     }
     archive.append(
       csv([
-        ['Last name', 'First name', 'Email', 'Position', 'Employment type', 'Employment status', 'Client start date', 'Site(s)', 'Assignment span', 'Inclusion basis', 'First worked', 'Last worked', 'Net hours (period)', 'Approved punches', 'Completed shifts', 'I-9 complete', 'E-Verify case'],
+        ['Last name', 'First name', 'Email', 'Position', 'Employment type', 'Employment status', 'Status since', 'Status reason', 'Status set by', 'Client start date', 'Site(s)', 'Assignment span', 'Inclusion basis', 'First worked', 'Last worked', 'Net hours (period)', 'Approved punches', 'Completed shifts', 'I-9 complete', 'E-Verify case'],
         ...associates.map((a) => {
           const app = a.applications[0];
           const i9 = a.i9Verification;
@@ -520,6 +619,9 @@ auditPacketRouter.post(
             app?.position ?? '',
             a.employmentType,
             statusOf(a),
+            ymd(statusSinceOf(a)),
+            statusReasonOf(a),
+            statusSetByOf(a),
             ymd(app?.startDate ?? null),
             sitesFor(a.id),
             assignmentSpanFor(a.id),
@@ -1141,8 +1243,12 @@ auditPacketRouter.post(
               ? `Workers providing services on ${client!.name} properties`
               : input.scope === 'ALL_WORKFORCE'
                 ? 'Every worker ever employed by the Company'
-                : 'Subject worker',
-            `${associates.length} worker${associates.length === 1 ? '' : 's'}${separatedCount > 0 ? ` (${separatedCount} since separated)` : ''} (PDF + CSV)`,
+                : input.scope === 'ACTIVE_WORKFORCE'
+                  ? 'The Company\'s currently active workforce'
+                  : input.scope === 'INACTIVE_WORKFORCE'
+                    ? 'Separated and deactivated associates only'
+                    : 'Subject worker',
+            `${associates.length} worker${associates.length === 1 ? '' : 's'}${input.scope !== 'INACTIVE_WORKFORCE' && inactiveCount > 0 ? ` (${inactiveCount} inactive)` : ''} (PDF + CSV)`,
           ],
           ['02-form-i9', 'Form I-9s and identity / eligibility documentation', `${associates.length} record sheets · ${i9Docs.length} documents`],
           ['03-e-verify', 'Confirmation of E-Verify', `${associates.length} worker${associates.length === 1 ? '' : 's'} (PDF + CSV)`],
@@ -1171,7 +1277,11 @@ auditPacketRouter.post(
       }
       pdf.heading('Data integrity');
       pdf.para(
-        'Roster inclusion is evidence-based: the union of site assignment records, approved worked time, and schedule-completed shifts for the period, with the basis stated per worker. Workers who separated after providing services in the period remain listed with their status; a worker whose record was privacy-erased appears with an anonymized identity, as noted on the roster.',
+        input.scope === 'ACTIVE_WORKFORCE'
+          ? `This packet covers the ACTIVE workforce only — ${excludedInactive} inactive (separated or deactivated) associate record(s) are deliberately excluded and available in the inactive-workforce or full-workforce packet. Each roster row states the worker's employment status as of generation.`
+          : input.scope === 'INACTIVE_WORKFORCE'
+            ? 'This packet covers the INACTIVE workforce only — every separated or temporarily deactivated associate, with the status, effective date, and recorded reason stated per row. These workers also appear in period-scoped packets for periods they worked; a worker whose record was privacy-erased appears with an anonymized identity, as noted on the roster.'
+            : 'Roster inclusion is evidence-based: the union of site assignment records, approved worked time, and schedule-completed shifts for the period, with the basis stated per worker. Workers who separated after providing services in the period remain listed with their status; a worker whose record was privacy-erased appears with an anonymized identity, as noted on the roster.',
       );
       pdf.para(
         missingBlobs > 0

@@ -106,6 +106,8 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
         createdAt: true,
         photoS3Key: true,
         separatedAt: true,
+        deactivatedAt: true,
+        deactivationReason: true,
         photoUpdatedAt: true,
         managerId: true,
         manager: { select: { firstName: true, lastName: true } },
@@ -205,13 +207,18 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
             x.approvedAt > a.separatedAt!,
         ) &&
         !inFlight;
-      const status: DirectoryStatus = separated
+      // A manual deactivation (temporary pause) hard-overrides everything:
+      // INACTIVE until someone clicks Reactivate, no matter what
+      // applications exist.
+      const status: DirectoryStatus = a.deactivatedAt
         ? 'INACTIVE'
-        : approved
-          ? 'ACTIVE'
-          : inFlight
-            ? 'PENDING'
-            : 'INACTIVE';
+        : separated
+          ? 'INACTIVE'
+          : approved
+            ? 'ACTIVE'
+            : inFlight
+              ? 'PENDING'
+              : 'INACTIVE';
 
       // Workplace = approved client first, then most-recent application.
       const workplaceApp = approved ?? inFlight ?? apps[0] ?? null;
@@ -267,6 +274,8 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
         onboardingPercent,
         applicationId: workplaceApp?.id ?? null,
         separatedAt: separated && a.separatedAt ? a.separatedAt.toISOString() : null,
+        deactivatedAt: a.deactivatedAt ? a.deactivatedAt.toISOString() : null,
+        deactivationReason: a.deactivatedAt ? a.deactivationReason : null,
         createdAt: a.createdAt.toISOString(),
         photoUrl: profilePhotoUrlFor({
           id: a.id,
