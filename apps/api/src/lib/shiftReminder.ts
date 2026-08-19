@@ -15,6 +15,8 @@ import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { formatShiftLine, notifyShift } from './notifyShift.js';
 import { notifyAllAdmins, notifyClientSupervisors } from './notify.js';
+import { recordNoShowAttendance } from './attendance.js';
+import { endOfWeekUTC, startOfWeekUTC } from './timeAnomalies.js';
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 // Bound one sweep so a backlog (e.g. cron re-enabled after a week off)
@@ -35,6 +37,8 @@ export interface ShiftReminderSweepResult {
   expiredClaims: number;
   /** Shifts flagged to admins as possible no-shows this sweep. */
   noShows: number;
+  /** Associates alerted for projected weekly overtime this sweep. */
+  otAlerts: number;
   errors: { shiftId: string; error: string }[];
 }
 
@@ -188,6 +192,14 @@ export async function runShiftReminderSweep(
       // The on-site supervisor is the one person who can physically walk
       // the floor and find (or replace) the associate.
       void notifyClientSupervisors(shift.clientId, noShowNotice);
+      // Attendance points: approved time off = excused (no event), a
+      // pending same-day request = CALL_OUT, silence = NO_CALL_NO_SHOW.
+      void recordNoShowAttendance(prisma, {
+        id: shift.id,
+        clientId: shift.clientId,
+        startsAt: shift.startsAt,
+        assignedAssociateId: shift.assignedAssociateId!,
+      });
       noShows++;
     } catch (err) {
       errors.push({
@@ -197,7 +209,123 @@ export async function runShiftReminderSweep(
     }
   }
 
-  return { scanned: due.length, reminded, expiredClaims: expired.count, noShows, errors };
+  // ----- OT radar ---------------------------------------------------------
+  // Projected overtime: worked-so-far + remaining ASSIGNED shift minutes
+  // this week > 40h. One alert per (associate, week) via OtAlertStamp —
+  // claim-before-notify, same discipline as reminders and no-shows. Warns
+  // only; never blocks or reschedules anything.
+  let otAlerts = 0;
+  try {
+    otAlerts = await runOtRadar(prisma, now);
+  } catch (err) {
+    errors.push({
+      shiftId: 'ot-radar',
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  return { scanned: due.length, reminded, expiredClaims: expired.count, noShows, otAlerts, errors };
+}
+
+const OT_THRESHOLD_MIN = 40 * 60;
+
+async function runOtRadar(prisma: PrismaClient, now: Date): Promise<number> {
+  const weekStart = startOfWeekUTC(now);
+  const weekEnd = endOfWeekUTC(now);
+  const weekShifts = await prisma.shift.findMany({
+    where: {
+      status: 'ASSIGNED',
+      assignedAssociateId: { not: null },
+      startsAt: { gte: weekStart, lt: weekEnd },
+    },
+    select: {
+      assignedAssociateId: true,
+      clientId: true,
+      startsAt: true,
+      endsAt: true,
+    },
+    take: 5000,
+  });
+  // Remaining scheduled minutes per associate (rest of a running shift +
+  // shifts not yet started). No remainder → the week is already decided.
+  const remaining = new Map<string, { min: number; clientId: string }>();
+  for (const s of weekShifts) {
+    const from = Math.max(s.startsAt.getTime(), now.getTime());
+    const min = Math.max(0, (s.endsAt.getTime() - from) / 60_000);
+    if (min <= 0) continue;
+    const cur = remaining.get(s.assignedAssociateId!);
+    remaining.set(s.assignedAssociateId!, {
+      min: (cur?.min ?? 0) + min,
+      clientId: cur?.clientId ?? s.clientId,
+    });
+  }
+  const candidates = [...remaining.keys()];
+  if (candidates.length === 0) return 0;
+
+  const [stamps, entries] = await Promise.all([
+    prisma.otAlertStamp.findMany({
+      where: { associateId: { in: candidates }, weekStart },
+      select: { associateId: true },
+    }),
+    prisma.timeEntry.findMany({
+      where: {
+        associateId: { in: candidates },
+        status: { in: ['ACTIVE', 'COMPLETED', 'APPROVED'] },
+        clockInAt: { gte: weekStart },
+      },
+      select: {
+        associateId: true,
+        clockInAt: true,
+        clockOutAt: true,
+        breaks: { select: { startedAt: true, endedAt: true } },
+      },
+      take: 20_000,
+    }),
+  ]);
+  const stamped = new Set(stamps.map((s) => s.associateId));
+  const worked = new Map<string, number>();
+  for (const e of entries) {
+    const end = (e.clockOutAt ?? now).getTime();
+    let ms = end - e.clockInAt.getTime();
+    for (const b of e.breaks) {
+      const bEnd = b.endedAt ? b.endedAt.getTime() : end;
+      ms -= Math.max(0, bEnd - b.startedAt.getTime());
+    }
+    worked.set(e.associateId, (worked.get(e.associateId) ?? 0) + Math.max(0, ms / 60_000));
+  }
+
+  let alerts = 0;
+  for (const associateId of candidates) {
+    if (stamped.has(associateId)) continue;
+    const rem = remaining.get(associateId)!;
+    const projected = (worked.get(associateId) ?? 0) + rem.min;
+    if (projected <= OT_THRESHOLD_MIN) continue;
+    // Claim the (associate, week) before notifying.
+    try {
+      await prisma.otAlertStamp.create({ data: { associateId, weekStart } });
+    } catch {
+      continue; // concurrent sweep won the claim
+    }
+    const associate = await prisma.associate.findUnique({
+      where: { id: associateId },
+      select: { firstName: true, lastName: true },
+    });
+    if (!associate) continue;
+    const otHours = (projected - OT_THRESHOLD_MIN) / 60;
+    const otBillRate =
+      env.DEFAULT_ASSOCIATE_BILL_RATE > 0 ? env.DEFAULT_ASSOCIATE_BILL_RATE * 1.5 : null;
+    const cost = otBillRate ? ` (≈ $${(otHours * otBillRate).toFixed(0)} billed at 1.5×)` : '';
+    const notice = {
+      subject: `Overtime ahead — ${associate.firstName} ${associate.lastName}`,
+      body: `${associate.firstName} ${associate.lastName} is on track for ~${otHours.toFixed(1)}h of overtime this week if their remaining shifts run as scheduled${cost}. Trim or reassign a shift now to avoid it.`,
+      category: 'ot_radar',
+      linkUrl: '/scheduling',
+    };
+    void notifyAllAdmins(notice);
+    void notifyClientSupervisors(rem.clientId, notice);
+    alerts++;
+  }
+  return alerts;
 }
 
 let timer: NodeJS.Timeout | null = null;

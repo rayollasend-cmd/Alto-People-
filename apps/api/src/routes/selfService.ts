@@ -663,6 +663,44 @@ selfServiceRouter.post('/me/w4', async (req, res) => {
   res.json({ ok: true, effectiveNote: 'Applies from the next payroll run.' });
 });
 
+// ----- Attendance (read-only self-view) ------------------------------------
+// Transparency is what makes a points system defensible: associates see
+// exactly what they were scored for and what was excused.
+
+selfServiceRouter.get('/me/attendance', async (req, res) => {
+  const associateId = requireAssociate(req);
+  const rows = await prisma.attendanceEvent.findMany({
+    where: {
+      associateId,
+      occurredOn: { gte: new Date(Date.now() - 180 * 24 * 3_600_000) },
+    },
+    orderBy: { occurredOn: 'desc' },
+    take: 100,
+    include: { excusedBy: { select: { email: true } } },
+  });
+  const inWindow = rows.filter(
+    (r) =>
+      r.excusedAt === null &&
+      r.occurredOn >= new Date(Date.now() - 90 * 24 * 3_600_000),
+  );
+  res.json({
+    events: rows.map((r) => ({
+      id: r.id,
+      associateId: r.associateId,
+      shiftId: r.shiftId,
+      kind: r.kind,
+      points: Number(r.points),
+      occurredOn: r.occurredOn.toISOString().slice(0, 10),
+      source: r.source,
+      note: r.note,
+      excused: r.excusedAt !== null,
+      excusedByEmail: r.excusedBy?.email ?? null,
+    })),
+    score: inWindow.reduce((s, r) => s + Number(r.points), 0),
+    windowDays: 90,
+  });
+});
+
 // ----- Payout method (Tier-3 self-service) --------------------------------
 
 /** ABA routing checksum (3-7-1 weighting). */

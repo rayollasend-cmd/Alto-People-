@@ -930,6 +930,110 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
   }
 });
 
+/* ===== Attendance points ================================================= *
+ * Rolling 90-day reliability score. Events auto-accrue from the kiosk
+ * clock-out hook and the no-show sweep (lib/attendance.ts); these routes
+ * read the record and let supervisors excuse an event (attributed,
+ * points zeroed at read time, row kept for the audit trail).
+ * ========================================================================= */
+
+function toAttendanceEvent(r: {
+  id: string;
+  associateId: string;
+  shiftId: string | null;
+  kind: string;
+  points: unknown;
+  occurredOn: Date;
+  source: string;
+  note: string | null;
+  excusedAt: Date | null;
+  excusedBy: { email: string } | null;
+}) {
+  return {
+    id: r.id,
+    associateId: r.associateId,
+    shiftId: r.shiftId,
+    kind: r.kind,
+    points: Number(r.points),
+    occurredOn: r.occurredOn.toISOString().slice(0, 10),
+    source: r.source,
+    note: r.note,
+    excused: r.excusedAt !== null,
+    excusedByEmail: r.excusedBy?.email ?? null,
+  };
+}
+
+timeRouter.get('/admin/attendance', MANAGE, async (req, res, next) => {
+  try {
+    const associateId = req.query.associateId?.toString();
+    if (!associateId) {
+      throw new HttpError(400, 'invalid_query', 'associateId is required');
+    }
+    // Tenant clamp: bounded callers only see events at their own client.
+    const clamp = clockInRequestClientClamp(req.user!);
+    const rows = await prisma.attendanceEvent.findMany({
+      where: {
+        associateId,
+        ...clamp,
+        // Show half a year of history; the score below still uses 90 days.
+        occurredOn: { gte: new Date(Date.now() - 180 * 24 * 3_600_000) },
+      },
+      orderBy: { occurredOn: 'desc' },
+      take: 200,
+      include: { excusedBy: { select: { email: true } } },
+    });
+    const inWindow = rows.filter(
+      (r) =>
+        r.excusedAt === null &&
+        r.occurredOn >= new Date(Date.now() - 90 * 24 * 3_600_000),
+    );
+    res.json({
+      events: rows.map(toAttendanceEvent),
+      score: inWindow.reduce((s, r) => s + Number(r.points), 0),
+      windowDays: 90,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+timeRouter.post('/admin/attendance/:id/excuse', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 300) : null;
+    const clamp = clockInRequestClientClamp(user);
+    const event = await prisma.attendanceEvent.findFirst({
+      where: { id: req.params.id, ...clamp },
+    });
+    if (!event) throw new HttpError(404, 'not_found', 'Attendance event not found.');
+    if (event.excusedAt) {
+      throw new HttpError(409, 'already_excused', 'This event was already excused.');
+    }
+    await prisma.attendanceEvent.update({
+      where: { id: event.id },
+      data: {
+        excusedById: user.id,
+        excusedAt: new Date(),
+        ...(note ? { note: event.note ? `${event.note} — ${note}` : note } : {}),
+      },
+    });
+    enqueueAudit(
+      {
+        actorUserId: user.id,
+        clientId: event.clientId,
+        action: 'time.attendance_excused',
+        entityType: 'AttendanceEvent',
+        entityId: event.id,
+        metadata: { associateId: event.associateId, kind: event.kind, note },
+      },
+      'time.attendance_excused',
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 /* ===== Walk-in clock-in requests (schedule gate) ========================= *
  * Kiosk punches the schedule gate refused, parked for a decision. Approval
  * clocks the associate in from the ORIGINAL punch instant; denial notifies

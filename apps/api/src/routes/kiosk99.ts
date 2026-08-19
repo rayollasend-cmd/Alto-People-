@@ -30,6 +30,7 @@ import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { send } from '../lib/notifications.js';
 import { associatesOfClient, effectiveClientIdFilter } from '../lib/scope.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
+import { recordAttendanceForEntry } from '../lib/attendance.js';
 import { env } from '../config/env.js';
 import { ROLE_CAPABILITIES, type Role } from '@alto-people/shared';
 
@@ -2608,6 +2609,8 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   // Advisory-only, so it runs after commit and never fails the punch.
   if (result.action === 'CLOCK_OUT') {
     void recomputeEntryAnomalies(prisma, result.timeEntry.id);
+    // Attendance points: LATE / EARLY_OUT against the linked shift.
+    void recordAttendanceForEntry(prisma, result.timeEntry.id);
   }
 
   res.json({

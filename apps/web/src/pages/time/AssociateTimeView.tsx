@@ -32,6 +32,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Clock, CalendarRange, ChevronDown } from 'lucide-react';
 import { ShiftTimeline } from './ShiftTimeline';
+import { AttendanceCard } from './AttendanceCard';
 import { TimesheetWeeks } from './TimesheetWeeks';
 import { fmtPunchTime, formatHM, punchDayOffset } from './punchFormat';
 
@@ -507,6 +508,12 @@ export function AssociateTimeView() {
             }}
           />
         )}
+      </section>
+
+      {/* Own attendance record — transparency is what makes the points
+          system defensible; associates see exactly what was scored. */}
+      <section className="mt-6">
+        <AttendanceCard />
       </section>
     </div>
   );

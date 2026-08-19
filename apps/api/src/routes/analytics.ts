@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   DashboardKPIsSchema,
   OnboardingAnalyticsResponseSchema,
+  RetentionResponseSchema,
   type DashboardKPIs,
   type OnboardingAnalyticsResponse,
   type OnboardingClientBreakdown,
@@ -285,6 +286,157 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
 const ANALYTICS_LOOKBACK_DAYS = 90;
 const ANALYTICS_TOP_CLIENTS = 10;
 const ANALYTICS_MONTHS = 6;
+
+/* ===== Retention ========================================================== *
+ * Turnover trend, hiring-cohort survival, and per-store comparison —
+ * computed from hireDate / separatedAt / assignments, no storage. An
+ * associate's "store" is their FIRST assignment's location (where they
+ * onboarded); separation reasons split voluntary vs involuntary.
+ * ========================================================================== */
+
+analyticsRouter.get('/retention', async (req, res, next) => {
+  try {
+    const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+    const now = new Date();
+    const associates = await prisma.associate.findMany({
+      where: { deletedAt: null },
+      select: {
+        id: true,
+        hireDate: true,
+        createdAt: true,
+        separatedAt: true,
+        assignments: {
+          orderBy: { startedAt: 'asc' },
+          select: {
+            endedAt: true,
+            location: { select: { id: true, name: true, clientId: true } },
+          },
+        },
+      },
+      take: 10_000,
+    });
+    const separations = await prisma.separation.findMany({
+      select: { associateId: true, reason: true },
+      take: 10_000,
+    });
+    const reasonByAssociate = new Map(separations.map((s) => [s.associateId, s.reason]));
+
+    // Scope: bounded callers (and an explicit clientId filter) only count
+    // associates who ever worked a site of that client.
+    const rows = associates
+      .map((a) => ({
+        hired: a.hireDate ?? a.createdAt,
+        separatedAt: a.separatedAt,
+        reason: reasonByAssociate.get(a.id) ?? null,
+        firstLocation: a.assignments[0]?.location ?? null,
+        activeNow:
+          a.separatedAt === null &&
+          a.assignments.some((asg) => asg.endedAt === null),
+        clientIds: new Set(a.assignments.map((asg) => asg.location.clientId)),
+      }))
+      .filter((r) =>
+        clamped === null
+          ? false // bounded caller with no client on file — fail closed
+          : clamped === undefined
+            ? true
+            : r.clientIds.has(clamped),
+      );
+
+    const monthStart = (offset: number) =>
+      new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - offset, 1));
+    const monthKey = (d: Date) =>
+      `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+
+    const monthly = [];
+    for (let i = 11; i >= 0; i--) {
+      const start = monthStart(i);
+      const end = monthStart(i - 1);
+      const headStart = rows.filter(
+        (r) => r.hired < start && (r.separatedAt === null || r.separatedAt >= start),
+      ).length;
+      const headEnd = rows.filter(
+        (r) => r.hired < end && (r.separatedAt === null || r.separatedAt >= end),
+      ).length;
+      const inMonth = (d: Date | null) => d !== null && d >= start && d < end;
+      const seps = rows.filter((r) => inMonth(r.separatedAt));
+      const avg = (headStart + headEnd) / 2;
+      monthly.push({
+        month: monthKey(start),
+        headcountStart: headStart,
+        hires: rows.filter((r) => r.hired >= start && r.hired < end).length,
+        separations: seps.length,
+        voluntary: seps.filter((r) => r.reason?.startsWith('VOLUNTARY')).length,
+        involuntary: seps.filter((r) => r.reason?.startsWith('INVOLUNTARY')).length,
+        turnoverPct: avg > 0 ? Math.round((seps.length / avg) * 1000) / 10 : null,
+      });
+    }
+
+    const survivedDays = (r: { hired: Date; separatedAt: Date | null }, days: number) =>
+      r.separatedAt === null ||
+      r.separatedAt.getTime() - r.hired.getTime() >= days * ONE_DAY_MS;
+    const cohorts = [];
+    for (let i = 11; i >= 0; i--) {
+      const start = monthStart(i);
+      const end = monthStart(i - 1);
+      const cohort = rows.filter((r) => r.hired >= start && r.hired < end);
+      if (cohort.length === 0) continue;
+      const rate = (days: number): number | null => {
+        // Only measurable once the WHOLE cohort is at least `days` old.
+        if (end.getTime() + days * ONE_DAY_MS > now.getTime()) return null;
+        return Math.round(
+          (cohort.filter((r) => survivedDays(r, days)).length / cohort.length) * 100,
+        );
+      };
+      cohorts.push({
+        month: monthKey(start),
+        hires: cohort.length,
+        s30: rate(30),
+        s60: rate(60),
+        s90: rate(90),
+        s180: rate(180),
+      });
+    }
+
+    const yearAgo = new Date(now.getTime() - 365 * ONE_DAY_MS);
+    const byLocationMap = new Map<
+      string,
+      { name: string; active: number; seps: number; recentHires: number; survived90: number }
+    >();
+    for (const r of rows) {
+      if (!r.firstLocation) continue;
+      const agg = byLocationMap.get(r.firstLocation.id) ?? {
+        name: r.firstLocation.name,
+        active: 0,
+        seps: 0,
+        recentHires: 0,
+        survived90: 0,
+      };
+      if (r.activeNow) agg.active += 1;
+      if (r.separatedAt && r.separatedAt >= yearAgo) agg.seps += 1;
+      // 90-day survival over hires old enough to measure (90–455 days ago).
+      const age = now.getTime() - r.hired.getTime();
+      if (age >= 90 * ONE_DAY_MS && age <= 455 * ONE_DAY_MS) {
+        agg.recentHires += 1;
+        if (survivedDays(r, 90)) agg.survived90 += 1;
+      }
+      byLocationMap.set(r.firstLocation.id, agg);
+    }
+    const byLocation = [...byLocationMap.entries()]
+      .map(([locationId, v]) => ({
+        locationId,
+        locationName: v.name,
+        active: v.active,
+        separations12mo: v.seps,
+        survival90Pct:
+          v.recentHires > 0 ? Math.round((v.survived90 / v.recentHires) * 100) : null,
+      }))
+      .sort((a, b) => a.locationName.localeCompare(b.locationName));
+
+    res.json(RetentionResponseSchema.parse({ monthly, cohorts, byLocation }));
+  } catch (err) {
+    next(err);
+  }
+});
 
 analyticsRouter.get('/onboarding', async (_req, res, next) => {
   try {

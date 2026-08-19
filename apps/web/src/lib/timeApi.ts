@@ -24,6 +24,7 @@ import type {
   TimesheetAssociateDetailInput,
   TimesheetAssociateDetailResponse,
   ClockInRequestListResponse,
+  AttendanceListResponse,
 } from '@alto-people/shared';
 import { apiFetch } from './api';
 import { announceTimeEntriesChanged } from './timeEntriesChannel';
@@ -158,6 +159,28 @@ export function listAdminTimeEntries(filters: {
   return apiFetch<TimeEntryListResponse>(
     `/time/admin/entries${qs ? `?${qs}` : ''}`
   );
+}
+
+/* ----- Attendance points -------------------------------------------------- */
+
+export function getAdminAttendance(
+  associateId: string,
+): Promise<AttendanceListResponse> {
+  return apiFetch(`/time/admin/attendance?associateId=${associateId}`);
+}
+
+export function excuseAttendanceEvent(
+  id: string,
+  note?: string,
+): Promise<{ ok: boolean }> {
+  return apiFetch(`/time/admin/attendance/${id}/excuse`, {
+    method: 'POST',
+    body: note ? { note } : {},
+  });
+}
+
+export function getMyAttendance(): Promise<AttendanceListResponse> {
+  return apiFetch('/self/me/attendance');
 }
 
 /* ----- Walk-in clock-in requests (schedule gate) ------------------------- */

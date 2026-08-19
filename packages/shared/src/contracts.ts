@@ -1126,6 +1126,41 @@ export const ClockInRequestDenyInputSchema = z.object({
 });
 export type ClockInRequestDenyInput = z.infer<typeof ClockInRequestDenyInputSchema>;
 
+/* -------------------------------------------------------------------------- *
+ *  Attendance points — rolling 90-day reliability score from late/early/
+ *  no-show signals. Excused events stay visible but score zero.
+ * -------------------------------------------------------------------------- */
+
+export const AttendanceKindSchema = z.enum([
+  'LATE',
+  'EARLY_OUT',
+  'CALL_OUT',
+  'NO_CALL_NO_SHOW',
+]);
+export type AttendanceKind = z.infer<typeof AttendanceKindSchema>;
+
+export const AttendanceEventSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  shiftId: UuidSchema.nullable(),
+  kind: AttendanceKindSchema,
+  points: z.number(),
+  occurredOn: z.string(),
+  source: z.string(),
+  note: z.string().nullable(),
+  excused: z.boolean(),
+  excusedByEmail: z.string().nullable(),
+});
+export type AttendanceEvent = z.infer<typeof AttendanceEventSchema>;
+
+export const AttendanceListResponseSchema = z.object({
+  events: z.array(AttendanceEventSchema),
+  /** Unexcused points inside the rolling 90-day window. */
+  score: z.number(),
+  windowDays: z.number().int(),
+});
+export type AttendanceListResponse = z.infer<typeof AttendanceListResponseSchema>;
+
 export const ClockInInputSchema = z.object({
   notes: z.string().max(500).optional(),
 });
@@ -2089,6 +2124,9 @@ export const FloorNowRowSchema = z.object({
   billedSoFar: z.number().nonnegative().optional(),
   /** Clocked-in people currently past 40 weekly hours (paying 1.5×). */
   otHeads: z.number().int().nonnegative().optional(),
+  /** Not over yet, but worked + remaining scheduled this week crosses 40h —
+   *  the window where trimming a shift still avoids the 1.5× bill. */
+  projectedOtHeads: z.number().int().nonnegative().optional(),
 });
 export type FloorNowRow = z.infer<typeof FloorNowRowSchema>;
 
@@ -5296,6 +5334,106 @@ export const LocationSummarySchema = z.object({
   timezone: z.string(),
 });
 export type LocationSummary = z.infer<typeof LocationSummarySchema>;
+
+/* -------------------------------------------------------------------------- *
+ *  Client statements — monthly billing/SLA artifact. DRAFT recomputes;
+ *  FINAL is an immutable, sequentially numbered snapshot.
+ * -------------------------------------------------------------------------- */
+
+export const StatementLineSchema = z.object({
+  label: z.string(),
+  hours: z.number(),
+  rate: z.number(),
+  amount: z.number(),
+});
+
+export const StatementSnapshotSchema = z.object({
+  clientName: z.string(),
+  periodStart: z.string(),
+  periodEnd: z.string(),
+  lines: z.array(StatementLineSchema),
+  stores: z.array(
+    z.object({ locationName: z.string(), hours: z.number(), amount: z.number() }),
+  ),
+  totals: z.object({
+    hours: z.number(),
+    regularHours: z.number(),
+    otHours: z.number(),
+    amount: z.number(),
+  }),
+  sla: z.object({
+    publishedShifts: z.number().int(),
+    assignedShifts: z.number().int(),
+    fillRatePct: z.number().nullable(),
+    punctualPct: z.number().nullable(),
+    noShows: z.number().int(),
+    pendingEntries: z.number().int(),
+  }),
+});
+export type StatementSnapshot = z.infer<typeof StatementSnapshotSchema>;
+
+export const ClientStatementSchema = z.object({
+  id: UuidSchema,
+  clientId: UuidSchema,
+  periodStart: z.string(),
+  periodEnd: z.string(),
+  number: z.number().int().nullable(),
+  status: z.enum(['DRAFT', 'FINAL']),
+  snapshot: StatementSnapshotSchema,
+  finalizedAt: z.string().datetime().nullable(),
+  finalizedByEmail: z.string().nullable(),
+});
+export type ClientStatement = z.infer<typeof ClientStatementSchema>;
+
+export const ClientStatementListResponseSchema = z.object({
+  statements: z.array(ClientStatementSchema),
+});
+export type ClientStatementListResponse = z.infer<
+  typeof ClientStatementListResponseSchema
+>;
+
+/* -------------------------------------------------------------------------- *
+ *  Retention analytics — computed, no storage.
+ * -------------------------------------------------------------------------- */
+
+export const RetentionResponseSchema = z.object({
+  monthly: z.array(
+    z.object({
+      /** YYYY-MM */
+      month: z.string(),
+      headcountStart: z.number().int(),
+      hires: z.number().int(),
+      separations: z.number().int(),
+      voluntary: z.number().int(),
+      involuntary: z.number().int(),
+      /** separations ÷ average headcount, percent; null when headcount 0. */
+      turnoverPct: z.number().nullable(),
+    }),
+  ),
+  cohorts: z.array(
+    z.object({
+      /** Hiring month, YYYY-MM */
+      month: z.string(),
+      hires: z.number().int(),
+      /** % of the cohort still active N days after hire; null = not yet old
+       *  enough to measure. */
+      s30: z.number().nullable(),
+      s60: z.number().nullable(),
+      s90: z.number().nullable(),
+      s180: z.number().nullable(),
+    }),
+  ),
+  byLocation: z.array(
+    z.object({
+      locationId: UuidSchema,
+      locationName: z.string(),
+      active: z.number().int(),
+      separations12mo: z.number().int(),
+      survival90Pct: z.number().nullable(),
+    }),
+  ),
+});
+export type RetentionResponse = z.infer<typeof RetentionResponseSchema>;
 
 export const LocationListResponseSchema = z.object({
   locations: z.array(LocationSummarySchema),

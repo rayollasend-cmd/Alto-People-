@@ -48,6 +48,7 @@ import {
   rejectTimeEntry,
 } from '@/lib/timeApi';
 import { listClientLocations } from '@/lib/clientsApi';
+import { AttendanceCard } from '@/pages/time/AttendanceCard';
 import { useClients } from '@/lib/useClients';
 import { listShifts, listSchedulingAssociates } from '@/lib/schedulingApi';
 import { toast } from 'sonner';
@@ -1380,6 +1381,13 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         </Card>
       )}
 
+      {/* Focused on one person → their attendance record sits above the
+          timesheet, where late/no-show patterns explain what's below. */}
+      {tab === 'queue' && focusAssociate && (
+        <div className="mb-4">
+          <AttendanceCard associateId={focusAssociate.id} canManage={canManage} />
+        </div>
+      )}
       {tab === 'queue' && (
         <Card>
           <CardHeader className="pb-3 gap-3">

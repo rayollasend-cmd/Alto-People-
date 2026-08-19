@@ -473,6 +473,7 @@ function FloorNowCard() {
       loadedSoFar: t.loadedSoFar + (r.loadedSoFar ?? 0),
       billedSoFar: t.billedSoFar + (r.billedSoFar ?? 0),
       otHeads: t.otHeads + (r.otHeads ?? 0),
+      projectedOtHeads: t.projectedOtHeads + (r.projectedOtHeads ?? 0),
     }),
     {
       clockedIn: 0,
@@ -483,6 +484,7 @@ function FloorNowCard() {
       loadedSoFar: 0,
       billedSoFar: 0,
       otHeads: 0,
+      projectedOtHeads: 0,
     },
   );
   const totalMarginPerHour = total.billedPerHour - total.loadedPerHour;
@@ -524,9 +526,21 @@ function FloorNowCard() {
                 ? `${total.clockedIn} / ${total.expected}`
                 : String(total.clockedIn),
               extra:
-                total.otHeads > 0 ? (
-                  <span className="ml-1.5 rounded bg-warning/15 px-1.5 py-0.5 align-middle text-2xs font-medium text-warning">
-                    {total.otHeads} OT
+                total.otHeads > 0 || total.projectedOtHeads > 0 ? (
+                  <span className="align-middle">
+                    {total.otHeads > 0 && (
+                      <span className="ml-1.5 rounded bg-warning/15 px-1.5 py-0.5 text-2xs font-medium text-warning">
+                        {total.otHeads} OT
+                      </span>
+                    )}
+                    {total.projectedOtHeads > 0 && (
+                      <span
+                        className="ml-1.5 rounded border border-warning/40 px-1.5 py-0.5 text-2xs font-medium text-warning/80"
+                        title="Will pass 40h this week if their remaining shifts run as scheduled — trim a shift to avoid 1.5× billing."
+                      >
+                        {total.projectedOtHeads} OT risk
+                      </span>
+                    )}
                   </span>
                 ) : null,
               tone: 'text-white',
@@ -639,6 +653,14 @@ function FloorNowCard() {
                         {(r.otHeads ?? 0) > 0 && (
                           <span className="ml-1.5 rounded bg-warning/15 px-1.5 py-0.5 text-2xs font-medium text-warning">
                             {r.otHeads} OT
+                          </span>
+                        )}
+                        {(r.projectedOtHeads ?? 0) > 0 && (
+                          <span
+                            className="ml-1.5 rounded border border-warning/40 px-1.5 py-0.5 text-2xs font-medium text-warning/80"
+                            title="Will pass 40h this week if remaining shifts run as scheduled."
+                          >
+                            {r.projectedOtHeads} OT risk
                           </span>
                         )}
                       </td>

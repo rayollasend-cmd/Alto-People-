@@ -1,6 +1,8 @@
 import type {
   ClientCreateInput,
   ClientListResponse,
+  ClientStatement,
+  ClientStatementListResponse,
   ClientStateInput,
   ClientStatus,
   ClientSummary,
@@ -54,6 +56,39 @@ export function updateClient(
 
 export function archiveClient(id: string): Promise<void> {
   return apiFetch<void>(`/clients/${id}`, { method: 'DELETE' });
+}
+
+/* ----- Statements (billing/SLA) ------------------------------------------ */
+
+export function listClientStatements(
+  clientId: string,
+): Promise<ClientStatementListResponse> {
+  return apiFetch(`/clients/${clientId}/statements`);
+}
+
+export function upsertClientStatement(
+  clientId: string,
+  periodStart: string,
+  periodEnd: string,
+): Promise<ClientStatement> {
+  return apiFetch(`/clients/${clientId}/statements`, {
+    method: 'POST',
+    body: { periodStart, periodEnd },
+  });
+}
+
+export function finalizeClientStatement(
+  clientId: string,
+  statementId: string,
+): Promise<ClientStatement> {
+  return apiFetch(`/clients/${clientId}/statements/${statementId}/finalize`, {
+    method: 'POST',
+    body: {},
+  });
+}
+
+export function clientStatementPdfUrl(clientId: string, statementId: string): string {
+  return `/api/clients/${clientId}/statements/${statementId}.pdf`;
 }
 
 export function listClientLocations(

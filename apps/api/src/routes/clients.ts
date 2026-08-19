@@ -17,8 +17,10 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopeClients } from '../lib/scope.js';
-import { enqueueAudit } from '../lib/audit.js';
+import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { seedDefaultShiftPositions } from '../lib/shiftPositions.js';
+import { computeStatementSnapshot, type StatementSnapshot } from '../lib/clientStatement.js';
+import { renderStatementPdf } from '../lib/statementPdf.js';
 
 export const clientsRouter = Router();
 
@@ -614,3 +616,172 @@ clientsRouter.put('/:id/state', MANAGE, async (req, res, next) => {
 // Phase 131 — geofence used to live on Client; it moved to Location.
 // The /clients/:id/geofence GET/PUT routes are gone. Use the LocationsSection
 // UI (PATCH /clients/:id/locations/:lid) to set per-site geofences.
+
+/* ===== Client statements ================================================== *
+ * Monthly billing/SLA statement per client. DRAFT recomputes the snapshot
+ * from live data on every read of the create/refresh route; FINALIZE
+ * assigns the next org-wide sequential number and freezes the snapshot —
+ * a statement must never change after the client has it. Gated on
+ * process:payroll (billing artifact, not a client-admin CRUD surface).
+ * ========================================================================== */
+
+const STATEMENTS = requireCapability('process:payroll');
+
+function statementRow(r: {
+  id: string;
+  clientId: string;
+  periodStart: Date;
+  periodEnd: Date;
+  number: number | null;
+  status: string;
+  snapshot: unknown;
+  finalizedAt: Date | null;
+  finalizedBy?: { email: string } | null;
+}) {
+  return {
+    id: r.id,
+    clientId: r.clientId,
+    periodStart: r.periodStart.toISOString().slice(0, 10),
+    periodEnd: r.periodEnd.toISOString().slice(0, 10),
+    number: r.number,
+    status: r.status,
+    snapshot: r.snapshot as StatementSnapshot,
+    finalizedAt: r.finalizedAt?.toISOString() ?? null,
+    finalizedByEmail: r.finalizedBy?.email ?? null,
+  };
+}
+
+clientsRouter.get('/:id/statements', STATEMENTS, async (req, res, next) => {
+  try {
+    const rows = await prisma.clientStatement.findMany({
+      where: { clientId: req.params.id },
+      orderBy: [{ periodStart: 'desc' }],
+      take: 60,
+      include: { finalizedBy: { select: { email: true } } },
+    });
+    res.json({ statements: rows.map(statementRow) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Create or refresh the DRAFT for a period. Recomputing an existing DRAFT
+// is the normal flow as late approvals land; a FINAL period 409s.
+clientsRouter.post('/:id/statements', STATEMENTS, async (req, res, next) => {
+  try {
+    const start = new Date(`${req.body?.periodStart}T00:00:00.000Z`);
+    const end = new Date(`${req.body?.periodEnd}T00:00:00.000Z`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
+      throw new HttpError(400, 'invalid_period', 'periodStart/periodEnd must be YYYY-MM-DD, end on or after start.');
+    }
+    const endExclusive = new Date(end.getTime() + 24 * 3_600_000);
+    const client = await prisma.client.findFirst({
+      where: { id: req.params.id, deletedAt: null },
+      select: { id: true },
+    });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+
+    const existing = await prisma.clientStatement.findUnique({
+      where: {
+        clientId_periodStart_periodEnd: {
+          clientId: client.id,
+          periodStart: start,
+          periodEnd: end,
+        },
+      },
+    });
+    if (existing?.status === 'FINAL') {
+      throw new HttpError(409, 'already_final', 'This period is finalized — its snapshot no longer changes.');
+    }
+    const snapshot = await computeStatementSnapshot(prisma, client.id, start, endExclusive);
+    const row = existing
+      ? await prisma.clientStatement.update({
+          where: { id: existing.id },
+          data: { snapshot: snapshot as unknown as Prisma.InputJsonValue },
+          include: { finalizedBy: { select: { email: true } } },
+        })
+      : await prisma.clientStatement.create({
+          data: {
+            clientId: client.id,
+            periodStart: start,
+            periodEnd: end,
+            snapshot: snapshot as unknown as Prisma.InputJsonValue,
+          },
+          include: { finalizedBy: { select: { email: true } } },
+        });
+    res.json(statementRow(row));
+  } catch (err) {
+    next(err);
+  }
+});
+
+clientsRouter.post('/:id/statements/:sid/finalize', STATEMENTS, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const row = await prisma.clientStatement.findFirst({
+      where: { id: req.params.sid, clientId: req.params.id },
+    });
+    if (!row) throw new HttpError(404, 'not_found', 'Statement not found');
+    if (row.status === 'FINAL') {
+      throw new HttpError(409, 'already_final', 'Already finalized.');
+    }
+    // Record-then-commit: a numbered billing artifact must never exist
+    // without a durable record of who issued it.
+    const updated = await prisma.$transaction(async (tx) => {
+      const max = await tx.clientStatement.aggregate({ _max: { number: true } });
+      return tx.clientStatement.update({
+        where: { id: row.id },
+        data: {
+          status: 'FINAL',
+          number: (max._max.number ?? 0) + 1,
+          finalizedById: user.id,
+          finalizedAt: new Date(),
+        },
+        include: { finalizedBy: { select: { email: true } } },
+      });
+    });
+    await recordCriticalAudit(
+      {
+        actorUserId: user.id,
+        clientId: row.clientId,
+        action: 'clients.statement_finalized',
+        entityType: 'ClientStatement',
+        entityId: row.id,
+        metadata: {
+          number: updated.number,
+          periodStart: row.periodStart.toISOString().slice(0, 10),
+          periodEnd: row.periodEnd.toISOString().slice(0, 10),
+        },
+      },
+      'clients.statement_finalized',
+    );
+    res.json(statementRow(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+clientsRouter.get('/:id/statements/:sid.pdf', STATEMENTS, async (req, res, next) => {
+  try {
+    const row = await prisma.clientStatement.findFirst({
+      where: { id: req.params.sid, clientId: req.params.id },
+    });
+    if (!row) throw new HttpError(404, 'not_found', 'Statement not found');
+    const pdf = await renderStatementPdf({
+      snapshot: row.snapshot as unknown as StatementSnapshot,
+      number: row.number,
+      status: row.status,
+      finalizedAt: row.finalizedAt,
+    });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="statement-${row.periodStart.toISOString().slice(0, 10)}${
+        row.number !== null ? `-no${String(row.number).padStart(4, '0')}` : '-draft'
+      }.pdf"`,
+    );
+    res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});

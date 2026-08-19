@@ -1456,6 +1456,31 @@ schedulingRouter.get('/floor-now', MANAGE, async (req, res, next) => {
         (weekMinutes.get(e.associateId) ?? 0) + netElapsedMinutes(e),
       );
     }
+    // OT radar: what's still SCHEDULED for each clocked-in associate this
+    // week (rest of the current shift + later assigned shifts). Worked +
+    // remaining > 40h means "will hit OT if the week goes as planned" —
+    // surfaced as a chip so a supervisor can trim hours before Friday.
+    const upcoming = activeAssociateIds.length
+      ? await prisma.shift.findMany({
+          where: {
+            assignedAssociateId: { in: activeAssociateIds },
+            status: 'ASSIGNED',
+            endsAt: { gt: now },
+            startsAt: { lt: endOfWeekUTC(now) },
+          },
+          select: { assignedAssociateId: true, startsAt: true, endsAt: true },
+          take: 5000,
+        })
+      : [];
+    const remainingScheduledMin = new Map<string, number>();
+    for (const s of upcoming) {
+      const from = Math.max(s.startsAt.getTime(), now.getTime());
+      const min = Math.max(0, (s.endsAt.getTime() - from) / 60_000);
+      remainingScheduledMin.set(
+        s.assignedAssociateId!,
+        (remainingScheduledMin.get(s.assignedAssociateId!) ?? 0) + min,
+      );
+    }
     const OT_THRESHOLD_MIN = 40 * 60;
     const burdenMult = 1 + env.LABOR_BURDEN_PERCENT / 100;
     const overhead = env.LABOR_OVERHEAD_PER_HOUR;
@@ -1468,6 +1493,7 @@ schedulingRouter.get('/floor-now', MANAGE, async (req, res, next) => {
       billedSoFar: number;
       elapsedHours: number;
       otHeads: number;
+      projectedOtHeads: number;
     }
     const liveByLocation = new Map<string, LiveAgg>();
     for (const e of activeEntries) {
@@ -1480,6 +1506,7 @@ schedulingRouter.get('/floor-now', MANAGE, async (req, res, next) => {
         billedSoFar: 0,
         elapsedHours: 0,
         otHeads: 0,
+        projectedOtHeads: 0,
       };
       const elapsed = netElapsedMinutes(e);
       const wtd = weekMinutes.get(e.associateId) ?? elapsed;
@@ -1502,6 +1529,13 @@ schedulingRouter.get('/floor-now', MANAGE, async (req, res, next) => {
       agg.wagePerHour += rate * (inOtNow ? 1.5 : 1);
       agg.billedPerHour += billRate * (inOtNow ? 1.5 : 1);
       if (inOtNow) agg.otHeads += 1;
+      // Not over yet, but worked + remaining scheduled crosses 40h.
+      else if (
+        wtd + (remainingScheduledMin.get(e.associateId) ?? 0) >
+        OT_THRESHOLD_MIN
+      ) {
+        agg.projectedOtHeads += 1;
+      }
       liveByLocation.set(e.locationId, agg);
     }
     const clockedByLocation = new Map(
@@ -1569,6 +1603,7 @@ schedulingRouter.get('/floor-now', MANAGE, async (req, res, next) => {
           ),
           billedSoFar: round2(live?.billedSoFar ?? 0),
           otHeads: live?.otHeads ?? 0,
+          projectedOtHeads: live?.projectedOtHeads ?? 0,
         };
       })
       // Quiet stores with no expectation and nobody in stay off the board.

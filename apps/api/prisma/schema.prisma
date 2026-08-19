@@ -527,6 +527,8 @@ model User {
   associateAssignmentsNoted         AssociateAssignment[]         @relation("AssociateAssignmentNoter")
   staffingTargetsSet                StaffingTarget[]              @relation("StaffingTargetAuthor")
   clockInRequestsDecided            ClockInRequest[]              @relation("ClockInRequestDecider")
+  attendanceExcusals                AttendanceEvent[]             @relation("AttendanceExcuser")
+  statementsFinalized               ClientStatement[]             @relation("StatementFinalizer")
   // Privacy erasures this admin performed (Associate.erasedById).
   associatesErased                  Associate[]                   @relation("AssociateEraser")
 
@@ -590,6 +592,7 @@ model Client {
   policies               Policy[]
   templates              OnboardingTemplate[]
   shifts                 Shift[]
+  statements             ClientStatement[]
   payrollRuns            PayrollRun[]
   // Wave 1.1 — Pay schedules scoped to this client.
   payrollSchedules       PayrollSchedule[]
@@ -772,6 +775,78 @@ model StaffingTarget {
   createdBy User?    @relation("StaffingTargetAuthor", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([locationId, effectiveFrom])
+}
+
+enum AttendanceKind {
+  LATE // punched in > 7 min after linked shift start
+  EARLY_OUT // punched out > 30 min before linked shift end
+  CALL_OUT // missed shift, but a time-off request covered the day
+  NO_CALL_NO_SHOW // missed shift, no request, no word
+}
+
+// One attendance signal, worth points on the rolling 90-day score.
+// Auto-written by the clock-out hook and the no-show sweep; a supervisor
+// excusal zeroes the points at read time but keeps the record.
+model AttendanceEvent {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId String         @db.Uuid
+  shiftId     String?        @db.Uuid
+  clientId    String?        @db.Uuid
+  kind        AttendanceKind
+  points      Decimal        @db.Decimal(4, 1)
+  occurredOn  DateTime       @db.Date
+  source      String         @default("AUTO") // AUTO | MANUAL
+  note        String?
+  excusedById String?        @db.Uuid
+  excusedAt   DateTime?      @db.Timestamptz(6)
+  createdAt   DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime       @updatedAt @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  excusedBy User?     @relation("AttendanceExcuser", fields: [excusedById], references: [id], onDelete: SetNull)
+
+  // One event per (shift, kind) — sweeps and clock-out hooks are idempotent.
+  // NULL shiftIds (manual events) don't collide under Postgres semantics.
+  @@unique([shiftId, kind])
+  @@index([associateId, occurredOn])
+  @@index([clientId, occurredOn])
+}
+
+// One row per (associate, week) so the OT radar's morning digest alerts a
+// supervisor about a projected-overtime week exactly once.
+model OtAlertStamp {
+  associateId String   @db.Uuid
+  weekStart   DateTime @db.Date
+  notifiedAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+
+  @@id([associateId, weekStart])
+}
+
+// Monthly client billing/SLA statement. DRAFT recomputes freely as late
+// approvals land; FINAL locks an immutable snapshot with the next
+// sequential number — a statement must never change after the client has
+// it. Totals and line items live in `snapshot`, frozen at finalize time.
+model ClientStatement {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId      String    @db.Uuid
+  periodStart   DateTime  @db.Date
+  periodEnd     DateTime  @db.Date
+  // Assigned org-wide sequentially at finalize; null while DRAFT.
+  number        Int?
+  status        String    @default("DRAFT") // DRAFT | FINAL
+  snapshot      Json
+  finalizedById String?   @db.Uuid
+  finalizedAt   DateTime? @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+
+  client      Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  finalizedBy User?  @relation("StatementFinalizer", fields: [finalizedById], references: [id], onDelete: SetNull)
+
+  @@unique([clientId, periodStart, periodEnd])
+  @@index([clientId, status])
 }
 
 enum ClockInRequestStatus {
@@ -1049,6 +1124,9 @@ model Associate {
   volunteerEntries         VolunteerEntry[]
   // Schedule-gated kiosk clock-ins awaiting a supervisor's decision.
   clockInRequests          ClockInRequest[]
+  // Rolling 90-day attendance signals (late/early/no-show/call-out).
+  attendanceEvents         AttendanceEvent[]
+  otAlertStamps            OtAlertStamp[]
   // Phase 131 — location-assignment history. The open row (endedAt IS
   // NULL) is the associate's current work site.
   assignments              AssociateAssignment[]

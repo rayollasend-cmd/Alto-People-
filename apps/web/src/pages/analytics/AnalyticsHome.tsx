@@ -33,6 +33,9 @@ import type { DonutDatum } from '@/components/ui/DonutChart';
 const DonutChart = lazy(() =>
   import('@/components/ui/DonutChart').then((m) => ({ default: m.DonutChart })),
 );
+const RetentionSection = lazy(() =>
+  import('./RetentionSection').then((m) => ({ default: m.RetentionSection })),
+);
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -301,6 +304,12 @@ export function AnalyticsHome() {
       </Section>
         </>
       )}
+
+      {/* Retention (turnover, cohorts, by store). Lazy — it carries the
+          recharts line chart, same deferral rationale as the donut. */}
+      <Suspense fallback={<Skeleton className="mt-8 h-48" />}>
+        <RetentionSection />
+      </Suspense>
 
       <p className="text-xs text-silver/70 mt-8">
         <Activity className="h-3 w-3 inline mr-1 -mt-0.5" />

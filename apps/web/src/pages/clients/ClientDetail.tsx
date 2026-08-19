@@ -29,6 +29,7 @@ import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { JobsSection } from './JobsSection';
 import { RateDefaultsSection } from './RateDefaultsSection';
+import { StatementsSection } from './StatementsSection';
 import { LocationsSection } from './LocationsSection';
 import { BenefitsPlansSection } from './BenefitsPlansSection';
 import { QuickbooksSection } from './QuickbooksSection';
@@ -176,6 +177,9 @@ export function ClientDetail() {
       <JobsSection clientId={client.id} />
 
       <RateDefaultsSection clientId={client.id} />
+
+      {/* Renders only for process:payroll holders. */}
+      <StatementsSection clientId={client.id} />
 
       <BenefitsPlansSection clientId={client.id} />
 
