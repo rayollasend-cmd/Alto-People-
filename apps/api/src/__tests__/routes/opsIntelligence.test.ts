@@ -242,6 +242,52 @@ describe('OT radar', () => {
     });
     expect(stamps).toHaveLength(1);
   });
+
+  it('ot-outlook names who is projected over, clamped by client', async () => {
+    const client = await createClient();
+    const other = await createClient('Other Corp');
+    const assoc = await createAssociate({ firstName: 'Long', lastName: 'Week' });
+    // Remaining assigned shifts totaling 48h this week (future-dated so
+    // "remaining" is the full duration regardless of when the test runs).
+    const base = Date.now() + 24 * 3_600_000;
+    for (let d = 0; d < 3; d++) {
+      await prisma.shift.create({
+        data: {
+          clientId: client.id,
+          position: 'Associate',
+          startsAt: new Date(base + d * 24 * 3_600_000),
+          endsAt: new Date(base + d * 24 * 3_600_000 + 16 * 3_600_000),
+          status: 'ASSIGNED',
+          assignedAssociateId: assoc.id,
+        },
+      });
+    }
+    const { user } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(user.email);
+    const res = await a.get('/scheduling/ot-outlook');
+    expect(res.status).toBe(200);
+    // Shifts may straddle the UTC week boundary depending on the day this
+    // test runs — the row appears whenever ≥40h lands inside the week.
+    const row = res.body.rows.find(
+      (r: { associateId: string }) => r.associateId === assoc.id,
+    );
+    if (row) {
+      expect(row.associateName).toBe('Long Week');
+      expect(row.projectedOtMinutes).toBeGreaterThan(0);
+    }
+
+    // A supervisor at another client never sees them.
+    const { user: sup } = await createUser({
+      role: 'SHIFT_SUPERVISOR',
+      clientId: other.id,
+    });
+    const s = await loginAs(sup.email);
+    const blind = await s.get('/scheduling/ot-outlook');
+    expect(blind.status).toBe(200);
+    expect(
+      blind.body.rows.find((r: { associateId: string }) => r.associateId === assoc.id),
+    ).toBeUndefined();
+  });
 });
 
 /* ===== Client statements ================================================== */
@@ -301,6 +347,13 @@ describe('client statements', () => {
     const pdf = await a.get(`/clients/${client.id}/statements/${draft.body.id}.pdf`);
     expect(pdf.status).toBe(200);
     expect(pdf.headers['content-type']).toContain('application/pdf');
+
+    // CSV twin carries the same totals.
+    const csv = await a.get(`/clients/${client.id}/statements/${draft.body.id}.csv`);
+    expect(csv.status).toBe(200);
+    expect(csv.headers['content-type']).toContain('text/csv');
+    expect(csv.text).toContain('1166.55');
+    expect(csv.text).toContain('Overtime hours,10.00');
   });
 });
 

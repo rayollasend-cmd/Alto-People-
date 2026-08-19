@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FileText, Lock, RefreshCw } from 'lucide-react';
+import { ChevronDown, Download, FileText, Lock, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ClientStatement } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtRelativeDate } from '@/lib/format';
+import { cn } from '@/lib/cn';
 import {
+  clientStatementCsvUrl,
   clientStatementPdfUrl,
   finalizeClientStatement,
   listClientStatements,
@@ -50,6 +52,73 @@ function monthOptions(): Array<{ key: string; label: string; start: string; end:
   return out;
 }
 
+/** Inline statement viewer — the PDF's contents without the download. */
+function StatementDetail({ s }: { s: ClientStatement }) {
+  const snap = s.snapshot;
+  return (
+    <div className="ml-6 mt-3 space-y-4 rounded-md border border-navy-secondary bg-navy/50 p-3">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm tabular-nums">
+          <thead>
+            <tr className="border-b border-navy-secondary text-2xs uppercase tracking-wider text-silver/60">
+              <th className="py-1 pr-3 text-left font-medium">Service</th>
+              <th className="py-1 px-2 text-right font-medium">Hours</th>
+              <th className="py-1 px-2 text-right font-medium">Rate</th>
+              <th className="py-1 pl-2 text-right font-medium">Amount</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-navy-secondary/50">
+            {snap.lines.map((l) => (
+              <tr key={l.label} className="text-white">
+                <td className="py-1 pr-3">{l.label}</td>
+                <td className="py-1 px-2 text-right">{l.hours.toFixed(2)}</td>
+                <td className="py-1 px-2 text-right">{money(l.rate)}</td>
+                <td className="py-1 pl-2 text-right">{money(l.amount)}</td>
+              </tr>
+            ))}
+            <tr className="font-semibold text-white">
+              <td className="py-1.5 pr-3">
+                Total — {snap.totals.regularHours.toFixed(2)} reg +{' '}
+                {snap.totals.otHours.toFixed(2)} OT
+              </td>
+              <td className="py-1.5 px-2 text-right">{snap.totals.hours.toFixed(2)}</td>
+              <td />
+              <td className="py-1.5 pl-2 text-right">{money(snap.totals.amount)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {snap.stores.length > 1 && (
+        <div className="text-xs text-silver">
+          {snap.stores.map((st) => (
+            <span key={st.locationName} className="mr-4 tabular-nums">
+              {st.locationName}: {st.hours.toFixed(1)} h · {money(st.amount)}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-silver">
+        <span>
+          Fill rate:{' '}
+          <span className="text-white tabular-nums">
+            {snap.sla.fillRatePct !== null ? `${snap.sla.fillRatePct}%` : '—'}
+          </span>{' '}
+          ({snap.sla.assignedShifts}/{snap.sla.publishedShifts} shifts)
+        </span>
+        <span>
+          On-time:{' '}
+          <span className="text-white tabular-nums">
+            {snap.sla.punctualPct !== null ? `${snap.sla.punctualPct}%` : '—'}
+          </span>
+        </span>
+        <span>
+          No-shows: <span className="text-white tabular-nums">{snap.sla.noShows}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function StatementsSection({ clientId }: { clientId: string }) {
   const { can } = useAuth();
   const confirm = useConfirm();
@@ -58,6 +127,7 @@ export function StatementsSection({ clientId }: { clientId: string }) {
   const [rows, setRows] = useState<ClientStatement[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const canBill = can('process:payroll');
 
@@ -155,58 +225,84 @@ export function StatementsSection({ clientId }: { clientId: string }) {
         )}
         {rows && rows.length > 0 && (
           <ul className="divide-y divide-navy-secondary/60">
-            {rows.map((s) => (
-              <li
-                key={s.id}
-                className="flex flex-wrap items-center justify-between gap-3 py-2.5"
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 text-sm text-white">
-                    {fmtDate(s.periodStart)} – {fmtDate(s.periodEnd)}
-                    {s.status === 'FINAL' ? (
-                      <Badge variant="success" withDot={false}>
-                        <Lock className="mr-1 h-3 w-3" />
-                        No. {String(s.number).padStart(4, '0')}
-                      </Badge>
-                    ) : (
-                      <Badge variant="pending">Draft</Badge>
-                    )}
-                  </div>
-                  <div className="text-xs tabular-nums text-silver">
-                    {s.snapshot.totals.hours.toFixed(1)} h ·{' '}
-                    {money(s.snapshot.totals.amount)}
-                    {s.snapshot.totals.otHours > 0 &&
-                      ` (incl. ${s.snapshot.totals.otHours.toFixed(1)} h OT)`}
-                    {s.snapshot.sla.fillRatePct !== null &&
-                      ` · fill ${s.snapshot.sla.fillRatePct}%`}
-                    {s.snapshot.sla.pendingEntries > 0 && (
-                      <span className="text-warning">
-                        {' '}
-                        · {s.snapshot.sla.pendingEntries} entries still pending approval
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <Button size="sm" variant="outline" asChild>
-                    <a href={clientStatementPdfUrl(clientId, s.id)} download>
-                      <FileText className="h-3.5 w-3.5" />
-                      PDF
-                    </a>
-                  </Button>
-                  {s.status === 'DRAFT' && (
-                    <Button
-                      size="sm"
-                      onClick={() => void finalize(s)}
-                      loading={busy === s.id}
-                      disabled={busy !== null}
+            {rows.map((s) => {
+              const open = openId === s.id;
+              return (
+                <li key={s.id} className="py-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setOpenId(open ? null : s.id)}
+                      aria-expanded={open}
+                      className="min-w-0 flex-1 text-left"
                     >
-                      Finalize
-                    </Button>
-                  )}
-                </div>
-              </li>
-            ))}
+                      <div className="flex items-center gap-2 text-sm text-white">
+                        <ChevronDown
+                          className={cn(
+                            'h-4 w-4 shrink-0 text-silver/60 transition-transform',
+                            open && 'rotate-180',
+                          )}
+                        />
+                        {fmtDate(s.periodStart)} – {fmtDate(s.periodEnd)}
+                        {s.status === 'FINAL' ? (
+                          <Badge variant="success" withDot={false}>
+                            <Lock className="mr-1 h-3 w-3" />
+                            No. {String(s.number).padStart(4, '0')}
+                          </Badge>
+                        ) : (
+                          <Badge variant="pending">Draft</Badge>
+                        )}
+                      </div>
+                      <div className="pl-6 text-xs tabular-nums text-silver">
+                        {s.snapshot.totals.hours.toFixed(1)} h ·{' '}
+                        {money(s.snapshot.totals.amount)}
+                        {s.snapshot.totals.otHours > 0 &&
+                          ` (incl. ${s.snapshot.totals.otHours.toFixed(1)} h OT)`}
+                        {s.snapshot.sla.fillRatePct !== null &&
+                          ` · fill ${s.snapshot.sla.fillRatePct}%`}
+                        {s.status === 'DRAFT' && s.snapshot.generatedAt && (
+                          <span className="text-silver/60">
+                            {' '}
+                            · computed {fmtRelativeDate(s.snapshot.generatedAt)}
+                          </span>
+                        )}
+                        {s.snapshot.sla.pendingEntries > 0 && (
+                          <span className="text-warning">
+                            {' '}
+                            · {s.snapshot.sla.pendingEntries} entries still pending approval
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" asChild>
+                        <a href={clientStatementPdfUrl(clientId, s.id)} download>
+                          <FileText className="h-3.5 w-3.5" />
+                          PDF
+                        </a>
+                      </Button>
+                      <Button size="sm" variant="outline" asChild>
+                        <a href={clientStatementCsvUrl(clientId, s.id)} download>
+                          <Download className="h-3.5 w-3.5" />
+                          CSV
+                        </a>
+                      </Button>
+                      {s.status === 'DRAFT' && (
+                        <Button
+                          size="sm"
+                          onClick={() => void finalize(s)}
+                          loading={busy === s.id}
+                          disabled={busy !== null}
+                        >
+                          Finalize
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  {open && <StatementDetail s={s} />}
+                </li>
+              );
+            })}
           </ul>
         )}
       </CardContent>

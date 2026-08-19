@@ -22,6 +22,7 @@ import type {
   DedupeDraftsInput,
   DedupeDraftsResponse,
   FloorNowResponse,
+  OtOutlookResponse,
   LaborCostReportResponse,
   MyShiftDetailResponse,
   StaffingTargetInput,
@@ -390,6 +391,11 @@ export function setStaffingTarget(body: StaffingTargetInput): Promise<{
 /** Clocked-in right now vs the expected headcount per store. */
 export function floorNow(): Promise<FloorNowResponse> {
   return apiFetch<FloorNowResponse>('/scheduling/floor-now');
+}
+
+/** Everyone projected past 40h this week, by name — the OT radar's list. */
+export function otOutlook(): Promise<OtOutlookResponse> {
+  return apiFetch<OtOutlookResponse>('/scheduling/ot-outlook');
 }
 
 /** Delete exact-twin DRAFT shifts in the window, keeping the oldest of

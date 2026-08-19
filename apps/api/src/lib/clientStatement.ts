@@ -29,6 +29,8 @@ export interface StatementSnapshot {
   clientName: string;
   periodStart: string;
   periodEnd: string;
+  /** When this snapshot was computed — drafts show their staleness. */
+  generatedAt?: string;
   lines: StatementLine[];
   stores: Array<{ locationName: string; hours: number; amount: number }>;
   totals: { hours: number; regularHours: number; otHours: number; amount: number };
@@ -267,6 +269,7 @@ export async function computeStatementSnapshot(
     clientName: client.name,
     periodStart: ymd(periodStart),
     periodEnd: ymd(new Date(periodEndExclusive.getTime() - 24 * 3_600_000)),
+    generatedAt: new Date().toISOString(),
     lines: [...lineAgg.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([label, v]) => ({

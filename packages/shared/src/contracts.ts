@@ -5351,6 +5351,8 @@ export const StatementSnapshotSchema = z.object({
   clientName: z.string(),
   periodStart: z.string(),
   periodEnd: z.string(),
+  /** When the snapshot was computed — drafts show their staleness. */
+  generatedAt: z.string().datetime().optional(),
   lines: z.array(StatementLineSchema),
   stores: z.array(
     z.object({ locationName: z.string(), hours: z.number(), amount: z.number() }),
@@ -5391,6 +5393,31 @@ export const ClientStatementListResponseSchema = z.object({
 export type ClientStatementListResponse = z.infer<
   typeof ClientStatementListResponseSchema
 >;
+
+/* -------------------------------------------------------------------------- *
+ *  OT outlook — who is projected past 40h this week, by name.
+ * -------------------------------------------------------------------------- */
+
+export const OtOutlookRowSchema = z.object({
+  associateId: UuidSchema,
+  associateName: z.string(),
+  /** Client(s) of their remaining shifts this week, display string. */
+  clientNames: z.string(),
+  workedMinutes: z.number(),
+  remainingScheduledMinutes: z.number(),
+  projectedMinutes: z.number(),
+  /** Minutes past 40h if the week runs as scheduled. */
+  projectedOtMinutes: z.number(),
+  /** Estimated extra billed cost of that OT at 1.5× the SOW rate. */
+  estOtBilled: z.number().nullable(),
+});
+export type OtOutlookRow = z.infer<typeof OtOutlookRowSchema>;
+
+export const OtOutlookResponseSchema = z.object({
+  rows: z.array(OtOutlookRowSchema),
+  generatedAt: z.string().datetime(),
+});
+export type OtOutlookResponse = z.infer<typeof OtOutlookResponseSchema>;
 
 /* -------------------------------------------------------------------------- *
  *  Retention analytics — computed, no storage.

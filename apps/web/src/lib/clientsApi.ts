@@ -91,6 +91,10 @@ export function clientStatementPdfUrl(clientId: string, statementId: string): st
   return `/api/clients/${clientId}/statements/${statementId}.pdf`;
 }
 
+export function clientStatementCsvUrl(clientId: string, statementId: string): string {
+  return `/api/clients/${clientId}/statements/${statementId}.csv`;
+}
+
 export function listClientLocations(
   id: string,
   opts: { includeInactive?: boolean } = {},

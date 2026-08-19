@@ -11,6 +11,7 @@ import {
   type ClientListResponse,
   type ClientSummary,
   type LocationSummary,
+  csvCell,
 } from '@alto-people/shared';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
@@ -21,6 +22,7 @@ import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { seedDefaultShiftPositions } from '../lib/shiftPositions.js';
 import { computeStatementSnapshot, type StatementSnapshot } from '../lib/clientStatement.js';
 import { renderStatementPdf } from '../lib/statementPdf.js';
+import { ensureBrandingLoaded } from '../lib/branding.js';
 
 export const clientsRouter = Router();
 
@@ -761,17 +763,92 @@ clientsRouter.post('/:id/statements/:sid/finalize', STATEMENTS, async (req, res,
   }
 });
 
-clientsRouter.get('/:id/statements/:sid.pdf', STATEMENTS, async (req, res, next) => {
+// CSV twin of the PDF — the shape AP teams paste into their own sheets.
+clientsRouter.get('/:id/statements/:sid.csv', STATEMENTS, async (req, res, next) => {
   try {
     const row = await prisma.clientStatement.findFirst({
       where: { id: req.params.sid, clientId: req.params.id },
     });
     if (!row) throw new HttpError(404, 'not_found', 'Statement not found');
+    const s = row.snapshot as unknown as StatementSnapshot;
+    const lines: string[] = [];
+    const push = (...cells: Array<string | number>) =>
+      lines.push(cells.map((c) => csvCell(String(c))).join(','));
+    push('Client', s.clientName);
+    push('Period', s.periodStart, s.periodEnd);
+    push(
+      'Statement',
+      row.status === 'FINAL' && row.number !== null
+        ? `No. ${String(row.number).padStart(4, '0')}`
+        : 'DRAFT',
+    );
+    push('');
+    push('Service', 'Hours', 'Rate', 'Amount');
+    for (const l of s.lines) push(l.label, l.hours.toFixed(2), l.rate.toFixed(2), l.amount.toFixed(2));
+    push(
+      'Total',
+      s.totals.hours.toFixed(2),
+      '',
+      s.totals.amount.toFixed(2),
+    );
+    push('Regular hours', s.totals.regularHours.toFixed(2));
+    push('Overtime hours', s.totals.otHours.toFixed(2));
+    push('');
+    push('Work site', 'Hours', 'Amount');
+    for (const st of s.stores) push(st.locationName, st.hours.toFixed(2), st.amount.toFixed(2));
+    push('');
+    push('Shifts published', s.sla.publishedShifts);
+    push('Shifts filled', s.sla.assignedShifts);
+    if (s.sla.fillRatePct !== null) push('Fill rate %', s.sla.fillRatePct);
+    if (s.sla.punctualPct !== null) push('On-time %', s.sla.punctualPct);
+    push('No-shows', s.sla.noShows);
+    if (s.sla.pendingEntries > 0) push('Entries pending approval (unbilled)', s.sla.pendingEntries);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="statement-${row.periodStart.toISOString().slice(0, 10)}${
+        row.number !== null ? `-no${String(row.number).padStart(4, '0')}` : '-draft'
+      }.csv"`,
+    );
+    res.send(lines.join('\n'));
+  } catch (err) {
+    next(err);
+  }
+});
+
+clientsRouter.get('/:id/statements/:sid.pdf', STATEMENTS, async (req, res, next) => {
+  try {
+    const row = await prisma.clientStatement.findFirst({
+      where: { id: req.params.sid, clientId: req.params.id },
+      include: { finalizedBy: { select: { email: true } } },
+    });
+    if (!row) throw new HttpError(404, 'not_found', 'Statement not found');
+    // Letterhead carries the org's configured name; bill-to uses the
+    // client's IRS-registered identity + address when HR has filled them
+    // in (same fields the W-2 employer block uses).
+    const [branding, client] = await Promise.all([
+      ensureBrandingLoaded(prisma),
+      prisma.client.findUnique({
+        where: { id: row.clientId },
+        select: {
+          legalName: true,
+          addressLine1: true,
+          addressLine2: true,
+          city: true,
+          state: true,
+          zip: true,
+        },
+      }),
+    ]);
     const pdf = await renderStatementPdf({
       snapshot: row.snapshot as unknown as StatementSnapshot,
       number: row.number,
       status: row.status,
       finalizedAt: row.finalizedAt,
+      finalizedByEmail: row.finalizedBy?.email ?? null,
+      orgName: branding.orgName,
+      billTo: client,
     });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(

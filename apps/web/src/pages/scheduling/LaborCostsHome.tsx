@@ -25,12 +25,14 @@ import {
 } from 'recharts';
 import type {
   FloorNowResponse,
+  OtOutlookResponse,
   LaborCostRow,
   StaffingTargetLocation,
 } from '@alto-people/shared';
 import { DonutChart } from '@/components/ui/DonutChart';
 import {
   floorNow,
+  otOutlook,
   laborCosts,
   listStaffingTargets,
   setStaffingTarget,
@@ -404,6 +406,96 @@ const hhmmToMinute = (s: string): number | null => {
   if (!Number.isInteger(h) || !Number.isInteger(m)) return null;
   return h * 60 + m;
 };
+
+/**
+ * OT outlook — the names behind the floor board's "OT risk" chips: every
+ * associate projected past 40h this week (worked + remaining scheduled,
+ * cross-client), with the estimated 1.5× billed cost. Quiet when clean.
+ */
+function OtOutlookCard() {
+  const [data, setData] = useState<OtOutlookResponse | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    otOutlook()
+      .then((r) => {
+        if (!cancelled) setData(r);
+      })
+      .catch(() => {
+        // A failed load renders nothing — this card is an extra lens, and
+        // the floor board above still shows the aggregate chips.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (!data || data.rows.length === 0) return null;
+  const h = (min: number) => (min / 60).toFixed(1);
+  const totalOtMin = data.rows.reduce((s, r) => s + r.projectedOtMinutes, 0);
+  const totalBilled = data.rows.reduce((s, r) => s + (r.estOtBilled ?? 0), 0);
+  return (
+    <div className="rounded-lg border border-warning/40 bg-warning/[0.04] p-4">
+      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold text-white">
+          Overtime ahead this week
+        </h2>
+        <span className="text-xs tabular-nums text-warning">
+          {h(totalOtMin)} h projected OT · ≈ {money(totalBilled)} billed at 1.5×
+        </span>
+      </div>
+      <p className="mb-2 text-xs text-silver">
+        Worked so far plus remaining scheduled shifts crosses 40 hours.
+        Trimming or reassigning a shift on the{' '}
+        <Link to="/scheduling" className="text-gold hover:underline">
+          schedule
+        </Link>{' '}
+        removes the overtime before it exists.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-navy-secondary text-2xs uppercase tracking-wider text-silver/60">
+              <th className="py-1.5 pr-3 text-left font-medium">Associate</th>
+              <th className="py-1.5 px-3 text-left font-medium hidden md:table-cell">
+                Client
+              </th>
+              <th className="py-1.5 px-3 text-right font-medium">Worked</th>
+              <th className="py-1.5 px-3 text-right font-medium hidden sm:table-cell">
+                Still scheduled
+              </th>
+              <th className="py-1.5 px-3 text-right font-medium">Projected</th>
+              <th className="py-1.5 pl-3 text-right font-medium">OT · est. billed</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-navy-secondary/50">
+            {data.rows.map((r) => (
+              <tr key={r.associateId}>
+                <td className="py-1.5 pr-3 text-white">{r.associateName}</td>
+                <td className="py-1.5 px-3 text-silver hidden md:table-cell">
+                  {r.clientNames}
+                </td>
+                <td className="py-1.5 px-3 text-right tabular-nums text-silver">
+                  {h(r.workedMinutes)} h
+                </td>
+                <td className="py-1.5 px-3 text-right tabular-nums text-silver hidden sm:table-cell">
+                  {h(r.remainingScheduledMinutes)} h
+                </td>
+                <td className="py-1.5 px-3 text-right tabular-nums font-medium text-white">
+                  {h(r.projectedMinutes)} h
+                </td>
+                <td className="py-1.5 pl-3 text-right tabular-nums font-semibold text-warning">
+                  {h(r.projectedOtMinutes)} h
+                  {r.estOtBilled !== null && (
+                    <span className="text-warning/70"> · {money(r.estOtBilled)}</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Live floor board — clocked-in RIGHT NOW vs the expected headcount (the
@@ -1274,6 +1366,12 @@ export function LaborCostsHome() {
           not scoped by the date range below. */}
       <div className="mb-4">
         <FloorNowCard />
+      </div>
+
+      {/* Names behind the "OT risk" chips — who, by how much, at what cost.
+          Renders nothing when the week is clean. */}
+      <div className="mb-4">
+        <OtOutlookCard />
       </div>
 
       <div className="mb-4 flex flex-wrap items-end gap-x-3 gap-y-2 rounded-lg border border-navy-secondary bg-navy/40 px-3 py-2.5">

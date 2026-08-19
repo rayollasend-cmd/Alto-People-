@@ -21,6 +21,7 @@ import {
   DedupeDraftsResponseSchema,
   LaborCostReportResponseSchema,
   FloorNowResponseSchema,
+  OtOutlookResponseSchema,
   StaffingTargetInputSchema,
   StaffingTargetsResponseSchema,
   OpenShiftClaimSchema,
@@ -1617,6 +1618,126 @@ schedulingRouter.get('/floor-now', MANAGE, async (req, res, next) => {
           overheadPerHour: env.LABOR_OVERHEAD_PER_HOUR,
         },
       }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /scheduling/ot-outlook?clientId?
+ *
+ * The OT radar's NAMES view: every associate projected past 40h this week
+ * (worked-to-date + remaining ASSIGNED shifts, cross-client), whether or
+ * not they are on the clock right now. The floor board's chips say "2 OT
+ * risk"; this says who, by how much, and what it costs — the list a
+ * supervisor works from when trimming Friday's schedule. Bounded callers
+ * see only associates with remaining shifts at their client.
+ */
+schedulingRouter.get('/ot-outlook', MANAGE, async (req, res, next) => {
+  try {
+    const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+    const otClientId = clamped === null ? NO_MATCH_ID : clamped;
+    const now = new Date();
+    const weekStart = startOfWeekUTC(now);
+    const weekEnd = endOfWeekUTC(now);
+    const weekShifts = await prisma.shift.findMany({
+      where: {
+        status: 'ASSIGNED',
+        assignedAssociateId: { not: null },
+        startsAt: { gte: weekStart, lt: weekEnd },
+        ...(otClientId ? { clientId: otClientId } : {}),
+      },
+      select: {
+        assignedAssociateId: true,
+        startsAt: true,
+        endsAt: true,
+        client: { select: { name: true } },
+      },
+      take: 5000,
+    });
+    const remaining = new Map<string, { min: number; clients: Set<string> }>();
+    for (const s of weekShifts) {
+      const from = Math.max(s.startsAt.getTime(), now.getTime());
+      const min = Math.max(0, (s.endsAt.getTime() - from) / 60_000);
+      if (min <= 0) continue;
+      const cur = remaining.get(s.assignedAssociateId!) ?? {
+        min: 0,
+        clients: new Set<string>(),
+      };
+      cur.min += min;
+      cur.clients.add(s.client.name);
+      remaining.set(s.assignedAssociateId!, cur);
+    }
+    const candidates = [...remaining.keys()];
+    if (candidates.length === 0) {
+      res.json(
+        OtOutlookResponseSchema.parse({ rows: [], generatedAt: now.toISOString() }),
+      );
+      return;
+    }
+    // Worked minutes are deliberately cross-client (the weekly OT trap):
+    // hours at another site still push this week past 40.
+    const [entries, associates] = await Promise.all([
+      prisma.timeEntry.findMany({
+        where: {
+          associateId: { in: candidates },
+          status: { in: ['ACTIVE', 'COMPLETED', 'APPROVED'] },
+          clockInAt: { gte: weekStart },
+        },
+        select: {
+          associateId: true,
+          clockInAt: true,
+          clockOutAt: true,
+          breaks: { select: { startedAt: true, endedAt: true } },
+        },
+        take: 20_000,
+      }),
+      prisma.associate.findMany({
+        where: { id: { in: candidates } },
+        select: { id: true, firstName: true, lastName: true },
+      }),
+    ]);
+    const worked = new Map<string, number>();
+    for (const e of entries) {
+      const end = (e.clockOutAt ?? now).getTime();
+      let ms = end - e.clockInAt.getTime();
+      for (const b of e.breaks) {
+        const bEnd = b.endedAt ? b.endedAt.getTime() : end;
+        ms -= Math.max(0, bEnd - b.startedAt.getTime());
+      }
+      worked.set(e.associateId, (worked.get(e.associateId) ?? 0) + Math.max(0, ms / 60_000));
+    }
+    const nameById = new Map(
+      associates.map((a) => [a.id, `${a.firstName} ${a.lastName}`]),
+    );
+    const OT_MIN = 40 * 60;
+    const otBillRate =
+      env.DEFAULT_ASSOCIATE_BILL_RATE > 0 ? env.DEFAULT_ASSOCIATE_BILL_RATE * 1.5 : null;
+    const round1 = (v: number) => Math.round(v * 10) / 10;
+    const rows = candidates
+      .map((id) => {
+        const w = worked.get(id) ?? 0;
+        const rem = remaining.get(id)!;
+        const projected = w + rem.min;
+        return {
+          associateId: id,
+          associateName: nameById.get(id) ?? 'Unknown',
+          clientNames: [...rem.clients].sort().join(' · '),
+          workedMinutes: Math.round(w),
+          remainingScheduledMinutes: Math.round(rem.min),
+          projectedMinutes: Math.round(projected),
+          projectedOtMinutes: Math.round(Math.max(0, projected - OT_MIN)),
+          estOtBilled:
+            otBillRate !== null
+              ? round1((Math.max(0, projected - OT_MIN) / 60) * otBillRate)
+              : null,
+        };
+      })
+      .filter((r) => r.projectedOtMinutes > 0)
+      .sort((a, b) => b.projectedOtMinutes - a.projectedOtMinutes);
+    res.json(
+      OtOutlookResponseSchema.parse({ rows, generatedAt: now.toISOString() }),
     );
   } catch (err) {
     next(err);
