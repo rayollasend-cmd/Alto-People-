@@ -11,6 +11,7 @@ import {
   truncateAll,
 } from '../../../test/db.js';
 import { runShiftReminderSweep } from '../../lib/shiftReminder.js';
+import { startOfWeekUTC } from '../../lib/timeAnomalies.js';
 
 const app = () => createApp();
 
@@ -744,14 +745,13 @@ describe('overtime chip on admin review lists', () => {
     const { associate: busy, user: busyUser } = await mkPlaced(client.id, 'Bea', 'Busy');
     const { associate: light, user: lightUser } = await mkPlaced(client.id, 'Lia', 'Light');
 
-    // Anchor everything inside next week (UTC Monday) so the 40h math
-    // can't straddle a week boundary regardless of when the suite runs.
-    const monday = new Date();
-    monday.setUTCHours(0, 0, 0, 0);
-    monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7) + 7);
-    const t = (h: number) => new Date(monday.getTime() + h * 3_600_000);
+    // Anchor everything inside next org week (Sat→Fri, per startOfWeekUTC)
+    // so the 40h math can't straddle a week boundary regardless of when
+    // the suite runs.
+    const weekStart = startOfWeekUTC(new Date(Date.now() + 7 * 24 * 3_600_000));
+    const t = (h: number) => new Date(weekStart.getTime() + h * 3_600_000);
 
-    // Bea already has 5×8h Mon–Fri.
+    // Bea already has 5×8h Sat–Wed.
     for (let d = 0; d < 5; d++) {
       await mkShift({
         clientId: client.id,
@@ -760,7 +760,7 @@ describe('overtime chip on admin review lists', () => {
         endsAt: t(d * 24 + 17),
       });
     }
-    // Saturday open shift both of them request.
+    // Thursday open shift (same org week) both of them request.
     const open = await mkShift({
       clientId: client.id,
       status: 'OPEN',

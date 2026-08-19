@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { startOfWeekUTC } from '../../lib/timeAnomalies.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createApplicationWithChecklist,
@@ -174,13 +175,11 @@ describe('GET /analytics/dashboard', () => {
     const client = await createClient();
     const associate = await createAssociate();
 
-    // Anchor on UTC week starts so fixtures land in deterministic buckets.
-    // Bucket 7 = current (partial) week, 6 = last complete week, 5 = prior.
-    // Monday-anchored (ISO), matching startOfWeekUTC after the workweek
-    // unification — the fixture math must bucket like the route does.
-    const thisWeek = new Date();
-    thisWeek.setUTCHours(0, 0, 0, 0);
-    thisWeek.setUTCDate(thisWeek.getUTCDate() - ((thisWeek.getUTCDay() + 6) % 7));
+    // Anchor on org week starts (Sat→Fri, per startOfWeekUTC) so fixtures
+    // land in deterministic buckets. Bucket 7 = current (partial) week,
+    // 6 = last complete week, 5 = prior — the route buckets with flat
+    // 7-day arithmetic from startOfWeekUTC(now), so mirror that exactly.
+    const thisWeek = startOfWeekUTC(new Date());
     const weekStart = (weeksAgo: number, dayOffsetHours = 12) =>
       new Date(thisWeek.getTime() - weeksAgo * 7 * 24 * 60 * 60 * 1000 + dayOffsetHours * 60 * 60 * 1000);
 
