@@ -1425,7 +1425,12 @@ auditPacketRouter.post(
       );
     }
 
-    // Counsel scope: currently-employed workers only.
+    // Counsel scope: currently-employed ACTIVE workers only — the same
+    // definition the directory's ACTIVE badge uses. The evidence union
+    // above can surface people tied to the client by old assignments or
+    // migrated punches whose onboarding was never approved (directory
+    // PENDING/INACTIVE); without the approved-application requirement
+    // they leaked into the I-9 / E-Verify / background sections.
     const associates = await prisma.associate.findMany({
       where: {
         id: { in: candidateIds },
@@ -1433,6 +1438,7 @@ auditPacketRouter.post(
         erasedAt: null,
         separatedAt: null,
         deactivatedAt: null,
+        applications: { some: { status: 'APPROVED', deletedAt: null } },
       },
       select: {
         id: true,

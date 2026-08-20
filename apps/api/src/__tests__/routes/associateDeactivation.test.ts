@@ -351,6 +351,29 @@ describe('audit packet workforce scopes', () => {
       where: { id: paused.id },
       data: { deactivatedAt: new Date(), deactivationReason: 'Seasonal break.' },
     });
+    // Never-approved associate with a worked-time tie to the client
+    // (migrated punches). Used to leak into the I-9/E-Verify/background
+    // sections through the evidence union despite not being ACTIVE.
+    const unapproved = await createAssociate({ firstName: 'Not', lastName: 'Approved' });
+    await prisma.application.create({
+      data: {
+        associateId: unapproved.id,
+        clientId: client.id,
+        onboardingTrack: 'STANDARD',
+        status: 'SUBMITTED',
+      },
+    });
+    const loc = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    await prisma.timeEntry.create({
+      data: {
+        associateId: unapproved.id,
+        clientId: client.id,
+        locationId: loc.id,
+        clockInAt: new Date('2026-02-03T14:00:00Z'),
+        clockOutAt: new Date('2026-02-03T22:00:00Z'),
+        status: 'COMPLETED',
+      },
+    });
 
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const hrAgent = await loginAs(hr.email);
