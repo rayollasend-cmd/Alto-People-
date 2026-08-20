@@ -1315,3 +1315,686 @@ auditPacketRouter.post(
     }
   },
 );
+
+/* ===== Counsel-format packet — ONE combined PDF =========================== */
+//
+// Built to the exact arrangement outside counsel requested for the vendor
+// audit response: a single professionally-arranged PDF — no ZIP, no
+// folders — with six numbered sections in counsel's order:
+//   1. workers providing services on the client's properties
+//   2. Form I-9 records with copies of the identity/eligibility documents
+//   3. confirmation of E-Verify
+//   4. paycheck stubs
+//   5. the harassment/discrimination reporting process
+//   6. background checks
+// Scope: ONLY the client's currently-employed workers for the period.
+// Per counsel's instruction the document contains no reference to any
+// other employment state; the ZIP scopes remain the vehicle when history
+// must be disclosed. Same safeguards as every packet: view:hr-admin, a
+// written reason, the bulk-PII limiter, CRITICAL audit row before the
+// first byte.
+
+const CounselInputSchema = z.object({
+  clientId: z.string().uuid(),
+  /** Calendar dates, YYYY-MM-DD, inclusive. */
+  periodStart: z.string().date(),
+  periodEnd: z.string().date(),
+  reason: z.string().trim().min(10).max(500),
+});
+
+auditPacketRouter.post(
+  '/generate-counsel',
+  HR_ADMIN,
+  bulkPiiExportLimiter,
+  async (req: Request, res: Response) => {
+    const input = CounselInputSchema.parse(req.body);
+    if (input.periodEnd < input.periodStart) {
+      throw new HttpError(400, 'invalid_period', 'periodEnd must be on or after periodStart.');
+    }
+    const start = new Date(`${input.periodStart}T00:00:00Z`);
+    const endExcl = new Date(`${input.periodEnd}T00:00:00Z`);
+    endExcl.setUTCDate(endExcl.getUTCDate() + 1);
+
+    const client = await prisma.client.findFirst({
+      where: { id: input.clientId, deletedAt: null },
+      select: { id: true, name: true },
+    });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+
+    // Same evidence-based four-signal roster as the CLIENT_PERIOD ZIP.
+    const locations = await prisma.location.findMany({
+      where: { clientId: client.id, deletedAt: null },
+      select: { id: true, name: true },
+    });
+    const locationName = new Map(locations.map((l) => [l.id, l.name]));
+    const [assignments, workedEntries, completedShifts, hiredForClient] =
+      await Promise.all([
+        prisma.associateAssignment.findMany({
+          where: {
+            locationId: { in: locations.map((l) => l.id) },
+            startedAt: { lt: endExcl },
+            OR: [{ endedAt: null }, { endedAt: { gte: start } }],
+          },
+          select: { associateId: true, locationId: true },
+        }),
+        prisma.timeEntry.findMany({
+          where: {
+            clientId: client.id,
+            status: { in: ['APPROVED', 'COMPLETED'] },
+            clockInAt: { gte: start, lt: endExcl },
+          },
+          select: {
+            associateId: true,
+            clockInAt: true,
+            clockOutAt: true,
+            breaks: { select: { startedAt: true, endedAt: true } },
+          },
+          orderBy: { clockInAt: 'asc' },
+          take: 50_000,
+        }),
+        prisma.shift.findMany({
+          where: {
+            clientId: client.id,
+            assignedAssociateId: { not: null },
+            OR: [
+              { status: 'COMPLETED' },
+              { status: 'ASSIGNED', publishedAt: { not: null }, startsAt: { lt: new Date() } },
+            ],
+            startsAt: { gte: start, lt: endExcl },
+          },
+          select: { assignedAssociateId: true },
+        }),
+        prisma.application.findMany({
+          where: { clientId: client.id, status: 'APPROVED', deletedAt: null },
+          select: { associateId: true },
+        }),
+      ]);
+    const candidateIds = [
+      ...new Set([
+        ...assignments.map((a) => a.associateId),
+        ...workedEntries.map((e) => e.associateId),
+        ...completedShifts.map((s) => s.assignedAssociateId!),
+        ...hiredForClient.map((h) => h.associateId),
+      ]),
+    ];
+    if (candidateIds.length === 0) {
+      throw new HttpError(
+        404,
+        'empty_roster',
+        'No workers were hired for, assigned to, worked time at, or scheduled for this client in the selected period.',
+      );
+    }
+
+    // Counsel scope: currently-employed workers only.
+    const associates = await prisma.associate.findMany({
+      where: {
+        id: { in: candidateIds },
+        deletedAt: null,
+        erasedAt: null,
+        separatedAt: null,
+        deactivatedAt: null,
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        employmentType: true,
+        i9Verification: {
+          select: {
+            citizenshipStatus: true,
+            section1CompletedAt: true,
+            section2CompletedAt: true,
+            documentList: true,
+            section2Verifier: { select: { email: true } },
+            eVerifyCaseNumber: true,
+            eVerifyStatus: true,
+            eVerifyCaseOpenedAt: true,
+            eVerifyClosedAt: true,
+          },
+        },
+        applications: {
+          where: { deletedAt: null, clientId: client.id },
+          orderBy: { invitedAt: 'desc' },
+          take: 1,
+          select: { position: true, startDate: true },
+        },
+        backgroundChecks: {
+          select: { provider: true, status: true, initiatedAt: true, completedAt: true },
+          orderBy: { initiatedAt: 'desc' },
+        },
+      },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+    });
+    if (associates.length === 0) {
+      throw new HttpError(
+        404,
+        'empty_roster',
+        'No currently-employed workers matched this client and period.',
+      );
+    }
+    const rosterIds = associates.map((a) => a.id);
+    const rosterSet = new Set(rosterIds);
+    const nameById = new Map(
+      associates.map((a) => [a.id, `${a.lastName}, ${a.firstName}`]),
+    );
+
+    const refId = formatRef();
+    const generatedAt = new Date();
+    const periodLabel = `${input.periodStart} to ${input.periodEnd}`;
+    const audience = `${client.name} vendor-compliance audit`;
+    const facts = (extra?: Array<{ label: string; value: string }>) => [
+      { label: 'Prepared for', value: audience },
+      { label: 'Audit period', value: periodLabel },
+      { label: 'Generated', value: generatedAt.toISOString().slice(0, 16).replace('T', ' ') + ' UTC' },
+      ...(extra ?? []),
+    ];
+    const confidentialityNote = `CONFIDENTIAL — prepared solely for the ${audience}. Handle per the data-handling terms of the applicable MSA.`;
+
+    await recordCriticalAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: client.id,
+        action: 'compliance.audit_packet_generated',
+        entityType: 'Client',
+        entityId: client.id,
+        metadata: {
+          ip: req.ip ?? null,
+          userAgent: req.headers['user-agent'] ?? null,
+          scope: 'COUNSEL_CLIENT_PDF',
+          reason: input.reason,
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          workerCount: associates.length,
+          reference: refId,
+        },
+      },
+      'compliance.audit_packet_generated',
+    );
+
+    const startedAtMs = Date.now();
+    console.log('[audit-packet] counsel-pdf start', {
+      ref: refId,
+      workers: associates.length,
+      period: periodLabel,
+    });
+
+    const blobStore = getBlobStore();
+    const { PDFDocument } = await import('pdf-lib');
+    const merged = await PDFDocument.create();
+    let missingBlobs = 0;
+    let notEmbeddable = 0;
+
+    const addPdf = async (buf: Buffer | Uint8Array): Promise<void> => {
+      const src = await PDFDocument.load(
+        buf instanceof Buffer ? new Uint8Array(buf) : buf,
+        { ignoreEncryption: true },
+      );
+      const pages = await merged.copyPages(src, src.getPageIndices());
+      for (const p of pages) merged.addPage(p);
+    };
+    // Full-page image plate, US-Letter with a printable margin.
+    const addImagePage = async (buf: Buffer, kind: 'jpg' | 'png'): Promise<void> => {
+      const img = kind === 'png' ? await merged.embedPng(buf) : await merged.embedJpg(buf);
+      const pw = 612;
+      const ph = 792;
+      const margin = 54;
+      const scale = Math.min((pw - margin * 2) / img.width, (ph - margin * 2) / img.height, 1);
+      const w = img.width * scale;
+      const h = img.height * scale;
+      const page = merged.addPage([pw, ph]);
+      page.drawImage(img, { x: (pw - w) / 2, y: (ph - h) / 2, width: w, height: h });
+    };
+    const sniff = (buf: Buffer): 'pdf' | 'jpg' | 'png' | null => {
+      if (buf.length >= 5 && buf.subarray(0, 5).toString('latin1') === '%PDF-') return 'pdf';
+      if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpg';
+      if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'png';
+      return null;
+    };
+    /** Merge a stored document (PDF or image) into the combined file. */
+    const addStoredDoc = async (s3Key: string | null): Promise<boolean> => {
+      if (!s3Key) {
+        missingBlobs += 1;
+        return false;
+      }
+      const blob = await blobStore.get(s3Key);
+      if (!blob) {
+        missingBlobs += 1;
+        return false;
+      }
+      try {
+        const kind = sniff(blob);
+        if (kind === 'pdf') await addPdf(blob);
+        else if (kind === 'jpg' || kind === 'png') await addImagePage(blob, kind);
+        else {
+          notEmbeddable += 1;
+          return false;
+        }
+        return true;
+      } catch (err) {
+        console.warn('[audit-packet] counsel-pdf could not embed document', { s3Key, err });
+        notEmbeddable += 1;
+        return false;
+      }
+    };
+
+    /* Section 1 — cover + worker list -------------------------------------- */
+    const workByAssociate = new Map<string, { first: Date; last: Date; netMinutes: number }>();
+    for (const e of workedEntries) {
+      if (!rosterSet.has(e.associateId)) continue;
+      let ms = e.clockOutAt ? e.clockOutAt.getTime() - e.clockInAt.getTime() : 0;
+      if (e.clockOutAt) {
+        for (const b of e.breaks) {
+          const bEnd = b.endedAt ? b.endedAt.getTime() : e.clockOutAt.getTime();
+          ms -= Math.max(0, bEnd - b.startedAt.getTime());
+        }
+      }
+      const mins = Math.max(0, Math.round(ms / 60_000));
+      const w = workByAssociate.get(e.associateId);
+      if (!w) {
+        workByAssociate.set(e.associateId, { first: e.clockInAt, last: e.clockInAt, netMinutes: mins });
+      } else {
+        if (e.clockInAt < w.first) w.first = e.clockInAt;
+        if (e.clockInAt > w.last) w.last = e.clockInAt;
+        w.netMinutes += mins;
+      }
+    }
+    const sitesByAssociate = new Map<string, Set<string>>();
+    for (const a of assignments) {
+      if (!rosterSet.has(a.associateId)) continue;
+      const set = sitesByAssociate.get(a.associateId) ?? new Set<string>();
+      set.add(locationName.get(a.locationId) ?? a.locationId);
+      sitesByAssociate.set(a.associateId, set);
+    }
+    {
+      const pdf = new ReportPdf({
+        title: `Vendor Audit Response — ${client.name}`,
+        subtitle:
+          `Single combined response document prepared in the arrangement requested by counsel. Six sections follow in order: (1) workers providing services on ${client.name} properties; (2) Form I-9 records with copies of the identity and employment-eligibility documents presented; (3) confirmation of E-Verify; (4) paycheck stubs; (5) the Company's process for workers to report harassment and/or discrimination; (6) background checks.`,
+        facts: facts([{ label: 'Workers', value: String(associates.length) }]),
+        reference: refId,
+        confidentialityNote,
+      });
+      pdf.heading(`1 · Workers providing services on ${client.name} properties`);
+      pdf.para(
+        'Inclusion is evidence-based: the union of hiring records for the client, site-assignment records, worked time (approved or recorded), and scheduled shifts within the audit period.',
+        { muted: true, size: 8.5 },
+      );
+      pdf.table(
+        [
+          { label: 'Worker', width: 120 },
+          { label: 'Position', width: 80 },
+          { label: 'Site(s)' },
+          { label: 'Worked (period)', width: 100 },
+          { label: 'I-9', width: 50 },
+          { label: 'E-Verify case', width: 84 },
+        ],
+        associates.map((a) => {
+          const w = workByAssociate.get(a.id);
+          return [
+            `${a.lastName}, ${a.firstName}`,
+            a.applications[0]?.position ?? '',
+            [...(sitesByAssociate.get(a.id) ?? [])].join('; ') || '—',
+            w ? `${ymd(w.first)} → ${ymd(w.last)} · ${(w.netMinutes / 60).toFixed(1)}h` : '—',
+            a.i9Verification?.section1CompletedAt && a.i9Verification?.section2CompletedAt
+              ? 'Complete'
+              : 'Incomplete',
+            a.i9Verification?.eVerifyCaseNumber ?? '—',
+          ];
+        }),
+      );
+      await addPdf(await pdf.render());
+    }
+
+    /* Section 2 — Form I-9s + document copies ------------------------------- */
+    const i9Docs = await prisma.documentRecord.findMany({
+      where: {
+        associateId: { in: rosterIds },
+        deletedAt: null,
+        status: { notIn: ['REJECTED', 'EXPIRED'] },
+        kind: { in: ['ID', 'SSN_CARD', 'I9_SUPPORTING', 'J1_VISA', 'J1_DS2019'] },
+      },
+      select: {
+        associateId: true,
+        kind: true,
+        filename: true,
+        s3Key: true,
+        i9DocTitle: true,
+        i9List: true,
+        side: true,
+        verifiedAt: true,
+      },
+    });
+    const docsByAssociate = new Map<string, typeof i9Docs>();
+    for (const d of i9Docs) {
+      const arr = docsByAssociate.get(d.associateId) ?? [];
+      arr.push(d);
+      docsByAssociate.set(d.associateId, arr);
+    }
+    {
+      const pdf = new ReportPdf({
+        title: 'Section 2 — Form I-9 Records & Identity Documents',
+        subtitle:
+          "Each worker's employment-eligibility verification record is followed immediately by copies of the identity and eligibility documents presented, reproduced in full page.",
+        facts: facts([
+          { label: 'Workers', value: String(associates.length) },
+          { label: 'Documents', value: String(i9Docs.length) },
+        ]),
+        reference: refId,
+        confidentialityNote,
+      });
+      await addPdf(await pdf.render());
+    }
+    for (const a of associates) {
+      const i9 = a.i9Verification;
+      const docs = docsByAssociate.get(a.id) ?? [];
+      const pdf = new ReportPdf({
+        title: `Form I-9 Record — ${a.firstName} ${a.lastName}`,
+        subtitle:
+          'Employment-eligibility verification record from the Alto People compliance system. Copies of the presented documents follow this sheet.',
+        facts: facts(),
+        reference: refId,
+        confidentialityNote,
+      });
+      pdf.heading('Verification record');
+      pdf.kv([
+        { label: 'Worker', value: `${a.firstName} ${a.lastName}` },
+        { label: 'Citizenship attestation', value: i9?.citizenshipStatus?.replace(/_/g, ' ') ?? 'NOT ON FILE' },
+        { label: 'Section 1 completed', value: iso(i9?.section1CompletedAt) || 'NOT ON FILE' },
+        { label: 'Section 2 completed', value: iso(i9?.section2CompletedAt) || 'NOT ON FILE' },
+        { label: 'Section 2 verifier', value: i9?.section2Verifier?.email ?? '—' },
+        { label: 'Document list used', value: i9?.documentList?.replace(/_/g, ' ') ?? '—' },
+      ]);
+      pdf.heading('Identity / eligibility documents on file');
+      if (docs.length) {
+        pdf.table(
+          [
+            { label: 'Type', width: 96 },
+            { label: 'Document' },
+            { label: 'List', width: 36 },
+            { label: 'Side', width: 44 },
+            { label: 'Verified', width: 62 },
+          ],
+          docs.map((d) => [
+            d.kind.replace(/_/g, ' '),
+            d.i9DocTitle ?? d.filename,
+            d.i9List ?? '—',
+            d.side ?? '—',
+            ymd(d.verifiedAt) || '—',
+          ]),
+        );
+      } else {
+        pdf.para('No documents on file.', { muted: true });
+      }
+      await addPdf(await pdf.render());
+      for (const d of docs) {
+        await addStoredDoc(d.s3Key);
+      }
+    }
+
+    /* Section 3 — E-Verify confirmation ------------------------------------- */
+    {
+      const pdf = new ReportPdf({
+        title: 'Section 3 — Confirmation of E-Verify',
+        subtitle:
+          'E-Verify case confirmation for every worker listed in Section 1. Case numbers are issued by the DHS E-Verify system.',
+        facts: facts([{ label: 'Workers', value: String(associates.length) }]),
+        reference: refId,
+        confidentialityNote,
+      });
+      pdf.table(
+        [
+          { label: 'Worker', width: 140 },
+          { label: 'E-Verify case number' },
+          { label: 'Status', width: 110 },
+          { label: 'Opened', width: 62 },
+          { label: 'Closed', width: 62 },
+        ],
+        associates.map((a) => [
+          `${a.lastName}, ${a.firstName}`,
+          a.i9Verification?.eVerifyCaseNumber ?? 'NO CASE ON FILE',
+          a.i9Verification?.eVerifyStatus?.replace(/_/g, ' ') ?? '—',
+          ymd(a.i9Verification?.eVerifyCaseOpenedAt) || '—',
+          ymd(a.i9Verification?.eVerifyClosedAt) || '—',
+        ]),
+      );
+      await addPdf(await pdf.render());
+    }
+
+    /* Section 4 — paycheck stubs -------------------------------------------- */
+    const payItems = await prisma.payrollItem.findMany({
+      where: {
+        associateId: { in: rosterIds },
+        payrollRun: {
+          status: { not: 'CANCELLED' },
+          periodStart: { lt: endExcl },
+          periodEnd: { gte: start },
+        },
+      },
+      include: paystubItemInclude(),
+      orderBy: [{ associate: { lastName: 'asc' } }, { payrollRun: { periodStart: 'asc' } }],
+      take: 2_000,
+    });
+    const disbursed = payItems.filter((it) => it.status === 'DISBURSED');
+    const externalPayments = await prisma.externalPayment.findMany({
+      where: {
+        associateId: { in: rosterIds },
+        deletedAt: null,
+        periodStart: { lt: endExcl },
+        periodEnd: { gte: start },
+      },
+      include: {
+        evidence: { where: { deletedAt: null } },
+        createdBy: { select: { email: true } },
+      },
+      orderBy: { periodEnd: 'asc' },
+    });
+    const PAYSTUB_CAP = 300;
+    {
+      const pdf = new ReportPdf({
+        title: 'Section 4 — Paycheck Stubs',
+        subtitle:
+          `Individual paycheck stubs for pay periods overlapping the audit period follow, ordered by worker.${externalPayments.length > 0 ? " Pay periods processed by the Company's external payroll provider are documented by letterheaded payment records with copies of the payment evidence." : ''}`,
+        facts: facts([
+          { label: 'Paystubs', value: String(Math.min(disbursed.length, PAYSTUB_CAP)) },
+          ...(externalPayments.length > 0
+            ? [{ label: 'External payment records', value: String(externalPayments.length) }]
+            : []),
+        ]),
+        reference: refId,
+        confidentialityNote,
+      });
+      await addPdf(await pdf.render());
+    }
+    let stubCount = 0;
+    for (const it of disbursed) {
+      if (stubCount >= PAYSTUB_CAP) break;
+      try {
+        const data = await buildPaystubDataFromItem(prisma, it);
+        await addPdf(await renderPaystubPdf(data));
+        stubCount += 1;
+      } catch (err) {
+        console.warn('[audit-packet] counsel-pdf paystub render failed for item', it.id, err);
+      }
+    }
+    for (const p of externalPayments) {
+      const worker = nameById.get(p.associateId) ?? p.associateId;
+      const pdf = new ReportPdf({
+        title: 'External Payment Record',
+        subtitle:
+          "Compensation for this pay period was processed by the Company's external payroll provider and documented in the Alto People compliance system. Copies of the uploaded payment evidence follow this record.",
+        facts: facts(),
+        reference: refId,
+        confidentialityNote,
+      });
+      pdf.heading('Payment record');
+      pdf.kv([
+        { label: 'Worker', value: worker },
+        { label: 'Pay period', value: `${ymd(p.periodStart)} to ${ymd(p.periodEnd)}` },
+        { label: 'Pay date', value: ymd(p.payDate) || '—' },
+        { label: 'Gross amount', value: p.grossAmount === null ? '—' : money(p.grossAmount) },
+        { label: 'Net amount', value: p.netAmount === null ? '—' : money(p.netAmount) },
+        { label: 'Payment method', value: p.method.replace(/_/g, ' ') },
+        { label: 'Reference', value: p.reference ?? '—' },
+        { label: 'Recorded by', value: p.createdBy?.email ?? '—' },
+        { label: 'Recorded at', value: iso(p.createdAt) },
+      ]);
+      await addPdf(await pdf.render());
+      for (const d of p.evidence) {
+        await addStoredDoc(d.s3Key);
+      }
+    }
+
+    /* Section 5 — harassment / discrimination reporting process -------------- */
+    {
+      const pdf = new ReportPdf({
+        title: 'Section 5 — Harassment & Discrimination Reporting Process',
+        subtitle: `How ${COMPANY_INFO.legalName} associates report harassment or discrimination, and the policy framework behind it.`,
+        facts: facts(),
+        reference: refId,
+        confidentialityNote,
+      });
+      pdf.heading('Reporting channels');
+      pdf.para(
+        "Every associate has three always-available channels. No channel requires going through the associate's direct supervisor, and all reports are handled confidentially:",
+      );
+      pdf.kv([
+        { label: '1 · In-app concern reporting', value: 'The Alto People portal includes a concern-reporting tool (HR case system). Cases carry a documented status history and are visible only to HR case managers.' },
+        { label: '2 · Direct to HR', value: 'The HR Administrator is reachable directly; contact details appear in every company email footer and in the associate portal.' },
+        { label: '3 · Company contact', value: `${COMPANY_INFO.email} · ${COMPANY_INFO.phone} (${COMPANY_INFO.hours})` },
+      ]);
+      pdf.heading('Policy framework');
+      pdf.para(
+        "The Anti-Harassment policy is incorporated into every associate's employment agreement (Section 17 — Equal Employment Opportunity and Anti-Harassment) and is acknowledged at onboarding. The full policy text and the acknowledgment log for the workers in Section 1 follow.",
+      );
+      await addPdf(await pdf.render());
+    }
+    const eeoPolicy = ALTO_POLICIES.find((p) => /anti-harassment/i.test(p.title));
+    if (eeoPolicy) {
+      const pdf = new ReportPdf({
+        title: eeoPolicy.title,
+        subtitle: `Policy version ${eeoPolicy.version} — binding on every associate through the employment agreement.`,
+        facts: facts(),
+        reference: refId,
+        confidentialityNote,
+      });
+      for (const paragraph of eeoPolicy.body.split(/\n{2,}/)) {
+        const trimmed = paragraph.trim();
+        if (trimmed) pdf.para(trimmed.replace(/\n/g, ' '), { size: 9.5 });
+      }
+      await addPdf(await pdf.render());
+    }
+    const acks = await prisma.policyAcknowledgment.findMany({
+      where: { associateId: { in: rosterIds } },
+      select: {
+        associateId: true,
+        acknowledgedAt: true,
+        policy: { select: { title: true } },
+      },
+      orderBy: { acknowledgedAt: 'asc' },
+    });
+    {
+      const pdf = new ReportPdf({
+        title: 'Policy Acknowledgment Log',
+        subtitle: 'Electronic acknowledgments recorded at onboarding for the workers in Section 1.',
+        facts: facts([{ label: 'Acknowledgments', value: String(acks.length) }]),
+        reference: refId,
+        confidentialityNote,
+      });
+      pdf.table(
+        [
+          { label: 'Worker', width: 150 },
+          { label: 'Policy' },
+          { label: 'Acknowledged', width: 96 },
+        ],
+        acks.map((k) => [
+          nameById.get(k.associateId) ?? k.associateId,
+          k.policy.title,
+          iso(k.acknowledgedAt).slice(0, 16).replace('T', ' '),
+        ]),
+      );
+      await addPdf(await pdf.render());
+    }
+
+    /* Section 6 — background checks ------------------------------------------ */
+    {
+      const pdf = new ReportPdf({
+        title: 'Section 6 — Background Checks',
+        subtitle:
+          'Background screening record for every worker in Section 1, as required under the MSA. Provider result documents on file follow this register.',
+        facts: facts([{ label: 'Workers', value: String(associates.length) }]),
+        reference: refId,
+        confidentialityNote,
+      });
+      pdf.table(
+        [
+          { label: 'Worker', width: 150 },
+          { label: 'Provider' },
+          { label: 'Status', width: 90 },
+          { label: 'Initiated', width: 62 },
+          { label: 'Completed', width: 62 },
+        ],
+        associates.flatMap((a) =>
+          a.backgroundChecks.length
+            ? a.backgroundChecks.map((b) => [
+                `${a.lastName}, ${a.firstName}`,
+                b.provider,
+                b.status.replace(/_/g, ' '),
+                ymd(b.initiatedAt),
+                ymd(b.completedAt) || '—',
+              ])
+            : [[`${a.lastName}, ${a.firstName}`, 'NO CHECK ON FILE', '—', '—', '—']],
+        ),
+      );
+      await addPdf(await pdf.render());
+    }
+    const bgDocs = await prisma.documentRecord.findMany({
+      where: {
+        associateId: { in: rosterIds },
+        deletedAt: null,
+        kind: 'BACKGROUND_CHECK_RESULT',
+        status: { notIn: ['REJECTED', 'EXPIRED'] },
+      },
+      select: { associateId: true, filename: true, s3Key: true },
+    });
+    for (const d of bgDocs) {
+      await addStoredDoc(d.s3Key);
+    }
+
+    /* Closing integrity page ------------------------------------------------- */
+    {
+      const pdf = new ReportPdf({
+        title: 'Document Integrity',
+        facts: facts(),
+        reference: refId,
+        confidentialityNote,
+      });
+      pdf.para(
+        missingBlobs + notEmbeddable > 0
+          ? `${missingBlobs + notEmbeddable} referenced document file(s) could not be reproduced in this combined document (unavailable in storage or in a non-reproducible file format); their records still appear in the relevant registers, and the files are available on request.`
+          : 'Every referenced document file was retrieved from storage and reproduced in this combined document.',
+      );
+      pdf.para(
+        `Generated ${generatedAt.toISOString()} by ${req.user!.email}. This generation event, including the stated business reason, is permanently recorded in the compliance audit log under reference ${refId}.`,
+        { muted: true, size: 8.5 },
+      );
+      await addPdf(await pdf.render());
+    }
+
+    const bytes = await merged.save();
+    console.log('[audit-packet] counsel-pdf complete', {
+      ref: refId,
+      ms: Date.now() - startedAtMs,
+      workers: associates.length,
+      pages: merged.getPageCount(),
+      paystubs: stubCount,
+      missingBlobs,
+      notEmbeddable,
+    });
+    const fileName = `audit-response-${safeName(client.name)}-${input.periodStart}-to-${input.periodEnd}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.end(Buffer.from(bytes));
+  },
+);

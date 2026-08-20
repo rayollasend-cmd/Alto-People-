@@ -342,4 +342,39 @@ describe('audit packet workforce scopes', () => {
     // made the inactive roster non-empty.
     expect(active.id).not.toBe(paused.id);
   });
+
+  it('counsel single-PDF packet covers only currently-employed workers', async () => {
+    const client = await createClient('Walmart Destin');
+    await mkHired(client.id, 'On', 'Roster');
+    const { associate: paused } = await mkHired(client.id, 'Off', 'Roster');
+    await prisma.associate.update({
+      where: { id: paused.id },
+      data: { deactivatedAt: new Date(), deactivationReason: 'Seasonal break.' },
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const res = await hrAgent
+      .post('/audit-packets/generate-counsel')
+      .send({
+        clientId: client.id,
+        periodStart: '2026-01-01',
+        periodEnd: '2026-06-30',
+        reason: 'Counsel-format vendor audit response — test run.',
+      })
+      .buffer(true)
+      .parse(zipParse);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('application/pdf');
+    expect((res.body as Buffer).subarray(0, 5).toString('latin1')).toBe('%PDF-');
+
+    const log = await prisma.auditLog.findFirstOrThrow({
+      where: { action: 'compliance.audit_packet_generated' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(log.metadata).toMatchObject({
+      scope: 'COUNSEL_CLIENT_PDF',
+      workerCount: 1,
+    });
+  });
 });

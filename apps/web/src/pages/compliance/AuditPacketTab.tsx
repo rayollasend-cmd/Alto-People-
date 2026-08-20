@@ -16,6 +16,7 @@ import {
 
 type PacketScope =
   | 'CLIENT_PERIOD'
+  | 'COUNSEL_PDF'
   | 'ALL_WORKFORCE'
   | 'ACTIVE_WORKFORCE'
   | 'INACTIVE_WORKFORCE'
@@ -23,8 +24,12 @@ type PacketScope =
 
 const SCOPE_LABEL: Record<PacketScope, { label: string; blurb: string }> = {
   CLIENT_PERIOD: {
-    label: 'Client audit',
+    label: 'Client audit (ZIP)',
     blurb: 'Workers tied to one client during the period — vendor-compliance audits (e.g. Walmart).',
+  },
+  COUNSEL_PDF: {
+    label: 'Client audit — counsel single PDF',
+    blurb: 'One combined PDF in counsel\'s arrangement: worker list, I-9s with document copies, E-Verify, paycheck stubs, harassment-reporting process, background checks. Currently-employed workers only.',
   },
   ALL_WORKFORCE: {
     label: 'Entire workforce',
@@ -78,7 +83,7 @@ export function AuditPacketTab() {
 
   const generate = async () => {
     setError(null);
-    if (scope === 'CLIENT_PERIOD' && !clientId) {
+    if ((scope === 'CLIENT_PERIOD' || scope === 'COUNSEL_PDF') && !clientId) {
       setError('Pick the auditing client.');
       return;
     }
@@ -100,21 +105,30 @@ export function AuditPacketTab() {
     }
     setBusy(true);
     try {
-      // apiFetch JSON-parses responses; this endpoint streams a ZIP, so
-      // hit fetch directly and hand the blob to the browser.
-      const res = await fetch('/api/audit-packets/generate', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scope,
-          ...(scope === 'CLIENT_PERIOD' ? { clientId } : {}),
-          ...(scope === 'INDIVIDUAL' ? { associateId: associate!.id } : {}),
-          periodStart,
-          periodEnd,
-          reason: reason.trim(),
-        }),
-      });
+      // apiFetch JSON-parses responses; these endpoints stream a ZIP/PDF,
+      // so hit fetch directly and hand the blob to the browser.
+      const res = await fetch(
+        scope === 'COUNSEL_PDF'
+          ? '/api/audit-packets/generate-counsel'
+          : '/api/audit-packets/generate',
+        {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(
+            scope === 'COUNSEL_PDF'
+              ? { clientId, periodStart, periodEnd, reason: reason.trim() }
+              : {
+                  scope,
+                  ...(scope === 'CLIENT_PERIOD' ? { clientId } : {}),
+                  ...(scope === 'INDIVIDUAL' ? { associateId: associate!.id } : {}),
+                  periodStart,
+                  periodEnd,
+                  reason: reason.trim(),
+                },
+          ),
+        },
+      );
       if (!res.ok) {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error?.message ?? `Packet generation failed (${res.status}).`);
@@ -124,7 +138,9 @@ export function AuditPacketTab() {
       const match = /filename="([^"]+)"/.exec(disposition);
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = match?.[1] ?? `audit-packet-${periodStart}-to-${periodEnd}.zip`;
+      a.download =
+        match?.[1] ??
+        `audit-${scope === 'COUNSEL_PDF' ? 'response' : 'packet'}-${periodStart}-to-${periodEnd}.${scope === 'COUNSEL_PDF' ? 'pdf' : 'zip'}`;
       a.click();
       URL.revokeObjectURL(a.href);
     } catch (err) {
@@ -178,7 +194,7 @@ export function AuditPacketTab() {
             <p className="mt-1 text-2xs text-silver">{SCOPE_LABEL[scope].blurb}</p>
           </div>
 
-          {scope === 'CLIENT_PERIOD' && (
+          {(scope === 'CLIENT_PERIOD' || scope === 'COUNSEL_PDF') && (
             <div>
               <Label htmlFor="audit-client">Auditing client</Label>
               <Select
