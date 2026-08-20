@@ -133,7 +133,7 @@ describe('POST /org/associates/:id/deactivate + reactivate', () => {
     expect(dead.status).toBe(401);
 
     // Directory: INACTIVE with the pause visible, despite the approved app.
-    const dir1 = await hrAgent.get('/directory');
+    const dir1 = await hrAgent.get('/people/directory');
     const row1 = dir1.body.associates.find(
       (x: { id: string }) => x.id === associate.id,
     );
@@ -160,7 +160,7 @@ describe('POST /org/associates/:id/deactivate + reactivate', () => {
       .send({ email: user.email, password: DEFAULT_TEST_PASSWORD });
     expect(alive.status).toBe(200);
 
-    const dir2 = await hrAgent.get('/directory');
+    const dir2 = await hrAgent.get('/people/directory');
     const row2 = dir2.body.associates.find(
       (x: { id: string }) => x.id === associate.id,
     );
@@ -257,6 +257,9 @@ describe('kiosk employment gate', () => {
     ]);
 
     // The pre-existing hole: a SEPARATED associate's PIN also stops working.
+    // (Reset the one-punch-per-second device throttle first — this is the
+    // second /kiosk/punch inside the same test.)
+    _resetKioskRateLimit();
     await prisma.associate.update({
       where: { id: associate.id },
       data: { deactivatedAt: null, separatedAt: new Date() },
