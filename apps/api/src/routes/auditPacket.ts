@@ -1483,9 +1483,12 @@ auditPacketRouter.post(
     const generatedAt = new Date();
     const periodLabel = `${input.periodStart} to ${input.periodEnd}`;
     const audience = `${client.name} vendor-compliance audit`;
+    // Counsel's presentation choice: the letterhead names the scope as the
+    // current active workforce rather than printing the selected date
+    // range (the range still bounds every query behind the document).
     const facts = (extra?: Array<{ label: string; value: string }>) => [
       { label: 'Prepared for', value: audience },
-      { label: 'Audit period', value: periodLabel },
+      { label: 'Audit period', value: 'Current Active Work Force' },
       { label: 'Generated', value: generatedAt.toISOString().slice(0, 16).replace('T', ' ') + ' UTC' },
       ...(extra ?? []),
     ];
@@ -2025,13 +2028,13 @@ auditPacketRouter.post(
         reference: refId,
         confidentialityNote,
       });
+      // Counsel's presentation choice: each row ends at the result — no
+      // initiated/completed date columns.
       pdf.table(
         [
-          { label: 'Worker', width: 150 },
+          { label: 'Worker', width: 170 },
           { label: 'Provider' },
-          { label: 'Status', width: 90 },
-          { label: 'Initiated', width: 62 },
-          { label: 'Completed', width: 62 },
+          { label: 'Status', width: 110 },
         ],
         associates.flatMap((a) =>
           a.backgroundChecks.length
@@ -2039,10 +2042,8 @@ auditPacketRouter.post(
                 `${a.lastName}, ${a.firstName}`,
                 b.provider,
                 b.status.replace(/_/g, ' '),
-                ymd(b.initiatedAt),
-                ymd(b.completedAt) || '—',
               ])
-            : [[`${a.lastName}, ${a.firstName}`, 'NO CHECK ON FILE', '—', '—', '—']],
+            : [[`${a.lastName}, ${a.firstName}`, 'NO CHECK ON FILE', '—']],
         ),
       );
       await addPdf(await pdf.render());
