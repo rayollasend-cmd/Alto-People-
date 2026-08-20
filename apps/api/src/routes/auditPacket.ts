@@ -1551,31 +1551,121 @@ auditPacketRouter.post(
       if (buf.length >= 8 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'png';
       return null;
     };
-    /** Merge a stored document (PDF or image) into the combined file. */
-    const addStoredDoc = async (s3Key: string | null): Promise<boolean> => {
+    // Text heuristic — reproduce plain-text uploads (txt/csv/eml…) verbatim
+    // instead of hiding behind an exhibit page. NUL bytes = binary.
+    const looksLikeText = (buf: Buffer): boolean => {
+      const sample = buf.subarray(0, 4096);
+      return sample.length > 0 && !sample.includes(0);
+    };
+    let convertedDocs = 0;
+    interface DocLabel {
+      worker: string;
+      kindLabel: string;
+      filename: string;
+    }
+    /** Letterheaded stand-in page — the floor that guarantees EVERY stored
+     *  document has a presence in the combined file, even when the bytes
+     *  themselves cannot be reproduced. */
+    const exhibitPage = async (label: DocLabel, note: string): Promise<void> => {
+      const pdf = new ReportPdf({
+        title: `Document Exhibit — ${label.kindLabel}`,
+        facts: facts(),
+        reference: refId,
+        confidentialityNote,
+      });
+      pdf.kv([
+        { label: 'Worker', value: label.worker },
+        { label: 'Document', value: label.kindLabel },
+        { label: 'File on record', value: label.filename },
+      ]);
+      pdf.para(note);
+      await addPdf(await pdf.render());
+    };
+    /** Merge a stored document into the combined file — every document
+     *  appears, via the strongest applicable rung:
+     *  PDF pages → native image plate → sharp-converted image plate →
+     *  verbatim text reproduction → labeled exhibit page. */
+    const addStoredDoc = async (s3Key: string | null, label: DocLabel): Promise<void> => {
       if (!s3Key) {
         missingBlobs += 1;
-        return false;
+        await exhibitPage(
+          label,
+          'No stored file is attached to this record in document storage. The record above identifies the document; contact the compliance administrator for the original.',
+        );
+        return;
       }
       const blob = await blobStore.get(s3Key);
       if (!blob) {
         missingBlobs += 1;
-        return false;
+        await exhibitPage(
+          label,
+          'The stored file referenced by this record could not be retrieved from document storage at generation time. The record above identifies the document; the original remains referenced in the compliance system.',
+        );
+        return;
       }
+      const kind = sniff(blob);
       try {
-        const kind = sniff(blob);
-        if (kind === 'pdf') await addPdf(blob);
-        else if (kind === 'jpg' || kind === 'png') await addImagePage(blob, kind);
-        else {
-          notEmbeddable += 1;
-          return false;
+        if (kind === 'pdf') {
+          await addPdf(blob);
+          return;
         }
-        return true;
+        if (kind === 'jpg' || kind === 'png') {
+          await addImagePage(blob, kind);
+          return;
+        }
       } catch (err) {
-        console.warn('[audit-packet] counsel-pdf could not embed document', { s3Key, err });
-        notEmbeddable += 1;
-        return false;
+        console.warn('[audit-packet] counsel-pdf direct embed failed, converting', {
+          s3Key,
+          err,
+        });
       }
+      // Other image formats (WEBP, GIF, TIFF, HEIC where supported, …):
+      // convert to PNG and plate like any other image.
+      try {
+        const sharp = (await import('sharp')).default;
+        const png = await sharp(blob, { pages: 1 }).png().toBuffer();
+        await addImagePage(png, 'png');
+        convertedDocs += 1;
+        return;
+      } catch {
+        // Not an image sharp can decode — keep descending.
+      }
+      if (looksLikeText(blob)) {
+        try {
+          const text = blob.toString('utf8');
+          const capped =
+            text.length > 40_000
+              ? `${text.slice(0, 40_000)}\n… (truncated for reproduction; the full file is available on request)`
+              : text;
+          const pdf = new ReportPdf({
+            title: `Document Exhibit — ${label.kindLabel}`,
+            subtitle: `Full text of the stored file, reproduced verbatim from the compliance document vault.`,
+            facts: facts(),
+            reference: refId,
+            confidentialityNote,
+          });
+          pdf.kv([
+            { label: 'Worker', value: label.worker },
+            { label: 'File on record', value: label.filename },
+          ]);
+          pdf.heading('Document content');
+          for (const paragraph of capped.split(/\n{2,}/)) {
+            const trimmed = paragraph.trim();
+            if (trimmed) pdf.para(trimmed.replace(/[ \t]+/g, ' '), { size: 8.5 });
+          }
+          await addPdf(await pdf.render());
+          convertedDocs += 1;
+          return;
+        } catch {
+          // fall through to the exhibit floor
+        }
+      }
+      notEmbeddable += 1;
+      const ext = (label.filename.split('.').pop() ?? 'unknown').toUpperCase();
+      await exhibitPage(
+        label,
+        `This document is stored in a file format (${ext}) that cannot be reproduced page-for-page inside a combined PDF. The record above identifies it; the original file is preserved unaltered in the compliance system and is available in its native format on request.`,
+      );
     };
 
     /* Section 1 — cover + worker list -------------------------------------- */
@@ -1728,7 +1818,12 @@ auditPacketRouter.post(
       }
       await addPdf(await pdf.render());
       for (const d of docs) {
-        await addStoredDoc(d.s3Key);
+        await addStoredDoc(d.s3Key, {
+          worker: `${a.lastName}, ${a.firstName}`,
+          kindLabel:
+            (d.i9DocTitle ?? d.kind.replace(/_/g, ' ')) + (d.side ? ` (${d.side})` : ''),
+          filename: d.filename,
+        });
       }
     }
 
@@ -1841,7 +1936,11 @@ auditPacketRouter.post(
       ]);
       await addPdf(await pdf.render());
       for (const d of p.evidence) {
-        await addStoredDoc(d.s3Key);
+        await addStoredDoc(d.s3Key, {
+          worker,
+          kindLabel: 'Payment evidence',
+          filename: d.filename,
+        });
       }
     }
 
@@ -1958,7 +2057,11 @@ auditPacketRouter.post(
       select: { associateId: true, filename: true, s3Key: true },
     });
     for (const d of bgDocs) {
-      await addStoredDoc(d.s3Key);
+      await addStoredDoc(d.s3Key, {
+        worker: nameById.get(d.associateId) ?? d.associateId,
+        kindLabel: 'Background check result',
+        filename: d.filename,
+      });
     }
 
     /* Closing integrity page ------------------------------------------------- */
@@ -1970,10 +2073,19 @@ auditPacketRouter.post(
         confidentialityNote,
       });
       pdf.para(
-        missingBlobs + notEmbeddable > 0
-          ? `${missingBlobs + notEmbeddable} referenced document file(s) could not be reproduced in this combined document (unavailable in storage or in a non-reproducible file format); their records still appear in the relevant registers, and the files are available on request.`
-          : 'Every referenced document file was retrieved from storage and reproduced in this combined document.',
+        'Every document referenced by the records in this response has a presence in this combined file: PDFs are merged page-for-page, images are reproduced as full-page plates (converted where necessary), text files are reproduced verbatim, and any file that cannot be rendered page-for-page is represented in place by a labeled Document Exhibit page identifying it.',
       );
+      if (convertedDocs > 0) {
+        pdf.para(
+          `${convertedDocs} document(s) were automatically converted from their stored format for reproduction here; the originals are preserved unaltered in the compliance system.`,
+          { muted: true, size: 8.5 },
+        );
+      }
+      if (missingBlobs + notEmbeddable > 0) {
+        pdf.para(
+          `${missingBlobs > 0 ? `${missingBlobs} document file(s) could not be retrieved from storage at generation time. ` : ''}${notEmbeddable > 0 ? `${notEmbeddable} document(s) are stored in formats that cannot be rendered page-for-page. ` : ''}Each is represented by a labeled Document Exhibit page in its section, and originals are available on request.`,
+        );
+      }
       pdf.para(
         `Generated ${generatedAt.toISOString()} by ${req.user!.email}. This generation event, including the stated business reason, is permanently recorded in the compliance audit log under reference ${refId}.`,
         { muted: true, size: 8.5 },
@@ -1990,6 +2102,7 @@ auditPacketRouter.post(
       paystubs: stubCount,
       missingBlobs,
       notEmbeddable,
+      convertedDocs,
     });
     const fileName = `audit-response-${safeName(client.name)}-${input.periodStart}-to-${input.periodEnd}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
