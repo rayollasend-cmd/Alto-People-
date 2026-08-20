@@ -333,7 +333,12 @@ export const integrationsApiKeyLimiter = rateLimit({
 // actor, and office NAT would otherwise pool unrelated admins together.
 
 const PII_REVEAL_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 30;
-const BULK_EXPORT_LIMIT = process.env.NODE_ENV === 'test' ? 100_000 : 5;
+// Env-overridable (BULK_PII_EXPORTS_PER_HOUR) so an audit-response day
+// can be accommodated from Railway config without a code change.
+const BULK_EXPORT_LIMIT =
+  process.env.NODE_ENV === 'test'
+    ? 100_000
+    : Number(process.env.BULK_PII_EXPORTS_PER_HOUR ?? '') || 5;
 
 const perActorKey = (req: Request) =>
   req.user?.id ? `user:${req.user.id}` : `ip:${req.ip ?? 'unknown'}`;
@@ -368,6 +373,10 @@ export const bulkPiiExportLimiter = rateLimit({
   limit: BULK_EXPORT_LIMIT,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
+  // A failed or aborted generation exported nothing — it must not consume
+  // the budget (a crashing packet build used to eat the whole hour's
+  // allowance in failed retries and then lock out the fixed attempt).
+  skipFailedRequests: true,
   keyGenerator: perActorKey,
   message: {
     error: {
