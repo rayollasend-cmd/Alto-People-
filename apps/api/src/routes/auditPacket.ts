@@ -1740,12 +1740,37 @@ auditPacketRouter.post(
     }
 
     /* Section 2 — Form I-9s + document copies ------------------------------- */
+    // Widened beyond the canonical I-9 kinds: associates uploaded identity
+    // and eligibility documents under the generic Documents bucket (OTHER)
+    // rather than the I-9 categories, and the audit response must include
+    // what was actually presented, wherever it was filed. Tax forms,
+    // agreements, and screening results stay out — they belong to other
+    // sections or aren't identity evidence.
+    const I9_KIND_LABEL: Record<string, string> = {
+      ID: 'Identity document',
+      SSN_CARD: 'Social Security card',
+      I9_SUPPORTING: 'I-9 supporting document',
+      J1_VISA: 'J-1 visa',
+      J1_DS2019: 'Form DS-2019',
+      I9_VERIFICATION_RESULT: 'I-9 verification result',
+      OTHER: 'Uploaded document',
+    };
     const i9Docs = await prisma.documentRecord.findMany({
       where: {
         associateId: { in: rosterIds },
         deletedAt: null,
         status: { notIn: ['REJECTED', 'EXPIRED'] },
-        kind: { in: ['ID', 'SSN_CARD', 'I9_SUPPORTING', 'J1_VISA', 'J1_DS2019'] },
+        kind: {
+          in: [
+            'ID',
+            'SSN_CARD',
+            'I9_SUPPORTING',
+            'J1_VISA',
+            'J1_DS2019',
+            'I9_VERIFICATION_RESULT',
+            'OTHER',
+          ],
+        },
       },
       select: {
         associateId: true,
@@ -1809,7 +1834,7 @@ auditPacketRouter.post(
             { label: 'Verified', width: 62 },
           ],
           docs.map((d) => [
-            d.kind.replace(/_/g, ' '),
+            I9_KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' '),
             d.i9DocTitle ?? d.filename,
             d.i9List ?? '—',
             d.side ?? '—',
@@ -1824,7 +1849,8 @@ auditPacketRouter.post(
         await addStoredDoc(d.s3Key, {
           worker: `${a.lastName}, ${a.firstName}`,
           kindLabel:
-            (d.i9DocTitle ?? d.kind.replace(/_/g, ' ')) + (d.side ? ` (${d.side})` : ''),
+            (d.i9DocTitle ?? I9_KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' ')) +
+            (d.side ? ` (${d.side})` : ''),
           filename: d.filename,
         });
       }
