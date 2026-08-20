@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Download,
   ExternalLink,
   ShieldCheck,
 } from 'lucide-react';
@@ -34,7 +35,8 @@ import {
   uploadAdminDocument,
 } from '@/lib/documentsApi';
 import { cn } from '@/lib/cn';
-import { fmtDate } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDate, ymdLocal } from '@/lib/format';
 import { statusTone } from '@/lib/status';
 import { toast } from 'sonner';
 import {
@@ -345,6 +347,48 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
           <option value="newest">Sort: newest hires first</option>
           <option value="due">Sort: deadline soonest</option>
         </Select>
+        <Button
+          variant="outline"
+          size="sm"
+          className="ml-auto"
+          disabled={visible.length === 0}
+          onClick={() =>
+            downloadCsv(`everify-list-${ymdLocal()}.csv`, [
+              [
+                'Last name',
+                'First name',
+                'Email',
+                'Client',
+                'Hire date',
+                'E-Verify case number',
+                'Status',
+                'Case opened',
+                'Case closed',
+                'Due by',
+                'Overdue',
+              ],
+              ...visible.map((r) => {
+                const [first, ...rest] = r.associateName.split(' ');
+                return [
+                  rest.join(' '),
+                  first,
+                  r.associateEmail,
+                  r.clientName ?? '',
+                  r.hireDate ?? '',
+                  r.caseNumber ?? 'NO CASE ON FILE',
+                  r.status?.replace(/_/g, ' ') ?? 'NOT RUN',
+                  r.caseOpenedAt ? r.caseOpenedAt.slice(0, 10) : '',
+                  r.closedAt ? r.closedAt.slice(0, 10) : '',
+                  r.dueBy ?? '',
+                  r.overdue ? 'YES' : '',
+                ];
+              }),
+            ])
+          }
+        >
+          <Download className="mr-2 h-3.5 w-3.5" />
+          Download CSV
+        </Button>
       </div>
 
       {rows === null ? (
