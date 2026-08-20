@@ -1527,6 +1527,10 @@ auditPacketRouter.post(
     const merged = await PDFDocument.create();
     let missingBlobs = 0;
     let notEmbeddable = 0;
+    // Breadcrumb per section — if generation dies (crash, OOM, kill),
+    // the last logged section names the culprit in the server log.
+    const logSection = (s: string): void =>
+      console.log('[audit-packet] counsel-pdf section', { ref: refId, section: s });
 
     const addPdf = async (buf: Buffer | Uint8Array): Promise<void> => {
       const src = await PDFDocument.load(
@@ -1536,15 +1540,27 @@ auditPacketRouter.post(
       const pages = await merged.copyPages(src, src.getPageIndices());
       for (const p of pages) merged.addPage(p);
     };
-    // Full-page image plate, US-Letter with a printable margin.
-    const addImagePage = async (buf: Buffer, kind: 'jpg' | 'png'): Promise<void> => {
-      const img = kind === 'png' ? await merged.embedPng(buf) : await merged.embedJpg(buf);
+    // Full-page image plate, US-Letter with a printable margin. EVERY
+    // image goes through sharp first: EXIF auto-rotate, downscale to
+    // document resolution, recompress as JPEG. Without this, a roster of
+    // full-resolution phone photos embeds hundreds of MB into the merge
+    // and the process dies mid-generation (reported as an aborted
+    // download). 2000px on the long edge ≈ 240 dpi on a letter page —
+    // crisper than a photocopy, ~30× smaller in memory.
+    const addImagePage = async (buf: Buffer): Promise<void> => {
+      const sharp = (await import('sharp')).default;
+      const { data, info } = await sharp(buf, { pages: 1 })
+        .rotate()
+        .resize({ width: 2000, height: 2000, fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 82 })
+        .toBuffer({ resolveWithObject: true });
+      const img = await merged.embedJpg(data);
       const pw = 612;
       const ph = 792;
       const margin = 54;
-      const scale = Math.min((pw - margin * 2) / img.width, (ph - margin * 2) / img.height, 1);
-      const w = img.width * scale;
-      const h = img.height * scale;
+      const scale = Math.min((pw - margin * 2) / info.width, (ph - margin * 2) / info.height, 1);
+      const w = info.width * scale;
+      const h = info.height * scale;
       const page = merged.addPage([pw, ph]);
       page.drawImage(img, { x: (pw - w) / 2, y: (ph - h) / 2, width: w, height: h });
     };
@@ -1607,28 +1623,22 @@ auditPacketRouter.post(
         return;
       }
       const kind = sniff(blob);
-      try {
-        if (kind === 'pdf') {
+      if (kind === 'pdf') {
+        try {
           await addPdf(blob);
           return;
+        } catch (err) {
+          console.warn('[audit-packet] counsel-pdf could not merge stored PDF', {
+            s3Key,
+            err,
+          });
         }
-        if (kind === 'jpg' || kind === 'png') {
-          await addImagePage(blob, kind);
-          return;
-        }
-      } catch (err) {
-        console.warn('[audit-packet] counsel-pdf direct embed failed, converting', {
-          s3Key,
-          err,
-        });
       }
-      // Other image formats (WEBP, GIF, TIFF, HEIC where supported, …):
-      // convert to PNG and plate like any other image.
+      // Any image sharp can decode (JPEG, PNG, WEBP, GIF, TIFF, …) —
+      // normalized and plated by addImagePage.
       try {
-        const sharp = (await import('sharp')).default;
-        const png = await sharp(blob, { pages: 1 }).png().toBuffer();
-        await addImagePage(png, 'png');
-        convertedDocs += 1;
+        await addImagePage(blob);
+        if (kind !== 'jpg' && kind !== 'png') convertedDocs += 1;
         return;
       } catch {
         // Not an image sharp can decode — keep descending.
@@ -1672,6 +1682,7 @@ auditPacketRouter.post(
     };
 
     /* Section 1 — cover + worker list -------------------------------------- */
+    logSection('1-worker-list');
     const workByAssociate = new Map<string, { first: Date; last: Date; netMinutes: number }>();
     for (const e of workedEntries) {
       if (!rosterSet.has(e.associateId)) continue;
@@ -1740,6 +1751,7 @@ auditPacketRouter.post(
     }
 
     /* Section 2 — Form I-9s + document copies ------------------------------- */
+    logSection('2-i9-documents');
     // Widened beyond the canonical I-9 kinds: associates uploaded identity
     // and eligibility documents under the generic Documents bucket (OTHER)
     // rather than the I-9 categories, and the audit response must include
@@ -1857,6 +1869,7 @@ auditPacketRouter.post(
     }
 
     /* Section 3 — E-Verify confirmation ------------------------------------- */
+    logSection('3-everify');
     {
       const pdf = new ReportPdf({
         title: 'Section 3 — Confirmation of E-Verify',
@@ -1886,6 +1899,7 @@ auditPacketRouter.post(
     }
 
     /* Section 4 — paycheck stubs -------------------------------------------- */
+    logSection('4-paystubs');
     const payItems = await prisma.payrollItem.findMany({
       where: {
         associateId: { in: rosterIds },
@@ -1974,6 +1988,7 @@ auditPacketRouter.post(
     }
 
     /* Section 5 — harassment / discrimination reporting process -------------- */
+    logSection('5-harassment-process');
     {
       const pdf = new ReportPdf({
         title: 'Section 5 — Harassment & Discrimination Reporting Process',
@@ -2045,6 +2060,7 @@ auditPacketRouter.post(
     }
 
     /* Section 6 — background checks ------------------------------------------ */
+    logSection('6-background-checks');
     {
       const pdf = new ReportPdf({
         title: 'Section 6 — Background Checks',
@@ -2120,6 +2136,7 @@ auditPacketRouter.post(
       await addPdf(await pdf.render());
     }
 
+    logSection('assemble-and-save');
     const bytes = await merged.save();
     console.log('[audit-packet] counsel-pdf complete', {
       ref: refId,
