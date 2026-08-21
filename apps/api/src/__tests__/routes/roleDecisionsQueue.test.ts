@@ -125,6 +125,49 @@ describe('GET /me/decisions', () => {
     expect(notif!.body).toContain('Nobody free to cover the kiosk.');
   });
 
+  it('one-tap quick actions: approve-all walk-ins clocks people in; reactivate revives a paused associate', async () => {
+    const client = await createClient('Walmart Destin');
+    const a1 = await createAssociate({ firstName: 'One', lastName: 'Waiting' });
+    const a2 = await createAssociate({ firstName: 'Two', lastName: 'Waiting' });
+    await prisma.clockInRequest.createMany({
+      data: [
+        { associateId: a1.id, clientId: client.id, requestedAt: new Date(Date.now() - 10 * 60_000) },
+        { associateId: a2.id, clientId: client.id, requestedAt: new Date(Date.now() - 5 * 60_000) },
+      ],
+    });
+    const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });
+    const agent = await loginAs(sup.email);
+
+    const quick = await agent
+      .post('/me/decisions/quick')
+      .send({ key: `walkins:pending:${client.id}` });
+    expect(quick.status).toBe(200);
+    expect(quick.body.summary).toContain('Approved 2');
+    // Both are genuinely on the clock, backdated to their punch.
+    const entries = await prisma.timeEntry.findMany({
+      where: { associateId: { in: [a1.id, a2.id] }, status: 'ACTIVE' },
+    });
+    expect(entries).toHaveLength(2);
+    expect(
+      await prisma.clockInRequest.count({ where: { status: 'PENDING', clientId: client.id } }),
+    ).toBe(0);
+
+    // Reactivate quick action (admin queue).
+    const paused = await createAssociate({ firstName: 'Long', lastName: 'Paused' });
+    await prisma.associate.update({
+      where: { id: paused.id },
+      data: { deactivatedAt: new Date(Date.now() - 50 * 86_400_000) },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const re = await hrAgent
+      .post('/me/decisions/quick')
+      .send({ key: `associate:paused:${paused.id}` });
+    expect(re.status).toBe(200);
+    const after = await prisma.associate.findUniqueOrThrow({ where: { id: paused.id } });
+    expect(after.deactivatedAt).toBeNull();
+  });
+
   it('one item, one room: Finance claim shows on the chairman queue; the thread is shared both ways', async () => {
     const client = await createClient('Walmart Destin');
     const stmt = await prisma.clientStatement.create({

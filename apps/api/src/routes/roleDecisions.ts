@@ -8,7 +8,8 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireAuth } from '../middleware/auth.js';
+import { invalidateUserCache, requireAuth } from '../middleware/auth.js';
+import { approveWalkInRequest } from '../lib/walkInApproval.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { notifyUser } from '../lib/notify.js';
 import { computeExecutiveDecisions } from '../lib/executiveDecisions.js';
@@ -356,6 +357,96 @@ roleDecisionsRouter.post('/decisions/act', requireAuth, async (req: Request, res
     'decisions.act',
   );
   res.json({ ok: true });
+});
+
+/* ===== One-tap resolutions =============================================== */
+//
+// The Tesla move: the fix lives on the item. Only SAFE bulk operations
+// get a quick action — each handler re-derives everything server-side
+// (never trusts the client's idea of what's pending) and reports what it
+// actually did.
+
+roleDecisionsRouter.post('/decisions/quick', requireAuth, async (req: Request, res: Response) => {
+  const key = z
+    .string()
+    .regex(/^[a-zA-Z0-9:_-]{3,160}$/)
+    .parse(req.body?.key);
+  const me = queueUser(req);
+  const decisions = await computeRoleDecisions(prisma, me);
+  const item = decisions.find((d) => d.key === key);
+  if (!item || !item.quickAction) {
+    throw new HttpError(404, 'not_found', 'No quick action available for that item.');
+  }
+
+  let summary = '';
+  if (key.startsWith('walkins:pending')) {
+    const clamp = me.clientId ? { clientId: me.clientId } : {};
+    const pending = await prisma.clockInRequest.findMany({
+      where: { status: 'PENDING', ...clamp },
+      select: { id: true },
+      take: 50,
+    });
+    let approved = 0;
+    let skipped = 0;
+    for (const r of pending) {
+      const result = await approveWalkInRequest(prisma, r.id, req.user!.id, req);
+      if (result.ok) approved += 1;
+      else skipped += 1;
+    }
+    summary = `Approved ${approved} walk-in${approved === 1 ? '' : 's'}${skipped > 0 ? `; ${skipped} needed manual review (too old or already clocked in)` : ''}.`;
+  } else if (key.startsWith('associate:paused:')) {
+    const associateId = z.string().uuid().parse(key.slice('associate:paused:'.length));
+    // Mirror of POST /org/associates/:id/reactivate — keep in lockstep.
+    const existing = await prisma.associate.findFirst({
+      where: { id: associateId, deletedAt: null, deactivatedAt: { not: null } },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    if (!existing) throw new HttpError(409, 'not_deactivated', 'Already reactivated.');
+    const enabledUserIds: string[] = [];
+    await prisma.$transaction(async (tx) => {
+      await tx.associate.update({
+        where: { id: associateId },
+        data: { deactivatedAt: null, deactivatedById: null, deactivationReason: null },
+      });
+      const users = await tx.user.findMany({
+        where: { associateId, deletedAt: null, status: 'DISABLED' },
+        select: { id: true },
+      });
+      if (users.length > 0) {
+        await tx.user.updateMany({
+          where: { id: { in: users.map((u) => u.id) } },
+          data: { status: 'ACTIVE' },
+        });
+        enabledUserIds.push(...users.map((u) => u.id));
+      }
+    });
+    for (const uid of enabledUserIds) invalidateUserCache(uid);
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'associate.reactivated',
+        entityType: 'Associate',
+        entityId: associateId,
+        metadata: { enabledLogins: enabledUserIds.length, via: 'quick_action' },
+      },
+      'decisions.quick',
+    );
+    summary = `${existing.firstName} ${existing.lastName} reactivated — login restored, back in the scheduling pool.`;
+  } else {
+    throw new HttpError(400, 'unsupported', 'No quick action handler for that item.');
+  }
+
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      action: 'decisions.quick_action',
+      entityType: 'DecisionClaim',
+      entityId: key,
+      metadata: { label: item.label, summary },
+    },
+    'decisions.quick',
+  );
+  res.json({ ok: true, summary });
 });
 
 /* ===== The item's room: thread + timeline + participants ================= */

@@ -36,6 +36,7 @@ interface RoleDecision {
   stakes: number | null;
   ageDays: number | null;
   linkUrl: string;
+  quickAction?: string;
   claimedBy: { id: string; name: string; photoUrl: string | null } | null;
   claimedByMe: boolean;
   assigned: boolean;
@@ -142,6 +143,22 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
       setBusyKey(null);
     }
   };
+  const quick = async (item: RoleDecision) => {
+    if (busyKey) return;
+    setBusyKey(`${item.key}:quick`);
+    try {
+      const r = await apiFetch<{ summary: string }>('/me/decisions/quick', {
+        method: 'POST',
+        body: { key: item.key },
+      });
+      toast.success(r.summary);
+      load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not run the quick action.');
+    } finally {
+      setBusyKey(null);
+    }
+  };
   const openPicker = (mode: 'assign' | 'tag', item: RoleDecision) => {
     ensureColleagues();
     setPickTarget('');
@@ -149,10 +166,19 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
     setPicker({ mode, item });
   };
 
-  // Supplement card: vanish quietly on failure or empty — every item has
-  // a primary surface with its own error handling.
+  // Supplement card: vanish quietly on failure — every item has a
+  // primary surface with its own error handling.
   if (error) return null;
-  if (rows !== null && rows.length === 0) return null;
+  // All systems nominal: a clean queue says so, calmly — silence you can
+  // trust beats an empty space you have to wonder about.
+  if (rows !== null && rows.length === 0) {
+    return (
+      <div className="flex items-center gap-2 rounded-md border border-success/20 bg-success/[0.06] px-3 py-2 text-sm text-silver">
+        <span className="h-2 w-2 shrink-0 rounded-full bg-success" aria-hidden="true" />
+        All systems nominal — nothing needs your decision.
+      </div>
+    );
+  }
 
   return (
     <Card className={rows?.some((d) => d.severity === 'critical') ? 'border-alert/40' : undefined}>
@@ -202,6 +228,16 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
                   <div className="text-xs text-silver">{d.detail}</div>
                 </button>
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  {d.quickAction && (
+                    <Button
+                      size="xs"
+                      loading={busyKey === `${d.key}:quick`}
+                      disabled={busyKey !== null}
+                      onClick={() => void quick(d)}
+                    >
+                      {d.quickAction}
+                    </Button>
+                  )}
                   {d.claimedBy && !d.claimedByMe ? (
                     <span
                       className="flex items-center gap-1.5 rounded-full bg-steel/20 py-0.5 pl-0.5 pr-2 text-2xs text-white"

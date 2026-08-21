@@ -280,7 +280,10 @@ function DecisionQueueCard({
       </CardHeader>
       <CardContent>
         {open.length === 0 && delegated.length === 0 ? (
-          <p className="text-sm text-silver">Nothing waiting on you — the queue is clear.</p>
+          <p className="flex items-center gap-2 text-sm text-silver">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-success" aria-hidden="true" />
+            All systems nominal — nothing needs your decision.
+          </p>
         ) : (
           <>
             <ul className="space-y-2.5">

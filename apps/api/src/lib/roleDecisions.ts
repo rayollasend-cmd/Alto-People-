@@ -8,6 +8,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { hasCapability, type Role } from '@alto-people/shared';
+import { computeNoShowRisk } from './noShowRisk.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
 
 const DAY_MS = 24 * 3600_000;
@@ -20,6 +21,9 @@ export interface RoleDecision {
   stakes: number | null;
   ageDays: number | null;
   linkUrl: string;
+  /** One-tap resolution, when a safe bulk fix exists — the button label
+   *  shown on the item (POST /me/decisions/quick executes it). */
+  quickAction?: string;
 }
 
 const SEVERITY_RANK = { critical: 0, high: 1, normal: 2 } as const;
@@ -69,6 +73,7 @@ export async function computeRoleDecisions(
         stakes: null,
         ageDays: null,
         linkUrl: '/approvals',
+        quickAction: 'Approve all',
       });
     }
     if (unapproved >= 10) {
@@ -103,11 +108,32 @@ export async function computeRoleDecisions(
         key: scoped('shifts:open-24h'),
         severity: 'high',
         label: `${openToday} shift${openToday === 1 ? '' : 's'} in the next 24h still unassigned`,
-        detail: 'Every unfilled shift is unbilled hours and a coverage gap on the floor.',
+        detail:
+          'The auto-fill engine already invited the eligible bench — these still need a hand.',
         stakes: null,
         ageDays: null,
         linkUrl: '/scheduling',
       });
+    }
+    // Prediction, not reaction: tomorrow's shifts held by high-risk
+    // attendees, flagged tonight (site-scoped callers only — org admins
+    // get the evening digest instead of a per-site row).
+    if (user.clientId) {
+      const risky = await computeNoShowRisk(prisma, now, user.clientId);
+      if (risky.length > 0) {
+        out.push({
+          key: scoped('risk:tomorrow'),
+          severity: 'high',
+          label: `${risky.length} of tomorrow's shifts ${risky.length === 1 ? 'is' : 'are'} held by high-risk attendees`,
+          detail: `History-based flag (${risky
+            .slice(0, 3)
+            .map((r) => r.holderName)
+            .join(', ')}) — worth a confirmation text tonight or a pre-arranged backup.`,
+          stakes: null,
+          ageDays: null,
+          linkUrl: '/scheduling',
+        });
+      }
     }
     if (claims > 0) {
       out.push({
@@ -235,6 +261,7 @@ export async function computeRoleDecisions(
         stakes: null,
         ageDays: days,
         linkUrl: `/people?associateId=${p.id}`,
+        quickAction: 'Reactivate',
       });
     }
   }
