@@ -172,7 +172,7 @@ const WEEK_TZ_FALLBACK = 'America/New_York';
 /** UTC instant of local midnight for a YYYY-MM-DD in `tz`, DST-correct.
  *  Classic two-pass correction: guess, measure the local rendering of the
  *  guess, shift by the difference. */
-function utcInstantOfLocalMidnight(ymdKey: string, tz: string): Date {
+export function utcInstantOfLocalMidnight(ymdKey: string, tz: string): Date {
   const [y, m, d] = ymdKey.split('-').map(Number);
   const target = Date.UTC(y, m - 1, d, 0, 0, 0);
   let guess = new Date(target);
@@ -202,7 +202,7 @@ function utcInstantOfLocalMidnight(ymdKey: string, tz: string): Date {
 
 /** YYYY-MM-DD of the instant in the org zone, without importing
  *  timezone.ts (kept dependency-free; en-CA renders ISO order). */
-function orgDateKey(d: Date): string {
+export function orgDateKey(d: Date): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: WEEK_TZ_FALLBACK,
     year: 'numeric',

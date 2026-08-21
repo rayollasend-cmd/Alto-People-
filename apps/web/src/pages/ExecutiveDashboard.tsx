@@ -129,6 +129,51 @@ interface ProspectsResponse {
   }>;
 }
 
+interface ExecBriefing {
+  generatedAt: string;
+  today: {
+    dateKey: string;
+    shiftsTotal: number;
+    shiftsAssigned: number;
+    shiftsOpen: number;
+    openShifts: Array<{
+      id: string;
+      clientName: string;
+      locationName: string | null;
+      position: string;
+      startsAt: string;
+    }>;
+    estBilledToday: number;
+    incidents: Array<{ kind: string; associateName: string; clientName: string | null }>;
+  };
+  decisions: Array<{ kind: string; label: string; detail: string; linkUrl: string }>;
+  clientHealth: Array<{
+    clientId: string;
+    clientName: string;
+    score: number;
+    band: 'green' | 'amber' | 'red';
+    fillRatePct: number | null;
+    fillDeltaPct: number | null;
+    reasons: string[];
+  }>;
+  capacity: {
+    bench: number;
+    funnel: { inFlight: number; approved30d: number };
+    j1Active: number;
+    j1Cliff: Array<{ month: string; count: number }>;
+  };
+  people: {
+    topPerformers: Array<{ id: string; name: string; photoUrl: string | null; hours: number }>;
+    anniversaries: Array<{
+      id: string;
+      name: string;
+      photoUrl: string | null;
+      years: number;
+      date: string;
+    }>;
+  };
+}
+
 const ATTENDANCE_LABEL: Record<string, string> = {
   LATE: 'Late arrivals',
   EARLY_OUT: 'Left early',
@@ -360,6 +405,7 @@ export function ExecutiveDashboard() {
   const [recv, setRecv] = useState<Receivables | null>(null);
   const [targets, setTargets] = useState<TargetsResponse | null>(null);
   const [prospects, setProspects] = useState<ProspectsResponse | null>(null);
+  const [brief, setBrief] = useState<ExecBriefing | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [packBusy, setPackBusy] = useState(false);
 
@@ -377,6 +423,7 @@ export function ExecutiveDashboard() {
     apiFetch<ProspectsResponse>('/executive/prospects')
       .then(setProspects)
       .catch(() => setProspects(null));
+    apiFetch<ExecBriefing>('/executive/briefing').then(setBrief).catch(() => setBrief(null));
   }, []);
   useEffect(() => {
     load();
@@ -490,6 +537,94 @@ export function ExecutiveDashboard() {
             ))}
           </div>
         </>
+      )}
+
+      {/* The 6:45am read — today's exposure + the chairman's queue. */}
+      {brief && (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <Card className={brief.today.shiftsOpen > 0 ? 'border-warning/40' : undefined}>
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">Today</CardTitle>
+                <span className="text-2xs text-silver/70">
+                  est. {fmtMoney(brief.today.estBilledToday)} billed
+                </span>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <p className="text-white">
+                {brief.today.shiftsTotal === 0 ? (
+                  'No shifts published today.'
+                ) : (
+                  <>
+                    {brief.today.shiftsAssigned} of {brief.today.shiftsTotal} shifts covered
+                    {brief.today.shiftsOpen > 0 ? (
+                      <span className="text-warning">
+                        {' '}
+                        — {brief.today.shiftsOpen} still open
+                      </span>
+                    ) : (
+                      <span className="text-success"> — fully staffed</span>
+                    )}
+                  </>
+                )}
+              </p>
+              {brief.today.openShifts.length > 0 && (
+                <ul className="space-y-1 text-xs text-silver">
+                  {brief.today.openShifts.map((s) => (
+                    <li key={s.id}>
+                      <Link to="/scheduling" className="hover:text-gold">
+                        {new Date(s.startsAt).toLocaleTimeString('en-US', {
+                          hour: 'numeric',
+                          minute: '2-digit',
+                        })}{' '}
+                        · {s.clientName}
+                        {s.locationName ? ` — ${s.locationName}` : ''} · {s.position}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="text-xs text-silver">
+                {brief.today.incidents.length === 0
+                  ? 'Last 24h: no unexcused attendance events.'
+                  : `Last 24h: ${brief.today.incidents
+                      .slice(0, 4)
+                      .map(
+                        (i) =>
+                          `${i.associateName} (${i.kind.toLowerCase().replace(/_/g, ' ')}${i.clientName ? `, ${i.clientName}` : ''})`,
+                      )
+                      .join(' · ')}`}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Needs your decision</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {brief.decisions.length === 0 ? (
+                <p className="text-sm text-silver">
+                  Nothing waiting on you — the queue is clear.
+                </p>
+              ) : (
+                <ul className="divide-y divide-navy-secondary/60">
+                  {brief.decisions.slice(0, 5).map((d, i) => (
+                    <li key={`${d.kind}-${i}`} className="py-2">
+                      <Link to={d.linkUrl} className="group block">
+                        <div className="text-sm text-white group-hover:text-gold">
+                          {d.label}
+                        </div>
+                        <div className="text-xs text-silver">{d.detail}</div>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {summary && (
@@ -887,6 +1022,211 @@ export function ExecutiveDashboard() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Client health + capacity & the J-1 cliff. */}
+          {brief && (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Client health</CardTitle>
+                  <p className="text-xs text-silver">
+                    Fill trend, reliability, and payment behavior over the last 4 weeks —
+                    the renewal-risk radar.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  {brief.clientHealth.length === 0 ? (
+                    <p className="text-sm text-silver">No client activity in the window.</p>
+                  ) : (
+                    <ul className="space-y-3">
+                      {brief.clientHealth.map((c) => (
+                        <li key={c.clientId}>
+                          <div className="flex items-center justify-between text-sm">
+                            <Link
+                              to={`/clients/${c.clientId}`}
+                              className="min-w-0 truncate text-white hover:text-gold"
+                            >
+                              {c.clientName}
+                            </Link>
+                            <span className="flex items-center gap-2">
+                              {c.fillRatePct !== null && (
+                                <span className="text-xs tabular-nums text-silver">
+                                  fill {c.fillRatePct.toFixed(0)}%
+                                  {c.fillDeltaPct !== null && c.fillDeltaPct !== 0 && (
+                                    <span
+                                      className={
+                                        c.fillDeltaPct > 0 ? 'text-success' : 'text-alert'
+                                      }
+                                    >
+                                      {' '}
+                                      ({c.fillDeltaPct > 0 ? '+' : ''}
+                                      {c.fillDeltaPct.toFixed(0)})
+                                    </span>
+                                  )}
+                                </span>
+                              )}
+                              <span
+                                className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums ${
+                                  c.band === 'green'
+                                    ? 'bg-success/15 text-success'
+                                    : c.band === 'amber'
+                                      ? 'bg-warning/15 text-warning'
+                                      : 'bg-alert/15 text-alert'
+                                }`}
+                              >
+                                {c.score}
+                              </span>
+                            </span>
+                          </div>
+                          <p className="mt-0.5 text-xs text-silver/80">
+                            {c.reasons.join(' · ')}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Capacity & the J-1 cliff</CardTitle>
+                  <p className="text-xs text-silver">
+                    Can you say yes to growth — and when does the seasonal workforce
+                    roll off?
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div className="rounded-md bg-navy-secondary/50 p-2">
+                      <div className="text-lg font-semibold tabular-nums text-white">
+                        {brief.capacity.bench}
+                      </div>
+                      <div className="text-2xs text-silver/70">on the bench</div>
+                    </div>
+                    <div className="rounded-md bg-navy-secondary/50 p-2">
+                      <div className="text-lg font-semibold tabular-nums text-white">
+                        {brief.capacity.funnel.inFlight}
+                      </div>
+                      <div className="text-2xs text-silver/70">
+                        onboarding · {brief.capacity.funnel.approved30d} approved/30d
+                      </div>
+                    </div>
+                    <div className="rounded-md bg-navy-secondary/50 p-2">
+                      <div className="text-lg font-semibold tabular-nums text-white">
+                        {brief.capacity.j1Active}
+                      </div>
+                      <div className="text-2xs text-silver/70">J-1 associates</div>
+                    </div>
+                  </div>
+                  {brief.capacity.j1Cliff.length > 0 ? (
+                    <div>
+                      <div className="mb-1 text-xs uppercase tracking-wider text-silver/70">
+                        Visa / DS-2019 expirations — next 120 days
+                      </div>
+                      <ul className="space-y-1.5">
+                        {brief.capacity.j1Cliff.map((m) => {
+                          const max = Math.max(
+                            ...brief.capacity.j1Cliff.map((x) => x.count),
+                          );
+                          return (
+                            <li key={m.month} className="flex items-center gap-2 text-xs">
+                              <span className="w-14 shrink-0 tabular-nums text-silver">
+                                {m.month}
+                              </span>
+                              <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-navy-secondary/70">
+                                <div
+                                  className={`h-full rounded-full ${m.count >= Math.max(3, brief.capacity.j1Active * 0.25) ? 'bg-alert' : 'bg-warning'}`}
+                                  style={{ width: `${(m.count / max) * 100}%` }}
+                                />
+                              </div>
+                              <span className="w-6 shrink-0 text-right tabular-nums text-white">
+                                {m.count}
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      <p className="mt-1 text-2xs text-silver/70">
+                        Plan replacements before the tallest bar hits.
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-silver">
+                      No J-1 documents expiring in the next 120 days.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* People worth knowing this week. */}
+          {brief &&
+            (brief.people.topPerformers.length > 0 ||
+              brief.people.anniversaries.length > 0) && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">People to know this week</CardTitle>
+                </CardHeader>
+                <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <div className="mb-2 text-xs uppercase tracking-wider text-silver/70">
+                      Hardest workers — last 4 weeks, clean record
+                    </div>
+                    {brief.people.topPerformers.length === 0 ? (
+                      <p className="text-sm text-silver">No qualifying hours yet.</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {brief.people.topPerformers.map((p, i) => (
+                          <li key={p.id} className="flex items-center gap-3">
+                            <span className="w-4 text-right text-xs tabular-nums text-gold">
+                              {i + 1}
+                            </span>
+                            <Avatar src={p.photoUrl} name={p.name} size="sm" />
+                            <Link
+                              to={`/people?associateId=${p.id}`}
+                              className="min-w-0 flex-1 truncate text-sm text-white hover:text-gold"
+                            >
+                              {p.name}
+                            </Link>
+                            <span className="text-xs tabular-nums text-silver">
+                              {p.hours.toFixed(1)}h
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div>
+                    <div className="mb-2 text-xs uppercase tracking-wider text-silver/70">
+                      Work anniversaries — say congratulations
+                    </div>
+                    {brief.people.anniversaries.length === 0 ? (
+                      <p className="text-sm text-silver">None in the next 7 days.</p>
+                    ) : (
+                      <ul className="space-y-2">
+                        {brief.people.anniversaries.map((p) => (
+                          <li key={p.id} className="flex items-center gap-3">
+                            <Avatar src={p.photoUrl} name={p.name} size="sm" />
+                            <Link
+                              to={`/people?associateId=${p.id}`}
+                              className="min-w-0 flex-1 truncate text-sm text-white hover:text-gold"
+                            >
+                              {p.name}
+                            </Link>
+                            <span className="text-xs tabular-nums text-silver">
+                              {p.years} {p.years === 1 ? 'year' : 'years'} ·{' '}
+                              {fmtDate(p.date)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
 
           {/* What-if rate model on real hours. */}
           <RateCalculator rates={summary.rates} trend={summary.trend} />

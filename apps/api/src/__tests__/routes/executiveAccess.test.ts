@@ -186,6 +186,22 @@ describe('executive read unlocks', () => {
     expect(summary.body.turnover.costPerSeparation).toBeGreaterThan(0);
     expect(Array.isArray(summary.body.league)).toBe(true);
     expect(Array.isArray(summary.body.concentration)).toBe(true);
+
+    // The morning brief answers all five questions with a sane shape,
+    // and surfaces the verbal prospect in the decision queue.
+    await hrAgent.patch(`/executive/prospects/${created.body.id}`).send({ stage: 'VERBAL' });
+    const brief = await execAgent.get('/executive/briefing');
+    expect(brief.status).toBe(200);
+    expect(brief.body.today.shiftsTotal).toBeDefined();
+    expect(Array.isArray(brief.body.clientHealth)).toBe(true);
+    expect(brief.body.capacity.bench).toBeDefined();
+    expect(Array.isArray(brief.body.people.topPerformers)).toBe(true);
+    expect(
+      brief.body.decisions.some(
+        (d: { kind: string; label: string }) =>
+          d.kind === 'pipeline' && d.label.includes('Target PCB'),
+      ),
+    ).toBe(true);
   });
 
   it('a client-scoped supervisor cannot read the executive surfaces', async () => {

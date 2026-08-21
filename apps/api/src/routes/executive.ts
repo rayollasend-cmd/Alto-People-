@@ -6,6 +6,7 @@ import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { formatRef } from '../lib/emailTemplates.js';
 import { ReportPdf } from '../lib/reportPdf.js';
+import { computeExecutiveBriefing } from '../lib/executiveBriefing.js';
 import { computeExecutiveSummary } from '../lib/executiveSummary.js';
 import { startOfWeekUTC } from '../lib/timeAnomalies.js';
 import { env } from '../config/env.js';
@@ -28,6 +29,13 @@ const EXEC = requireCapability('view:executive');
 
 executiveRouter.get('/summary', EXEC, async (_req: Request, res: Response) => {
   res.json(await computeExecutiveSummary(prisma));
+});
+
+// The morning brief: today's coverage + overnight incidents, the
+// chairman's decision queue, client health scores, capacity + the J-1
+// cliff, and the people worth knowing this week.
+executiveRouter.get('/briefing', EXEC, async (_req: Request, res: Response) => {
+  res.json(await computeExecutiveBriefing(prisma));
 });
 
 /* ===== Receivables — the cash view ======================================= */
