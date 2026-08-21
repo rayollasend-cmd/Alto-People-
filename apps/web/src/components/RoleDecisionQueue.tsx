@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { fmtMoney, ymdLocal } from '@/lib/format';
 import { DecisionRoom } from '@/components/DecisionRoom';
+import { PLAN_CHANGED_EVENT } from '@/components/MyPlanCard';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -156,12 +157,9 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
     if (typed === null) return;
     void act(item.key, 'escalate', { note: typed.trim() || undefined });
   };
-  const postpone = (item: RoleDecision) => {
-    const typed = window.prompt('Postpone for how many days? (1–14)', '1');
-    if (typed === null) return;
-    const days = Math.min(14, Math.max(1, Math.round(Number(typed)) || 1));
-    void act(item.key, 'postpone', { days });
-  };
+  // Postponing is a TAP, never typing — the dialog offers the horizons.
+  const [postponeItem, setPostponeItem] = useState<RoleDecision | null>(null);
+  const postpone = (item: RoleDecision) => setPostponeItem(item);
   const addToPlan = async (item: RoleDecision) => {
     if (busyKey) return;
     setBusyKey(`${item.key}:plan`);
@@ -170,6 +168,8 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
         method: 'POST',
         body: { day: ymdLocal(), title: item.label, decisionKey: item.key, linkUrl: item.linkUrl },
       });
+      // Instant sync — the plan card on this dashboard re-reads NOW.
+      window.dispatchEvent(new CustomEvent(PLAN_CHANGED_EVENT));
       toast.success('Added to your plan for today.');
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not add to your plan.');
@@ -462,6 +462,42 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
             ) : undefined
           }
         />
+
+        <Dialog open={postponeItem !== null} onOpenChange={(o) => !o && setPostponeItem(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Postpone</DialogTitle>
+              <DialogDescription>
+                {postponeItem?.label} — it disappears from every teammate&apos;s queue and
+                walks back in on its own.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-wrap gap-2">
+              {(
+                [
+                  ['Tomorrow', 1],
+                  ['3 days', 3],
+                  ['Next week', 7],
+                  ['Two weeks', 14],
+                ] as const
+              ).map(([label, days]) => (
+                <Button
+                  key={days}
+                  size="sm"
+                  variant="outline"
+                  disabled={busyKey !== null}
+                  onClick={() => {
+                    const item = postponeItem;
+                    setPostponeItem(null);
+                    if (item) void act(item.key, 'postpone', { days });
+                  }}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={picker !== null} onOpenChange={(o) => !o && setPicker(null)}>
           <DialogContent>
