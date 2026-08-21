@@ -137,15 +137,16 @@ interface ExecBriefing {
     shiftsAssigned: number;
     shiftsOpen: number;
     openShifts: Array<{
-      id: string;
       clientName: string;
       locationName: string | null;
       position: string;
       startsAt: string;
+      count: number;
     }>;
     estBilledToday: number;
     incidents: Array<{ kind: string; associateName: string; clientName: string | null }>;
   };
+  outlook: Array<{ dateKey: string; published: number; assigned: number; open: number }>;
   decisions: Array<{ kind: string; label: string; detail: string; linkUrl: string }>;
   clientHealth: Array<{
     clientId: string;
@@ -544,58 +545,180 @@ export function ExecutiveDashboard() {
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <Card className={brief.today.shiftsOpen > 0 ? 'border-warning/40' : undefined}>
             <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-base">Today</CardTitle>
-                <span className="text-2xs text-silver/70">
-                  est. {fmtMoney(brief.today.estBilledToday)} billed
-                </span>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base">Today</CardTitle>
+                  <p className="text-2xs text-silver/70">
+                    {new Date().toLocaleDateString('en-US', {
+                      weekday: 'long',
+                      month: 'long',
+                      day: 'numeric',
+                    })}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <div className="text-xl font-semibold tabular-nums text-white">
+                    {fmtMoney(brief.today.estBilledToday)}
+                  </div>
+                  <div className="text-2xs text-silver/70">est. billed today</div>
+                </div>
               </div>
             </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <p className="text-white">
-                {brief.today.shiftsTotal === 0 ? (
-                  'No shifts published today.'
-                ) : (
-                  <>
-                    {brief.today.shiftsAssigned} of {brief.today.shiftsTotal} shifts covered
-                    {brief.today.shiftsOpen > 0 ? (
-                      <span className="text-warning">
-                        {' '}
-                        — {brief.today.shiftsOpen} still open
-                      </span>
-                    ) : (
-                      <span className="text-success"> — fully staffed</span>
-                    )}
-                  </>
-                )}
-              </p>
+            <CardContent className="space-y-3">
+              {/* Coverage gauge. */}
+              {brief.today.shiftsTotal === 0 ? (
+                <p className="text-sm text-silver">No shifts published today.</p>
+              ) : (
+                <div>
+                  <div className="flex items-baseline justify-between">
+                    <span
+                      className={`text-3xl font-semibold tabular-nums ${brief.today.shiftsOpen === 0 ? 'text-success' : 'text-white'}`}
+                    >
+                      {Math.round(
+                        (brief.today.shiftsAssigned / brief.today.shiftsTotal) * 100,
+                      )}
+                      %
+                    </span>
+                    <span className="text-xs tabular-nums text-silver">
+                      {brief.today.shiftsAssigned}/{brief.today.shiftsTotal} covered
+                      {brief.today.shiftsOpen > 0 && (
+                        <span className="font-medium text-warning">
+                          {' '}
+                          · {brief.today.shiftsOpen} open
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-navy-secondary/70">
+                    <div
+                      className={`h-full rounded-full ${brief.today.shiftsOpen === 0 ? 'bg-success' : 'bg-gold'}`}
+                      style={{
+                        width: `${(brief.today.shiftsAssigned / brief.today.shiftsTotal) * 100}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Open shifts, grouped, with urgency. */}
               {brief.today.openShifts.length > 0 && (
-                <ul className="space-y-1 text-xs text-silver">
-                  {brief.today.openShifts.map((s) => (
-                    <li key={s.id}>
-                      <Link to="/scheduling" className="hover:text-gold">
-                        {new Date(s.startsAt).toLocaleTimeString('en-US', {
-                          hour: 'numeric',
-                          minute: '2-digit',
-                        })}{' '}
-                        · {s.clientName}
-                        {s.locationName ? ` — ${s.locationName}` : ''} · {s.position}
-                      </Link>
-                    </li>
-                  ))}
+                <ul className="space-y-1.5">
+                  {brief.today.openShifts.map((s, i) => {
+                    const start = new Date(s.startsAt);
+                    const hoursOut = (start.getTime() - Date.now()) / 3_600_000;
+                    const urgent = hoursOut >= 0 && hoursOut < 3;
+                    const past = hoursOut < 0;
+                    return (
+                      <li key={i}>
+                        <Link
+                          to="/scheduling"
+                          className="group flex items-center justify-between gap-2 text-sm"
+                        >
+                          <span className="min-w-0 truncate text-white group-hover:text-gold">
+                            {s.count > 1 && (
+                              <span className="font-semibold text-warning">{s.count}× </span>
+                            )}
+                            {s.position}
+                            <span className="text-silver">
+                              {' '}
+                              · {s.locationName ?? s.clientName}
+                            </span>
+                          </span>
+                          <span
+                            className={`shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium tabular-nums ${
+                              urgent || past
+                                ? 'bg-alert/15 text-alert'
+                                : 'bg-navy-secondary/70 text-silver'
+                            }`}
+                          >
+                            {past
+                              ? 'started'
+                              : urgent
+                                ? `in ${Math.max(1, Math.round(hoursOut))}h`
+                                : start.toLocaleTimeString('en-US', {
+                                    hour: 'numeric',
+                                    minute: '2-digit',
+                                  })}
+                          </span>
+                        </Link>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
-              <p className="text-xs text-silver">
-                {brief.today.incidents.length === 0
-                  ? 'Last 24h: no unexcused attendance events.'
-                  : `Last 24h: ${brief.today.incidents
-                      .slice(0, 4)
-                      .map(
-                        (i) =>
-                          `${i.associateName} (${i.kind.toLowerCase().replace(/_/g, ' ')}${i.clientName ? `, ${i.clientName}` : ''})`,
-                      )
-                      .join(' · ')}`}
-              </p>
+
+              {/* The future: 6-day coverage outlook. */}
+              {brief.outlook.length > 0 && (
+                <div>
+                  <div className="mb-1 text-2xs uppercase tracking-wider text-silver/60">
+                    Next {brief.outlook.length} days
+                  </div>
+                  <div className="flex items-end gap-1.5">
+                    {brief.outlook.map((d) => {
+                      const pct =
+                        d.published > 0 ? Math.round((d.assigned / d.published) * 100) : null;
+                      const weekday = new Date(`${d.dateKey}T12:00:00Z`).toLocaleDateString(
+                        'en-US',
+                        { weekday: 'short', timeZone: 'UTC' },
+                      );
+                      return (
+                        <Link
+                          key={d.dateKey}
+                          to="/scheduling"
+                          className="group flex-1 text-center"
+                          title={`${d.dateKey}: ${d.assigned}/${d.published} covered${d.open ? `, ${d.open} open` : ''}`}
+                        >
+                          <div className="flex h-10 items-end overflow-hidden rounded bg-navy-secondary/50">
+                            <div
+                              className={`w-full ${pct === null ? 'bg-navy-secondary/50' : d.open > 0 ? 'bg-warning/80' : 'bg-success/70'}`}
+                              style={{ height: `${pct ?? 4}%` }}
+                            />
+                          </div>
+                          <div className="mt-0.5 text-2xs text-silver/70 group-hover:text-gold">
+                            {weekday}
+                          </div>
+                          <div
+                            className={`text-2xs tabular-nums ${d.open > 0 ? 'font-medium text-warning' : 'text-silver/50'}`}
+                          >
+                            {d.open > 0 ? `${d.open} open` : pct === null ? '—' : '✓'}
+                          </div>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Overnight incidents. */}
+              {brief.today.incidents.length === 0 ? (
+                <p className="text-2xs text-silver/70">
+                  Last 24h: no unexcused attendance events.
+                </p>
+              ) : (
+                <div>
+                  <div className="mb-1 text-2xs uppercase tracking-wider text-silver/60">
+                    Last 24 hours
+                  </div>
+                  <ul className="space-y-0.5">
+                    {brief.today.incidents.slice(0, 4).map((inc, i) => (
+                      <li key={i} className="flex items-center justify-between text-xs">
+                        <span className="min-w-0 truncate text-white">{inc.associateName}</span>
+                        <span
+                          className={`shrink-0 ${inc.kind === 'NO_CALL_NO_SHOW' ? 'text-alert' : 'text-warning'}`}
+                        >
+                          {inc.kind.toLowerCase().replace(/_/g, ' ')}
+                          {inc.clientName ? ` · ${inc.clientName.replace(/^Walmart /, '')}` : ''}
+                        </span>
+                      </li>
+                    ))}
+                    {brief.today.incidents.length > 4 && (
+                      <li className="text-2xs text-silver/60">
+                        +{brief.today.incidents.length - 4} more — see Compliance
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              )}
             </CardContent>
           </Card>
 

@@ -26,17 +26,26 @@ export interface ExecutiveBriefing {
     shiftsTotal: number;
     shiftsAssigned: number;
     shiftsOpen: number;
+    /** Open shifts GROUPED by (client, site, position, start) — "3× GM
+     *  Morning @ Pier Park, 6:00 AM", not three identical lines. */
     openShifts: Array<{
-      id: string;
       clientName: string;
       locationName: string | null;
       position: string;
       startsAt: string;
+      count: number;
     }>;
     estBilledToday: number;
     /** Unexcused attendance events from the last 24h — the overnight read. */
     incidents: Array<{ kind: string; associateName: string; clientName: string | null }>;
   };
+  /** The next 7 org days' coverage — the future, per day. */
+  outlook: Array<{
+    dateKey: string;
+    published: number;
+    assigned: number;
+    open: number;
+  }>;
   decisions: Array<{ kind: string; label: string; detail: string; linkUrl: string }>;
   clientHealth: Array<{
     clientId: string;
@@ -76,9 +85,15 @@ export async function computeExecutiveBriefing(
 ): Promise<ExecutiveBriefing> {
   const todayKey = orgDateKey(now);
   const dayStart = utcInstantOfLocalMidnight(todayKey, ORG_TZ);
-  const nextKey = new Date(`${todayKey}T12:00:00Z`);
-  nextKey.setUTCDate(nextKey.getUTCDate() + 1);
-  const dayEnd = utcInstantOfLocalMidnight(nextKey.toISOString().slice(0, 10), ORG_TZ);
+  // Org-local midnights for today+1 … today+7 — day boundaries for the
+  // end of today and each outlook day.
+  const dayBounds: Date[] = [dayStart];
+  for (let i = 1; i <= 7; i++) {
+    const k = new Date(`${todayKey}T12:00:00Z`);
+    k.setUTCDate(k.getUTCDate() + i);
+    dayBounds.push(utcInstantOfLocalMidnight(k.toISOString().slice(0, 10), ORG_TZ));
+  }
+  const dayEnd = dayBounds[1];
 
   const thisWeekStart = startOfWeekUTC(now);
   const w = [thisWeekStart];
@@ -90,6 +105,7 @@ export async function computeExecutiveBriefing(
 
   const [
     todayShifts,
+    outlookShifts,
     incidents,
     unpaidOld,
     staleDrafts,
@@ -123,6 +139,15 @@ export async function computeExecutiveBriefing(
         client: { select: { name: true } },
       },
       take: 2_000,
+    }),
+    prisma.shift.findMany({
+      where: {
+        publishedAt: { not: null },
+        status: { notIn: ['CANCELLED', 'DRAFT'] },
+        startsAt: { gte: dayEnd, lt: dayBounds[7] },
+      },
+      select: { startsAt: true, assignedAssociateId: true },
+      take: 10_000,
     }),
     prisma.attendanceEvent.findMany({
       where: { occurredOn: { gte: new Date(now.getTime() - DAY_MS) }, excusedAt: null },
@@ -471,16 +496,34 @@ export async function computeExecutiveBriefing(
       shiftsTotal: todayShifts.length,
       shiftsAssigned: assignedToday.length,
       shiftsOpen: openToday.length,
-      openShifts: openToday
-        .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime())
-        .slice(0, 5)
-        .map((s) => ({
-          id: s.id,
-          clientName: s.client.name,
-          locationName: s.location ?? null,
-          position: s.position,
-          startsAt: s.startsAt.toISOString(),
-        })),
+      openShifts: (() => {
+        const grouped = new Map<
+          string,
+          {
+            clientName: string;
+            locationName: string | null;
+            position: string;
+            startsAt: string;
+            count: number;
+          }
+        >();
+        for (const s of openToday) {
+          const key = `${s.client.name}|${s.location ?? ''}|${s.position}|${s.startsAt.getTime()}`;
+          const g = grouped.get(key);
+          if (g) g.count += 1;
+          else
+            grouped.set(key, {
+              clientName: s.client.name,
+              locationName: s.location ?? null,
+              position: s.position,
+              startsAt: s.startsAt.toISOString(),
+              count: 1,
+            });
+        }
+        return [...grouped.values()]
+          .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+          .slice(0, 6);
+      })(),
       estBilledToday:
         Math.round((scheduledMinToday / 60) * env.DEFAULT_ASSOCIATE_BILL_RATE * 100) / 100,
       incidents: incidents.map((e) => ({
@@ -489,6 +532,19 @@ export async function computeExecutiveBriefing(
         clientName: e.clientId ? (clientNames.get(e.clientId) ?? null) : null,
       })),
     },
+    outlook: dayBounds.slice(1, 7).map((boundStart, i) => {
+      const boundEnd = dayBounds[i + 2] ?? new Date(boundStart.getTime() + 26 * 3600_000);
+      const days = outlookShifts.filter(
+        (s) => s.startsAt >= boundStart && s.startsAt < boundEnd,
+      );
+      const assigned = days.filter((s) => s.assignedAssociateId !== null).length;
+      return {
+        dateKey: orgDateKey(new Date(boundStart.getTime() + 12 * 3600_000)),
+        published: days.length,
+        assigned,
+        open: days.length - assigned,
+      };
+    }),
     decisions,
     clientHealth,
     capacity: {
