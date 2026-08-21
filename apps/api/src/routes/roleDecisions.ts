@@ -13,8 +13,10 @@ import { approveWalkInRequest } from '../lib/walkInApproval.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { notifyUser } from '../lib/notify.js';
 import { computeExecutiveDecisions } from '../lib/executiveDecisions.js';
+import { computeNoShowRisk } from '../lib/noShowRisk.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { computeRoleDecisions } from '../lib/roleDecisions.js';
+import { DEFAULT_TIMEZONE, formatTimeInZone } from '../lib/timezone.js';
 
 /**
  * The collaborative work layer under every dashboard:
@@ -103,11 +105,29 @@ async function resolveItemForUser(req: Request, key: string) {
   const me = queueUser(req);
   const decisions = await computeRoleDecisions(prisma, me);
   const own = decisions.find((d) => d.key === key);
-  if (own) return { label: own.label, detail: own.detail, linkUrl: own.linkUrl };
+  if (own) {
+    return {
+      label: own.label,
+      detail: own.detail,
+      linkUrl: own.linkUrl,
+      severity: own.severity as string | null,
+      stakes: own.stakes,
+      ageDays: own.ageDays,
+    };
+  }
   if (hasCapability(me.role, 'view:executive')) {
     const exec = await computeExecutiveDecisions(prisma);
     const item = exec.find((d) => d.key === key);
-    if (item) return { label: item.label, detail: item.detail, linkUrl: item.linkUrl };
+    if (item) {
+      return {
+        label: item.label,
+        detail: item.detail,
+        linkUrl: item.linkUrl,
+        severity: item.severity as string | null,
+        stakes: item.stakes,
+        ageDays: item.ageDays,
+      };
+    }
   }
   // The item may have RESOLVED while its room still holds history — allow
   // opening a room that has any trace (thread or claim), so links in old
@@ -116,8 +136,139 @@ async function resolveItemForUser(req: Request, key: string) {
     prisma.decisionComment.findFirst({ where: { key }, select: { id: true } }),
     prisma.decisionClaim.findUnique({ where: { key }, select: { id: true } }),
   ]);
-  if (comment || claim) return { label: key, detail: '', linkUrl: '/' };
+  if (comment || claim) {
+    return { label: key, detail: '', linkUrl: '/', severity: null, stakes: null, ageDays: null };
+  }
   return null;
+}
+
+/** NVIDIA move: the room pulls its own evidence — item-type-aware facts
+ *  computed server-side so nobody leaves the room to look things up. */
+async function computeItemFacts(
+  key: string,
+): Promise<{ facts: Array<{ label: string; value: string }>; list: string[] }> {
+  const facts: Array<{ label: string; value: string }> = [];
+  const list: string[] = [];
+  const money = (v: number) => `$${v.toFixed(2)}`;
+
+  if (key.startsWith('receivable:')) {
+    const id = key.slice('receivable:'.length);
+    const s = await prisma.clientStatement.findUnique({
+      where: { id },
+      select: {
+        number: true,
+        periodStart: true,
+        periodEnd: true,
+        finalizedAt: true,
+        snapshot: true,
+        clientId: true,
+        client: { select: { name: true } },
+      },
+    });
+    if (s) {
+      const amount =
+        (s.snapshot as { totals?: { amount?: number } } | null)?.totals?.amount ?? 0;
+      facts.push(
+        { label: 'Client', value: s.client.name },
+        { label: 'Statement', value: `#${s.number ?? '—'}` },
+        {
+          label: 'Period',
+          value: `${s.periodStart.toISOString().slice(0, 10)} → ${s.periodEnd.toISOString().slice(0, 10)}`,
+        },
+        { label: 'Amount', value: money(amount) },
+        {
+          label: 'Outstanding',
+          value: s.finalizedAt
+            ? `${Math.floor((Date.now() - s.finalizedAt.getTime()) / 86_400_000)} days`
+            : '—',
+        },
+      );
+      const paid = await prisma.clientStatement.findMany({
+        where: {
+          clientId: s.clientId,
+          status: 'FINAL',
+          paidAt: { not: null },
+          finalizedAt: { not: null },
+        },
+        select: { paidAt: true, finalizedAt: true },
+        take: 50,
+      });
+      if (paid.length > 0) {
+        const avg = Math.round(
+          paid.reduce(
+            (n, p) => n + (p.paidAt!.getTime() - p.finalizedAt!.getTime()) / 86_400_000,
+            0,
+          ) / paid.length,
+        );
+        facts.push({ label: 'This client usually pays in', value: `${avg} days` });
+      }
+    }
+  } else if (key.startsWith('walkins:pending')) {
+    const clientId = key.includes(':', 'walkins:pending'.length)
+      ? key.slice('walkins:pending:'.length)
+      : null;
+    const pending = await prisma.clockInRequest.findMany({
+      where: { status: 'PENDING', ...(clientId ? { clientId } : {}) },
+      select: {
+        requestedAt: true,
+        associate: { select: { firstName: true, lastName: true } },
+      },
+      orderBy: { requestedAt: 'asc' },
+      take: 8,
+    });
+    for (const p of pending) {
+      const mins = Math.round((Date.now() - p.requestedAt.getTime()) / 60_000);
+      list.push(`${p.associate.firstName} ${p.associate.lastName} — waiting ${mins} min`);
+    }
+  } else if (key.startsWith('associate:paused:')) {
+    const id = key.slice('associate:paused:'.length);
+    const a = await prisma.associate.findUnique({
+      where: { id },
+      select: { firstName: true, lastName: true, deactivatedAt: true, deactivationReason: true },
+    });
+    if (a) {
+      facts.push(
+        { label: 'Associate', value: `${a.firstName} ${a.lastName}` },
+        {
+          label: 'Paused since',
+          value: a.deactivatedAt ? a.deactivatedAt.toISOString().slice(0, 10) : '—',
+        },
+        ...(a.deactivationReason ? [{ label: 'Reason', value: a.deactivationReason }] : []),
+      );
+    }
+  } else if (key.startsWith('risk:tomorrow')) {
+    const clientId = key.includes(':', 'risk:tomorrow'.length)
+      ? key.slice('risk:tomorrow:'.length)
+      : null;
+    const risky = await computeNoShowRisk(prisma, new Date(), clientId);
+    for (const r of risky.slice(0, 8)) {
+      list.push(
+        `${formatTimeInZone(r.startsAt, DEFAULT_TIMEZONE)} ${r.position} — ${r.holderName} (${r.points} pts, 90d)`,
+      );
+    }
+  } else if (key.startsWith('shifts:open-24h')) {
+    const clientId = key.includes(':', 'shifts:open-24h'.length)
+      ? key.slice('shifts:open-24h:'.length)
+      : null;
+    const shifts = await prisma.shift.findMany({
+      where: {
+        publishedAt: { not: null },
+        status: 'OPEN',
+        assignedAssociateId: null,
+        startsAt: { gte: new Date(), lt: new Date(Date.now() + 24 * 3600_000) },
+        ...(clientId ? { clientId } : {}),
+      },
+      select: { position: true, startsAt: true, location: true, client: { select: { name: true } } },
+      orderBy: { startsAt: 'asc' },
+      take: 8,
+    });
+    for (const s of shifts) {
+      list.push(
+        `${formatTimeInZone(s.startsAt, DEFAULT_TIMEZONE)} ${s.position} — ${s.location ?? s.client.name}`,
+      );
+    }
+  }
+  return { facts, list };
 }
 
 /** The people this user can assign/tag: same-site operators for client-
@@ -153,14 +304,21 @@ roleDecisionsRouter.get('/colleagues', requireAuth, async (req: Request, res: Re
 
 roleDecisionsRouter.get('/decisions', requireAuth, async (req: Request, res: Response) => {
   const decisions = await computeRoleDecisions(prisma, queueUser(req));
-  const claims =
+  const [claims, nextSteps] =
     decisions.length === 0
-      ? []
-      : await prisma.decisionClaim.findMany({
-          where: { key: { in: decisions.map((d) => d.key) } },
-          include: { claimedBy: { select: CLAIMER_SELECT } },
-        });
+      ? [[], []]
+      : await Promise.all([
+          prisma.decisionClaim.findMany({
+            where: { key: { in: decisions.map((d) => d.key) } },
+            include: { claimedBy: { select: CLAIMER_SELECT } },
+          }),
+          prisma.decisionNextStep.findMany({
+            where: { key: { in: decisions.map((d) => d.key) } },
+            include: { owner: { select: CLAIMER_SELECT } },
+          }),
+        ]);
   const byKey = new Map(claims.map((c) => [c.key, c]));
+  const stepByKey = new Map(nextSteps.map((s) => [s.key, s]));
   const now = new Date();
   res.json({
     decisions: decisions
@@ -171,6 +329,7 @@ roleDecisionsRouter.get('/decisions', requireAuth, async (req: Request, res: Res
       })
       .map((d) => {
         const c = byKey.get(d.key);
+        const s = stepByKey.get(d.key);
         return {
           ...d,
           claimedBy: c ? personOf(c.claimedBy as ClaimerRow) : null,
@@ -178,6 +337,13 @@ roleDecisionsRouter.get('/decisions', requireAuth, async (req: Request, res: Res
           assigned: Boolean(c?.assignedById),
           note: c?.note ?? null,
           escalated: Boolean(c?.escalatedAt),
+          nextStep: s
+            ? {
+                text: s.text,
+                ownerName: s.owner ? personOf(s.owner as ClaimerRow).name : null,
+                dueDay: s.dueDay ? s.dueDay.toISOString().slice(0, 10) : null,
+              }
+            : null,
         };
       }),
   });
@@ -459,6 +625,8 @@ const TIMELINE_LABEL: Record<string, string> = {
   'decisions.tag': 'tagged a colleague',
   'decisions.escalate': 'escalated it',
   'decisions.comment': 'commented',
+  'decisions.next_step': 'set the next step',
+  'decisions.quick_action': 'ran the one-tap fix',
   'executive.decision_dismiss': 'dismissed it (chairman)',
   'executive.decision_snooze': 'snoozed it (chairman)',
   'executive.decision_delegate': 'delegated it to the team (chairman)',
@@ -472,7 +640,7 @@ roleDecisionsRouter.get('/decisions/item', requireAuth, async (req: Request, res
   const item = await resolveItemForUser(req, key);
   if (!item) throw new HttpError(404, 'not_found', 'That item is not visible to you.');
 
-  const [comments, timelineRows, claim] = await Promise.all([
+  const [comments, timelineRows, claim, nextStep, itemContext] = await Promise.all([
     prisma.decisionComment.findMany({
       where: { key },
       orderBy: { createdAt: 'asc' },
@@ -489,6 +657,11 @@ roleDecisionsRouter.get('/decisions/item', requireAuth, async (req: Request, res
       where: { key },
       include: { claimedBy: { select: CLAIMER_SELECT } },
     }),
+    prisma.decisionNextStep.findUnique({
+      where: { key },
+      include: { owner: { select: CLAIMER_SELECT } },
+    }),
+    computeItemFacts(key),
   ]);
 
   const thread = comments.map((c) => ({
@@ -516,12 +689,86 @@ roleDecisionsRouter.get('/decisions/item', requireAuth, async (req: Request, res
     label: item.label,
     detail: item.detail,
     linkUrl: item.linkUrl,
+    severity: item.severity,
+    stakes: item.stakes,
+    ageDays: item.ageDays,
     claimedBy: claim ? personOf(claim.claimedBy as ClaimerRow) : null,
     participants: [...seen.values()],
+    nextStep: nextStep
+      ? {
+          text: nextStep.text,
+          owner: nextStep.owner ? personOf(nextStep.owner as ClaimerRow) : null,
+          dueDay: nextStep.dueDay ? nextStep.dueDay.toISOString().slice(0, 10) : null,
+        }
+      : null,
+    facts: itemContext.facts,
+    factList: itemContext.list,
     thread,
     timeline,
   });
 });
+
+/* ----- The pinned next step — the flight-director rule ------------------- */
+
+const NextStepInputSchema = z.object({
+  key: z.string().regex(/^[a-zA-Z0-9:_-]{3,160}$/),
+  /** null / empty clears the next step. */
+  text: z.string().trim().max(200).nullable(),
+  ownerUserId: z.string().uuid().nullable().optional(),
+  dueDay: z.string().date().nullable().optional(),
+});
+
+roleDecisionsRouter.post(
+  '/decisions/next-step',
+  requireAuth,
+  async (req: Request, res: Response) => {
+    const input = NextStepInputSchema.parse(req.body);
+    const item = await resolveItemForUser(req, input.key);
+    if (!item) throw new HttpError(404, 'not_found', 'That item is not visible to you.');
+
+    if (!input.text) {
+      await prisma.decisionNextStep.deleteMany({ where: { key: input.key } });
+    } else {
+      await prisma.decisionNextStep.upsert({
+        where: { key: input.key },
+        create: {
+          key: input.key,
+          text: input.text,
+          ownerId: input.ownerUserId ?? req.user!.id,
+          dueDay: input.dueDay ? new Date(`${input.dueDay}T00:00:00Z`) : null,
+          setById: req.user!.id,
+        },
+        update: {
+          text: input.text,
+          ownerId: input.ownerUserId ?? req.user!.id,
+          dueDay: input.dueDay ? new Date(`${input.dueDay}T00:00:00Z`) : null,
+          setById: req.user!.id,
+        },
+      });
+      const ownerId = input.ownerUserId ?? req.user!.id;
+      if (ownerId !== req.user!.id) {
+        const actorLocal = req.user!.email.split('@')[0] ?? req.user!.email;
+        await notifyUser(ownerId, {
+          subject: `Next step is yours: ${item.label}`,
+          body: `${input.text}${input.dueDay ? ` — by ${input.dueDay}` : ''} (set by ${actorLocal.charAt(0).toUpperCase() + actorLocal.slice(1)})`,
+          category: 'decision_next_step',
+          linkUrl: item.linkUrl,
+        });
+      }
+    }
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'decisions.next_step',
+        entityType: 'DecisionClaim',
+        entityId: input.key,
+        metadata: { text: input.text, ownerUserId: input.ownerUserId ?? null, dueDay: input.dueDay ?? null },
+      },
+      'decisions.next_step',
+    );
+    res.json({ ok: true });
+  },
+);
 
 const CommentInputSchema = z.object({
   key: z.string().regex(/^[a-zA-Z0-9:_-]{3,160}$/),

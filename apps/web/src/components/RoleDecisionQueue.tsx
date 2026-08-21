@@ -44,6 +44,7 @@ interface RoleDecision {
   assigned: boolean;
   note: string | null;
   escalated: boolean;
+  nextStep: { text: string; ownerName: string | null; dueDay: string | null } | null;
 }
 
 interface Colleague {
@@ -277,6 +278,13 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
                 </span>
               )}
             </div>
+            {focus.nextStep && (
+              <div className="mt-1.5 text-xs text-gold">
+                → {focus.nextStep.text}
+                {focus.nextStep.ownerName ? ` — ${focus.nextStep.ownerName}` : ''}
+                {focus.nextStep.dueDay ? `, ${focus.nextStep.dueDay.slice(5)}` : ''}
+              </div>
+            )}
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <Button
                 size="sm"
@@ -322,6 +330,12 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
                     <span className="block truncate text-sm text-white hover:text-gold">
                       {d.label}
                     </span>
+                    {d.nextStep && (
+                      <span className="block truncate text-2xs text-gold/80">
+                        → {d.nextStep.text}
+                        {d.nextStep.ownerName ? ` — ${d.nextStep.ownerName}` : ''}
+                      </span>
+                    )}
                     {/* Preattentive stakes: relative bar, not just a number. */}
                     {d.stakes !== null && d.stakes > 0 && (
                       <span className="mt-0.5 block h-1 w-full max-w-[160px] overflow-hidden rounded-full bg-navy-secondary/70">

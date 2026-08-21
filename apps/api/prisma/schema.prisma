@@ -536,6 +536,7 @@ model User {
   decisionClaims                    DecisionClaim[]               @relation("DecisionClaimer")
   workPlanItems                     WorkPlanItem[]                @relation("WorkPlanOwner")
   decisionComments                  DecisionComment[]             @relation("DecisionCommenter")
+  nextStepsOwned                    DecisionNextStep[]            @relation("NextStepOwner")
 
   @@index([role])
   @@index([clientId])
@@ -915,6 +916,22 @@ model DecisionClaim {
   escalatedAt    DateTime? @db.Timestamptz(6)
   escalatedById  String?   @db.Uuid
   updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+}
+
+// The flight-director rule: a room is never just chat — it carries ONE
+// agreed next step with an owner. Echoed onto the queue rows; cleared
+// when the item resolves (the row is keyed to the item and simply stops
+// rendering).
+model DecisionNextStep {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key         String    @unique @db.VarChar(160)
+  text        String
+  ownerId     String?   @db.Uuid
+  owner       User?     @relation("NextStepOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  dueDay      DateTime? @db.Date
+  setById     String    @db.Uuid
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
 }
 
 // The item's conversation — comments live ON the decision key, visible

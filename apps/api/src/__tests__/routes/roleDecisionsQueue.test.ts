@@ -232,6 +232,42 @@ describe('GET /me/decisions', () => {
         t.action.includes('took the item'),
       ),
     ).toBe(true);
+
+    // Room 2.0: the facts panel carries the statement's own evidence…
+    expect(
+      (room2.body.facts as Array<{ label: string; value: string }>).some(
+        (f) => f.label === 'Statement' && f.value === '#21',
+      ),
+    ).toBe(true);
+    expect(
+      (room2.body.facts as Array<{ label: string; value: string }>).some(
+        (f) => f.label === 'Amount' && f.value === '$2500.00',
+      ),
+    ).toBe(true);
+    // …and the pinned next step: the chairman sets it, Finance owns it,
+    // and it echoes onto Finance's queue row.
+    expect(
+      (
+        await execAgent.post('/me/decisions/next-step').send({
+          key,
+          text: 'Call Walmart AP about the missing check',
+          ownerUserId: fin.id,
+          dueDay: '2026-09-05',
+        })
+      ).status,
+    ).toBe(200);
+    const stepNotif = await prisma.notification.findFirst({
+      where: { recipientUserId: fin.id, category: 'decision_next_step' },
+    });
+    expect(stepNotif).not.toBeNull();
+    const room3 = await finAgent.get(`/me/decisions/item?key=${key}`);
+    expect(room3.body.nextStep.text).toContain('Call Walmart AP');
+    expect(room3.body.nextStep.dueDay).toBe('2026-09-05');
+    const q = await finAgent.get('/me/decisions');
+    const row = (
+      q.body.decisions as Array<{ key: string; nextStep: { text: string } | null }>
+    ).find((d) => d.key === key);
+    expect(row?.nextStep?.text).toContain('Call Walmart AP');
   });
 
   it('assign moves the item to a colleague, postpone hides it, tag notifies, planner CRUDs', async () => {
