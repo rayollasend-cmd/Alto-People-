@@ -125,6 +125,82 @@ describe('GET /me/decisions', () => {
     expect(notif!.body).toContain('Nobody free to cover the kiosk.');
   });
 
+  it('role affinity: recruiter never sees money, marketing runs quiet, manager is team-clamped', async () => {
+    const client = await createClient('Walmart Destin');
+    // A finance condition + a hiring condition exist simultaneously.
+    await prisma.clientStatement.create({
+      data: {
+        clientId: client.id,
+        periodStart: new Date('2026-05-01T00:00:00Z'),
+        periodEnd: new Date('2026-05-31T00:00:00Z'),
+        status: 'FINAL',
+        number: 30,
+        finalizedAt: new Date(Date.now() - 70 * 86_400_000),
+        snapshot: { totals: { amount: 3000 } },
+      },
+    });
+    const candidate = await createAssociate({ firstName: 'Stuck', lastName: 'InReview' });
+    await prisma.application.create({
+      data: {
+        associateId: candidate.id,
+        clientId: client.id,
+        onboardingTrack: 'STANDARD',
+        status: 'SUBMITTED',
+      },
+    });
+    await prisma.$executeRaw`UPDATE "Application" SET "updatedAt" = NOW() - INTERVAL '10 days' WHERE "associateId" = ${candidate.id}::uuid`;
+
+    // Recruiter: hiring items yes, money items never (despite full-admin caps).
+    const { user: recruiter } = await createUser({ role: 'INTERNAL_RECRUITER' });
+    const rq = await (await loginAs(recruiter.email)).get('/me/decisions');
+    const rKeys = (rq.body.decisions as Item[]).map((d) => d.key);
+    expect(rKeys.some((k) => k === 'onboarding:stuck')).toBe(true);
+    expect(rKeys.some((k) => k.startsWith('receivable:'))).toBe(false);
+
+    // Marketing: none of the ops/finance items at all.
+    const { user: mkt } = await createUser({ role: 'MARKETING_MANAGER' });
+    const mq = await (await loginAs(mkt.email)).get('/me/decisions');
+    expect(
+      (mq.body.decisions as Item[]).filter((d) => !d.key.startsWith('me:')),
+    ).toHaveLength(0);
+
+    // Manager: time-off counts only their direct reports.
+    const mgrAssoc = await createAssociate({ firstName: 'Team', lastName: 'Lead' });
+    const report = await createAssociate({ firstName: 'Direct', lastName: 'Report' });
+    await prisma.associate.update({
+      where: { id: report.id },
+      data: { managerId: mgrAssoc.id },
+    });
+    const stranger = await createAssociate({ firstName: 'Other', lastName: 'Team' });
+    await prisma.timeOffRequest.createMany({
+      data: [
+        {
+          associateId: report.id,
+          category: 'PTO',
+          startDate: new Date('2026-10-01T00:00:00Z'),
+          endDate: new Date('2026-10-02T00:00:00Z'),
+          requestedMinutes: 960,
+        },
+        {
+          associateId: stranger.id,
+          category: 'PTO',
+          startDate: new Date('2026-10-01T00:00:00Z'),
+          endDate: new Date('2026-10-02T00:00:00Z'),
+          requestedMinutes: 960,
+        },
+      ],
+    });
+    const { user: mgr } = await createUser({
+      role: 'MANAGER',
+      associateId: mgrAssoc.id,
+      email: mgrAssoc.email,
+    });
+    const gq = await (await loginAs(mgr.email)).get('/me/decisions');
+    const timeOff = (gq.body.decisions as Item[]).find((d) => d.key === 'timeoff:pending');
+    expect(timeOff).toBeDefined();
+    expect(timeOff!.label).toContain('1 time-off request');
+  });
+
   it('one-tap quick actions: approve-all walk-ins clocks people in; reactivate revives a paused associate', async () => {
     const client = await createClient('Walmart Destin');
     const a1 = await createAssociate({ firstName: 'One', lastName: 'Waiting' });

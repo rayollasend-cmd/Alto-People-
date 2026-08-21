@@ -13,6 +13,14 @@ import { startOfWeekUTC } from './timeAnomalies.js';
 
 const DAY_MS = 24 * 3600_000;
 
+export type DecisionDomain =
+  | 'site-ops'
+  | 'people'
+  | 'hiring'
+  | 'compliance'
+  | 'money'
+  | 'personal';
+
 export interface RoleDecision {
   key: string;
   severity: 'critical' | 'high' | 'normal';
@@ -21,12 +29,40 @@ export interface RoleDecision {
   stakes: number | null;
   ageDays: number | null;
   linkUrl: string;
+  /** Which craft this item belongs to — drives the role-affinity layer. */
+  domain: DecisionDomain;
   /** One-tap resolution, when a safe bulk fix exists — the button label
    *  shown on the item (POST /me/decisions/quick executes it). */
   quickAction?: string;
 }
 
 const SEVERITY_RANK = { critical: 0, high: 1, normal: 2 } as const;
+
+/**
+ * Role affinity — capabilities gate ACCESS, this shapes RELEVANCE. Six
+ * roles share the identical full-admin capability set as product policy,
+ * so a pure capability engine served the Marketing Manager the same
+ * queue as the HR Administrator. Each role leads with its own craft and
+ * excludes domains that aren't its job (personal items are never
+ * excluded). Roles not listed keep everything their capabilities allow.
+ */
+const ROLE_PROFILES: Partial<
+  Record<Role, { lead: DecisionDomain[]; exclude: DecisionDomain[] }>
+> = {
+  SHIFT_SUPERVISOR: { lead: ['site-ops', 'people'], exclude: [] },
+  FINANCE_ACCOUNTANT: { lead: ['money'], exclude: [] },
+  HR_ADMINISTRATOR: { lead: ['hiring', 'compliance', 'people'], exclude: [] },
+  OPERATIONS_MANAGER: { lead: ['site-ops', 'people', 'money'], exclude: [] },
+  MANAGER: { lead: ['people', 'site-ops'], exclude: ['money', 'compliance', 'hiring'] },
+  INTERNAL_RECRUITER: { lead: ['hiring', 'compliance'], exclude: ['money', 'site-ops', 'people'] },
+  WORKFORCE_MANAGER: { lead: ['site-ops', 'people', 'hiring'], exclude: ['money'] },
+  // Marketing runs communications, not operations — their queue is
+  // honestly quiet rather than a copy of HR's worries.
+  MARKETING_MANAGER: {
+    lead: [],
+    exclude: ['site-ops', 'people', 'hiring', 'compliance', 'money'],
+  },
+};
 
 interface QueueUser {
   id: string;
@@ -67,6 +103,7 @@ export async function computeRoleDecisions(
       );
       out.push({
         key: scoped('walkins:pending'),
+        domain: 'site-ops',
         severity: 'critical',
         label: `${walkIns.length} walk-in clock-in${walkIns.length === 1 ? '' : 's'} waiting on you`,
         detail: `Someone is standing at a kiosk unable to work — oldest has waited ${oldestMin} minutes.`,
@@ -79,6 +116,7 @@ export async function computeRoleDecisions(
     if (unapproved >= 10) {
       out.push({
         key: scoped('time:unapproved'),
+        domain: 'site-ops',
         severity: unapproved >= 100 ? 'high' : 'normal',
         label: `${unapproved} punches from past weeks awaiting approval`,
         detail: 'Unapproved time is unbillable and holds up payroll — run timesheet approval.',
@@ -106,6 +144,7 @@ export async function computeRoleDecisions(
     if (openToday > 0) {
       out.push({
         key: scoped('shifts:open-24h'),
+        domain: 'site-ops',
         severity: 'high',
         label: `${openToday} shift${openToday === 1 ? '' : 's'} in the next 24h still unassigned`,
         detail:
@@ -123,6 +162,7 @@ export async function computeRoleDecisions(
       if (risky.length > 0) {
         out.push({
           key: scoped('risk:tomorrow'),
+          domain: 'site-ops',
           severity: 'high',
           label: `${risky.length} of tomorrow's shifts ${risky.length === 1 ? 'is' : 'are'} held by high-risk attendees`,
           detail: `History-based flag (${risky
@@ -138,6 +178,7 @@ export async function computeRoleDecisions(
     if (claims > 0) {
       out.push({
         key: scoped('claims:pending'),
+        domain: 'site-ops',
         severity: 'normal',
         label: `${claims} open-shift pickup${claims === 1 ? '' : 's'} awaiting review`,
         detail: 'Associates volunteered — a fast yes fills the schedule and rewards initiative.',
@@ -149,11 +190,21 @@ export async function computeRoleDecisions(
   }
 
   /* ----- People management (managers + admins) --------------------------- */
+  // A MANAGER's queue is team-wide, not org-wide: when their login links
+  // to an associate record, approvals count only their direct reports.
+  // Other roles (and managers without team linkage) stay org-wide.
+  const teamClamp =
+    user.role === 'MANAGER' && user.associateId
+      ? { associate: { managerId: user.associateId } }
+      : {};
   if (can('approve:reimbursement')) {
-    const pending = await prisma.reimbursement.count({ where: { status: 'SUBMITTED' } });
+    const pending = await prisma.reimbursement.count({
+      where: { status: 'SUBMITTED', ...teamClamp },
+    });
     if (pending > 0) {
       out.push({
         key: 'reimbursements:approve',
+        domain: 'people',
         severity: 'normal',
         label: `${pending} reimbursement${pending === 1 ? '' : 's'} awaiting your approval`,
         detail: 'Associates fronted this money — a quick decision keeps trust intact.',
@@ -164,10 +215,13 @@ export async function computeRoleDecisions(
     }
   }
   if (can('manage:team-time-off')) {
-    const pending = await prisma.timeOffRequest.count({ where: { status: 'PENDING' } });
+    const pending = await prisma.timeOffRequest.count({
+      where: { status: 'PENDING', ...teamClamp },
+    });
     if (pending > 0) {
       out.push({
         key: 'timeoff:pending',
+        domain: 'people',
         severity: 'normal',
         label: `${pending} time-off request${pending === 1 ? '' : 's'} awaiting a decision`,
         detail: 'People are holding plans on your answer.',
@@ -199,6 +253,7 @@ export async function computeRoleDecisions(
     if (stuck > 0) {
       out.push({
         key: 'onboarding:stuck',
+        domain: 'hiring',
         severity: stuck >= 5 ? 'high' : 'normal',
         label: `${stuck} candidate${stuck === 1 ? '' : 's'} stuck in review over 5 days`,
         detail: 'Every stalled day risks losing them to another employer.',
@@ -210,6 +265,7 @@ export async function computeRoleDecisions(
     if (i9Pending > 0) {
       out.push({
         key: 'i9:section2',
+        domain: 'hiring',
         severity: 'high',
         label: `${i9Pending} I-9 Section 2 verification${i9Pending === 1 ? '' : 's'} pending`,
         detail: 'Federal deadline: Section 2 within 3 business days of the start date.',
@@ -234,6 +290,7 @@ export async function computeRoleDecisions(
     if (people > 0) {
       out.push({
         key: 'compliance:expiring-docs',
+        domain: 'compliance',
         severity: 'high',
         label: `${people} associate${people === 1 ? "'s" : "s'"} work documents expire within 30 days`,
         detail: 'Expired documents block legal work — collect renewals now.',
@@ -255,6 +312,7 @@ export async function computeRoleDecisions(
       const days = Math.floor((now.getTime() - p.deactivatedAt!.getTime()) / DAY_MS);
       out.push({
         key: `associate:paused:${p.id}`,
+        domain: 'people',
         severity: 'normal',
         label: `${p.firstName} ${p.lastName} has been paused ${days} days`,
         detail: 'Limbo is the wrong state — reactivate them or run a separation.',
@@ -274,6 +332,7 @@ export async function computeRoleDecisions(
     if (toSettle > 0) {
       out.push({
         key: 'reimbursements:settle',
+        domain: 'money',
         severity: 'normal',
         label: `${toSettle} approved reimbursement${toSettle === 1 ? '' : 's'} to settle`,
         detail: 'Fold them into the next regular payroll run.',
@@ -315,6 +374,7 @@ export async function computeRoleDecisions(
       out.push({
         // Same key as the executive engine — one shared item.
         key: 'statements:stale-drafts',
+        domain: 'money',
         severity: 'normal',
         label: `${drafts.length} draft statement${drafts.length === 1 ? '' : 's'} to finalize`,
         detail: 'Drafts idle over a week are unbilled revenue.',
@@ -332,6 +392,7 @@ export async function computeRoleDecisions(
       const amount = statementTotal(s.snapshot);
       out.push({
         key: `receivable:${s.id}`,
+        domain: 'money',
         severity: days >= 60 || amount >= 5_000 ? 'critical' : 'high',
         label: `Chase ${s.client.name} statement #${s.number ?? '—'}`,
         detail: `${days} days unpaid — chase the cash or flag it upward.`,
@@ -369,6 +430,7 @@ export async function computeRoleDecisions(
     if (remaining > 0) {
       out.push({
         key: 'me:onboarding-tasks',
+        domain: 'personal',
         severity: 'high',
         label: `${remaining} onboarding task${remaining === 1 ? '' : 's'} left to finish`,
         detail: 'Finishing them clears you for the schedule and payroll.',
@@ -380,6 +442,7 @@ export async function computeRoleDecisions(
     if (expiringOwn > 0) {
       out.push({
         key: 'me:expiring-docs',
+        domain: 'personal',
         severity: 'high',
         label: `${expiringOwn} of your documents expire${expiringOwn === 1 ? 's' : ''} within 60 days`,
         detail: 'Upload the renewal before it blocks you from working.',
@@ -390,10 +453,23 @@ export async function computeRoleDecisions(
     }
   }
 
-  out.sort((a, b) => {
+  // Role affinity: exclude domains that aren't this role's job (never
+  // personal items), then rank severity → own-craft-first → stakes.
+  const profile = ROLE_PROFILES[user.role];
+  const filtered = profile
+    ? out.filter((d) => d.domain === 'personal' || !profile.exclude.includes(d.domain))
+    : out;
+  const leadRank = (d: RoleDecision): number => {
+    if (!profile) return 99;
+    const i = profile.lead.indexOf(d.domain);
+    return i === -1 ? 99 : i;
+  };
+  filtered.sort((a, b) => {
     const sev = SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity];
     if (sev !== 0) return sev;
+    const lead = leadRank(a) - leadRank(b);
+    if (lead !== 0) return lead;
     return (b.stakes ?? 0) - (a.stakes ?? 0);
   });
-  return out;
+  return filtered;
 }

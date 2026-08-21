@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { fmtMoney, ymdLocal } from '@/lib/format';
 import { DecisionRoom } from '@/components/DecisionRoom';
 import { PLAN_CHANGED_EVENT } from '@/components/MyPlanCard';
@@ -73,6 +74,7 @@ function ageTone(ageDays: number | null): string {
 }
 
 export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: string }) {
+  const { user } = useAuth();
   const [rows, setRows] = useState<RoleDecision[] | null>(null);
   const [error, setError] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -194,8 +196,10 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
     return { label: "I've got this", run: () => void act(d.key, 'claim') };
   };
 
-  // Supplement card: vanish quietly on failure.
+  // Supplement card: vanish quietly on failure. Client-portal viewers
+  // have no queue at all — even a "nominal" chip would be noise.
   if (error) return null;
+  if (user?.role === 'CLIENT_PORTAL') return null;
   if (rows !== null && rows.length === 0) {
     return (
       <div className="flex items-center gap-2 rounded-md border border-success/20 bg-success/[0.06] px-3 py-2 text-sm text-silver">
