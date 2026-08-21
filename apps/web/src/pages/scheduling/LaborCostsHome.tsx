@@ -47,7 +47,8 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from '@/components/ui';
-import { ApiError } from '@/lib/api';
+import { ApiError, apiFetch } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtMoney, fmtMoneyCompact, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -473,6 +474,10 @@ function OtOutlookCard() {
   const h = (min: number) => (min / 60).toFixed(1);
   const totalOtMin = data.rows.reduce((s, r) => s + r.projectedOtMinutes, 0);
   const totalBilled = data.rows.reduce((s, r) => s + (r.estOtBilled ?? 0), 0);
+  // The bill, named: the single biggest contributor to this week's OT.
+  const topContributor = [...data.rows].sort(
+    (a, b) => (b.estOtBilled ?? 0) - (a.estOtBilled ?? 0),
+  )[0];
   const anyFilter = clientFilter !== '' || q.trim() !== '' || minOtHours > 0;
 
   return (
@@ -525,6 +530,16 @@ function OtOutlookCard() {
       {open && (
         <div className="border-t border-warning/20 px-4 pb-4 pt-3">
           <p className="mb-3 text-xs text-silver">
+            <span className="font-medium text-warning">
+              Unchecked, this week&apos;s overtime bills ≈ {money(totalBilled)}
+            </span>
+            {topContributor && (topContributor.estOtBilled ?? 0) > 0 && (
+              <>
+                {' '}
+                — biggest single line: {topContributor.associateName} (≈{' '}
+                {money(topContributor.estOtBilled ?? 0)}).
+              </>
+            )}{' '}
             Worked so far plus remaining scheduled shifts crosses 40 hours.
             Trimming or reassigning a shift on the{' '}
             <Link to="/scheduling" className="text-gold hover:underline">
@@ -648,6 +663,145 @@ function OtOutlookTable({ rows }: { rows: OtOutlookResponse['rows'] }) {
  * shift window covering the store's local time, else the total floor
  * target). Polls every 60s while the page is open.
  */
+/**
+ * Store benchmarks — each store's 4-week margin/hr trend (sparkline) and
+ * where it sits against the org's own "speed of light": the best store's
+ * average. A store at 62% of what a sister store proves possible is a
+ * conversation, not a mystery.
+ */
+interface StoreTrend {
+  clientId: string;
+  locationId: string;
+  locationName: string;
+  clientName: string;
+  weeks: Array<{ start: string; hours: number; marginPerHour: number | null }>;
+  avgMarginPerHour: number | null;
+  hours4w: number;
+}
+
+function Sparkline({ weeks }: { weeks: StoreTrend['weeks'] }) {
+  const vals = weeks.map((w) => w.marginPerHour);
+  const present = vals.filter((v): v is number => v !== null);
+  if (present.length < 2) return <span className="text-2xs text-silver/40">—</span>;
+  const min = Math.min(...present, 0);
+  const max = Math.max(...present, 0.01);
+  const range = max - min || 1;
+  const pts = vals
+    .map((v, i) =>
+      v === null ? null : `${(i / (vals.length - 1)) * 92 + 2},${22 - ((v - min) / range) * 20}`,
+    )
+    .filter((p): p is string => p !== null)
+    .join(' ');
+  const lastUp =
+    present.length >= 2 && present[present.length - 1] >= present[present.length - 2];
+  return (
+    <svg width="96" height="24" viewBox="0 0 96 24" aria-hidden="true" className="shrink-0">
+      <polyline
+        points={pts}
+        fill="none"
+        stroke={lastUp ? 'rgb(var(--color-success))' : 'rgb(var(--color-warning))'}
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function StoreTrendsCard() {
+  const [data, setData] = useState<{ stores: StoreTrend[]; bestMarginPerHour: number } | null>(
+    null,
+  );
+  const [failed, setFailed] = useState(false);
+  const [open, setOpen] = usePersistentState<boolean>(
+    'alto:laborcosts.trends.open.v1',
+    true,
+    (v): v is boolean => typeof v === 'boolean',
+  );
+
+  useEffect(() => {
+    apiFetch<{ stores: StoreTrend[]; bestMarginPerHour: number }>('/scheduling/store-trends')
+      .then(setData)
+      .catch(() => setFailed(true));
+  }, []);
+
+  if (failed || (data !== null && data.stores.length === 0)) return null;
+  if (data === null) return <Skeleton className="h-24" />;
+  const best = data.bestMarginPerHour;
+
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex w-full min-w-0 items-center gap-2 text-left"
+        >
+          <ChevronDown
+            className={cn(
+              'h-4 w-4 shrink-0 text-silver/60 transition-transform',
+              !open && '-rotate-90',
+            )}
+          />
+          <span className="text-sm font-medium text-white">Store benchmarks — 4 weeks</span>
+          <span className="ml-auto text-2xs text-silver/60">
+            margin/hr vs the best store&apos;s pace
+          </span>
+        </button>
+        {open && (
+          <ul className="mt-3 space-y-2.5">
+            {data.stores.map((s) => {
+              const pct =
+                best > 0 && s.avgMarginPerHour !== null
+                  ? Math.max(0, Math.min(100, (s.avgMarginPerHour / best) * 100))
+                  : null;
+              return (
+                <li key={s.locationId} className="flex items-center gap-3">
+                  <span className="w-40 min-w-0 shrink-0 truncate text-sm text-white">
+                    {s.locationName}
+                  </span>
+                  <Sparkline weeks={s.weeks} />
+                  <span
+                    className={cn(
+                      'w-20 shrink-0 text-right text-sm tabular-nums',
+                      s.avgMarginPerHour === null
+                        ? 'text-silver/40'
+                        : s.avgMarginPerHour >= 0
+                          ? 'text-success'
+                          : 'text-alert',
+                    )}
+                  >
+                    {s.avgMarginPerHour === null
+                      ? '—'
+                      : `${s.avgMarginPerHour >= 0 ? '+' : '−'}${money(Math.abs(s.avgMarginPerHour))}/h`}
+                  </span>
+                  <span className="hidden flex-1 items-center gap-2 sm:flex">
+                    <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-navy-secondary/70">
+                      {pct !== null && (
+                        <span
+                          className={cn(
+                            'block h-full rounded-full',
+                            pct >= 85 ? 'bg-success/80' : pct >= 60 ? 'bg-gold/80' : 'bg-warning/80',
+                          )}
+                          style={{ width: `${pct}%` }}
+                        />
+                      )}
+                    </span>
+                    <span className="w-12 shrink-0 text-right text-2xs tabular-nums text-silver/60">
+                      {pct !== null ? `${Math.round(pct)}%` : ''}
+                    </span>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function FloorNowCard() {
   const [data, setData] = useState<FloorNowResponse | null>(null);
   const [failed, setFailed] = useState(false);
@@ -688,18 +842,56 @@ function FloorNowCard() {
     };
   }, [reloadKey]);
 
-  // Memoized above the early return (hooks can't follow it): this
-  // component re-renders itself every 60s, so the sort shouldn't re-run
-  // on unrelated state changes too.
-  const sortedRows = useMemo(
-    () =>
-      [...(data?.rows ?? [])].sort(
-        (a, b) =>
-          a.clientName.localeCompare(b.clientName) ||
-          a.locationName.localeCompare(b.locationName),
-      ),
-    [data],
+  const { can } = useAuth();
+  const canManage = can('manage:scheduling');
+  const [showNominal, setShowNominal] = useState(false);
+  const [broadcasting, setBroadcasting] = useState<string | null>(null);
+  const broadcast = async (clientId: string) => {
+    if (broadcasting) return;
+    setBroadcasting(clientId);
+    try {
+      const r = await apiFetch<{ shiftsScanned: number; invitesSent: number }>(
+        '/scheduling/broadcast-bench',
+        { method: 'POST', body: { clientId } },
+      );
+      toast.success(
+        r.invitesSent > 0
+          ? `Invited ${r.invitesSent} bench associate${r.invitesSent === 1 ? '' : 's'} across ${r.shiftsScanned} open shift${r.shiftsScanned === 1 ? '' : 's'}.`
+          : r.shiftsScanned > 0
+            ? 'Every eligible bench associate was already invited — nothing new to send.'
+            : 'No open shifts in the next 48h for this client.',
+      );
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not broadcast.');
+    } finally {
+      setBroadcasting(null);
+    }
+  };
+
+  // Anomaly-first: mission control sorts by badness, not by alphabet.
+  // Short-staffed stores and negative-margin stores rise; clean stores
+  // fold into a single "nominal" strip below.
+  const badnessOf = useCallback(
+    (r: NonNullable<typeof data>['rows'][number]): number => {
+      const short = r.expected !== null ? Math.max(0, r.expected - r.clockedIn) : 0;
+      const margin = (r.billedPerHour ?? 0) - (r.loadedPerHour ?? 0);
+      const negMargin = r.clockedIn > 0 && margin < 0 ? 1.5 : 0;
+      return short * 2 + negMargin + (r.projectedOtHeads ?? 0) * 0.5;
+    },
+    [],
   );
+  const { anomalyRows, nominalRows } = useMemo(() => {
+    const rows = [...(data?.rows ?? [])].sort(
+      (a, b) =>
+        badnessOf(b) - badnessOf(a) ||
+        a.clientName.localeCompare(b.clientName) ||
+        a.locationName.localeCompare(b.locationName),
+    );
+    return {
+      anomalyRows: rows.filter((r) => badnessOf(r) > 0),
+      nominalRows: rows.filter((r) => badnessOf(r) === 0),
+    };
+  }, [data, badnessOf]);
 
   // A failed board must SAY so — silently unmounting the page's headline
   // surface reads as "nobody's working", which is worse than an error.
@@ -893,16 +1085,36 @@ function FloorNowCard() {
               </tr>
             </thead>
             <tbody className="divide-y divide-navy-secondary/50">
-              {sortedRows.map((r) => {
+              {[...anomalyRows, ...(showNominal ? nominalRows : [])].map((r) => {
                   const over = r.expected !== null && r.clockedIn > r.expected;
                   const under = r.expected !== null && r.clockedIn < r.expected;
                   const margin = (r.billedPerHour ?? 0) - (r.loadedPerHour ?? 0);
+                  const negMargin = r.clockedIn > 0 && margin < 0;
                   return (
-                    <tr key={r.locationId}>
+                    <tr
+                      key={r.locationId}
+                      className={cn(
+                        under && 'bg-warning/[0.045]',
+                        !under && (over || negMargin) && 'bg-alert/[0.04]',
+                      )}
+                    >
                       <td className="py-2 pr-3">
                         <div className="text-white">{r.locationName}</div>
                         {anyMultiStoreClient && r.clientName !== r.locationName && (
                           <div className="text-2xs text-silver/50">{r.clientName}</div>
+                        )}
+                        {/* Act in place: a short floor gets its fix here. */}
+                        {under && canManage && (
+                          <button
+                            type="button"
+                            disabled={broadcasting !== null}
+                            onClick={() => void broadcast(r.clientId)}
+                            className="mt-0.5 text-2xs text-gold hover:text-gold-bright disabled:opacity-50"
+                          >
+                            {broadcasting === r.clientId
+                              ? 'Broadcasting…'
+                              : 'Broadcast to bench →'}
+                          </button>
                         )}
                       </td>
                       <td className="py-2 px-3 hidden md:table-cell">
@@ -979,6 +1191,26 @@ function FloorNowCard() {
                     </tr>
                   );
                 })}
+              {/* Clean stores fold into one calm green line. */}
+              {nominalRows.length > 0 && (
+                <tr>
+                  <td colSpan={7} className="py-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setShowNominal((v) => !v)}
+                      aria-expanded={showNominal}
+                      className="flex w-full items-center gap-2 rounded-md border border-success/15 bg-success/[0.05] px-3 py-1.5 text-xs text-silver transition-colors hover:bg-success/[0.09]"
+                    >
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" aria-hidden="true" />
+                      {nominalRows.length} store{nominalRows.length === 1 ? '' : 's'} nominal —
+                      staffed to target, positive margin
+                      <span className="ml-auto text-silver/60">
+                        {showNominal ? 'hide' : 'show'}
+                      </span>
+                    </button>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -1567,6 +1799,7 @@ export function LaborCostsHome() {
       <div className="mb-6 space-y-3">
         <FloorNowCard />
         <OtOutlookCard />
+        <StoreTrendsCard />
       </div>
 
       <div className="mb-4 flex flex-wrap items-end gap-x-3 gap-y-2 rounded-lg border border-navy-secondary bg-navy/40 px-3 py-2.5">

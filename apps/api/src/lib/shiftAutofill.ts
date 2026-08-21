@@ -25,6 +25,7 @@ export interface AutofillResult {
 export async function runShiftAutofillSweep(
   prisma: PrismaClient = defaultPrisma,
   now: Date = new Date(),
+  opts: { clientId?: string } = {},
 ): Promise<AutofillResult> {
   const shifts = await prisma.shift.findMany({
     where: {
@@ -32,6 +33,7 @@ export async function runShiftAutofillSweep(
       status: 'OPEN',
       assignedAssociateId: null,
       startsAt: { gt: now, lt: new Date(now.getTime() + HORIZON_MS) },
+      ...(opts.clientId ? { clientId: opts.clientId } : {}),
     },
     select: {
       id: true,

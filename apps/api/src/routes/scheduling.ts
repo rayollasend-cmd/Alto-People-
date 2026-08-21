@@ -99,6 +99,7 @@ import {
 import { renderSchedulePdf } from '../lib/scheduleReport.js';
 import { mintCalendarToken } from '../lib/calendarFeed.js';
 import { env } from '../config/env.js';
+import { runShiftAutofillSweep } from '../lib/shiftAutofill.js';
 
 export const schedulingRouter = Router();
 
@@ -1364,6 +1365,174 @@ schedulingRouter.post('/staffing-targets', MANAGE, async (req, res, next) => {
  * is defined, else the total floor target. Tenant-clamped like everything
  * else here.
  */
+/**
+ * Store benchmarks — per-store weekly margin/hr for the last 4 complete
+ * org weeks, at standard rates with OT allocated within each associate-
+ * week proportionally to where the hours were worked. Powers the labor
+ * page's sparklines and the "speed of light" benchmark (each store vs
+ * the best any store ran). Client-bounded callers see their store(s).
+ */
+schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, async (req, res, next) => {
+  try {
+    const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+    const trendClientId = clamped === null ? NO_MATCH_ID : clamped;
+    const now = new Date();
+    const bounds: Date[] = [startOfWeekUTC(now)];
+    for (let i = 0; i < 4; i++) {
+      bounds.push(startOfWeekUTC(new Date(bounds[i].getTime() - 36 * 3600_000)));
+    }
+    const entries = await prisma.timeEntry.findMany({
+      where: {
+        status: { in: ['APPROVED', 'COMPLETED'] },
+        clockInAt: { gte: bounds[4], lt: bounds[0] },
+        ...(trendClientId ? { clientId: trendClientId } : {}),
+      },
+      select: {
+        associateId: true,
+        clientId: true,
+        locationId: true,
+        clockInAt: true,
+        clockOutAt: true,
+        breaks: { select: { startedAt: true, endedAt: true } },
+      },
+      take: 50_000,
+    });
+    const netMin = (e: (typeof entries)[number]): number => {
+      if (!e.clockOutAt) return 0;
+      let ms = e.clockOutAt.getTime() - e.clockInAt.getTime();
+      for (const b of e.breaks) {
+        const bEnd = b.endedAt ? b.endedAt.getTime() : e.clockOutAt.getTime();
+        ms -= Math.max(0, bEnd - b.startedAt.getTime());
+      }
+      return Math.max(0, Math.round(ms / 60_000));
+    };
+    // associate-week → total minutes + per (store, weekIdx) minutes.
+    const byAssocWeek = new Map<
+      string,
+      { total: number; perLoc: Map<string, number> }
+    >();
+    for (const e of entries) {
+      if (!e.locationId || !e.clientId) continue;
+      const wkStart = startOfWeekUTC(e.clockInAt).getTime();
+      const wkIdx = bounds.findIndex(
+        (_b, i) => i > 0 && wkStart >= bounds[i].getTime() && wkStart < bounds[i - 1].getTime(),
+      );
+      if (wkIdx < 1) continue;
+      const key = `${e.associateId}|${wkStart}`;
+      const rec = byAssocWeek.get(key) ?? { total: 0, perLoc: new Map<string, number>() };
+      const mins = netMin(e);
+      rec.total += mins;
+      const locKey = `${e.clientId}|${e.locationId}|${wkIdx}`;
+      rec.perLoc.set(locKey, (rec.perLoc.get(locKey) ?? 0) + mins);
+      byAssocWeek.set(key, rec);
+    }
+    const perStoreWeek = new Map<string, { minutes: number; otMinutes: number }>();
+    for (const rec of byAssocWeek.values()) {
+      const ot = Math.max(0, rec.total - 2_400);
+      for (const [locKey, mins] of rec.perLoc) {
+        const agg = perStoreWeek.get(locKey) ?? { minutes: 0, otMinutes: 0 };
+        agg.minutes += mins;
+        agg.otMinutes += rec.total > 0 ? (ot * mins) / rec.total : 0;
+        perStoreWeek.set(locKey, agg);
+      }
+    }
+    const bill = env.DEFAULT_ASSOCIATE_BILL_RATE;
+    const pay = env.DEFAULT_ASSOCIATE_PAY_RATE;
+    const burden = 1 + env.LABOR_BURDEN_PERCENT / 100;
+    const stores = new Map<
+      string,
+      {
+        clientId: string;
+        locationId: string;
+        weeks: Array<{ start: string; hours: number; marginPerHour: number | null }>;
+      }
+    >();
+    for (const [locKey, agg] of perStoreWeek) {
+      const [clientId, locationId, wkIdxStr] = locKey.split('|');
+      const wkIdx = Number(wkIdxStr);
+      const storeKey = `${clientId}|${locationId}`;
+      const store =
+        stores.get(storeKey) ??
+        (() => {
+          const s = {
+            clientId,
+            locationId,
+            weeks: [4, 3, 2, 1].map((i) => ({
+              start: bounds[i].toISOString().slice(0, 10),
+              hours: 0,
+              marginPerHour: null as number | null,
+            })),
+          };
+          stores.set(storeKey, s);
+          return s;
+        })();
+      const hours = agg.minutes / 60;
+      const otHours = agg.otMinutes / 60;
+      const billed = hours * bill + otHours * bill * 0.5;
+      const cost =
+        (hours * pay + otHours * pay * 0.5) * burden + hours * env.LABOR_OVERHEAD_PER_HOUR;
+      // weeks array is oldest-first: index 4-wkIdx.
+      const slot = store.weeks[4 - wkIdx];
+      slot.hours = Math.round(hours * 10) / 10;
+      slot.marginPerHour = hours > 0 ? Math.round(((billed - cost) / hours) * 100) / 100 : null;
+    }
+    const locIds = [...new Set([...stores.values()].map((s) => s.locationId))];
+    const locMeta =
+      locIds.length === 0
+        ? []
+        : await prisma.location.findMany({
+            where: { id: { in: locIds } },
+            select: { id: true, name: true, client: { select: { name: true } } },
+          });
+    const metaById = new Map(locMeta.map((l) => [l.id, l]));
+    const out = [...stores.values()].map((s) => {
+      const withData = s.weeks.filter((w) => w.marginPerHour !== null);
+      const avg =
+        withData.length > 0
+          ? Math.round(
+              (withData.reduce((n, w) => n + (w.marginPerHour ?? 0), 0) / withData.length) * 100,
+            ) / 100
+          : null;
+      return {
+        clientId: s.clientId,
+        locationId: s.locationId,
+        locationName: metaById.get(s.locationId)?.name ?? 'Unknown store',
+        clientName: metaById.get(s.locationId)?.client.name ?? 'Unknown client',
+        weeks: s.weeks,
+        avgMarginPerHour: avg,
+        hours4w: Math.round(s.weeks.reduce((n, w) => n + w.hours, 0) * 10) / 10,
+      };
+    });
+    const best = Math.max(0, ...out.map((s) => s.avgMarginPerHour ?? 0));
+    out.sort((a, b) => (b.avgMarginPerHour ?? -999) - (a.avgMarginPerHour ?? -999));
+    res.json({ stores: out, bestMarginPerHour: best });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Act-in-place: fire the auto-fill engine for ONE client's open shifts
+ * right now — the "Broadcast to bench" button on a short-staffed store
+ * row. MANAGE (it sends notifications); bounded callers are clamped to
+ * their own client.
+ */
+schedulingRouter.post('/broadcast-bench', MANAGE, async (req, res, next) => {
+  try {
+    const requested =
+      typeof req.body?.clientId === 'string' ? req.body.clientId : undefined;
+    const clamped = effectiveClientIdFilter(req.user!, requested);
+    const clientId = clamped === null ? NO_MATCH_ID : clamped;
+    if (!clientId) {
+      throw new HttpError(400, 'client_required', 'Pick the client to broadcast for.');
+    }
+    const result = await runShiftAutofillSweep(prisma, new Date(), { clientId });
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
 schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, async (req, res, next) => {
   try {
     const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
