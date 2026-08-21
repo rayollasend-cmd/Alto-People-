@@ -642,6 +642,8 @@ function statementRow(r: {
   snapshot: unknown;
   finalizedAt: Date | null;
   finalizedBy?: { email: string } | null;
+  paidAt?: Date | null;
+  paymentRef?: string | null;
 }) {
   return {
     id: r.id,
@@ -653,6 +655,8 @@ function statementRow(r: {
     snapshot: r.snapshot as StatementSnapshot,
     finalizedAt: r.finalizedAt?.toISOString() ?? null,
     finalizedByEmail: r.finalizedBy?.email ?? null,
+    paidAt: r.paidAt?.toISOString() ?? null,
+    paymentRef: r.paymentRef ?? null,
   };
 }
 
@@ -759,6 +763,46 @@ clientsRouter.post('/:id/statements/:sid/finalize', STATEMENTS, async (req, res,
         },
       },
       'clients.statement_finalized',
+    );
+    res.json(statementRow(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Record the client's payment against a FINAL statement — the receivables
+// view ages every unpaid FINAL from finalizedAt until this lands.
+clientsRouter.post('/:id/statements/:sid/mark-paid', STATEMENTS, async (req, res, next) => {
+  try {
+    const paymentRef =
+      typeof req.body?.paymentRef === 'string' && req.body.paymentRef.trim()
+        ? String(req.body.paymentRef).trim().slice(0, 120)
+        : null;
+    const row = await prisma.clientStatement.findFirst({
+      where: { id: req.params.sid, clientId: req.params.id },
+    });
+    if (!row) throw new HttpError(404, 'not_found', 'Statement not found.');
+    if (row.status !== 'FINAL') {
+      throw new HttpError(409, 'not_final', 'Only finalized statements can be marked paid.');
+    }
+    if (row.paidAt) {
+      throw new HttpError(409, 'already_paid', 'Statement is already marked paid.');
+    }
+    const updated = await prisma.clientStatement.update({
+      where: { id: row.id },
+      data: { paidAt: new Date(), paidById: req.user!.id, paymentRef },
+      include: { finalizedBy: { select: { email: true } } },
+    });
+    await recordCriticalAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: row.clientId,
+        action: 'clients.statement_paid',
+        entityType: 'ClientStatement',
+        entityId: row.id,
+        metadata: { number: row.number, paymentRef },
+      },
+      'clients.statement_paid',
     );
     res.json(statementRow(updated));
   } catch (err) {

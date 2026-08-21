@@ -5409,6 +5409,10 @@ export const ClientStatementSchema = z.object({
   snapshot: StatementSnapshotSchema,
   finalizedAt: z.string().datetime().nullable(),
   finalizedByEmail: z.string().nullable(),
+  /** Receivables: when the client's payment was recorded (null = a FINAL
+   *  statement is outstanding). paymentRef = check/ACH reference. */
+  paidAt: z.string().datetime().nullable().optional(),
+  paymentRef: z.string().nullable().optional(),
 });
 export type ClientStatement = z.infer<typeof ClientStatementSchema>;
 

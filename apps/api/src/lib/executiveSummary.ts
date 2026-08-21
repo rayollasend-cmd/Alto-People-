@@ -57,10 +57,39 @@ export interface ExecutiveSummary {
     photoUrl: string | null;
     hireDate: string | null;
   }>;
+  /** The rate assumptions behind every est. figure — feeds the web
+   *  what-if calculator so it starts from reality. */
+  rates: {
+    payRate: number;
+    billRate: number;
+    burdenPct: number;
+    overheadPerHour: number;
+  };
+  /** Store profitability league — last 4 complete org weeks, best margin
+   *  first. OT is allocated to stores proportionally to hours within
+   *  each associate-week. */
+  league: Array<{
+    clientId: string;
+    clientName: string;
+    locationId: string;
+    locationName: string;
+    hours: number;
+    otHours: number;
+    estBilled: number;
+    estMargin: number;
+  }>;
+  /** Revenue concentration — est. billed share per client over the same
+   *  4 weeks, largest first. */
+  concentration: Array<{ clientId: string; clientName: string; sharePct: number }>;
+  /** The churn bill: separations in the last 90 days × the configured
+   *  fully-loaded cost per separation. */
+  turnover: { separations90d: number; costPerSeparation: number; estCost90d: number };
 }
 
 interface EntryRow {
   associateId: string;
+  clientId: string | null;
+  locationId: string | null;
   clockInAt: Date;
   clockOutAt: Date | null;
   breaks: Array<{ startedAt: Date; endedAt: Date | null }>;
@@ -139,6 +168,7 @@ export async function computeExecutiveSummary(
     deactivated,
     hires30d,
     separations30d,
+    separations90d,
     onboardingInFlight,
     attendanceRows,
     openAssignments,
@@ -151,6 +181,8 @@ export async function computeExecutiveSummary(
       },
       select: {
         associateId: true,
+        clientId: true,
+        locationId: true,
         clockInAt: true,
         clockOutAt: true,
         breaks: { select: { startedAt: true, endedAt: true } },
@@ -174,6 +206,9 @@ export async function computeExecutiveSummary(
     }),
     prisma.associate.count({
       where: { separatedAt: { gte: thirtyAgo } },
+    }),
+    prisma.associate.count({
+      where: { separatedAt: { gte: new Date(now.getTime() - 90 * DAY_MS) } },
     }),
     prisma.application.count({
       where: {
@@ -226,6 +261,89 @@ export async function computeExecutiveSummary(
     trend.push(aggregateWeek(entries, weekStarts[i + 1], weekStarts[i]));
   }
 
+  // ----- Store league + client concentration (last 4 complete weeks) -----
+  // OT is a per-associate-per-week property; allocate each associate-
+  // week's OT minutes back to the stores they worked, proportional to
+  // hours there, so a store that drove someone past 40h wears the cost.
+  const leagueStart = weekStarts[Math.min(4, TREND_WEEKS)];
+  const leagueEnd = thisWeekStart;
+  const byAssocWeek = new Map<string, { total: number; perLoc: Map<string, number> }>();
+  for (const e of entries) {
+    if (e.clockInAt < leagueStart || e.clockInAt >= leagueEnd) continue;
+    if (!e.locationId || !e.clientId) continue;
+    const wk = startOfWeekUTC(e.clockInAt).getTime();
+    const key = `${e.associateId}:${wk}`;
+    const rec = byAssocWeek.get(key) ?? { total: 0, perLoc: new Map<string, number>() };
+    const mins = netMinutes(e);
+    rec.total += mins;
+    const locKey = `${e.clientId}:${e.locationId}`;
+    rec.perLoc.set(locKey, (rec.perLoc.get(locKey) ?? 0) + mins);
+    byAssocWeek.set(key, rec);
+  }
+  const perLocation = new Map<string, { minutes: number; otMinutes: number }>();
+  for (const rec of byAssocWeek.values()) {
+    const ot = Math.max(0, rec.total - WEEKLY_OT_THRESHOLD_MIN);
+    for (const [locKey, mins] of rec.perLoc) {
+      const agg = perLocation.get(locKey) ?? { minutes: 0, otMinutes: 0 };
+      agg.minutes += mins;
+      agg.otMinutes += rec.total > 0 ? (ot * mins) / rec.total : 0;
+      perLocation.set(locKey, agg);
+    }
+  }
+  const locationIds = [...new Set([...perLocation.keys()].map((k) => k.split(':')[1]))];
+  const locMeta =
+    locationIds.length === 0
+      ? []
+      : await prisma.location.findMany({
+          where: { id: { in: locationIds } },
+          select: {
+            id: true,
+            name: true,
+            clientId: true,
+            client: { select: { name: true } },
+          },
+        });
+  const locById = new Map(locMeta.map((l) => [l.id, l]));
+  const bill = env.DEFAULT_ASSOCIATE_BILL_RATE;
+  const pay = env.DEFAULT_ASSOCIATE_PAY_RATE;
+  const burden = 1 + env.LABOR_BURDEN_PERCENT / 100;
+  const league = [...perLocation.entries()]
+    .map(([locKey, agg]) => {
+      const [clientId, locationId] = locKey.split(':');
+      const meta = locById.get(locationId);
+      const hours = agg.minutes / 60;
+      const otHours = agg.otMinutes / 60;
+      const estBilled = hours * bill + otHours * bill * 0.5;
+      const estCost =
+        (hours * pay + otHours * pay * 0.5) * burden +
+        hours * env.LABOR_OVERHEAD_PER_HOUR;
+      return {
+        clientId,
+        clientName: meta?.client.name ?? 'Unknown client',
+        locationId,
+        locationName: meta?.name ?? 'Unknown store',
+        hours: Math.round(hours * 10) / 10,
+        otHours: Math.round(otHours * 10) / 10,
+        estBilled: Math.round(estBilled * 100) / 100,
+        estMargin: Math.round((estBilled - estCost) * 100) / 100,
+      };
+    })
+    .sort((a, b) => b.estMargin - a.estMargin);
+  const billedByClient = new Map<string, { clientName: string; billed: number }>();
+  for (const row of league) {
+    const c = billedByClient.get(row.clientId) ?? { clientName: row.clientName, billed: 0 };
+    c.billed += row.estBilled;
+    billedByClient.set(row.clientId, c);
+  }
+  const totalBilled = [...billedByClient.values()].reduce((n, c) => n + c.billed, 0);
+  const concentration = [...billedByClient.entries()]
+    .map(([clientId, c]) => ({
+      clientId,
+      clientName: c.clientName,
+      sharePct: totalBilled > 0 ? Math.round((c.billed / totalBilled) * 1000) / 10 : 0,
+    }))
+    .sort((a, b) => b.sharePct - a.sharePct);
+
   return {
     generatedAt: now.toISOString(),
     workforce: { active, deactivated, hires30d, separations30d, onboardingInFlight },
@@ -238,6 +356,19 @@ export async function computeExecutiveSummary(
       photoUrl: profilePhotoUrlFor(a),
       hireDate: a.hireDate ? a.hireDate.toISOString().slice(0, 10) : null,
     })),
+    rates: {
+      payRate: env.DEFAULT_ASSOCIATE_PAY_RATE,
+      billRate: env.DEFAULT_ASSOCIATE_BILL_RATE,
+      burdenPct: env.LABOR_BURDEN_PERCENT,
+      overheadPerHour: env.LABOR_OVERHEAD_PER_HOUR,
+    },
+    league,
+    concentration,
+    turnover: {
+      separations90d,
+      costPerSeparation: env.EXEC_COST_PER_SEPARATION,
+      estCost90d: separations90d * env.EXEC_COST_PER_SEPARATION,
+    },
     attendance30d: attendanceRows
       .map((r) => ({ kind: r.kind, count: r._count._all }))
       .sort((a, b) => b.count - a.count),

@@ -112,6 +112,79 @@ describe('executive read unlocks', () => {
     expect(survey.status).toBe(403);
   });
 
+  it('command center: receivables, targets, pipeline — exec reads, admins write', async () => {
+    const client = await createClient();
+    const { user: exec } = await createUser({ role: 'EXECUTIVE_CHAIRMAN' });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const execAgent = await loginAs(exec.email);
+    const hrAgent = await loginAs(hr.email);
+
+    // An old unpaid FINAL statement lands in receivables aged 60+.
+    const stmt = await prisma.clientStatement.create({
+      data: {
+        clientId: client.id,
+        periodStart: new Date('2026-05-01T00:00:00Z'),
+        periodEnd: new Date('2026-05-31T00:00:00Z'),
+        status: 'FINAL',
+        number: 77,
+        finalizedAt: new Date(Date.now() - 70 * 86_400_000),
+        snapshot: { totals: { amount: 1234.56 } },
+      },
+    });
+    const recv = await execAgent.get('/executive/receivables');
+    expect(recv.status).toBe(200);
+    expect(recv.body.totals.outstandingCount).toBe(1);
+    expect(recv.body.totals.aging.days60plus).toBeCloseTo(1234.56, 2);
+
+    // Exec cannot record payment; payroll can — and it clears the AR.
+    expect(
+      (await execAgent.post(`/clients/${client.id}/statements/${stmt.id}/mark-paid`)).status,
+    ).toBe(403);
+    const paid = await hrAgent
+      .post(`/clients/${client.id}/statements/${stmt.id}/mark-paid`)
+      .send({ paymentRef: 'ACH-889' });
+    expect(paid.status).toBe(200);
+    expect(paid.body.paidAt).not.toBeNull();
+    const recv2 = await execAgent.get('/executive/receivables');
+    expect(recv2.body.totals.outstandingCount).toBe(0);
+    expect(recv2.body.totals.avgDaysToPay).toBeGreaterThan(0);
+
+    // Targets: exec reads, cannot write; admin sets, pace shows up.
+    const q = `${new Date().getUTCFullYear()}-Q${Math.floor(new Date().getUTCMonth() / 3) + 1}`;
+    expect(
+      (await execAgent.put('/executive/targets').send({ quarter: q, revenueTarget: 100000 }))
+        .status,
+    ).toBe(403);
+    expect(
+      (await hrAgent.put('/executive/targets').send({ quarter: q, revenueTarget: 100000, marginTarget: 25000 }))
+        .status,
+    ).toBe(200);
+    const targets = await execAgent.get('/executive/targets');
+    expect(targets.status).toBe(200);
+    expect(targets.body.targets.revenueTarget).toBe(100000);
+    expect(targets.body.actuals.headcount).toBeDefined();
+
+    // Pipeline: admin writes, exec reads, exec cannot write.
+    expect(
+      (await execAgent.post('/executive/prospects').send({ name: 'Target PCB' })).status,
+    ).toBe(403);
+    const created = await hrAgent
+      .post('/executive/prospects')
+      .send({ name: 'Target PCB', estWeeklyHours: 200, estBillRate: 22 });
+    expect(created.status).toBe(201);
+    const list = await execAgent.get('/executive/prospects');
+    expect(list.status).toBe(200);
+    expect(list.body.prospects).toHaveLength(1);
+    expect(list.body.prospects[0].stage).toBe('LEAD');
+
+    // Summary carries the new intelligence blocks.
+    const summary = await execAgent.get('/executive/summary');
+    expect(summary.body.rates.billRate).toBeGreaterThan(0);
+    expect(summary.body.turnover.costPerSeparation).toBeGreaterThan(0);
+    expect(Array.isArray(summary.body.league)).toBe(true);
+    expect(Array.isArray(summary.body.concentration)).toBe(true);
+  });
+
   it('a client-scoped supervisor cannot read the executive surfaces', async () => {
     const client = await createClient();
     const { user: sup } = await createUser({

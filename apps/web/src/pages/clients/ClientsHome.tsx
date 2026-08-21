@@ -37,6 +37,7 @@ import {
 } from '@/components/ui/Table';
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { NewClientDialog } from './NewClientDialog';
+import { PipelineSection } from './PipelineSection';
 
 const STATUS_FILTERS: Array<{ value: ClientStatus | 'ALL'; label: string }> = [
   { value: 'ALL', label: 'All' },
@@ -309,6 +310,8 @@ export function ClientsHome() {
           </Button>
         </div>
       )}
+
+      {canManage && <PipelineSection />}
 
       <NewClientDialog
         open={showNew}

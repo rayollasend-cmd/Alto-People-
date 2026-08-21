@@ -87,6 +87,17 @@ export function finalizeClientStatement(
   });
 }
 
+export function markClientStatementPaid(
+  clientId: string,
+  statementId: string,
+  paymentRef?: string,
+): Promise<ClientStatement> {
+  return apiFetch(`/clients/${clientId}/statements/${statementId}/mark-paid`, {
+    method: 'POST',
+    body: paymentRef ? { paymentRef } : {},
+  });
+}
+
 export function clientStatementPdfUrl(clientId: string, statementId: string): string {
   return `/api/clients/${clientId}/statements/${statementId}.pdf`;
 }

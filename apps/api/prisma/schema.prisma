@@ -532,6 +532,7 @@ model User {
   // Privacy erasures this admin performed (Associate.erasedById).
   associatesErased                  Associate[]                   @relation("AssociateEraser")
   associatesDeactivated             Associate[]                   @relation("AssociateDeactivator")
+  statementsPaymentsRecorded        ClientStatement[]             @relation("StatementPaymentRecorder")
 
   @@index([role])
   @@index([clientId])
@@ -840,14 +841,62 @@ model ClientStatement {
   snapshot      Json
   finalizedById String?   @db.Uuid
   finalizedAt   DateTime? @db.Timestamptz(6)
+  // Receivables: stamped when the client's payment lands. Null on a FINAL
+  // statement = outstanding — the executive AR view ages it from
+  // finalizedAt. paymentRef holds the check/ACH reference.
+  paidAt        DateTime? @db.Timestamptz(6)
+  paidById      String?   @db.Uuid
+  paymentRef    String?
   createdAt     DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
 
   client      Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
   finalizedBy User?  @relation("StatementFinalizer", fields: [finalizedById], references: [id], onDelete: SetNull)
+  paidBy      User?  @relation("StatementPaymentRecorder", fields: [paidById], references: [id], onDelete: SetNull)
 
   @@unique([clientId, periodStart, periodEnd])
   @@index([clientId, status])
+}
+
+// Quarterly executive targets — what "on plan" means. One row per
+// quarter key ('2026-Q3'); admins (manage:org) set them, the executive
+// dashboard and board pack show actual-vs-target pace.
+model ExecTarget {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  quarter           String   @unique @db.VarChar(8)
+  revenueTarget     Decimal? @db.Decimal(12, 2)
+  marginTarget      Decimal? @db.Decimal(12, 2)
+  headcountTarget   Int?
+  turnoverPctTarget Decimal? @db.Decimal(5, 2)
+  fillRatePctTarget Decimal? @db.Decimal(5, 2)
+  updatedAt         DateTime @updatedAt @db.Timestamptz(6)
+  createdAt         DateTime @default(now()) @db.Timestamptz(6)
+}
+
+enum ProspectStage {
+  LEAD
+  CONTACTED
+  PROPOSAL
+  VERBAL
+  WON
+  LOST
+}
+
+// New-business pipeline — the diversification answer to single-client
+// concentration. Deliberately NOT linked to Client: a prospect becomes a
+// Client only on WON, by the normal client-creation flow.
+model ClientProspect {
+  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String
+  stage          ProspectStage @default(LEAD)
+  estWeeklyHours Int?
+  estBillRate    Decimal?      @db.Decimal(8, 2)
+  notes          String?
+  createdAt      DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @db.Timestamptz(6)
+  deletedAt      DateTime?     @db.Timestamptz(6)
+
+  @@index([stage])
 }
 
 enum ClockInRequestStatus {

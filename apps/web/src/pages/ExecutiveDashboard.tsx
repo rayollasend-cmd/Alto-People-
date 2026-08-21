@@ -67,6 +67,66 @@ interface ExecSummary {
     photoUrl: string | null;
     hireDate: string | null;
   }>;
+  rates: { payRate: number; billRate: number; burdenPct: number; overheadPerHour: number };
+  league: Array<{
+    clientId: string;
+    clientName: string;
+    locationId: string;
+    locationName: string;
+    hours: number;
+    otHours: number;
+    estBilled: number;
+    estMargin: number;
+  }>;
+  concentration: Array<{ clientId: string; clientName: string; sharePct: number }>;
+  turnover: { separations90d: number; costPerSeparation: number; estCost90d: number };
+}
+
+interface Receivables {
+  outstanding: Array<{
+    id: string;
+    clientName: string;
+    number: number | null;
+    periodStart: string;
+    amount: number;
+    ageDays: number;
+  }>;
+  totals: {
+    outstandingAmount: number;
+    outstandingCount: number;
+    aging: { current: number; days30: number; days45: number; days60plus: number };
+    avgDaysToPay: number | null;
+    paidCount: number;
+  };
+}
+
+interface TargetsResponse {
+  quarter: string;
+  elapsedPct: number;
+  targets: {
+    revenueTarget: number | null;
+    marginTarget: number | null;
+    headcountTarget: number | null;
+    turnoverPctTarget: number | null;
+    fillRatePctTarget: number | null;
+  } | null;
+  actuals: {
+    revenueQtd: number;
+    marginQtd: number;
+    headcount: number;
+    turnoverAnnualizedPct: number;
+    fillRatePct: number | null;
+  };
+}
+
+interface ProspectsResponse {
+  prospects: Array<{
+    id: string;
+    name: string;
+    stage: string;
+    estWeeklyHours: number | null;
+    estBillRate: number | null;
+  }>;
 }
 
 const ATTENDANCE_LABEL: Record<string, string> = {
@@ -104,6 +164,166 @@ function Delta({ now, prev, money }: { now: number; prev: number; money?: boolea
   );
 }
 
+function TargetBar({
+  label,
+  actual,
+  target,
+  pacePct,
+  fmt,
+}: {
+  label: string;
+  actual: number;
+  target: number;
+  /** Where "on pace" sits (percent of quarter elapsed; 100 for level targets). */
+  pacePct: number;
+  fmt: (v: number) => string;
+}) {
+  const pct = target > 0 ? Math.min(100, Math.max(0, (actual / target) * 100)) : 0;
+  const behind = pct < pacePct - 5;
+  return (
+    <div>
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-silver">{label}</span>
+        <span className="tabular-nums text-white">
+          {fmt(actual)} <span className="text-silver/60">/ {fmt(target)}</span>
+        </span>
+      </div>
+      <div className="relative mt-1 h-1.5 overflow-hidden rounded-full bg-navy-secondary/70">
+        <div
+          className={`h-full rounded-full ${behind ? 'bg-warning' : 'bg-success'}`}
+          style={{ width: `${pct}%` }}
+        />
+        {pacePct < 100 && (
+          <div
+            className="absolute top-0 h-full w-px bg-silver/60"
+            style={{ left: `${pacePct}%` }}
+            title={`On-pace marker: ${pacePct}% of the quarter elapsed`}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LeagueRow({
+  rank,
+  row,
+  worst,
+}: {
+  rank: number;
+  row: ExecSummary['league'][number];
+  worst?: boolean;
+}) {
+  return (
+    <li className="flex items-center justify-between gap-2 py-1.5 text-sm">
+      <span className="flex min-w-0 items-center gap-2">
+        <span
+          className={`w-5 shrink-0 text-right tabular-nums text-xs ${worst ? 'text-alert' : 'text-gold'}`}
+        >
+          {rank}
+        </span>
+        <span className="min-w-0 truncate text-white">
+          {row.clientName} — {row.locationName}
+        </span>
+      </span>
+      <span className={`tabular-nums ${row.estMargin < 0 ? 'text-alert' : 'text-silver'}`}>
+        {fmtMoney(row.estMargin)}
+        {row.otHours > 0 ? ` · ${row.otHours.toFixed(1)}h OT` : ''}
+      </span>
+    </li>
+  );
+}
+
+function RateCalculator({
+  rates,
+  trend,
+}: {
+  rates: ExecSummary['rates'];
+  trend: ExecSummary['trend'];
+}) {
+  const [bill, setBill] = useState(rates.billRate);
+  const [pay, setPay] = useState(rates.payRate);
+  const recent = trend.slice(-4);
+  const weeklyHours =
+    recent.length > 0 ? recent.reduce((n, w) => n + w.workedHours, 0) / recent.length : 0;
+  const weeklyOt =
+    recent.length > 0 ? recent.reduce((n, w) => n + w.otHours, 0) / recent.length : 0;
+  const annualMargin = (b: number, p: number) => {
+    const billed = weeklyHours * b + weeklyOt * b * 0.5;
+    const cost =
+      (weeklyHours * p + weeklyOt * p * 0.5) * (1 + rates.burdenPct / 100) +
+      weeklyHours * rates.overheadPerHour;
+    return (billed - cost) * 52;
+  };
+  const current = annualMargin(rates.billRate, rates.payRate);
+  const adjusted = annualMargin(bill, pay);
+  const delta = adjusted - current;
+  const num = (v: string, fallback: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  };
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Rate negotiation model</CardTitle>
+        <p className="text-xs text-silver">
+          What-if on your real volume — {weeklyHours.toFixed(0)}h/week average over the
+          last four weeks ({weeklyOt.toFixed(1)}h OT), burden {rates.burdenPct}%.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-wrap items-end gap-4">
+          <label className="text-xs text-silver">
+            Bill rate ($/h)
+            <input
+              type="number"
+              step="0.25"
+              min="0"
+              value={bill}
+              onChange={(e) => setBill(num(e.target.value, rates.billRate))}
+              className="mt-1 block h-9 w-28 rounded border border-navy-secondary bg-navy-secondary/60 px-2 text-sm text-white tabular-nums focus:border-gold focus:outline-none"
+            />
+          </label>
+          <label className="text-xs text-silver">
+            Pay rate ($/h)
+            <input
+              type="number"
+              step="0.25"
+              min="0"
+              value={pay}
+              onChange={(e) => setPay(num(e.target.value, rates.payRate))}
+              className="mt-1 block h-9 w-28 rounded border border-navy-secondary bg-navy-secondary/60 px-2 text-sm text-white tabular-nums focus:border-gold focus:outline-none"
+            />
+          </label>
+          <div className="min-w-[180px]">
+            <div className="text-xs text-silver">Annualized margin impact</div>
+            <div
+              className={`text-xl font-semibold tabular-nums ${delta > 0 ? 'text-success' : delta < 0 ? 'text-alert' : 'text-white'}`}
+            >
+              {delta >= 0 ? '+' : '−'}
+              {fmtMoney(Math.abs(delta))}
+            </div>
+            <div className="text-2xs text-silver/70">
+              vs current {fmtMoney(current)} / yr at ${rates.billRate.toFixed(2)} bill · $
+              {rates.payRate.toFixed(2)} pay
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setBill(rates.billRate);
+              setPay(rates.payRate);
+            }}
+          >
+            Reset
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function Tile({
   label,
   value,
@@ -137,6 +357,9 @@ export function ExecutiveDashboard() {
   const [summary, setSummary] = useState<ExecSummary | null>(null);
   const [floor, setFloor] = useState<FloorNowResponse | null>(null);
   const [ot, setOt] = useState<OtOutlookResponse | null>(null);
+  const [recv, setRecv] = useState<Receivables | null>(null);
+  const [targets, setTargets] = useState<TargetsResponse | null>(null);
+  const [prospects, setProspects] = useState<ProspectsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [packBusy, setPackBusy] = useState(false);
 
@@ -149,6 +372,11 @@ export function ExecutiveDashboard() {
       );
     floorNow().then(setFloor).catch(() => setFloor(null));
     otOutlook().then(setOt).catch(() => setOt(null));
+    apiFetch<Receivables>('/executive/receivables').then(setRecv).catch(() => setRecv(null));
+    apiFetch<TargetsResponse>('/executive/targets').then(setTargets).catch(() => setTargets(null));
+    apiFetch<ProspectsResponse>('/executive/prospects')
+      .then(setProspects)
+      .catch(() => setProspects(null));
   }, []);
   useEffect(() => {
     load();
@@ -414,7 +642,254 @@ export function ExecutiveDashboard() {
               sub={`est. billed ${fmtMoney(summary.thisWeek.estBilled)}`}
               to="/labor-costs"
             />
+            <Tile
+              label="Receivables outstanding"
+              value={recv ? fmtMoney(recv.totals.outstandingAmount) : '—'}
+              sub={
+                recv
+                  ? `${recv.totals.outstandingCount} statement${recv.totals.outstandingCount === 1 ? '' : 's'}${recv.totals.avgDaysToPay !== null ? ` · pays in ~${recv.totals.avgDaysToPay}d` : ''}`
+                  : undefined
+              }
+            />
+            <Tile
+              label="Turnover cost (90d)"
+              value={fmtMoney(summary.turnover.estCost90d)}
+              sub={`${summary.turnover.separations90d} separations × ${fmtMoney(summary.turnover.costPerSeparation)}`}
+              to="/analytics"
+            />
           </div>
+
+          {/* Targets vs actuals + receivables aging. */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <Card>
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base">
+                    {targets ? `${targets.quarter} — plan vs actual` : 'Quarter plan'}
+                  </CardTitle>
+                  {targets && (
+                    <span className="text-2xs text-silver/70">
+                      {targets.elapsedPct}% of quarter elapsed
+                    </span>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {!targets || !targets.targets ? (
+                  <p className="text-sm text-silver">
+                    No targets set for this quarter yet — an administrator can set
+                    revenue, margin, headcount, turnover, and fill-rate targets, and
+                    this card tracks the pace against them.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {targets.targets.revenueTarget !== null && (
+                      <TargetBar
+                        label="Revenue"
+                        actual={targets.actuals.revenueQtd}
+                        target={targets.targets.revenueTarget}
+                        pacePct={targets.elapsedPct}
+                        fmt={fmtMoney}
+                      />
+                    )}
+                    {targets.targets.marginTarget !== null && (
+                      <TargetBar
+                        label="Margin"
+                        actual={targets.actuals.marginQtd}
+                        target={targets.targets.marginTarget}
+                        pacePct={targets.elapsedPct}
+                        fmt={fmtMoney}
+                      />
+                    )}
+                    {targets.targets.headcountTarget !== null && (
+                      <TargetBar
+                        label="Headcount"
+                        actual={targets.actuals.headcount}
+                        target={targets.targets.headcountTarget}
+                        pacePct={100}
+                        fmt={(v) => String(Math.round(v))}
+                      />
+                    )}
+                    {targets.targets.fillRatePctTarget !== null &&
+                      targets.actuals.fillRatePct !== null && (
+                        <TargetBar
+                          label="Fill rate"
+                          actual={targets.actuals.fillRatePct}
+                          target={targets.targets.fillRatePctTarget}
+                          pacePct={100}
+                          fmt={(v) => `${v.toFixed(1)}%`}
+                        />
+                      )}
+                    {targets.targets.turnoverPctTarget !== null && (
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-silver">Turnover (annualized)</span>
+                        <span
+                          className={`tabular-nums ${targets.actuals.turnoverAnnualizedPct > targets.targets.turnoverPctTarget ? 'text-alert' : 'text-success'}`}
+                        >
+                          {targets.actuals.turnoverAnnualizedPct.toFixed(1)}% vs ≤
+                          {targets.targets.turnoverPctTarget.toFixed(1)}%
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Receivables aging</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {!recv ? (
+                  <Skeleton className="h-28" />
+                ) : recv.totals.outstandingCount === 0 ? (
+                  <p className="text-sm text-silver">
+                    Nothing outstanding — every finalized statement is paid.
+                    {recv.totals.avgDaysToPay !== null &&
+                      ` Clients pay in ~${recv.totals.avgDaysToPay} days on average.`}
+                  </p>
+                ) : (
+                  <>
+                    <div className="mb-3 grid grid-cols-4 gap-2 text-center">
+                      {(
+                        [
+                          ['0–30d', recv.totals.aging.current, 'text-white'],
+                          ['30–45d', recv.totals.aging.days30, 'text-white'],
+                          ['45–60d', recv.totals.aging.days45, 'text-warning'],
+                          ['60d+', recv.totals.aging.days60plus, 'text-alert'],
+                        ] as const
+                      ).map(([label, amount, tone]) => (
+                        <div key={label} className="rounded-md bg-navy-secondary/50 p-2">
+                          <div className={`text-sm font-semibold tabular-nums ${tone}`}>
+                            {fmtMoney(amount)}
+                          </div>
+                          <div className="text-2xs text-silver/70">{label}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <ul className="divide-y divide-navy-secondary/60">
+                      {recv.outstanding.slice(0, 5).map((s) => (
+                        <li key={s.id} className="flex items-center justify-between py-1.5 text-sm">
+                          <span className="min-w-0 truncate text-white">
+                            {s.clientName} #{s.number ?? '—'}
+                          </span>
+                          <span
+                            className={`tabular-nums ${s.ageDays >= 45 ? 'text-alert' : 'text-silver'}`}
+                          >
+                            {fmtMoney(s.amount)} · {s.ageDays}d
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Store league + concentration & pipeline. */}
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <Card>
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-base">Store league — last 4 weeks</CardTitle>
+                  <Link to="/labor-costs" className="text-xs text-gold hover:text-gold-bright">
+                    Labor board
+                  </Link>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {summary.league.length === 0 ? (
+                  <p className="text-sm text-silver">No worked time in the window.</p>
+                ) : (
+                  <ul className="divide-y divide-navy-secondary/60">
+                    {summary.league.slice(0, 3).map((r, i) => (
+                      <LeagueRow key={r.locationId} rank={i + 1} row={r} />
+                    ))}
+                    {summary.league.length > 4 && (
+                      <li className="py-1 text-center text-2xs text-silver/50">···</li>
+                    )}
+                    {summary.league.length > 3 &&
+                      summary.league
+                        .slice(-Math.min(3, summary.league.length - 3))
+                        .map((r) => (
+                          <LeagueRow
+                            key={r.locationId}
+                            rank={summary.league.indexOf(r) + 1}
+                            row={r}
+                            worst
+                          />
+                        ))}
+                  </ul>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Concentration & pipeline</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div>
+                  {summary.concentration.slice(0, 4).map((c) => (
+                    <div key={c.clientId} className="mb-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="min-w-0 truncate text-white">{c.clientName}</span>
+                        <span
+                          className={`tabular-nums ${c.sharePct >= 70 ? 'text-warning' : 'text-silver'}`}
+                        >
+                          {c.sharePct.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-navy-secondary/70">
+                        <div
+                          className={`h-full rounded-full ${c.sharePct >= 70 ? 'bg-warning' : 'bg-steel'}`}
+                          style={{ width: `${Math.min(100, c.sharePct)}%` }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                  {summary.concentration[0] && summary.concentration[0].sharePct >= 70 && (
+                    <p className="text-2xs text-warning/90">
+                      {summary.concentration[0].sharePct.toFixed(0)}% of revenue rides on one
+                      client — the pipeline below is the hedge.
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <div className="mb-1 text-xs uppercase tracking-wider text-silver/70">
+                    New-business pipeline
+                  </div>
+                  {!prospects || prospects.prospects.length === 0 ? (
+                    <p className="text-sm text-silver">
+                      No prospects tracked yet — admins add them on the Clients page.
+                    </p>
+                  ) : (
+                    <ul className="divide-y divide-navy-secondary/60">
+                      {prospects.prospects
+                        .filter((p) => p.stage !== 'LOST' && p.stage !== 'WON')
+                        .slice(0, 5)
+                        .map((p) => (
+                          <li key={p.id} className="flex items-center justify-between py-1.5 text-sm">
+                            <span className="min-w-0 truncate text-white">{p.name}</span>
+                            <span className="tabular-nums text-silver">
+                              {p.stage.toLowerCase()}
+                              {p.estWeeklyHours && p.estBillRate
+                                ? ` · ~${fmtMoney(p.estWeeklyHours * p.estBillRate)}/wk`
+                                : ''}
+                            </span>
+                          </li>
+                        ))}
+                    </ul>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* What-if rate model on real hours. */}
+          <RateCalculator rates={summary.rates} trend={summary.trend} />
 
           {/* Infographics row: hours composition + workforce donut. */}
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

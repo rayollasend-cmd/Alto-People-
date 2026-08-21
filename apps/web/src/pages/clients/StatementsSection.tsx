@@ -12,6 +12,7 @@ import {
   clientStatementPdfUrl,
   finalizeClientStatement,
   listClientStatements,
+  markClientStatementPaid,
   upsertClientStatement,
 } from '@/lib/clientsApi';
 import { Badge } from '@/components/ui/Badge';
@@ -165,6 +166,24 @@ export function StatementsSection({ clientId }: { clientId: string }) {
     }
   };
 
+  const markPaid = async (s: ClientStatement) => {
+    const ref = window.prompt(
+      'Payment reference (check / ACH number) — optional:',
+      '',
+    );
+    if (ref === null) return; // cancelled
+    setBusy(`paid-${s.id}`);
+    try {
+      await markClientStatementPaid(clientId, s.id, ref.trim() || undefined);
+      toast.success('Payment recorded — statement moved out of receivables.');
+      await load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not record payment.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   // Fetch-then-save instead of a bare <a download>: an auth failure or 500
   // on a raw link dumps the user on a JSON error page with no way back.
   const download = async (url: string, fallbackName: string) => {
@@ -294,6 +313,12 @@ export function StatementsSection({ clientId }: { clientId: string }) {
                         ) : (
                           <Badge variant="pending">Draft</Badge>
                         )}
+                        {s.status === 'FINAL' &&
+                          (s.paidAt ? (
+                            <Badge variant="success">Paid {fmtDate(s.paidAt)}</Badge>
+                          ) : (
+                            <Badge variant="pending">Unpaid</Badge>
+                          ))}
                       </div>
                       <div className="pl-6 text-xs tabular-nums text-silver">
                         {s.snapshot.totals.hours.toFixed(1)} h ·{' '}
@@ -351,6 +376,17 @@ export function StatementsSection({ clientId }: { clientId: string }) {
                           disabled={busy !== null}
                         >
                           Finalize
+                        </Button>
+                      )}
+                      {canFinalize && s.status === 'FINAL' && !s.paidAt && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void markPaid(s)}
+                          loading={busy === `paid-${s.id}`}
+                          disabled={busy !== null}
+                        >
+                          Mark paid
                         </Button>
                       )}
                     </div>

@@ -192,6 +192,9 @@ const EnvSchema = z.object({
   // board's loaded cost. OT (past 40h/week, ALL clients combined) pays and
   // bills at 1.5× — $31.82 billed on the $21.21 SOW rate.
   LABOR_BURDEN_PERCENT: z.coerce.number().min(0).max(100).default(12),
+  // Fully-loaded cost of losing one associate (recruiting + onboarding +
+  // ramp gap) — drives the executive turnover-cost figure.
+  EXEC_COST_PER_SEPARATION: z.coerce.number().min(0).default(400),
   LABOR_OVERHEAD_PER_HOUR: z.coerce.number().min(0).default(0),
   // Schedule gate on kiosk clock-ins (product owner, 2026-08-19): a fresh
   // CLOCK_IN requires an ASSIGNED shift covering the punch (2h early
