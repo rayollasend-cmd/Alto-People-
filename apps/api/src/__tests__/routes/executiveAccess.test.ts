@@ -75,7 +75,10 @@ describe('executive is truly read-only', () => {
     const res = await agent
       .patch(`/admin/users/${target.id}`)
       .send({ status: 'DISABLED' });
-    expect(res.status).toBe(200);
+    // 200-with-body or 204-no-content are both success shapes here.
+    expect([200, 204]).toContain(res.status);
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: target.id } });
+    expect(after.status).toBe('DISABLED');
   });
 });
 
