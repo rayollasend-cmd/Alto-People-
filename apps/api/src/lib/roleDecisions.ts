@@ -41,6 +41,9 @@ export async function computeRoleDecisions(
   const thisWeekStart = startOfWeekUTC(now);
   // Client-scoped operators see their site; org roles see everything.
   const clientClamp = user.clientId ? { clientId: user.clientId } : {};
+  // Scope-aware keys: two supervisors at the SAME site share one item
+  // (and see each other's claims); different sites never collide.
+  const scoped = (key: string) => (user.clientId ? `${key}:${user.clientId}` : key);
 
   /* ----- Site operations (supervisors + anyone managing time) ----------- */
   if (can('manage:time')) {
@@ -59,7 +62,7 @@ export async function computeRoleDecisions(
         ...walkIns.map((w) => Math.round((now.getTime() - w.requestedAt.getTime()) / 60_000)),
       );
       out.push({
-        key: 'walkins:pending',
+        key: scoped('walkins:pending'),
         severity: 'critical',
         label: `${walkIns.length} walk-in clock-in${walkIns.length === 1 ? '' : 's'} waiting on you`,
         detail: `Someone is standing at a kiosk unable to work — oldest has waited ${oldestMin} minutes.`,
@@ -70,7 +73,7 @@ export async function computeRoleDecisions(
     }
     if (unapproved >= 10) {
       out.push({
-        key: 'time:unapproved',
+        key: scoped('time:unapproved'),
         severity: unapproved >= 100 ? 'high' : 'normal',
         label: `${unapproved} punches from past weeks awaiting approval`,
         detail: 'Unapproved time is unbillable and holds up payroll — run timesheet approval.',
@@ -97,7 +100,7 @@ export async function computeRoleDecisions(
     ]);
     if (openToday > 0) {
       out.push({
-        key: 'shifts:open-24h',
+        key: scoped('shifts:open-24h'),
         severity: 'high',
         label: `${openToday} shift${openToday === 1 ? '' : 's'} in the next 24h still unassigned`,
         detail: 'Every unfilled shift is unbilled hours and a coverage gap on the floor.',
@@ -108,7 +111,7 @@ export async function computeRoleDecisions(
     }
     if (claims > 0) {
       out.push({
-        key: 'claims:pending',
+        key: scoped('claims:pending'),
         severity: 'normal',
         label: `${claims} open-shift pickup${claims === 1 ? '' : 's'} awaiting review`,
         detail: 'Associates volunteered — a fast yes fills the schedule and rewards initiative.',

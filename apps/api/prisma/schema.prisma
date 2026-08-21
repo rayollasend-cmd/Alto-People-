@@ -533,6 +533,7 @@ model User {
   associatesErased                  Associate[]                   @relation("AssociateEraser")
   associatesDeactivated             Associate[]                   @relation("AssociateDeactivator")
   statementsPaymentsRecorded        ClientStatement[]             @relation("StatementPaymentRecorder")
+  decisionClaims                    DecisionClaim[]               @relation("DecisionClaimer")
 
   @@index([role])
   @@index([clientId])
@@ -890,6 +891,23 @@ model ExecDecisionState {
   actedAt        DateTime  @default(now()) @db.Timestamptz(6)
   note           String?
   updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+}
+
+// Collaboration overlay for the role decision queues: who has TAKEN an
+// item ("I've got this"), so teammates sharing the same queue scope
+// don't double-work it, and whether it was escalated upward. Keys are
+// scope-aware (client-clamped items carry the clientId), and rows are
+// cleaned up lazily — a claim on a resolved item simply never renders.
+model DecisionClaim {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key           String    @unique @db.VarChar(160)
+  claimedById   String    @db.Uuid
+  claimedBy     User      @relation("DecisionClaimer", fields: [claimedById], references: [id], onDelete: Cascade)
+  claimedAt     DateTime  @default(now()) @db.Timestamptz(6)
+  note          String?
+  escalatedAt   DateTime? @db.Timestamptz(6)
+  escalatedById String?   @db.Uuid
+  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
 }
 
 enum ProspectStage {

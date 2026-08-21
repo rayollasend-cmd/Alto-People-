@@ -72,11 +72,57 @@ describe('GET /me/decisions', () => {
     const res = await agent.get('/me/decisions');
     expect(res.status).toBe(200);
     const items = res.body.decisions as Item[];
-    const walkins = items.find((d) => d.key === 'walkins:pending');
+    const walkins = items.find((d) => d.key.startsWith('walkins:pending'));
     expect(walkins).toBeDefined();
     expect(walkins!.severity).toBe('critical');
     expect(walkins!.label).toContain('1 walk-in');
     expect(items.some((d) => d.key === 'receivables:overdue')).toBe(false);
+  });
+
+  it('collaboration: same-site supervisors see claims, conflicting claims 409, escalation pings admins', async () => {
+    const client = await createClient('Walmart Destin');
+    const a = await createAssociate({ firstName: 'Kiosk', lastName: 'Waiter' });
+    await prisma.clockInRequest.create({
+      data: { associateId: a.id, clientId: client.id, requestedAt: new Date() },
+    });
+    const { user: sup1 } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });
+    const { user: sup2 } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });
+    const { user: admin } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const agent1 = await loginAs(sup1.email);
+    const agent2 = await loginAs(sup2.email);
+
+    const key = `walkins:pending:${client.id}`;
+    const claim = await agent1.post('/me/decisions/act').send({ key, action: 'claim' });
+    expect(claim.status).toBe(200);
+
+    // Teammate at the same site sees who has it, and can't double-claim.
+    const q2 = await agent2.get('/me/decisions');
+    const seen = (q2.body.decisions as Array<Item & { claimedBy: { name: string } | null; claimedByMe: boolean }>).find(
+      (d) => d.key === key,
+    );
+    expect(seen).toBeDefined();
+    expect(seen!.claimedBy).not.toBeNull();
+    expect(seen!.claimedByMe).toBe(false);
+    const conflict = await agent2.post('/me/decisions/act').send({ key, action: 'claim' });
+    expect(conflict.status).toBe(409);
+    // Only the claimer can release.
+    expect(
+      (await agent2.post('/me/decisions/act').send({ key, action: 'release' })).status,
+    ).toBe(403);
+    expect(
+      (await agent1.post('/me/decisions/act').send({ key, action: 'release' })).status,
+    ).toBe(200);
+
+    // Escalation notifies the org admins with the note.
+    const esc = await agent2
+      .post('/me/decisions/act')
+      .send({ key, action: 'escalate', note: 'Nobody free to cover the kiosk.' });
+    expect(esc.status).toBe(200);
+    const notif = await prisma.notification.findFirst({
+      where: { recipientUserId: admin.id, category: 'decision_escalation' },
+    });
+    expect(notif).not.toBeNull();
+    expect(notif!.body).toContain('Nobody free to cover the kiosk.');
   });
 
   it('HR admin sees finance + compliance items; an associate login gets a personal (or empty) queue', async () => {
