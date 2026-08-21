@@ -20,12 +20,14 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { Textarea } from '@/components/ui/Input';
 
 /**
- * "Needs your decision" for every seat — collaborative: claim ("I've got
- * this"), hand off to a colleague (assign/reassign, they're notified and
- * it lands in their chips), tag someone for awareness, postpone to a
- * later day, escalate upward with a note, or pull the item into your own
- * day plan. Items auto-clear when the underlying work is done. Renders
- * nothing when empty or unavailable — every item has a primary surface.
+ * The Decision Console — mission-control presentation of the queue:
+ *   · a one-line TRIAGE summary (severity mix + dollars at stake)
+ *   · FOCUS: the top decision as a hero with ONE primary action
+ *   · calm rows below with relative stakes bars and a single button each
+ *   · every other verb (assign / tag / postpone / plan / escalate /
+ *     release) lives in the item's ROOM, where the context is
+ * The engine, rooms, and actions are unchanged — this is the console
+ * skin. Empty queue = "All systems nominal". Fails silent (supplement).
  */
 
 interface RoleDecision {
@@ -50,23 +52,45 @@ interface Colleague {
   roleLabel: string;
 }
 
+const SEV_DOT: Record<RoleDecision['severity'], string> = {
+  critical: 'bg-alert',
+  high: 'bg-warning',
+  normal: 'bg-silver/40',
+};
+const SEV_BAR: Record<RoleDecision['severity'], string> = {
+  critical: 'bg-alert/70',
+  high: 'bg-warning/70',
+  normal: 'bg-steel/70',
+};
+
+function ageTone(ageDays: number | null): string {
+  if (ageDays === null || ageDays <= 0) return 'text-silver/60';
+  if (ageDays >= 14) return 'text-alert';
+  if (ageDays >= 7) return 'text-warning';
+  return 'text-silver/60';
+}
+
 export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: string }) {
   const [rows, setRows] = useState<RoleDecision[] | null>(null);
   const [error, setError] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [colleagues, setColleagues] = useState<Colleague[] | null>(null);
-  const [picker, setPicker] = useState<{
-    mode: 'assign' | 'tag';
-    item: RoleDecision;
-  } | null>(null);
+  const [picker, setPicker] = useState<{ mode: 'assign' | 'tag'; item: RoleDecision } | null>(
+    null,
+  );
   const [pickTarget, setPickTarget] = useState('');
   const [pickNote, setPickNote] = useState('');
   const [roomKey, setRoomKey] = useState<string | null>(null);
+  const [focusIdx, setFocusIdx] = useState(0);
+  const [showAll, setShowAll] = useState(false);
 
   const load = useCallback(() => {
     setError(false);
     apiFetch<{ decisions: RoleDecision[] }>('/me/decisions')
-      .then((r) => setRows(r.decisions))
+      .then((r) => {
+        setRows(r.decisions);
+        setFocusIdx(0);
+      })
       .catch(() => setError(true));
   }, []);
   useEffect(load, [load]);
@@ -86,10 +110,7 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
     if (busyKey) return;
     setBusyKey(`${key}:${action}`);
     try {
-      await apiFetch('/me/decisions/act', {
-        method: 'POST',
-        body: { key, action, ...extra },
-      });
+      await apiFetch('/me/decisions/act', { method: 'POST', body: { key, action, ...extra } });
       toast.success(
         action === 'claim'
           ? "It's yours — your teammates can see you've got it."
@@ -112,6 +133,23 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
     }
   };
 
+  const quick = async (item: RoleDecision) => {
+    if (busyKey) return;
+    setBusyKey(`${item.key}:quick`);
+    try {
+      const r = await apiFetch<{ summary: string }>('/me/decisions/quick', {
+        method: 'POST',
+        body: { key: item.key },
+      });
+      toast.success(r.summary);
+      load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not run the quick action.');
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
   const escalate = (item: RoleDecision) => {
     const typed = window.prompt('Add a note for the admins (optional):', '');
     if (typed === null) return;
@@ -129,32 +167,11 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
     try {
       await apiFetch('/me/plan', {
         method: 'POST',
-        body: {
-          day: ymdLocal(),
-          title: item.label,
-          decisionKey: item.key,
-          linkUrl: item.linkUrl,
-        },
+        body: { day: ymdLocal(), title: item.label, decisionKey: item.key, linkUrl: item.linkUrl },
       });
       toast.success('Added to your plan for today.');
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not add to your plan.');
-    } finally {
-      setBusyKey(null);
-    }
-  };
-  const quick = async (item: RoleDecision) => {
-    if (busyKey) return;
-    setBusyKey(`${item.key}:quick`);
-    try {
-      const r = await apiFetch<{ summary: string }>('/me/decisions/quick', {
-        method: 'POST',
-        body: { key: item.key },
-      });
-      toast.success(r.summary);
-      load();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not run the quick action.');
     } finally {
       setBusyKey(null);
     }
@@ -166,11 +183,18 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
     setPicker({ mode, item });
   };
 
-  // Supplement card: vanish quietly on failure — every item has a
-  // primary surface with its own error handling.
+  /** ONE primary action per item — quick fix beats claim beats room. */
+  const primaryFor = (d: RoleDecision): { label: string; run: () => void } => {
+    if (d.claimedBy && !d.claimedByMe) {
+      return { label: 'Open room', run: () => setRoomKey(d.key) };
+    }
+    if (d.quickAction) return { label: d.quickAction, run: () => void quick(d) };
+    if (d.claimedByMe) return { label: 'Open room', run: () => setRoomKey(d.key) };
+    return { label: "I've got this", run: () => void act(d.key, 'claim') };
+  };
+
+  // Supplement card: vanish quietly on failure.
   if (error) return null;
-  // All systems nominal: a clean queue says so, calmly — silence you can
-  // trust beats an empty space you have to wonder about.
   if (rows !== null && rows.length === 0) {
     return (
       <div className="flex items-center gap-2 rounded-md border border-success/20 bg-success/[0.06] px-3 py-2 text-sm text-silver">
@@ -180,157 +204,250 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
     );
   }
 
+  const maxStakes = Math.max(1, ...(rows ?? []).map((d) => d.stakes ?? 0));
+  const focus = rows && rows.length > 0 ? rows[Math.min(focusIdx, rows.length - 1)] : null;
+  const rest = rows ? rows.filter((_, i) => i !== Math.min(focusIdx, rows.length - 1)) : [];
+  const visibleRest = showAll ? rest : rest.slice(0, 3);
+  const nCritical = (rows ?? []).filter((d) => d.severity === 'critical').length;
+  const nHigh = (rows ?? []).filter((d) => d.severity === 'high').length;
+  const nNormal = (rows ?? []).filter((d) => d.severity === 'normal').length;
+  const totalStakes = (rows ?? []).reduce((n, d) => n + (d.stakes ?? 0), 0);
+  const roomItem = rows?.find((d) => d.key === roomKey) ?? null;
+
   return (
-    <Card className={rows?.some((d) => d.severity === 'critical') ? 'border-alert/40' : undefined}>
+    <Card className={nCritical > 0 ? 'border-alert/40' : undefined}>
       <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="text-base">{title}</CardTitle>
+          {/* The triage line — the whole queue in one sentence. */}
           {rows && rows.length > 0 && (
-            <span className="text-2xs tabular-nums text-silver/70">{rows.length} waiting</span>
+            <span className="text-2xs tabular-nums text-silver">
+              {nCritical > 0 && <span className="font-medium text-alert">{nCritical} critical</span>}
+              {nCritical > 0 && (nHigh > 0 || nNormal > 0) && ' · '}
+              {nHigh > 0 && <span className="text-warning">{nHigh} high</span>}
+              {nHigh > 0 && nNormal > 0 && ' · '}
+              {nNormal > 0 && <span>{nNormal} routine</span>}
+              {totalStakes > 0 && (
+                <span className="text-silver/70"> — {fmtMoney(totalStakes)} at stake</span>
+              )}
+            </span>
           )}
         </div>
       </CardHeader>
       <CardContent>
-        {rows === null && <Skeleton className="h-20" />}
-        {rows && rows.length > 0 && (
-          <ul className="space-y-2">
-            {rows.slice(0, 6).map((d) => (
-              <li
-                key={d.key}
-                className={`rounded-md border-l-2 bg-navy-secondary/30 px-3 py-2 ${
-                  d.severity === 'critical'
-                    ? 'border-alert'
-                    : d.severity === 'high'
-                      ? 'border-warning'
-                      : 'border-navy-secondary'
-                }`}
-              >
-                {/* The label opens the item's ROOM (thread + timeline). */}
-                <button
-                  type="button"
-                  onClick={() => setRoomKey(d.key)}
-                  className="group block w-full text-left"
+        {rows === null && <Skeleton className="h-24" />}
+
+        {/* FOCUS — the console asks one question at a time. */}
+        {focus && (
+          <div
+            className={`rounded-lg border-l-4 bg-navy-secondary/40 p-4 ${
+              focus.severity === 'critical'
+                ? 'border-alert'
+                : focus.severity === 'high'
+                  ? 'border-warning'
+                  : 'border-steel'
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => setRoomKey(focus.key)}
+              className="group block w-full text-left"
+            >
+              <div className="text-lg font-semibold leading-snug text-white group-hover:text-gold">
+                {focus.label}
+              </div>
+              <div className="mt-0.5 text-sm text-silver">{focus.detail}</div>
+            </button>
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs tabular-nums">
+              {focus.stakes !== null && (
+                <span
+                  className={focus.severity === 'critical' ? 'font-medium text-alert' : 'text-white'}
                 >
-                  <div className="flex flex-wrap items-center justify-between gap-x-2">
-                    <span className="text-sm text-white group-hover:text-gold">{d.label}</span>
-                    <span className="flex items-center gap-1.5 text-2xs tabular-nums text-silver">
-                      {d.stakes !== null && <span>{fmtMoney(d.stakes)} at stake</span>}
-                      {d.ageDays !== null && d.ageDays > 0 && (
-                        <span className="text-silver/60">waiting {d.ageDays}d</span>
-                      )}
-                      {d.escalated && (
-                        <span className="rounded-full bg-warning/15 px-1.5 py-0.5 text-warning">
-                          escalated
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                  <div className="text-xs text-silver">{d.detail}</div>
-                </button>
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                  {d.quickAction && (
-                    <Button
-                      size="xs"
-                      loading={busyKey === `${d.key}:quick`}
-                      disabled={busyKey !== null}
-                      onClick={() => void quick(d)}
-                    >
-                      {d.quickAction}
-                    </Button>
-                  )}
-                  {d.claimedBy && !d.claimedByMe ? (
-                    <span
-                      className="flex items-center gap-1.5 rounded-full bg-steel/20 py-0.5 pl-0.5 pr-2 text-2xs text-white"
-                      title={d.note ?? undefined}
-                    >
-                      <Avatar src={d.claimedBy.photoUrl} name={d.claimedBy.name} size="xs" />
-                      With {d.claimedBy.name}
-                    </span>
-                  ) : d.claimedByMe ? (
-                    <>
-                      <span className="rounded-full bg-gold/15 px-2 py-0.5 text-2xs text-gold">
-                        {d.assigned ? 'Assigned to you' : "You've got this"}
-                      </span>
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        loading={busyKey === `${d.key}:release`}
-                        disabled={busyKey !== null}
-                        onClick={() => void act(d.key, 'release')}
-                      >
-                        Release
-                      </Button>
-                    </>
-                  ) : (
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      loading={busyKey === `${d.key}:claim`}
-                      disabled={busyKey !== null}
-                      onClick={() => void act(d.key, 'claim')}
-                    >
-                      I&apos;ve got this
-                    </Button>
-                  )}
-                  {(!d.claimedBy || d.claimedByMe) && (
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      disabled={busyKey !== null}
-                      onClick={() => openPicker('assign', d)}
-                    >
-                      Assign
-                    </Button>
-                  )}
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    disabled={busyKey !== null}
-                    onClick={() => openPicker('tag', d)}
-                  >
-                    Tag
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    loading={busyKey === `${d.key}:postpone`}
-                    disabled={busyKey !== null}
-                    onClick={() => postpone(d)}
-                  >
-                    Postpone
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    loading={busyKey === `${d.key}:plan`}
-                    disabled={busyKey !== null}
-                    onClick={() => void addToPlan(d)}
-                  >
-                    + My day
-                  </Button>
-                  {!d.escalated && (
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      loading={busyKey === `${d.key}:escalate`}
-                      disabled={busyKey !== null}
-                      onClick={() => escalate(d)}
-                    >
-                      Escalate
-                    </Button>
-                  )}
-                </div>
-              </li>
-            ))}
-            {rows.length > 6 && (
-              <li className="text-center text-2xs text-silver/60">
-                +{rows.length - 6} more waiting
-              </li>
-            )}
-          </ul>
+                  {fmtMoney(focus.stakes)} at stake
+                </span>
+              )}
+              {focus.ageDays !== null && focus.ageDays > 0 && (
+                <span className={ageTone(focus.ageDays)}>waiting {focus.ageDays}d</span>
+              )}
+              {focus.escalated && <span className="text-warning">escalated</span>}
+              {focus.claimedBy && (
+                <span className="flex items-center gap-1.5 text-silver">
+                  <Avatar src={focus.claimedBy.photoUrl} name={focus.claimedBy.name} size="xs" />
+                  {focus.claimedByMe ? 'with you' : `with ${focus.claimedBy.name}`}
+                </span>
+              )}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                loading={busyKey?.startsWith(focus.key) ?? false}
+                disabled={busyKey !== null}
+                onClick={primaryFor(focus).run}
+              >
+                {primaryFor(focus).label}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setRoomKey(focus.key)}>
+                Open room
+              </Button>
+              {rows && rows.length > 1 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="ml-auto text-silver/70"
+                  onClick={() => setFocusIdx((i) => (i + 1) % rows.length)}
+                >
+                  Next ↓
+                </Button>
+              )}
+            </div>
+          </div>
         )}
 
-        <DecisionRoom itemKey={roomKey} onClose={() => setRoomKey(null)} />
+        {/* The quiet stack below. */}
+        {visibleRest.length > 0 && (
+          <ul className="mt-3 space-y-1">
+            {visibleRest.map((d) => {
+              const primary = primaryFor(d);
+              return (
+                <li key={d.key} className="group/row flex items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-navy-secondary/30">
+                  <span
+                    className={`h-2 w-2 shrink-0 rounded-full ${SEV_DOT[d.severity]}`}
+                    aria-hidden="true"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setRoomKey(d.key)}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <span className="block truncate text-sm text-white hover:text-gold">
+                      {d.label}
+                    </span>
+                    {/* Preattentive stakes: relative bar, not just a number. */}
+                    {d.stakes !== null && d.stakes > 0 && (
+                      <span className="mt-0.5 block h-1 w-full max-w-[160px] overflow-hidden rounded-full bg-navy-secondary/70">
+                        <span
+                          className={`block h-full rounded-full ${SEV_BAR[d.severity]}`}
+                          style={{ width: `${Math.max(6, ((d.stakes ?? 0) / maxStakes) * 100)}%` }}
+                        />
+                      </span>
+                    )}
+                  </button>
+                  <span className="flex shrink-0 items-center gap-2 text-2xs tabular-nums">
+                    {d.stakes !== null && <span className="text-silver">{fmtMoney(d.stakes)}</span>}
+                    {d.ageDays !== null && d.ageDays > 0 && (
+                      <span className={ageTone(d.ageDays)}>{d.ageDays}d</span>
+                    )}
+                    {d.claimedBy && (
+                      <Avatar
+                        src={d.claimedBy.photoUrl}
+                        name={d.claimedBy.name}
+                        size="xs"
+                      />
+                    )}
+                  </span>
+                  <Button
+                    size="xs"
+                    variant={d.quickAction && !(d.claimedBy && !d.claimedByMe) ? 'primary' : 'ghost'}
+                    className="shrink-0"
+                    loading={busyKey?.startsWith(d.key) ?? false}
+                    disabled={busyKey !== null}
+                    onClick={primary.run}
+                  >
+                    {primary.label}
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {rest.length > 3 && (
+          <button
+            type="button"
+            className="mt-2 w-full text-center text-2xs text-silver/70 hover:text-gold"
+            onClick={() => setShowAll((s) => !s)}
+          >
+            {showAll ? 'Show less' : `Show all (${rows?.length ?? 0})`}
+          </button>
+        )}
+
+        <DecisionRoom
+          itemKey={roomKey}
+          onClose={() => setRoomKey(null)}
+          actions={
+            roomItem ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {roomItem.claimedByMe ? (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    loading={busyKey === `${roomItem.key}:release`}
+                    disabled={busyKey !== null}
+                    onClick={() => void act(roomItem.key, 'release')}
+                  >
+                    Release
+                  </Button>
+                ) : !roomItem.claimedBy ? (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    loading={busyKey === `${roomItem.key}:claim`}
+                    disabled={busyKey !== null}
+                    onClick={() => void act(roomItem.key, 'claim')}
+                  >
+                    I&apos;ve got this
+                  </Button>
+                ) : null}
+                {(!roomItem.claimedBy || roomItem.claimedByMe) && (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    disabled={busyKey !== null}
+                    onClick={() => openPicker('assign', roomItem)}
+                  >
+                    Assign
+                  </Button>
+                )}
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  disabled={busyKey !== null}
+                  onClick={() => openPicker('tag', roomItem)}
+                >
+                  Tag
+                </Button>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  loading={busyKey === `${roomItem.key}:postpone`}
+                  disabled={busyKey !== null}
+                  onClick={() => postpone(roomItem)}
+                >
+                  Postpone
+                </Button>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  loading={busyKey === `${roomItem.key}:plan`}
+                  disabled={busyKey !== null}
+                  onClick={() => void addToPlan(roomItem)}
+                >
+                  + My day
+                </Button>
+                {!roomItem.escalated && (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    loading={busyKey === `${roomItem.key}:escalate`}
+                    disabled={busyKey !== null}
+                    onClick={() => escalate(roomItem)}
+                  >
+                    Escalate
+                  </Button>
+                )}
+              </div>
+            ) : undefined
+          }
+        />
 
         <Dialog open={picker !== null} onOpenChange={(o) => !o && setPicker(null)}>
           <DialogContent>

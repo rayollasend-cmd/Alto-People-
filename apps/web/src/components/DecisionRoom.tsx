@@ -69,9 +69,13 @@ function RoleBadge({ p }: { p: Person }) {
 export function DecisionRoom({
   itemKey,
   onClose,
+  actions,
 }: {
   itemKey: string | null;
   onClose: () => void;
+  /** The action bar the opener renders into the room — claim/assign/
+   *  tag/postpone/plan/escalate live HERE, next to the context. */
+  actions?: React.ReactNode;
 }) {
   const [room, setRoom] = useState<RoomData | null>(null);
   const [failed, setFailed] = useState(false);
@@ -154,6 +158,14 @@ export function DecisionRoom({
         {!room && !failed && <Skeleton className="h-40" />}
         {room && (
           <>
+            {actions && (
+              <div>
+                <div className="mb-1.5 text-2xs uppercase tracking-wider text-silver/60">
+                  Actions
+                </div>
+                {actions}
+              </div>
+            )}
             {/* Who's in the room. */}
             {room.participants.length > 0 && (
               <div>
