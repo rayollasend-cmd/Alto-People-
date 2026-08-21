@@ -41,6 +41,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
+import { MyPlanCard } from '@/components/MyPlanCard';
 
 const greetingFor = (hour: number): string => {
   if (hour < 5) return 'Up late';
@@ -165,6 +166,7 @@ export function ManagerDashboard() {
       </header>
 
       <RoleDecisionQueue />
+      <MyPlanCard />
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
 

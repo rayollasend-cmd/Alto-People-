@@ -52,6 +52,7 @@ import {
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
+import { MyPlanCard } from '@/components/MyPlanCard';
 
 /**
  * Role-tailored subtitle on the greeting strip. The same dashboard scaffold
@@ -208,6 +209,7 @@ export function AdminDashboard() {
       <WelcomeCard greetingName={greetingName} />
 
       <RoleDecisionQueue />
+      <MyPlanCard />
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
 

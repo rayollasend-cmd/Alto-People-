@@ -125,6 +125,92 @@ describe('GET /me/decisions', () => {
     expect(notif!.body).toContain('Nobody free to cover the kiosk.');
   });
 
+  it('assign moves the item to a colleague, postpone hides it, tag notifies, planner CRUDs', async () => {
+    const client = await createClient('Walmart Destin');
+    const a = await createAssociate({ firstName: 'Kiosk', lastName: 'Waiter' });
+    await prisma.clockInRequest.create({
+      data: { associateId: a.id, clientId: client.id, requestedAt: new Date() },
+    });
+    const { user: sup1 } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });
+    const { user: sup2 } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });
+    const agent1 = await loginAs(sup1.email);
+    const agent2 = await loginAs(sup2.email);
+    const key = `walkins:pending:${client.id}`;
+
+    // Colleagues list includes the same-site teammate.
+    const col = await agent1.get('/me/colleagues');
+    expect(col.status).toBe(200);
+    expect(
+      (col.body.colleagues as Array<{ id: string }>).some((c) => c.id === sup2.id),
+    ).toBe(true);
+
+    // Assign to sup2: they get the notification AND the ownership chip.
+    const assign = await agent1
+      .post('/me/decisions/act')
+      .send({ key, action: 'assign', targetUserId: sup2.id, note: 'Take this while I cover GM.' });
+    expect(assign.status).toBe(200);
+    const assignNotif = await prisma.notification.findFirst({
+      where: { recipientUserId: sup2.id, category: 'decision_assignment' },
+    });
+    expect(assignNotif).not.toBeNull();
+    expect(assignNotif!.body).toContain('Take this while I cover GM.');
+    const q2 = await agent2.get('/me/decisions');
+    const mine = (
+      q2.body.decisions as Array<Item & { claimedByMe: boolean; assigned: boolean }>
+    ).find((d) => d.key === key);
+    expect(mine?.claimedByMe).toBe(true);
+    expect(mine?.assigned).toBe(true);
+
+    // The assigner can reassign back to themselves.
+    expect(
+      (
+        await agent1
+          .post('/me/decisions/act')
+          .send({ key, action: 'assign', targetUserId: sup1.id })
+      ).status,
+    ).toBe(400); // can't target yourself — not in your own colleague list
+    // Tag notifies without changing hands.
+    const tag = await agent2
+      .post('/me/decisions/act')
+      .send({ key, action: 'tag', targetUserId: sup1.id, note: 'FYI still working it.' });
+    expect(tag.status).toBe(200);
+    const tagNotif = await prisma.notification.findFirst({
+      where: { recipientUserId: sup1.id, category: 'decision_tag' },
+    });
+    expect(tagNotif).not.toBeNull();
+
+    // Postpone hides the item from everyone until the day comes.
+    const post = await agent2
+      .post('/me/decisions/act')
+      .send({ key, action: 'postpone', days: 3 });
+    expect(post.status).toBe(200);
+    const q1 = await agent1.get('/me/decisions');
+    expect((q1.body.decisions as Item[]).some((d) => d.key === key)).toBe(false);
+
+    // Planner: add, list, check off, delete.
+    const today = new Date().toISOString().slice(0, 10);
+    const created = await agent1
+      .post('/me/plan')
+      .send({ day: today, title: 'Walk the floor at 2pm' });
+    expect(created.status).toBe(201);
+    const list = await agent1.get(`/me/plan?from=${today}&to=${today}`);
+    expect(list.status).toBe(200);
+    expect(list.body.items).toHaveLength(1);
+    expect(list.body.items[0].done).toBe(false);
+    expect(
+      (
+        await agent1.patch(`/me/plan/${created.body.id}`).send({ done: true })
+      ).status,
+    ).toBe(200);
+    const list2 = await agent1.get(`/me/plan?from=${today}&to=${today}`);
+    expect(list2.body.items[0].done).toBe(true);
+    // Another user cannot touch it.
+    expect(
+      (await agent2.patch(`/me/plan/${created.body.id}`).send({ done: false })).status,
+    ).toBe(404);
+    expect((await agent1.delete(`/me/plan/${created.body.id}`)).status).toBe(200);
+  });
+
   it('HR admin sees finance + compliance items; an associate login gets a personal (or empty) queue', async () => {
     const client = await createClient();
     await prisma.clientStatement.create({

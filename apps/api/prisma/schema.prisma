@@ -534,6 +534,7 @@ model User {
   associatesDeactivated             Associate[]                   @relation("AssociateDeactivator")
   statementsPaymentsRecorded        ClientStatement[]             @relation("StatementPaymentRecorder")
   decisionClaims                    DecisionClaim[]               @relation("DecisionClaimer")
+  workPlanItems                     WorkPlanItem[]                @relation("WorkPlanOwner")
 
   @@index([role])
   @@index([clientId])
@@ -899,15 +900,37 @@ model ExecDecisionState {
 // scope-aware (client-clamped items carry the clientId), and rows are
 // cleaned up lazily — a claim on a resolved item simply never renders.
 model DecisionClaim {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  key           String    @unique @db.VarChar(160)
-  claimedById   String    @db.Uuid
-  claimedBy     User      @relation("DecisionClaimer", fields: [claimedById], references: [id], onDelete: Cascade)
-  claimedAt     DateTime  @default(now()) @db.Timestamptz(6)
-  note          String?
-  escalatedAt   DateTime? @db.Timestamptz(6)
-  escalatedById String?   @db.Uuid
-  updatedAt     DateTime  @updatedAt @db.Timestamptz(6)
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key            String    @unique @db.VarChar(160)
+  claimedById    String    @db.Uuid
+  claimedBy      User      @relation("DecisionClaimer", fields: [claimedById], references: [id], onDelete: Cascade)
+  claimedAt      DateTime  @default(now()) @db.Timestamptz(6)
+  // Set when the item was ASSIGNED to claimedBy by someone else (vs
+  // self-claimed) — the assigner keeps reassign rights.
+  assignedById   String?   @db.Uuid
+  // Postponed items are hidden from every queue until this instant.
+  postponedUntil DateTime? @db.Timestamptz(6)
+  note           String?
+  escalatedAt    DateTime? @db.Timestamptz(6)
+  escalatedById  String?   @db.Uuid
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+}
+
+// Personal day/week planner — each user's own list, mixing queue items
+// they pulled in ("Add to my day") with free-form tasks they typed.
+model WorkPlanItem {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @db.Uuid
+  user        User      @relation("WorkPlanOwner", fields: [userId], references: [id], onDelete: Cascade)
+  day         DateTime  @db.Date
+  title       String
+  decisionKey String?   @db.VarChar(160)
+  linkUrl     String?
+  doneAt      DateTime? @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([userId, day])
 }
 
 enum ProspectStage {
