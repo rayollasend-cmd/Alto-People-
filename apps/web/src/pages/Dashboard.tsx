@@ -17,6 +17,9 @@ const ManagerDashboard = lazy(() =>
 const SupervisorDashboard = lazy(() =>
   import('./SupervisorDashboard').then((m) => ({ default: m.SupervisorDashboard })),
 );
+const ExecutiveDashboard = lazy(() =>
+  import('./ExecutiveDashboard').then((m) => ({ default: m.ExecutiveDashboard })),
+);
 
 function DashboardFallback() {
   return (
@@ -49,7 +52,9 @@ export function Dashboard() {
         ? ManagerDashboard
         : user?.role === 'SHIFT_SUPERVISOR'
           ? SupervisorDashboard
-          : AdminDashboard;
+          : user?.role === 'EXECUTIVE_CHAIRMAN'
+            ? ExecutiveDashboard
+            : AdminDashboard;
   return (
     <Suspense fallback={<DashboardFallback />}>
       <Variant />

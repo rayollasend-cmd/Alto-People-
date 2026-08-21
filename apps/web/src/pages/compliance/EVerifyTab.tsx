@@ -26,6 +26,8 @@ import {
   updateEVerifyIdentity,
 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+import { hasCapability } from '@/lib/roles';
 import { DocumentThumbnails, DocumentViewer } from '@/components/DocumentViewer';
 import {
   DOCUMENT_KIND_LABEL,
@@ -158,6 +160,8 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   // '' = all clients; 'none' = rows with no client attribution.
   const [clientFilter, setClientFilter] = useState('');
   const [openFor, setOpenFor] = useState<string | null>(null);
+  const { user } = useAuth();
+  const canOpenCase = user ? hasCapability(user.role, 'manage:compliance') : false;
 
   const refresh = useCallback(async () => {
     try {
@@ -407,7 +411,10 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
                 <RosterRow
                   key={r.associateId}
                   row={r}
-                  onOpen={() => setOpenFor(r.associateId)}
+                  // The case drawer's detail API is manage-gated (it
+                  // stages SSN/DOB for the portal); a view-only role used
+                  // to click into a guaranteed 403.
+                  onOpen={canOpenCase ? () => setOpenFor(r.associateId) : null}
                 />
               ))}
             </div>
@@ -427,12 +434,14 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   );
 }
 
-function RosterRow({ row, onOpen }: { row: EVerifyRosterRow; onOpen: () => void }) {
+function RosterRow({ row, onOpen }: { row: EVerifyRosterRow; onOpen: (() => void) | null }) {
   return (
     <button
       type="button"
-      onClick={onOpen}
-      className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-left transition-colors hover:bg-navy-secondary/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+      onClick={onOpen ?? undefined}
+      disabled={!onOpen}
+      title={onOpen ? undefined : 'View only — opening a case requires compliance management access.'}
+      className="flex w-full flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-left transition-colors enabled:hover:bg-navy-secondary/40 disabled:cursor-default focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
     >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">

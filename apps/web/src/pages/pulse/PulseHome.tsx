@@ -82,7 +82,14 @@ type Tab = 'me' | 'admin';
 export function PulseHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:org') : false;
-  const [tab, setTab] = useState<Tab>('me');
+  // Executives read survey results (anonymized aggregates) without the
+  // create/close/delete controls. They also have no associate record, so
+  // "For me" is empty — land them on results directly.
+  const canReadAdmin =
+    canManage || (user ? hasCapability(user.role, 'view:executive') : false);
+  const [tab, setTab] = useState<Tab>(
+    user?.role === 'EXECUTIVE_CHAIRMAN' ? 'admin' : 'me',
+  );
 
   return (
     <div className="space-y-5">
@@ -94,10 +101,16 @@ export function PulseHome() {
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="me">For me</TabsTrigger>
-          {canManage && <TabsTrigger value="admin">Admin</TabsTrigger>}
+          {canReadAdmin && (
+            <TabsTrigger value="admin">{canManage ? 'Admin' : 'Results'}</TabsTrigger>
+          )}
         </TabsList>
         <TabsContent value="me"><MyPulseTab /></TabsContent>
-        {canManage && <TabsContent value="admin"><AdminPulseTab /></TabsContent>}
+        {canReadAdmin && (
+          <TabsContent value="admin">
+            <AdminPulseTab canManage={canManage} />
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );
@@ -268,7 +281,7 @@ function RespondCard({
   );
 }
 
-function AdminPulseTab() {
+function AdminPulseTab({ canManage }: { canManage: boolean }) {
   const confirm = useConfirm();
   const [rows, setRows] = useState<PulseSurveyAdmin[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -334,9 +347,11 @@ function AdminPulseTab() {
             </FilterChip>
           ))}
         </div>
-        <Button onClick={() => setShowNew(true)}>
-          <Plus className="mr-2 h-4 w-4" /> New survey
-        </Button>
+        {canManage && (
+          <Button onClick={() => setShowNew(true)}>
+            <Plus className="mr-2 h-4 w-4" /> New survey
+          </Button>
+        )}
       </div>
       {error && (
         <ErrorBanner
@@ -416,7 +431,7 @@ function AdminPulseTab() {
                       >
                         <BarChart3 className="mr-1 h-3 w-3" /> Results
                       </Button>
-                      {s.isOpen && (
+                      {canManage && s.isOpen && (
                         <Button
                           size="sm"
                           variant="ghost"
@@ -426,14 +441,16 @@ function AdminPulseTab() {
                           Close now
                         </Button>
                       )}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setDeleteTarget(s)}
-                        className="can-hover:opacity-60 group-hover:opacity-100 hover:text-alert"
-                      >
-                        Delete
-                      </Button>
+                      {canManage && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setDeleteTarget(s)}
+                          className="can-hover:opacity-60 group-hover:opacity-100 hover:text-alert"
+                        >
+                          Delete
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

@@ -16,7 +16,7 @@ import {
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { scopeClients } from '../lib/scope.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { seedDefaultShiftPositions } from '../lib/shiftPositions.js';
@@ -628,6 +628,9 @@ clientsRouter.put('/:id/state', MANAGE, async (req, res, next) => {
  * ========================================================================== */
 
 const STATEMENTS = requireCapability('process:payroll');
+// Reading statements (list/PDF/CSV) is also an executive surface —
+// drafting and finalizing stay with payroll.
+const STATEMENTS_READ = requireAnyCapability('process:payroll', 'view:executive');
 
 function statementRow(r: {
   id: string;
@@ -653,7 +656,7 @@ function statementRow(r: {
   };
 }
 
-clientsRouter.get('/:id/statements', STATEMENTS, async (req, res, next) => {
+clientsRouter.get('/:id/statements', STATEMENTS_READ, async (req, res, next) => {
   try {
     const rows = await prisma.clientStatement.findMany({
       where: { clientId: req.params.id },
@@ -764,7 +767,7 @@ clientsRouter.post('/:id/statements/:sid/finalize', STATEMENTS, async (req, res,
 });
 
 // CSV twin of the PDF — the shape AP teams paste into their own sheets.
-clientsRouter.get('/:id/statements/:sid.csv', STATEMENTS, async (req, res, next) => {
+clientsRouter.get('/:id/statements/:sid.csv', STATEMENTS_READ, async (req, res, next) => {
   try {
     const row = await prisma.clientStatement.findFirst({
       where: { id: req.params.sid, clientId: req.params.id },
@@ -817,7 +820,7 @@ clientsRouter.get('/:id/statements/:sid.csv', STATEMENTS, async (req, res, next)
   }
 });
 
-clientsRouter.get('/:id/statements/:sid.pdf', STATEMENTS, async (req, res, next) => {
+clientsRouter.get('/:id/statements/:sid.pdf', STATEMENTS_READ, async (req, res, next) => {
   try {
     const row = await prisma.clientStatement.findFirst({
       where: { id: req.params.sid, clientId: req.params.id },

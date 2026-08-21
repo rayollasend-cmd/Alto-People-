@@ -156,7 +156,10 @@ const CLIENT_SCOPED_ROLES: Role[] = ['SHIFT_SUPERVISOR'];
 
 usersRouter.patch(
   '/admin/users/:id',
-  requireCapability('view:hr-admin'),
+  // manage:org, NOT view:hr-admin — the read-only EXECUTIVE_CHAIRMAN holds
+  // view:hr-admin, and gating this write on it was a privilege-escalation
+  // path (a "read-only" account could promote another account to admin).
+  requireCapability('manage:org'),
   async (req, res) => {
     const id = z.string().uuid().parse(req.params.id);
     const input = PatchInputSchema.parse(req.body);
@@ -303,7 +306,8 @@ usersRouter.patch(
  */
 usersRouter.post(
   '/admin/users/:id/unlock',
-  requireCapability('view:hr-admin'),
+  // manage:org — write; view:hr-admin is read-only (see PATCH above).
+  requireCapability('manage:org'),
   async (req, res) => {
     const id = z.string().uuid().parse(req.params.id);
 
@@ -365,7 +369,8 @@ usersRouter.post(
  */
 usersRouter.post(
   '/admin/users/:id/force-password-reset',
-  requireCapability('view:hr-admin'),
+  // manage:org — write; view:hr-admin is read-only (see PATCH above).
+  requireCapability('manage:org'),
   // Capability + rate limit. The cap controls *who* can call this; the
   // limiter controls *how often* — without it a compromised admin
   // session can fan out resets to every user in seconds.

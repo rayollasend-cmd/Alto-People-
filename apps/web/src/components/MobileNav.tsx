@@ -4,7 +4,7 @@ import { Briefcase, Monitor, Moon, Search, Sun, X, type LucideIcon } from 'lucid
 import {
   DASHBOARD_NAV,
   GROUP_LABEL,
-  MODULES,
+  visibleModules,
   useActiveNavPath,
   type ModuleGroup,
   type ModuleNav,
@@ -34,12 +34,12 @@ interface MobileNavProps {
 }
 
 export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProps) {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const { lang, setLang, t } = useI18n();
   const { preference, setTheme } = useTheme();
   const approvalsCount = useApprovalsCount();
   const { pinned } = usePinnedModules();
-  const visible = MODULES.filter((m) => can(m.requires));
+  const visible = visibleModules(user?.role, can);
   const byKey = new Map(visible.map((m) => [m.key, m]));
   const pinnedModules = pinned
     .map((k) => byKey.get(k))

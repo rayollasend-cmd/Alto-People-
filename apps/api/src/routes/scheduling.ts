@@ -68,7 +68,7 @@ import {
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import {
   associatesOfClient,
   effectiveClientIdFilter,
@@ -103,6 +103,10 @@ import { env } from '../config/env.js';
 export const schedulingRouter = Router();
 
 const MANAGE = requireCapability('manage:scheduling');
+// Read-only financial telemetry (KPIs, labor costs, floor board, OT
+// outlook) is also an executive surface — view:executive unlocks the
+// GETs without granting any scheduling writes.
+const MANAGE_OR_EXEC = requireAnyCapability('manage:scheduling', 'view:executive');
 
 // Reported 2026-05-02: scheduling pickers were listing every Associate
 // regardless of role or status, including managers (who use a separate
@@ -522,7 +526,7 @@ schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
  *
  * groupBy keeps this O(1 query) regardless of the window size.
  */
-schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
+schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
   try {
     const clientId = req.query.clientId?.toString();
     const fromParam = req.query.from?.toString();
@@ -670,7 +674,7 @@ schedulingRouter.get('/kpis', MANAGE, async (req, res, next) => {
  * MANAGE + the usual tenant clamp: supervisors get their own client only
  * (they already see per-shift rates), org roles see everything.
  */
-schedulingRouter.get('/labor-costs', MANAGE, async (req, res, next) => {
+schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, async (req, res, next) => {
   try {
     const from = parseDateParam(req.query.from?.toString(), 'from');
     const to = parseDateParam(req.query.to?.toString(), 'to');
@@ -1360,7 +1364,7 @@ schedulingRouter.post('/staffing-targets', MANAGE, async (req, res, next) => {
  * is defined, else the total floor target. Tenant-clamped like everything
  * else here.
  */
-schedulingRouter.get('/floor-now', MANAGE, async (req, res, next) => {
+schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, async (req, res, next) => {
   try {
     const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
     const fnClientId = clamped === null ? NO_MATCH_ID : clamped;
@@ -1641,7 +1645,7 @@ schedulingRouter.get('/floor-now', MANAGE, async (req, res, next) => {
  * supervisor works from when trimming Friday's schedule. Bounded callers
  * see only associates with remaining shifts at their client.
  */
-schedulingRouter.get('/ot-outlook', MANAGE, async (req, res, next) => {
+schedulingRouter.get('/ot-outlook', MANAGE_OR_EXEC, async (req, res, next) => {
   try {
     const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
     const otClientId = clamped === null ? NO_MATCH_ID : clamped;

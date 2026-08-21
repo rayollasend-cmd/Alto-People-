@@ -68,6 +68,14 @@ const SCHEDULER_TABS: TabDef[] = [
   { path: '/time-attendance', label: 'Time', icon: Timer, requires: 'view:time' },
 ];
 
+/** Executive loop: numbers, clients, compliance — never a punch clock. */
+const EXEC_TABS: TabDef[] = [
+  HOME_TAB,
+  { path: '/analytics', label: 'Analytics', icon: DollarSign, requires: 'view:analytics' },
+  { path: '/clients', label: 'Clients', icon: Calendar, requires: 'view:clients' },
+  { path: '/compliance', label: 'Compliance', icon: Timer, requires: 'view:compliance' },
+];
+
 /** Legacy fallback for roles that fit neither bucket. */
 const DEFAULT_TABS: TabDef[] = [
   HOME_TAB,
@@ -85,9 +93,11 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
   const tabSet =
     user?.role === 'ASSOCIATE'
       ? ASSOCIATE_TABS
-      : can('manage:scheduling')
-        ? SCHEDULER_TABS
-        : DEFAULT_TABS;
+      : user?.role === 'EXECUTIVE_CHAIRMAN'
+        ? EXEC_TABS
+        : can('manage:scheduling')
+          ? SCHEDULER_TABS
+          : DEFAULT_TABS;
   // Keep at most 4 destination tabs so every target stays comfortably
   // wide on a 360px screen once "More" is added.
   const tabs = tabSet

@@ -41,6 +41,7 @@ import { orgRouter } from './routes/org.js';
 import { externalPaymentsRouter } from './routes/externalPayments.js';
 import { auditPacketRouter } from './routes/auditPacket.js';
 import { directoryRouter } from './routes/directory.js';
+import { executiveRouter } from './routes/executive.js';
 import { positionsRouter } from './routes/positions.js';
 import { teamRouter } from './routes/team.js';
 import { workflowsRouter } from './routes/workflows.js';
@@ -332,6 +333,7 @@ export function createApp() {
   // Phase 76 — org hierarchy. Routes self-gate read vs write capability.
   app.use('/org', orgRouter);
   app.use('/people', directoryRouter);
+  app.use('/executive', executiveRouter);
   // External payroll documentation — pay periods + evidence uploads for the
   // directory drawer's Payments tab. Router self-gates on process:payroll.
   app.use('/external-payments', externalPaymentsRouter);

@@ -100,6 +100,11 @@ export type Capability =
   | 'manage:team-time'
   | 'manage:team-time-off'
   | 'view:org' | 'manage:org'
+  // Executive read-only surfaces: the executive dashboard, board pack,
+  // live labor/margin board, client statements (read), and pulse results
+  // (read). Held by EXECUTIVE_CHAIRMAN and the FULL_ADMIN family — never
+  // by client-scoped or self-service roles.
+  | 'view:executive'
   // Phase 83 — compensation: history, bands, merit cycles.
   | 'view:comp' | 'manage:comp'
   // Phase 93 — public API keys + outbound webhooks.
@@ -157,10 +162,19 @@ const ALL_MANAGE: Capability[] = [
 // to OPERATIONS_MANAGER, MANAGER, INTERNAL_RECRUITER, WORKFORCE_MANAGER per
 // product policy — the role label still differs so audit logs show who
 // acted in which functional capacity.
-const FULL_ADMIN: Capability[] = [...ALL_VIEWS, ...ALL_MANAGE, 'view:audit'];
+const FULL_ADMIN: Capability[] = [
+  ...ALL_VIEWS,
+  ...ALL_MANAGE,
+  'view:audit',
+  'view:executive',
+];
 
 export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
-  EXECUTIVE_CHAIRMAN: new Set<Capability>([...ALL_VIEWS, 'view:audit']),
+  EXECUTIVE_CHAIRMAN: new Set<Capability>([
+    ...ALL_VIEWS,
+    'view:audit',
+    'view:executive',
+  ]),
   // Gap 10 — HR Admin holds all three reimbursement caps so they can act
   // as the manager fallback when an associate has no direct manager and
   // perform the HR/Finance settle step.

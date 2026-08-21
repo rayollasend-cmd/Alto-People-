@@ -129,7 +129,10 @@ export function StatementsSection({ clientId }: { clientId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
 
-  const canBill = can('process:payroll');
+  // Executives read statements (list + PDF/CSV); drafting and finalizing
+  // stay with payroll.
+  const canFinalize = can('process:payroll');
+  const canBill = canFinalize || can('view:executive');
 
   const load = async () => {
     setError(null);
@@ -225,15 +228,17 @@ export function StatementsSection({ clientId }: { clientId: string }) {
                 </option>
               ))}
             </Select>
-            <Button
-              size="sm"
-              onClick={generate}
-              loading={busy === 'generate'}
-              disabled={busy !== null}
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              Generate / refresh draft
-            </Button>
+            {canFinalize && (
+              <Button
+                size="sm"
+                onClick={generate}
+                loading={busy === 'generate'}
+                disabled={busy !== null}
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Generate / refresh draft
+              </Button>
+            )}
           </div>
         </div>
         <p className="text-xs text-silver">
@@ -338,7 +343,7 @@ export function StatementsSection({ clientId }: { clientId: string }) {
                         <Download className="h-3.5 w-3.5" />
                         CSV
                       </Button>
-                      {s.status === 'DRAFT' && (
+                      {canFinalize && s.status === 'DRAFT' && (
                         <Button
                           size="sm"
                           onClick={() => void finalize(s)}

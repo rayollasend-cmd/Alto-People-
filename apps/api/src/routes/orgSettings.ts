@@ -86,7 +86,9 @@ orgSettingsRouter.get(
 
 orgSettingsRouter.patch(
   '/admin/org/settings',
-  requireCapability('view:hr-admin'),
+  // manage:org, NOT view:hr-admin — the read-only EXECUTIVE_CHAIRMAN
+  // holds view:hr-admin; branding writes must stay admin-only.
+  requireCapability('manage:org'),
   async (req, res) => {
     const body = UpdateOrgBrandingInputSchema.parse(req.body);
     if (Object.keys(body).length === 0) {
@@ -142,7 +144,8 @@ orgSettingsRouter.patch(
 
 orgSettingsRouter.post(
   '/admin/org/settings/logo',
-  requireCapability('view:hr-admin'),
+  // manage:org — write; see PATCH above.
+  requireCapability('manage:org'),
   upload.single('file'),
   async (req, res) => {
     if (!req.file) {
@@ -180,7 +183,8 @@ orgSettingsRouter.post(
 
 orgSettingsRouter.delete(
   '/admin/org/settings/logo',
-  requireCapability('view:hr-admin'),
+  // manage:org — write; see PATCH above.
+  requireCapability('manage:org'),
   async (req, res) => {
     await prisma.orgSetting.upsert({
       where: { id: 'singleton' },

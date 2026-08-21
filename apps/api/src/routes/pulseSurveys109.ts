@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
-import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { requireAnyCapability, requireAuth, requireCapability } from '../middleware/auth.js';
 
 /**
  * Phase 109 — Anonymous pulse surveys.
@@ -26,6 +26,10 @@ import { requireAuth, requireCapability } from '../middleware/auth.js';
 export const pulseSurveysRouter = Router();
 
 const VIEW_ADMIN = requireCapability('manage:org');
+// Aggregate results are an executive read — creating/closing/deleting
+// surveys stays manage:org. Results are anonymized by design (responder
+// hash), so the read grants no individual-level data.
+const ADMIN_READ = requireAnyCapability('manage:org', 'view:executive');
 const ANY_USER = requireAuth;
 
 function pulseSecret(): string {
@@ -139,7 +143,7 @@ pulseSurveysRouter.post('/pulse-surveys/:id/close', VIEW_ADMIN, async (req, res)
   res.json({ ok: true });
 });
 
-pulseSurveysRouter.get('/pulse-surveys', VIEW_ADMIN, async (_req, res) => {
+pulseSurveysRouter.get('/pulse-surveys', ADMIN_READ, async (_req, res) => {
   const rows = await prisma.pulseSurvey.findMany({
     include: {
       _count: { select: { responses: true } },
@@ -172,7 +176,7 @@ pulseSurveysRouter.get('/pulse-surveys', VIEW_ADMIN, async (_req, res) => {
 
 pulseSurveysRouter.get(
   '/pulse-surveys/:id/results',
-  VIEW_ADMIN,
+  ADMIN_READ,
   async (req, res) => {
     const survey = await prisma.pulseSurvey.findUnique({
       where: { id: req.params.id },

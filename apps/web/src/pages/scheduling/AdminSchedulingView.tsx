@@ -67,6 +67,7 @@ import {
 } from '@/lib/schedulingApi';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { hasCapability } from '@/lib/roles';
 import { useConfirm, type ConfirmOptions } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -806,8 +807,14 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // proxy for "something happened"; debounce so a burst (bulk action, rapid
   // paging) collapses to one request, and guard with a sequence id so a
   // slow earlier response can't overwrite a newer one.
+  // KPI endpoint is manage-or-executive gated — anyone else (e.g. a
+  // client-portal viewer) used to fire a guaranteed-403 on every week
+  // change with the strip hidden anyway.
+  const canSeeKpis =
+    canManage || (user ? hasCapability(user.role, 'view:executive') : false);
   const kpiSeq = useRef(0);
   useEffect(() => {
+    if (!canSeeKpis) return;
     const seq = ++kpiSeq.current;
     const t = window.setTimeout(() => {
       getSchedulingKpis({
@@ -824,7 +831,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         });
     }, 300);
     return () => window.clearTimeout(t);
-  }, [shifts, view, weekStart, weekEnd, clientFilter]);
+  }, [shifts, view, weekStart, weekEnd, clientFilter, canSeeKpis]);
 
   // Last position used in the create dialog this session — most weeks
   // schedule one role at a time, so it prefills the next create.
@@ -1926,7 +1933,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         }
       />
 
-      {canManage && (
+      {canSeeKpis && (
         <div className="no-print">
           <KpiStrip kpis={kpis} />
         </div>

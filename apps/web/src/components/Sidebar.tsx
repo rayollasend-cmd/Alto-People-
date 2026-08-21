@@ -21,7 +21,7 @@ import { Logo } from '@/components/Logo';
 import {
   DASHBOARD_NAV,
   GROUP_LABEL,
-  MODULES,
+  visibleModules,
   useActiveNavPath,
   type ModuleGroup,
   type ModuleNav,
@@ -112,8 +112,8 @@ function writeRailCollapsed(value: boolean): void {
 }
 
 export function Sidebar() {
-  const { can } = useAuth();
-  const visible = MODULES.filter((m) => can(m.requires));
+  const { can, user } = useAuth();
+  const visible = visibleModules(user?.role, can);
   const activePath = useActiveNavPath();
   const approvalsCount = useApprovalsCount();
   const { pinned, isPinned, togglePin } = usePinnedModules();

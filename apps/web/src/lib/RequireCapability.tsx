@@ -17,13 +17,17 @@ import { NotFound } from '@/pages/NotFound';
  */
 export function RequireCapability({
   cap,
+  anyOf,
   children,
 }: {
   cap: Capability;
+  /** When set, holding ANY of these also grants the page (cap ∪ anyOf). */
+  anyOf?: Capability[];
   children: ReactNode;
 }) {
   const { can } = useAuth();
-  if (!can(cap)) {
+  const ok = can(cap) || (anyOf?.some(can) ?? false);
+  if (!ok) {
     return <NotFound />;
   }
   return <>{children}</>;

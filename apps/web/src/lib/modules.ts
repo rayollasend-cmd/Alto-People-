@@ -91,8 +91,49 @@ export interface ModuleNav {
   label: string;
   description: string;
   requires: Capability;
+  /** When set, ANY of these capabilities also reveals the module —
+   *  used where two audiences share a page (e.g. Labor costs is both a
+   *  scheduling-ops and an executive surface). */
+  requiresAny?: Capability[];
   /** Phase 67 — sidebar grouping. */
   group: ModuleGroup;
+}
+
+/**
+ * The Executive/Chairman's curated sidebar. The role holds every view
+ * capability, which used to render an HR clerk's 56-row sidebar with the
+ * buttons greyed out. Executives get the strategic surfaces only —
+ * everything else stays reachable by URL (capability-gated as always),
+ * just not in their nav.
+ */
+export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
+  'me',
+  'people',
+  'org-chart',
+  'headcount',
+  'succession',
+  'separations',
+  'pulse',
+  'clients',
+  'labor-costs',
+  'compensation',
+  'compliance',
+  'audit',
+  'analytics',
+  'reports',
+]);
+
+/** Capability-filtered module list, with the executive curation applied. */
+export function visibleModules(
+  role: string | undefined,
+  can: (c: Capability) => boolean,
+): ModuleNav[] {
+  const base = MODULES.filter(
+    (m) => can(m.requires) || (m.requiresAny?.some(can) ?? false),
+  );
+  return role === 'EXECUTIVE_CHAIRMAN'
+    ? base.filter((m) => EXEC_MODULE_KEYS.has(m.key))
+    : base;
 }
 
 
@@ -460,8 +501,10 @@ export const MODULES: ModuleNav[] = [
     description:
       'Daily scheduled vs worked labor spend, broken down by client and store.',
     // Same audience as the scheduling KPI strip that already shows cost —
-    // supervisors see their own client, org roles see everything.
+    // supervisors see their own client, org roles see everything. Also an
+    // executive read (live margin board).
     requires: 'manage:scheduling',
+    requiresAny: ['manage:scheduling', 'view:executive'],
     group: 'time-and-pay',
   },
   {
