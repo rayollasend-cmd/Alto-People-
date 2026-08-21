@@ -17,6 +17,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { env } from '../config/env.js';
+import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
 
 const DAY_MS = 24 * 3600_000;
@@ -39,6 +40,10 @@ export interface ExecutiveDecision {
   status: DecisionStatus;
   /** Days since delegation, when status = delegated. */
   delegatedDays: number | null;
+  /** Whoever in the org has TAKEN this item in the shared collaboration
+   *  layer (keys are unified with the role queues) — the chairman sees
+   *  "Maria is on it" without asking. */
+  claimedBy: { id: string; name: string; photoUrl: string | null } | null;
 }
 
 const SEVERITY_RANK: Record<DecisionSeverity, number> = {
@@ -60,8 +65,8 @@ const statementTotal = (snapshot: unknown): number => {
 async function generateRaw(
   prisma: PrismaClient,
   now: Date,
-): Promise<Omit<ExecutiveDecision, 'status' | 'delegatedDays'>[]> {
-  const out: Omit<ExecutiveDecision, 'status' | 'delegatedDays'>[] = [];
+): Promise<Omit<ExecutiveDecision, 'status' | 'delegatedDays' | 'claimedBy'>[]> {
+  const out: Omit<ExecutiveDecision, 'status' | 'delegatedDays' | 'claimedBy'>[] = [];
   const thisWeekStart = startOfWeekUTC(now);
   const quarterKey = `${now.getUTCFullYear()}-Q${Math.floor(now.getUTCMonth() / 3) + 1}`;
 
@@ -428,10 +433,46 @@ export async function computeExecutiveDecisions(
 ): Promise<ExecutiveDecision[]> {
   const raw = await generateRaw(prisma, now);
   if (raw.length === 0) return [];
-  const states = await prisma.execDecisionState.findMany({
-    where: { key: { in: raw.map((d) => d.key) } },
-  });
+  const [states, claims] = await Promise.all([
+    prisma.execDecisionState.findMany({
+      where: { key: { in: raw.map((d) => d.key) } },
+    }),
+    prisma.decisionClaim.findMany({
+      where: { key: { in: raw.map((d) => d.key) } },
+      include: {
+        claimedBy: {
+          select: {
+            id: true,
+            email: true,
+            associate: {
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                photoS3Key: true,
+                photoUpdatedAt: true,
+              },
+            },
+          },
+        },
+      },
+    }),
+  ]);
   const stateByKey = new Map(states.map((s) => [s.key, s]));
+  const claimByKey = new Map(claims.map((c) => [c.key, c]));
+  const claimInfo = (key: string) => {
+    const c = claimByKey.get(key);
+    if (!c) return null;
+    const u = c.claimedBy;
+    const name = u.associate
+      ? `${u.associate.firstName} ${u.associate.lastName}`.trim()
+      : (u.email.split('@')[0] ?? u.email);
+    return {
+      id: u.id,
+      name: name.charAt(0).toUpperCase() + name.slice(1),
+      photoUrl: u.associate ? profilePhotoUrlFor(u.associate) : null,
+    };
+  };
 
   const merged: ExecutiveDecision[] = [];
   for (const d of raw) {
@@ -456,7 +497,7 @@ export async function computeExecutiveDecisions(
       d.ageDays !== null && d.ageDays >= 14 && status === 'open'
         ? escalate(d.severity)
         : d.severity;
-    merged.push({ ...d, severity, status, delegatedDays });
+    merged.push({ ...d, severity, status, delegatedDays, claimedBy: claimInfo(d.key) });
   }
   merged.sort((a, b) => {
     if (a.status !== b.status) return a.status === 'open' ? -1 : 1;

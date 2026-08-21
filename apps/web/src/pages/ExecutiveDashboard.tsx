@@ -21,6 +21,7 @@ import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtMoney } from '@/lib/format';
 import { floorNow, otOutlook } from '@/lib/schedulingApi';
+import { DecisionRoom } from '@/components/DecisionRoom';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -158,6 +159,7 @@ interface ExecBriefing {
     linkUrl: string;
     status: 'open' | 'delegated';
     delegatedDays: number | null;
+    claimedBy: { id: string; name: string; photoUrl: string | null } | null;
   }>;
   clientHealth: Array<{
     clientId: string;
@@ -237,6 +239,7 @@ function DecisionQueueCard({
   onChanged: () => void;
 }) {
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [roomKey, setRoomKey] = useState<string | null>(null);
   const open = decisions.filter((d) => d.status === 'open');
   const delegated = decisions.filter((d) => d.status === 'delegated');
 
@@ -292,7 +295,12 @@ function DecisionQueueCard({
                         : 'border-navy-secondary'
                   }`}
                 >
-                  <Link to={d.linkUrl} className="group block">
+                  {/* Label opens the item's room — thread + timeline. */}
+                  <button
+                    type="button"
+                    onClick={() => setRoomKey(d.key)}
+                    className="group block w-full text-left"
+                  >
                     <div className="flex flex-wrap items-center justify-between gap-x-2">
                       <span className="text-sm text-white group-hover:text-gold">{d.label}</span>
                       <span className="flex items-center gap-1.5 text-2xs tabular-nums">
@@ -314,7 +322,17 @@ function DecisionQueueCard({
                       </span>
                     </div>
                     <div className="text-xs text-silver">{d.detail}</div>
-                  </Link>
+                    {d.claimedBy && (
+                      <div className="mt-1 flex items-center gap-1.5 text-2xs text-silver">
+                        <Avatar
+                          src={d.claimedBy.photoUrl}
+                          name={d.claimedBy.name}
+                          size="xs"
+                        />
+                        <span className="text-white">{d.claimedBy.name}</span> is on it
+                      </div>
+                    )}
+                  </button>
                   <div className="mt-1.5 flex gap-1.5">
                     <Button
                       size="xs"
@@ -352,6 +370,7 @@ function DecisionQueueCard({
                 </li>
               )}
             </ul>
+            <DecisionRoom itemKey={roomKey} onClose={() => setRoomKey(null)} />
             {delegated.length > 0 && (
               <div className="mt-3">
                 <div className="mb-1 text-2xs uppercase tracking-wider text-silver/60">

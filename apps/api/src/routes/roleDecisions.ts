@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import {
+  hasCapability,
   ROLE_LABELS,
   rolesWithCapability,
   type Role,
@@ -10,6 +11,8 @@ import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { notifyUser } from '../lib/notify.js';
+import { computeExecutiveDecisions } from '../lib/executiveDecisions.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { computeRoleDecisions } from '../lib/roleDecisions.js';
 
 /**
@@ -59,8 +62,62 @@ const claimantName = (u: {
 const CLAIMER_SELECT = {
   id: true,
   email: true,
-  associate: { select: { firstName: true, lastName: true } },
+  role: true,
+  associate: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      photoS3Key: true,
+      photoUpdatedAt: true,
+    },
+  },
 } as const;
+
+type ClaimerRow = {
+  id: string;
+  email: string;
+  role: string;
+  associate: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    photoS3Key: string | null;
+    photoUpdatedAt: Date | null;
+  } | null;
+};
+
+const personOf = (u: ClaimerRow) => ({
+  id: u.id,
+  name: claimantName(u),
+  photoUrl: u.associate ? profilePhotoUrlFor(u.associate) : null,
+  roleLabel: ROLE_LABELS[u.role as Role] ?? u.role,
+  role: u.role,
+});
+
+/** Can this user see this key at all? Their role queue, or (for
+ *  view:executive holders) the executive queue — the chairman can open
+ *  any room his own queue shows. */
+async function resolveItemForUser(req: Request, key: string) {
+  const me = queueUser(req);
+  const decisions = await computeRoleDecisions(prisma, me);
+  const own = decisions.find((d) => d.key === key);
+  if (own) return { label: own.label, detail: own.detail, linkUrl: own.linkUrl };
+  if (hasCapability(me.role, 'view:executive')) {
+    const exec = await computeExecutiveDecisions(prisma);
+    const item = exec.find((d) => d.key === key);
+    if (item) return { label: item.label, detail: item.detail, linkUrl: item.linkUrl };
+  }
+  // The item may have RESOLVED while its room still holds history — allow
+  // opening a room that has any trace (thread or claim), so links in old
+  // notifications don't dead-end.
+  const [comment, claim] = await Promise.all([
+    prisma.decisionComment.findFirst({ where: { key }, select: { id: true } }),
+    prisma.decisionClaim.findUnique({ where: { key }, select: { id: true } }),
+  ]);
+  if (comment || claim) return { label: key, detail: '', linkUrl: '/' };
+  return null;
+}
 
 /** The people this user can assign/tag: same-site operators for client-
  *  scoped roles plus the org admins; org-wide roles get every operator
@@ -86,11 +143,7 @@ async function listColleagues(req: Request) {
     orderBy: { email: 'asc' },
     take: 50,
   });
-  return rows.map((u) => ({
-    id: u.id,
-    name: claimantName(u),
-    roleLabel: ROLE_LABELS[u.role as Role] ?? u.role,
-  }));
+  return rows.map((u) => personOf(u as ClaimerRow));
 }
 
 roleDecisionsRouter.get('/colleagues', requireAuth, async (req: Request, res: Response) => {
@@ -119,7 +172,7 @@ roleDecisionsRouter.get('/decisions', requireAuth, async (req: Request, res: Res
         const c = byKey.get(d.key);
         return {
           ...d,
-          claimedBy: c ? { id: c.claimedBy.id, name: claimantName(c.claimedBy) } : null,
+          claimedBy: c ? personOf(c.claimedBy as ClaimerRow) : null,
           claimedByMe: c ? c.claimedById === req.user!.id : false,
           assigned: Boolean(c?.assignedById),
           note: c?.note ?? null,
@@ -303,6 +356,129 @@ roleDecisionsRouter.post('/decisions/act', requireAuth, async (req: Request, res
     'decisions.act',
   );
   res.json({ ok: true });
+});
+
+/* ===== The item's room: thread + timeline + participants ================= */
+
+const TIMELINE_LABEL: Record<string, string> = {
+  'decisions.claim': 'took the item',
+  'decisions.release': 'released it back to the team',
+  'decisions.assign': 'assigned it',
+  'decisions.postpone': 'postponed it',
+  'decisions.tag': 'tagged a colleague',
+  'decisions.escalate': 'escalated it',
+  'decisions.comment': 'commented',
+  'executive.decision_dismiss': 'dismissed it (chairman)',
+  'executive.decision_snooze': 'snoozed it (chairman)',
+  'executive.decision_delegate': 'delegated it to the team (chairman)',
+};
+
+roleDecisionsRouter.get('/decisions/item', requireAuth, async (req: Request, res: Response) => {
+  const key = z
+    .string()
+    .regex(/^[a-zA-Z0-9:_-]{3,160}$/)
+    .parse(String(req.query.key ?? ''));
+  const item = await resolveItemForUser(req, key);
+  if (!item) throw new HttpError(404, 'not_found', 'That item is not visible to you.');
+
+  const [comments, timelineRows, claim] = await Promise.all([
+    prisma.decisionComment.findMany({
+      where: { key },
+      orderBy: { createdAt: 'asc' },
+      take: 100,
+      include: { user: { select: CLAIMER_SELECT } },
+    }),
+    prisma.auditLog.findMany({
+      where: { entityType: 'DecisionClaim', entityId: key },
+      orderBy: { createdAt: 'asc' },
+      take: 50,
+      include: { actorUser: { select: CLAIMER_SELECT } },
+    }),
+    prisma.decisionClaim.findUnique({
+      where: { key },
+      include: { claimedBy: { select: CLAIMER_SELECT } },
+    }),
+  ]);
+
+  const thread = comments.map((c) => ({
+    id: c.id,
+    author: personOf(c.user as ClaimerRow),
+    body: c.body,
+    at: c.createdAt.toISOString(),
+  }));
+  const timeline = timelineRows
+    .filter((r) => r.action !== 'decisions.comment')
+    .map((r) => ({
+      action: TIMELINE_LABEL[r.action] ?? r.action,
+      actor: r.actorUser ? personOf(r.actorUser as ClaimerRow) : null,
+      note: (r.metadata as { note?: string | null } | null)?.note ?? null,
+      at: r.createdAt.toISOString(),
+    }));
+  // Participants: everyone who touched the room, deduped, claimer first.
+  const seen = new Map<string, ReturnType<typeof personOf>>();
+  if (claim) seen.set(claim.claimedBy.id, personOf(claim.claimedBy as ClaimerRow));
+  for (const c of thread) if (!seen.has(c.author.id)) seen.set(c.author.id, c.author);
+  for (const t of timeline) if (t.actor && !seen.has(t.actor.id)) seen.set(t.actor.id, t.actor);
+
+  res.json({
+    key,
+    label: item.label,
+    detail: item.detail,
+    linkUrl: item.linkUrl,
+    claimedBy: claim ? personOf(claim.claimedBy as ClaimerRow) : null,
+    participants: [...seen.values()],
+    thread,
+    timeline,
+  });
+});
+
+const CommentInputSchema = z.object({
+  key: z.string().regex(/^[a-zA-Z0-9:_-]{3,160}$/),
+  body: z.string().trim().min(1).max(1_000),
+  mentionUserId: z.string().uuid().optional(),
+});
+
+roleDecisionsRouter.post('/decisions/comment', requireAuth, async (req: Request, res: Response) => {
+  const input = CommentInputSchema.parse(req.body);
+  const item = await resolveItemForUser(req, input.key);
+  if (!item) throw new HttpError(404, 'not_found', 'That item is not visible to you.');
+
+  await prisma.decisionComment.create({
+    data: { key: input.key, userId: req.user!.id, body: input.body },
+  });
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      action: 'decisions.comment',
+      entityType: 'DecisionClaim',
+      entityId: input.key,
+      metadata: { label: item.label },
+    },
+    'decisions.comment',
+  );
+
+  const actorLocal = req.user!.email.split('@')[0] ?? req.user!.email;
+  const actorName = actorLocal.charAt(0).toUpperCase() + actorLocal.slice(1);
+  // Ping the mentioned colleague and the item's current holder (if
+  // someone else) — the room comes to them.
+  const targets = new Set<string>();
+  if (input.mentionUserId && input.mentionUserId !== req.user!.id) {
+    targets.add(input.mentionUserId);
+  }
+  const claim = await prisma.decisionClaim.findUnique({
+    where: { key: input.key },
+    select: { claimedById: true },
+  });
+  if (claim && claim.claimedById !== req.user!.id) targets.add(claim.claimedById);
+  for (const t of targets) {
+    await notifyUser(t, {
+      subject: `${actorName} on: ${item.label}`,
+      body: input.body,
+      category: 'decision_comment',
+      linkUrl: item.linkUrl,
+    });
+  }
+  res.status(201).json({ ok: true });
 });
 
 /* ===== Personal day/week planner ========================================= */

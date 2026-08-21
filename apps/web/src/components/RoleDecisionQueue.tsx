@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { fmtMoney, ymdLocal } from '@/lib/format';
+import { DecisionRoom } from '@/components/DecisionRoom';
+import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import {
@@ -35,7 +36,7 @@ interface RoleDecision {
   stakes: number | null;
   ageDays: number | null;
   linkUrl: string;
-  claimedBy: { id: string; name: string } | null;
+  claimedBy: { id: string; name: string; photoUrl: string | null } | null;
   claimedByMe: boolean;
   assigned: boolean;
   note: string | null;
@@ -59,6 +60,7 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
   } | null>(null);
   const [pickTarget, setPickTarget] = useState('');
   const [pickNote, setPickNote] = useState('');
+  const [roomKey, setRoomKey] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setError(false);
@@ -177,7 +179,12 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
                       : 'border-navy-secondary'
                 }`}
               >
-                <Link to={d.linkUrl} className="group block">
+                {/* The label opens the item's ROOM (thread + timeline). */}
+                <button
+                  type="button"
+                  onClick={() => setRoomKey(d.key)}
+                  className="group block w-full text-left"
+                >
                   <div className="flex flex-wrap items-center justify-between gap-x-2">
                     <span className="text-sm text-white group-hover:text-gold">{d.label}</span>
                     <span className="flex items-center gap-1.5 text-2xs tabular-nums text-silver">
@@ -193,13 +200,14 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
                     </span>
                   </div>
                   <div className="text-xs text-silver">{d.detail}</div>
-                </Link>
+                </button>
                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                   {d.claimedBy && !d.claimedByMe ? (
                     <span
-                      className="rounded-full bg-steel/20 px-2 py-0.5 text-2xs text-white"
+                      className="flex items-center gap-1.5 rounded-full bg-steel/20 py-0.5 pl-0.5 pr-2 text-2xs text-white"
                       title={d.note ?? undefined}
                     >
+                      <Avatar src={d.claimedBy.photoUrl} name={d.claimedBy.name} size="xs" />
                       With {d.claimedBy.name}
                     </span>
                   ) : d.claimedByMe ? (
@@ -285,6 +293,8 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
             )}
           </ul>
         )}
+
+        <DecisionRoom itemKey={roomKey} onClose={() => setRoomKey(null)} />
 
         <Dialog open={picker !== null} onOpenChange={(o) => !o && setPicker(null)}>
           <DialogContent>

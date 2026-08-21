@@ -535,6 +535,7 @@ model User {
   statementsPaymentsRecorded        ClientStatement[]             @relation("StatementPaymentRecorder")
   decisionClaims                    DecisionClaim[]               @relation("DecisionClaimer")
   workPlanItems                     WorkPlanItem[]                @relation("WorkPlanOwner")
+  decisionComments                  DecisionComment[]             @relation("DecisionCommenter")
 
   @@index([role])
   @@index([clientId])
@@ -914,6 +915,21 @@ model DecisionClaim {
   escalatedAt    DateTime? @db.Timestamptz(6)
   escalatedById  String?   @db.Uuid
   updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+}
+
+// The item's conversation — comments live ON the decision key, visible
+// to everyone whose queue shows that item (Ops, Finance, the chairman),
+// so cross-functional work happens in one room instead of notification
+// ping-pong. Rows outlive claims: the thread is the item's memory.
+model DecisionComment {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key       String   @db.VarChar(160)
+  userId    String   @db.Uuid
+  user      User     @relation("DecisionCommenter", fields: [userId], references: [id], onDelete: Cascade)
+  body      String
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([key, createdAt])
 }
 
 // Personal day/week planner — each user's own list, mixing queue items

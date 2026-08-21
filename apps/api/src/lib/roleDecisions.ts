@@ -218,18 +218,23 @@ export async function computeRoleDecisions(
     }
   }
   if (can('manage:org')) {
-    const paused = await prisma.associate.count({
+    // Per-associate keys, IDENTICAL to the executive engine's — the
+    // chairman and HR collaborate on the same item, not two shadows.
+    const paused = await prisma.associate.findMany({
       where: { deletedAt: null, deactivatedAt: { lt: new Date(now.getTime() - 42 * DAY_MS) } },
+      select: { id: true, firstName: true, lastName: true, deactivatedAt: true },
+      take: 5,
     });
-    if (paused > 0) {
+    for (const p of paused) {
+      const days = Math.floor((now.getTime() - p.deactivatedAt!.getTime()) / DAY_MS);
       out.push({
-        key: 'associates:paused-long',
+        key: `associate:paused:${p.id}`,
         severity: 'normal',
-        label: `${paused} associate${paused === 1 ? '' : 's'} paused over 6 weeks`,
+        label: `${p.firstName} ${p.lastName} has been paused ${days} days`,
         detail: 'Limbo is the wrong state — reactivate them or run a separation.',
         stakes: null,
-        ageDays: null,
-        linkUrl: '/people?status=INACTIVE',
+        ageDays: days,
+        linkUrl: `/people?associateId=${p.id}`,
       });
     }
   }
@@ -268,14 +273,21 @@ export async function computeRoleDecisions(
           paidAt: null,
           finalizedAt: { lt: new Date(now.getTime() - 45 * DAY_MS) },
         },
-        select: { snapshot: true, finalizedAt: true },
-        take: 50,
+        select: {
+          id: true,
+          number: true,
+          snapshot: true,
+          finalizedAt: true,
+          client: { select: { name: true } },
+        },
+        take: 20,
       }),
     ]);
     if (drafts.length > 0) {
       const total = drafts.reduce((n, d) => n + statementTotal(d.snapshot), 0);
       out.push({
-        key: 'statements:finalize',
+        // Same key as the executive engine — one shared item.
+        key: 'statements:stale-drafts',
         severity: 'normal',
         label: `${drafts.length} draft statement${drafts.length === 1 ? '' : 's'} to finalize`,
         detail: 'Drafts idle over a week are unbilled revenue.',
@@ -284,20 +296,20 @@ export async function computeRoleDecisions(
         linkUrl: '/clients',
       });
     }
-    if (unpaid.length > 0) {
-      const total = unpaid.reduce((n, d) => n + statementTotal(d.snapshot), 0);
-      const oldest = Math.max(
-        ...unpaid.map((s) =>
-          s.finalizedAt ? Math.floor((now.getTime() - s.finalizedAt.getTime()) / DAY_MS) : 0,
-        ),
-      );
+    // Per-statement, with keys IDENTICAL to the executive engine's, so a
+    // Finance claim shows on the chairman's queue and vice versa.
+    for (const s of unpaid) {
+      const days = s.finalizedAt
+        ? Math.floor((now.getTime() - s.finalizedAt.getTime()) / DAY_MS)
+        : 0;
+      const amount = statementTotal(s.snapshot);
       out.push({
-        key: 'receivables:overdue',
-        severity: oldest >= 60 ? 'critical' : 'high',
-        label: `${unpaid.length} statement${unpaid.length === 1 ? '' : 's'} unpaid past 45 days`,
-        detail: `Oldest is ${oldest} days out — chase the cash or flag it upward.`,
-        stakes: total || null,
-        ageDays: oldest,
+        key: `receivable:${s.id}`,
+        severity: days >= 60 || amount >= 5_000 ? 'critical' : 'high',
+        label: `Chase ${s.client.name} statement #${s.number ?? '—'}`,
+        detail: `${days} days unpaid — chase the cash or flag it upward.`,
+        stakes: amount || null,
+        ageDays: days,
         linkUrl: '/clients',
       });
     }

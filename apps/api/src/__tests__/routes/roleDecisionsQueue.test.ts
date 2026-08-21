@@ -76,7 +76,7 @@ describe('GET /me/decisions', () => {
     expect(walkins).toBeDefined();
     expect(walkins!.severity).toBe('critical');
     expect(walkins!.label).toContain('1 walk-in');
-    expect(items.some((d) => d.key === 'receivables:overdue')).toBe(false);
+    expect(items.some((d) => d.key.startsWith('receivable'))).toBe(false);
   });
 
   it('collaboration: same-site supervisors see claims, conflicting claims 409, escalation pings admins', async () => {
@@ -123,6 +123,72 @@ describe('GET /me/decisions', () => {
     });
     expect(notif).not.toBeNull();
     expect(notif!.body).toContain('Nobody free to cover the kiosk.');
+  });
+
+  it('one item, one room: Finance claim shows on the chairman queue; the thread is shared both ways', async () => {
+    const client = await createClient('Walmart Destin');
+    const stmt = await prisma.clientStatement.create({
+      data: {
+        clientId: client.id,
+        periodStart: new Date('2026-05-01T00:00:00Z'),
+        periodEnd: new Date('2026-05-31T00:00:00Z'),
+        status: 'FINAL',
+        number: 21,
+        finalizedAt: new Date(Date.now() - 50 * 86_400_000),
+        snapshot: { totals: { amount: 2500 } },
+      },
+    });
+    const { user: fin } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const { user: exec } = await createUser({ role: 'EXECUTIVE_CHAIRMAN' });
+    const finAgent = await loginAs(fin.email);
+    const execAgent = await loginAs(exec.email);
+    const key = `receivable:${stmt.id}`;
+
+    // Finance claims it in THEIR queue…
+    expect(
+      (await finAgent.post('/me/decisions/act').send({ key, action: 'claim' })).status,
+    ).toBe(200);
+    // …and the CHAIRMAN's executive queue shows who's on it.
+    const brief = await execAgent.get('/executive/briefing');
+    const item = (
+      brief.body.decisions as Array<{ key: string; claimedBy: { name: string } | null }>
+    ).find((d) => d.key === key);
+    expect(item).toBeDefined();
+    expect(item!.claimedBy).not.toBeNull();
+
+    // Finance writes to the room; the chairman reads the same thread and
+    // replies — his comment notifies the claimer.
+    expect(
+      (
+        await finAgent
+          .post('/me/decisions/comment')
+          .send({ key, body: 'Walmart AP says the check went out Tuesday.' })
+      ).status,
+    ).toBe(201);
+    const room = await execAgent.get(`/me/decisions/item?key=${key}`);
+    expect(room.status).toBe(200);
+    expect(room.body.thread).toHaveLength(1);
+    expect(room.body.thread[0].body).toContain('check went out Tuesday');
+    expect(room.body.claimedBy).not.toBeNull();
+    expect(
+      (
+        await execAgent
+          .post('/me/decisions/comment')
+          .send({ key, body: "Good. If it's not cleared Friday, I call their VP." })
+      ).status,
+    ).toBe(201);
+    const ping = await prisma.notification.findFirst({
+      where: { recipientUserId: fin.id, category: 'decision_comment' },
+    });
+    expect(ping).not.toBeNull();
+    // Timeline carries the claim event.
+    const room2 = await finAgent.get(`/me/decisions/item?key=${key}`);
+    expect(room2.body.thread).toHaveLength(2);
+    expect(
+      (room2.body.timeline as Array<{ action: string }>).some((t) =>
+        t.action.includes('took the item'),
+      ),
+    ).toBe(true);
   });
 
   it('assign moves the item to a colleague, postpone hides it, tag notifies, planner CRUDs', async () => {
@@ -229,7 +295,7 @@ describe('GET /me/decisions', () => {
     const hrRes = await hrAgent.get('/me/decisions');
     expect(hrRes.status).toBe(200);
     const hrItems = hrRes.body.decisions as Item[];
-    const ar = hrItems.find((d) => d.key === 'receivables:overdue');
+    const ar = hrItems.find((d) => d.key.startsWith('receivable:'));
     expect(ar).toBeDefined();
     expect(ar!.stakes).toBeCloseTo(4321.5, 2);
     expect(ar!.severity).toBe('critical');
