@@ -105,6 +105,26 @@ executiveRouter.get('/board-pack.pdf', EXEC, async (req: Request, res: Response)
     { muted: true, size: 8.5 },
   );
 
+  pdf.heading('Eight-week trend');
+  pdf.table(
+    [
+      { label: 'Week of', width: 90 },
+      { label: 'Hours', width: 80, align: 'right' },
+      { label: 'OT hours', width: 80, align: 'right' },
+      { label: 'Heads', width: 60, align: 'right' },
+      { label: 'Est. billed', align: 'right' },
+      { label: 'Est. margin', align: 'right' },
+    ],
+    s.trend.map((w) => [
+      w.start.slice(0, 10),
+      w.workedHours.toFixed(1),
+      w.otHours.toFixed(1),
+      w.headsWorked,
+      money(w.estBilled),
+      money(w.estMargin),
+    ]),
+  );
+
   pdf.heading('Attendance — unexcused events, last 30 days');
   if (s.attendance30d.length > 0) {
     pdf.table(

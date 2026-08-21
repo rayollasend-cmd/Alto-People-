@@ -10,10 +10,13 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { env } from '../config/env.js';
+import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
 
 const WEEKLY_OT_THRESHOLD_MIN = 40 * 60;
 const DAY_MS = 24 * 3600_000;
+/** Complete org weeks in the trend series (newest last = last week). */
+const TREND_WEEKS = 8;
 
 export interface ExecutiveWeek {
   /** ISO instant of the org-week start (Sat 00:00 FL-local). */
@@ -41,8 +44,19 @@ export interface ExecutiveSummary {
   lastWeek: ExecutiveWeek;
   /** Current (partial) org week, aggregated through generation time. */
   thisWeek: ExecutiveWeek;
+  /** The last TREND_WEEKS complete org weeks, oldest first (the final
+   *  element is lastWeek) — feeds the dashboard's trend charts and the
+   *  board pack's trend table. */
+  trend: ExecutiveWeek[];
   attendance30d: Array<{ kind: string; count: number }>;
   clients: Array<{ clientId: string; clientName: string; activeAssociates: number }>;
+  /** Faces for the "new this month" band — name + photo only. */
+  newHires30d: Array<{
+    id: string;
+    name: string;
+    photoUrl: string | null;
+    hireDate: string | null;
+  }>;
 }
 
 interface EntryRow {
@@ -106,9 +120,17 @@ export async function computeExecutiveSummary(
   now: Date = new Date(),
 ): Promise<ExecutiveSummary> {
   const thisWeekStart = startOfWeekUTC(now);
-  // 36h back from the week boundary lands safely inside the previous
-  // org week regardless of DST week lengths.
-  const lastWeekStart = startOfWeekUTC(new Date(thisWeekStart.getTime() - 36 * 3600_000));
+  // Walk week boundaries backwards — 36h back from a boundary lands
+  // safely inside the previous org week regardless of DST week lengths.
+  // weekStarts[0] = thisWeekStart, [1] = last week, … [TREND_WEEKS] = oldest.
+  const weekStarts: Date[] = [thisWeekStart];
+  for (let i = 0; i < TREND_WEEKS; i++) {
+    weekStarts.push(
+      startOfWeekUTC(new Date(weekStarts[i].getTime() - 36 * 3600_000)),
+    );
+  }
+  const lastWeekStart = weekStarts[1];
+  const oldestStart = weekStarts[TREND_WEEKS];
   const thirtyAgo = new Date(now.getTime() - 30 * DAY_MS);
 
   const [
@@ -120,11 +142,12 @@ export async function computeExecutiveSummary(
     onboardingInFlight,
     attendanceRows,
     openAssignments,
+    newHireRows,
   ] = await Promise.all([
     prisma.timeEntry.findMany({
       where: {
         status: { in: ['APPROVED', 'COMPLETED'] },
-        clockInAt: { gte: lastWeekStart, lt: now },
+        clockInAt: { gte: oldestStart, lt: now },
       },
       select: {
         associateId: true,
@@ -132,7 +155,7 @@ export async function computeExecutiveSummary(
         clockOutAt: true,
         breaks: { select: { startedAt: true, endedAt: true } },
       },
-      take: 20_000,
+      take: 50_000,
     }),
     prisma.associate.count({
       where: {
@@ -172,6 +195,19 @@ export async function computeExecutiveSummary(
       },
       take: 5_000,
     }),
+    prisma.associate.findMany({
+      where: { deletedAt: null, erasedAt: null, hireDate: { gte: thirtyAgo } },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        hireDate: true,
+        photoS3Key: true,
+        photoUpdatedAt: true,
+      },
+      orderBy: { hireDate: 'desc' },
+      take: 24,
+    }),
   ]);
 
   const byClient = new Map<string, { clientName: string; activeAssociates: number }>();
@@ -184,11 +220,24 @@ export async function computeExecutiveSummary(
     byClient.set(a.location.clientId, c);
   }
 
+  // Oldest → newest: window i runs weekStarts[i+1] → weekStarts[i].
+  const trend: ExecutiveWeek[] = [];
+  for (let i = TREND_WEEKS - 1; i >= 0; i--) {
+    trend.push(aggregateWeek(entries, weekStarts[i + 1], weekStarts[i]));
+  }
+
   return {
     generatedAt: now.toISOString(),
     workforce: { active, deactivated, hires30d, separations30d, onboardingInFlight },
     lastWeek: aggregateWeek(entries, lastWeekStart, thisWeekStart),
     thisWeek: aggregateWeek(entries, thisWeekStart, now),
+    trend,
+    newHires30d: newHireRows.map((a) => ({
+      id: a.id,
+      name: `${a.firstName} ${a.lastName}`,
+      photoUrl: profilePhotoUrlFor(a),
+      hireDate: a.hireDate ? a.hireDate.toISOString().slice(0, 10) : null,
+    })),
     attendance30d: attendanceRows
       .map((r) => ({ kind: r.kind, count: r._count._all }))
       .sort((a, b) => b.count - a.count),
