@@ -9,6 +9,10 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { env } from '../config/env.js';
+import {
+  computeExecutiveDecisions,
+  type ExecutiveDecision,
+} from './executiveDecisions.js';
 import { profilePhotoUrlFor } from './profilePhotoUrl.js';
 import {
   orgDateKey,
@@ -46,7 +50,7 @@ export interface ExecutiveBriefing {
     assigned: number;
     open: number;
   }>;
-  decisions: Array<{ kind: string; label: string; detail: string; linkUrl: string }>;
+  decisions: ExecutiveDecision[];
   clientHealth: Array<{
     clientId: string;
     clientName: string;
@@ -107,10 +111,6 @@ export async function computeExecutiveBriefing(
     todayShifts,
     outlookShifts,
     incidents,
-    unpaidOld,
-    staleDrafts,
-    verbalProspects,
-    quarterTarget,
     windowShifts,
     windowEvents,
     paidStatements,
@@ -157,29 +157,6 @@ export async function computeExecutiveBriefing(
         clientId: true,
       },
       take: 20,
-    }),
-    prisma.clientStatement.findMany({
-      where: {
-        status: 'FINAL',
-        paidAt: null,
-        finalizedAt: { lt: new Date(now.getTime() - 45 * DAY_MS) },
-      },
-      select: { client: { select: { name: true } }, number: true, finalizedAt: true },
-      take: 10,
-    }),
-    prisma.clientStatement.count({
-      where: { status: 'DRAFT', updatedAt: { lt: new Date(now.getTime() - 7 * DAY_MS) } },
-    }),
-    prisma.clientProspect.findMany({
-      where: { deletedAt: null, stage: 'VERBAL' },
-      select: { name: true },
-      take: 5,
-    }),
-    prisma.execTarget.findUnique({
-      where: {
-        quarter: `${now.getUTCFullYear()}-Q${Math.floor(now.getUTCMonth() / 3) + 1}`,
-      },
-      select: { id: true },
     }),
     prisma.shift.findMany({
       where: {
@@ -297,44 +274,8 @@ export async function computeExecutiveBriefing(
   const clientNames = new Map<string, string>();
   for (const s of windowShifts) clientNames.set(s.clientId, s.client.name);
 
-  /* ----- 2. Decisions --------------------------------------------------- */
-  const decisions: ExecutiveBriefing['decisions'] = [];
-  if (unpaidOld.length > 0) {
-    const oldest = unpaidOld[0];
-    const days = oldest.finalizedAt
-      ? Math.floor((now.getTime() - oldest.finalizedAt.getTime()) / DAY_MS)
-      : 0;
-    decisions.push({
-      kind: 'receivables',
-      label: `Chase ${unpaidOld.length} overdue statement${unpaidOld.length === 1 ? '' : 's'}`,
-      detail: `Oldest: ${oldest.client.name} #${oldest.number ?? '—'}, ${days} days unpaid. Worth a call to their AP.`,
-      linkUrl: '/clients',
-    });
-  }
-  if (staleDrafts > 0) {
-    decisions.push({
-      kind: 'statements',
-      label: `${staleDrafts} draft statement${staleDrafts === 1 ? '' : 's'} idle over a week`,
-      detail: 'Unfinalized drafts are unbilled revenue — have payroll finalize or discard.',
-      linkUrl: '/clients',
-    });
-  }
-  for (const p of verbalProspects) {
-    decisions.push({
-      kind: 'pipeline',
-      label: `${p.name} is at verbal`,
-      detail: 'A verbal yes decays fast — worth the closing call this week.',
-      linkUrl: '/clients',
-    });
-  }
-  if (!quarterTarget) {
-    decisions.push({
-      kind: 'targets',
-      label: 'No targets set for this quarter',
-      detail: 'Have an administrator set revenue/margin/turnover targets so pace tracking works.',
-      linkUrl: '/',
-    });
-  }
+  /* ----- 2. Decisions — the full rule engine with human-state overlay --- */
+  const decisions = await computeExecutiveDecisions(prisma, now);
 
   /* ----- 3. Client health ------------------------------------------------ */
   interface WindowAgg {

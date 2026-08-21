@@ -873,6 +873,25 @@ model ExecTarget {
   createdAt         DateTime @default(now()) @db.Timestamptz(6)
 }
 
+// State overlay for the chairman's decision queue. Decisions themselves
+// are GENERATED from live data (lib/executiveDecisions.ts) under stable
+// keys; this table stores only what a human did about one — dismissed,
+// snoozed, or delegated. A decision auto-clears when its condition
+// resolves (the generator stops emitting it); a DISMISSED one re-raises
+// if the stakes grow materially past what was dismissed.
+model ExecDecisionState {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key            String    @unique @db.VarChar(120)
+  status         String    @db.VarChar(12) // DISMISSED | SNOOZED | DELEGATED
+  snoozeUntil    DateTime? @db.Timestamptz(6)
+  // Dollar stakes at the moment of dismissal — the re-raise baseline.
+  stakesAtAction Decimal?  @db.Decimal(12, 2)
+  actedById      String?   @db.Uuid
+  actedAt        DateTime  @default(now()) @db.Timestamptz(6)
+  note           String?
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+}
+
 enum ProspectStage {
   LEAD
   CONTACTED

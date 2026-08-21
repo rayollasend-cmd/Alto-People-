@@ -6,8 +6,11 @@ import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { formatRef } from '../lib/emailTemplates.js';
 import { ReportPdf } from '../lib/reportPdf.js';
+import { rolesWithCapability } from '@alto-people/shared';
 import { computeExecutiveBriefing } from '../lib/executiveBriefing.js';
+import { computeExecutiveDecisions } from '../lib/executiveDecisions.js';
 import { computeExecutiveSummary } from '../lib/executiveSummary.js';
+import { notifyUser } from '../lib/notify.js';
 import { startOfWeekUTC } from '../lib/timeAnomalies.js';
 import { env } from '../config/env.js';
 
@@ -36,6 +39,99 @@ executiveRouter.get('/summary', EXEC, async (_req: Request, res: Response) => {
 // cliff, and the people worth knowing this week.
 executiveRouter.get('/briefing', EXEC, async (_req: Request, res: Response) => {
   res.json(await computeExecutiveBriefing(prisma));
+});
+
+/* ===== Decision actions ==================================================== */
+//
+// The chairman's ONLY write surface — and it touches nothing but his own
+// queue's state overlay. Dismiss = deliberately not acting (re-raises if
+// stakes grow 1.25×); snooze = 7 days; delegate = fans the item out to
+// every manage:org admin's bell + email and keeps it visible as
+// "with your team" until the underlying condition resolves.
+
+const DecisionActionSchema = z.object({
+  action: z.enum(['dismiss', 'snooze', 'delegate']),
+  note: z.string().trim().max(300).optional(),
+});
+
+executiveRouter.post('/decisions/action', EXEC, async (req: Request, res: Response) => {
+  const key = z
+    .string()
+    .regex(/^[a-zA-Z0-9:_-]{3,120}$/)
+    .parse(req.body?.key);
+  const input = DecisionActionSchema.parse(req.body);
+
+  const decisions = await computeExecutiveDecisions(prisma);
+  const item = decisions.find((d) => d.key === key);
+  if (!item) {
+    throw new HttpError(404, 'not_found', 'That decision is no longer in the queue.');
+  }
+
+  const data =
+    input.action === 'dismiss'
+      ? {
+          status: 'DISMISSED',
+          snoozeUntil: null,
+          stakesAtAction: item.stakes,
+          actedById: req.user!.id,
+          actedAt: new Date(),
+          note: input.note ?? null,
+        }
+      : input.action === 'snooze'
+        ? {
+            status: 'SNOOZED',
+            snoozeUntil: new Date(Date.now() + 7 * 86_400_000),
+            stakesAtAction: item.stakes,
+            actedById: req.user!.id,
+            actedAt: new Date(),
+            note: input.note ?? null,
+          }
+        : {
+            status: 'DELEGATED',
+            snoozeUntil: null,
+            stakesAtAction: item.stakes,
+            actedById: req.user!.id,
+            actedAt: new Date(),
+            note: input.note ?? null,
+          };
+  await prisma.execDecisionState.upsert({
+    where: { key },
+    create: { key, ...data },
+    update: data,
+  });
+  enqueueAudit(
+    {
+      actorUserId: req.user!.id,
+      action: `executive.decision_${input.action}`,
+      entityType: 'ExecDecisionState',
+      entityId: key,
+      metadata: { label: item.label, stakes: item.stakes, note: input.note ?? null },
+    },
+    'executive.decisions',
+  );
+
+  if (input.action === 'delegate') {
+    const adminRoles = rolesWithCapability('manage:org');
+    const admins = await prisma.user.findMany({
+      where: {
+        role: { in: adminRoles },
+        status: 'ACTIVE',
+        deletedAt: null,
+        id: { not: req.user!.id },
+      },
+      select: { id: true },
+      take: 25,
+    });
+    for (const a of admins) {
+      await notifyUser(a.id, {
+        subject: `Delegated by the chairman: ${item.label}`,
+        body: `${item.detail}${input.note ? `\n\nNote from the chairman: ${input.note}` : ''}`,
+        category: 'executive_delegation',
+        linkUrl: item.linkUrl,
+      });
+    }
+  }
+  res.json({ ok: true });
 });
 
 /* ===== Receivables — the cash view ======================================= */

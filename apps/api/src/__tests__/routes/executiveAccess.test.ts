@@ -188,20 +188,55 @@ describe('executive read unlocks', () => {
     expect(Array.isArray(summary.body.concentration)).toBe(true);
 
     // The morning brief answers all five questions with a sane shape,
-    // and surfaces the verbal prospect in the decision queue.
+    // and surfaces the verbal prospect in the decision queue with stakes
+    // (200h × $22 × 4 weeks).
     await hrAgent.patch(`/executive/prospects/${created.body.id}`).send({ stage: 'VERBAL' });
     const brief = await execAgent.get('/executive/briefing');
     expect(brief.status).toBe(200);
     expect(brief.body.today.shiftsTotal).toBeDefined();
+    expect(Array.isArray(brief.body.outlook)).toBe(true);
     expect(Array.isArray(brief.body.clientHealth)).toBe(true);
     expect(brief.body.capacity.bench).toBeDefined();
     expect(Array.isArray(brief.body.people.topPerformers)).toBe(true);
+    interface QueueItem {
+      key: string;
+      label: string;
+      status: string;
+      stakes: number | null;
+      severity: string;
+    }
+    const verbalItem = (brief.body.decisions as QueueItem[]).find(
+      (d) => d.key.startsWith('prospect:verbal:') && d.label.includes('Target PCB'),
+    );
+    expect(verbalItem).toBeDefined();
+    expect(verbalItem!.status).toBe('open');
+    expect(verbalItem!.stakes).toBe(200 * 22 * 4);
+
+    // Decision lifecycle: the exec's one write surface. Delegate notifies
+    // the admins and keeps the item visible as delegated; dismiss hides it.
+    const delegate = await execAgent
+      .post('/executive/decisions/action')
+      .send({ key: verbalItem!.key, action: 'delegate', note: 'Close this one personally.' });
+    expect(delegate.status).toBe(200);
+    const notif = await prisma.notification.findFirst({
+      where: { recipientUserId: hr.id, category: 'executive_delegation' },
+    });
+    expect(notif).not.toBeNull();
+    expect(notif!.body).toContain('Close this one personally.');
+    const brief2 = await execAgent.get('/executive/briefing');
+    const afterDelegate = (brief2.body.decisions as QueueItem[]).find(
+      (d) => d.key === verbalItem!.key,
+    );
+    expect(afterDelegate?.status).toBe('delegated');
+
+    const dismiss = await execAgent
+      .post('/executive/decisions/action')
+      .send({ key: verbalItem!.key, action: 'dismiss' });
+    expect(dismiss.status).toBe(200);
+    const brief3 = await execAgent.get('/executive/briefing');
     expect(
-      brief.body.decisions.some(
-        (d: { kind: string; label: string }) =>
-          d.kind === 'pipeline' && d.label.includes('Target PCB'),
-      ),
-    ).toBe(true);
+      (brief3.body.decisions as QueueItem[]).some((d) => d.key === verbalItem!.key),
+    ).toBe(false);
   });
 
   it('a client-scoped supervisor cannot read the executive surfaces', async () => {
@@ -213,5 +248,12 @@ describe('executive read unlocks', () => {
     const agent = await loginAs(sup.email);
     expect((await agent.get('/executive/summary')).status).toBe(403);
     expect((await agent.get('/executive/board-pack.pdf')).status).toBe(403);
+    expect(
+      (
+        await agent
+          .post('/executive/decisions/action')
+          .send({ key: 'bench:idle', action: 'dismiss' })
+      ).status,
+    ).toBe(403);
   });
 });

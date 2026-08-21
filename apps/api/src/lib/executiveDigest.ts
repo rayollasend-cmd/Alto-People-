@@ -11,6 +11,7 @@
 import { prisma as defaultPrisma } from '../db.js';
 import type { PrismaClient } from '@prisma/client';
 import { startOfWeekUTC } from './timeAnomalies.js';
+import { computeExecutiveDecisions } from './executiveDecisions.js';
 import { computeExecutiveSummary, executiveDigestBody } from './executiveSummary.js';
 import { notifyUser } from './notify.js';
 import { DEFAULT_TIMEZONE } from './timezone.js';
@@ -63,7 +64,15 @@ export async function runExecutiveDigestSweep(
   if (pending.length === 0) return { sent: 0, skipped: 'already_sent' };
 
   const summary = await computeExecutiveSummary(prisma, now);
-  const body = executiveDigestBody(summary);
+  let body = executiveDigestBody(summary);
+  // The follow-through line: the digest never lets the queue die quietly.
+  const decisions = await computeExecutiveDecisions(prisma, now);
+  const open = decisions.filter((d) => d.status === 'open');
+  const delegated = decisions.filter((d) => d.status === 'delegated');
+  if (open.length > 0 || delegated.length > 0) {
+    const oldest = Math.max(0, ...open.map((d) => d.ageDays ?? 0));
+    body += `\nDecision queue: ${open.length} open${oldest > 0 ? ` (oldest waiting ${oldest} days)` : ''}${delegated.length > 0 ? `, ${delegated.length} with your team` : ''}.`;
+  }
   for (const r of pending) {
     await notifyUser(r.id, {
       subject: 'Your weekly executive digest',

@@ -147,7 +147,18 @@ interface ExecBriefing {
     incidents: Array<{ kind: string; associateName: string; clientName: string | null }>;
   };
   outlook: Array<{ dateKey: string; published: number; assigned: number; open: number }>;
-  decisions: Array<{ kind: string; label: string; detail: string; linkUrl: string }>;
+  decisions: Array<{
+    key: string;
+    category: 'run' | 'develop' | 'move';
+    severity: 'critical' | 'high' | 'normal';
+    label: string;
+    detail: string;
+    stakes: number | null;
+    ageDays: number | null;
+    linkUrl: string;
+    status: 'open' | 'delegated';
+    delegatedDays: number | null;
+  }>;
   clientHealth: Array<{
     clientId: string;
     clientName: string;
@@ -207,6 +218,172 @@ function Delta({ now, prev, money }: { now: number; prev: number; money?: boolea
       <Icon className="h-3.5 w-3.5" />
       {Math.abs(pct).toFixed(0)}%
     </span>
+  );
+}
+
+const CATEGORY_LABEL: Record<string, string> = {
+  run: 'Run',
+  develop: 'Develop',
+  move: 'Move',
+};
+
+/** The chairman's queue — stakes-ranked, workable (dismiss/snooze/delegate),
+ *  with delegated items held visible until their condition resolves. */
+function DecisionQueueCard({
+  decisions,
+  onChanged,
+}: {
+  decisions: ExecBriefing['decisions'];
+  onChanged: () => void;
+}) {
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const open = decisions.filter((d) => d.status === 'open');
+  const delegated = decisions.filter((d) => d.status === 'delegated');
+
+  const act = async (key: string, action: 'dismiss' | 'snooze' | 'delegate') => {
+    if (busyKey) return;
+    setBusyKey(`${key}:${action}`);
+    try {
+      await apiFetch('/executive/decisions/action', {
+        method: 'POST',
+        body: { key, action },
+      });
+      toast.success(
+        action === 'dismiss'
+          ? 'Dismissed — it will re-raise only if the stakes grow.'
+          : action === 'snooze'
+            ? 'Snoozed for 7 days.'
+            : 'Delegated — your admins were notified; it stays listed until resolved.',
+      );
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not update the decision.');
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  return (
+    <Card className={open.some((d) => d.severity === 'critical') ? 'border-alert/40' : undefined}>
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">Needs your decision</CardTitle>
+          {open.length > 0 && (
+            <span className="text-2xs tabular-nums text-silver/70">
+              {open.length} open{delegated.length > 0 ? ` · ${delegated.length} with your team` : ''}
+            </span>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {open.length === 0 && delegated.length === 0 ? (
+          <p className="text-sm text-silver">Nothing waiting on you — the queue is clear.</p>
+        ) : (
+          <>
+            <ul className="space-y-2.5">
+              {open.slice(0, 5).map((d) => (
+                <li
+                  key={d.key}
+                  className={`rounded-md border-l-2 bg-navy-secondary/30 px-3 py-2 ${
+                    d.severity === 'critical'
+                      ? 'border-alert'
+                      : d.severity === 'high'
+                        ? 'border-warning'
+                        : 'border-navy-secondary'
+                  }`}
+                >
+                  <Link to={d.linkUrl} className="group block">
+                    <div className="flex flex-wrap items-center justify-between gap-x-2">
+                      <span className="text-sm text-white group-hover:text-gold">{d.label}</span>
+                      <span className="flex items-center gap-1.5 text-2xs tabular-nums">
+                        {d.stakes !== null && (
+                          <span
+                            className={
+                              d.severity === 'critical' ? 'font-medium text-alert' : 'text-silver'
+                            }
+                          >
+                            {fmtMoney(d.stakes)} at stake
+                          </span>
+                        )}
+                        {d.ageDays !== null && d.ageDays > 0 && (
+                          <span className="text-silver/60">· waiting {d.ageDays}d</span>
+                        )}
+                        <span className="rounded-full bg-navy-secondary/80 px-1.5 py-0.5 text-silver/70">
+                          {CATEGORY_LABEL[d.category]}
+                        </span>
+                      </span>
+                    </div>
+                    <div className="text-xs text-silver">{d.detail}</div>
+                  </Link>
+                  <div className="mt-1.5 flex gap-1.5">
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      loading={busyKey === `${d.key}:delegate`}
+                      disabled={busyKey !== null}
+                      onClick={() => void act(d.key, 'delegate')}
+                    >
+                      Delegate to team
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      loading={busyKey === `${d.key}:snooze`}
+                      disabled={busyKey !== null}
+                      onClick={() => void act(d.key, 'snooze')}
+                    >
+                      Snooze 7d
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="ghost"
+                      loading={busyKey === `${d.key}:dismiss`}
+                      disabled={busyKey !== null}
+                      onClick={() => void act(d.key, 'dismiss')}
+                    >
+                      Dismiss
+                    </Button>
+                  </div>
+                </li>
+              ))}
+              {open.length > 5 && (
+                <li className="text-center text-2xs text-silver/60">
+                  +{open.length - 5} more in the queue
+                </li>
+              )}
+            </ul>
+            {delegated.length > 0 && (
+              <div className="mt-3">
+                <div className="mb-1 text-2xs uppercase tracking-wider text-silver/60">
+                  With your team
+                </div>
+                <ul className="space-y-1">
+                  {delegated.map((d) => (
+                    <li
+                      key={d.key}
+                      className="flex items-center justify-between gap-2 text-xs"
+                    >
+                      <Link
+                        to={d.linkUrl}
+                        className="min-w-0 truncate text-silver hover:text-gold"
+                      >
+                        {d.label}
+                      </Link>
+                      <span className="shrink-0 tabular-nums text-silver/60">
+                        delegated{' '}
+                        {d.delegatedDays !== null && d.delegatedDays > 0
+                          ? `${d.delegatedDays}d ago`
+                          : 'today'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -722,31 +899,7 @@ export function ExecutiveDashboard() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Needs your decision</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {brief.decisions.length === 0 ? (
-                <p className="text-sm text-silver">
-                  Nothing waiting on you — the queue is clear.
-                </p>
-              ) : (
-                <ul className="divide-y divide-navy-secondary/60">
-                  {brief.decisions.slice(0, 5).map((d, i) => (
-                    <li key={`${d.kind}-${i}`} className="py-2">
-                      <Link to={d.linkUrl} className="group block">
-                        <div className="text-sm text-white group-hover:text-gold">
-                          {d.label}
-                        </div>
-                        <div className="text-xs text-silver">{d.detail}</div>
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
+          <DecisionQueueCard decisions={brief.decisions} onChanged={load} />
         </div>
       )}
 
