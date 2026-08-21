@@ -40,6 +40,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
+import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 
 const greetingFor = (hour: number): string => {
   if (hour < 5) return 'Up late';
@@ -176,6 +177,8 @@ export function SupervisorDashboard() {
           Your site today — who&apos;s on, who&apos;s late, what&apos;s open.
         </p>
       </header>
+
+      <RoleDecisionQueue />
 
       {/* KPI tiles */}
       <section aria-label="Site snapshot" className="space-y-3">

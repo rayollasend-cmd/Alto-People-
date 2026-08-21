@@ -42,6 +42,7 @@ import { externalPaymentsRouter } from './routes/externalPayments.js';
 import { auditPacketRouter } from './routes/auditPacket.js';
 import { directoryRouter } from './routes/directory.js';
 import { executiveRouter } from './routes/executive.js';
+import { roleDecisionsRouter } from './routes/roleDecisions.js';
 import { positionsRouter } from './routes/positions.js';
 import { teamRouter } from './routes/team.js';
 import { workflowsRouter } from './routes/workflows.js';
@@ -334,6 +335,7 @@ export function createApp() {
   app.use('/org', orgRouter);
   app.use('/people', directoryRouter);
   app.use('/executive', executiveRouter);
+  app.use('/me', roleDecisionsRouter);
   // External payroll documentation — pay periods + evidence uploads for the
   // directory drawer's Payments tab. Router self-gates on process:payroll.
   app.use('/external-payments', externalPaymentsRouter);

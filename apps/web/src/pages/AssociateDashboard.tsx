@@ -45,6 +45,7 @@ import { getPushStatus, subscribeToPush } from '@/lib/push';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { OnboardingBanner } from '@/components/OnboardingBanner';
 import { cn } from '@/lib/cn';
+import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 
 /**
  * 403/404 are fully expected for accounts without the linked records
@@ -144,6 +145,9 @@ export function AssociateDashboard() {
       />
 
       <OnboardingBanner />
+      <div className="mb-4">
+        <RoleDecisionQueue title="Your to-dos" />
+      </div>
       <EnablePushCard />
       <ActionNeededCard
         shifts={
