@@ -222,8 +222,9 @@ export function scopeTimeEntries(user: SessionUser): Prisma.TimeEntryWhereInput 
   if (user.role === 'CLIENT_PORTAL' && user.clientId) {
     return { clientId: user.clientId };
   }
-  // SHIFT_SUPERVISOR manages only its own client's time (fail closed).
-  if (user.role === 'SHIFT_SUPERVISOR') {
+  // SHIFT_SUPERVISOR manages — and FLOOR_SUPERVISOR watches — only its
+  // own client's time (fail closed).
+  if (user.role === 'SHIFT_SUPERVISOR' || user.role === 'FLOOR_SUPERVISOR') {
     return { clientId: user.clientId ?? NO_CLIENT };
   }
   return {};
@@ -251,7 +252,8 @@ export function effectiveClientIdFilter(
   if (
     user.role === 'CLIENT_PORTAL' ||
     user.role === 'ASSOCIATE' ||
-    user.role === 'SHIFT_SUPERVISOR'
+    user.role === 'SHIFT_SUPERVISOR' ||
+    user.role === 'FLOOR_SUPERVISOR'
   ) {
     return user.clientId ?? null;
   }

@@ -11,6 +11,7 @@ export const ROLES = {
   WORKFORCE_MANAGER: 'WORKFORCE_MANAGER',
   MARKETING_MANAGER: 'MARKETING_MANAGER',
   SHIFT_SUPERVISOR: 'SHIFT_SUPERVISOR',
+  FLOOR_SUPERVISOR: 'FLOOR_SUPERVISOR',
 } as const;
 
 export type Role = keyof typeof ROLES;
@@ -28,6 +29,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   WORKFORCE_MANAGER: 'Workforce Manager',
   MARKETING_MANAGER: 'Marketing Manager',
   SHIFT_SUPERVISOR: 'Shift Supervisor',
+  FLOOR_SUPERVISOR: 'Floor Supervisor',
 };
 
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
@@ -44,6 +46,8 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   MARKETING_MANAGER: 'Full org-wide access (mirrors HR Administrator)',
   SHIFT_SUPERVISOR:
     'Scheduling, time & attendance, and onboarding invites for one client only — assign the client in Users & access',
+  FLOOR_SUPERVISOR:
+    'Watch-only: the live clocked-in board for one client. No time approvals, edits, or walk-in decisions — assign the client in Users & access',
 };
 
 export type Capability =
@@ -58,6 +62,11 @@ export type Capability =
   // and UI can gate invite-shaped affordances on it alone.
   | 'invite:onboarding'
   | 'view:time' | 'manage:time'
+  // The live clocked-in board (GET /time/admin/active) as a READ, split
+  // from manage:time so the watch-only FLOOR_SUPERVISOR can see who is
+  // on the floor without inheriting approvals, edits, or walk-in
+  // decisions. Every manage:time holder also holds this.
+  | 'view:time-live'
   | 'view:scheduling' | 'manage:scheduling'
   // Gap 3 — `void:payroll` is intentionally NOT part of FULL_ADMIN.
   // Voiding a disbursed run reverses a QBO journal entry and marks
@@ -167,6 +176,7 @@ const FULL_ADMIN: Capability[] = [
   ...ALL_MANAGE,
   'view:audit',
   'view:executive',
+  'view:time-live',
 ];
 
 export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
@@ -174,6 +184,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     ...ALL_VIEWS,
     'view:audit',
     'view:executive',
+    'view:time-live',
   ]),
   // Gap 10 — HR Admin holds all three reimbursement caps so they can act
   // as the manager fallback when an associate has no direct manager and
@@ -248,6 +259,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:dashboard',
     'view:time',
     'manage:time',
+    'view:time-live',
     'view:scheduling',
     'manage:scheduling',
     'view:onboarding',
@@ -255,6 +267,16 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // The in-app inbox/bell. Without it, notifications routed to
     // supervisors (shift claims, swaps, no-shows at their site) land in a
     // mailbox they can't open — associates hold this for the same reason.
+    'view:communications',
+  ]),
+  // Step-down from SHIFT_SUPERVISOR: watches the live floor for one
+  // client, decides nothing. Deliberately NO manage:time — walk-in
+  // approvals, manual entries, and timesheet approval all stay with the
+  // shift supervisor and above.
+  FLOOR_SUPERVISOR: new Set<Capability>([
+    'view:dashboard',
+    'view:time',
+    'view:time-live',
     'view:communications',
   ]),
 };

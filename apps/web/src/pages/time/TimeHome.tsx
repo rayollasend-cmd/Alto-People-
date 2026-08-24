@@ -18,6 +18,12 @@ export function TimeHome() {
     return <AssociateKioskOnlyView />;
   }
 
+  // FLOOR_SUPERVISOR: watch-only. The live board and nothing else — no
+  // approval queue, no add-entry, no walk-in decisions.
+  if (user?.role === 'FLOOR_SUPERVISOR') {
+    return <AdminTimeView canManage={false} liveOnly />;
+  }
+
   // Managers (manage:time + an associate record) see BOTH: a personal
   // clock-in widget at the top (so they can punch their own time from
   // their phone) and the team approval queue below.

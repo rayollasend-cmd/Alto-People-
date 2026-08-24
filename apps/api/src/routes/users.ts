@@ -152,7 +152,7 @@ const PatchInputSchema = z
   );
 
 // Roles that must be pinned to a single client to function.
-const CLIENT_SCOPED_ROLES: Role[] = ['SHIFT_SUPERVISOR'];
+const CLIENT_SCOPED_ROLES: Role[] = ['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR'];
 
 usersRouter.patch(
   '/admin/users/:id',

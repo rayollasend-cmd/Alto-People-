@@ -46,6 +46,10 @@ enum Role {
   // and time & attendance for a single client's associates only (via
   // User.clientId + the scope* helpers). No HR/payroll surface.
   SHIFT_SUPERVISOR
+  // Floor Supervisor — watch-only step-down from SHIFT_SUPERVISOR: the
+  // live clocked-in board for a single client, nothing else. No time
+  // approvals, edits, or walk-in decisions.
+  FLOOR_SUPERVISOR
 }
 
 enum UserStatus {

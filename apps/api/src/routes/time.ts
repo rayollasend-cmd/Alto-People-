@@ -32,7 +32,7 @@ import { csvCell as sharedCsvCell } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { scopeTimeEntries, scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
 import { runWithConcurrency } from '../lib/concurrency.js';
 import { z } from 'zod';
@@ -689,7 +689,9 @@ timeRouter.post('/me/break/end', async (req, res, next) => {
 
 /* ===== Real-time clocked-in dashboard (HR/Ops) ========================== */
 
-timeRouter.get('/admin/active', MANAGE, async (req, res, next) => {
+// view:time-live — the watch-only FLOOR_SUPERVISOR (and executives) read
+// the live board; every write on this router stays MANAGE.
+timeRouter.get('/admin/active', requireAnyCapability('manage:time', 'view:time-live'), async (req, res, next) => {
   try {
     // Tenant clamp FIRST (same bug class as scheduling /shifts): spreading
     // the raw query param after scopeTimeEntries would let a bounded

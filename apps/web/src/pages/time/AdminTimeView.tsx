@@ -350,6 +350,9 @@ export function __resetPayPeriodsCacheForTests(): void {
 
 interface AdminTimeViewProps {
   canManage: boolean;
+  /** Watch-only mode (FLOOR_SUPERVISOR): live board only — the approval
+   *  queue tab is hidden entirely. */
+  liveOnly?: boolean;
 }
 
 // ── Shift-window lens ─────────────────────────────────────────────────────
@@ -587,14 +590,14 @@ function ClientSiteSelects({
   );
 }
 
-export function AdminTimeView({ canManage }: AdminTimeViewProps) {
+export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProps) {
   const navigate = useNavigate();
   const isDesktop = useIsDesktop();
   // Active tab lives in ?tab= — shareable ("send me the queue"), and Back
   // retraces the live↔queue switch instead of leaving the page.
   const [tabParams, setTabParams] = useSearchParams();
   const tabParam = tabParams.get('tab');
-  const tab: Tab = tabParam === 'queue' ? 'queue' : 'live';
+  const tab: Tab = !liveOnly && tabParam === 'queue' ? 'queue' : 'live';
   const setTab = (next: Tab) => {
     const params = new URLSearchParams(tabParams);
     if (next === 'live') params.delete('tab');
@@ -1114,7 +1117,9 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         subtitle={
           canManage
             ? 'Review, approve, or reject time entries from associates.'
-            : 'Read-only view of time entries.'
+            : liveOnly
+              ? "Live floor view — who's clocked in at your site right now."
+              : 'Read-only view of time entries.'
         }
         secondaryActions={
           canManage ? (
@@ -1170,12 +1175,14 @@ export function AdminTimeView({ canManage }: AdminTimeViewProps) {
         />
       </div>
 
-      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="mb-5">
-        <TabsList>
-          <TabsTrigger value="live">Live (clocked in)</TabsTrigger>
-          <TabsTrigger value="queue">Approval queue</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      {!liveOnly && (
+        <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="mb-5">
+          <TabsList>
+            <TabsTrigger value="live">Live (clocked in)</TabsTrigger>
+            <TabsTrigger value="queue">Approval queue</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
 
       {error && (
         <ErrorBanner className="mb-4">

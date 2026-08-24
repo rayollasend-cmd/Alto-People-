@@ -123,7 +123,14 @@ export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'reports',
 ]);
 
-/** Capability-filtered module list, with the executive curation applied. */
+/** The watch-only floor supervisor's sidebar: the live board and their
+ *  own profile — nothing else to wander into. */
+const FLOOR_SUPERVISOR_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
+  'me',
+  'time-attendance',
+]);
+
+/** Capability-filtered module list, with per-role curation applied. */
 export function visibleModules(
   role: string | undefined,
   can: (c: Capability) => boolean,
@@ -131,9 +138,11 @@ export function visibleModules(
   const base = MODULES.filter(
     (m) => can(m.requires) || (m.requiresAny?.some(can) ?? false),
   );
-  return role === 'EXECUTIVE_CHAIRMAN'
-    ? base.filter((m) => EXEC_MODULE_KEYS.has(m.key))
-    : base;
+  if (role === 'EXECUTIVE_CHAIRMAN') return base.filter((m) => EXEC_MODULE_KEYS.has(m.key));
+  if (role === 'FLOOR_SUPERVISOR') {
+    return base.filter((m) => FLOOR_SUPERVISOR_MODULE_KEYS.has(m.key));
+  }
+  return base;
 }
 
 

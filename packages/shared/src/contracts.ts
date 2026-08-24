@@ -435,6 +435,7 @@ export const RoleSchema = z.enum([
   'WORKFORCE_MANAGER',
   'MARKETING_MANAGER',
   'SHIFT_SUPERVISOR',
+  'FLOOR_SUPERVISOR',
 ]);
 
 export const UserStatusSchema = z.enum(['ACTIVE', 'DISABLED', 'INVITED']);

@@ -76,6 +76,12 @@ const EXEC_TABS: TabDef[] = [
   { path: '/compliance', label: 'Compliance', icon: Timer, requires: 'view:compliance' },
 ];
 
+/** Watch-only floor supervisor: home + the live board, nothing else. */
+const FLOOR_TABS: TabDef[] = [
+  HOME_TAB,
+  { path: '/time-attendance', label: 'Live floor', icon: Timer, requires: 'view:time' },
+];
+
 /** Legacy fallback for roles that fit neither bucket. */
 const DEFAULT_TABS: TabDef[] = [
   HOME_TAB,
@@ -95,9 +101,11 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
       ? ASSOCIATE_TABS
       : user?.role === 'EXECUTIVE_CHAIRMAN'
         ? EXEC_TABS
-        : can('manage:scheduling')
-          ? SCHEDULER_TABS
-          : DEFAULT_TABS;
+        : user?.role === 'FLOOR_SUPERVISOR'
+          ? FLOOR_TABS
+          : can('manage:scheduling')
+            ? SCHEDULER_TABS
+            : DEFAULT_TABS;
   // Keep at most 4 destination tabs so every target stays comfortably
   // wide on a 360px screen once "More" is added.
   const tabs = tabSet
