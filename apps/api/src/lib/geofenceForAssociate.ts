@@ -47,7 +47,21 @@ export async function resolveAssociateGeofence(
       locationId: assignment.locationId,
     };
   }
-  if (!clientIdFallback) {
+  // No assignment and no job-pinned client: fall back to the HIRING
+  // record — the most recent approved application names the client the
+  // associate works for. Without this, migrated/unplaced associates got
+  // clientless time entries from manual adds and self clock-ins, which
+  // the payroll sheet then had to skip ("no client attached").
+  let effectiveFallback = clientIdFallback;
+  if (!effectiveFallback) {
+    const approved = await prisma.application.findFirst({
+      where: { associateId, status: 'APPROVED', deletedAt: null },
+      orderBy: { approvedAt: 'desc' },
+      select: { clientId: true },
+    });
+    effectiveFallback = approved?.clientId ?? null;
+  }
+  if (!effectiveFallback) {
     return {
       geofence: { latitude: null, longitude: null, radiusMeters: null },
       clientId: null,
@@ -61,7 +75,7 @@ export async function resolveAssociateGeofence(
   // exists (or none has a geofence set), enforcement falls back to
   // "no fence" — same as the old all-NULL Client state.
   const fallback = await prisma.location.findFirst({
-    where: { clientId: clientIdFallback, deletedAt: null, isActive: true },
+    where: { clientId: effectiveFallback, deletedAt: null, isActive: true },
     orderBy: { createdAt: 'asc' },
     select: { id: true, latitude: true, longitude: true, geofenceRadiusMeters: true },
   });
@@ -71,7 +85,7 @@ export async function resolveAssociateGeofence(
       longitude: fallback?.longitude ? Number(fallback.longitude) : null,
       radiusMeters: fallback?.geofenceRadiusMeters ?? null,
     },
-    clientId: clientIdFallback,
+    clientId: effectiveFallback,
     locationId: fallback?.id ?? null,
   };
 }
