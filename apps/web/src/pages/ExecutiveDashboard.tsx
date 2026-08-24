@@ -188,6 +188,19 @@ interface ExecBriefing {
   };
 }
 
+// Intl directly — toLocale* is lint-banned in favor of the shared fmt*
+// helpers, but these headers need shapes fmt* doesn't offer.
+const LONG_DAY_FMT = new Intl.DateTimeFormat('en-US', {
+  weekday: 'long',
+  month: 'long',
+  day: 'numeric',
+});
+const CLOCK_FMT = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' });
+const SHORT_WEEKDAY_UTC_FMT = new Intl.DateTimeFormat('en-US', {
+  weekday: 'short',
+  timeZone: 'UTC',
+});
+
 const ATTENDANCE_LABEL: Record<string, string> = {
   LATE: 'Late arrivals',
   EARLY_OUT: 'Left early',
@@ -697,13 +710,7 @@ export function ExecutiveDashboard() {
             <LiveNow
               render={(now) => (
                 <>
-                  {now.toLocaleDateString('en-US', {
-                    weekday: 'long',
-                    month: 'long',
-                    day: 'numeric',
-                  })}{' '}
-                  ·{' '}
-                  {now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}{' '}
+                  {LONG_DAY_FMT.format(now)} · {CLOCK_FMT.format(now)}{' '}
                   — company posture at a glance, board-ready.
                 </>
               )}
@@ -748,11 +755,7 @@ export function ExecutiveDashboard() {
                 <div>
                   <CardTitle className="text-base">Today</CardTitle>
                   <p className="text-2xs text-silver/70">
-                    {new Date().toLocaleDateString('en-US', {
-                      weekday: 'long',
-                      month: 'long',
-                      day: 'numeric',
-                    })}
+                    {LONG_DAY_FMT.format(new Date())}
                   </p>
                 </div>
                 <div className="text-right">
@@ -834,10 +837,7 @@ export function ExecutiveDashboard() {
                               ? 'started'
                               : urgent
                                 ? `in ${Math.max(1, Math.round(hoursOut))}h`
-                                : start.toLocaleTimeString('en-US', {
-                                    hour: 'numeric',
-                                    minute: '2-digit',
-                                  })}
+                                : CLOCK_FMT.format(start)}
                           </span>
                         </Link>
                       </li>
@@ -856,9 +856,8 @@ export function ExecutiveDashboard() {
                     {brief.outlook.map((d) => {
                       const pct =
                         d.published > 0 ? Math.round((d.assigned / d.published) * 100) : null;
-                      const weekday = new Date(`${d.dateKey}T12:00:00Z`).toLocaleDateString(
-                        'en-US',
-                        { weekday: 'short', timeZone: 'UTC' },
+                      const weekday = SHORT_WEEKDAY_UTC_FMT.format(
+                        new Date(`${d.dateKey}T12:00:00Z`),
                       );
                       return (
                         <Link

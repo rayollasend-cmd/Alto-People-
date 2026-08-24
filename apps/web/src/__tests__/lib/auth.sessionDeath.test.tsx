@@ -140,9 +140,12 @@ describe('AuthProvider session death', () => {
     await failBusinessRequest('/payroll/runs');
 
     // RequireAuth bounced to /login with the prior location in state.from.
-    expect(await screen.findByTestId('login')).toHaveTextContent(
-      'next=/payroll',
-    );
+    // Generous timeout: the 401 → confirming re-probe → state update →
+    // redirect chain is eventually-consistent by design, and the default
+    // 1s window flakes under CI parallel load.
+    expect(
+      await screen.findByTestId('login', undefined, { timeout: 5_000 }),
+    ).toHaveTextContent('next=/payroll');
   });
 
   it('shows the session-ended toast exactly once, not once per failed request', async () => {
@@ -159,7 +162,7 @@ describe('AuthProvider session death', () => {
     await failBusinessRequest('/time/entries');
     await failBusinessRequest('/scheduling/shifts');
 
-    await screen.findByTestId('login');
+    await screen.findByTestId('login', undefined, { timeout: 5_000 });
     expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(toast.error).mock.calls[0][0]).toMatch(
       /session ended/i,

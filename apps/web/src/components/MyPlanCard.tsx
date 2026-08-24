@@ -29,6 +29,16 @@ interface PlanItem {
 
 export const PLAN_CHANGED_EVENT = 'alto:plan-changed';
 
+// Intl directly — toLocale* is lint-banned; fmt* has no narrow-weekday
+// or UTC-pinned day-name shapes.
+const NARROW_WEEKDAY_FMT = new Intl.DateTimeFormat('en-US', { weekday: 'narrow' });
+const DAY_NAME_UTC_FMT = new Intl.DateTimeFormat('en-US', {
+  weekday: 'long',
+  month: 'short',
+  day: 'numeric',
+  timeZone: 'UTC',
+});
+
 function weekDays(): Array<{
   key: string;
   letter: string;
@@ -40,7 +50,7 @@ function weekDays(): Array<{
     const d = new Date(Date.now() + i * 86_400_000);
     out.push({
       key: ymdLocal(d),
-      letter: d.toLocaleDateString('en-US', { weekday: 'narrow' }),
+      letter: NARROW_WEEKDAY_FMT.format(d),
       date: d.getDate(),
       isToday: i === 0,
     });
@@ -51,12 +61,7 @@ function weekDays(): Array<{
 function dayName(key: string, todayKey: string, tomorrowKey: string): string {
   if (key === todayKey) return 'Today';
   if (key === tomorrowKey) return 'Tomorrow';
-  return new Date(`${key}T12:00:00Z`).toLocaleDateString('en-US', {
-    weekday: 'long',
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-  });
+  return DAY_NAME_UTC_FMT.format(new Date(`${key}T12:00:00Z`));
 }
 
 /** The check circle — a real control with motion, not a browser checkbox. */
