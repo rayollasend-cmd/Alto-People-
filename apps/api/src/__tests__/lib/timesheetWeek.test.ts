@@ -213,6 +213,25 @@ describe('aggregateTimesheetRows', () => {
     // Sunday (the clock-out day) shows nothing — the shift belongs to Saturday.
     expect(days[1].timeIn).toBeNull();
     expect(days[1].netHours).toBe(0);
+    // Crossing midnight flags the day overnight; no shift link = an
+    // "unscheduled" (null) chip, never a silent blank.
+    expect(sat.overnight).toBe(true);
+    expect(sat.shifts).toEqual([null]);
+    expect(days[1].overnight).toBe(false);
+
+    // A punch linked to its scheduled shift carries the shift's NAME.
+    const { days: named } = buildAssociateDays(
+      [
+        entry({
+          clockInAt: new Date('2026-07-11T18:00:00Z'), // Sat 2pm ET
+          clockOutAt: new Date('2026-07-12T02:00:00Z'), // Sat 10pm ET
+          shiftName: 'GM Afternoon Shift',
+        }),
+      ],
+      WEEK.dateKeys,
+    );
+    expect(named[0].shifts).toEqual(['GM Afternoon Shift']);
+    expect(named[0].overnight).toBe(false);
     expect(totalHours).toBe(8);
   });
 

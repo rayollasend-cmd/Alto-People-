@@ -1404,6 +1404,12 @@ export const TimesheetDaySchema = z.object({
   breaks: z.array(z.string()),
   /** Net worked hours for the day (breaks excluded). */
   netHours: z.number().nonnegative(),
+  /** The shift name each approved entry fulfilled, in clock-in order —
+   *  null = the punch matched no scheduled shift (walk-in / manual). */
+  shifts: z.array(z.string().nullable()).optional(),
+  /** True when any entry crossed midnight — the "in Fri 10 PM, out Sat
+   *  7 AM under Friday" convention, made explicit for reviewers. */
+  overnight: z.boolean().optional(),
 });
 export type TimesheetDay = z.infer<typeof TimesheetDaySchema>;
 

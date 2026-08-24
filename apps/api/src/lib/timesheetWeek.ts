@@ -48,6 +48,9 @@ export interface TimesheetSourceEntry {
   clockOutAt: Date | null;
   /** APPROVED | COMPLETED | … — only APPROVED contributes hours. */
   status: string;
+  /** Name of the scheduled shift this punch fulfilled (Shift.position);
+   *  null/absent = unscheduled (walk-in approval, manual entry). */
+  shiftName?: string | null;
   breaks: BreakFacts[];
   /**
    * The IANA timezone of the SITE where this entry was punched
@@ -223,6 +226,7 @@ export async function buildTimesheetWeek(
       status: true,
       associate: { select: { firstName: true, lastName: true } },
       location: { select: { name: true, timezone: true } },
+      shift: { select: { position: true } },
       breaks: { select: { type: true, startedAt: true, endedAt: true } },
     },
   });
@@ -616,7 +620,11 @@ export function buildAssociateDays(
     let timeInZone = DEFAULT_TIMEZONE;
     let timeOutZone = DEFAULT_TIMEZONE;
     const breaks: string[] = [];
+    const shifts: Array<string | null> = [];
+    let overnight = false;
     for (const e of dayEntries) {
+      shifts.push(e.shiftName ?? null);
+      if (e.clockOutAt && localDateKey(e.clockOutAt, e.timeZone) !== key) overnight = true;
       netMin += netWorkedMinutes(
         { clockInAt: e.clockInAt, clockOutAt: e.clockOutAt },
         e.breaks,
@@ -650,6 +658,8 @@ export function buildAssociateDays(
       timeOut: timeOutAt ? formatTimeInZone(timeOutAt, timeOutZone) : null,
       breaks,
       netHours,
+      shifts,
+      overnight,
     };
   });
 
@@ -711,6 +721,7 @@ export async function buildAssociateTimesheetDetail(
       status: true,
       associate: { select: { firstName: true, lastName: true } },
       location: { select: { name: true, timezone: true } },
+      shift: { select: { position: true } },
       breaks: { select: { type: true, startedAt: true, endedAt: true } },
     },
   });
@@ -754,6 +765,7 @@ export async function buildAssociateTimesheetDetail(
         clockInAt: e.clockInAt,
         clockOutAt: e.clockOutAt,
         status: e.status,
+        shiftName: e.shift?.position ?? null,
         breaks: e.breaks.map((b) => ({
           type: b.type as BreakFacts['type'],
           startedAt: b.startedAt,

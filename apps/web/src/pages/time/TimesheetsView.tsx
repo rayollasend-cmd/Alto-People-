@@ -100,6 +100,25 @@ const ISSUE_LABEL: Record<TimesheetIssueKind, string> = {
   OVER_HOURS: 'Over hours',
 };
 
+/**
+ * Stable shift-name → chip color. Hashed (not first-appearance) so "GM
+ * Morning Shift" wears the same hue on every timesheet, every week —
+ * reviewers learn the colors once. Warning is reserved for
+ * "unscheduled"; alert for errors.
+ */
+const SHIFT_CHIP_PALETTE = [
+  'bg-gold/15 text-gold',
+  'bg-steel/25 text-white',
+  'bg-sky/15 text-sky',
+  'bg-teal/15 text-teal',
+  'bg-success/15 text-success',
+] as const;
+function shiftChipClass(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return SHIFT_CHIP_PALETTE[h % SHIFT_CHIP_PALETTE.length];
+}
+
 export function TimesheetsView() {
   const { can, user } = useAuth();
   const navigate = useNavigate();
@@ -785,6 +804,45 @@ export function TimesheetsView() {
                     </tr>
                   </thead>
                   <tbody>
+                    {/* Which shift each day fulfilled — named and color-
+                        coded so the week's pattern reads at a glance. */}
+                    {detail.days.some((d) => (d.shifts ?? []).length > 0) && (
+                      <tr className="border-t border-navy-secondary">
+                        <td className="p-2 text-silver/70">Shift</td>
+                        {detail.days.map((d) => (
+                          <td key={d.date} className="p-2 text-center align-top">
+                            {(d.shifts ?? []).length === 0 ? (
+                              <span className="text-silver/40">—</span>
+                            ) : (
+                              <div className="flex flex-col items-center gap-1">
+                                {(d.shifts ?? []).map((name, i) => (
+                                  <span
+                                    key={i}
+                                    className={`inline-flex max-w-[9rem] items-center gap-1 truncate rounded-full px-2 py-0.5 text-xs2 font-medium ${
+                                      name === null
+                                        ? 'bg-warning/15 text-warning'
+                                        : shiftChipClass(name)
+                                    }`}
+                                    title={name ?? 'No scheduled shift matched this punch (walk-in or manual entry)'}
+                                  >
+                                    {name ?? 'unscheduled'}
+                                  </span>
+                                ))}
+                                {d.overnight && (
+                                  <span
+                                    className="text-xs2 text-sky/80"
+                                    title="This shift crossed midnight — it ends the next calendar day but belongs to this day's timesheet column."
+                                  >
+                                    ☾ overnight
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                        ))}
+                        <td />
+                      </tr>
+                    )}
                     <tr className="border-t border-navy-secondary">
                       <td className="p-2 text-silver/70">Time In</td>
                       {detail.days.map((d) => (
@@ -828,6 +886,39 @@ export function TimesheetsView() {
                   </tbody>
                 </table>
               </div>
+              {/* Shift legend — the week's distinct shifts with their colors,
+                  so the chip bands read without hovering. */}
+              {(() => {
+                const named = [
+                  ...new Set(
+                    detail.days.flatMap((d) =>
+                      (d.shifts ?? []).filter((s): s is string => s !== null),
+                    ),
+                  ),
+                ];
+                const anyUnscheduled = detail.days.some((d) =>
+                  (d.shifts ?? []).some((s) => s === null),
+                );
+                if (named.length === 0 && !anyUnscheduled) return null;
+                return (
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs2">
+                    <span className="text-silver/60">Shifts:</span>
+                    {named.map((name) => (
+                      <span
+                        key={name}
+                        className={`rounded-full px-2 py-0.5 font-medium ${shiftChipClass(name)}`}
+                      >
+                        {name}
+                      </span>
+                    ))}
+                    {anyUnscheduled && (
+                      <span className="rounded-full bg-warning/15 px-2 py-0.5 font-medium text-warning">
+                        unscheduled — no shift matched the punch
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
               {/* Punches are formatted server-side on each SITE's wall clock —
                   the same clock the associate punched on — not the viewer's. */}
               <p className="text-xs2 text-silver/60">
