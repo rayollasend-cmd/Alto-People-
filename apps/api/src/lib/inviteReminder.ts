@@ -146,6 +146,9 @@ export async function sendReminderForUser(
           userId,
           expiresAt,
           reminderSentAt: now,
+          // The purge sweep's 3-day clock runs from the newest HUMAN-caused
+          // token; an automatic 48h reminder must not restart it.
+          mintedBySweep: reason === 'sweep',
         },
       });
     },

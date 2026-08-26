@@ -10,6 +10,7 @@ import { prisma } from './db.js';
 import { logger } from './lib/logger.js';
 import { startKeepAlive } from './lib/keepalive.js';
 import { startInviteReminderCron } from './lib/inviteReminder.js';
+import { startOnboardingPurgeCron } from './lib/onboardingPurge.js';
 import { startAttestationReminderCron } from './lib/attestationReminder.js';
 import { startExpirationDigestCron } from './lib/expirationDigest.js';
 import { startKioskMaintenanceCron } from './lib/kioskMaintenance.js';
@@ -59,6 +60,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   }
 
   startInviteReminderCron();
+  startOnboardingPurgeCron();
   startAttestationReminderCron();
   startExpirationDigestCron();
   startKioskMaintenanceCron();

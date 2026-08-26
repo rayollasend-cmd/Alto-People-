@@ -118,6 +118,10 @@ const EnvSchema = z.object({
   // On by default (6h) — the sweep is the only automation keeping stalled
   // onboarding moving. Set 0 to disable.
   INVITE_REMINDER_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
+  // Onboarding ghost purge (lib/onboardingPurge.ts): hard-deletes invites
+  // unaccepted after 3 days and abandoned onboardings after 10 idle days
+  // (final notice at 8). On by default (6h scan). Set 0 to disable.
+  ONBOARDING_PURGE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
   // Manual compliance attestation reminder cron. 0 (default) disables;
   // production should set 3600 (hourly) so HR gets pinged the day a
   // weekly/monthly compliance attestation comes due. Per-signal de-dup

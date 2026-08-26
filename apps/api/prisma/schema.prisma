@@ -1177,6 +1177,13 @@ model Associate {
   erasedAt            DateTime?          @db.Timestamptz(6)
   erasedById          String?            @db.Uuid
   erasedBy            User?              @relation("AssociateEraser", fields: [erasedById], references: [id], onDelete: SetNull)
+  // Onboarding purge final notice (lib/onboardingPurge.ts). Stamped when
+  // the "your onboarding will be removed in 48 hours" email goes out to an
+  // accepted-but-abandoned onboarder; any later onboarding activity makes
+  // the stamp stale (activity > stamp), which re-arms a fresh warning
+  // before any purge. Never set for people with work history — the sweep's
+  // guards exclude them entirely.
+  purgeWarnedAt       DateTime?          @db.Timestamptz(6)
   createdAt           DateTime           @default(now()) @db.Timestamptz(6)
   updatedAt           DateTime           @updatedAt @db.Timestamptz(6)
   deletedAt           DateTime?          @db.Timestamptz(6)
@@ -2570,6 +2577,11 @@ model InviteToken {
   // once per token. HR-triggered resend always rotates the token (creates
   // a new row), so this never blocks a manual resend.
   reminderSentAt DateTime? @db.Timestamptz(6)
+  // True for tokens the 48h reminder sweep rotated in automatically.
+  // The onboarding purge sweep's 3-day clock runs from the newest token a
+  // HUMAN caused (original invite, HR resend, self-service renew) — sweep-
+  // minted tokens must not keep restarting it.
+  mintedBySweep  Boolean   @default(false)
   createdAt      DateTime  @default(now()) @db.Timestamptz(6)
   user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
