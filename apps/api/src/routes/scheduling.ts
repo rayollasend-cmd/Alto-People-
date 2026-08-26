@@ -87,6 +87,8 @@ import { netWorkedMinutes, startOfWeekUTC, endOfWeekUTC } from '../lib/timeAnoma
 import {
   DEFAULT_TIMEZONE,
   addDaysInZone,
+  formatDateInZone,
+  formatTimeInZone,
   localDateKey,
   zonedDayOfWeek,
   zonedMinutes,
@@ -186,6 +188,52 @@ async function associateHasOverlap(
   return hasOverlapExcluding(tx, associateId, startsAt, endsAt, [excludeShiftId]);
 }
 
+/** The conflicting shift itself, with enough context to NAME it in an
+ *  error. "Already has an overlapping shift" was undiagnosable in the
+ *  two honest collision cases: an overnight shift that renders under the
+ *  PREVIOUS day's column, and a shift at another client that a bounded
+ *  supervisor cannot see at all. */
+async function findOverlapExcluding(
+  tx: Prisma.TransactionClient | typeof prisma,
+  associateId: string,
+  startsAt: Date,
+  endsAt: Date,
+  excludeShiftIds: string[],
+) {
+  return tx.shift.findFirst({
+    where: {
+      id: { notIn: excludeShiftIds },
+      assignedAssociateId: associateId,
+      status: { notIn: ['CANCELLED'] },
+      startsAt: { lt: endsAt },
+      endsAt: { gt: startsAt },
+    },
+    select: {
+      id: true,
+      startsAt: true,
+      endsAt: true,
+      status: true,
+      position: true,
+      client: { select: { name: true } },
+      locationRel: { select: { timezone: true } },
+    },
+  });
+}
+
+/** Human-readable identity of a conflicting shift, on the site's clock. */
+function describeClash(clash: {
+  startsAt: Date;
+  endsAt: Date;
+  status: string;
+  position: string;
+  client: { name: string };
+  locationRel: { timezone: string | null } | null;
+}): string {
+  const tz = clash.locationRel?.timezone ?? DEFAULT_TIMEZONE;
+  const overnight = formatDateInZone(clash.startsAt, tz) !== formatDateInZone(clash.endsAt, tz);
+  return `${clash.position} at ${clash.client.name}, ${formatDateInZone(clash.startsAt, tz)} ${formatTimeInZone(clash.startsAt, tz)} – ${formatTimeInZone(clash.endsAt, tz)}${overnight ? ' (overnight — it runs into the next day)' : ''}${clash.status === 'DRAFT' ? ' [unpublished draft]' : ''}`;
+}
+
 /** Overlap check excluding SEVERAL shifts — trades hand off two shifts at
  *  once, so each party's own half must not count against them. */
 async function hasOverlapExcluding(
@@ -195,17 +243,7 @@ async function hasOverlapExcluding(
   endsAt: Date,
   excludeShiftIds: string[],
 ): Promise<boolean> {
-  const clash = await tx.shift.findFirst({
-    where: {
-      id: { notIn: excludeShiftIds },
-      assignedAssociateId: associateId,
-      status: { notIn: ['CANCELLED'] },
-      startsAt: { lt: endsAt },
-      endsAt: { gt: startsAt },
-    },
-    select: { id: true },
-  });
-  return clash !== null;
+  return (await findOverlapExcluding(tx, associateId, startsAt, endsAt, excludeShiftIds)) !== null;
 }
 
 /**
@@ -2604,13 +2642,14 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
 
     const updated = await prisma.$transaction(async (tx) => {
       if (assigneeAfter && (timesChanged || i.status === 'ASSIGNED')) {
-        if (
-          await associateHasOverlap(tx, assigneeAfter, newStarts, newEnds, existing.id)
-        ) {
+        const clash = await findOverlapExcluding(tx, assigneeAfter, newStarts, newEnds, [
+          existing.id,
+        ]);
+        if (clash) {
           throw new HttpError(
             409,
             'associate_double_booked',
-            'These times overlap another shift already assigned to this associate.',
+            `These times overlap another shift already assigned to this associate: ${describeClash(clash)}.`,
           );
         }
       }
@@ -2752,19 +2791,22 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
           );
         }
       }
-      if (
-        await associateHasOverlap(
-          tx,
-          associate.id,
-          shift.startsAt,
-          shift.endsAt,
-          shift.id,
-        )
-      ) {
+      // Name the conflict: the two honest collision cases — an overnight
+      // shift living under the PREVIOUS day's column, and a shift at a
+      // client this caller can't see — were undiagnosable from a bare
+      // "already has an overlapping shift".
+      const clash = await findOverlapExcluding(
+        tx,
+        associate.id,
+        shift.startsAt,
+        shift.endsAt,
+        [shift.id],
+      );
+      if (clash) {
         throw new HttpError(
           409,
           'associate_double_booked',
-          `${associate.firstName} ${associate.lastName} already has an overlapping shift.`,
+          `${associate.firstName} ${associate.lastName} already has an overlapping shift: ${describeClash(clash)}.`,
         );
       }
       return tx.shift.update({
