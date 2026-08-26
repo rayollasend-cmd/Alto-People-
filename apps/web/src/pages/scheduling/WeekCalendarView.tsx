@@ -818,7 +818,11 @@ const Cell = memo(function Cell({
             : undefined
       }
       className={cn(
-        'group relative border-b border-r border-navy-secondary p-1 min-h-[44px]',
+        // Near-zero inset: a lone shift tile stretches to paint the whole
+        // cell (flex-1 on the chip), so the cell border is the only frame.
+        // Split shifts / doubles are still legal — two chips just share the
+        // height in equal slices.
+        'group relative border-b border-r border-navy-secondary p-0.5 min-h-[44px]',
         'flex flex-col',
         cellDensity.gap,
         isToday && 'bg-gold/[0.03]',
@@ -994,6 +998,8 @@ function ShiftChip({
       }}
       className={cn(
         'relative rounded border transition-colors hover:brightness-125',
+        // Claim the cell: a single chip fills it; stacked chips split it.
+        'flex-1 flex flex-col',
         density.minH,
         statusTileClass(shift.status),
         isDragging && 'elev-3 ring-2 ring-gold/60 opacity-90',
@@ -1034,7 +1040,7 @@ function ShiftChip({
         type="button"
         onClick={onClick}
         className={cn(
-          'w-full h-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded',
+          'w-full flex-1 flex items-center text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded',
           density.padY,
           density.padX,
           // Clear the ⋯ touch-menu trigger, which only renders sans hover.
@@ -1042,7 +1048,7 @@ function ShiftChip({
         )}
         title={`${fmtTime(shift.startsAt, shift.timezone)}–${fmtTime(previewEndsAt.toISOString(), shift.timezone)} · ${shift.position} · ${SHIFT_STATUS_LABEL[shift.status]}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
       >
-        <div className="flex items-center gap-1.5 min-w-0">
+        <div className="w-full flex items-center gap-1.5 min-w-0">
           <span
             className={cn(
               'text-silver/90 tabular-nums shrink-0',
