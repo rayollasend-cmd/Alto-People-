@@ -1071,6 +1071,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // saved as "the order" would silently demote everyone hidden).
   const canReorderRows =
     canManage && !!clientFilter && !locationFilter && !teamFilter && showAllAssociates;
+  // When reordering is disarmed, say WHY above the grid instead of silently
+  // hiding the arrows — "the feature doesn't exist" and "the feature is off
+  // because of a filter" look identical otherwise.
+  const reorderHint = !canManage
+    ? null
+    : canReorderRows
+      ? null
+      : !clientFilter
+        ? 'To reorder the roster rows (↑↓), pick a single client first.'
+        : locationFilter || teamFilter
+          ? 'Row reordering (↑↓) is paused while a site/crew filter is on — it saves the whole roster’s order, so clear those filters to move people.'
+          : 'Turn on “Show all associates” to reorder the roster rows (↑↓).';
   const reorderBusy = useRef(false);
   const moveAssociateRow = useCallback(
     (associateId: string, dir: -1 | 1) => {
@@ -2580,6 +2592,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       )}
       {filteredShifts && view === 'week' && weekLayout === 'compact' && (
         <div className="hidden lg:block fine:md:block">
+        {reorderHint && (
+          <p className="mb-1.5 text-2xs text-silver/60 no-print">{reorderHint}</p>
+        )}
         <WeekCalendarView
           shifts={filteredShifts}
           hiddenShifts={hiddenShifts}

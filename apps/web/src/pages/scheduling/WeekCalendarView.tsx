@@ -680,8 +680,11 @@ const Row = memo(function Row({
   return (
     <div className="grid" style={colsStyle}>
       <div className="group/row sticky left-0 z-10 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-3 flex items-center gap-2.5">
+        {/* Always visible when armed — the old hover-reveal made the
+            feature invisible on tablets (no hover) and undiscoverable
+            with a mouse. */}
         {(onMoveUp || onMoveDown) && (
-          <div className="flex shrink-0 flex-col opacity-0 transition-opacity group-hover/row:opacity-100 focus-within:opacity-100">
+          <div className="flex shrink-0 flex-col no-print">
             <button
               type="button"
               disabled={!onMoveUp}
