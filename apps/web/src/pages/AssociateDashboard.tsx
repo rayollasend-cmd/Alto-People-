@@ -47,6 +47,7 @@ import { OnboardingBanner } from '@/components/OnboardingBanner';
 import { cn } from '@/lib/cn';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { MyPlanCard } from '@/components/MyPlanCard';
+import { EarningsCard } from '@/components/EarningsCard';
 
 /**
  * 403/404 are fully expected for accounts without the linked records
@@ -147,6 +148,7 @@ export function AssociateDashboard() {
 
       <OnboardingBanner />
       <div className="mb-4 space-y-4">
+        <EarningsCard />
         <RoleDecisionQueue title="Your to-dos" />
         <MyPlanCard />
       </div>

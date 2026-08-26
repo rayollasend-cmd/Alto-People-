@@ -55,6 +55,16 @@ const en = {
   // Associate dashboard
   'dash.greeting': 'Hey {name} 👋',
   'dash.subtitle': "Here's what's on for today.",
+  // Earnings motivation card
+  'earn.title': 'My earnings this week',
+  'earn.readyToday': 'Ready to earn ~{amount} today? 💪',
+  'earn.finishToday': 'Finish today and add ~{amount} more.',
+  'earn.soFar': 'earned so far',
+  'earn.projected': 'projected by Friday',
+  'earn.hours': '{worked}h worked · {remaining}h still scheduled',
+  'earn.pickup': 'Want more? Grab an open shift.',
+  'earn.disclaimer':
+    'Estimated at your hourly rate, before taxes — your paycheck is the official number.',
   'dash.clock': 'Clock',
   'dash.onClock': 'On the clock',
   'dash.offClock': 'Off the clock',
@@ -523,6 +533,15 @@ const es: Record<MessageKey, string> = {
 
   'dash.greeting': 'Hola {name} 👋',
   'dash.subtitle': 'Esto es lo que hay para hoy.',
+  'earn.title': 'Mis ganancias esta semana',
+  'earn.readyToday': '¿Listo para ganar ~{amount} hoy? 💪',
+  'earn.finishToday': 'Termina hoy y suma ~{amount} más.',
+  'earn.soFar': 'ganado hasta ahora',
+  'earn.projected': 'proyectado para el viernes',
+  'earn.hours': '{worked}h trabajadas · {remaining}h aún programadas',
+  'earn.pickup': '¿Quieres más? Toma un turno abierto.',
+  'earn.disclaimer':
+    'Estimado con tu tarifa por hora, antes de impuestos — tu cheque de pago es la cifra oficial.',
   'dash.clock': 'Reloj',
   'dash.onClock': 'En turno',
   'dash.offClock': 'Fuera de turno',

@@ -44,6 +44,7 @@ import { recomputeEntryAnomalies } from '../lib/recomputeEntryAnomalies.js';
 import { checkGeofence } from '../lib/geo.js';
 import { resolveAssociateGeofence } from '../lib/geofenceForAssociate.js';
 import { matchShiftForPunch } from '../lib/matchShiftForPunch.js';
+import { computeAssociateEarnings } from '../lib/associateEarnings.js';
 import { notifyAssociate } from '../lib/notify.js';
 import { DEFAULT_TIMEZONE, formatDateInZone, formatTimeInZone, localDateKey } from '../lib/timezone.js';
 import {
@@ -311,6 +312,23 @@ timeRouter.get('/me/active', async (req, res, next) => {
 
 // Display cap for an associate's own history.
 const ME_ENTRY_CAP = 200;
+
+/**
+ * GET /time/me/earnings — the associate's week as money: earned so far
+ * (incl. live on-the-clock minutes), what the remaining schedule is
+ * worth, and today's shift as a number. Estimates, gross, before taxes.
+ */
+timeRouter.get('/me/earnings', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      throw new HttpError(404, 'no_associate', 'No associate record linked to this login.');
+    }
+    res.json(await computeAssociateEarnings(prisma, user.associateId));
+  } catch (err) {
+    next(err);
+  }
+});
 
 timeRouter.get('/me/entries', async (req, res, next) => {
   try {

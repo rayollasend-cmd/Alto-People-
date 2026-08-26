@@ -30,6 +30,7 @@ import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { send } from '../lib/notifications.js';
 import { associatesOfClient, effectiveClientIdFilter } from '../lib/scope.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
+import { notifyClockOutEarnings } from '../lib/associateEarnings.js';
 import { recordAttendanceForEntry } from '../lib/attendance.js';
 import { env } from '../config/env.js';
 import { ROLE_CAPABILITIES, type Role } from '@alto-people/shared';
@@ -2681,6 +2682,10 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
     void recomputeEntryAnomalies(prisma, result.timeEntry.id);
     // Attendance points: LATE / EARLY_OUT against the linked shift.
     void recordAttendanceForEntry(prisma, result.timeEntry.id);
+    // "You just added ~$X to your week" — to the associate's OWN
+    // bell/push, never this shared screen (a dollar figure here would
+    // leak their pay rate to the next person in line).
+    void notifyClockOutEarnings(prisma, result.timeEntry.id);
   }
 
   res.json({
