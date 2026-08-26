@@ -389,6 +389,17 @@ export function setStaffingTarget(body: StaffingTargetInput): Promise<{
 }
 
 /** Clocked-in right now vs the expected headcount per store. */
+/** Persist the client's grid row order (whole roster, replace-all). */
+export function saveRosterOrder(
+  clientId: string,
+  orderedIds: string[],
+): Promise<{ ok: true }> {
+  return apiFetch('/scheduling/roster-order', {
+    method: 'POST',
+    body: { clientId, orderedIds },
+  });
+}
+
 export function floorNow(): Promise<FloorNowResponse> {
   return apiFetch<FloorNowResponse>('/scheduling/floor-now');
 }

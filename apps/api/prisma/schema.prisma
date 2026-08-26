@@ -881,6 +881,22 @@ model ExecTarget {
   createdAt         DateTime @default(now()) @db.Timestamptz(6)
 }
 
+// Per-client custom order for the scheduling grid's associate rows —
+// the supervisor's whiteboard order (leads first, openers together…),
+// SHARED by everyone who schedules that client. Associates without a
+// row sort after the positioned ones, alphabetically, so new hires
+// join at the bottom until placed.
+model SchedulingRosterOrder {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId    String   @db.Uuid
+  associateId String   @db.Uuid
+  position    Int
+  updatedAt   DateTime @updatedAt @db.Timestamptz(6)
+
+  @@unique([clientId, associateId])
+  @@index([clientId, position])
+}
+
 // State overlay for the chairman's decision queue. Decisions themselves
 // are GENERATED from live data (lib/executiveDecisions.ts) under stable
 // keys; this table stores only what a human did about one — dismissed,

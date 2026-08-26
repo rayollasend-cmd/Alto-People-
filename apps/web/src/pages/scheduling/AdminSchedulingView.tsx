@@ -55,6 +55,7 @@ import {
   getSchedulingKpis,
   getShiftConflicts,
   listSchedulingAssociates,
+  saveRosterOrder,
   listShifts,
   listShiftTeams,
   listShiftTemplates,
@@ -1060,6 +1061,42 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   useEffect(() => {
     loadAssociates();
   }, [loadAssociates]);
+
+  // Row reordering — the supervisor's whiteboard order, saved per client
+  // and shared by everyone who schedules it. Only meaningful when one
+  // client is selected with the FULL roster showing (a filtered subset
+  // saved as "the order" would silently demote everyone hidden).
+  const canReorderRows =
+    canManage && !!clientFilter && !locationFilter && !teamFilter && showAllAssociates;
+  const reorderBusy = useRef(false);
+  const moveAssociateRow = useCallback(
+    (associateId: string, dir: -1 | 1) => {
+      if (!clientFilter || reorderBusy.current) return;
+      setAssociates((prev) => {
+        const idx = prev.findIndex((a) => a.id === associateId);
+        const to = idx + dir;
+        if (idx === -1 || to < 0 || to >= prev.length) return prev;
+        const next = [...prev];
+        [next[idx], next[to]] = [next[to], next[idx]];
+        // Optimistic: the row moves NOW; the save follows. On failure,
+        // reload restores the server's truth.
+        reorderBusy.current = true;
+        saveRosterOrder(
+          clientFilter,
+          next.map((a) => a.id),
+        )
+          .catch(() => {
+            toast.error('Could not save the new order.');
+            loadAssociates();
+          })
+          .finally(() => {
+            reorderBusy.current = false;
+          });
+        return next;
+      });
+    },
+    [clientFilter, loadAssociates],
+  );
 
   // Cascade: when the client narrows, load THAT client's locations for the
   // location dropdown and clear any stale location selection. Selecting
@@ -2557,6 +2594,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           quickActions={quickActions}
           selectedIds={selectedIds}
           onTemplateDrop={onTemplateDrop}
+          onReorderRow={canReorderRows ? moveAssociateRow : undefined}
         />
         </div>
       )}

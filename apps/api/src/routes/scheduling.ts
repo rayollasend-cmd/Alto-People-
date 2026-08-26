@@ -79,6 +79,7 @@ import {
 // Impossible id used to fail a mis-provisioned client-bounded caller CLOSED.
 const NO_MATCH_ID = '00000000-0000-0000-0000-000000000000';
 import { firstLocationForClient } from '../lib/firstLocationForClient.js';
+import { z } from 'zod';
 import { enqueueAudit, recordShiftEvent } from '../lib/audit.js';
 import { formatShiftLine, notifyShift } from '../lib/notifyShift.js';
 import { notifyAllAdmins, notifyClientSupervisors, notifyManager } from '../lib/notify.js';
@@ -2186,12 +2187,77 @@ schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
       take: ROSTER_PAGE + 1,
     });
     const truncated = rows.length > ROSTER_PAGE;
+    let page = truncated ? rows.slice(0, ROSTER_PAGE) : rows;
+    // The supervisor's saved whiteboard order for this client: positioned
+    // associates first (by position), everyone else keeps the alphabetical
+    // tail — new hires join at the bottom until placed. The ARRAY ORDER is
+    // the contract; the grid renders rows in response order.
+    if (clientId) {
+      const order = await prisma.schedulingRosterOrder.findMany({
+        where: { clientId },
+        select: { associateId: true, position: true },
+      });
+      if (order.length > 0) {
+        const pos = new Map(order.map((o) => [o.associateId, o.position]));
+        page = [...page].sort((a, b) => {
+          const pa = pos.get(a.id);
+          const pb = pos.get(b.id);
+          if (pa !== undefined && pb !== undefined) return pa - pb;
+          if (pa !== undefined) return -1;
+          if (pb !== undefined) return 1;
+          return 0; // stable sort keeps the alphabetical tail intact
+        });
+      }
+    }
     res.json(
-      AssociateListResponseSchema.parse({
-        associates: truncated ? rows.slice(0, ROSTER_PAGE) : rows,
-        truncated,
-      }),
+      AssociateListResponseSchema.parse({ associates: page, truncated }),
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Save the client's grid row order — the whole visible roster, in the
+ * order the scheduler wants it. Replace-all semantics: simple, atomic,
+ * and an associate later removed from the roster just stops matching.
+ * Shared per client (a schedule board is a team artifact), audited.
+ */
+schedulingRouter.post('/roster-order', MANAGE, async (req, res, next) => {
+  try {
+    const parsed = z
+      .object({
+        clientId: z.string().uuid(),
+        orderedIds: z.array(z.string().uuid()).min(1).max(500),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const clamped = effectiveClientIdFilter(req.user!, parsed.data.clientId);
+    const clientId = clamped === null ? NO_MATCH_ID : (clamped ?? parsed.data.clientId);
+    if (clientId !== parsed.data.clientId) {
+      throw new HttpError(403, 'forbidden', 'You can only reorder your own client\'s roster.');
+    }
+    const unique = [...new Set(parsed.data.orderedIds)];
+    await prisma.$transaction([
+      prisma.schedulingRosterOrder.deleteMany({ where: { clientId } }),
+      prisma.schedulingRosterOrder.createMany({
+        data: unique.map((associateId, i) => ({ clientId, associateId, position: i })),
+      }),
+    ]);
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId,
+        action: 'scheduling.roster_reordered',
+        entityType: 'Client',
+        entityId: clientId,
+        metadata: { count: unique.length },
+      },
+      'scheduling.roster_order',
+    );
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }

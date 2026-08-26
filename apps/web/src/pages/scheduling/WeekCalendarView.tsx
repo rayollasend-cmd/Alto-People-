@@ -11,7 +11,7 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { VirtualizedRows } from './VirtualizedRows';
-import { Plus, GripVertical } from 'lucide-react';
+import { ChevronDown, ChevronUp, Plus, GripVertical } from 'lucide-react';
 import type { AssociateLite, Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
@@ -116,6 +116,9 @@ interface Props {
   selectedIds: Set<string>;
   /** Click "+" in a cell. associateId is null for the Unassigned row. */
   onCellCreate: (dayStart: Date, associateId: string | null) => void;
+  /** Move an associate's ROW up/down the grid (the saved whiteboard
+   *  order). Undefined = reordering unavailable in this view state. */
+  onReorderRow?: (associateId: string, dir: -1 | 1) => void;
   /**
    * Drop a shift on a different cell.
    *  - same row, different day  → patch startsAt/endsAt by the day delta
@@ -176,6 +179,7 @@ export function WeekCalendarView({
   onTemplateDrop,
   showAllAssociates,
   availabilityFit = null,
+  onReorderRow,
 }: Props) {
   const hover = useShiftHoverCard();
   const ctxMenu = useShiftContextMenu();
@@ -495,6 +499,14 @@ export function WeekCalendarView({
                 overTime={overTime}
                 nearOT={nearOT}
                 colsStyle={colsStyle}
+                onMoveUp={
+                  onReorderRow && index > 0 ? () => onReorderRow(a.id, -1) : undefined
+                }
+                onMoveDown={
+                  onReorderRow && index < visibleAssociates.length - 1
+                    ? () => onReorderRow(a.id, 1)
+                    : undefined
+                }
               >
                 {days.map((d, i) => {
                   const dayKey = dayKeys[i];
@@ -629,6 +641,8 @@ const Row = memo(function Row({
   nearOT,
   colsStyle,
   children,
+  onMoveUp,
+  onMoveDown,
 }: {
   associate: AssociateLite;
   minutes: number;
@@ -638,11 +652,36 @@ const Row = memo(function Row({
   /** Shared column template — every row grid matches the header's. */
   colsStyle: React.CSSProperties;
   children: React.ReactNode;
+  /** Whiteboard-order controls; undefined = hidden (edge rows / view states). */
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
 }) {
   const initials = `${associate.firstName[0] ?? ''}${associate.lastName[0] ?? ''}`.toUpperCase();
   return (
     <div className="grid" style={colsStyle}>
-      <div className="sticky left-0 z-10 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-3 flex items-center gap-2.5">
+      <div className="group/row sticky left-0 z-10 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-3 flex items-center gap-2.5">
+        {(onMoveUp || onMoveDown) && (
+          <div className="flex shrink-0 flex-col opacity-0 transition-opacity group-hover/row:opacity-100 focus-within:opacity-100">
+            <button
+              type="button"
+              disabled={!onMoveUp}
+              onClick={onMoveUp}
+              aria-label={`Move ${associate.firstName} ${associate.lastName} up`}
+              className="rounded p-0.5 text-silver/50 hover:text-gold disabled:opacity-25"
+            >
+              <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              disabled={!onMoveDown}
+              onClick={onMoveDown}
+              aria-label={`Move ${associate.firstName} ${associate.lastName} down`}
+              className="rounded p-0.5 text-silver/50 hover:text-gold disabled:opacity-25"
+            >
+              <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+          </div>
+        )}
         <div className="h-8 w-8 rounded-full bg-gold/15 text-gold text-xs font-semibold flex items-center justify-center shrink-0">
           {initials || '?'}
         </div>
