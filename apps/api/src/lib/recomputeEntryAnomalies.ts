@@ -61,6 +61,10 @@ export async function recomputeEntryAnomalies(
         // them over rather than clearing.
         geofenceInOk: existing.includes('GEOFENCE_VIOLATION_IN') ? false : null,
         geofenceOutOk: existing.includes('GEOFENCE_VIOLATION_OUT') ? false : null,
+        // FORGOT_CLOCKOUT is stamped by the auto-close sweeps, never
+        // re-derivable from the entry itself — carry it like the
+        // geofence flags so a later edit/recompute can't silently erase
+        // the "this punch-out was inferred" marker (handled below).
       },
       breaks: entry.breaks.map((b) => ({
         type: b.type,
@@ -72,9 +76,13 @@ export async function recomputeEntryAnomalies(
       state: entry.associate?.state ?? null,
     });
 
+    const carried =
+      existing.includes('FORGOT_CLOCKOUT') && !detected.includes('FORGOT_CLOCKOUT')
+        ? [...detected, 'FORGOT_CLOCKOUT' as const]
+        : detected;
     await prisma.timeEntry.update({
       where: { id: entry.id },
-      data: { anomalies: detected },
+      data: { anomalies: carried },
     });
   } catch (err) {
     console.warn(

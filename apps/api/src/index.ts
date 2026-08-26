@@ -17,6 +17,7 @@ import { startDocumentMaintenanceCron } from './lib/documentMaintenance.js';
 import { startReportScheduleCron } from './lib/reportScheduleRunner.js';
 import { startUploadsBackupCron } from './lib/uploadsBackup.js';
 import { startShiftReminderCron } from './lib/shiftReminder.js';
+import { startAutoClockOutCron } from './lib/autoClockOut.js';
 import { startExecutiveAlertsCron } from './lib/executiveAlerts.js';
 import { startNoShowRiskCron } from './lib/noShowRisk.js';
 import { startShiftAutofillCron } from './lib/shiftAutofill.js';
@@ -70,6 +71,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startExecutiveAlertsCron();
   startShiftAutofillCron();
   startNoShowRiskCron();
+  startAutoClockOutCron();
   startWeekAheadCron();
   startOfferLetterCron();
   // Outbound webhook deliveries — safe under MULTI_REPLICA without a
