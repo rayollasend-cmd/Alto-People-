@@ -507,7 +507,10 @@ schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
       ...(status ? { status: status as Prisma.ShiftWhereInput['status'] } : {}),
       ...(clientId ? { clientId } : {}),
       // Narrow to one work-site within the client (cascading filter).
-      ...(locationId ? { locationId } : {}),
+      // Site-less shifts (locationId null) are INCLUDED: they belong to no
+      // site, so a strict match made them vanish from every filtered view
+      // while still blocking the overlap check — an invisible conflict.
+      ...(locationId ? { OR: [{ locationId }, { locationId: null }] } : {}),
       ...(from || to
         ? {
             startsAt: {
@@ -524,9 +527,11 @@ schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
 
     // Fetch one past the cap so we can tell the client the list was truncated
     // (more shifts match than we returned) without an extra count query.
-    // 500 comfortably covers a large site's week (40 people × 7 shifts);
-    // the calendar views render a warning banner when even this trips.
-    const SHIFT_PAGE_CAP = 500;
+    // The old 500 cap silently cut the END of wide calendar windows (sorted
+    // startsAt asc), so Friday-evening shifts were the first to vanish and
+    // days rendered emptier than reality; 3000 covers an org-wide month
+    // (~3 MB serialized) and the warning banner still guards the rest.
+    const SHIFT_PAGE_CAP = 3000;
     const rows = await prisma.shift.findMany({
       where,
       orderBy: { startsAt: 'asc' },

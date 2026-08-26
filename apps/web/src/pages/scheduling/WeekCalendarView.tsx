@@ -145,6 +145,12 @@ interface Props {
    *    availability exceptions.
    */
   availabilityFit?: Map<string, { dows: Set<number>; blocked: Set<string> }> | null;
+  /**
+   * Shifts in the loaded window that a client-side filter (position) is
+   * hiding. Cells show a "N hidden" hint from these so a filtered cell
+   * never reads as empty — a hidden shift still blocks the overlap check.
+   */
+  hiddenShifts?: Shift[];
 }
 
 /**
@@ -179,6 +185,7 @@ export function WeekCalendarView({
   onTemplateDrop,
   showAllAssociates,
   availabilityFit = null,
+  hiddenShifts,
   onReorderRow,
 }: Props) {
   const hover = useShiftHoverCard();
@@ -226,6 +233,17 @@ export function WeekCalendarView({
     }
     return map;
   }, [shifts, displayTimeZone]);
+
+  // Per-cell count of filter-hidden shifts, same keying as byCell.
+  const hiddenByCell = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const s of hiddenShifts ?? []) {
+      const day = zonedDayKey(s.startsAt, displayTimeZone);
+      const key = `${s.assignedAssociateId ?? UNASSIGNED_ROW_ID}_${day}`;
+      map.set(key, (map.get(key) ?? 0) + 1);
+    }
+    return map;
+  }, [hiddenShifts, displayTimeZone]);
 
   // Per-day totals: shift count + scheduled minutes + projected cost.
   // Powers the footer row under each day column.
@@ -459,6 +477,7 @@ export function WeekCalendarView({
               key={`u_${d.getTime()}`}
               cellId={`cell:${UNASSIGNED_ROW_ID}:${d.getTime()}`}
               shifts={byCell.get(`${UNASSIGNED_ROW_ID}_${dayKeys[i]}`) ?? EMPTY_SHIFTS}
+              hiddenCount={hiddenByCell.get(`${UNASSIGNED_ROW_ID}_${dayKeys[i]}`) ?? 0}
               dayStart={d}
               associateId={null}
               isToday={sameDay(d, today)}
@@ -525,6 +544,7 @@ export function WeekCalendarView({
                       key={`${a.id}_${d.getTime()}`}
                       cellId={`cell:${a.id}:${d.getTime()}`}
                       shifts={byCell.get(`${a.id}_${dayKey}`) ?? EMPTY_SHIFTS}
+                      hiddenCount={hiddenByCell.get(`${a.id}_${dayKey}`) ?? 0}
                       dayStart={d}
                       associateId={a.id}
                       isToday={sameDay(d, today)}
@@ -758,6 +778,7 @@ const Cell = memo(function Cell({
   variant,
   onTemplateDrop,
   availabilityShade = null,
+  hiddenCount = 0,
 }: {
   cellId: string;
   shifts: Shift[];
@@ -781,6 +802,8 @@ const Cell = memo(function Cell({
   onTemplateDrop: (templateId: string, dayStart: Date, associateId: string | null) => void;
   /** Availability tint (associate rows only): PTO-blocked or outside windows. */
   availabilityShade?: 'blocked' | 'outside' | null;
+  /** Shifts here that the position filter is hiding — never render as empty. */
+  hiddenCount?: number;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: cellId });
   // Native HTML5 drag from the templates rail. Independent of dnd-kit's
@@ -846,16 +869,19 @@ const Cell = memo(function Cell({
       )}
     >
       {shifts.length === 0 ? (
-        canManage ? (
-          <button
-            type="button"
-            onClick={onCreate}
-            className="absolute inset-0 flex items-center justify-center text-silver/30 hover:text-gold hover:bg-gold/5 transition-colors can-hover:opacity-60 group-hover:opacity-100"
-            aria-label="Add shift"
-          >
-            <Plus className="h-4 w-4" />
-          </button>
-        ) : null
+        <>
+          {canManage && (
+            <button
+              type="button"
+              onClick={onCreate}
+              className="absolute inset-0 flex items-center justify-center text-silver/30 hover:text-gold hover:bg-gold/5 transition-colors can-hover:opacity-60 group-hover:opacity-100"
+              aria-label="Add shift"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          )}
+          {hiddenCount > 0 && <HiddenShiftsHint count={hiddenCount} />}
+        </>
       ) : (
         <>
           {shifts.map((s) => (
@@ -887,11 +913,29 @@ const Cell = memo(function Cell({
               <Plus className="h-3.5 w-3.5" />
             </button>
           )}
+          {hiddenCount > 0 && <HiddenShiftsHint count={hiddenCount} />}
         </>
       )}
     </div>
   );
 });
+
+/**
+ * "N hidden" marker for cells where the position filter is concealing real
+ * shifts. Without it a filtered cell reads as free while the server still
+ * (correctly) rejects new shifts there as overlapping — the classic
+ * "the day is empty but it says Adolfo has a shift" confusion.
+ */
+function HiddenShiftsHint({ count }: { count: number }) {
+  return (
+    <div
+      className="relative flex items-center justify-center py-0.5 text-2xs italic text-silver/50 cursor-help"
+      title={`${count} shift${count === 1 ? '' : 's'} hidden by the position filter — clear the filter to see ${count === 1 ? 'it' : 'them'}.`}
+    >
+      {count} hidden
+    </div>
+  );
+}
 
 function ShiftChip({
   shift,

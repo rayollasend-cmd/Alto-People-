@@ -318,6 +318,9 @@ function daysBetweenLocal(a: Date, b: Date): number {
 // Persisted so leaving /scheduling and coming back resumes the SAME week they
 // were planning, instead of snapping to the current Mon–Sun. The "This week"
 // button still resets it on demand.
+// Stable empty array so the no-hidden-shifts case never busts memoization.
+const EMPTY_HIDDEN: Shift[] = [];
+
 const WEEK_RANGE_KEY = 'alto:scheduling.weekRange.v1';
 function readStoredWeekRange(): { start: Date; days: number } | null {
   if (typeof window === 'undefined') return null;
@@ -1140,6 +1143,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     if (!pos) return shifts;
     return shifts.filter((s) => s.position.trim().toLowerCase() === pos);
   }, [shifts, posFilter]);
+
+  // The complement of the position filter — shifts that exist in the loaded
+  // window but are hidden from the grid. The week matrix shows a per-cell
+  // "N hidden" hint from these so a filtered cell never reads as empty when
+  // it isn't (an invisible shift still blocks the overlap check).
+  const hiddenShifts = useMemo(() => {
+    if (!shifts || !filteredShifts || filteredShifts === shifts) return EMPTY_HIDDEN;
+    if (shifts.length === filteredShifts.length) return EMPTY_HIDDEN;
+    const visible = new Set(filteredShifts.map((s) => s.id));
+    return shifts.filter((s) => !visible.has(s.id));
+  }, [shifts, filteredShifts]);
 
   // Shift objects behind the current bulk selection — memoized so the
   // SelectionToolbar doesn't get a freshly-allocated array (new identity)
@@ -2568,6 +2582,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         <div className="hidden lg:block fine:md:block">
         <WeekCalendarView
           shifts={filteredShifts}
+          hiddenShifts={hiddenShifts}
           associates={associates}
           weekStart={weekStart}
           dayCount={weekDayCount}
@@ -2676,7 +2691,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
       {listTruncated && (
         <ErrorBanner severity="warning" className="mb-3 no-print">
-          Showing only the first 500 shifts — more match this range than fit,
+          Showing only the first 3,000 shifts — more match this range than fit,
           so days may look emptier than they are and totals are incomplete.
           Narrow the range or filter by client/location before trusting counts
           or publishing.
