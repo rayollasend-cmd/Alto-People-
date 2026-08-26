@@ -77,7 +77,9 @@ export async function runAutoClockOutSweep(
     // we closed exactly at the scheduled end.
     void recordAttendanceForEntry(prisma, entry.id);
     const tz = entry.location?.timezone ?? DEFAULT_TIMEZONE;
-    void notifyAssociate(entry.associateId, {
+    // Awaited: the cron caller can afford it, and awaited-by callers
+    // (tests) must see the row — same race class as the earnings notify.
+    await notifyAssociate(entry.associateId, {
       subject: `We clocked you out at ${formatTimeInZone(shiftEnd, tz)}`,
       body: `Looks like you forgot to punch out — your entry was closed at your shift's scheduled end. If you actually worked later, tell your supervisor so they can adjust it. Remember to punch out at the kiosk next time!`,
       category: 'time_entry',
