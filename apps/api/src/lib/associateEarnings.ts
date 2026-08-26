@@ -174,7 +174,10 @@ export async function notifyClockOutEarnings(
   const { rate } = await hourlyRateFor(prisma, entry.associateId);
   const amount = round2((mins / 60) * rate);
   const hours = (mins / 60).toFixed(2);
-  void notifyAssociate(entry.associateId, {
+  // Awaited: the kiosk call site fire-and-forgets THIS helper, so
+  // awaiting the insert here costs the punch nothing — and callers that
+  // do await (tests) see the row.
+  await notifyAssociate(entry.associateId, {
     subject: `You just added ~$${amount.toFixed(2)} to your week 💪`,
     body: `${hours}h worked today at ~$${rate.toFixed(2)}/hr. Estimated and before taxes — your paycheck is the official number. Great shift!`,
     category: 'earnings',
