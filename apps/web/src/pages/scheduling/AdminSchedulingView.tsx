@@ -55,7 +55,7 @@ import {
   getSchedulingKpis,
   getShiftConflicts,
   listSchedulingAssociates,
-  saveRosterOrder,
+  moveRosterRow,
   listShifts,
   listShiftTeams,
   listShiftTemplates,
@@ -1069,36 +1069,40 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // and shared by everyone who schedules it. Only meaningful when one
   // client is selected with the FULL roster showing (a filtered subset
   // saved as "the order" would silently demote everyone hidden).
-  const canReorderRows =
-    canManage && !!clientFilter && !locationFilter && !teamFilter && showAllAssociates;
+  // Anchor moves ("put X above Y") merge into the FULL saved order server-
+  // side, so reordering is safe — and therefore available — under site/crew
+  // filters and the with-shifts-only view. Only "which client's roster?"
+  // still needs answering.
+  const canReorderRows = canManage && !!clientFilter;
   // When reordering is disarmed, say WHY above the grid instead of silently
-  // hiding the arrows — "the feature doesn't exist" and "the feature is off
-  // because of a filter" look identical otherwise.
-  const reorderHint = !canManage
-    ? null
-    : canReorderRows
-      ? null
-      : !clientFilter
-        ? 'To reorder the roster rows (↑↓), pick a single client first.'
-        : locationFilter || teamFilter
-          ? 'Row reordering (↑↓) is paused while a site/crew filter is on — it saves the whole roster’s order, so clear those filters to move people.'
-          : 'Turn on “Show all associates” to reorder the roster rows (↑↓).';
+  // hiding the arrows — "the feature doesn't exist" and "the feature is off"
+  // look identical otherwise.
+  const reorderHint =
+    canManage && !clientFilter
+      ? 'To reorder the roster rows (↑↓), pick a single client first.'
+      : null;
   const reorderBusy = useRef(false);
+  // Anchor move: reposition `associateId` directly above/below its VISIBLE
+  // neighbor (the grid tells us which one). Optimistic locally; the server
+  // applies the same move to the full saved order.
   const moveAssociateRow = useCallback(
-    (associateId: string, dir: -1 | 1) => {
+    (associateId: string, neighborId: string, dir: -1 | 1) => {
       if (!clientFilter || reorderBusy.current) return;
       setAssociates((prev) => {
-        const idx = prev.findIndex((a) => a.id === associateId);
-        const to = idx + dir;
-        if (idx === -1 || to < 0 || to >= prev.length) return prev;
-        const next = [...prev];
-        [next[idx], next[to]] = [next[to], next[idx]];
+        const from = prev.findIndex((a) => a.id === associateId);
+        const anchor = prev.findIndex((a) => a.id === neighborId);
+        if (from === -1 || anchor === -1) return prev;
+        const next = prev.filter((a) => a.id !== associateId);
+        const at = next.findIndex((a) => a.id === neighborId);
+        next.splice(dir === -1 ? at : at + 1, 0, prev[from]);
         // Optimistic: the row moves NOW; the save follows. On failure,
         // reload restores the server's truth.
         reorderBusy.current = true;
-        saveRosterOrder(
+        moveRosterRow(
           clientFilter,
-          next.map((a) => a.id),
+          associateId,
+          neighborId,
+          dir === -1 ? 'before' : 'after',
         )
           .catch(() => {
             toast.error('Could not save the new order.');

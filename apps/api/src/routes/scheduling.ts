@@ -2223,9 +2223,17 @@ schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
 });
 
 /**
- * Save the client's grid row order — the whole visible roster, in the
- * order the scheduler wants it. Replace-all semantics: simple, atomic,
- * and an associate later removed from the roster just stops matching.
+ * Save the client's grid row order. Two modes:
+ *
+ *  - `orderedIds`: replace-all — the whole roster in the order the
+ *    scheduler wants it (used when the full list is on screen).
+ *  - `moveId` + `beforeId`/`afterId`: anchor move — "put this person
+ *    above/below that person" in the FULL saved order, leaving everyone
+ *    else exactly where they were. This is what the grid's ↑↓ send, and
+ *    it's what makes reordering safe under site/crew/with-shifts filters:
+ *    a filtered view can only see two neighbors, but the move is applied
+ *    to the whole roster server-side, so hidden people keep their spots.
+ *
  * Shared per client (a schedule board is a team artifact), audited.
  */
 schedulingRouter.post('/roster-order', MANAGE, async (req, res, next) => {
@@ -2233,8 +2241,18 @@ schedulingRouter.post('/roster-order', MANAGE, async (req, res, next) => {
     const parsed = z
       .object({
         clientId: z.string().uuid(),
-        orderedIds: z.array(z.string().uuid()).min(1).max(500),
+        orderedIds: z.array(z.string().uuid()).min(1).max(500).optional(),
+        moveId: z.string().uuid().optional(),
+        beforeId: z.string().uuid().optional(),
+        afterId: z.string().uuid().optional(),
       })
+      .refine(
+        (b) =>
+          b.orderedIds
+            ? !b.moveId && !b.beforeId && !b.afterId
+            : !!b.moveId && (!!b.beforeId !== !!b.afterId),
+        { message: 'Send orderedIds, or moveId with exactly one of beforeId/afterId.' },
+      )
       .safeParse(req.body);
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
@@ -2244,7 +2262,55 @@ schedulingRouter.post('/roster-order', MANAGE, async (req, res, next) => {
     if (clientId !== parsed.data.clientId) {
       throw new HttpError(403, 'forbidden', 'You can only reorder your own client\'s roster.');
     }
-    const unique = [...new Set(parsed.data.orderedIds)];
+
+    let unique: string[];
+    if (parsed.data.orderedIds) {
+      unique = [...new Set(parsed.data.orderedIds)];
+    } else {
+      const { moveId } = parsed.data;
+      const anchorId = parsed.data.beforeId ?? parsed.data.afterId!;
+      if (moveId === anchorId) {
+        throw new HttpError(400, 'invalid_body', 'Cannot anchor an associate to themselves.');
+      }
+      // Rebuild the client's FULL current order: the same composition the
+      // roster endpoint renders — positioned people first (position asc),
+      // everyone else in the alphabetical tail.
+      const roster = await prisma.associate.findMany({
+        where: {
+          deletedAt: null,
+          AND: [SCHEDULABLE_USER_FILTER],
+          OR: [
+            { applications: { some: { status: 'APPROVED', clientId } } },
+            { assignments: { some: { endedAt: null, location: { clientId } } } },
+          ],
+        },
+        orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+        select: { id: true },
+        take: 1000,
+      });
+      const order = await prisma.schedulingRosterOrder.findMany({
+        where: { clientId },
+        select: { associateId: true, position: true },
+      });
+      const pos = new Map(order.map((o) => [o.associateId, o.position]));
+      const full = [...roster].sort((a, b) => {
+        const pa = pos.get(a.id);
+        const pb = pos.get(b.id);
+        if (pa !== undefined && pb !== undefined) return pa - pb;
+        if (pa !== undefined) return -1;
+        if (pb !== undefined) return 1;
+        return 0;
+      });
+      const ids = full.map((a) => a.id);
+      if (!ids.includes(moveId!) || !ids.includes(anchorId)) {
+        throw new HttpError(404, 'not_on_roster', 'Both associates must be on this client\'s roster.');
+      }
+      const without = ids.filter((id) => id !== moveId);
+      const at = without.indexOf(anchorId);
+      without.splice(parsed.data.beforeId ? at : at + 1, 0, moveId!);
+      unique = without;
+    }
+
     await prisma.$transaction([
       prisma.schedulingRosterOrder.deleteMany({ where: { clientId } }),
       prisma.schedulingRosterOrder.createMany({
@@ -2258,7 +2324,9 @@ schedulingRouter.post('/roster-order', MANAGE, async (req, res, next) => {
         action: 'scheduling.roster_reordered',
         entityType: 'Client',
         entityId: clientId,
-        metadata: { count: unique.length },
+        metadata: parsed.data.orderedIds
+          ? { count: unique.length }
+          : { count: unique.length, moveId: parsed.data.moveId },
       },
       'scheduling.roster_order',
     );

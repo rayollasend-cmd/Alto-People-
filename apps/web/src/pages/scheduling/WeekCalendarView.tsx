@@ -116,9 +116,11 @@ interface Props {
   selectedIds: Set<string>;
   /** Click "+" in a cell. associateId is null for the Unassigned row. */
   onCellCreate: (dayStart: Date, associateId: string | null) => void;
-  /** Move an associate's ROW up/down the grid (the saved whiteboard
-   *  order). Undefined = reordering unavailable in this view state. */
-  onReorderRow?: (associateId: string, dir: -1 | 1) => void;
+  /** Move an associate's ROW above/below its visible neighbor (the saved
+   *  whiteboard order). Undefined = reordering unavailable in this view
+   *  state. `neighborId` is the row currently adjacent in the direction
+   *  of travel — the anchor for the server-side move. */
+  onReorderRow?: (associateId: string, neighborId: string, dir: -1 | 1) => void;
   /**
    * Drop a shift on a different cell.
    *  - same row, different day  → patch startsAt/endsAt by the day delta
@@ -519,11 +521,13 @@ export function WeekCalendarView({
                 nearOT={nearOT}
                 colsStyle={colsStyle}
                 onMoveUp={
-                  onReorderRow && index > 0 ? () => onReorderRow(a.id, -1) : undefined
+                  onReorderRow && index > 0
+                    ? () => onReorderRow(a.id, visibleAssociates[index - 1].id, -1)
+                    : undefined
                 }
                 onMoveDown={
                   onReorderRow && index < visibleAssociates.length - 1
-                    ? () => onReorderRow(a.id, 1)
+                    ? () => onReorderRow(a.id, visibleAssociates[index + 1].id, 1)
                     : undefined
                 }
               >

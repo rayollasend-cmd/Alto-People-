@@ -400,6 +400,27 @@ export function saveRosterOrder(
   });
 }
 
+/**
+ * Anchor move: put `moveId` directly above/below `anchorId` in the FULL
+ * saved roster order. Safe under any filter — hidden people keep their
+ * positions, which replace-all cannot guarantee from a filtered view.
+ */
+export function moveRosterRow(
+  clientId: string,
+  moveId: string,
+  anchorId: string,
+  place: 'before' | 'after',
+): Promise<{ ok: true }> {
+  return apiFetch('/scheduling/roster-order', {
+    method: 'POST',
+    body: {
+      clientId,
+      moveId,
+      ...(place === 'before' ? { beforeId: anchorId } : { afterId: anchorId }),
+    },
+  });
+}
+
 export function floorNow(): Promise<FloorNowResponse> {
   return apiFetch<FloorNowResponse>('/scheduling/floor-now');
 }
