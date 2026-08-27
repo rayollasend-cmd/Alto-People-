@@ -56,6 +56,9 @@ const STATUS_LABELS: Record<ShiftStatus, string> = {
 interface Props {
   shifts: Shift[];
   associates: AssociateLite[];
+  /** Shifts a client-side filter (position) is concealing — surfaced as a
+   *  count so a filtered day never silently reads as lighter than it is. */
+  hiddenShifts?: Shift[];
   dayAnchor: Date;
   /** Work-site zone to pick the day's shifts in. null = browser-local. */
   displayTimeZone?: string | null;
@@ -82,6 +85,7 @@ function fmtDateHeader(d: Date): string {
 export function MobileScheduleList({
   shifts,
   associates,
+  hiddenShifts,
   dayAnchor,
   displayTimeZone = null,
   canManage,
@@ -109,6 +113,17 @@ export function MobileScheduleList({
   }, [shifts, dayAnchor, displayTimeZone]);
 
   const openCount = todayShifts.filter((s) => s.status === 'OPEN').length;
+
+  // Same day-bucketing as the visible list, applied to the filter-hidden
+  // complement — so the header can say "2 hidden by filter" instead of
+  // letting a filtered day masquerade as a light one.
+  const hiddenToday = useMemo(() => {
+    if (!hiddenShifts || hiddenShifts.length === 0) return 0;
+    const key = ymd(dayAnchor);
+    return hiddenShifts.filter(
+      (s) => zonedDayKey(s.startsAt, displayTimeZone) === key,
+    ).length;
+  }, [hiddenShifts, dayAnchor, displayTimeZone]);
 
   // Swipe between days — the native calendar idiom. Direction-locked so
   // vertical scrolling through the shift list is untouched; a clearly
@@ -169,6 +184,14 @@ export function MobileScheduleList({
               <>
                 {' · '}
                 <span className="text-warning">{openCount} open</span>
+              </>
+            )}
+            {hiddenToday > 0 && (
+              <>
+                {' · '}
+                <span className="italic text-silver/60">
+                  {hiddenToday} hidden by filter
+                </span>
               </>
             )}
           </div>

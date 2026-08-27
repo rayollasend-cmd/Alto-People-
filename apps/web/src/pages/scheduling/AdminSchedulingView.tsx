@@ -2536,6 +2536,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         <div className="lg:hidden fine:md:hidden">
           <MobileScheduleList
             shifts={filteredShifts}
+            hiddenShifts={hiddenShifts}
             associates={associates}
             dayAnchor={dayAnchor}
             displayTimeZone={gridTimeZone}

@@ -689,23 +689,26 @@ const Row = memo(function Row({
             with a mouse. */}
         {(onMoveUp || onMoveDown) && (
           <div className="flex shrink-0 flex-col no-print">
+            {/* Compact base + coarse: up-size (the repo's touch pattern) —
+                a 18px arrow is fine under a mouse and unusable on the
+                iPads schedules get built on. */}
             <button
               type="button"
               disabled={!onMoveUp}
               onClick={onMoveUp}
               aria-label={`Move ${associate.firstName} ${associate.lastName} up`}
-              className="rounded p-0.5 text-silver/50 hover:text-gold disabled:opacity-25"
+              className="rounded p-0.5 coarse:p-1.5 text-silver/50 hover:text-gold disabled:opacity-25"
             >
-              <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
+              <ChevronUp className="h-3.5 w-3.5 coarse:h-4 coarse:w-4" aria-hidden="true" />
             </button>
             <button
               type="button"
               disabled={!onMoveDown}
               onClick={onMoveDown}
               aria-label={`Move ${associate.firstName} ${associate.lastName} down`}
-              className="rounded p-0.5 text-silver/50 hover:text-gold disabled:opacity-25"
+              className="rounded p-0.5 coarse:p-1.5 text-silver/50 hover:text-gold disabled:opacity-25"
             >
-              <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+              <ChevronDown className="h-3.5 w-3.5 coarse:h-4 coarse:w-4" aria-hidden="true" />
             </button>
           </div>
         )}
@@ -934,13 +937,23 @@ const Cell = memo(function Cell({
  * "the day is empty but it says Adolfo has a shift" confusion.
  */
 function HiddenShiftsHint({ count }: { count: number }) {
+  // Tap-to-expand: the title tooltip is unreachable on touch, so tapping
+  // the marker swaps in the explanation inline (tap again to collapse).
+  const [expanded, setExpanded] = useState(false);
   return (
-    <div
-      className="relative flex items-center justify-center py-0.5 text-2xs italic text-silver/50 cursor-help"
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        setExpanded((v) => !v);
+      }}
+      className="relative z-[1] flex w-full items-center justify-center py-0.5 text-2xs italic text-silver/50 cursor-help text-center"
       title={`${count} shift${count === 1 ? '' : 's'} hidden by the position filter — clear the filter to see ${count === 1 ? 'it' : 'them'}.`}
     >
-      {count} hidden
-    </div>
+      {expanded
+        ? `${count} hidden by the position filter`
+        : `${count} hidden`}
+    </button>
   );
 }
 
