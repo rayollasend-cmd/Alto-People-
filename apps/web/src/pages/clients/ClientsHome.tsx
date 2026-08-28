@@ -5,6 +5,7 @@ import {
   Building2,
   ClipboardList,
   DollarSign,
+  FileText,
   LayoutGrid,
   List,
   MapPin,
@@ -13,7 +14,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { ClientListItem, ClientStatus } from '@alto-people/shared';
-import { listClients } from '@/lib/clientsApi';
+import { clientServiceReportUrl, listClients } from '@/lib/clientsApi';
 import { ApiError } from '@/lib/api';
 import { fmtRelativeDate } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
@@ -55,6 +56,37 @@ const fmtRelative = (iso: string | null): string => fmtRelativeDate(iso);
 export function ClientsHome() {
   const { can } = useAuth();
   const canManage = can('manage:clients');
+  // The weekly service-report endpoint is billing-gated; the button only
+  // renders for logins that can actually download it.
+  const canReport = can('process:payroll') || can('view:executive');
+  const [reportBusyId, setReportBusyId] = useState<string | null>(null);
+
+  const downloadReport = async (clientId: string, clientName: string) => {
+    if (reportBusyId) return;
+    setReportBusyId(clientId);
+    try {
+      const res = await fetch(clientServiceReportUrl(clientId), {
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const blob = await res.blob();
+      const cd = res.headers.get('content-disposition') ?? '';
+      const m = /filename="([^"]+)"/.exec(cd);
+      const objUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objUrl;
+      a.download = m?.[1] ?? `service-report-${clientName}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objUrl);
+      toast.success(`Service report for ${clientName} downloaded.`);
+    } catch {
+      toast.error(`Could not generate the report for ${clientName}.`);
+    } finally {
+      setReportBusyId(null);
+    }
+  };
 
   const [items, setItems] = useState<ClientListItem[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -245,6 +277,7 @@ export function ClientsHome() {
                 <TableHead className="text-right hidden sm:table-cell">Open apps</TableHead>
                 <TableHead className="text-right hidden md:table-cell">Active</TableHead>
                 <TableHead className="text-right hidden lg:table-cell">Last payroll</TableHead>
+                {canReport && <TableHead className="text-right">Report</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -296,6 +329,22 @@ export function ClientsHome() {
                   <TableCell className="text-right hidden lg:table-cell text-silver text-xs">
                     {fmtRelative(c.lastPayrollDisbursedAt)}
                   </TableCell>
+                  {canReport && (
+                    <TableCell className="text-right">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => void downloadReport(c.id, c.name)}
+                        loading={reportBusyId === c.id}
+                        disabled={reportBusyId !== null && reportBusyId !== c.id}
+                        title={`Download ${c.name}'s weekly service report (last completed week) — the client-facing PDF.`}
+                        aria-label={`Download service report for ${c.name}`}
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                        PDF
+                      </Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
