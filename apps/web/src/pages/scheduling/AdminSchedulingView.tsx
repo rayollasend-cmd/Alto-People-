@@ -41,6 +41,8 @@ import { listClientLocations } from '@/lib/clientsApi';
 import { downloadCsv } from '@/lib/csv';
 import { listShiftPositions } from '@/lib/orgApi';
 import {
+  addShiftTeamMember,
+  removeShiftTeamMember,
   applyShiftTemplate,
   assignShift,
   bulkCreateShifts,
@@ -1115,6 +1117,58 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       });
     },
     [clientFilter, loadAssociates],
+  );
+
+  /* ----- Crew membership, managed from the grid ------------------------- */
+  // While a crew filter is active, rows ARE the crew — so membership edits
+  // live right there: an ✕ on each row removes the person from the crew
+  // (never touching their shifts or roster spot), and "+ Add to crew"
+  // opens a picker of site associates not yet on it.
+  const [crewPickerOpen, setCrewPickerOpen] = useState(false);
+  const [crewCandidates, setCrewCandidates] = useState<AssociateLite[] | null>(null);
+  const [crewSearch, setCrewSearch] = useState('');
+
+  const openCrewPicker = () => {
+    setCrewPickerOpen(true);
+    setCrewSearch('');
+    setCrewCandidates(null);
+    // The SITE roster (no team filter) — candidates are whoever isn't
+    // already rendered as a crew row.
+    listSchedulingAssociates({
+      clientId: clientFilter || undefined,
+      locationId: (clientFilter && locationFilter) || undefined,
+    })
+      .then((r) => setCrewCandidates(r.associates))
+      .catch(() => {
+        toast.error('Could not load the site roster.');
+        setCrewPickerOpen(false);
+      });
+  };
+
+  const addToCrew = (a: AssociateLite) => {
+    if (!teamFilter) return;
+    // Optimistic: the row appears NOW (which also drops them from the
+    // picker's candidate list); the save follows, then a reload picks up
+    // the saved roster order.
+    setAssociates((prev) => (prev.some((x) => x.id === a.id) ? prev : [...prev, a]));
+    addShiftTeamMember(teamFilter, a.id)
+      .then(() => loadAssociates())
+      .catch(() => {
+        toast.error(`Could not add ${a.firstName} ${a.lastName} to the crew.`);
+        loadAssociates();
+      });
+  };
+
+  const removeFromCrew = useCallback(
+    (associateId: string) => {
+      if (!teamFilter) return;
+      setAssociates((prev) => prev.filter((a) => a.id !== associateId));
+      removeShiftTeamMember(teamFilter, associateId).catch(() => {
+        toast.error('Could not remove them from the crew.');
+        loadAssociates();
+      });
+    },
+    [teamFilter, loadAssociates],
   );
 
   // Cascade: when the client narrows, load THAT client's locations for the
@@ -2600,6 +2654,19 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         {reorderHint && (
           <p className="mb-1.5 text-2xs text-silver/60 no-print">{reorderHint}</p>
         )}
+        {canManage && teamFilter && selectedTeam && (
+          <div className="mb-1.5 flex items-center gap-2 no-print">
+            <span className="text-2xs text-silver/60">
+              Crew: {selectedTeam.name} · {associates.length} member
+              {associates.length === 1 ? '' : 's'} — ✕ on a row removes them
+              (their shifts stay).
+            </span>
+            <Button size="sm" variant="secondary" onClick={openCrewPicker}>
+              <UserPlus className="h-3.5 w-3.5 mr-1" aria-hidden="true" />
+              Add to crew
+            </Button>
+          </div>
+        )}
         <WeekCalendarView
           shifts={filteredShifts}
           hiddenShifts={hiddenShifts}
@@ -2630,6 +2697,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           selectedIds={selectedIds}
           onTemplateDrop={onTemplateDrop}
           onReorderRow={canReorderRows ? moveAssociateRow : undefined}
+          onRemoveFromCrew={canManage && teamFilter ? removeFromCrew : undefined}
         />
         </div>
       )}
@@ -3007,6 +3075,67 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Quick-add picker: site associates not yet on the filtered crew. */}
+      <Dialog open={crewPickerOpen} onOpenChange={setCrewPickerOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add to {selectedTeam?.name ?? 'this crew'}</DialogTitle>
+            <DialogDescription>
+              Everyone at this site who isn&apos;t on the crew yet. Adding
+              someone only changes crew membership — it doesn&apos;t schedule
+              them.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            placeholder="Search names…"
+            value={crewSearch}
+            onChange={(e) => setCrewSearch(e.target.value)}
+            aria-label="Search site associates"
+          />
+          <div className="mt-2 max-h-72 overflow-y-auto flex flex-col gap-0.5">
+            {crewCandidates === null ? (
+              <SkeletonRows count={4} />
+            ) : (
+              (() => {
+                const memberIds = new Set(associates.map((a) => a.id));
+                const q = crewSearch.trim().toLowerCase();
+                const list = crewCandidates.filter(
+                  (a) =>
+                    !memberIds.has(a.id) &&
+                    (!q ||
+                      `${a.firstName} ${a.lastName}`.toLowerCase().includes(q)),
+                );
+                if (list.length === 0) {
+                  return (
+                    <p className="py-3 text-center text-sm text-silver/60">
+                      {q
+                        ? 'No one matches that search.'
+                        : 'Everyone at this site is already on this crew.'}
+                    </p>
+                  );
+                }
+                return list.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => addToCrew(a)}
+                    className="flex items-center gap-2.5 rounded px-2 py-2 text-left hover:bg-navy-secondary/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                  >
+                    <span className="h-7 w-7 shrink-0 rounded-full bg-gold/15 text-gold text-2xs font-semibold flex items-center justify-center">
+                      {`${a.firstName[0] ?? ''}${a.lastName[0] ?? ''}`.toUpperCase() || '?'}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm text-white">
+                      {a.firstName} {a.lastName}
+                    </span>
+                    <Plus className="h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
+                  </button>
+                ));
+              })()
+            )}
+          </div>
         </DialogContent>
       </Dialog>
 

@@ -11,7 +11,7 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { VirtualizedRows } from './VirtualizedRows';
-import { ChevronDown, ChevronUp, Plus, GripVertical } from 'lucide-react';
+import { ChevronDown, ChevronUp, Plus, GripVertical, UserMinus } from 'lucide-react';
 import type { AssociateLite, Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
@@ -121,6 +121,10 @@ interface Props {
    *  state. `neighborId` is the row currently adjacent in the direction
    *  of travel — the anchor for the server-side move. */
   onReorderRow?: (associateId: string, neighborId: string, dir: -1 | 1) => void;
+  /** Remove this associate from the ACTIVE crew filter (membership only —
+   *  never touches their shifts or roster spot). Undefined = no crew
+   *  filter, so rows show no remove control. */
+  onRemoveFromCrew?: (associateId: string) => void;
   /**
    * Drop a shift on a different cell.
    *  - same row, different day  → patch startsAt/endsAt by the day delta
@@ -189,6 +193,7 @@ export function WeekCalendarView({
   availabilityFit = null,
   hiddenShifts,
   onReorderRow,
+  onRemoveFromCrew,
 }: Props) {
   const hover = useShiftHoverCard();
   const ctxMenu = useShiftContextMenu();
@@ -554,6 +559,9 @@ export function WeekCalendarView({
                 colsStyle={colsStyle}
                 reorderArmed={!!onReorderRow}
                 rowDragActive={draggingRowId !== null}
+                onRemoveFromCrew={
+                  onRemoveFromCrew ? () => onRemoveFromCrew(a.id) : undefined
+                }
                 onMoveUp={
                   onReorderRow && index > 0
                     ? () => onReorderRow(a.id, visibleAssociates[index - 1].id, -1)
@@ -703,6 +711,7 @@ const Row = memo(function Row({
   rowDragActive = false,
   onMoveUp,
   onMoveDown,
+  onRemoveFromCrew,
 }: {
   associate: AssociateLite;
   minutes: number;
@@ -719,6 +728,8 @@ const Row = memo(function Row({
   /** Whiteboard-order controls; undefined = hidden (edge rows / view states). */
   onMoveUp?: () => void;
   onMoveDown?: () => void;
+  /** Remove this row's associate from the active crew filter. */
+  onRemoveFromCrew?: () => void;
 }) {
   const initials = `${associate.firstName[0] ?? ''}${associate.lastName[0] ?? ''}`.toUpperCase();
   // Row-reorder drag: the grip is the draggable, the name cell the drop
@@ -815,6 +826,19 @@ const Row = memo(function Row({
             </span>
           </div>
         </div>
+        {/* Crew membership: one tap takes them off the filtered crew —
+            their shifts and roster spot survive; only membership changes. */}
+        {onRemoveFromCrew && (
+          <button
+            type="button"
+            onClick={onRemoveFromCrew}
+            aria-label={`Remove ${associate.firstName} ${associate.lastName} from this crew`}
+            title="Remove from this crew — their shifts and roster spot are untouched."
+            className="shrink-0 rounded p-1 coarse:p-1.5 text-silver/40 hover:text-alert focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright no-print"
+          >
+            <UserMinus className="h-3.5 w-3.5 coarse:h-4 coarse:w-4" aria-hidden="true" />
+          </button>
+        )}
       </div>
       {children}
     </div>
