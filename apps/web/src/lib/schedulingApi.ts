@@ -27,6 +27,7 @@ import type {
   MyShiftDetailResponse,
   StaffingTargetInput,
   StaffingTargetsResponse,
+  PublishPreflightResponse,
   PublishWeekInput,
   PublishWeekResponse,
   Shift,
@@ -389,6 +390,22 @@ export function setStaffingTarget(body: StaffingTargetInput): Promise<{
 }
 
 /** Clocked-in right now vs the expected headcount per store. */
+/** Pre-publish health report: drafts, unfilled, projected OT, short rest. */
+export function getPublishPreflight(params: {
+  from: string;
+  to: string;
+  clientId?: string;
+}): Promise<PublishPreflightResponse> {
+  const q = new URLSearchParams({
+    from: params.from,
+    to: params.to,
+    ...(params.clientId ? { clientId: params.clientId } : {}),
+  });
+  return apiFetch<PublishPreflightResponse>(
+    `/scheduling/publish-preflight?${q.toString()}`,
+  );
+}
+
 /** "Please confirm" nudge to every unconfirmed shift in the next 48h. */
 export function nudgeUnconfirmedShifts(): Promise<{ nudged: number }> {
   return apiFetch<{ nudged: number }>('/scheduling/shifts/nudge-unconfirmed', {

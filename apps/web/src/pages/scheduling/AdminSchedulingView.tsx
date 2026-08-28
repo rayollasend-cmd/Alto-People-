@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import type {
   AssociateLite,
+  StaffingTargetLocation,
   AutoFillCandidate,
   ClientSummary,
   LocationSummary,
@@ -56,7 +57,9 @@ import {
   getAvailabilityOverview,
   getSchedulingKpis,
   getShiftConflicts,
+  getPublishPreflight,
   listSchedulingAssociates,
+  listStaffingTargets,
   moveRosterRow,
   listShifts,
   listShiftTeams,
@@ -564,6 +567,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const [createInitialDate, setCreateInitialDate] = useState<Date | null>(null);
   // End of a drag-created range (time-grid drag-to-create); null = default.
   const [createInitialEnd, setCreateInitialEnd] = useState<Date | null>(null);
+  // Coverage-gap prefill: "3 short" in a day footer opens the dialog with
+  // that many open slots pre-entered.
+  const [createInitialOpenSlots, setCreateInitialOpenSlots] = useState(0);
   const [createInitialAssociateId, setCreateInitialAssociateId] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
@@ -1119,6 +1125,30 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     [clientFilter, loadAssociates],
   );
 
+  /* ----- Coverage targets (expected floor headcount) --------------------- */
+  // The Labor page's staffing targets, surfaced in the week grid's footer:
+  // per day, peak scheduled heads vs the site's floor target, with a
+  // tappable "N short" that posts that many open shifts.
+  const [staffingTargets, setStaffingTargets] = useState<
+    StaffingTargetLocation[] | null
+  >(null);
+  useEffect(() => {
+    if (!canManage) return;
+    listStaffingTargets()
+      .then((r) => setStaffingTargets(r.locations))
+      .catch(() => setStaffingTargets(null));
+  }, [canManage]);
+  const coverageTarget = useMemo(() => {
+    if (!clientFilter || !staffingTargets) return null;
+    const rows = staffingTargets.filter(
+      (l) =>
+        l.clientId === clientFilter &&
+        (!locationFilter || l.locationId === locationFilter),
+    );
+    const sum = rows.reduce((s, l) => s + (l.targetCount ?? 0), 0);
+    return sum > 0 ? sum : null;
+  }, [staffingTargets, clientFilter, locationFilter]);
+
   /* ----- Crew membership, managed from the grid ------------------------- */
   // While a crew filter is active, rows ARE the crew — so membership edits
   // live right there: an ✕ on each row removes the person from the crew
@@ -1438,13 +1468,51 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
   const onPublishWeek = async () => {
     if (publishing) return;
+    // Preflight: name the problems BEFORE the notifications go out. Best-
+    // effort — a failed report never blocks publishing.
+    let health = '';
+    try {
+      const pf = await getPublishPreflight({
+        from: publishWindow.from.toISOString(),
+        to: publishWindow.to.toISOString(),
+        ...(clientFilter ? { clientId: clientFilter } : {}),
+      });
+      const lines: string[] = [];
+      if (pf.open > 0) {
+        lines.push(`• ${pf.open} shift${pf.open === 1 ? '' : 's'} still unfilled`);
+      }
+      if (pf.otProjected.length > 0) {
+        const names = pf.otProjected
+          .slice(0, 3)
+          .map((p) => `${p.name} (${p.hours}h)`)
+          .join(', ');
+        lines.push(
+          `• ${pf.otProjected.length} projected over 40h: ${names}${pf.otProjected.length > 3 ? ', …' : ''}`,
+        );
+      }
+      if (pf.restGaps.length > 0) {
+        const names = pf.restGaps
+          .slice(0, 3)
+          .map((r) => `${r.name} (${r.gapHours}h rest)`)
+          .join(', ');
+        lines.push(
+          `• ${pf.restGaps.length} short turnaround${pf.restGaps.length === 1 ? '' : 's'} under 10h: ${names}${pf.restGaps.length > 3 ? ', …' : ''}`,
+        );
+      }
+      health =
+        lines.length > 0
+          ? `\n\nWeek health:\n${lines.join('\n')}\n\nYou can publish anyway and fix these after.`
+          : '\n\nWeek health: no unfilled shifts, no projected overtime, no short turnarounds. Clean.';
+    } catch {
+      // Report unavailable — publish flow proceeds with the basics.
+    }
     const ok = await confirm({
       title: `Publish ${draftsInWeek} draft shift${draftsInWeek === 1 ? '' : 's'}?`,
       description: `Assigned associates will be notified. Drafts inside a fair-workweek state's 14-day notice window will be skipped — open those individually (Edit) to add a late-notice reason before publishing.${
         listTruncated
           ? ' WARNING: this range is showing a truncated shift list — narrow the range first so you can see everything you are publishing.'
           : ''
-      }`,
+      }${health}`,
       confirmLabel: 'Publish week',
     });
     if (!ok) return;
@@ -1789,10 +1857,30 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             }
             if (assigneeChanged) {
               try {
-                updated =
-                  target.associateId === null
-                    ? await unassignShift(s.id)
-                    : await assignShift(s.id, { associateId: target.associateId });
+                if (target.associateId === null) {
+                  updated = await unassignShift(s.id);
+                } else {
+                  // Soft blocks (day off, <10h rest) prompt right here in
+                  // the drag flow; a decline rolls the whole drop back.
+                  const ok = await assignWithOverridePrompt(
+                    s.id,
+                    target.associateId,
+                    confirm,
+                    patch.assignedAssociateName ?? 'This associate',
+                  );
+                  if (!ok) {
+                    if (timesWritten) {
+                      await updateShift(s.id, {
+                        startsAt: undoSnapshot.startsAt,
+                        endsAt: undoSnapshot.endsAt,
+                      });
+                    }
+                    patchShift(s.id, undoSnapshot);
+                    return;
+                  }
+                  await refresh();
+                  return;
+                }
               } catch (assignErr) {
                 // The two writes aren't one transaction. If the reassignment
                 // is refused (double-booked, PTO veto) AFTER the times
@@ -1824,7 +1912,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         commitFailedMessage: 'Move failed.',
       });
     },
-    [refresh, gridTimeZone, associates, patchShift, replaceShift]
+    [refresh, gridTimeZone, associates, patchShift, replaceShift, confirm]
   );
 
   const onAutoFill = async (id: string) => {
@@ -2078,6 +2166,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           initialDate={createInitialDate}
           initialEnd={createInitialEnd}
           initialAssociateId={createInitialAssociateId}
+          initialOpenSlots={createInitialOpenSlots}
           initialClientId={clientFilter || null}
           initialLocationId={locationFilter || null}
           initialPosition={lastPositionRef.current || null}
@@ -2091,6 +2180,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
               setCreateInitialDate(null);
               setCreateInitialEnd(null);
               setCreateInitialAssociateId(null);
+              setCreateInitialOpenSlots(0);
             }
           }}
           onCreated={() => {
@@ -2098,6 +2188,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             setCreateInitialDate(null);
             setCreateInitialEnd(null);
             setCreateInitialAssociateId(null);
+            setCreateInitialOpenSlots(0);
             toast.success('Shift created.');
             refresh();
           }}
@@ -2718,6 +2809,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           onTemplateDrop={onTemplateDrop}
           onReorderRow={canReorderRows ? moveAssociateRow : undefined}
           onRemoveFromCrew={canManage && teamFilter ? removeFromCrew : undefined}
+          coverageTarget={coverageTarget}
+          onCoverageGap={
+            canManage
+              ? (dayStart, gap) => {
+                  setCreateInitialDate(dayStart);
+                  setCreateInitialEnd(null);
+                  setCreateInitialAssociateId(null);
+                  setCreateInitialOpenSlots(gap);
+                  setShowCreate(true);
+                }
+              : undefined
+          }
         />
         </div>
       )}
@@ -3954,12 +4057,13 @@ function AutoFillDialog({
 /* ===== Approval panels — moved to AdminApprovalPanels.tsx ================ */
 
 /**
- * Assign with the day-off/PTO override flow: a plain assign that, on the
- * server's `associate_unavailable` hard block, asks for an explicit
- * destructive confirmation and retries with overrideUnavailability. One
- * implementation for every assign entry point (dialog, auto-fill) so the
- * override UX can't drift. Returns true when an assignment landed; false
- * when the admin declined the override. Non-unavailability errors throw.
+ * Assign with the soft-block override flow: a plain assign that, on the
+ * server's `associate_unavailable` (day off / PTO) or `rest_gap` (<10h
+ * turnaround) blocks, asks for an explicit destructive confirmation and
+ * retries with the matching override. One implementation for every assign
+ * entry point (dialog, drag, auto-fill) so the override UX can't drift.
+ * Returns true when an assignment landed; false when the admin declined.
+ * Hard errors (double-booked etc.) throw.
  */
 async function assignWithOverridePrompt(
   shiftId: string,
@@ -3967,22 +4071,38 @@ async function assignWithOverridePrompt(
   confirm: (opts: ConfirmOptions) => Promise<boolean>,
   who = 'This associate',
 ): Promise<boolean> {
-  try {
-    await assignShift(shiftId, { associateId });
-    return true;
-  } catch (err) {
-    if (!(err instanceof ApiError) || err.code !== 'associate_unavailable') {
+  const overrides: { overrideUnavailability?: boolean; overrideRestGap?: boolean } = {};
+  // Both soft blocks can apply to one assignment; each is asked at most once.
+  for (;;) {
+    try {
+      await assignShift(shiftId, { associateId, ...overrides });
+      return true;
+    } catch (err) {
+      if (!(err instanceof ApiError)) throw err;
+      if (err.code === 'associate_unavailable' && !overrides.overrideUnavailability) {
+        const ok = await confirm({
+          title: 'Assign on their day off?',
+          description: `${who} has approved time off or a declared day off covering this shift. Assigning anyway overrides that — they'll be notified.`,
+          confirmLabel: 'Assign anyway',
+          destructive: true,
+        });
+        if (!ok) return false;
+        overrides.overrideUnavailability = true;
+        continue;
+      }
+      if (err.code === 'rest_gap' && !overrides.overrideRestGap) {
+        const ok = await confirm({
+          title: 'Short rest turnaround',
+          description: `${err.message} Less than 10 hours between shifts is a fatigue risk — tired people no-show, get hurt, and quit.`,
+          confirmLabel: 'Assign anyway',
+          destructive: true,
+        });
+        if (!ok) return false;
+        overrides.overrideRestGap = true;
+        continue;
+      }
       throw err;
     }
-    const ok = await confirm({
-      title: 'Assign on their day off?',
-      description: `${who} has approved time off or a declared day off covering this shift. Assigning anyway overrides that — they'll be notified.`,
-      confirmLabel: 'Assign anyway',
-      destructive: true,
-    });
-    if (!ok) return false;
-    await assignShift(shiftId, { associateId, overrideUnavailability: true });
-    return true;
   }
 }
 /* ===== Duplicate-to-employee dialog ====================================== */
@@ -4393,6 +4513,7 @@ function CreateShiftDialog({
   initialClientId,
   initialLocationId,
   initialPosition,
+  initialOpenSlots = 0,
   team,
   onOpenChange,
   onCreated,
@@ -4421,6 +4542,8 @@ function CreateShiftDialog({
   /** Last position used this session — most weeks schedule one role at a
    *  time, so re-typing it per shift was pure friction. */
   initialPosition?: string | null;
+  /** Coverage-gap prefill: open with this many open slots pre-entered. */
+  initialOpenSlots?: number;
   /** Selected shift team — scopes the picker and prefills default times. */
   team?: ShiftTeamData | null;
   onOpenChange: (open: boolean) => void;
@@ -4586,11 +4709,11 @@ function CreateShiftDialog({
       setSubmitting(false);
       // Pre-select the employee whose cell was clicked, if any.
       setAssignIds(initialAssociateId ? new Set([initialAssociateId]) : new Set());
-      setOpenSlots('0');
+      setOpenSlots(String(initialOpenSlots > 0 ? initialOpenSlots : 0));
       setEmpSearch('');
       setExtraDays(new Set());
     }
-  }, [open, clients, initialDate, initialEnd, initialAssociateId, initialClientId, initialPosition, team]);
+  }, [open, clients, initialDate, initialEnd, initialAssociateId, initialClientId, initialPosition, initialOpenSlots, team]);
 
   // The day chips belong to the org week (Sat→Fri) around the picked Day —
   // changing the Day moves the week, so stale picks must not survive it.

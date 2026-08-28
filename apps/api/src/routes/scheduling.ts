@@ -24,6 +24,7 @@ import {
   OtOutlookResponseSchema,
   StaffingTargetInputSchema,
   StaffingTargetsResponseSchema,
+  PublishPreflightResponseSchema,
   OpenShiftClaimSchema,
   OpenShiftsResponseSchema,
   PublishWeekInputSchema,
@@ -219,6 +220,54 @@ async function findOverlapExcluding(
       locationRel: { select: { timezone: true } },
     },
   });
+}
+
+/** Minimum rest between consecutive shifts before we make the manager
+ *  confirm — the "clopen" guard. Advisory: overridable, never a wall. */
+const REST_GAP_MIN_HOURS = 10;
+
+/**
+ * Nearest non-overlapping neighbor shift that would leave this associate
+ * under REST_GAP_MIN_HOURS of rest against [startsAt, endsAt]. Overlaps
+ * are the hard check's job (findOverlapExcluding); this catches the
+ * close-at-11pm-open-at-6am pattern that overlap math waves through.
+ */
+async function findRestGapViolation(
+  tx: Prisma.TransactionClient | typeof prisma,
+  associateId: string,
+  startsAt: Date,
+  endsAt: Date,
+  excludeShiftIds: string[],
+): Promise<{ gapHours: number; clash: Parameters<typeof describeClash>[0] } | null> {
+  const restMs = REST_GAP_MIN_HOURS * 60 * 60 * 1000;
+  const neighbor = await tx.shift.findFirst({
+    where: {
+      id: { notIn: excludeShiftIds },
+      assignedAssociateId: associateId,
+      status: { notIn: ['CANCELLED'] },
+      OR: [
+        // Ends within the rest window before this shift starts…
+        { endsAt: { gt: new Date(startsAt.getTime() - restMs), lte: startsAt } },
+        // …or starts within the rest window after it ends.
+        { startsAt: { gte: endsAt, lt: new Date(endsAt.getTime() + restMs) } },
+      ],
+    },
+    select: {
+      id: true,
+      startsAt: true,
+      endsAt: true,
+      status: true,
+      position: true,
+      client: { select: { name: true } },
+      locationRel: { select: { timezone: true } },
+    },
+  });
+  if (!neighbor) return null;
+  const gapMs =
+    neighbor.endsAt <= startsAt
+      ? startsAt.getTime() - neighbor.endsAt.getTime()
+      : neighbor.startsAt.getTime() - endsAt.getTime();
+  return { gapHours: Math.round((gapMs / 3_600_000) * 10) / 10, clash: neighbor };
 }
 
 /** Human-readable identity of a conflicting shift, on the site's clock. */
@@ -3081,6 +3130,24 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
           `${associate.firstName} ${associate.lastName} already has an overlapping shift: ${describeClash(clash)}.`,
         );
       }
+      // Fatigue guard: a legal-but-brutal turnaround (close then open on
+      // <10h rest) needs an explicit manager confirm, not a silent save.
+      if (!parsed.data.overrideRestGap) {
+        const rest = await findRestGapViolation(
+          tx,
+          associate.id,
+          shift.startsAt,
+          shift.endsAt,
+          [shift.id],
+        );
+        if (rest) {
+          throw new HttpError(
+            409,
+            'rest_gap',
+            `${associate.firstName} ${associate.lastName} would get only ${rest.gapHours}h rest next to ${describeClash(rest.clash)}.`,
+          );
+        }
+      }
       return tx.shift.update({
         where: { id: shift.id },
         data: {
@@ -3102,6 +3169,7 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
         ...(parsed.data.overrideUnavailability
           ? { overrodeUnavailability: true }
           : {}),
+        ...(parsed.data.overrideRestGap ? { overrodeRestGap: true } : {}),
       },
       req,
     });
@@ -6272,6 +6340,106 @@ schedulingRouter.post('/drafts/dedupe', MANAGE, async (req, res, next) => {
         scanned: drafts.length,
         groups: dupGroups.size,
         removed: extras.length,
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /scheduling/publish-preflight?from&to&clientId
+ * The 5-second health report the publish dialog shows BEFORE the button:
+ * drafts about to go live, open shifts still unstaffed, people projected
+ * past 40h, and <10h rest turnarounds — all within the visible window.
+ */
+schedulingRouter.get('/publish-preflight', MANAGE, async (req, res, next) => {
+  try {
+    const from = parseDateParam(req.query.from?.toString(), 'from');
+    const to = parseDateParam(req.query.to?.toString(), 'to');
+    if (!from || !to) {
+      throw new HttpError(400, 'invalid_range', '`from` and `to` are required');
+    }
+    const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
+    const clientId = clamped === null ? NO_MATCH_ID : clamped;
+
+    const rows = await prisma.shift.findMany({
+      where: {
+        ...scopeShifts(req.user!),
+        ...(clientId ? { clientId } : {}),
+        status: { notIn: ['CANCELLED'] },
+        startsAt: { gte: from, lt: to },
+      },
+      select: {
+        id: true,
+        status: true,
+        startsAt: true,
+        endsAt: true,
+        assignedAssociateId: true,
+        assignedAssociate: { select: { firstName: true, lastName: true } },
+      },
+      orderBy: { startsAt: 'asc' },
+      take: 3000,
+    });
+
+    const drafts = rows.filter((s) => s.status === 'DRAFT').length;
+    const open = rows.filter(
+      (s) => s.status === 'OPEN' || (s.status === 'DRAFT' && !s.assignedAssociateId),
+    ).length;
+
+    // Per-associate weekly minutes + adjacent-gap scan in one pass over
+    // the window's assigned shifts.
+    const byAssociate = new Map<
+      string,
+      { name: string; minutes: number; shifts: { startsAt: Date; endsAt: Date }[] }
+    >();
+    for (const s of rows) {
+      if (!s.assignedAssociateId || !s.assignedAssociate) continue;
+      const entry = byAssociate.get(s.assignedAssociateId) ?? {
+        name: `${s.assignedAssociate.firstName} ${s.assignedAssociate.lastName}`,
+        minutes: 0,
+        shifts: [],
+      };
+      entry.minutes += Math.max(
+        0,
+        Math.round((s.endsAt.getTime() - s.startsAt.getTime()) / 60_000),
+      );
+      entry.shifts.push({ startsAt: s.startsAt, endsAt: s.endsAt });
+      byAssociate.set(s.assignedAssociateId, entry);
+    }
+    const otProjected: { name: string; hours: number }[] = [];
+    const restGaps: { name: string; gapHours: number; startsAt: string }[] = [];
+    const restMs = REST_GAP_MIN_HOURS * 60 * 60 * 1000;
+    for (const entry of byAssociate.values()) {
+      if (entry.minutes > 40 * 60) {
+        otProjected.push({
+          name: entry.name,
+          hours: Math.round((entry.minutes / 60) * 10) / 10,
+        });
+      }
+      const sorted = [...entry.shifts].sort(
+        (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
+      );
+      for (let i = 1; i < sorted.length; i++) {
+        const gap = sorted[i].startsAt.getTime() - sorted[i - 1].endsAt.getTime();
+        if (gap > 0 && gap < restMs) {
+          restGaps.push({
+            name: entry.name,
+            gapHours: Math.round((gap / 3_600_000) * 10) / 10,
+            startsAt: sorted[i].startsAt.toISOString(),
+          });
+        }
+      }
+    }
+    otProjected.sort((a, b) => b.hours - a.hours);
+    restGaps.sort((a, b) => a.gapHours - b.gapHours);
+
+    res.json(
+      PublishPreflightResponseSchema.parse({
+        drafts,
+        open,
+        otProjected: otProjected.slice(0, 10),
+        restGaps: restGaps.slice(0, 10),
       }),
     );
   } catch (err) {

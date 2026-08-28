@@ -1901,8 +1901,37 @@ export const ShiftAssignInputSchema = z.object({
    *  day off covering the shift. Without it, /assign 409s with
    *  `associate_unavailable`. Overrides are audit-logged. */
   overrideUnavailability: z.boolean().optional(),
+  /** Assign even though it leaves under 10h rest against an adjacent
+   *  shift (a "clopen"). Without it, /assign 409s with `rest_gap`.
+   *  Advisory guard — the override is audit-logged, never silent. */
+  overrideRestGap: z.boolean().optional(),
 });
 export type ShiftAssignInput = z.infer<typeof ShiftAssignInputSchema>;
+
+/* ----- Publish preflight -------------------------------------------------- */
+
+/** Pre-publish health report for a week window: what a manager is about
+ *  to ship, with the problems named BEFORE the notifications go out. */
+export const PublishPreflightResponseSchema = z.object({
+  /** Draft shifts in the window (what publish would flip live). */
+  drafts: z.number().int().nonnegative(),
+  /** OPEN (unassigned, non-draft) shifts still needing a person. */
+  open: z.number().int().nonnegative(),
+  /** People projected past 40h scheduled in the window's week. */
+  otProjected: z.array(
+    z.object({ name: z.string(), hours: z.number().nonnegative() }),
+  ),
+  /** Short turnarounds (<10h between consecutive shifts). */
+  restGaps: z.array(
+    z.object({
+      name: z.string(),
+      gapHours: z.number().nonnegative(),
+      /** ISO start of the SECOND (short-rested) shift. */
+      startsAt: z.string().datetime(),
+    }),
+  ),
+});
+export type PublishPreflightResponse = z.infer<typeof PublishPreflightResponseSchema>;
 
 export const ShiftCancelInputSchema = z.object({
   reason: z.string().min(1).max(500),

@@ -11,7 +11,14 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { VirtualizedRows } from './VirtualizedRows';
-import { ChevronDown, ChevronUp, Plus, GripVertical, UserMinus } from 'lucide-react';
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Plus,
+  GripVertical,
+  UserMinus,
+} from 'lucide-react';
 import type { AssociateLite, Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
@@ -157,6 +164,12 @@ interface Props {
    * never reads as empty — a hidden shift still blocks the overlap check.
    */
   hiddenShifts?: Shift[];
+  /** Expected concurrent floor headcount for the filtered site(s). When
+   *  set, each day's footer shows peak-scheduled vs target and flags
+   *  short days. */
+  coverageTarget?: number | null;
+  /** Tap the shortfall in a day's footer → create that many open shifts. */
+  onCoverageGap?: (dayStart: Date, gap: number) => void;
 }
 
 /**
@@ -192,6 +205,8 @@ export function WeekCalendarView({
   showAllAssociates,
   availabilityFit = null,
   hiddenShifts,
+  coverageTarget = null,
+  onCoverageGap,
   onReorderRow,
   onRemoveFromCrew,
 }: Props) {
@@ -240,6 +255,62 @@ export function WeekCalendarView({
     }
     return map;
   }, [shifts, displayTimeZone]);
+
+  // Short-rest ("clopen") flags: a shift starting under 10h after the same
+  // associate's previous shift ends wears a fatigue marker. Client-side
+  // over the loaded window — the ±1-day fetch padding covers week edges.
+  const shortRestIds = useMemo(() => {
+    const REST_MS = 10 * 60 * 60 * 1000;
+    const byAssociate = new Map<string, Shift[]>();
+    for (const s of shifts) {
+      if (!s.assignedAssociateId || s.status === 'CANCELLED') continue;
+      const list = byAssociate.get(s.assignedAssociateId) ?? [];
+      list.push(s);
+      byAssociate.set(s.assignedAssociateId, list);
+    }
+    const out = new Set<string>();
+    for (const list of byAssociate.values()) {
+      list.sort(
+        (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
+      );
+      for (let i = 1; i < list.length; i++) {
+        const gap =
+          new Date(list[i].startsAt).getTime() -
+          new Date(list[i - 1].endsAt).getTime();
+        if (gap > 0 && gap < REST_MS) out.add(list[i].id);
+      }
+    }
+    return out;
+  }, [shifts]);
+
+  // Peak concurrent scheduled heads per day column — compared against the
+  // site's floor-headcount target in the footer.
+  const dayPeaks = useMemo(() => {
+    const out = new Map<string, number>();
+    if (coverageTarget == null) return out;
+    for (const key of dayKeys) out.set(key, 0);
+    const byDay = new Map<string, { at: number; delta: number }[]>();
+    for (const s of shifts) {
+      if (s.status === 'CANCELLED') continue;
+      const key = zonedDayKey(s.startsAt, displayTimeZone);
+      if (!out.has(key)) continue;
+      const events = byDay.get(key) ?? [];
+      events.push({ at: new Date(s.startsAt).getTime(), delta: 1 });
+      events.push({ at: new Date(s.endsAt).getTime(), delta: -1 });
+      byDay.set(key, events);
+    }
+    for (const [key, events] of byDay) {
+      events.sort((a, b) => a.at - b.at || a.delta - b.delta);
+      let cur = 0;
+      let peak = 0;
+      for (const e of events) {
+        cur += e.delta;
+        if (cur > peak) peak = cur;
+      }
+      out.set(key, peak);
+    }
+    return out;
+  }, [shifts, dayKeys, displayTimeZone, coverageTarget]);
 
   // Per-cell count of filter-hidden shifts, same keying as byCell.
   const hiddenByCell = useMemo(() => {
@@ -591,6 +662,7 @@ export function WeekCalendarView({
                       cellId={`cell:${a.id}:${d.getTime()}`}
                       shifts={byCell.get(`${a.id}_${dayKey}`) ?? EMPTY_SHIFTS}
                       hiddenCount={hiddenByCell.get(`${a.id}_${dayKey}`) ?? 0}
+                      shortRestIds={shortRestIds}
                       dayStart={d}
                       associateId={a.id}
                       isToday={sameDay(d, today)}
@@ -648,6 +720,29 @@ export function WeekCalendarView({
                     )}
                   </div>
                 )}
+                {coverageTarget != null && coverageTarget > 0 && (() => {
+                  const peak = dayPeaks.get(dayKeys[i]) ?? 0;
+                  const gap = coverageTarget - peak;
+                  return gap > 0 ? (
+                    <button
+                      type="button"
+                      onClick={
+                        onCoverageGap ? () => onCoverageGap(d, gap) : undefined
+                      }
+                      className="mt-0.5 text-xs2 tabular-nums text-alert hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright no-print"
+                      title={`Peak ${peak} scheduled vs a floor target of ${coverageTarget} — tap to post ${gap} open shift${gap === 1 ? '' : 's'} for this day.`}
+                    >
+                      {peak} / {coverageTarget} · {gap} short
+                    </button>
+                  ) : (
+                    <div
+                      className="mt-0.5 text-xs2 tabular-nums text-success/80"
+                      title={`Peak ${peak} scheduled vs a floor target of ${coverageTarget}.`}
+                    >
+                      {peak} / {coverageTarget} ✓
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
@@ -897,6 +992,7 @@ const Cell = memo(function Cell({
   onTemplateDrop,
   availabilityShade = null,
   hiddenCount = 0,
+  shortRestIds,
 }: {
   cellId: string;
   shifts: Shift[];
@@ -922,6 +1018,8 @@ const Cell = memo(function Cell({
   availabilityShade?: 'blocked' | 'outside' | null;
   /** Shifts here that the position filter is hiding — never render as empty. */
   hiddenCount?: number;
+  /** Shift ids with <10h rest after the associate's previous shift. */
+  shortRestIds?: Set<string>;
 }) {
   const { isOver, setNodeRef } = useDroppable({ id: cellId });
   // Native HTML5 drag from the templates rail. Independent of dnd-kit's
@@ -1012,6 +1110,7 @@ const Cell = memo(function Cell({
               canManage={canManage}
               isMoving={movingShiftId === s.id}
               isSelected={selectedIds.has(s.id)}
+              shortRest={shortRestIds?.has(s.id) ?? false}
               hoverHandlers={hoverBind(s)}
             />
           ))}
@@ -1073,6 +1172,7 @@ function ShiftChip({
   canManage,
   isMoving,
   isSelected,
+  shortRest = false,
   hoverHandlers,
 }: {
   shift: Shift;
@@ -1082,6 +1182,8 @@ function ShiftChip({
   canManage: boolean;
   isMoving: boolean;
   isSelected: boolean;
+  /** <10h rest after this associate's previous shift — fatigue marker. */
+  shortRest?: boolean;
   hoverHandlers: {
     onPointerEnter: (e: React.PointerEvent<HTMLElement>) => void;
     onPointerLeave: () => void;
@@ -1242,6 +1344,15 @@ function ShiftChip({
           >
             {shift.position}
           </span>
+          {shortRest && (
+            <span
+              className="shrink-0 text-warning"
+              title="Short rest: under 10 hours after this associate's previous shift."
+            >
+              <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+              <span className="sr-only">Short rest before this shift</span>
+            </span>
+          )}
           <StatusMark status={shift.status} />
         </div>
       </button>
