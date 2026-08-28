@@ -110,6 +110,12 @@ export function markClientStatementPaid(
   });
 }
 
+/** Weekly client-facing service report. week = any date in the desired
+ *  org week (YYYY-MM-DD); omitted = last completed week. */
+export function clientServiceReportUrl(clientId: string, week?: string): string {
+  return `/api/clients/${clientId}/service-report.pdf${week ? `?week=${week}` : ''}`;
+}
+
 export function clientStatementPdfUrl(clientId: string, statementId: string): string {
   return `/api/clients/${clientId}/statements/${statementId}.pdf`;
 }

@@ -8,6 +8,7 @@ import { useConfirm } from '@/lib/confirm';
 import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import {
+  clientServiceReportUrl,
   clientStatementCsvUrl,
   clientStatementPdfUrl,
   finalizeClientStatement,
@@ -251,6 +252,20 @@ export function StatementsSection({ clientId }: { clientId: string }) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <CardTitle>Statements</CardTitle>
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                void download(
+                  clientServiceReportUrl(clientId),
+                  'service-report.pdf',
+                )
+              }
+              title="The client-facing weekly report: coverage, day-by-day fill, reliability, roster, next-week readiness, and billing status — ready to hand to the store manager. Covers the last completed week."
+            >
+              <FileText className="h-3.5 w-3.5" />
+              Service report (PDF)
+            </Button>
             <Select
               size="sm"
               aria-label="Statement month"

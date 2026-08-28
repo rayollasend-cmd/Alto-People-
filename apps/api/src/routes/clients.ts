@@ -22,6 +22,10 @@ import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { seedDefaultShiftPositions } from '../lib/shiftPositions.js';
 import { computeStatementSnapshot, type StatementSnapshot } from '../lib/clientStatement.js';
 import { orgDateKey, startOfWeekUTC } from '../lib/timeAnomalies.js';
+import {
+  buildClientServiceReport,
+  renderClientServiceReportPdf,
+} from '../lib/clientServiceReport.js';
 import { renderStatementPdf } from '../lib/statementPdf.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
 
@@ -945,6 +949,60 @@ clientsRouter.get('/:id/statements/:sid.csv', STATEMENTS_READ, async (req, res, 
       }.csv"`,
     );
     res.send(lines.join('\n'));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /clients/:id/service-report.pdf?week=YYYY-MM-DD
+ * The weekly client-facing service report — coverage, day-by-day,
+ * reliability, roster, next-week readiness, billing status — as a
+ * letterheaded PDF Alto downloads and hands to the client. `week` is any
+ * date inside the desired org week (Sat→Fri); omitted = the last
+ * COMPLETED week, which is what a handout is usually about.
+ */
+clientsRouter.get('/:id/service-report.pdf', STATEMENTS_READ, async (req, res, next) => {
+  try {
+    const client = await prisma.client.findFirst({
+      where: { id: req.params.id, deletedAt: null },
+      select: { id: true, name: true },
+    });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    const weekParam = req.query.week?.toString();
+    if (weekParam && !/^\d{4}-\d{2}-\d{2}$/.test(weekParam)) {
+      throw new HttpError(400, 'invalid_week', '`week` must be YYYY-MM-DD');
+    }
+    const weekStart = weekParam
+      ? startOfWeekUTC(new Date(`${weekParam}T12:00:00.000Z`))
+      : new Date(startOfWeekUTC(new Date()).getTime() - 7 * 24 * 3_600_000);
+
+    const branding = await ensureBrandingLoaded(prisma);
+    const data = await buildClientServiceReport(
+      prisma,
+      client.id,
+      weekStart,
+      branding.orgName,
+    );
+    const pdf = await renderClientServiceReportPdf(data);
+
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: client.id,
+        action: 'client.service_report_exported',
+        entityType: 'Client',
+        entityId: client.id,
+        metadata: { periodStart: data.periodStart, periodEnd: data.periodEnd },
+      },
+      'clients.service_report',
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="service-report-${client.name.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()}-${data.periodStart}.pdf"`,
+    );
+    res.send(pdf);
   } catch (err) {
     next(err);
   }
