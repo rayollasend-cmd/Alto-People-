@@ -1672,6 +1672,9 @@ export const AdminOpenShiftClaimSchema = z.object({
   /** Approving would push this associate past 40h scheduled that week.
    *  Advisory chip — the manager can still approve. */
   wouldExceed40h: z.boolean().default(false),
+  /** Minutes they'd be scheduled that week AFTER approval — the ranking
+   *  signal for "approve best" (fewest hours first). */
+  weeklyMinutes: z.number().int().nonnegative().optional(),
   createdAt: z.string().datetime(),
 });
 export type AdminOpenShiftClaim = z.infer<typeof AdminOpenShiftClaimSchema>;

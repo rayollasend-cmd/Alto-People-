@@ -33,6 +33,8 @@ const NO_SHOW_LOOKBACK_MS = 12 * 60 * 60 * 1000;
 export interface ShiftReminderSweepResult {
   scanned: number;
   reminded: number;
+  /** "Please confirm" asks sent to associates who haven't acknowledged. */
+  confirmNudges: number;
   /** PENDING pickup claims whose shift already started — flipped to EXPIRED. */
   expiredClaims: number;
   /** Shifts flagged to admins as possible no-shows this sweep. */
@@ -94,6 +96,57 @@ export async function runShiftReminderSweep(
         senderUserId: null,
       });
       reminded++;
+    } catch (err) {
+      errors.push({
+        shiftId: shift.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // ----- Confirm nudges ---------------------------------------------------
+  // Shifts inside the same 24h window whose associate still hasn't tapped
+  // "I'll be there": one automatic "please confirm" ask, claim-before-send
+  // via confirmNudgedAt (shared with the admin panel's manual nudge-all so
+  // neither path double-pesters).
+  const unconfirmed = await prisma.shift.findMany({
+    where: {
+      status: 'ASSIGNED',
+      publishedAt: { not: null },
+      assignedAssociateId: { not: null },
+      acknowledgedAt: null,
+      confirmNudgedAt: null,
+      startsAt: { gt: now, lte: new Date(now.getTime() + WINDOW_MS) },
+    },
+    orderBy: { startsAt: 'asc' },
+    take: SWEEP_CAP,
+    include: {
+      client: { select: { name: true } },
+      locationRel: { select: { timezone: true } },
+    },
+  });
+  let confirmNudges = 0;
+  for (const shift of unconfirmed) {
+    try {
+      const claim = await prisma.shift.updateMany({
+        where: { id: shift.id, confirmNudgedAt: null },
+        data: { confirmNudgedAt: now },
+      });
+      if (claim.count === 0) continue;
+      await notifyShift(prisma, {
+        associateId: shift.assignedAssociateId!,
+        subject: 'Please confirm your shift',
+        body: `Quick tap needed: are you coming to ${formatShiftLine({
+          position: shift.position,
+          clientName: shift.client?.name ?? null,
+          startsAt: shift.startsAt,
+          endsAt: shift.endsAt,
+          timezone: shift.locationRel?.timezone ?? null,
+        })}? Open your schedule and tap "I'll be there".`,
+        category: 'shift_confirm',
+        senderUserId: null,
+      });
+      confirmNudges++;
     } catch (err) {
       errors.push({
         shiftId: shift.id,
@@ -224,7 +277,7 @@ export async function runShiftReminderSweep(
     });
   }
 
-  return { scanned: due.length, reminded, expiredClaims: expired.count, noShows, otAlerts, errors };
+  return { scanned: due.length, reminded, confirmNudges, expiredClaims: expired.count, noShows, otAlerts, errors };
 }
 
 const OT_THRESHOLD_MIN = 40 * 60;

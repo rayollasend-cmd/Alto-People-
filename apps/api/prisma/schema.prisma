@@ -1866,6 +1866,10 @@ model Shift {
   // Associate tapped "I'll be there" on this published shift. Null = not
   // yet acknowledged; admins can chase unconfirmed shifts before the day.
   acknowledgedAt      DateTime?                       @db.Timestamptz(6)
+  // "Please confirm" chase (manual nudge-all button + hourly auto-nudge).
+  // Stamped when a confirm reminder went out so neither path re-pesters;
+  // distinct from reminderSentAt (the day-before "shift tomorrow" note).
+  confirmNudgedAt     DateTime?                       @db.Timestamptz(6)
   // Day-before reminder dedupe stamp — the reminder cron claims a shift by
   // setting this (guarded update), so overlapping sweeps can't double-send.
   reminderSentAt      DateTime?                       @db.Timestamptz(6)

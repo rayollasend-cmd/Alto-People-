@@ -429,7 +429,7 @@ async function wouldExceed40hFlags(
     /** Shifts the associate would GIVE UP in the same action (trade legs). */
     excludeShiftIds?: string[];
   }[],
-): Promise<boolean[]> {
+): Promise<{ exceed: boolean; weeklyMinutes: number }[]> {
   if (items.length === 0) return [];
   const ids = [...new Set(items.map((i) => i.associateId))];
   const minStart = new Date(
@@ -460,7 +460,8 @@ async function wouldExceed40hFlags(
     const existing = (byKey.get(k) ?? [])
       .filter((r) => !excl.has(r.id))
       .reduce((s, r) => s + r.minutes, 0);
-    return existing + scheduledMinutes(i) > 40 * 60;
+    const weeklyMinutes = existing + scheduledMinutes(i);
+    return { exceed: weeklyMinutes > 40 * 60, weeklyMinutes };
   });
 }
 
@@ -2728,6 +2729,79 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
   }
 });
 
+/**
+ * "Send reminder to all" for the unconfirmed panel: every published,
+ * assigned shift starting in the next 48h whose associate hasn't tapped
+ * "I'll be there" gets a confirm nudge — skipping anyone nudged in the
+ * last 20h so mashing the button doesn't spam people. The hourly cron
+ * (shiftReminder sweep) auto-nudges the 24h window with the same marker.
+ */
+schedulingRouter.post('/shifts/nudge-unconfirmed', MANAGE, async (req, res, next) => {
+  try {
+    const now = new Date();
+    const renudgeCutoff = new Date(now.getTime() - 20 * 60 * 60 * 1000);
+    const due = await prisma.shift.findMany({
+      where: {
+        ...scopeShifts(req.user!),
+        status: 'ASSIGNED',
+        publishedAt: { not: null },
+        assignedAssociateId: { not: null },
+        acknowledgedAt: null,
+        startsAt: { gt: now, lte: new Date(now.getTime() + 48 * 60 * 60 * 1000) },
+        OR: [{ confirmNudgedAt: null }, { confirmNudgedAt: { lt: renudgeCutoff } }],
+      },
+      orderBy: { startsAt: 'asc' },
+      take: 500,
+      include: {
+        client: { select: { name: true } },
+        locationRel: { select: { timezone: true } },
+      },
+    });
+
+    let nudged = 0;
+    for (const shift of due) {
+      // Claim before sending — a concurrent click or cron sweep loses.
+      const claim = await prisma.shift.updateMany({
+        where: {
+          id: shift.id,
+          OR: [{ confirmNudgedAt: null }, { confirmNudgedAt: { lt: renudgeCutoff } }],
+        },
+        data: { confirmNudgedAt: now },
+      });
+      if (claim.count === 0) continue;
+      const line = formatShiftLine({
+        position: shift.position,
+        clientName: shift.client?.name ?? 'your site',
+        startsAt: shift.startsAt,
+        endsAt: shift.endsAt,
+        timezone: shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
+      });
+      await notifyShift(prisma, {
+        associateId: shift.assignedAssociateId!,
+        subject: 'Please confirm your shift',
+        body: `Quick tap needed: are you coming to ${line}? Open your schedule and tap "I'll be there" so your supervisor doesn't have to chase you.`,
+        category: 'shift_confirm',
+        senderUserId: req.user!.id,
+      });
+      nudged += 1;
+    }
+
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'scheduling.unconfirmed_nudged',
+        entityType: 'Shift',
+        entityId: due[0]?.id ?? 'none',
+        metadata: { nudged, scanned: due.length },
+      },
+      'scheduling.nudge_unconfirmed',
+    );
+    res.json({ nudged });
+  } catch (err) {
+    next(err);
+  }
+});
+
 schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
   try {
     const parsed = ShiftUpdateInputSchema.safeParse(req.body);
@@ -3902,7 +3976,9 @@ schedulingRouter.get('/open-shift-claims', MANAGE, async (req, res, next) => {
     const rows = await prisma.openShiftClaim.findMany({
       where: { status: 'PENDING', shift: { is: scopeShifts(req.user!) } },
       orderBy: { createdAt: 'asc' },
-      take: 100,
+      // 500, not 100: a busy multi-store week really does field hundreds
+      // of requests, and the grouped panel needs the whole picture.
+      take: 500,
       include: CLAIM_INCLUDE,
     });
     const otFlags = await wouldExceed40hFlags(
@@ -3925,7 +4001,8 @@ schedulingRouter.get('/open-shift-claims', MANAGE, async (req, res, next) => {
           shiftStartsAt: c.shift.startsAt.toISOString(),
           shiftEndsAt: c.shift.endsAt.toISOString(),
           shiftTimezone: c.shift.locationRel?.timezone ?? DEFAULT_TIMEZONE,
-          wouldExceed40h: otFlags[i],
+          wouldExceed40h: otFlags[i].exceed,
+          weeklyMinutes: otFlags[i].weeklyMinutes,
           createdAt: c.createdAt.toISOString(),
         })),
       }),
@@ -4898,7 +4975,7 @@ schedulingRouter.get('/swap-requests/admin', MANAGE, async (req, res, next) => {
     );
     res.json(
       ShiftSwapListResponseSchema.parse({
-        requests: rows.map((r, i) => ({ ...toSwap(r), wouldExceed40h: otFlags[i] })),
+        requests: rows.map((r, i) => ({ ...toSwap(r), wouldExceed40h: otFlags[i].exceed })),
       }),
     );
   } catch (err) {

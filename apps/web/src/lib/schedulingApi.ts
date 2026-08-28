@@ -389,6 +389,13 @@ export function setStaffingTarget(body: StaffingTargetInput): Promise<{
 }
 
 /** Clocked-in right now vs the expected headcount per store. */
+/** "Please confirm" nudge to every unconfirmed shift in the next 48h. */
+export function nudgeUnconfirmedShifts(): Promise<{ nudged: number }> {
+  return apiFetch<{ nudged: number }>('/scheduling/shifts/nudge-unconfirmed', {
+    method: 'POST',
+  });
+}
+
 /** Persist the client's grid row order (whole roster, replace-all). */
 export function saveRosterOrder(
   clientId: string,

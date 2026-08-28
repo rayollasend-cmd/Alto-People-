@@ -2253,6 +2253,26 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         {(view === 'week' || view === 'day' || view === 'month') && (
           <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2 no-print">
             <StatusMarkLegend />
+            {/* One-click bulk selection: feeds the SelectionToolbar (bulk
+                publish/cancel/reassign/move) without 57 modifier-clicks. */}
+            {canManage &&
+              (() => {
+                const draftIds = (filteredShifts ?? [])
+                  .filter((s) => s.status === 'DRAFT')
+                  .map((s) => s.id);
+                if (draftIds.length < 2) return null;
+                return (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => setSelectedIds(new Set(draftIds))}
+                    title="Select every draft in view — then bulk publish, reassign, move, or delete from the toolbar."
+                  >
+                    Select {draftIds.length} drafts
+                  </Button>
+                );
+              })()}
             <div className="ml-auto inline-flex items-center gap-2">
               <span className="text-2xs uppercase tracking-wider text-silver/70">
                 Density

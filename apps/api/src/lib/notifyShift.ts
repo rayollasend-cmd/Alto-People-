@@ -34,6 +34,7 @@ export interface NotifyShiftParams {
     | 'shift_cancelled'
     | 'shift_published'
     | 'shift_reminder'
+    | 'shift_confirm'
     | 'shift_pickup_approved'
     | 'shift_pickup_rejected'
     | 'swap_peer_request'
