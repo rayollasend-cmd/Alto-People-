@@ -28,6 +28,41 @@ export function createExternalPayment(
   });
 }
 
+export interface PeriodPrefillRow {
+  associateId: string;
+  fullName: string;
+  clientName: string;
+  regularHours: number;
+  overtimeHours: number;
+  suggestedGross: number | null;
+  alreadyRecorded: boolean;
+  recordedGross: number | null;
+}
+
+/** One row per associate with approved time in the period — the batch
+ *  recorder's starting grid. Hours/gross use the bureau sheet's math. */
+export function getPeriodPrefill(
+  from: string,
+  to: string,
+): Promise<{ rows: PeriodPrefillRow[]; truncated: boolean }> {
+  return apiFetch(
+    `/external-payments/period-prefill?from=${from}&to=${to}`,
+  );
+}
+
+/** Record (or update) the whole pay period in one call. */
+export function recordPayPeriod(body: {
+  periodStart: string;
+  periodEnd: string;
+  payDate?: string | null;
+  method?: string;
+  reference?: string | null;
+  note?: string | null;
+  rows: { associateId: string; grossAmount?: number | null; netAmount?: number | null }[];
+}): Promise<{ created: number; updated: number; skipped: number }> {
+  return apiFetch('/external-payments/record-period', { method: 'POST', body });
+}
+
 export function updateExternalPayment(
   paymentId: string,
   input: ExternalPaymentInput,

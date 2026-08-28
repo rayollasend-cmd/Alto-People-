@@ -428,6 +428,21 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
           canManage={canManage}
           onClose={() => setOpenFor(null)}
           onSaved={() => void refresh()}
+          // Hiring-wave assembly line: hop straight to the next person in
+          // the filtered view with no case recorded yet — no drawer-close,
+          // re-scan, re-open loop per hire.
+          onNextPending={(() => {
+            const list = visible;
+            const idx = list.findIndex((r) => r.associateId === openFor);
+            for (let i = 1; i <= list.length; i++) {
+              const r = list[(idx + i) % list.length];
+              if (r && r.associateId !== openFor && !r.caseNumber) {
+                const id = r.associateId;
+                return () => setOpenFor(id);
+              }
+            }
+            return null;
+          })()}
         />
       )}
     </div>
@@ -557,11 +572,14 @@ function CaseDrawer({
   canManage,
   onClose,
   onSaved,
+  onNextPending = null,
 }: {
   associateId: string;
   canManage: boolean;
   onClose: () => void;
   onSaved: () => void;
+  /** Jump to the next person in view with no case yet. Null = none left. */
+  onNextPending?: (() => void) | null;
 }) {
   const [detail, setDetail] = useState<EVerifyCaseDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -594,6 +612,16 @@ function CaseDrawer({
               View profile
               <ExternalLink className="h-3 w-3" />
             </Link>
+          )}
+          {onNextPending && (
+            <button
+              type="button"
+              onClick={onNextPending}
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-navy-secondary px-2 py-1 text-xs text-silver hover:text-gold hover:border-gold/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+              title="Open the next person in this view with no E-Verify case recorded yet."
+            >
+              Next pending →
+            </button>
           )}
         </div>
       </DrawerHeader>

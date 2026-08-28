@@ -2,12 +2,15 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import multer from 'multer';
 import { randomUUID, createHash } from 'node:crypto';
 import { extname } from 'node:path';
+import { z } from 'zod';
 import {
   ExternalPaymentInputSchema,
   ExternalPaymentListResponseSchema,
+  ExternalPaymentMethodSchema,
   UPLOAD_MAX_BYTES,
   toDateOnly,
 } from '@alto-people/shared';
+import { buildExternalPayrollSheet } from '../lib/externalPayrollSheet.js';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -152,6 +155,184 @@ externalPaymentsRouter.get(
           total,
         }),
       );
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/* ----- Batch: record a whole pay period ---------------------------------- */
+
+/**
+ * GET /external-payments/period-prefill?from=YYYY-MM-DD&to=YYYY-MM-DD
+ * One row per associate with APPROVED time in the period, hours split
+ * reg/OT by the SAME math as the bureau handoff sheet, plus a suggested
+ * gross (hourly rate × hours, 1.5× OT) and whether a payment row already
+ * exists for this exact period. NO PII — this powers the on-screen batch
+ * recorder, not the bureau file.
+ */
+externalPaymentsRouter.get(
+  '/period-prefill',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const from = req.query.from?.toString();
+      const to = req.query.to?.toString();
+      if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || to < from) {
+        throw new HttpError(400, 'invalid_period', 'from/to must be YYYY-MM-DD, to on or after from.');
+      }
+      const sheet = await buildExternalPayrollSheet(prisma, {}, {
+        from: `${from}T00:00:00.000Z`,
+        to: new Date(new Date(`${to}T00:00:00.000Z`).getTime() + 24 * 3_600_000).toISOString(),
+      });
+      const existing = await prisma.externalPayment.findMany({
+        where: {
+          deletedAt: null,
+          periodStart: new Date(from),
+          periodEnd: new Date(to),
+          associateId: { in: sheet.rows.map((r) => r.associateId) },
+        },
+        select: { associateId: true, grossAmount: true },
+      });
+      const recorded = new Map(existing.map((p) => [p.associateId, p]));
+      res.json({
+        rows: sheet.rows.map((r) => {
+          const hourly = r.payType === 'HOURLY' && r.payRate != null;
+          const gross = hourly
+            ? Math.round((r.regularHours * r.payRate! + r.overtimeHours * r.payRate! * 1.5) * 100) / 100
+            : null;
+          const prior = recorded.get(r.associateId);
+          return {
+            associateId: r.associateId,
+            fullName: r.fullName,
+            clientName: r.clientName,
+            regularHours: r.regularHours,
+            overtimeHours: r.overtimeHours,
+            suggestedGross: gross,
+            alreadyRecorded: !!prior,
+            recordedGross: prior?.grossAmount != null ? Number(prior.grossAmount) : null,
+          };
+        }),
+        truncated: sheet.truncated,
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+const RecordPeriodSchema = z.object({
+  periodStart: z.string().date(),
+  periodEnd: z.string().date(),
+  payDate: z.string().date().nullable().optional(),
+  method: ExternalPaymentMethodSchema.default('OTHER'),
+  reference: z.string().trim().max(120).nullable().optional(),
+  note: z.string().trim().max(500).nullable().optional(),
+  rows: z
+    .array(
+      z.object({
+        associateId: z.string().uuid(),
+        grossAmount: z.number().nonnegative().max(1_000_000).nullable().optional(),
+        netAmount: z.number().nonnegative().max(1_000_000).nullable().optional(),
+      }),
+    )
+    .min(1)
+    .max(500),
+}).refine((v) => v.periodEnd >= v.periodStart, {
+  message: 'periodEnd must be on or after periodStart',
+  path: ['periodEnd'],
+});
+
+/**
+ * POST /external-payments/record-period — the whole pay run in one call.
+ * Idempotent per (associate, period): an existing row for the exact
+ * period is UPDATED, so re-running after corrections never duplicates.
+ * One audit row carries the batch; the per-payment evidence flow is
+ * unchanged.
+ */
+externalPaymentsRouter.post(
+  '/record-period',
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const parsed = RecordPeriodSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+      }
+      const input = parsed.data;
+      const periodStart = new Date(input.periodStart);
+      const periodEnd = new Date(input.periodEnd);
+      const ids = [...new Set(input.rows.map((r) => r.associateId))];
+      const valid = new Set(
+        (
+          await prisma.associate.findMany({
+            where: { id: { in: ids }, deletedAt: null },
+            select: { id: true },
+          })
+        ).map((a) => a.id),
+      );
+
+      let created = 0;
+      let updated = 0;
+      let skipped = 0;
+      for (const row of input.rows) {
+        if (!valid.has(row.associateId)) {
+          skipped += 1;
+          continue;
+        }
+        const shared = {
+          payDate: input.payDate ? new Date(input.payDate) : null,
+          grossAmount: row.grossAmount ?? null,
+          netAmount: row.netAmount ?? null,
+          method: input.method,
+          reference: input.reference || null,
+          note: input.note || null,
+        };
+        const existing = await prisma.externalPayment.findFirst({
+          where: {
+            associateId: row.associateId,
+            periodStart,
+            periodEnd,
+            deletedAt: null,
+          },
+          select: { id: true },
+        });
+        if (existing) {
+          await prisma.externalPayment.update({
+            where: { id: existing.id },
+            data: shared,
+          });
+          updated += 1;
+        } else {
+          await prisma.externalPayment.create({
+            data: {
+              associateId: row.associateId,
+              periodStart,
+              periodEnd,
+              createdById: req.user!.id,
+              ...shared,
+            },
+          });
+          created += 1;
+        }
+      }
+
+      enqueueAudit(
+        {
+          actorUserId: req.user!.id,
+          action: 'external_payment.batch_recorded',
+          entityType: 'ExternalPayment',
+          entityId: `${input.periodStart}..${input.periodEnd}`,
+          metadata: {
+            periodStart: input.periodStart,
+            periodEnd: input.periodEnd,
+            method: input.method,
+            created,
+            updated,
+            skipped,
+          },
+        },
+        'externalPayments.batch',
+      );
+      res.json({ created, updated, skipped });
     } catch (err) {
       next(err);
     }

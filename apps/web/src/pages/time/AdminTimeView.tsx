@@ -47,6 +47,11 @@ import {
   listPayPeriods,
   rejectTimeEntry,
 } from '@/lib/timeApi';
+import {
+  getPeriodPrefill,
+  recordPayPeriod,
+  type PeriodPrefillRow,
+} from '@/lib/externalPaymentsApi';
 import { listClientLocations } from '@/lib/clientsApi';
 import { AttendanceCard } from '@/pages/time/AttendanceCard';
 import { useClients } from '@/lib/useClients';
@@ -101,6 +106,7 @@ import {
   ErrorBanner,
   FilterChip,
   Input,
+  Label,
   PageHeader,
   Select,
   Skeleton,
@@ -654,6 +660,8 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
   // HR_ADMINISTRATOR alone — manage:time reaches down to SHIFT_SUPERVISOR.
   const { can: canCap, user } = useAuth();
   const canExportPayrollPii = canCap('export:payroll-pii');
+  const canProcessPayroll = canCap('process:payroll');
+  const [recordPeriodOpen, setRecordPeriodOpen] = useState(false);
 
   // Client/site scope — shared by BOTH tabs so switching keeps context.
   // Every client's live board and approval queue used to pool into one
@@ -1658,6 +1666,19 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                       External payroll
                     </Button>
                   )}
+                  {canProcessPayroll && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setRecordPeriodOpen(true)}
+                      disabled={exportBusy !== null}
+                      title="Document the whole pay run: one row per paid associate, prefilled from approved time, recorded in a single click."
+                    >
+                      <FileSpreadsheet className="h-4 w-4" />
+                      Record pay period
+                    </Button>
+                  )}
                 </div>
               )}
 
@@ -2024,6 +2045,15 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
         <ExternalPayrollSheetDialog
           open={externalOpen}
           onOpenChange={setExternalOpen}
+          defaultFromYmd={fromYmd}
+          defaultToYmd={toYmd}
+        />
+      )}
+
+      {canProcessPayroll && (
+        <RecordPayPeriodDialog
+          open={recordPeriodOpen}
+          onOpenChange={setRecordPeriodOpen}
           defaultFromYmd={fromYmd}
           defaultToYmd={toYmd}
         />
@@ -3351,6 +3381,277 @@ function SummaryExportDialog({
             Export CSV
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Record pay period — the batch external-payment recorder. One row per
+ * associate with APPROVED time in the period, hours + suggested gross
+ * prefilled from the same math as the bureau handoff sheet; one click
+ * records (or refreshes) the whole run as ExternalPayment vault rows.
+ * Replaces the old per-associate drawer round-trip for run documentation;
+ * per-person evidence uploads stay on the profile drawer.
+ */
+function RecordPayPeriodDialog({
+  open,
+  onOpenChange,
+  defaultFromYmd,
+  defaultToYmd,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  defaultFromYmd: string;
+  defaultToYmd: string;
+}) {
+  const [fromYmd, setFromYmd] = useState(defaultFromYmd);
+  const [toYmd, setToYmd] = useState(defaultToYmd);
+  const [rows, setRows] = useState<PeriodPrefillRow[] | null>(null);
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [grossById, setGrossById] = useState<Record<string, string>>({});
+  const [payDate, setPayDate] = useState('');
+  const [method, setMethod] = useState('ACH');
+  const [reference, setReference] = useState('');
+  const [busy, setBusy] = useState<'load' | 'save' | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setFromYmd(defaultFromYmd);
+    setToYmd(defaultToYmd);
+    setRows(null);
+    setChecked(new Set());
+    setGrossById({});
+    setPayDate('');
+    setReference('');
+    setErr(null);
+  }, [open, defaultFromYmd, defaultToYmd]);
+
+  const load = async () => {
+    if (!fromYmd || !toYmd || toYmd < fromYmd) {
+      setErr('Pick a valid pay period (end on or after start).');
+      return;
+    }
+    setBusy('load');
+    setErr(null);
+    try {
+      const r = await getPeriodPrefill(fromYmd, toYmd);
+      setRows(r.rows);
+      // Default: everyone with hours is checked; already-recorded rows too
+      // (re-recording just refreshes them — idempotent server-side).
+      setChecked(new Set(r.rows.map((x) => x.associateId)));
+      setGrossById(
+        Object.fromEntries(
+          r.rows.map((x) => [
+            x.associateId,
+            x.suggestedGross != null ? String(x.suggestedGross) : '',
+          ]),
+        ),
+      );
+      if (r.truncated) {
+        toast.warning('The time scan hit its cap — narrow the range.');
+      }
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : 'Could not load the period.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const record = async () => {
+    if (!rows) return;
+    const picked = rows.filter((r) => checked.has(r.associateId));
+    if (picked.length === 0) {
+      setErr('Nobody is selected.');
+      return;
+    }
+    setBusy('save');
+    setErr(null);
+    try {
+      const res = await recordPayPeriod({
+        periodStart: fromYmd,
+        periodEnd: toYmd,
+        payDate: payDate || null,
+        method,
+        reference: reference || null,
+        rows: picked.map((r) => {
+          const g = Number(grossById[r.associateId]);
+          return {
+            associateId: r.associateId,
+            grossAmount: Number.isFinite(g) && grossById[r.associateId] !== '' ? g : null,
+          };
+        }),
+      });
+      toast.success(
+        `Pay period recorded: ${res.created} new, ${res.updated} refreshed${res.skipped > 0 ? `, ${res.skipped} skipped` : ''}.`,
+      );
+      onOpenChange(false);
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : 'Recording failed.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const total = rows
+    ? rows
+        .filter((r) => checked.has(r.associateId))
+        .reduce((s, r) => s + (Number(grossById[r.associateId]) || 0), 0)
+    : 0;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Record pay period</DialogTitle>
+          <DialogDescription>
+            Documents the external pay run for the audit vault — one payment
+            row per associate, prefilled from approved time. Re-recording a
+            period refreshes it, never duplicates.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {err && <ErrorBanner>{err}</ErrorBanner>}
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
+              <Label className="text-xs">Period start</Label>
+              <Input type="date" value={fromYmd} onChange={(e) => setFromYmd(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Period end</Label>
+              <Input type="date" value={toYmd} onChange={(e) => setToYmd(e.target.value)} />
+            </div>
+            <Button onClick={() => void load()} loading={busy === 'load'} disabled={busy !== null}>
+              Load period
+            </Button>
+          </div>
+
+          {rows && rows.length === 0 && (
+            <p className="text-sm text-silver">
+              No approved time in this period — approve entries first.
+            </p>
+          )}
+
+          {rows && rows.length > 0 && (
+            <>
+              <div className="flex flex-wrap items-end gap-2">
+                <div>
+                  <Label className="text-xs">Pay date</Label>
+                  <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+                </div>
+                <div>
+                  <Label className="text-xs">Method</Label>
+                  <Select value={method} onChange={(e) => setMethod(e.target.value)}>
+                    <option value="ACH">ACH / direct deposit</option>
+                    <option value="CHECK">Check</option>
+                    <option value="CASH">Cash</option>
+                    <option value="PAYCARD">Pay card</option>
+                    <option value="OTHER">Other</option>
+                  </Select>
+                </div>
+                <div className="min-w-[180px] flex-1">
+                  <Label className="text-xs">Reference (processor run / batch id)</Label>
+                  <Input
+                    value={reference}
+                    onChange={(e) => setReference(e.target.value)}
+                    placeholder="e.g. ADP run #4412"
+                  />
+                </div>
+              </div>
+
+              <div className="max-h-80 overflow-y-auto rounded-md border border-navy-secondary">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-navy">
+                    <tr className="text-left text-2xs uppercase tracking-wider text-silver/70">
+                      <th className="px-2 py-1.5">
+                        <input
+                          type="checkbox"
+                          aria-label="Select everyone"
+                          checked={checked.size === rows.length}
+                          onChange={(e) =>
+                            setChecked(
+                              e.target.checked
+                                ? new Set(rows.map((r) => r.associateId))
+                                : new Set(),
+                            )
+                          }
+                        />
+                      </th>
+                      <th className="px-2 py-1.5">Associate</th>
+                      <th className="px-2 py-1.5 text-right">Reg h</th>
+                      <th className="px-2 py-1.5 text-right">OT h</th>
+                      <th className="px-2 py-1.5 text-right">Gross $</th>
+                      <th className="px-2 py-1.5">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-navy-secondary/60">
+                    {rows.map((r) => (
+                      <tr key={r.associateId}>
+                        <td className="px-2 py-1">
+                          <input
+                            type="checkbox"
+                            aria-label={`Include ${r.fullName}`}
+                            checked={checked.has(r.associateId)}
+                            onChange={(e) =>
+                              setChecked((prev) => {
+                                const next = new Set(prev);
+                                if (e.target.checked) next.add(r.associateId);
+                                else next.delete(r.associateId);
+                                return next;
+                              })
+                            }
+                          />
+                        </td>
+                        <td className="px-2 py-1 text-white">
+                          {r.fullName}
+                          <span className="ml-1.5 text-2xs text-silver/60">{r.clientName}</span>
+                        </td>
+                        <td className="px-2 py-1 text-right tabular-nums text-silver">
+                          {r.regularHours.toFixed(1)}
+                        </td>
+                        <td className="px-2 py-1 text-right tabular-nums text-silver">
+                          {r.overtimeHours.toFixed(1)}
+                        </td>
+                        <td className="px-2 py-1 text-right">
+                          <Input
+                            inputMode="decimal"
+                            className="h-7 w-24 text-right tabular-nums"
+                            value={grossById[r.associateId] ?? ''}
+                            onChange={(e) =>
+                              setGrossById((prev) => ({
+                                ...prev,
+                                [r.associateId]: e.target.value,
+                              }))
+                            }
+                            aria-label={`Gross pay for ${r.fullName}`}
+                          />
+                        </td>
+                        <td className="px-2 py-1 text-2xs">
+                          {r.alreadyRecorded ? (
+                            <span className="text-success">recorded ✓</span>
+                          ) : (
+                            <span className="text-silver/50">new</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-xs text-silver tabular-nums">
+                  {checked.size} of {rows.length} selected · total gross ~$
+                  {total.toFixed(2)}
+                </div>
+                <Button onClick={() => void record()} loading={busy === 'save'} disabled={busy !== null}>
+                  Record {checked.size} payment{checked.size === 1 ? '' : 's'}
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );
