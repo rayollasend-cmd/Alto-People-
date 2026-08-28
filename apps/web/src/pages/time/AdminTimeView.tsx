@@ -3411,7 +3411,7 @@ function RecordPayPeriodDialog({
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [grossById, setGrossById] = useState<Record<string, string>>({});
   const [payDate, setPayDate] = useState('');
-  const [method, setMethod] = useState('ACH');
+  const [method, setMethod] = useState('DIRECT_DEPOSIT');
   const [reference, setReference] = useState('');
   const [busy, setBusy] = useState<'load' | 'save' | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -3543,10 +3543,10 @@ function RecordPayPeriodDialog({
                 <div>
                   <Label className="text-xs">Method</Label>
                   <Select value={method} onChange={(e) => setMethod(e.target.value)}>
-                    <option value="ACH">ACH / direct deposit</option>
+                    <option value="DIRECT_DEPOSIT">ACH / direct deposit</option>
                     <option value="CHECK">Check</option>
                     <option value="CASH">Cash</option>
-                    <option value="PAYCARD">Pay card</option>
+                    <option value="PAYROLL_PROVIDER">Payroll provider</option>
                     <option value="OTHER">Other</option>
                   </Select>
                 </div>

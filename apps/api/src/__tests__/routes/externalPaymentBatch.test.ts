@@ -78,7 +78,7 @@ describe('external payment batch recording', () => {
     const first = await agent.post('/external-payments/record-period').send({
       periodStart: '2026-08-22',
       periodEnd: '2026-08-28',
-      method: 'ACH',
+      method: 'DIRECT_DEPOSIT',
       reference: 'run #1',
       rows: [{ associateId: worker.id, grossAmount: 128 }],
     });
@@ -89,7 +89,7 @@ describe('external payment batch recording', () => {
     const second = await agent.post('/external-payments/record-period').send({
       periodStart: '2026-08-22',
       periodEnd: '2026-08-28',
-      method: 'ACH',
+      method: 'DIRECT_DEPOSIT',
       reference: 'run #1 corrected',
       rows: [{ associateId: worker.id, grossAmount: 130 }],
     });
