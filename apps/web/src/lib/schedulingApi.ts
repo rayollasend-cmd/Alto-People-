@@ -406,6 +406,21 @@ export function getPublishPreflight(params: {
   );
 }
 
+export interface UnconfirmedShiftRow {
+  shiftId: string;
+  position: string;
+  clientName: string | null;
+  startsAt: string;
+  associateId: string;
+  associateName: string;
+  phone: string | null;
+}
+
+/** The chase list: unacknowledged published shifts in the next 48h. */
+export function listUnconfirmedShifts(): Promise<{ shifts: UnconfirmedShiftRow[] }> {
+  return apiFetch<{ shifts: UnconfirmedShiftRow[] }>('/scheduling/unconfirmed');
+}
+
 /** "Please confirm" nudge to every unconfirmed shift in the next 48h. */
 export function nudgeUnconfirmedShifts(): Promise<{ nudged: number }> {
   return apiFetch<{ nudged: number }>('/scheduling/shifts/nudge-unconfirmed', {

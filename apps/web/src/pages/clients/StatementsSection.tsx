@@ -11,6 +11,7 @@ import {
   clientStatementCsvUrl,
   clientStatementPdfUrl,
   finalizeClientStatement,
+  generateDueStatements,
   listClientStatements,
   markClientStatementPaid,
   upsertClientStatement,
@@ -166,6 +167,21 @@ export function StatementsSection({ clientId }: { clientId: string }) {
     }
   };
 
+  const generateAllDue = async () => {
+    setBusy('generate-all');
+    try {
+      const r = await generateDueStatements();
+      toast.success(
+        `Last week (${r.periodStart} → ${r.periodEnd}): ${r.generated} drafted, ${r.refreshed} refreshed${r.skippedFinal > 0 ? `, ${r.skippedFinal} already final` : ''}.`,
+      );
+      await load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not generate.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const markPaid = async (s: ClientStatement) => {
     const ref = window.prompt(
       'Payment reference (check / ACH number) — optional:',
@@ -256,6 +272,19 @@ export function StatementsSection({ clientId }: { clientId: string }) {
               >
                 <RefreshCw className="h-3.5 w-3.5" />
                 Generate / refresh draft
+              </Button>
+            )}
+            {canFinalize && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={generateAllDue}
+                loading={busy === 'generate-all'}
+                disabled={busy !== null}
+                title="Draft (or refresh) last week's statement for EVERY active client in one run. Finalized periods are left alone."
+              >
+                <FileText className="h-3.5 w-3.5" />
+                Generate all clients (last week)
               </Button>
             )}
           </div>

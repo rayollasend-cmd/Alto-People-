@@ -2779,6 +2779,53 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
 });
 
 /**
+ * GET /scheduling/unconfirmed — the chase list, with the phone number on
+ * it. The panel used to filter a generic shift list client-side and told
+ * admins "worth a call" without showing the number; this returns exactly
+ * the rows the chase needs (published, assigned, unacknowledged, next
+ * 48h) including each associate's phone for tap-to-call.
+ */
+schedulingRouter.get('/unconfirmed', MANAGE, async (req, res, next) => {
+  try {
+    const now = new Date();
+    const rows = await prisma.shift.findMany({
+      where: {
+        ...scopeShifts(req.user!),
+        status: 'ASSIGNED',
+        publishedAt: { not: null },
+        assignedAssociateId: { not: null },
+        acknowledgedAt: null,
+        startsAt: { gt: now, lte: new Date(now.getTime() + 48 * 60 * 60 * 1000) },
+      },
+      orderBy: { startsAt: 'asc' },
+      take: 500,
+      select: {
+        id: true,
+        position: true,
+        startsAt: true,
+        client: { select: { name: true } },
+        assignedAssociate: {
+          select: { id: true, firstName: true, lastName: true, phone: true },
+        },
+      },
+    });
+    res.json({
+      shifts: rows.map((r) => ({
+        shiftId: r.id,
+        position: r.position,
+        clientName: r.client?.name ?? null,
+        startsAt: r.startsAt.toISOString(),
+        associateId: r.assignedAssociate!.id,
+        associateName: `${r.assignedAssociate!.firstName} ${r.assignedAssociate!.lastName}`,
+        phone: r.assignedAssociate!.phone ?? null,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * "Send reminder to all" for the unconfirmed panel: every published,
  * assigned shift starting in the next 48h whose associate hasn't tapped
  * "I'll be there" gets a confirm nudge — skipping anyone nudged in the

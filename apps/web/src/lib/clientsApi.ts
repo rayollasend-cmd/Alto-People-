@@ -66,6 +66,18 @@ export function listClientStatements(
   return apiFetch(`/clients/${clientId}/statements`);
 }
 
+/** One-click weekly run: draft (or refresh) EVERY active client's
+ *  statement for the last completed org week. FINAL periods are skipped. */
+export function generateDueStatements(): Promise<{
+  periodStart: string;
+  periodEnd: string;
+  generated: number;
+  refreshed: number;
+  skippedFinal: number;
+}> {
+  return apiFetch('/clients/statements/generate-due', { method: 'POST' });
+}
+
 export function upsertClientStatement(
   clientId: string,
   periodStart: string,

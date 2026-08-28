@@ -108,6 +108,16 @@ export function resendInvite(applicationId: string): Promise<{
 
 /* ----------------- HR review outcome (approve / reject) --------------- */
 
+/** Next application awaiting review (docs-ready first) + how many remain. */
+export function nextReviewApplication(
+  excludeId?: string,
+): Promise<{ applicationId: string | null; remaining: number }> {
+  const q = excludeId ? `?excludeId=${encodeURIComponent(excludeId)}` : '';
+  return apiFetch<{ applicationId: string | null; remaining: number }>(
+    `/onboarding/review-queue/next${q}`,
+  );
+}
+
 export function approveApplication(
   applicationId: string,
   body: { hireDate: string }

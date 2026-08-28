@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AdminOpenShiftClaim, ShiftSwapRequest } from '@alto-people/shared';
 import {
   approveOpenShiftClaim,
   listAdminSwaps,
   listOpenShiftClaims,
-  listShifts,
+  listUnconfirmedShifts,
   managerApproveSwap,
   managerRejectSwap,
   nudgeUnconfirmedShifts,
@@ -312,7 +313,13 @@ export function AdminPickupPanel() {
   const candidateRow = (c: AdminOpenShiftClaim) => (
     <li key={c.id} className="flex items-center justify-between gap-2 py-1.5">
       <div className="min-w-0 flex items-center gap-2">
-        <span className="truncate text-sm text-white">{c.associateName}</span>
+        <Link
+          to={`/people?associateId=${c.associateId}`}
+          className="truncate text-sm text-white hover:text-gold transition-colors"
+          title="Open this associate's profile"
+        >
+          {c.associateName}
+        </Link>
         {hours(c) && (
           <span className="shrink-0 text-2xs tabular-nums text-silver/60">{hours(c)}</span>
         )}
@@ -473,14 +480,9 @@ export function AdminUnconfirmedPanel() {
     queryKey: UNCONFIRMED_KEY,
     queryFn: async () => {
       try {
-        const now = new Date();
-        const to = new Date(now.getTime() + 48 * 3_600_000);
-        const res = await listShifts({
-          status: 'ASSIGNED',
-          from: now.toISOString(),
-          to: to.toISOString(),
-        });
-        return res.shifts.filter((s) => s.publishedAt && !s.acknowledgedAt);
+        // Dedicated endpoint: exactly the chase rows, phone included —
+        // "worth a call" is useless advice without the number on screen.
+        return (await listUnconfirmedShifts()).shifts;
       } catch {
         // Best-effort chase list — a load failure just hides the panel.
         return [];
@@ -533,18 +535,33 @@ export function AdminUnconfirmedPanel() {
         <ul className="space-y-2">
           {items.map((s) => (
             <li
-              key={s.id}
+              key={s.shiftId}
               className="p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md flex items-center justify-between gap-3 flex-wrap"
             >
               <div>
-                <div className="text-white text-sm font-medium">
-                  {s.assignedAssociateName ?? '—'}
-                </div>
+                <Link
+                  to={`/people?associateId=${s.associateId}`}
+                  className="text-white text-sm font-medium hover:text-gold transition-colors"
+                  title="Open this associate's profile"
+                >
+                  {s.associateName}
+                </Link>
                 <div className="text-xs text-silver mt-0.5 tabular-nums">
                   {s.position} · {s.clientName ?? '—'} · {fmtDateTime(s.startsAt)}
                 </div>
               </div>
-              <Badge variant="pending">Unconfirmed</Badge>
+              <div className="flex items-center gap-3">
+                {s.phone && (
+                  <a
+                    href={`tel:${s.phone}`}
+                    className="text-xs tabular-nums text-sky hover:underline"
+                    title="Call them"
+                  >
+                    {s.phone}
+                  </a>
+                )}
+                <Badge variant="pending">Unconfirmed</Badge>
+              </div>
             </li>
           ))}
         </ul>

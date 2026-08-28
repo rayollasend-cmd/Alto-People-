@@ -21,6 +21,7 @@ import { scopeClients } from '../lib/scope.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { seedDefaultShiftPositions } from '../lib/shiftPositions.js';
 import { computeStatementSnapshot, type StatementSnapshot } from '../lib/clientStatement.js';
+import { orgDateKey, startOfWeekUTC } from '../lib/timeAnomalies.js';
 import { renderStatementPdf } from '../lib/statementPdf.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
 
@@ -659,6 +660,91 @@ function statementRow(r: {
     paymentRef: r.paymentRef ?? null,
   };
 }
+
+/**
+ * POST /clients/statements/generate-due — the weekly statement run in one
+ * click. For every active client, create (or refresh) the DRAFT statement
+ * for the LAST COMPLETED org week (Sat→Fri); FINAL periods are skipped.
+ * Same create-or-refresh semantics as the per-client POST below, so
+ * running it twice is harmless.
+ */
+clientsRouter.post('/statements/generate-due', STATEMENTS, async (req, res, next) => {
+  try {
+    // Last completed org week as Florida-local calendar dates.
+    const thisWeekStart = startOfWeekUTC(new Date());
+    const prevWeekStart = new Date(thisWeekStart.getTime() - 7 * 24 * 3_600_000);
+    const prevWeekEnd = new Date(thisWeekStart.getTime() - 24 * 3_600_000);
+    const startKey = orgDateKey(prevWeekStart);
+    const endKey = orgDateKey(prevWeekEnd);
+    const start = new Date(`${startKey}T00:00:00.000Z`);
+    const end = new Date(`${endKey}T00:00:00.000Z`);
+    const endExclusive = new Date(end.getTime() + 24 * 3_600_000);
+
+    const clients = await prisma.client.findMany({
+      where: { deletedAt: null, status: 'ACTIVE' },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+      take: 200,
+    });
+
+    let generated = 0;
+    let refreshed = 0;
+    let skippedFinal = 0;
+    for (const client of clients) {
+      const existing = await prisma.clientStatement.findUnique({
+        where: {
+          clientId_periodStart_periodEnd: {
+            clientId: client.id,
+            periodStart: start,
+            periodEnd: end,
+          },
+        },
+        select: { id: true, status: true },
+      });
+      if (existing?.status === 'FINAL') {
+        skippedFinal += 1;
+        continue;
+      }
+      const snapshot = await computeStatementSnapshot(
+        prisma,
+        client.id,
+        start,
+        endExclusive,
+      );
+      if (existing) {
+        await prisma.clientStatement.update({
+          where: { id: existing.id },
+          data: { snapshot: snapshot as unknown as Prisma.InputJsonValue },
+        });
+        refreshed += 1;
+      } else {
+        await prisma.clientStatement.create({
+          data: {
+            clientId: client.id,
+            periodStart: start,
+            periodEnd: end,
+            snapshot: snapshot as unknown as Prisma.InputJsonValue,
+          },
+        });
+        generated += 1;
+      }
+    }
+
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'client.statements_generated_due',
+        entityType: 'ClientStatement',
+        entityId: `${startKey}..${endKey}`,
+        metadata: { periodStart: startKey, periodEnd: endKey, generated, refreshed, skippedFinal },
+      },
+      'clients.statements_generate_due',
+    );
+    res.json({ periodStart: startKey, periodEnd: endKey, generated, refreshed, skippedFinal });
+  } catch (err) {
+    next(err);
+  }
+});
 
 clientsRouter.get('/:id/statements', STATEMENTS_READ, async (req, res, next) => {
   try {

@@ -35,6 +35,7 @@ import {
   compliancePacketUrl,
   getApplication,
   getApplicationAudit,
+  nextReviewApplication,
   rejectApplication,
   resendInvite,
   skipTask,
@@ -141,6 +142,7 @@ interface ApplicationDetailBodyProps {
  */
 export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetailBodyProps) {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [approveOpen, setApproveOpen] = useState(false);
@@ -174,6 +176,16 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
       (await getApplicationAudit(applicationId!)).entries,
     enabled: !!applicationId && canManage,
   });
+
+  // Hiring-wave assembly line: who's next in the review queue (and how
+  // many are waiting) so approving flows straight into the next review
+  // instead of a list round-trip.
+  const reviewQueueQuery = useQuery({
+    queryKey: ['review-queue', applicationId],
+    queryFn: () => nextReviewApplication(applicationId ?? undefined),
+    enabled: !!applicationId && canManage,
+  });
+  const queueNext = reviewQueueQuery.data ?? null;
 
   const detail: ApplicationDetailType | null = detailQuery.data ?? null;
   const audit: AuditLogEntry[] = auditQuery.data ?? [];
@@ -256,6 +268,7 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
       setApproveOpen(false);
       setApproveWarnings(null);
       await refresh();
+      void queryClient.invalidateQueries({ queryKey: ['review-queue'] });
       // Skip the toast — open the celebration instead. The "hire is real"
       // moment is the most consequential surface in the onboarding flow
       // and deserves a ceremony, not a passing notification.
@@ -347,6 +360,26 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
           detail.status !== 'APPROVED' &&
           detail.status !== 'REJECTED' && (
             <DeliverabilityStrip info={detail.lastInviteDelivery} />
+          )}
+
+        {/* Review assembly line: jump straight to the next waiting
+            application instead of a list round-trip per hire. */}
+        {canManage &&
+          (detail.status === 'SUBMITTED' || detail.status === 'IN_REVIEW') &&
+          queueNext?.applicationId &&
+          queueNext.remaining > 0 && (
+            <div className="mt-3 no-print">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  navigate(`/onboarding/applications/${queueNext.applicationId}`)
+                }
+                title="Skip to the next application awaiting review (docs-ready ones come first)."
+              >
+                Review next application → ({queueNext.remaining} more waiting)
+              </Button>
+            </div>
           )}
       </header>
 
@@ -488,6 +521,9 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
       <ApprovedCelebration
         open={celebration !== null}
         onOpenChange={(o) => !o && setCelebration(null)}
+        nextInQueue={
+          queueNext?.applicationId && queueNext.remaining > 0 ? queueNext : null
+        }
         associateName={detail.associateName}
         clientName={detail.clientName}
         position={detail.position}
@@ -795,6 +831,7 @@ function ApprovedCelebration({
   applicationId,
   completedTasks,
   totalTasks,
+  nextInQueue = null,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -805,6 +842,8 @@ function ApprovedCelebration({
   applicationId: string;
   completedTasks: number;
   totalTasks: number;
+  /** Next application awaiting review — powers the assembly-line button. */
+  nextInQueue?: { applicationId: string | null; remaining: number } | null;
 }) {
   const navigate = useNavigate();
   // parseYmd → local midnight, so the label can't shift a day across
@@ -882,15 +921,27 @@ function ApprovedCelebration({
                 <Sparkles className="h-4 w-4" />
                 Review checklist
               </Button>
-              <Button
-                size="lg"
-                onClick={() => {
-                  onOpenChange(false);
-                  navigate('/onboarding');
-                }}
-              >
-                Back to applications
-              </Button>
+              {nextInQueue?.applicationId ? (
+                <Button
+                  size="lg"
+                  onClick={() => {
+                    onOpenChange(false);
+                    navigate(`/onboarding/applications/${nextInQueue.applicationId}`);
+                  }}
+                >
+                  Review next ({nextInQueue.remaining} left) →
+                </Button>
+              ) : (
+                <Button
+                  size="lg"
+                  onClick={() => {
+                    onOpenChange(false);
+                    navigate('/onboarding');
+                  }}
+                >
+                  Back to applications
+                </Button>
+              )}
             </div>
           </div>
         </div>

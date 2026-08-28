@@ -891,6 +891,50 @@ onboardingRouter.get('/applications/:id', async (req, res, next) => {
 // Per product call: rejected User accounts stay intact so the same person
 // can be re-considered later via a brand-new Application — no soft-delete.
 
+/**
+ * GET /onboarding/review-queue/next?excludeId=
+ * The hiring-wave assembly line: the next application awaiting review
+ * (SUBMITTED / IN_REVIEW), docs-ready ones first — an application whose
+ * documents are all verified is a ten-second decision, so those clear
+ * before the ones that still need document review. `remaining` powers the
+ * "N left" label; `excludeId` keeps "next" from returning the page the
+ * admin is already on.
+ */
+onboardingRouter.get('/review-queue/next', MANAGE, async (req, res, next) => {
+  try {
+    const excludeId = req.query.excludeId?.toString();
+    const candidates = await prisma.application.findMany({
+      where: {
+        deletedAt: null,
+        status: { in: ['SUBMITTED', 'IN_REVIEW'] },
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+      select: { id: true, associateId: true, submittedAt: true },
+      orderBy: [{ submittedAt: 'asc' }, { invitedAt: 'asc' }],
+      take: 200,
+    });
+    if (candidates.length === 0) {
+      res.json({ applicationId: null, remaining: 0 });
+      return;
+    }
+    const pendingDocs = await prisma.documentRecord.groupBy({
+      by: ['associateId'],
+      where: {
+        associateId: { in: candidates.map((c) => c.associateId) },
+        deletedAt: null,
+        status: 'UPLOADED',
+      },
+      _count: { _all: true },
+    });
+    const hasPending = new Set(pendingDocs.map((d) => d.associateId));
+    const next =
+      candidates.find((c) => !hasPending.has(c.associateId)) ?? candidates[0];
+    res.json({ applicationId: next.id, remaining: candidates.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
 onboardingRouter.post(
   '/applications/:id/approve',
   MANAGE,
