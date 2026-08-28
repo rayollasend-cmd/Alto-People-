@@ -4444,6 +4444,9 @@ function CreateShiftDialog({
   const [assignIds, setAssignIds] = useState<Set<string>>(new Set());
   const [openSlots, setOpenSlots] = useState('0');
   const [empSearch, setEmpSearch] = useState('');
+  // Multi-day: extra org-week days (ymd keys) that get their own copy of
+  // this shift at the same wall-clock times. The picked Day is implicit.
+  const [extraDays, setExtraDays] = useState<Set<string>>(new Set());
 
   // Phase 131 — load Locations under the selected client. Auto-picks
   // the first option so HR can hit Save in the single-site case
@@ -4565,8 +4568,35 @@ function CreateShiftDialog({
       setAssignIds(initialAssociateId ? new Set([initialAssociateId]) : new Set());
       setOpenSlots('0');
       setEmpSearch('');
+      setExtraDays(new Set());
     }
   }, [open, clients, initialDate, initialEnd, initialAssociateId, initialClientId, initialPosition, team]);
+
+  // The day chips belong to the org week (Sat→Fri) around the picked Day —
+  // changing the Day moves the week, so stale picks must not survive it.
+  useEffect(() => {
+    setExtraDays(new Set());
+  }, [dateStr]);
+
+  // Sat→Fri chip row for the week containing the picked Day. The picked
+  // day itself renders as a locked chip; the rest toggle extra copies.
+  const weekDayChips = useMemo(() => {
+    if (!dateStr) return [];
+    const day = fromYmd(dateStr);
+    const sat = new Date(day);
+    sat.setDate(sat.getDate() - ((day.getDay() + 1) % 7));
+    const WD = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(sat);
+      d.setDate(sat.getDate() + i);
+      const key = ymd(d);
+      return {
+        key,
+        label: `${WD[d.getDay()]} ${d.getDate()}`,
+        isPrimary: key === dateStr,
+      };
+    });
+  }, [dateStr]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -4595,6 +4625,26 @@ function CreateShiftDialog({
     if (end <= start) end = zonedWallTimeToUtc(y, mo, d + 1, eh, em, siteTz);
     const startISO = start.toISOString();
     const endISO = end.toISOString();
+    // Extra day copies: same wall-clock times re-anchored on each ticked
+    // day (per-day conversion so a DST boundary mid-week stays correct).
+    const extras = [...extraDays]
+      .filter((k) => k !== dateStr)
+      .sort()
+      .map((k) => {
+        const dd = fromYmd(k);
+        const s = zonedWallTimeToUtc(
+          dd.getFullYear(), dd.getMonth() + 1, dd.getDate(), sh, sm, siteTz,
+        );
+        let e2 = zonedWallTimeToUtc(
+          dd.getFullYear(), dd.getMonth() + 1, dd.getDate(), eh, em, siteTz,
+        );
+        if (e2 <= s) {
+          e2 = zonedWallTimeToUtc(
+            dd.getFullYear(), dd.getMonth() + 1, dd.getDate() + 1, eh, em, siteTz,
+          );
+        }
+        return { startsAt: s.toISOString(), endsAt: e2.toISOString() };
+      });
     const assignList = [...assignIds];
     const open = Math.max(0, Math.trunc(Number(openSlots)) || 0);
     const shared = {
@@ -4612,21 +4662,30 @@ function CreateShiftDialog({
     };
     setSubmitting(true);
     try {
-      if (assignList.length > 0 || open > 0) {
-        // Create one copy per selected employee (+ any open slots) in a
-        // single call; employees already scheduled at this time are skipped.
+      if (assignList.length > 0 || open > 0 || extras.length > 0) {
+        // Create one copy per selected employee (+ any open slots) per
+        // selected day in a single call; employees already scheduled at a
+        // given time are skipped for that day only. Extra days with no
+        // employees and no slots still mean "one open shift per day".
+        const effOpen =
+          assignList.length === 0 && open === 0 && extras.length > 0
+            ? 1
+            : open;
         const res = await bulkCreateShifts({
           ...shared,
           associateIds: assignList,
-          openCount: open,
+          openCount: effOpen,
+          ...(extras.length > 0 ? { extraOccurrences: extras } : {}),
         });
         const made = `${res.created} shift${res.created === 1 ? '' : 's'}`;
+        const across =
+          extras.length > 0 ? ` across ${extras.length + 1} days` : '';
         if (res.skipped.length > 0) {
           toast.success(
-            `Created ${made} · skipped ${res.skipped.length} already scheduled then`,
+            `Created ${made}${across} · skipped ${res.skipped.length} already scheduled then`,
           );
         } else {
-          toast.success(`Created ${made}.`);
+          toast.success(`Created ${made}${across}.`);
         }
       } else {
         // No employees chosen → a single unassigned shift (open coverage).
@@ -4757,6 +4816,49 @@ function CreateShiftDialog({
                 />
               )}
             </Field>
+            {/* Multi-day: same shift, same times, more days of this org
+                week (Sat→Fri) — one create instead of five dialog trips. */}
+            {weekDayChips.length > 0 && (
+              <div className="md:col-span-2">
+                <div className="mb-1.5 text-xs font-medium text-silver">
+                  Also on these days (same times)
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {weekDayChips.map((c) => (
+                    <button
+                      key={c.key}
+                      type="button"
+                      disabled={c.isPrimary}
+                      onClick={() =>
+                        setExtraDays((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(c.key)) next.delete(c.key);
+                          else next.add(c.key);
+                          return next;
+                        })
+                      }
+                      aria-pressed={c.isPrimary || extraDays.has(c.key)}
+                      className={cn(
+                        'rounded-md border px-2.5 py-1.5 coarse:px-3 coarse:py-2 text-xs tabular-nums transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                        c.isPrimary
+                          ? 'cursor-default border-gold bg-gold/20 text-gold'
+                          : extraDays.has(c.key)
+                            ? 'border-gold/60 bg-gold/10 text-white'
+                            : 'border-navy-secondary text-silver/70 hover:border-gold/40 hover:text-white',
+                      )}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+                {extraDays.size > 0 && (
+                  <p className="mt-1.5 text-2xs text-silver/60">
+                    {extraDays.size + 1} days × each selected employee — anyone
+                    already booked on a day is skipped for that day only.
+                  </p>
+                )}
+              </div>
+            )}
             <Field label="Start time" required hint={tzHint}>
               {(p) => (
                 <Input

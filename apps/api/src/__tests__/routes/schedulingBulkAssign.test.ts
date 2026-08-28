@@ -106,6 +106,50 @@ describe('POST /scheduling/shifts/bulk — multi-assign', () => {
     expect(await prisma.shift.count({ where: { assignedAssociateId: free.id } })).toBe(1);
   });
 
+  it('multi-day: extraOccurrences stamp a copy per employee per day, skipping per-day conflicts', async () => {
+    const client = await createClient('Walmart Front Beach');
+    const a1 = await createAssociate({ firstName: 'Adolfo', lastName: 'Reinoso' });
+    const a2 = await createAssociate({ firstName: 'Dalia', lastName: 'Acosta' });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const agent = await loginAs(hr.email);
+
+    const DAY = 24 * 60;
+    // a1 is already booked during the SECOND day's window only.
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        position: 'Stocker',
+        startsAt: new Date(future(DAY + 90)),
+        endsAt: new Date(future(DAY + 60 * 5)),
+        assignedAssociateId: a1.id,
+        status: 'ASSIGNED',
+      },
+    });
+
+    const res = await agent.post('/scheduling/shifts/bulk').send({
+      clientId: client.id,
+      position: 'F&D OVERNIGHT',
+      startsAt: future(60),
+      endsAt: future(60 * 9),
+      extraOccurrences: [
+        { startsAt: future(DAY + 60), endsAt: future(DAY + 60 * 9) },
+        { startsAt: future(2 * DAY + 60), endsAt: future(2 * DAY + 60 * 9) },
+      ],
+      associateIds: [a1.id, a2.id],
+      status: 'OPEN',
+    });
+    expect(res.status).toBe(201);
+    // a2 gets all 3 days; a1 gets days 1 and 3 (day 2 skipped, not doubled).
+    expect(res.body.created).toBe(5);
+    expect(res.body.skipped).toHaveLength(1);
+    expect(res.body.skipped[0].associateId).toBe(a1.id);
+    expect(res.body.skipped[0].reason).toBe('already_scheduled');
+
+    // 2 new + 1 pre-existing for a1; 3 for a2.
+    expect(await prisma.shift.count({ where: { assignedAssociateId: a1.id } })).toBe(3);
+    expect(await prisma.shift.count({ where: { assignedAssociateId: a2.id } })).toBe(3);
+  });
+
   it('rejects a bulk create with no employees and no open slots', async () => {
     const client = await createClient('Acme');
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });

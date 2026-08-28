@@ -2490,24 +2490,37 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
       location = full;
     }
 
-    const startsAt = new Date(input.startsAt);
-    const endsAt = new Date(input.endsAt);
+    // Every day copy of the shift: the primary date + any "also on …"
+    // chips. Each occurrence is conflict-checked and created per day.
+    const occurrences = [
+      { startsAt: new Date(input.startsAt), endsAt: new Date(input.endsAt) },
+      ...(input.extraOccurrences ?? []).map((o) => ({
+        startsAt: new Date(o.startsAt),
+        endsAt: new Date(o.endsAt),
+      })),
+    ];
     const status = input.status ?? 'OPEN';
     const isPublishing = isPublishingTransition(undefined, status);
     const now = new Date();
     let lateNoticeReason: string | null = null;
     let publishedAt: Date | null = null;
     if (isPublishing) {
-      const evaluation = evaluateShiftNotice({
-        state: client.state,
-        startsAt,
-        publishAt: now,
-      });
-      if (evaluation.requiresReason && !input.lateNoticeReason) {
+      // The EARLIEST occurrence is the strictest under fair-workweek
+      // notice rules — if any day needs a reason, the batch needs one.
+      const strict = occurrences
+        .map((o) =>
+          evaluateShiftNotice({
+            state: client.state,
+            startsAt: o.startsAt,
+            publishAt: now,
+          }),
+        )
+        .find((e) => e.requiresReason);
+      if (strict && !input.lateNoticeReason) {
         throw new HttpError(
           400,
           'late_notice_reason_required',
-          `Publishing a shift inside the 14-day notice window in ${evaluation.state} requires lateNoticeReason`,
+          `Publishing a shift inside the 14-day notice window in ${strict.state} requires lateNoticeReason`,
         );
       }
       lateNoticeReason = input.lateNoticeReason ?? null;
@@ -2537,8 +2550,6 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
       clientId: input.clientId,
       locationId: location.id,
       position: input.position,
-      startsAt,
-      endsAt,
       location: input.location ?? null,
       hourlyRate: input.hourlyRate ?? null,
       payRate: input.payRate ?? null,
@@ -2550,81 +2561,127 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
     };
     const openCount = input.openCount ?? 0;
 
-    // Associates who declared this day unavailable (approved time off or a
+    // Associates who declared a day unavailable (approved time off or a
     // one-off day off) are skipped like conflicts — a bulk assign must not
-    // steamroll a day someone said they can't work.
-    const unavailableIds = await blockedForWindow(
-      candidateIds,
-      startsAt,
-      endsAt,
-      location.timezone ?? DEFAULT_TIMEZONE,
+    // steamroll a day someone said they can't work. Checked per occurrence:
+    // being off Tuesday doesn't block their Monday copy.
+    const unavailableByOcc = await Promise.all(
+      occurrences.map((o) =>
+        blockedForWindow(
+          candidateIds,
+          o.startsAt,
+          o.endsAt,
+          location.timezone ?? DEFAULT_TIMEZONE,
+        ),
+      ),
     );
 
-    // Conflict-check + create everything atomically.
-    const { createdIds, toAssign, conflictedSkips } = await prisma.$transaction(
-      async (tx) => {
-        const conflictRows =
-          candidateIds.length > 0
-            ? await tx.shift.findMany({
-                where: {
-                  assignedAssociateId: { in: candidateIds },
-                  status: { notIn: ['CANCELLED'] },
-                  startsAt: { lt: endsAt },
-                  endsAt: { gt: startsAt },
-                },
-                select: { assignedAssociateId: true },
-              })
-            : [];
-        const conflicted = new Set(conflictRows.map((r) => r.assignedAssociateId));
-        const toAssign = candidateIds.filter(
-          (id) => !conflicted.has(id) && !unavailableIds.has(id),
-        );
-        const conflictedSkips = candidateIds
-          .filter((id) => conflicted.has(id) || unavailableIds.has(id))
-          .map((id) => ({
-            associateId: id,
-            associateName: nameById.get(id)!,
-            reason: conflicted.has(id) ? 'already_scheduled' : 'day_unavailable',
-          }));
+    // Conflict-check + create everything atomically, one pass per day copy.
+    const { createdIds, assignedCount, conflictedSkips, notifyList } =
+      await prisma.$transaction(
+        async (tx) => {
+          const createdIds: string[] = [];
+          const conflictedSkips: {
+            associateId: string;
+            associateName: string;
+            reason: string;
+            startsAt: string;
+          }[] = [];
+          const notifyList: {
+            associateId: string;
+            startsAt: Date;
+            endsAt: Date;
+          }[] = [];
+          let assignedCount = 0;
 
-        if (toAssign.length > 0) {
-          await tx.shift.createMany({
-            data: toAssign.map((associateId) => ({
-              ...baseData,
-              assignedAssociateId: associateId,
-              assignedAt: now,
-            })),
-          });
-        }
-        if (openCount > 0) {
-          await tx.shift.createMany({
-            data: Array.from({ length: openCount }, () => ({ ...baseData })),
-          });
-        }
-        // Pull the ids we just made (this manager, this exact window +
-        // position) so the audit log references them.
-        const rows = await tx.shift.findMany({
-          where: {
-            createdById: req.user!.id,
-            clientId: input.clientId,
-            locationId: location.id,
-            position: input.position,
-            startsAt,
-            endsAt,
-            createdAt: { gte: now },
-          },
-          select: { id: true },
-        });
-        return { createdIds: rows.map((r) => r.id), toAssign, conflictedSkips };
-      },
-      // This transaction does a conflict scan + up to two createMany + an id
-      // fetch; the default 5s interactive-transaction window is tight for a
-      // large bulk on a cold pool, so give it room.
-      { timeout: 20_000 },
-    );
+          for (let i = 0; i < occurrences.length; i++) {
+            const occ = occurrences[i];
+            const unavailableIds = unavailableByOcc[i];
+            const conflictRows =
+              candidateIds.length > 0
+                ? await tx.shift.findMany({
+                    where: {
+                      assignedAssociateId: { in: candidateIds },
+                      status: { notIn: ['CANCELLED'] },
+                      startsAt: { lt: occ.endsAt },
+                      endsAt: { gt: occ.startsAt },
+                    },
+                    select: { assignedAssociateId: true },
+                  })
+                : [];
+            const conflicted = new Set(
+              conflictRows.map((r) => r.assignedAssociateId),
+            );
+            const toAssign = candidateIds.filter(
+              (id) => !conflicted.has(id) && !unavailableIds.has(id),
+            );
+            conflictedSkips.push(
+              ...candidateIds
+                .filter((id) => conflicted.has(id) || unavailableIds.has(id))
+                .map((id) => ({
+                  associateId: id,
+                  associateName: nameById.get(id)!,
+                  reason: conflicted.has(id)
+                    ? 'already_scheduled'
+                    : 'day_unavailable',
+                  startsAt: occ.startsAt.toISOString(),
+                })),
+            );
+
+            if (toAssign.length > 0) {
+              await tx.shift.createMany({
+                data: toAssign.map((associateId) => ({
+                  ...baseData,
+                  startsAt: occ.startsAt,
+                  endsAt: occ.endsAt,
+                  assignedAssociateId: associateId,
+                  assignedAt: now,
+                })),
+              });
+            }
+            if (openCount > 0) {
+              await tx.shift.createMany({
+                data: Array.from({ length: openCount }, () => ({
+                  ...baseData,
+                  startsAt: occ.startsAt,
+                  endsAt: occ.endsAt,
+                })),
+              });
+            }
+            assignedCount += toAssign.length;
+            notifyList.push(
+              ...toAssign.map((associateId) => ({
+                associateId,
+                startsAt: occ.startsAt,
+                endsAt: occ.endsAt,
+              })),
+            );
+            // Pull the ids we just made (this manager, this exact window +
+            // position) so the audit log references them.
+            const rows = await tx.shift.findMany({
+              where: {
+                createdById: req.user!.id,
+                clientId: input.clientId,
+                locationId: location.id,
+                position: input.position,
+                startsAt: occ.startsAt,
+                endsAt: occ.endsAt,
+                createdAt: { gte: now },
+              },
+              select: { id: true },
+            });
+            createdIds.push(...rows.map((r) => r.id));
+          }
+          return { createdIds, assignedCount, conflictedSkips, notifyList };
+        },
+        // Conflict scan + up to two createMany + an id fetch PER DAY COPY;
+        // the default 5s interactive-transaction window is tight for a
+        // large multi-day bulk on a cold pool, so give it room.
+        { timeout: 30_000 },
+      );
 
     const skipped = [...notFoundSkips, ...conflictedSkips];
-    const createdCount = toAssign.length + openCount;
+    const createdCount = assignedCount + openCount * occurrences.length;
     await recordShiftEvent({
       actorUserId: req.user!.id,
       action: 'shift.bulk_created',
@@ -2633,8 +2690,9 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
       metadata: {
         position: input.position,
         status,
-        assigned: toAssign.length,
-        openSlots: openCount,
+        assigned: assignedCount,
+        openSlots: openCount * occurrences.length,
+        days: occurrences.length,
         skipped: skipped.length,
         ...(lateNoticeReason ? { lateNoticeReason, lateNotice: true } : {}),
       },
@@ -2642,18 +2700,19 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
     });
 
     // Notify each assigned associate only if the shift is already published
-    // (drafts stay private until the week is published).
+    // (drafts stay private until the week is published). One note per day
+    // copy — each is its own shift on their calendar.
     if (publishedAt) {
-      const line = formatShiftLine({
-        position: input.position,
-        clientName: client.name,
-        startsAt,
-        endsAt,
-        timezone: location.timezone,
-      });
-      for (const associateId of toAssign) {
+      for (const n of notifyList) {
+        const line = formatShiftLine({
+          position: input.position,
+          clientName: client.name,
+          startsAt: n.startsAt,
+          endsAt: n.endsAt,
+          timezone: location.timezone,
+        });
         void notifyShift(prisma, {
-          associateId,
+          associateId: n.associateId,
           subject: 'New shift',
           body: `You've been assigned: ${line}`,
           category: 'shift_assigned',

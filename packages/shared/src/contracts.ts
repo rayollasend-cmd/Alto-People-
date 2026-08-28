@@ -1792,6 +1792,26 @@ export const BulkCreateShiftsInputSchema = z
     associateIds: z.array(UuidSchema).max(200),
     /** Extra unassigned copies (open slots) to create. */
     openCount: z.number().int().min(0).max(100).optional(),
+    /**
+     * Additional day copies of the SAME shift definition (the create
+     * dialog's "also on Tue/Wed/Thu" chips): every employee + open slot
+     * is stamped once per occurrence, each conflict-checked per day.
+     * Max 6 — the rest of the org week beyond the primary date.
+     */
+    extraOccurrences: z
+      .array(
+        z
+          .object({
+            startsAt: z.string().datetime(),
+            endsAt: z.string().datetime(),
+          })
+          .refine((v) => new Date(v.endsAt) > new Date(v.startsAt), {
+            message: 'endsAt must be after startsAt',
+            path: ['endsAt'],
+          }),
+      )
+      .max(6)
+      .optional(),
   })
   .refine((v) => new Date(v.endsAt) > new Date(v.startsAt), {
     message: 'endsAt must be after startsAt',
@@ -1812,6 +1832,9 @@ export const BulkCreateShiftsResponseSchema = z.object({
       associateId: UuidSchema,
       associateName: z.string(),
       reason: z.string(),
+      /** Which day copy the skip applies to (multi-day creates). Absent =
+       *  the primary date (single-day creates, pre-multi-day clients). */
+      startsAt: z.string().datetime().optional(),
     }),
   ),
 });
