@@ -327,16 +327,45 @@ export function WeekCalendarView({
   // live conflict overlay (red tint) where dropping would create an
   // overlap with that associate's existing shifts on that day.
   const [activeDragShift, setActiveDragShift] = useState<Shift | null>(null);
+  // Row-reorder drag in flight — enables the per-row drop targets (kept
+  // disabled otherwise so shift drags can never land on a row by mistake).
+  const [draggingRowId, setDraggingRowId] = useState<string | null>(null);
 
   const handleDragStart = (e: DragStartEvent) => {
-    const shiftId = String(e.active.id);
-    const s = shifts.find((x) => x.id === shiftId) ?? null;
+    const id = String(e.active.id);
+    if (id.startsWith('rowmove:')) {
+      setDraggingRowId(id.slice('rowmove:'.length));
+      return;
+    }
+    const s = shifts.find((x) => x.id === id) ?? null;
     setActiveDragShift(s);
   };
 
   const handleDragEnd = async (e: DragEndEvent) => {
     setActiveDragShift(null);
-    const shiftId = String(e.active.id);
+    const activeId = String(e.active.id);
+    if (activeId.startsWith('rowmove:')) {
+      // Row reorder: drop anywhere on the target row — its name cell OR any
+      // of its day cells (the cell id carries the associate id) — and the
+      // move lands above/below that row depending on travel direction.
+      setDraggingRowId(null);
+      if (!onReorderRow) return;
+      const moveId = activeId.slice('rowmove:'.length);
+      const overId = e.over ? String(e.over.id) : null;
+      if (!overId) return;
+      const targetId = overId.startsWith('rowdrop:')
+        ? overId.slice('rowdrop:'.length)
+        : overId.startsWith('cell:')
+          ? overId.split(':')[1]
+          : null;
+      if (!targetId || targetId === UNASSIGNED_ROW_ID || targetId === moveId) return;
+      const from = visibleAssociates.findIndex((a) => a.id === moveId);
+      const to = visibleAssociates.findIndex((a) => a.id === targetId);
+      if (from === -1 || to === -1) return;
+      onReorderRow(moveId, targetId, from < to ? 1 : -1);
+      return;
+    }
+    const shiftId = activeId;
     const overId = e.over ? String(e.over.id) : null;
     if (!overId || !overId.startsWith('cell:')) return;
     const [, associateRaw, dayMsRaw] = overId.split(':');
@@ -425,7 +454,10 @@ export function WeekCalendarView({
       sensors={sensors}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
-      onDragCancel={() => setActiveDragShift(null)}
+      onDragCancel={() => {
+        setActiveDragShift(null);
+        setDraggingRowId(null);
+      }}
     >
       <div className="rounded-md border border-navy-secondary bg-navy/40 overflow-x-auto">
         <div style={minWidthStyle}>
@@ -520,6 +552,8 @@ export function WeekCalendarView({
                 overTime={overTime}
                 nearOT={nearOT}
                 colsStyle={colsStyle}
+                reorderArmed={!!onReorderRow}
+                rowDragActive={draggingRowId !== null}
                 onMoveUp={
                   onReorderRow && index > 0
                     ? () => onReorderRow(a.id, visibleAssociates[index - 1].id, -1)
@@ -665,6 +699,8 @@ const Row = memo(function Row({
   nearOT,
   colsStyle,
   children,
+  reorderArmed = false,
+  rowDragActive = false,
   onMoveUp,
   onMoveDown,
 }: {
@@ -676,14 +712,62 @@ const Row = memo(function Row({
   /** Shared column template — every row grid matches the header's. */
   colsStyle: React.CSSProperties;
   children: React.ReactNode;
+  /** Reordering available in this view state — shows the grip + arrows. */
+  reorderArmed?: boolean;
+  /** A row drag is in flight somewhere — arms this row's drop target. */
+  rowDragActive?: boolean;
   /** Whiteboard-order controls; undefined = hidden (edge rows / view states). */
   onMoveUp?: () => void;
   onMoveDown?: () => void;
 }) {
   const initials = `${associate.firstName[0] ?? ''}${associate.lastName[0] ?? ''}`.toUpperCase();
+  // Row-reorder drag: the grip is the draggable, the name cell the drop
+  // target. The droppable stays DISABLED unless a row drag is in flight so
+  // shift-chip drags can never resolve onto a row target by accident.
+  const rowDrag = useDraggable({
+    id: `rowmove:${associate.id}`,
+    disabled: !reorderArmed,
+  });
+  const rowDrop = useDroppable({
+    id: `rowdrop:${associate.id}`,
+    disabled: !rowDragActive,
+  });
+  const dragStyle: React.CSSProperties = rowDrag.transform
+    ? {
+        // Vertical-only: a roster row can move up or down, never sideways.
+        transform: `translate3d(0, ${rowDrag.transform.y}px, 0)`,
+        zIndex: 60,
+        position: 'relative',
+      }
+    : {};
   return (
-    <div className="grid" style={colsStyle}>
-      <div className="group/row sticky left-0 z-10 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-3 flex items-center gap-2.5">
+    <div
+      className={cn('grid', rowDrag.isDragging && 'opacity-90')}
+      style={{ ...colsStyle, ...dragStyle }}
+    >
+      <div
+        ref={rowDrop.setNodeRef}
+        className={cn(
+          'group/row sticky left-0 z-10 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-3 flex items-center gap-2.5',
+          rowDrag.isDragging && 'ring-1 ring-gold/60',
+          rowDrop.isOver && rowDragActive &&
+            'bg-gold/15 outline outline-1 outline-gold/50 -outline-offset-1',
+        )}
+      >
+        {/* Drag handle: grab a row and drop it on another row (name cell
+            or any of its day cells) to reposition. Same anchor-move save
+            as the arrows. Touch uses the grid's 250ms hold-to-drag. */}
+        {reorderArmed && (
+          <div
+            ref={rowDrag.setNodeRef}
+            {...rowDrag.listeners}
+            {...rowDrag.attributes}
+            className={cn(GRIP_HIT, 'shrink-0 touch-none')}
+            aria-label={`Drag to reorder ${associate.firstName} ${associate.lastName}`}
+          >
+            <GripVertical className={GRIP_ICON} />
+          </div>
+        )}
         {/* Always visible when armed — the old hover-reveal made the
             feature invisible on tablets (no hover) and undiscoverable
             with a mouse. */}
