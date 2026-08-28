@@ -126,7 +126,18 @@ export type Capability =
   | 'asn:read:schedule'
   | 'asn:read:roster'
   | 'asn:read:clocked-in'
-  | 'asn:read:kpis';
+  | 'asn:read:kpis'
+  // Store Operations (SOP checklists, ops shifts, handover):
+  //  - run:ops-shifts     open/run/close an operational shift — the shift
+  //    supervisor's tool on the floor (client-clamped for bounded roles).
+  //  - view:ops           the oversight board + scorecards (regional ops,
+  //    HR admin, the chairman).
+  //  - manage:ops-library edit the SOP standard itself. Per the owner's
+  //    explicit call this is the ONE write the Executive/Chairman holds —
+  //    the exec portal stays read-only everywhere else.
+  | 'run:ops-shifts'
+  | 'view:ops'
+  | 'manage:ops-library';
 
 const ALL_VIEWS: Capability[] = [
   'view:dashboard',
@@ -177,6 +188,9 @@ const FULL_ADMIN: Capability[] = [
   'view:audit',
   'view:executive',
   'view:time-live',
+  'view:ops',
+  'run:ops-shifts',
+  'manage:ops-library',
 ];
 
 export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
@@ -185,6 +199,9 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:audit',
     'view:executive',
     'view:time-live',
+    // Store-ops oversight + the chairman's ONE write: the SOP standard.
+    'view:ops',
+    'manage:ops-library',
   ]),
   // Gap 10 — HR Admin holds all three reimbursement caps so they can act
   // as the manager fallback when an associate has no direct manager and
@@ -264,6 +281,9 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'manage:scheduling',
     'view:onboarding',
     'invite:onboarding',
+    // Run their store's operational shifts (SOP checklist, tasks,
+    // handover). Client-clamped; the library and board stay above them.
+    'run:ops-shifts',
     // The in-app inbox/bell. Without it, notifications routed to
     // supervisors (shift claims, swaps, no-shows at their site) land in a
     // mailbox they can't open — associates hold this for the same reason.

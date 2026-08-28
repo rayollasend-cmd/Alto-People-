@@ -126,6 +126,48 @@ export async function computeRoleDecisions(
       });
     }
   }
+  // Store-ops floor signals — keys mirrored with the executive engine
+  // (same convention as time:unapproved: scoped for bounded supervisors,
+  // plain for org-wide roles).
+  if (can('view:ops') || can('run:ops-shifts')) {
+    const dayAgo = new Date(now.getTime() - DAY_MS);
+    const [tempAlerts, incompleteCloses] = await Promise.all([
+      prisma.opsTask.count({
+        where: {
+          tempOutOfRange: true,
+          updatedAt: { gte: dayAgo },
+          opsShift: { is: { ...clientClamp } },
+        },
+      }),
+      prisma.opsShift.count({
+        where: { closedIncomplete: true, closedAt: { gte: dayAgo }, ...clientClamp },
+      }),
+    ]);
+    if (tempAlerts > 0) {
+      out.push({
+        key: scoped('ops:temp-alerts'),
+        domain: 'site-ops',
+        severity: 'critical',
+        label: `${tempAlerts} temperature reading${tempAlerts === 1 ? '' : 's'} out of range`,
+        detail: 'Food-safety equipment may be failing — check the cases and log the fix.',
+        stakes: null,
+        ageDays: null,
+        linkUrl: '/ops',
+      });
+    }
+    if (incompleteCloses > 0) {
+      out.push({
+        key: scoped('ops:incomplete'),
+        domain: 'site-ops',
+        severity: 'high',
+        label: `${incompleteCloses} ops shift${incompleteCloses === 1 ? '' : 's'} closed with required work unfinished`,
+        detail: 'The record says the standard was not met — read the closing notes and follow up.',
+        stakes: null,
+        ageDays: null,
+        linkUrl: '/ops',
+      });
+    }
+  }
   if (can('manage:scheduling')) {
     const [openToday, claims] = await Promise.all([
       prisma.shift.count({

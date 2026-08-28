@@ -74,6 +74,16 @@ export interface ServiceReportData {
     paid: boolean;
     amount: number | null;
   }[];
+  /** Store-ops evidence for the week (null until the ops module has runs). */
+  ops: {
+    shifts: number;
+    sopPct: number | null;
+    tempChecks: number;
+    tempOutOfRange: number;
+    incompleteCloses: number;
+    handoverItems: number;
+    photos: Buffer[];
+  } | null;
 }
 
 const DAY_LABEL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -284,6 +294,66 @@ export async function buildClientServiceReport(
     tomorrowConfirmed: tomorrowList.filter((s) => s.acknowledgedAt).length,
   };
 
+  // ---- Store-ops evidence for the week ----------------------------------
+  const opsShifts = await prisma.opsShift.findMany({
+    where: {
+      clientId,
+      dateKey: { gte: startKey, lte: orgDateKey(new Date(start.getTime() + 6 * 24 * 3_600_000)) },
+    },
+    select: {
+      id: true,
+      status: true,
+      sopDone: true,
+      sopTotal: true,
+      closedIncomplete: true,
+    },
+    take: 200,
+  });
+  let ops: ServiceReportData['ops'] = null;
+  if (opsShifts.length > 0) {
+    const shiftIds = opsShifts.map((s) => s.id);
+    const [tempAgg, handoverItems, photoRows] = await Promise.all([
+      prisma.opsTask.groupBy({
+        by: ['tempOutOfRange'],
+        where: {
+          opsShiftId: { in: shiftIds },
+          responseType: 'TEMPERATURE',
+          answerNumber: { not: null },
+        },
+        _count: { _all: true },
+      }),
+      prisma.opsHandoverItem.count({ where: { fromShiftId: { in: shiftIds } } }),
+      prisma.opsTaskPhoto.findMany({
+        where: { task: { is: { opsShiftId: { in: shiftIds } } } },
+        orderBy: { createdAt: 'desc' },
+        take: 3,
+        select: { s3Key: true },
+      }),
+    ]);
+    const sopDone = opsShifts.reduce((n, s) => n + s.sopDone, 0);
+    const sopTotal = opsShifts.reduce((n, s) => n + s.sopTotal, 0);
+    const inRange = tempAgg.find((r) => !r.tempOutOfRange)?._count._all ?? 0;
+    const outRange = tempAgg.find((r) => r.tempOutOfRange)?._count._all ?? 0;
+    const photos: Buffer[] = [];
+    for (const p of photoRows) {
+      try {
+        const buf = await blobStore.get(p.s3Key);
+        if (buf) photos.push(buf);
+      } catch {
+        /* best-effort highlight */
+      }
+    }
+    ops = {
+      shifts: opsShifts.length,
+      sopPct: sopTotal > 0 ? Math.round((sopDone / sopTotal) * 100) : null,
+      tempChecks: inRange + outRange,
+      tempOutOfRange: outRange,
+      incompleteCloses: opsShifts.filter((s) => s.closedIncomplete).length,
+      handoverItems,
+      photos,
+    };
+  }
+
   const statementRows = await prisma.clientStatement.findMany({
     where: { clientId },
     orderBy: { periodStart: 'desc' },
@@ -334,6 +404,7 @@ export async function buildClientServiceReport(
     reliability: { noShows, noShowsCovered, pickupsApproved },
     nextWeek,
     statements,
+    ops,
   };
 }
 
@@ -722,6 +793,58 @@ export function renderClientServiceReportPdf(data: ServiceReportData): Promise<B
           });
         }
         doc.y = y + 12;
+      }
+    }
+
+    // ---- Operational excellence (store-ops evidence) -----------------------
+    if (data.ops) {
+      section('Operational excellence');
+      doc
+        .font('Helvetica')
+        .fontSize(9)
+        .fillColor(GREY)
+        .text(
+          `${data.ops.shifts} supervised operational shift${data.ops.shifts === 1 ? '' : 's'} ran on documented SOP checklists this week` +
+            (data.ops.sopPct != null ? ` — SOP compliance ${data.ops.sopPct}%` : '') +
+            `. ${data.ops.tempChecks} logged temperature check${data.ops.tempChecks === 1 ? '' : 's'}` +
+            (data.ops.tempOutOfRange === 0
+              ? ', all in range'
+              : `, ${data.ops.tempOutOfRange} flagged and escalated the moment they were recorded`) +
+            `. ${data.ops.handoverItems} shift-to-shift handover item${data.ops.handoverItems === 1 ? '' : 's'} tracked to a decision — nothing left on paper.` +
+            (data.ops.incompleteCloses > 0
+              ? ` ${data.ops.incompleteCloses} shift${data.ops.incompleteCloses === 1 ? '' : 's'} closed with open items, visible to our operations team for follow-up.`
+              : ''),
+          left,
+          doc.y,
+          { width },
+        );
+      if (data.ops.photos.length > 0) {
+        doc.y += 6;
+        ensure(96);
+        const ph = 84;
+        const pw = (width - 16) / 3;
+        data.ops.photos.forEach((photo, i) => {
+          const x = left + i * (pw + 8);
+          try {
+            doc.save();
+            doc.roundedRect(x, doc.y, pw, ph, 6).clip();
+            doc.image(photo, x, doc.y, { width: pw, height: ph });
+            doc.restore();
+          } catch {
+            try {
+              doc.restore();
+            } catch {
+              /* no dangling save */
+            }
+          }
+        });
+        doc.y += ph + 8;
+        doc
+          .font('Helvetica')
+          .fontSize(7)
+          .fillColor(LIGHT)
+          .text('From the floor this week — captured by our shift supervisors.', left, doc.y);
+        doc.y += 12;
       }
     }
 

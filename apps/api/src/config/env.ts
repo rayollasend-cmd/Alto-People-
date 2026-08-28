@@ -122,6 +122,10 @@ const EnvSchema = z.object({
   // unaccepted after 3 days and abandoned onboardings after 10 idle days
   // (final notice at 8). On by default (6h scan). Set 0 to disable.
   ONBOARDING_PURGE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
+  // Store-ops evening digest (lib/opsDigest.ts): summarizes each store's
+  // ops shifts once per org-day after 8pm. On by default (hourly scan).
+  // Set 0 to disable.
+  OPS_DIGEST_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
   // Manual compliance attestation reminder cron. 0 (default) disables;
   // production should set 3600 (hourly) so HR gets pinged the day a
   // weekly/monthly compliance attestation comes due. Per-signal de-dup

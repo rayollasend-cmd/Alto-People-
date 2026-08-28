@@ -421,6 +421,14 @@ model User {
   receivedNotifications             Notification[]                @relation("NotificationRecipient")
   authoredReviews                   PerformanceReview[]           @relation("PerformanceReviewer")
   inviteTokens                      InviteToken[]
+  // Store-ops back-relations.
+  opsSopTemplatesCreated            OpsSopTemplate[]              @relation("OpsSopTemplateCreator")
+  opsShiftsOpened                   OpsShift[]                    @relation("OpsShiftOpener")
+  opsShiftsClosed                   OpsShift[]                    @relation("OpsShiftCloser")
+  opsTasksCompleted                 OpsTask[]                     @relation("OpsTaskCompleter")
+  opsTasksCreated                   OpsTask[]                     @relation("OpsTaskCreator")
+  opsPhotosUploaded                 OpsTaskPhoto[]                @relation("OpsPhotoUploader")
+  opsHandoverDecisions              OpsHandoverItem[]             @relation("OpsHandoverDecider")
   passwordResetTokens               PasswordResetToken[]
   mfaRecoveryCodes                  MfaRecoveryCode[]
   webauthnCredentials               WebAuthnCredential[]
@@ -603,6 +611,7 @@ model Client {
   templates              OnboardingTemplate[]
   shifts                 Shift[]
   statements             ClientStatement[]
+  opsShifts              OpsShift[]
   payrollRuns            PayrollRun[]
   // Wave 1.1 — Pay schedules scoped to this client.
   payrollSchedules       PayrollSchedule[]
@@ -1313,6 +1322,9 @@ model Associate {
   assignments              AssociateAssignment[]
   // Standing shift-crew memberships (scheduling roster filter).
   teamMemberships          ShiftTeamMember[]
+  // Store-ops tasks where a supervisor tagged this associate as the one
+  // who did the physical work.
+  opsTasksDone             OpsTask[]                 @relation("OpsTaskDoneBy")
   // Tier-2 — manual earning lines attached to draft runs.
   payrollRunAddOns         PayrollRunAddOn[]
 
@@ -1574,6 +1586,222 @@ enum ExternalPaymentMethod {
   CASH
   PAYROLL_PROVIDER
   OTHER
+}
+
+// ===== Store Operations (SOPs, ops shifts, handover) =====================
+
+enum OpsPeriod {
+  MORNING
+  EVENING
+  CLOSING
+  OVERNIGHT
+}
+
+enum OpsShiftStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum OpsResponseType {
+  CHECK
+  YES_NO
+  YES_NO_PARTIAL
+  TEXT
+  NUMBER
+  TEMPERATURE
+  PHOTO
+}
+
+enum OpsTaskSource {
+  SOP
+  ADHOC
+  CARRYOVER
+}
+
+enum OpsTaskStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+  BLOCKED
+}
+
+enum OpsPriority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum OpsHandoverKind {
+  NOTE
+  UNFINISHED_TASK
+  SPECIAL_ORDER
+  COACH_COMPLAINT
+  EQUIPMENT
+  STOCKING
+}
+
+enum OpsHandoverStatus {
+  PENDING
+  CARRIED
+  DISMISSED
+  REVIEWED
+}
+
+// A reusable department+period checklist standard. "Delete" = retire:
+// running shifts snapshot their tasks (OpsTask rows carry full content),
+// so history never changes when the library does.
+model OpsSopTemplate {
+  id          String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  department  String             @db.VarChar(80)
+  period      OpsPeriod
+  description String?            @db.VarChar(500)
+  active      Boolean            @default(true)
+  retiredAt   DateTime?          @db.Timestamptz(6)
+  createdById String?            @db.Uuid
+  createdBy   User?              @relation("OpsSopTemplateCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  tasks       OpsSopTemplateTask[]
+  createdAt   DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime           @updatedAt @db.Timestamptz(6)
+
+  @@index([department, period, active])
+}
+
+model OpsSopTemplateTask {
+  id            String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateId    String          @db.Uuid
+  template      OpsSopTemplate  @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  section       String          @db.VarChar(80)
+  order         Int
+  title         String          @db.VarChar(300)
+  instructions  String?         @db.VarChar(1000)
+  responseType  OpsResponseType @default(CHECK)
+  required      Boolean         @default(true)
+  photoRequired Boolean         @default(false)
+  tempLabel     String?         @db.VarChar(80)
+  tempMin       Decimal?        @db.Decimal(6, 1)
+  tempMax       Decimal?        @db.Decimal(6, 1)
+
+  @@index([templateId, order])
+}
+
+// One supervisor-run operational shift: "Frozen & Dairy · Store 101 ·
+// Morning · 2026-08-29". Header facts auto-populate from scheduling and
+// the kiosk; the checklist snapshots from the SOP library at open.
+model OpsShift {
+  id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId           String         @db.Uuid
+  client             Client         @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  department         String         @db.VarChar(80)
+  period             OpsPeriod
+  position           String         @db.VarChar(120)
+  dateKey            String         @db.VarChar(10)
+  status             OpsShiftStatus @default(ACTIVE)
+  openedById         String         @db.Uuid
+  openedBy           User           @relation("OpsShiftOpener", fields: [openedById], references: [id], onDelete: Restrict)
+  openedAt           DateTime       @default(now()) @db.Timestamptz(6)
+  closedById         String?        @db.Uuid
+  closedBy           User?          @relation("OpsShiftCloser", fields: [closedById], references: [id], onDelete: SetNull)
+  closedAt           DateTime?      @db.Timestamptz(6)
+  scheduledHeadcount Int            @default(0)
+  actualHeadcount    Int            @default(0)
+  templateId         String?        @db.Uuid
+  templateName       String?        @db.VarChar(200)
+  // Stamped at close so scorecards never recount task rows.
+  sopTotal           Int            @default(0)
+  sopDone            Int            @default(0)
+  taskTotal          Int            @default(0)
+  taskDone           Int            @default(0)
+  closedIncomplete   Boolean        @default(false)
+  tempAlerts         Int            @default(0)
+  closingSummary     String?        @db.VarChar(2000)
+  tasks              OpsTask[]
+  handoverOut        OpsHandoverItem[] @relation("HandoverFrom")
+  handoverDecided    OpsHandoverItem[] @relation("HandoverDecidedIn")
+
+  @@index([clientId, dateKey])
+  @@index([clientId, department, status])
+  @@index([status, openedAt])
+}
+
+model OpsTask {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  opsShiftId      String          @db.Uuid
+  opsShift        OpsShift        @relation(fields: [opsShiftId], references: [id], onDelete: Cascade)
+  source          OpsTaskSource   @default(SOP)
+  templateTaskId  String?         @db.Uuid
+  section         String?         @db.VarChar(80)
+  order           Int             @default(0)
+  title           String          @db.VarChar(300)
+  instructions    String?         @db.VarChar(1000)
+  priority        OpsPriority     @default(MEDIUM)
+  status          OpsTaskStatus   @default(OPEN)
+  responseType    OpsResponseType @default(CHECK)
+  required        Boolean         @default(true)
+  photoRequired   Boolean         @default(false)
+  tempLabel       String?         @db.VarChar(80)
+  tempMin         Decimal?        @db.Decimal(6, 1)
+  tempMax         Decimal?        @db.Decimal(6, 1)
+  answerChoice    String?         @db.VarChar(10)
+  answerNumber    Decimal?        @db.Decimal(12, 2)
+  answerText      String?         @db.VarChar(2000)
+  tempOutOfRange  Boolean         @default(false)
+  note            String?         @db.VarChar(1000)
+  blockedReason   String?         @db.VarChar(500)
+  // Who did the PHYSICAL work (associates never log in here) — tagged by
+  // the supervisor from the clocked-in list.
+  doneAssociateId String?         @db.Uuid
+  doneAssociate   Associate?      @relation("OpsTaskDoneBy", fields: [doneAssociateId], references: [id], onDelete: SetNull)
+  completedById   String?         @db.Uuid
+  completedBy     User?           @relation("OpsTaskCompleter", fields: [completedById], references: [id], onDelete: SetNull)
+  completedAt     DateTime?       @db.Timestamptz(6)
+  createdById     String?         @db.Uuid
+  createdBy       User?           @relation("OpsTaskCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime        @updatedAt @db.Timestamptz(6)
+  photos          OpsTaskPhoto[]
+  carriedFrom     OpsHandoverItem[] @relation("HandoverCarriedTask")
+
+  @@index([opsShiftId, order])
+  @@index([tempOutOfRange])
+}
+
+model OpsTaskPhoto {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  taskId       String   @db.Uuid
+  task         OpsTask  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  s3Key        String
+  filename     String   @db.VarChar(255)
+  mimeType     String   @db.VarChar(100)
+  size         Int
+  uploadedById String?  @db.Uuid
+  uploadedBy   User?    @relation("OpsPhotoUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([taskId])
+}
+
+// What one shift tells the next. PENDING items surface as the FIRST
+// screen when the next supervisor opens the same department — each must
+// be explicitly Carried, Dismissed, or Reviewed, on the record.
+model OpsHandoverItem {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fromShiftId      String            @db.Uuid
+  fromShift        OpsShift          @relation("HandoverFrom", fields: [fromShiftId], references: [id], onDelete: Cascade)
+  kind             OpsHandoverKind   @default(NOTE)
+  body             String            @db.VarChar(1000)
+  priority         OpsPriority       @default(MEDIUM)
+  status           OpsHandoverStatus @default(PENDING)
+  decidedById      String?           @db.Uuid
+  decidedBy        User?             @relation("OpsHandoverDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  decidedAt        DateTime?         @db.Timestamptz(6)
+  decidedInShiftId String?           @db.Uuid
+  decidedInShift   OpsShift?         @relation("HandoverDecidedIn", fields: [decidedInShiftId], references: [id], onDelete: SetNull)
+  carriedTaskId    String?           @db.Uuid
+  carriedTask      OpsTask?          @relation("HandoverCarriedTask", fields: [carriedTaskId], references: [id], onDelete: SetNull)
+  createdAt        DateTime          @default(now()) @db.Timestamptz(6)
+
+  @@index([fromShiftId, status])
 }
 
 model Signature {

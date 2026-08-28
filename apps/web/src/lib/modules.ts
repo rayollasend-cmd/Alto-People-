@@ -8,6 +8,7 @@ export type ModuleKey =
   | 'kiosk'
   | 'time-off'
   | 'scheduling'
+  | 'ops'
   | 'labor-costs'
   | 'approvals'
   | 'payroll'
@@ -116,6 +117,7 @@ export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'pulse',
   'clients',
   'labor-costs',
+  'ops',
   'compensation',
   'compliance',
   'audit',
@@ -501,6 +503,16 @@ export const MODULES: ModuleNav[] = [
     description:
       'Shift planning, fill rate tracking, and assignment management.',
     requires: 'view:scheduling',
+    group: 'time-and-pay',
+  },
+  {
+    key: 'ops',
+    path: '/ops',
+    label: 'Store Ops',
+    description:
+      'SOP checklists, live operational shifts, shift-to-shift handover, and the standards library.',
+    requires: 'run:ops-shifts',
+    requiresAny: ['run:ops-shifts', 'view:ops'],
     group: 'time-and-pay',
   },
   {

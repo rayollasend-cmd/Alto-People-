@@ -21,6 +21,8 @@ import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtMoney } from '@/lib/format';
 import { floorNow, otOutlook } from '@/lib/schedulingApi';
+import { getOpsBoard, getOpsScorecard } from '@/lib/opsApi';
+import { cn } from '@/lib/cn';
 import { DecisionRoom } from '@/components/DecisionRoom';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
@@ -244,6 +246,80 @@ const CATEGORY_LABEL: Record<string, string> = {
 
 /** The chairman's queue — stakes-ranked, workable (dismiss/snooze/delegate),
  *  with delegated items held visible until their condition resolves. */
+/**
+ * The chairman's window into the floor: last-4-weeks SOP compliance per
+ * store/department plus the live count — "are they doing the work" at a
+ * glance, with the full board one click away.
+ */
+function OpsPulseCard() {
+  const [data, setData] = useState<Awaited<ReturnType<typeof getOpsScorecard>> | null>(null);
+  const [live, setLive] = useState<number | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    getOpsScorecard(4)
+      .then(setData)
+      .catch(() => setFailed(true));
+    getOpsBoard()
+      .then((b) => setLive(b.active.length))
+      .catch(() => {});
+  }, []);
+  // Quiet until the ops module has real runs — no empty ceremony.
+  if (failed || !data || data.totals.shifts === 0) return null;
+  const worst = [...data.rows]
+    .filter((r) => r.sopPct != null)
+    .sort((a, b) => (a.sopPct ?? 0) - (b.sopPct ?? 0))[0];
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Store operations — last 4 weeks</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2 tabular-nums">
+          <div>
+            <div className="text-2xl font-semibold text-white">{data.totals.shifts}</div>
+            <div className="text-2xs uppercase tracking-wider text-silver/60">
+              SOP shifts run
+            </div>
+          </div>
+          <div>
+            <div
+              className={cn(
+                'text-2xl font-semibold',
+                data.totals.tempOutOfRange === 0 ? 'text-success' : 'text-alert',
+              )}
+            >
+              {data.totals.tempOutOfRange}
+            </div>
+            <div className="text-2xs uppercase tracking-wider text-silver/60">
+              temps out of range ({data.totals.tempChecks} checks)
+            </div>
+          </div>
+          {live != null && (
+            <div>
+              <div className="text-2xl font-semibold text-gold">{live}</div>
+              <div className="text-2xs uppercase tracking-wider text-silver/60">
+                running right now
+              </div>
+            </div>
+          )}
+        </div>
+        {worst && worst.sopPct != null && worst.sopPct < 90 && (
+          <p className="mt-3 text-xs text-warning">
+            Weakest standard: {worst.clientName} · {worst.department} at {worst.sopPct}% SOP
+            compliance.
+          </p>
+        )}
+        <Link
+          to="/ops"
+          className="mt-3 inline-flex items-center gap-1 text-xs text-gold hover:underline"
+        >
+          Open the ops board →
+        </Link>
+      </CardContent>
+    </Card>
+  );
+}
+
 function DecisionQueueCard({
   decisions,
   onChanged,
@@ -921,6 +997,8 @@ export function ExecutiveDashboard() {
           </Card>
 
           <DecisionQueueCard decisions={brief.decisions} onChanged={load} />
+
+          <OpsPulseCard />
         </div>
       )}
 

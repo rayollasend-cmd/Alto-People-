@@ -333,6 +333,43 @@ async function generateRaw(
       linkUrl: '/time-attendance',
     });
   }
+  // Store-ops floor signals — keys mirrored with the role engine so a
+  // supervisor's claim shows on the chairman's queue and vice versa.
+  {
+    const dayAgoOps = new Date(now.getTime() - DAY_MS);
+    const [opsTempAlerts, opsIncomplete] = await Promise.all([
+      prisma.opsTask.count({
+        where: { tempOutOfRange: true, updatedAt: { gte: dayAgoOps } },
+      }),
+      prisma.opsShift.count({
+        where: { closedIncomplete: true, closedAt: { gte: dayAgoOps } },
+      }),
+    ]);
+    if (opsTempAlerts > 0) {
+      out.push({
+        key: 'ops:temp-alerts',
+        category: 'run',
+        severity: 'critical',
+        label: `${opsTempAlerts} temperature reading${opsTempAlerts === 1 ? '' : 's'} out of range`,
+        detail: 'Food-safety equipment may be failing on a floor — ops should confirm the fix today.',
+        stakes: null,
+        ageDays: null,
+        linkUrl: '/ops',
+      });
+    }
+    if (opsIncomplete > 0) {
+      out.push({
+        key: 'ops:incomplete',
+        category: 'run',
+        severity: 'high',
+        label: `${opsIncomplete} ops shift${opsIncomplete === 1 ? '' : 's'} closed with required work unfinished`,
+        detail: 'The floor record says the standard was missed — read the closing notes.',
+        stakes: null,
+        ageDays: null,
+        linkUrl: '/ops',
+      });
+    }
+  }
   const supervisorClients = new Set(supervisors.map((s) => s.clientId).filter(Boolean));
   const workClients = new Map<string, string>();
   for (const a of clientsWithWork) workClients.set(a.location.clientId, a.location.client.name);
