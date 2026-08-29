@@ -13,7 +13,7 @@ import { enqueueAudit } from '../lib/audit.js';
 import { getBlobStore } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { notifyAllAdmins } from '../lib/notify.js';
-import { orgDateKey, utcInstantOfLocalMidnight } from '../lib/timeAnomalies.js';
+import { orgDateKey, startOfWeekUTC, utcInstantOfLocalMidnight } from '../lib/timeAnomalies.js';
 import {
   OPS_DEPARTMENTS,
   departmentForPosition,
@@ -107,6 +107,7 @@ const taskSelect = {
   tempMax: true,
   metricKey: true,
   unit: true,
+  parentTaskId: true,
   answerChoice: true,
   answerNumber: true,
   answerText: true,
@@ -136,6 +137,7 @@ function toTask(t: Prisma.OpsTaskGetPayload<{ select: typeof taskSelect }>) {
     tempMax: t.tempMax != null ? Number(t.tempMax) : null,
     metricKey: t.metricKey,
     unit: t.unit,
+    parentTaskId: t.parentTaskId,
     answerChoice: t.answerChoice,
     answerNumber: t.answerNumber != null ? Number(t.answerNumber) : null,
     answerText: t.answerText,
@@ -1155,6 +1157,37 @@ opsRouter.post('/shifts/:id/handover', RUN, async (req, res, next) => {
         priority: i.priority,
       })),
     });
+    // Client-relationship and maintenance signals don't wait for the next
+    // shift: coach complaints, equipment problems, and anything HIGH
+    // escalate to leadership the moment they're written down. The item
+    // still flows to the next shift's handover as designed.
+    const urgent = parsed.data.items.filter(
+      (i) => i.kind === 'COACH_COMPLAINT' || i.kind === 'EQUIPMENT' || i.priority === 'HIGH',
+    );
+    if (urgent.length > 0) {
+      const client = await prisma.client.findUnique({
+        where: { id: shift.clientId },
+        select: { name: true },
+      });
+      const kindLabel: Record<string, string> = {
+        COACH_COMPLAINT: 'Walmart coach complaint',
+        EQUIPMENT: 'Equipment problem',
+        STOCKING: 'Stocking issue',
+        SPECIAL_ORDER: 'Special order',
+        UNFINISHED_TASK: 'Unfinished task',
+        NOTE: 'Note',
+      };
+      await notifyAllAdmins({
+        subject: `Floor escalation — ${client?.name ?? 'store'} · ${shift.department}`,
+        body:
+          urgent
+            .map((i) => `${kindLabel[i.kind]}${i.priority === 'HIGH' ? ' (HIGH)' : ''}: ${i.body}`)
+            .join('\n') +
+          `\n\nLogged by ${req.user!.email} on the ${shift.position} shift (${shift.dateKey}). Also queued for the next shift's handover.`,
+        category: 'ops.handover_alert',
+        linkUrl: '/ops',
+      });
+    }
     res.status(201).json({ added: parsed.data.items.length });
   } catch (err) {
     next(err);
@@ -1789,6 +1822,53 @@ opsRouter.get('/scorecard', BOARD, async (req, res, next) => {
       where: { createdAt: { gte: since } },
       _count: { _all: true },
     });
+    // Weekly named-metric series — where the metric keys pay compound
+    // interest: cases stocked / discards / out-of-stocks per org week.
+    const metricRows = await prisma.opsTask.findMany({
+      where: {
+        responseType: 'NUMBER',
+        metricKey: { not: null },
+        answerNumber: { not: null },
+        completedAt: { gte: since },
+      },
+      select: { metricKey: true, unit: true, answerNumber: true, completedAt: true },
+      take: 5000,
+    });
+    // Continuous week buckets across the window (zero-filled).
+    const weekKeys: string[] = [];
+    for (let w = weeks - 1; w >= 0; w--) {
+      weekKeys.push(
+        orgDateKey(startOfWeekUTC(new Date(Date.now() - w * 7 * DAY_MS))),
+      );
+    }
+    const byMetric = new Map<
+      string,
+      { unit: string | null; total: number; weeks: Map<string, number> }
+    >();
+    for (const r of metricRows) {
+      const wk = orgDateKey(startOfWeekUTC(r.completedAt!));
+      const row = byMetric.get(r.metricKey!) ?? {
+        unit: r.unit,
+        total: 0,
+        weeks: new Map<string, number>(),
+      };
+      const v = Number(r.answerNumber);
+      row.total += v;
+      row.weeks.set(wk, (row.weeks.get(wk) ?? 0) + v);
+      byMetric.set(r.metricKey!, row);
+    }
+    const metricTrends = [...byMetric.entries()]
+      .sort(([, a], [, b]) => b.total - a.total)
+      .slice(0, 4)
+      .map(([metricKey, r]) => ({
+        metricKey,
+        unit: r.unit,
+        total: r.total,
+        weeks: weekKeys.map((weekKey) => ({
+          weekKey,
+          total: r.weeks.get(weekKey) ?? 0,
+        })),
+      }));
 
     const byKey = new Map<
       string,
@@ -1849,6 +1929,7 @@ opsRouter.get('/scorecard', BOARD, async (req, res, next) => {
           (handoverCounts.REVIEWED ?? 0),
         handoverCarried: handoverCounts.CARRIED ?? 0,
       },
+      metricTrends,
     });
   } catch (err) {
     next(err);

@@ -67,6 +67,7 @@ export interface OpsTaskRow {
   tempMax: number | null;
   metricKey: string | null;
   unit: string | null;
+  parentTaskId: string | null;
   answerChoice: 'YES' | 'NO' | 'PARTIAL' | null;
   answerNumber: number | null;
   answerText: string | null;
@@ -418,6 +419,13 @@ export function getOpsScorecard(weeks = 4): Promise<{
     handoverCreated: number;
     handoverCarried: number;
   };
+  /** Weekly named-metric series (top 4 by volume, zero-filled weeks). */
+  metricTrends: {
+    metricKey: string;
+    unit: string | null;
+    total: number;
+    weeks: { weekKey: string; total: number }[];
+  }[];
 }> {
   return apiFetch(`/ops/scorecard?weeks=${weeks}`);
 }

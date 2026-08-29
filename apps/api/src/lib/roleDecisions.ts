@@ -131,7 +131,8 @@ export async function computeRoleDecisions(
   // plain for org-wide roles).
   if (can('view:ops') || can('run:ops-shifts')) {
     const dayAgo = new Date(now.getTime() - DAY_MS);
-    const [tempAlerts, incompleteCloses] = await Promise.all([
+    const twoDaysAgo = new Date(now.getTime() - 2 * DAY_MS);
+    const [tempAlerts, incompleteCloses, urgentHandover] = await Promise.all([
       prisma.opsTask.count({
         where: {
           tempOutOfRange: true,
@@ -142,7 +143,27 @@ export async function computeRoleDecisions(
       prisma.opsShift.count({
         where: { closedIncomplete: true, closedAt: { gte: dayAgo }, ...clientClamp },
       }),
+      prisma.opsHandoverItem.count({
+        where: {
+          status: 'PENDING',
+          createdAt: { gte: twoDaysAgo },
+          OR: [{ kind: 'COACH_COMPLAINT' }, { kind: 'EQUIPMENT' }],
+          fromShift: { is: { ...clientClamp } },
+        },
+      }),
     ]);
+    if (urgentHandover > 0) {
+      out.push({
+        key: scoped('ops:floor-escalations'),
+        domain: 'site-ops',
+        severity: 'high',
+        label: `${urgentHandover} floor escalation${urgentHandover === 1 ? '' : 's'} — coach complaints / equipment`,
+        detail: 'Logged on the floor and unresolved — read them and act before the client calls.',
+        stakes: null,
+        ageDays: null,
+        linkUrl: '/ops',
+      });
+    }
     if (tempAlerts > 0) {
       out.push({
         key: scoped('ops:temp-alerts'),

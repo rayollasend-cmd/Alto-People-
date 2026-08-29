@@ -43,6 +43,7 @@ import {
   type OpsFeedEvent,
   type OpsShiftHeader,
 } from '@/lib/opsApi';
+import { OpsShiftRecordDialog } from './OpsShiftRecord';
 
 /**
  * The operations command center — presence in every store without being
@@ -129,6 +130,8 @@ export function OpsBoard() {
     ReturnType<typeof getOpsScorecard>
   > | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The record drill-in: which shift's full evidence is open.
+  const [recordId, setRecordId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -609,10 +612,13 @@ export function OpsBoard() {
                     const pct =
                       s.taskTotal > 0 ? Math.round((s.taskDone / s.taskTotal) * 100) : 0;
                     return (
-                      <div
+                      <button
+                        type="button"
                         key={s.id}
+                        onClick={() => setRecordId(s.id)}
+                        title="Open the full shift record"
                         className={cn(
-                          'flex items-center gap-3 rounded-lg border bg-navy-secondary/20 p-3.5 transition-colors',
+                          'flex items-center gap-3 rounded-lg border bg-navy-secondary/20 p-3.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
                           s.tempAlerts > 0
                             ? 'border-alert/60 bg-alert/[0.06]'
                             : 'border-navy-secondary hover:border-gold/30',
@@ -648,7 +654,7 @@ export function OpsBoard() {
                             {s.openedByEmail} · opened {relTime(s.openedAt)}
                           </div>
                         </div>
-                      </div>
+                      </button>
                     );
                   })}
                 </div>
@@ -710,9 +716,12 @@ export function OpsBoard() {
               ) : (
                 <ul className="divide-y divide-navy-secondary/60">
                   {board.closedToday.map((s) => (
-                    <li
-                      key={s.id}
-                      className="flex flex-wrap items-center justify-between gap-2 py-2.5"
+                    <li key={s.id}>
+                    <button
+                      type="button"
+                      onClick={() => setRecordId(s.id)}
+                      title="Open the full shift record"
+                      className="flex w-full flex-wrap items-center justify-between gap-2 rounded py-2.5 text-left transition-colors hover:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
                     >
                       <div className="min-w-0">
                         <div className="text-sm text-white">
@@ -743,12 +752,105 @@ export function OpsBoard() {
                           </span>
                         )}
                       </div>
+                    </button>
                     </li>
                   ))}
                 </ul>
               )}
             </CardContent>
           </Card>
+
+          {/* ===== Production trends — the metric keys paying interest ===== */}
+          {scorecard && scorecard.metricTrends.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">
+                  Production trends — {scorecard.weeks} weeks
+                  <span className="ml-2 text-xs font-normal text-silver/60">
+                    volumes per org week, all stores
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {scorecard.metricTrends.map((m) => (
+                    <div key={m.metricKey}>
+                      <div className="flex items-baseline justify-between">
+                        <span className="text-xs font-medium text-white">
+                          {metricLabel(m.metricKey)}
+                        </span>
+                        <span className="text-xs tabular-nums text-gold">
+                          {m.total.toLocaleString('en-US')} {m.unit ?? ''}
+                        </span>
+                      </div>
+                      <div className="mt-1 h-20">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart
+                            data={m.weeks}
+                            margin={{ top: 4, right: 4, bottom: 0, left: -26 }}
+                          >
+                            <defs>
+                              <linearGradient
+                                id={`mt-${m.metricKey}`}
+                                x1="0"
+                                y1="0"
+                                x2="0"
+                                y2="1"
+                              >
+                                <stop
+                                  offset="0%"
+                                  stopColor="rgb(var(--color-gold))"
+                                  stopOpacity={0.35}
+                                />
+                                <stop
+                                  offset="100%"
+                                  stopColor="rgb(var(--color-gold))"
+                                  stopOpacity={0}
+                                />
+                              </linearGradient>
+                            </defs>
+                            <XAxis
+                              dataKey="weekKey"
+                              tickFormatter={(v: string) => v.slice(5)}
+                              tick={{ fill: 'rgb(var(--color-silver) / 0.5)', fontSize: 9 }}
+                              axisLine={false}
+                              tickLine={false}
+                            />
+                            <YAxis
+                              tick={{ fill: 'rgb(var(--color-silver) / 0.6)', fontSize: 9 }}
+                              axisLine={false}
+                              tickLine={false}
+                              width={38}
+                              allowDecimals={false}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                background: 'rgb(var(--color-navy))',
+                                border: '1px solid rgb(var(--color-navy-secondary))',
+                                borderRadius: 8,
+                                fontSize: 11,
+                              }}
+                              formatter={(value) => [
+                                `${String(value)} ${m.unit ?? ''}`,
+                                metricLabel(m.metricKey),
+                              ]}
+                            />
+                            <Area
+                              type="monotone"
+                              dataKey="total"
+                              stroke="rgb(var(--color-gold))"
+                              strokeWidth={2}
+                              fill={`url(#mt-${m.metricKey})`}
+                            />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* ===== Scorecard ===== */}
           {scorecard && scorecard.rows.length > 0 && (
@@ -897,6 +999,10 @@ export function OpsBoard() {
           </CardContent>
         </Card>
       </div>
+
+      {recordId && (
+        <OpsShiftRecordDialog shiftId={recordId} onClose={() => setRecordId(null)} />
+      )}
     </div>
   );
 }

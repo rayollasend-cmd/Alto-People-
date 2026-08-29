@@ -337,14 +337,33 @@ async function generateRaw(
   // supervisor's claim shows on the chairman's queue and vice versa.
   {
     const dayAgoOps = new Date(now.getTime() - DAY_MS);
-    const [opsTempAlerts, opsIncomplete] = await Promise.all([
+    const [opsTempAlerts, opsIncomplete, opsEscalations] = await Promise.all([
       prisma.opsTask.count({
         where: { tempOutOfRange: true, updatedAt: { gte: dayAgoOps } },
       }),
       prisma.opsShift.count({
         where: { closedIncomplete: true, closedAt: { gte: dayAgoOps } },
       }),
+      prisma.opsHandoverItem.count({
+        where: {
+          status: 'PENDING',
+          createdAt: { gte: new Date(now.getTime() - 2 * DAY_MS) },
+          OR: [{ kind: 'COACH_COMPLAINT' }, { kind: 'EQUIPMENT' }],
+        },
+      }),
     ]);
+    if (opsEscalations > 0) {
+      out.push({
+        key: 'ops:floor-escalations',
+        category: 'run',
+        severity: 'high',
+        label: `${opsEscalations} floor escalation${opsEscalations === 1 ? '' : 's'} — coach complaints / equipment`,
+        detail: 'Client-relationship and maintenance signals from the floor, still unresolved.',
+        stakes: null,
+        ageDays: null,
+        linkUrl: '/ops',
+      });
+    }
     if (opsTempAlerts > 0) {
       out.push({
         key: 'ops:temp-alerts',
