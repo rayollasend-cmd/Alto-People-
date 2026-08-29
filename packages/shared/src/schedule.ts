@@ -9,6 +9,12 @@
  * labor cost/revenue projections, and earnings estimates.
  */
 
+/** Hardest ceiling on a single shift's wall-clock span. No retail shift
+ *  runs longer than 16 hours — anything above it is a data error (the
+ *  classic corruption: an end time rolled one day too far, turning a
+ *  4 PM–11 PM shift into 31 hours and wrecking every weekly total). */
+export const MAX_SHIFT_WALL_MIN = 16 * 60;
+
 export const UNPAID_BREAK_MIN = 60;
 /** Break applies to shifts strictly longer than this (6h). */
 export const UNPAID_BREAK_THRESHOLD_MIN = 6 * 60;

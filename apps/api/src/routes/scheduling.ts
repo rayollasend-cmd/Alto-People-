@@ -61,6 +61,7 @@ import {
   type PublishWeekResponse,
   type PublishWeekSkip,
   type Shift,
+  MAX_SHIFT_WALL_MIN,
   paidMinutesForRange,
   type ShiftConflict,
   type ShiftListResponse,
@@ -229,6 +230,23 @@ async function findOverlapExcluding(
 /** Minimum rest between consecutive shifts before we make the manager
  *  confirm — the "clopen" guard. Advisory: overridable, never a wall. */
 const REST_GAP_MIN_HOURS = 10;
+
+/**
+ * Hard sanity ceiling on a shift's wall-clock span. The 31-hour-shift
+ * corruption (an end time rolled one day too far) silently wrecked
+ * weekly totals and OT flags — no retail shift exceeds 16h, so anything
+ * longer is rejected at every write path, not stored and discovered.
+ */
+function assertSaneShiftDuration(startsAt: Date, endsAt: Date): void {
+  const minutes = (endsAt.getTime() - startsAt.getTime()) / 60_000;
+  if (minutes > MAX_SHIFT_WALL_MIN) {
+    throw new HttpError(
+      400,
+      'shift_too_long',
+      `A shift can't span ${(minutes / 60).toFixed(1)} hours (max ${MAX_SHIFT_WALL_MIN / 60}h). Check the end date — it's probably rolled a day too far.`,
+    );
+  }
+}
 
 /**
  * Nearest non-overlapping neighbor shift that would leave this associate
@@ -2437,6 +2455,7 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
       location = await firstLocationForClient(prisma, client.id);
     }
 
+    assertSaneShiftDuration(new Date(input.startsAt), new Date(input.endsAt));
     const status = input.status ?? 'OPEN';
     const isPublishing = isPublishingTransition(undefined, status);
     const now = new Date();
@@ -2556,6 +2575,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
         endsAt: new Date(o.endsAt),
       })),
     ];
+    for (const occ of occurrences) assertSaneShiftDuration(occ.startsAt, occ.endsAt);
     const status = input.status ?? 'OPEN';
     const isPublishing = isPublishingTransition(undefined, status);
     const now = new Date();
@@ -2934,6 +2954,14 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
     if (i.position !== undefined) data.position = i.position;
     if (i.startsAt !== undefined) data.startsAt = new Date(i.startsAt);
     if (i.endsAt !== undefined) data.endsAt = new Date(i.endsAt);
+    // Guard the MERGED window — a lone endsAt edit can still create a
+    // 31-hour monster against the existing start.
+    if (i.startsAt !== undefined || i.endsAt !== undefined) {
+      assertSaneShiftDuration(
+        i.startsAt !== undefined ? new Date(i.startsAt) : existing.startsAt,
+        i.endsAt !== undefined ? new Date(i.endsAt) : existing.endsAt,
+      );
+    }
     if (i.location !== undefined) data.location = i.location;
     if (i.hourlyRate !== undefined) data.hourlyRate = i.hourlyRate;
     if (i.payRate !== undefined) data.payRate = i.payRate;
@@ -6229,6 +6257,11 @@ schedulingRouter.post('/copy-week', MANAGE, async (req, res, next) => {
       const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
       const startsAt = addDaysInZone(s.startsAt, dayOffset, tz);
       const endsAt = addDaysInZone(s.endsAt, dayOffset, tz);
+      // Never propagate a corrupted span (the 31-hour-shift class) into
+      // the target week — the copy quietly multiplies the damage.
+      if ((endsAt.getTime() - startsAt.getTime()) / 60_000 > MAX_SHIFT_WALL_MIN) {
+        continue;
+      }
       const k = twinKey({
         clientId: s.clientId,
         locationId: s.locationId,

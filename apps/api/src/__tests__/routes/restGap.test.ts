@@ -36,6 +36,38 @@ async function loginAs(email: string): Promise<TestAgent<Test>> {
 
 const future = (offsetMin: number) => new Date(Date.now() + offsetMin * 60_000);
 
+describe('shift duration sanity ceiling', () => {
+  it('rejects a 31-hour shift on create and on edit (the rolled-end-date corruption)', async () => {
+    const client = await createClient();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const agent = await loginAs(hr.email);
+
+    // Create: 4 PM → next-day 11 PM = 31h → refused.
+    const created = await agent.post('/scheduling/shifts').send({
+      clientId: client.id,
+      position: 'F&D Afternoon Shift',
+      startsAt: future(60).toISOString(),
+      endsAt: future(60 + 31 * 60).toISOString(),
+    });
+    expect(created.status).toBe(400);
+    expect(created.body.error?.code).toBe('shift_too_long');
+
+    // Edit: a sane 7h shift can't be stretched past the ceiling either.
+    const ok = await agent.post('/scheduling/shifts').send({
+      clientId: client.id,
+      position: 'F&D Afternoon Shift',
+      startsAt: future(60).toISOString(),
+      endsAt: future(60 + 7 * 60).toISOString(),
+    });
+    expect(ok.status).toBe(201);
+    const stretched = await agent.patch(`/scheduling/shifts/${ok.body.id}`).send({
+      endsAt: future(60 + 31 * 60).toISOString(),
+    });
+    expect(stretched.status).toBe(400);
+    expect(stretched.body.error?.code).toBe('shift_too_long');
+  });
+});
+
 describe('rest-gap guard', () => {
   it('409s an assignment with <10h turnaround; override assigns and is audited', async () => {
     const client = await createClient();
