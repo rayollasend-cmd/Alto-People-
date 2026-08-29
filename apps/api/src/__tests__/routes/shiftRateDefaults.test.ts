@@ -172,17 +172,18 @@ describe('effectivePayRate resolution', () => {
     );
     expect(bare.effectivePayRate).toBeNull();
 
-    // KPI: cost = 8h*30 + 8h*20 + 8h*15 = 520. The Cart Pusher shift has
-    // no explicit rate and no default, but org standard rates
-    // (DEFAULT_ASSOCIATE_PAY_RATE=15) now price it — so nothing counts as
-    // "without rate" unless even the env fallback is unset.
+    // KPI: each 8h shift carries a 1h unpaid meal break (shifts >6h), so
+    // PAID hours are 7: cost = 7h*30 + 7h*20 + 7h*15 = 455. The Cart
+    // Pusher shift has no explicit rate and no default, but org standard
+    // rates (DEFAULT_ASSOCIATE_PAY_RATE=15) now price it — so nothing
+    // counts as "without rate" unless even the env fallback is unset.
     const kpis = await a.get(
       `/scheduling/kpis?from=${new Date(Date.now() - 3600_000).toISOString()}&to=${new Date(
         Date.now() + 48 * 3600_000,
       ).toISOString()}`,
     );
     expect(kpis.status).toBe(200);
-    expect(kpis.body.projectedLaborCost).toBe(520);
+    expect(kpis.body.projectedLaborCost).toBe(455);
     expect(kpis.body.shiftsWithoutRate).toBe(0);
   });
 
