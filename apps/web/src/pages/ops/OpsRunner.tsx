@@ -46,29 +46,22 @@ import {
   type OpsShiftDetail,
   type OpsTaskRow,
 } from '@/lib/opsApi';
+import {
+  DEPT_FALLBACK_ICON,
+  DEPT_ICON,
+  DEPT_TONE,
+  HANDOVER_KIND_ICON,
+  HANDOVER_KIND_LABEL,
+  PERIOD_LABEL,
+} from './opsVisuals';
 
 /**
- * The shift supervisor's floor tool. Touch-first: one column, big
- * targets, camera-native photo capture — built to be worked one-handed
- * on an iPad between aisles. Associates never see this; the supervisor
- * records reality and tags who did the physical work.
+ * The shift supervisor's floor tool — the flagship surface where the
+ * standard becomes real work. Touch-first: one column, big targets,
+ * camera-native photo capture, section rail for one-thumb navigation.
+ * Associates never see this; the supervisor records reality and tags
+ * who did the physical work.
  */
-
-const PERIOD_LABEL: Record<string, string> = {
-  MORNING: 'Morning',
-  EVENING: 'Evening',
-  CLOSING: 'Closing',
-  OVERNIGHT: 'Overnight',
-};
-
-const HANDOVER_KIND_LABEL: Record<OpsHandoverKind, string> = {
-  NOTE: 'Note',
-  UNFINISHED_TASK: 'Unfinished task',
-  SPECIAL_ORDER: 'Special order',
-  COACH_COMPLAINT: 'Walmart coach complaint',
-  EQUIPMENT: 'Equipment problem',
-  STOCKING: 'Stocking issue',
-};
 
 export function OpsRunner() {
   const [shiftId, setShiftId] = useState<string | null>(null);
@@ -144,63 +137,103 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
 
   return (
     <div className="space-y-4">
+      {/* Hero: the day, framed. */}
+      <div className="relative overflow-hidden rounded-lg border border-navy-secondary bg-gradient-to-br from-navy-secondary/60 via-navy to-navy p-5">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-8 -top-8 h-40 w-40 rounded-full bg-gold/10 blur-3xl"
+        />
+        <div className="relative">
+          <div className="text-2xs uppercase tracking-[0.2em] text-gold">
+            Your floor · {options.dateKey}
+          </div>
+          <div className="mt-1 text-xl font-medium text-white">
+            {options.resumeShift ? 'Pick up where you left off' : 'Start your shift'}
+          </div>
+          <div className="mt-0.5 max-w-prose text-xs text-silver/70">
+            Open a shift and its SOP checklist loads itself — store, headcounts,
+            and standards fill in automatically.
+          </div>
+        </div>
+      </div>
+
       {options.resumeShift && (
-        <Card className="border-gold/40">
-          <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
-            <div>
-              <div className="text-white font-medium">
-                Your {options.resumeShift.department} shift is still open
-              </div>
-              <div className="text-xs text-silver mt-0.5">
-                {options.resumeShift.position} — pick up where you left off.
-              </div>
+        <button
+          type="button"
+          onClick={() => onOpened(options.resumeShift!.id)}
+          className="group flex w-full items-center gap-4 rounded-lg border border-gold/50 bg-gold/[0.06] p-4 text-left transition-colors hover:bg-gold/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        >
+          <span className="relative flex h-2.5 w-2.5 shrink-0">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-success" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-white">
+              Your {options.resumeShift.department} shift is still live
             </div>
-            <Button onClick={() => onOpened(options.resumeShift!.id)}>
-              Resume shift
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </CardContent>
-        </Card>
+            <div className="mt-0.5 text-xs text-silver">
+              {options.resumeShift.position} — tap to resume.
+            </div>
+          </div>
+          <ChevronRight className="h-5 w-5 shrink-0 text-gold transition-transform group-hover:translate-x-0.5" />
+        </button>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Start your shift</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-xs text-silver/70 mb-3">
-            Today&apos;s scheduled positions at your store. Opening a shift loads its
-            SOP checklist automatically — store, headcounts, and times fill
-            themselves in.
-          </p>
-          {options.positions.length === 0 ? (
+      {options.positions.length === 0 ? (
+        <Card>
+          <CardContent className="py-8">
             <EmptyState
               icon={ClipboardList}
               title="Nothing scheduled today"
               description="No shifts are on today's schedule for your store yet."
             />
-          ) : (
-            <ul className="space-y-2">
-              {options.positions.map((p) => (
-                <li
-                  key={p.position}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-navy-secondary bg-navy-secondary/20 p-3"
-                >
-                  <div className="min-w-0">
-                    <div className="text-white font-medium">{p.position}</div>
-                    <div className="text-xs text-silver mt-0.5">
-                      {p.department ?? 'Department?'} · {PERIOD_LABEL[p.period]} ·{' '}
-                      {p.scheduledCount} scheduled
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {options.positions.map((p) => {
+            const Icon = (p.department && DEPT_ICON[p.department]) || DEPT_FALLBACK_ICON;
+            const tone = (p.department && DEPT_TONE[p.department]) || 'text-gold';
+            const needsDept = !p.department;
+            return (
+              <div
+                key={p.position}
+                className="group relative overflow-hidden rounded-lg border border-navy-secondary bg-navy-secondary/20 p-4 transition-colors hover:border-gold/40"
+              >
+                <div className="flex items-start gap-3">
+                  <span
+                    className={cn(
+                      'grid h-12 w-12 shrink-0 place-items-center rounded-lg border border-navy-secondary bg-navy/70',
+                      tone,
+                    )}
+                  >
+                    <Icon className="h-6 w-6" aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-white">
+                      {p.position}
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {!p.department && (
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-silver">
+                      <span>{p.department ?? 'Department?'}</span>
+                      <span className="rounded-full border border-navy-secondary px-1.5 py-px text-2xs text-silver/70">
+                        {PERIOD_LABEL[p.period]}
+                      </span>
+                      <span className="inline-flex items-center gap-1 tabular-nums text-silver/70">
+                        <Users className="h-3 w-3 text-gold" aria-hidden="true" />
+                        {p.scheduledCount} scheduled
+                      </span>
+                    </div>
+                    {needsDept && (
                       <Select
                         size="sm"
+                        className="mt-2"
                         aria-label={`Department for ${p.position}`}
                         value={manualDept[p.position] ?? ''}
                         onChange={(e) =>
-                          setManualDept((prev) => ({ ...prev, [p.position]: e.target.value }))
+                          setManualDept((prev) => ({
+                            ...prev,
+                            [p.position]: e.target.value,
+                          }))
                         }
                       >
                         <option value="">Pick department…</option>
@@ -211,21 +244,22 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
                         ))}
                       </Select>
                     )}
-                    <Button
-                      size="sm"
-                      onClick={() => void open(p.position, manualDept[p.position] || undefined)}
-                      loading={busy === p.position}
-                      disabled={busy !== null || (!p.department && !manualDept[p.position])}
-                    >
-                      Open shift
-                    </Button>
                   </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+                </div>
+                <Button
+                  className="mt-3 w-full"
+                  onClick={() => void open(p.position, manualDept[p.position] || undefined)}
+                  loading={busy === p.position}
+                  disabled={busy !== null || (needsDept && !manualDept[p.position])}
+                >
+                  Open shift
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -258,18 +292,47 @@ function ShiftRunner({
 
   const done = tasks.filter((t) => t.status === 'DONE').length;
   const pct = tasks.length > 0 ? Math.round((done / tasks.length) * 100) : 0;
+  const allDone = tasks.length > 0 && done === tasks.length;
+
+  // Evidence + risk stats for the hero strip.
+  const stats = useMemo(() => {
+    const temps = tasks.filter((t) => t.responseType === 'TEMPERATURE');
+    return {
+      tempsDone: temps.filter((t) => t.answerNumber != null).length,
+      tempsTotal: temps.length,
+      photos: tasks.reduce((n, t) => n + t.photos.length, 0),
+      blocked: tasks.filter((t) => t.status === 'BLOCKED').length,
+      highOpen: tasks.filter((t) => t.priority === 'HIGH' && t.status !== 'DONE').length,
+    };
+  }, [tasks]);
+
+  const scrollTo = (section: string) => {
+    document
+      .getElementById(`ops-section-${section}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const Icon = DEPT_ICON[shift.department] ?? DEPT_FALLBACK_ICON;
 
   return (
     <div className="space-y-4">
-      {/* Hero header: everything auto-populated, the ring is the shift's
-          heartbeat — a supervisor should feel progress, not read it. */}
-      <div className="relative overflow-hidden rounded-lg border border-navy-secondary bg-gradient-to-br from-navy-secondary/60 via-navy to-navy p-5">
+      {/* Hero: the shift's heartbeat. */}
+      <div
+        className={cn(
+          'relative overflow-hidden rounded-lg border p-5 transition-colors',
+          allDone
+            ? 'border-success/50 bg-gradient-to-br from-success/[0.10] via-navy to-navy'
+            : 'border-navy-secondary bg-gradient-to-br from-navy-secondary/60 via-navy to-navy',
+        )}
+      >
         <div
           aria-hidden
-          className="pointer-events-none absolute -right-8 -top-8 h-40 w-40 rounded-full bg-gold/10 blur-3xl"
+          className={cn(
+            'pointer-events-none absolute -right-8 -top-8 h-40 w-40 rounded-full blur-3xl',
+            allDone ? 'bg-success/15' : 'bg-gold/10',
+          )}
         />
         <div className="relative flex flex-wrap items-center gap-4">
-          {/* Completion ring */}
           <svg viewBox="0 0 72 72" className="h-[72px] w-[72px] shrink-0" aria-hidden="true">
             <circle
               cx="36"
@@ -291,7 +354,7 @@ function ShiftRunner({
               transform="rotate(-90 36 36)"
               className={cn(
                 'transition-all duration-700',
-                pct >= 100 ? 'stroke-success' : 'stroke-gold',
+                allDone ? 'stroke-success' : 'stroke-gold',
               )}
             />
             <text
@@ -313,9 +376,13 @@ function ShiftRunner({
                 Shift live · {shift.dateKey}
               </span>
             </div>
-            <div className="mt-1 text-xl font-medium text-white">
+            <div className="mt-1 flex items-center gap-2 text-xl font-medium text-white">
+              <Icon
+                className={cn('h-5 w-5', DEPT_TONE[shift.department] ?? 'text-gold')}
+                aria-hidden="true"
+              />
               {shift.department}
-              <span className="ml-2 text-base font-normal text-gold">
+              <span className="text-base font-normal text-gold">
                 {PERIOD_LABEL[shift.period]}
               </span>
             </div>
@@ -323,19 +390,42 @@ function ShiftRunner({
               {shift.clientName} · {shift.position}
               {shift.templateName ? ` · ${shift.templateName}` : ''}
             </div>
+            {/* Evidence strip — the shift's proof, live. */}
             <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs tabular-nums">
               <span className="inline-flex items-center gap-1.5 text-silver">
                 <Users className="h-3.5 w-3.5 text-gold" aria-hidden="true" />
                 <span className="text-white">{shift.actualHeadcount}</span>/
                 {shift.scheduledHeadcount} on the floor
               </span>
-              <span className="text-silver">
-                <span className="text-white">{done}</span>/{tasks.length} tasks
+              {stats.tempsTotal > 0 && (
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1.5',
+                    shift.tempAlerts > 0
+                      ? 'text-alert'
+                      : stats.tempsDone === stats.tempsTotal
+                        ? 'text-success'
+                        : 'text-silver',
+                  )}
+                >
+                  <Thermometer className="h-3.5 w-3.5" aria-hidden="true" />
+                  {stats.tempsDone}/{stats.tempsTotal} temps
+                </span>
+              )}
+              <span
+                className={cn(
+                  'inline-flex items-center gap-1.5',
+                  stats.photos > 0 ? 'text-sky' : 'text-silver/60',
+                )}
+              >
+                <Camera className="h-3.5 w-3.5" aria-hidden="true" />
+                {stats.photos} photo{stats.photos === 1 ? '' : 's'}
               </span>
-              {shift.tempAlerts > 0 && (
-                <Badge variant="destructive">
-                  {shift.tempAlerts} temp alert{shift.tempAlerts === 1 ? '' : 's'}
-                </Badge>
+              {stats.highOpen > 0 && (
+                <Badge variant="destructive">{stats.highOpen} high-priority open</Badge>
+              )}
+              {stats.blocked > 0 && (
+                <Badge variant="destructive">{stats.blocked} blocked</Badge>
               )}
             </div>
           </div>
@@ -344,16 +434,53 @@ function ShiftRunner({
               <Plus className="h-4 w-4" />
               Add task
             </Button>
-            <Button onClick={() => setCloseOpen(true)}>Close shift</Button>
+            <Button
+              onClick={() => setCloseOpen(true)}
+              className={cn(allDone && 'animate-pulse')}
+            >
+              {allDone ? 'Ready — close shift' : 'Close shift'}
+            </Button>
           </div>
         </div>
       </div>
 
+      {/* Section rail — one-thumb navigation with live progress. */}
+      {sections.length > 1 && (
+        <div className="sticky top-2 z-10 -mx-1 overflow-x-auto px-1 pb-1">
+          <div className="flex w-max gap-2 rounded-full border border-navy-secondary bg-navy/95 p-1.5 backdrop-blur">
+            {sections.map(([section, rows]) => {
+              const secDone = rows.filter((r) => r.status === 'DONE').length;
+              const complete = secDone === rows.length;
+              return (
+                <button
+                  key={section}
+                  type="button"
+                  onClick={() => scrollTo(section)}
+                  className={cn(
+                    'flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                    complete
+                      ? 'bg-success/15 text-success'
+                      : 'text-silver hover:bg-navy-secondary/60 hover:text-white',
+                  )}
+                >
+                  {complete && <Check className="h-3 w-3" strokeWidth={3} />}
+                  {section}
+                  <span className="tabular-nums text-2xs opacity-70">
+                    {secDone}/{rows.length}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Handover from the previous shift — the FIRST thing to deal with. */}
       {handoverIn.length > 0 && (
-        <Card className="border-warning/40">
+        <Card className="border-warning/50 bg-warning/[0.03]">
           <CardHeader>
             <CardTitle className="text-base">
+              <Flag className="mr-1.5 inline h-4 w-4 text-warning" aria-hidden="true" />
               From the previous shift ({handoverIn.length})
             </CardTitle>
           </CardHeader>
@@ -371,23 +498,52 @@ function ShiftRunner({
       )}
 
       {/* The checklist, by section. */}
-      {sections.map(([section, rows]) => (
-        <Card key={section}>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">
-              {section}
-              <span className="ml-2 text-xs font-normal text-silver/70 tabular-nums">
-                {rows.filter((r) => r.status === 'DONE').length}/{rows.length}
-              </span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="divide-y divide-navy-secondary/60">
-            {rows.map((task) => (
-              <TaskRow key={task.id} task={task} clockedIn={clockedIn} onChanged={refresh} />
-            ))}
-          </CardContent>
-        </Card>
-      ))}
+      {sections.map(([section, rows], secIdx) => {
+        const secDone = rows.filter((r) => r.status === 'DONE').length;
+        const secPct = rows.length > 0 ? Math.round((secDone / rows.length) * 100) : 0;
+        return (
+          <Card
+            key={section}
+            id={`ops-section-${section}`}
+            className="scroll-mt-16"
+          >
+            <CardHeader className="pb-2">
+              <div className="flex items-center gap-2.5">
+                <span
+                  className={cn(
+                    'grid h-6 w-6 shrink-0 place-items-center rounded-full text-2xs font-semibold tabular-nums',
+                    secPct === 100
+                      ? 'bg-success/20 text-success'
+                      : 'bg-gold/15 text-gold',
+                  )}
+                >
+                  {secPct === 100 ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : secIdx + 1}
+                </span>
+                <CardTitle className="text-base">
+                  {section}
+                  <span className="ml-2 text-xs font-normal text-silver/60 tabular-nums">
+                    {secDone}/{rows.length}
+                  </span>
+                </CardTitle>
+                <div className="ml-auto h-1.5 w-24 overflow-hidden rounded-full bg-navy-secondary">
+                  <div
+                    className={cn(
+                      'h-full rounded-full transition-all duration-500',
+                      secPct === 100 ? 'bg-success' : 'bg-gold',
+                    )}
+                    style={{ width: `${secPct}%` }}
+                  />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="divide-y divide-navy-secondary/60">
+              {rows.map((task) => (
+                <TaskRow key={task.id} task={task} clockedIn={clockedIn} onChanged={refresh} />
+              ))}
+            </CardContent>
+          </Card>
+        );
+      })}
 
       <AdhocDialog
         open={adhocOpen}
@@ -549,21 +705,17 @@ function TaskRow({
                   {(task.responseType === 'YES_NO_PARTIAL'
                     ? (['YES', 'NO', 'PARTIAL'] as const)
                     : (['YES', 'NO'] as const)
-                  ).map(
-                    (choice) => (
-                      <Button
-                        key={choice}
-                        size="sm"
-                        variant={task.answerChoice === choice ? 'primary' : 'outline'}
-                        onClick={() =>
-                          void patch({ answerChoice: choice, status: 'DONE' })
-                        }
-                        disabled={busy}
-                      >
-                        {choice === 'YES' ? 'Yes' : choice === 'NO' ? 'No' : 'Partial'}
-                      </Button>
-                    ),
-                  )}
+                  ).map((choice) => (
+                    <Button
+                      key={choice}
+                      size="sm"
+                      variant={task.answerChoice === choice ? 'primary' : 'outline'}
+                      onClick={() => void patch({ answerChoice: choice, status: 'DONE' })}
+                      disabled={busy}
+                    >
+                      {choice === 'YES' ? 'Yes' : choice === 'NO' ? 'No' : 'Partial'}
+                    </Button>
+                  ))}
                 </div>
               )}
 
@@ -661,7 +813,6 @@ function TaskRow({
                     className="block h-12 w-12 overflow-hidden rounded border border-navy-secondary"
                     title={p.filename}
                   >
-                    {/* eslint-disable-next-line jsx-a11y/img-redundant-alt */}
                     <img
                       src={opsPhotoUrl(p.id)}
                       alt={`Photo: ${p.filename}`}
@@ -741,6 +892,7 @@ function HandoverDecisionRow({
   onDecided: () => void;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const KindIcon = HANDOVER_KIND_ICON[item.kind];
   const decide = async (action: 'CARRY' | 'DISMISS' | 'REVIEW') => {
     setBusy(action);
     try {
@@ -761,16 +913,27 @@ function HandoverDecisionRow({
   };
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-navy-secondary bg-navy-secondary/20 p-3">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <Badge variant={item.priority === 'HIGH' ? 'destructive' : 'default'}>
-            {HANDOVER_KIND_LABEL[item.kind]}
-          </Badge>
-          <span className="text-2xs text-silver/60">
-            from {item.from.position} · {item.from.dateKey}
-          </span>
+      <div className="flex min-w-0 items-start gap-2.5">
+        <span
+          className={cn(
+            'mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-md border',
+            item.priority === 'HIGH'
+              ? 'border-alert/50 bg-alert/10 text-alert'
+              : 'border-navy-secondary bg-navy/60 text-gold',
+          )}
+        >
+          <KindIcon className="h-4 w-4" aria-hidden="true" />
+        </span>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2 text-2xs text-silver/60">
+            <span className="font-medium text-silver">{HANDOVER_KIND_LABEL[item.kind]}</span>
+            {item.priority === 'HIGH' && <Badge variant="destructive">high</Badge>}
+            <span>
+              from {item.from.position} · {item.from.dateKey}
+            </span>
+          </div>
+          <p className="mt-0.5 text-sm text-white">{item.body}</p>
         </div>
-        <p className="mt-1 text-sm text-white">{item.body}</p>
       </div>
       <div className="flex shrink-0 gap-2">
         <Button size="sm" onClick={() => void decide('CARRY')} loading={busy === 'CARRY'}>
@@ -937,24 +1100,29 @@ function CloseDialog({
           {/* Handover composer. */}
           <div className="rounded-md border border-navy-secondary bg-navy-secondary/20 p-3 space-y-2">
             <div className="text-xs font-medium text-white">Handover to the next shift</div>
-            {items.map((i, idx) => (
-              <div
-                key={idx}
-                className="flex items-center justify-between gap-2 text-xs text-silver"
-              >
-                <span className="min-w-0 truncate">
-                  <span className="text-white">{HANDOVER_KIND_LABEL[i.kind]}:</span> {i.body}
-                </span>
-                <button
-                  type="button"
-                  className="text-silver/50 hover:text-alert"
-                  onClick={() => setItems((prev) => prev.filter((_, j) => j !== idx))}
-                  aria-label="Remove handover item"
+            {items.map((i, idx) => {
+              const KindIcon = HANDOVER_KIND_ICON[i.kind];
+              return (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between gap-2 text-xs text-silver"
                 >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            ))}
+                  <span className="flex min-w-0 items-center gap-1.5 truncate">
+                    <KindIcon className="h-3.5 w-3.5 shrink-0 text-gold" aria-hidden="true" />
+                    <span className="text-white">{HANDOVER_KIND_LABEL[i.kind]}:</span>{' '}
+                    {i.body}
+                  </span>
+                  <button
+                    type="button"
+                    className="text-silver/50 hover:text-alert"
+                    onClick={() => setItems((prev) => prev.filter((_, j) => j !== idx))}
+                    aria-label="Remove handover item"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              );
+            })}
             <div className="flex flex-wrap items-end gap-2">
               <div>
                 <Label className="text-xs">Type</Label>

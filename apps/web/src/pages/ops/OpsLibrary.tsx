@@ -1,23 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Beef,
-  BookOpen,
   Camera,
   ChevronDown,
   ChevronRight,
   ClipboardCheck,
-  Croissant,
   Hash,
   MessageSquare,
   Plus,
   ShieldCheck,
-  ShoppingBasket,
-  Snowflake,
-  Store,
   Thermometer,
   Trash2,
   type LucideIcon,
 } from 'lucide-react';
+import { DEPT_FALLBACK_ICON, DEPT_ICON, DEPT_TONE } from './opsVisuals';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
@@ -79,22 +74,6 @@ const RESPONSE_ICON: Partial<Record<OpsResponseType, LucideIcon>> = {
   PHOTO: Camera,
   NUMBER: Hash,
   TEXT: MessageSquare,
-};
-
-/** Department identity — each library gets a face, not a bullet point. */
-const DEPT_ICON: Record<string, LucideIcon> = {
-  'Frozen & Dairy': Snowflake,
-  'Meat & Produce': Beef,
-  'Deli & Bakery': Croissant,
-  'Food & Consumables': ShoppingBasket,
-  'General Merchandise': Store,
-};
-const DEPT_TONE: Record<string, string> = {
-  'Frozen & Dairy': 'text-sky',
-  'Meat & Produce': 'text-alert',
-  'Deli & Bakery': 'text-gold',
-  'Food & Consumables': 'text-success',
-  'General Merchandise': 'text-teal',
 };
 
 export function OpsLibrary() {
@@ -215,7 +194,7 @@ export function OpsLibrary() {
                 </div>
               ))}
               {library.departments.map((dept) => {
-                const Icon = DEPT_ICON[dept] ?? BookOpen;
+                const Icon = DEPT_ICON[dept] ?? DEPT_FALLBACK_ICON;
                 return [
                   <div key={dept} className="flex items-center gap-2 pr-2">
                     <Icon
@@ -264,7 +243,7 @@ export function OpsLibrary() {
       {[...byDepartment.entries()]
         .filter(([, templates]) => templates.length > 0)
         .map(([department, templates]) => {
-          const Icon = DEPT_ICON[department] ?? BookOpen;
+          const Icon = DEPT_ICON[department] ?? DEPT_FALLBACK_ICON;
           const deptTasks = templates.reduce((n, t) => n + t.taskCount, 0);
           const deptRuns = templates.reduce((n, t) => n + t.runs28d, 0);
           return (
