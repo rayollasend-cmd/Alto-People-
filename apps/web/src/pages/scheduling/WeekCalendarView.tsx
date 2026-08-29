@@ -478,9 +478,12 @@ export function WeekCalendarView({
   // are now their own grids sharing this column template, so header, body
   // and footer still line up while each row is a single measurable element.
   const colsStyle = {
-    gridTemplateColumns: `200px repeat(${dayCount}, minmax(0, 1fr))`,
+    // 248px, not 200: the always-visible reorder controls + avatar +
+    // (crew ✕) squeezed long names into a ~60px sliver — the supervisor
+    // couldn't tell WHO they were scheduling. The rail pays for identity.
+    gridTemplateColumns: `248px repeat(${dayCount}, minmax(0, 1fr))`,
   };
-  const minWidthStyle = { minWidth: `${200 + dayCount * 100}px` };
+  const minWidthStyle = { minWidth: `${248 + dayCount * 100}px` };
 
   // Compute the set of (associateId|unassigned)_dayMs cells that would be
   // conflicts for the currently-dragged shift. Using a Set keeps per-cell
@@ -854,59 +857,55 @@ const Row = memo(function Row({
       <div
         ref={rowDrop.setNodeRef}
         className={cn(
-          'group/row sticky left-0 z-10 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-3 flex items-center gap-2.5',
+          'group/row sticky left-0 z-10 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-2.5 py-3 flex items-center gap-2',
           rowDrag.isDragging && 'ring-1 ring-gold/60',
           rowDrop.isOver && rowDragActive &&
             'bg-gold/15 outline outline-1 outline-gold/50 -outline-offset-1',
         )}
       >
-        {/* Drag handle: grab a row and drop it on another row (name cell
-            or any of its day cells) to reposition. Same anchor-move save
-            as the arrows. Touch uses the grid's 250ms hold-to-drag. */}
+        {/* ONE narrow control column (grip + arrows stacked) — the old
+            side-by-side cluster ate the name's space. */}
         {reorderArmed && (
-          <div
-            ref={rowDrag.setNodeRef}
-            {...rowDrag.listeners}
-            {...rowDrag.attributes}
-            className={cn(GRIP_HIT, 'shrink-0 touch-none')}
-            aria-label={`Drag to reorder ${associate.firstName} ${associate.lastName}`}
-          >
-            <GripVertical className={GRIP_ICON} />
-          </div>
-        )}
-        {/* Always visible when armed — the old hover-reveal made the
-            feature invisible on tablets (no hover) and undiscoverable
-            with a mouse. */}
-        {(onMoveUp || onMoveDown) && (
-          <div className="flex shrink-0 flex-col no-print">
-            {/* Compact base + coarse: up-size (the repo's touch pattern) —
-                a 18px arrow is fine under a mouse and unusable on the
-                iPads schedules get built on. */}
+          <div className="flex w-7 shrink-0 flex-col items-center no-print">
+            <div
+              ref={rowDrag.setNodeRef}
+              {...rowDrag.listeners}
+              {...rowDrag.attributes}
+              className={cn(GRIP_HIT, 'touch-none')}
+              aria-label={`Drag to reorder ${associate.firstName} ${associate.lastName}`}
+            >
+              <GripVertical className={GRIP_ICON} />
+            </div>
             <button
               type="button"
               disabled={!onMoveUp}
               onClick={onMoveUp}
               aria-label={`Move ${associate.firstName} ${associate.lastName} up`}
-              className="rounded p-0.5 coarse:p-1.5 text-silver/50 hover:text-gold disabled:opacity-25"
+              className="rounded p-0.5 text-silver/50 hover:text-gold disabled:opacity-25"
             >
-              <ChevronUp className="h-3.5 w-3.5 coarse:h-4 coarse:w-4" aria-hidden="true" />
+              <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
             <button
               type="button"
               disabled={!onMoveDown}
               onClick={onMoveDown}
               aria-label={`Move ${associate.firstName} ${associate.lastName} down`}
-              className="rounded p-0.5 coarse:p-1.5 text-silver/50 hover:text-gold disabled:opacity-25"
+              className="rounded p-0.5 text-silver/50 hover:text-gold disabled:opacity-25"
             >
-              <ChevronDown className="h-3.5 w-3.5 coarse:h-4 coarse:w-4" aria-hidden="true" />
+              <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           </div>
         )}
-        <div className="h-8 w-8 rounded-full bg-gold/15 text-gold text-xs font-semibold flex items-center justify-center shrink-0">
+        <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-xs font-semibold flex items-center justify-center shrink-0">
           {initials || '?'}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm text-white truncate">
+          {/* Two lines + full-name tooltip: "Adolfo Fernando Reinoso
+              Hernadez" must be identifiable, not a 6-character sliver. */}
+          <div
+            className="text-sm text-white leading-tight line-clamp-2 break-words"
+            title={`${associate.firstName} ${associate.lastName}`}
+          >
             {associate.firstName} {associate.lastName}
           </div>
           <div className="text-2xs tabular-nums">
