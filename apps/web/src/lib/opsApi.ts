@@ -102,6 +102,9 @@ export interface OpsLibraryTemplate {
   description: string | null;
   active: boolean;
   taskCount: number;
+  /** Closed runs in the last 28 days + their aggregate SOP completion. */
+  runs28d: number;
+  avgSopPct: number | null;
   tasks: {
     id: string;
     section: string;

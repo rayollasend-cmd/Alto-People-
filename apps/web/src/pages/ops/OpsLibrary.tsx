@@ -1,9 +1,28 @@
-import { useCallback, useEffect, useState } from 'react';
-import { BookOpen, ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Beef,
+  BookOpen,
+  Camera,
+  ChevronDown,
+  ChevronRight,
+  ClipboardCheck,
+  Croissant,
+  Hash,
+  MessageSquare,
+  Plus,
+  ShieldCheck,
+  ShoppingBasket,
+  Snowflake,
+  Store,
+  Thermometer,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react';
 import { ApiError } from '@/lib/api';
-import { Badge } from '@/components/ui/Badge';
+import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { CountUpValue } from '@/components/ui/MetricCard';
 import {
   Dialog,
   DialogContent,
@@ -31,17 +50,18 @@ import {
 } from '@/lib/opsApi';
 
 /**
- * The SOP standard, editable by leadership only (operations, HR admin,
- * the chairman). Supervisors run these; they never edit them. "Delete"
- * on a template is a retire — every already-run shift keeps its
- * checklist exactly as executed.
+ * The standard itself — the constitution every floor runs on. Editable by
+ * leadership only (operations, HR admin, the chairman: this page is the
+ * exec portal's ONE write). Supervisors run these; they never edit them.
+ * "Delete" is retire — every already-run shift keeps its checklist as
+ * executed, so the record never rewrites.
  */
 
-const PERIODS: { value: OpsPeriod; label: string }[] = [
-  { value: 'MORNING', label: 'Morning / opening' },
-  { value: 'EVENING', label: 'Evening / recovery' },
-  { value: 'CLOSING', label: 'Closing' },
-  { value: 'OVERNIGHT', label: 'Overnight' },
+const PERIODS: { value: OpsPeriod; label: string; short: string }[] = [
+  { value: 'MORNING', label: 'Morning / opening', short: 'Morning' },
+  { value: 'EVENING', label: 'Evening / recovery', short: 'Evening' },
+  { value: 'CLOSING', label: 'Closing', short: 'Closing' },
+  { value: 'OVERNIGHT', label: 'Overnight', short: 'Overnight' },
 ];
 
 const RESPONSE_TYPES: { value: OpsResponseType; label: string }[] = [
@@ -53,6 +73,29 @@ const RESPONSE_TYPES: { value: OpsResponseType; label: string }[] = [
   { value: 'TEMPERATURE', label: 'Temperature (with bounds)' },
   { value: 'PHOTO', label: 'Photo required' },
 ];
+
+const RESPONSE_ICON: Partial<Record<OpsResponseType, LucideIcon>> = {
+  TEMPERATURE: Thermometer,
+  PHOTO: Camera,
+  NUMBER: Hash,
+  TEXT: MessageSquare,
+};
+
+/** Department identity — each library gets a face, not a bullet point. */
+const DEPT_ICON: Record<string, LucideIcon> = {
+  'Frozen & Dairy': Snowflake,
+  'Meat & Produce': Beef,
+  'Deli & Bakery': Croissant,
+  'Food & Consumables': ShoppingBasket,
+  'General Merchandise': Store,
+};
+const DEPT_TONE: Record<string, string> = {
+  'Frozen & Dairy': 'text-sky',
+  'Meat & Produce': 'text-alert',
+  'Deli & Bakery': 'text-gold',
+  'Food & Consumables': 'text-success',
+  'General Merchandise': 'text-teal',
+};
 
 export function OpsLibrary() {
   const [library, setLibrary] = useState<{
@@ -73,10 +116,23 @@ export function OpsLibrary() {
   }, []);
   useEffect(() => load(), [load]);
 
+  const stats = useMemo(() => {
+    if (!library) return null;
+    const tasks = library.templates.flatMap((t) => t.tasks);
+    return {
+      sops: library.templates.length,
+      tasks: tasks.length,
+      temps: tasks.filter((t) => t.responseType === 'TEMPERATURE').length,
+      photos: tasks.filter((t) => t.photoRequired || t.responseType === 'PHOTO').length,
+      runs: library.templates.reduce((n, t) => n + t.runs28d, 0),
+    };
+  }, [library]);
+
   if (error) return <ErrorBanner>{error}</ErrorBanner>;
-  if (!library) return <Skeleton className="h-64" />;
+  if (!library || !stats) return <Skeleton className="h-64" />;
 
   const byDepartment = new Map<string, OpsLibraryTemplate[]>();
+  for (const dept of library.departments) byDepartment.set(dept, []);
   for (const tpl of library.templates) {
     const list = byDepartment.get(tpl.department) ?? [];
     list.push(tpl);
@@ -85,91 +141,262 @@ export function OpsLibrary() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-silver/70 max-w-prose">
-          The standard your supervisors run. Edits apply to <em>future</em> shifts
-          only — every shift already run keeps its checklist exactly as executed,
-          so the record stays honest.
-        </p>
-        <Button size="sm" onClick={() => setNewOpen(true)}>
-          <Plus className="h-3.5 w-3.5" />
-          New SOP
-        </Button>
+      {/* ===== Hero: the constitution's vital signs ===== */}
+      <div className="relative overflow-hidden rounded-lg border border-navy-secondary bg-gradient-to-br from-navy-secondary/60 via-navy to-navy p-5">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-gold/10 blur-3xl"
+        />
+        <div className="relative flex flex-wrap items-center gap-x-8 gap-y-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-gold" aria-hidden="true" />
+              <span className="text-2xs uppercase tracking-[0.2em] text-gold">
+                The operating standard
+              </span>
+            </div>
+            <div className="mt-1 text-xl font-medium text-white">
+              One playbook, every floor, every shift
+            </div>
+            <div className="mt-0.5 max-w-prose text-xs text-silver/70">
+              Edits apply to future shifts only — every shift already run keeps its
+              checklist exactly as executed.
+            </div>
+          </div>
+          <div className="ml-auto flex flex-wrap items-center gap-x-8 gap-y-3">
+            <HeroStat label="Active SOPs" value={<CountUpValue value={stats.sops} />} />
+            <HeroStat label="Standard tasks" value={<CountUpValue value={stats.tasks} />} />
+            <HeroStat
+              label="Temp checks"
+              value={<CountUpValue value={stats.temps} />}
+              tone="text-teal"
+            />
+            <HeroStat
+              label="Photo proofs"
+              value={<CountUpValue value={stats.photos} />}
+              tone="text-sky"
+            />
+            <HeroStat
+              label="Runs · 28d"
+              value={<CountUpValue value={stats.runs} />}
+              tone="text-success"
+            />
+          </div>
+          <Button onClick={() => setNewOpen(true)}>
+            <Plus className="h-4 w-4" />
+            New SOP
+          </Button>
+        </div>
       </div>
 
-      {[...byDepartment.entries()].map(([department, templates]) => (
-        <Card key={department}>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">
-              <BookOpen className="mr-2 inline h-4 w-4 text-gold" aria-hidden="true" />
-              {department}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {templates.map((tpl) => {
-              const isOpen = expanded.has(tpl.id);
-              return (
-                <div key={tpl.id} className="rounded-md border border-navy-secondary">
-                  <div className="flex flex-wrap items-center justify-between gap-2 p-3">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setExpanded((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(tpl.id)) next.delete(tpl.id);
-                          else next.add(tpl.id);
-                          return next;
-                        })
-                      }
-                      className="flex min-w-0 items-center gap-2 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
-                    >
-                      {isOpen ? (
-                        <ChevronDown className="h-4 w-4 shrink-0 text-silver/60" />
-                      ) : (
-                        <ChevronRight className="h-4 w-4 shrink-0 text-silver/60" />
-                      )}
-                      <span className="truncate text-sm text-white">{tpl.name}</span>
-                      <Badge variant="default">
-                        {PERIODS.find((p) => p.value === tpl.period)?.label ?? tpl.period}
-                      </Badge>
-                      <span className="text-2xs text-silver/60 tabular-nums">
-                        {tpl.taskCount} task{tpl.taskCount === 1 ? '' : 's'}
-                      </span>
-                    </button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={async () => {
-                        const ok = await confirm({
-                          title: `Retire "${tpl.name}"?`,
-                          description:
-                            'It disappears from future shifts. Every shift already run keeps its checklist as executed — history never changes.',
-                          confirmLabel: 'Retire',
-                          destructive: true,
-                        });
-                        if (!ok) return;
-                        try {
-                          await patchOpsTemplate(tpl.id, { retire: true });
-                          toast.success('Retired.');
-                          load();
-                        } catch (err) {
-                          toast.error(
-                            err instanceof ApiError ? err.message : 'Could not retire.',
-                          );
-                        }
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Retire
-                    </Button>
-                  </div>
-                  {isOpen && <TemplateTasks tpl={tpl} onChanged={load} />}
+      {/* ===== Coverage matrix — where the standard reaches ===== */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">
+            Coverage — department × shift period
+            <span className="ml-2 text-xs font-normal text-silver/60">
+              a dark cell is an uncovered period
+            </span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <div
+              className="grid min-w-[560px] gap-1.5"
+              style={{ gridTemplateColumns: '200px repeat(4, 1fr)' }}
+            >
+              <div />
+              {PERIODS.map((p) => (
+                <div
+                  key={p.value}
+                  className="text-center text-2xs uppercase tracking-wider text-silver/60"
+                >
+                  {p.short}
                 </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      ))}
+              ))}
+              {library.departments.map((dept) => {
+                const Icon = DEPT_ICON[dept] ?? BookOpen;
+                return [
+                  <div key={dept} className="flex items-center gap-2 pr-2">
+                    <Icon
+                      className={cn('h-4 w-4 shrink-0', DEPT_TONE[dept] ?? 'text-gold')}
+                      aria-hidden="true"
+                    />
+                    <span className="truncate text-xs text-white">{dept}</span>
+                  </div>,
+                  ...PERIODS.map((p) => {
+                    const tpl = library.templates.find(
+                      (t) => t.department === dept && t.period === p.value,
+                    );
+                    return (
+                      <div
+                        key={`${dept}|${p.value}`}
+                        className={cn(
+                          'flex h-9 items-center justify-center rounded-md border text-2xs tabular-nums transition-colors',
+                          tpl
+                            ? tpl.avgSopPct != null && tpl.avgSopPct < 70
+                              ? 'border-warning/50 bg-warning/10 text-warning'
+                              : 'border-success/30 bg-success/[0.08] text-success'
+                            : 'border-navy-secondary bg-navy-secondary/30 text-silver/30',
+                        )}
+                        title={
+                          tpl
+                            ? `${tpl.name} · ${tpl.taskCount} tasks${tpl.runs28d > 0 ? ` · ${tpl.runs28d} runs, ${tpl.avgSopPct ?? '—'}% avg` : ' · not run yet'}`
+                            : `${dept} has no ${p.short.toLowerCase()} SOP — add one if this period is worked.`
+                        }
+                      >
+                        {tpl
+                          ? tpl.runs28d > 0
+                            ? `${tpl.avgSopPct ?? '—'}%`
+                            : `${tpl.taskCount} tasks`
+                          : '—'}
+                      </div>
+                    );
+                  }),
+                ];
+              })}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ===== Department libraries ===== */}
+      {[...byDepartment.entries()]
+        .filter(([, templates]) => templates.length > 0)
+        .map(([department, templates]) => {
+          const Icon = DEPT_ICON[department] ?? BookOpen;
+          const deptTasks = templates.reduce((n, t) => n + t.taskCount, 0);
+          const deptRuns = templates.reduce((n, t) => n + t.runs28d, 0);
+          return (
+            <Card key={department}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">
+                  <Icon
+                    className={cn('mr-2 inline h-5 w-5', DEPT_TONE[department] ?? 'text-gold')}
+                    aria-hidden="true"
+                  />
+                  {department}
+                  <span className="ml-2 text-xs font-normal text-silver/60 tabular-nums">
+                    {templates.length} SOP{templates.length === 1 ? '' : 's'} · {deptTasks}{' '}
+                    tasks{deptRuns > 0 ? ` · ${deptRuns} runs in 28d` : ''}
+                  </span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {templates.map((tpl) => {
+                  const isOpen = expanded.has(tpl.id);
+                  return (
+                    <div
+                      key={tpl.id}
+                      className={cn(
+                        'rounded-lg border transition-colors',
+                        isOpen
+                          ? 'border-gold/40 bg-navy-secondary/10'
+                          : 'border-navy-secondary hover:border-gold/25',
+                      )}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2 p-3">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpanded((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(tpl.id)) next.delete(tpl.id);
+                              else next.add(tpl.id);
+                              return next;
+                            })
+                          }
+                          className="flex min-w-0 flex-1 items-center gap-2.5 rounded text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                        >
+                          {isOpen ? (
+                            <ChevronDown className="h-4 w-4 shrink-0 text-gold" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 shrink-0 text-silver/60" />
+                          )}
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="truncate text-sm font-medium text-white">
+                                {tpl.name}
+                              </span>
+                              <span className="rounded-full border border-navy-secondary px-2 py-0.5 text-2xs text-silver/70">
+                                {PERIODS.find((p) => p.value === tpl.period)?.short ??
+                                  tpl.period}
+                              </span>
+                            </div>
+                            {tpl.description && (
+                              <div className="mt-0.5 truncate text-xs text-silver/60">
+                                {tpl.description}
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                        <div className="flex shrink-0 items-center gap-4">
+                          {/* Standard → execution: proof it's actually run. */}
+                          <div className="text-right">
+                            <div
+                              className={cn(
+                                'text-sm font-semibold tabular-nums',
+                                tpl.runs28d === 0
+                                  ? 'text-silver/40'
+                                  : (tpl.avgSopPct ?? 0) >= 90
+                                    ? 'text-success'
+                                    : (tpl.avgSopPct ?? 0) >= 70
+                                      ? 'text-gold'
+                                      : 'text-warning',
+                              )}
+                            >
+                              {tpl.runs28d === 0 ? 'not run yet' : `${tpl.avgSopPct ?? '—'}%`}
+                            </div>
+                            <div className="text-2xs text-silver/50 tabular-nums">
+                              {tpl.runs28d === 0
+                                ? 'last 28 days'
+                                : `${tpl.runs28d} run${tpl.runs28d === 1 ? '' : 's'} · 28d`}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-sm font-semibold tabular-nums text-white">
+                              {tpl.taskCount}
+                            </div>
+                            <div className="text-2xs text-silver/50">tasks</div>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={async () => {
+                              const ok = await confirm({
+                                title: `Retire "${tpl.name}"?`,
+                                description:
+                                  'It disappears from future shifts. Every shift already run keeps its checklist as executed — history never changes.',
+                                confirmLabel: 'Retire',
+                                destructive: true,
+                              });
+                              if (!ok) return;
+                              try {
+                                await patchOpsTemplate(tpl.id, { retire: true });
+                                toast.success('Retired.');
+                                load();
+                              } catch (err) {
+                                toast.error(
+                                  err instanceof ApiError
+                                    ? err.message
+                                    : 'Could not retire.',
+                                );
+                              }
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Retire
+                          </Button>
+                        </div>
+                      </div>
+                      {isOpen && <TemplateTasks tpl={tpl} onChanged={load} />}
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          );
+        })}
 
       <NewTemplateDialog
         open={newOpen}
@@ -177,6 +404,23 @@ export function OpsLibrary() {
         departments={library.departments}
         onCreated={load}
       />
+    </div>
+  );
+}
+
+function HeroStat({
+  label,
+  value,
+  tone = 'text-white',
+}: {
+  label: string;
+  value: React.ReactNode;
+  tone?: string;
+}) {
+  return (
+    <div>
+      <div className={cn('text-xl font-semibold leading-none tabular-nums', tone)}>{value}</div>
+      <div className="mt-1 text-2xs uppercase tracking-wider text-silver/60">{label}</div>
     </div>
   );
 }
@@ -199,59 +443,94 @@ function TemplateTasks({
 
   return (
     <div className="border-t border-navy-secondary p-3 space-y-3">
-      {sections.map((sec) => (
-        <div key={sec}>
-          <div className="text-2xs uppercase tracking-wider text-silver/60">{sec}</div>
-          <ul className="mt-1 space-y-1">
-            {tpl.tasks
-              .filter((t) => t.section === sec)
-              .map((task) => (
-                <li
-                  key={task.id}
-                  className="flex items-center justify-between gap-2 rounded bg-navy-secondary/20 px-2 py-1.5 text-sm"
-                >
-                  <span className="min-w-0 truncate text-white">
-                    {task.title}
-                    <span className="ml-2 text-2xs text-silver/60">
-                      {RESPONSE_TYPES.find((r) => r.value === task.responseType)?.label}
-                      {task.responseType === 'TEMPERATURE' &&
-                        task.tempMin != null &&
-                        task.tempMax != null && (
-                          <span className="tabular-nums">
-                            {' '}
-                            {task.tempMin}–{task.tempMax}°F
-                          </span>
-                        )}
-                      {task.photoRequired && ' · photo'}
-                      {!task.required && ' · optional'}
-                    </span>
-                  </span>
-                  <button
-                    type="button"
-                    className="shrink-0 text-silver/40 hover:text-alert"
-                    aria-label={`Remove "${task.title}" from this SOP`}
-                    title="Remove from the standard (past shifts keep it)."
-                    onClick={async () => {
-                      try {
-                        await deleteOpsTemplateTask(task.id);
-                        onChanged();
-                      } catch (err) {
-                        toast.error(
-                          err instanceof ApiError ? err.message : 'Could not remove.',
-                        );
-                      }
-                    }}
+      {sections.map((sec, secIdx) => {
+        const rows = tpl.tasks.filter((t) => t.section === sec);
+        return (
+          <div key={sec}>
+            <div className="flex items-center gap-2">
+              <span className="grid h-5 w-5 place-items-center rounded-full bg-gold/15 text-2xs font-semibold tabular-nums text-gold">
+                {secIdx + 1}
+              </span>
+              <span className="text-2xs uppercase tracking-wider text-silver/70">{sec}</span>
+              <span className="text-2xs text-silver/40 tabular-nums">{rows.length}</span>
+              <span className="h-px flex-1 bg-navy-secondary" aria-hidden="true" />
+            </div>
+            <ul className="mt-1.5 space-y-1">
+              {rows.map((task) => {
+                const RIcon = RESPONSE_ICON[task.responseType];
+                return (
+                  <li
+                    key={task.id}
+                    className="group flex items-center justify-between gap-2 rounded-md bg-navy-secondary/20 px-2.5 py-1.5 text-sm hover:bg-navy-secondary/40"
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </li>
-              ))}
-          </ul>
-        </div>
-      ))}
+                    <span className="flex min-w-0 items-center gap-2">
+                      <ClipboardCheck
+                        className="h-3.5 w-3.5 shrink-0 text-silver/30"
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 truncate text-white">{task.title}</span>
+                      {RIcon && (
+                        <span
+                          className={cn(
+                            'inline-flex shrink-0 items-center gap-1 rounded-full border border-navy-secondary px-1.5 py-0.5 text-2xs',
+                            task.responseType === 'TEMPERATURE'
+                              ? 'text-teal'
+                              : task.responseType === 'PHOTO'
+                                ? 'text-sky'
+                                : 'text-silver/70',
+                          )}
+                        >
+                          <RIcon className="h-3 w-3" aria-hidden="true" />
+                          {task.responseType === 'TEMPERATURE' &&
+                          task.tempMin != null &&
+                          task.tempMax != null ? (
+                            <span className="tabular-nums">
+                              {task.tempMin}–{task.tempMax}°F
+                            </span>
+                          ) : task.responseType === 'PHOTO' || task.photoRequired ? (
+                            'proof'
+                          ) : task.responseType === 'NUMBER' ? (
+                            'count'
+                          ) : (
+                            'note'
+                          )}
+                        </span>
+                      )}
+                      {task.photoRequired && task.responseType !== 'PHOTO' && (
+                        <Camera className="h-3 w-3 shrink-0 text-sky" aria-hidden="true" />
+                      )}
+                      {!task.required && (
+                        <span className="shrink-0 text-2xs text-silver/40">optional</span>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      className="shrink-0 text-silver/30 opacity-0 transition-opacity hover:text-alert group-hover:opacity-100 focus:opacity-100"
+                      aria-label={`Remove "${task.title}" from this SOP`}
+                      title="Remove from the standard (past shifts keep it)."
+                      onClick={async () => {
+                        try {
+                          await deleteOpsTemplateTask(task.id);
+                          onChanged();
+                        } catch (err) {
+                          toast.error(
+                            err instanceof ApiError ? err.message : 'Could not remove.',
+                          );
+                        }
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        );
+      })}
 
       {/* Add-task composer. */}
-      <div className="flex flex-wrap items-end gap-2 rounded-md border border-navy-secondary bg-navy-secondary/20 p-2">
+      <div className="flex flex-wrap items-end gap-2 rounded-md border border-dashed border-navy-secondary bg-navy-secondary/10 p-2.5">
         <div className="w-36">
           <Label className="text-xs">Section</Label>
           <Input

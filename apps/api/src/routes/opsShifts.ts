@@ -263,9 +263,32 @@ opsRouter.get('/library', LIB_READ, async (_req, res, next) => {
       orderBy: [{ department: 'asc' }, { period: 'asc' }, { name: 'asc' }],
       include: { tasks: { orderBy: { order: 'asc' } } },
     });
+    // Standard → execution: how often each SOP ran in the last 28 days
+    // and how completely (closed shifts only — their stamps are final).
+    const since = new Date(Date.now() - 28 * DAY_MS);
+    const usage = await prisma.opsShift.groupBy({
+      by: ['templateId'],
+      where: { templateId: { not: null }, status: 'CLOSED', closedAt: { gte: since } },
+      _count: { _all: true },
+      _sum: { sopDone: true, sopTotal: true },
+    });
+    const usageByTemplate = new Map(
+      usage.map((u) => [
+        u.templateId!,
+        {
+          runs28d: u._count._all,
+          avgSopPct:
+            (u._sum.sopTotal ?? 0) > 0
+              ? Math.round(((u._sum.sopDone ?? 0) / (u._sum.sopTotal ?? 1)) * 100)
+              : null,
+        },
+      ]),
+    );
     res.json({
       departments: OPS_DEPARTMENTS,
       templates: templates.map((tpl) => ({
+        runs28d: usageByTemplate.get(tpl.id)?.runs28d ?? 0,
+        avgSopPct: usageByTemplate.get(tpl.id)?.avgSopPct ?? null,
         id: tpl.id,
         name: tpl.name,
         department: tpl.department,
