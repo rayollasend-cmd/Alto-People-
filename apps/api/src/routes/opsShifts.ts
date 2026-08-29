@@ -1154,6 +1154,175 @@ opsRouter.get('/board', BOARD, async (_req, res, next) => {
   }
 });
 
+/**
+ * GET /ops/feed — the live pulse of every floor. The most recent task
+ * completions, temperature readings, photos, opens/closes and handover
+ * notes across all stores, merged newest-first: what an executive would
+ * see standing in the store, without standing in the store.
+ */
+opsRouter.get('/feed', BOARD, async (_req, res, next) => {
+  try {
+    const since = new Date(Date.now() - 36 * 3_600_000);
+    const [tasks, photos, shifts] = await Promise.all([
+      prisma.opsTask.findMany({
+        where: { completedAt: { gte: since } },
+        orderBy: { completedAt: 'desc' },
+        take: 40,
+        select: {
+          id: true,
+          title: true,
+          responseType: true,
+          answerNumber: true,
+          answerChoice: true,
+          tempLabel: true,
+          tempOutOfRange: true,
+          completedAt: true,
+          doneAssociate: { select: { firstName: true, lastName: true } },
+          completedBy: { select: { email: true } },
+          opsShift: {
+            select: {
+              department: true,
+              client: { select: { name: true } },
+            },
+          },
+        },
+      }),
+      prisma.opsTaskPhoto.findMany({
+        where: { createdAt: { gte: since } },
+        orderBy: { createdAt: 'desc' },
+        take: 12,
+        select: {
+          id: true,
+          createdAt: true,
+          task: {
+            select: {
+              title: true,
+              opsShift: {
+                select: { department: true, client: { select: { name: true } } },
+              },
+            },
+          },
+        },
+      }),
+      prisma.opsShift.findMany({
+        where: {
+          OR: [{ openedAt: { gte: since } }, { closedAt: { gte: since } }],
+        },
+        orderBy: { openedAt: 'desc' },
+        take: 30,
+        select: {
+          id: true,
+          department: true,
+          period: true,
+          status: true,
+          openedAt: true,
+          closedAt: true,
+          closedIncomplete: true,
+          sopDone: true,
+          sopTotal: true,
+          client: { select: { name: true } },
+          openedBy: { select: { email: true } },
+        },
+      }),
+    ]);
+
+    type FeedEvent = {
+      at: string;
+      kind: 'task' | 'temp' | 'photo' | 'open' | 'close';
+      store: string;
+      department: string;
+      headline: string;
+      detail: string | null;
+      alert: boolean;
+      photoId: string | null;
+    };
+    const events: FeedEvent[] = [];
+    for (const t of tasks) {
+      const who = t.doneAssociate
+        ? `${t.doneAssociate.firstName} ${t.doneAssociate.lastName}`
+        : (t.completedBy?.email ?? null);
+      if (t.responseType === 'TEMPERATURE' && t.answerNumber != null) {
+        events.push({
+          at: t.completedAt!.toISOString(),
+          kind: 'temp',
+          store: t.opsShift.client.name,
+          department: t.opsShift.department,
+          headline: `${t.tempLabel ?? 'Temperature'}: ${Number(t.answerNumber)}°F`,
+          detail: t.tempOutOfRange ? 'OUT OF RANGE — alerted' : 'in range',
+          alert: t.tempOutOfRange,
+          photoId: null,
+        });
+      } else {
+        events.push({
+          at: t.completedAt!.toISOString(),
+          kind: 'task',
+          store: t.opsShift.client.name,
+          department: t.opsShift.department,
+          headline: t.title,
+          detail: [
+            t.answerNumber != null ? `count ${Number(t.answerNumber)}` : null,
+            t.answerChoice ?? null,
+            who ? `by ${who}` : null,
+          ]
+            .filter(Boolean)
+            .join(' · ') || null,
+          alert: false,
+          photoId: null,
+        });
+      }
+    }
+    for (const p of photos) {
+      events.push({
+        at: p.createdAt.toISOString(),
+        kind: 'photo',
+        store: p.task.opsShift.client.name,
+        department: p.task.opsShift.department,
+        headline: p.task.title,
+        detail: 'photo from the floor',
+        alert: false,
+        photoId: p.id,
+      });
+    }
+    for (const s of shifts) {
+      events.push({
+        at: s.openedAt.toISOString(),
+        kind: 'open',
+        store: s.client.name,
+        department: s.department,
+        headline: `${s.department} shift opened`,
+        detail: s.openedBy.email,
+        alert: false,
+        photoId: null,
+      });
+      if (s.closedAt) {
+        events.push({
+          at: s.closedAt.toISOString(),
+          kind: 'close',
+          store: s.client.name,
+          department: s.department,
+          headline: `${s.department} shift closed — SOP ${s.sopDone}/${s.sopTotal}`,
+          detail: s.closedIncomplete ? 'closed incomplete' : 'complete',
+          alert: s.closedIncomplete,
+          photoId: null,
+        });
+      }
+    }
+    events.sort((a, b) => b.at.localeCompare(a.at));
+    res.json({
+      events: events.slice(0, 60),
+      photos: photos.map((p) => ({
+        id: p.id,
+        at: p.createdAt.toISOString(),
+        store: p.task.opsShift.client.name,
+        department: p.task.opsShift.department,
+        title: p.task.title,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 opsRouter.get('/scorecard', BOARD, async (req, res, next) => {
   try {
     const weeks = Math.min(12, Math.max(1, Number(req.query.weeks) || 4));

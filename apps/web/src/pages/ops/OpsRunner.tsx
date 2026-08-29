@@ -261,52 +261,93 @@ function ShiftRunner({
 
   return (
     <div className="space-y-4">
-      {/* Header: everything auto-populated. */}
-      <Card className="border-l-2 border-l-gold">
-        <CardContent className="py-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <div className="text-lg font-medium text-white">
-                {shift.department} — {PERIOD_LABEL[shift.period]}
-              </div>
-              <div className="text-xs text-silver mt-0.5">
-                {shift.clientName} · {shift.position} · {shift.dateKey}
-                {shift.templateName ? ` · ${shift.templateName}` : ''}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" onClick={() => setAdhocOpen(true)}>
-                <Plus className="h-3.5 w-3.5" />
-                Add task
-              </Button>
-              <Button size="sm" onClick={() => setCloseOpen(true)}>
-                Close shift
-              </Button>
-            </div>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs tabular-nums">
-            <span className="inline-flex items-center gap-1.5 text-silver">
-              <Users className="h-3.5 w-3.5 text-gold" aria-hidden="true" />
-              <span className="text-white">{shift.actualHeadcount}</span>/
-              {shift.scheduledHeadcount} on the floor
-            </span>
-            <span className="text-silver">
-              Checklist <span className="text-white">{done}</span>/{tasks.length} · {pct}%
-            </span>
-            {shift.tempAlerts > 0 && (
-              <Badge variant="destructive">
-                {shift.tempAlerts} temp alert{shift.tempAlerts === 1 ? '' : 's'}
-              </Badge>
-            )}
-          </div>
-          <div className="mt-2 h-1.5 rounded-full bg-navy-secondary overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-gold to-success transition-all"
-              style={{ width: `${pct}%` }}
+      {/* Hero header: everything auto-populated, the ring is the shift's
+          heartbeat — a supervisor should feel progress, not read it. */}
+      <div className="relative overflow-hidden rounded-lg border border-navy-secondary bg-gradient-to-br from-navy-secondary/60 via-navy to-navy p-5">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-8 -top-8 h-40 w-40 rounded-full bg-gold/10 blur-3xl"
+        />
+        <div className="relative flex flex-wrap items-center gap-4">
+          {/* Completion ring */}
+          <svg viewBox="0 0 72 72" className="h-[72px] w-[72px] shrink-0" aria-hidden="true">
+            <circle
+              cx="36"
+              cy="36"
+              r="30"
+              fill="none"
+              strokeWidth="6"
+              className="stroke-navy-secondary"
             />
+            <circle
+              cx="36"
+              cy="36"
+              r="30"
+              fill="none"
+              strokeWidth="6"
+              strokeLinecap="round"
+              strokeDasharray={2 * Math.PI * 30}
+              strokeDashoffset={2 * Math.PI * 30 * (1 - pct / 100)}
+              transform="rotate(-90 36 36)"
+              className={cn(
+                'transition-all duration-700',
+                pct >= 100 ? 'stroke-success' : 'stroke-gold',
+              )}
+            />
+            <text
+              x="36"
+              y="41"
+              textAnchor="middle"
+              className="fill-white text-[15px] font-semibold tabular-nums"
+            >
+              {pct}%
+            </text>
+          </svg>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+              </span>
+              <span className="text-2xs uppercase tracking-[0.2em] text-gold">
+                Shift live · {shift.dateKey}
+              </span>
+            </div>
+            <div className="mt-1 text-xl font-medium text-white">
+              {shift.department}
+              <span className="ml-2 text-base font-normal text-gold">
+                {PERIOD_LABEL[shift.period]}
+              </span>
+            </div>
+            <div className="mt-0.5 truncate text-xs text-silver">
+              {shift.clientName} · {shift.position}
+              {shift.templateName ? ` · ${shift.templateName}` : ''}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs tabular-nums">
+              <span className="inline-flex items-center gap-1.5 text-silver">
+                <Users className="h-3.5 w-3.5 text-gold" aria-hidden="true" />
+                <span className="text-white">{shift.actualHeadcount}</span>/
+                {shift.scheduledHeadcount} on the floor
+              </span>
+              <span className="text-silver">
+                <span className="text-white">{done}</span>/{tasks.length} tasks
+              </span>
+              {shift.tempAlerts > 0 && (
+                <Badge variant="destructive">
+                  {shift.tempAlerts} temp alert{shift.tempAlerts === 1 ? '' : 's'}
+                </Badge>
+              )}
+            </div>
           </div>
-        </CardContent>
-      </Card>
+          <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+            <Button variant="outline" onClick={() => setAdhocOpen(true)}>
+              <Plus className="h-4 w-4" />
+              Add task
+            </Button>
+            <Button onClick={() => setCloseOpen(true)}>Close shift</Button>
+          </div>
+        </div>
+      </div>
 
       {/* Handover from the previous shift — the FIRST thing to deal with. */}
       {handoverIn.length > 0 && (

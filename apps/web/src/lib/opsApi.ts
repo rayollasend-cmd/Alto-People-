@@ -285,6 +285,25 @@ export function getOpsBoard(): Promise<{
   return apiFetch('/ops/board');
 }
 
+export interface OpsFeedEvent {
+  at: string;
+  kind: 'task' | 'temp' | 'photo' | 'open' | 'close';
+  store: string;
+  department: string;
+  headline: string;
+  detail: string | null;
+  alert: boolean;
+  photoId: string | null;
+}
+
+/** The live pulse: recent completions, temps, photos, opens/closes. */
+export function getOpsFeed(): Promise<{
+  events: OpsFeedEvent[];
+  photos: { id: string; at: string; store: string; department: string; title: string }[];
+}> {
+  return apiFetch('/ops/feed');
+}
+
 export function getOpsScorecard(weeks = 4): Promise<{
   weeks: number;
   rows: {
