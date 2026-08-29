@@ -1087,7 +1087,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // look identical otherwise.
   const reorderHint =
     canManage && !clientFilter
-      ? 'To reorder the roster rows (↑↓), pick a single client first.'
+      ? 'To reorder the roster rows (drag the ⠿ grip), pick a single client first.'
       : null;
   const reorderBusy = useRef(false);
   // Anchor move: reposition `associateId` directly above/below its VISIBLE

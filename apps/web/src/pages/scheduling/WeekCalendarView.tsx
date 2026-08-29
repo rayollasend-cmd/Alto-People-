@@ -11,14 +11,7 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core';
 import { VirtualizedRows } from './VirtualizedRows';
-import {
-  AlertTriangle,
-  ChevronDown,
-  ChevronUp,
-  Plus,
-  GripVertical,
-  UserMinus,
-} from 'lucide-react';
+import { AlertTriangle, Plus, GripVertical, UserMinus } from 'lucide-react';
 import type { AssociateLite, Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import { colorForPosition } from '@/lib/positionColor';
@@ -636,16 +629,6 @@ export function WeekCalendarView({
                 onRemoveFromCrew={
                   onRemoveFromCrew ? () => onRemoveFromCrew(a.id) : undefined
                 }
-                onMoveUp={
-                  onReorderRow && index > 0
-                    ? () => onReorderRow(a.id, visibleAssociates[index - 1].id, -1)
-                    : undefined
-                }
-                onMoveDown={
-                  onReorderRow && index < visibleAssociates.length - 1
-                    ? () => onReorderRow(a.id, visibleAssociates[index + 1].id, 1)
-                    : undefined
-                }
               >
                 {days.map((d, i) => {
                   const dayKey = dayKeys[i];
@@ -807,8 +790,6 @@ const Row = memo(function Row({
   children,
   reorderArmed = false,
   rowDragActive = false,
-  onMoveUp,
-  onMoveDown,
   onRemoveFromCrew,
 }: {
   associate: AssociateLite;
@@ -819,13 +800,10 @@ const Row = memo(function Row({
   /** Shared column template — every row grid matches the header's. */
   colsStyle: React.CSSProperties;
   children: React.ReactNode;
-  /** Reordering available in this view state — shows the grip + arrows. */
+  /** Reordering available in this view state — shows the drag grip. */
   reorderArmed?: boolean;
   /** A row drag is in flight somewhere — arms this row's drop target. */
   rowDragActive?: boolean;
-  /** Whiteboard-order controls; undefined = hidden (edge rows / view states). */
-  onMoveUp?: () => void;
-  onMoveDown?: () => void;
   /** Remove this row's associate from the active crew filter. */
   onRemoveFromCrew?: () => void;
 }) {
@@ -863,37 +841,18 @@ const Row = memo(function Row({
             'bg-gold/15 outline outline-1 outline-gold/50 -outline-offset-1',
         )}
       >
-        {/* ONE narrow control column (grip + arrows stacked) — the old
-            side-by-side cluster ate the name's space. */}
+        {/* The grip alone — drag is the one reorder gesture (arrows were
+            redundant chrome once dragging landed, and names need the room). */}
         {reorderArmed && (
-          <div className="flex w-7 shrink-0 flex-col items-center no-print">
-            <div
-              ref={rowDrag.setNodeRef}
-              {...rowDrag.listeners}
-              {...rowDrag.attributes}
-              className={cn(GRIP_HIT, 'touch-none')}
-              aria-label={`Drag to reorder ${associate.firstName} ${associate.lastName}`}
-            >
-              <GripVertical className={GRIP_ICON} />
-            </div>
-            <button
-              type="button"
-              disabled={!onMoveUp}
-              onClick={onMoveUp}
-              aria-label={`Move ${associate.firstName} ${associate.lastName} up`}
-              className="rounded p-0.5 text-silver/50 hover:text-gold disabled:opacity-25"
-            >
-              <ChevronUp className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              disabled={!onMoveDown}
-              onClick={onMoveDown}
-              aria-label={`Move ${associate.firstName} ${associate.lastName} down`}
-              className="rounded p-0.5 text-silver/50 hover:text-gold disabled:opacity-25"
-            >
-              <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
+          <div
+            ref={rowDrag.setNodeRef}
+            {...rowDrag.listeners}
+            {...rowDrag.attributes}
+            className={cn(GRIP_HIT, 'shrink-0 touch-none coarse:p-1.5')}
+            aria-label={`Drag to reorder ${associate.firstName} ${associate.lastName}`}
+            title="Drag to reorder this row"
+          >
+            <GripVertical className={GRIP_ICON} />
           </div>
         )}
         <div className="h-7 w-7 rounded-full bg-gold/15 text-gold text-xs font-semibold flex items-center justify-center shrink-0">
