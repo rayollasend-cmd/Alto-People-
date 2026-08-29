@@ -278,6 +278,9 @@ function ShiftRunner({
   const { shift, tasks, handoverIn, clockedIn } = detail;
   const [adhocOpen, setAdhocOpen] = useState(false);
   const [closeOpen, setCloseOpen] = useState(false);
+  // The same crew member usually does consecutive tasks — remember the
+  // last "done by" pick so tagging the next task is one tap.
+  const [lastTagged, setLastTagged] = useState<{ id: string; name: string } | null>(null);
 
   const sections = useMemo(() => {
     const bySection = new Map<string, OpsTaskRow[]>();
@@ -538,7 +541,14 @@ function ShiftRunner({
             </CardHeader>
             <CardContent className="divide-y divide-navy-secondary/60">
               {rows.map((task) => (
-                <TaskRow key={task.id} task={task} clockedIn={clockedIn} onChanged={refresh} />
+                <TaskRow
+                  key={task.id}
+                  task={task}
+                  clockedIn={clockedIn}
+                  onChanged={refresh}
+                  lastTagged={lastTagged}
+                  onTagged={setLastTagged}
+                />
               ))}
             </CardContent>
           </Card>
@@ -567,13 +577,20 @@ function TaskRow({
   task,
   clockedIn,
   onChanged,
+  lastTagged,
+  onTagged,
 }: {
   task: OpsTaskRow;
   clockedIn: { id: string; name: string }[];
   onChanged: () => void;
+  /** Last "done by" pick this shift — powers one-tap re-tagging. */
+  lastTagged: { id: string; name: string } | null;
+  onTagged: (a: { id: string; name: string } | null) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [blockOpen, setBlockOpen] = useState(false);
+  const [blockReason, setBlockReason] = useState('');
   const [numberDraft, setNumberDraft] = useState(
     task.answerNumber != null ? String(task.answerNumber) : '',
   );
@@ -584,6 +601,10 @@ function TaskRow({
     setBusy(true);
     try {
       await patchOpsTask(task.id, body);
+      if (body.doneAssociateId) {
+        const a = clockedIn.find((x) => x.id === body.doneAssociateId);
+        if (a) onTagged(a);
+      }
       onChanged();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not save.');
@@ -595,8 +616,10 @@ function TaskRow({
   const uploadPhoto = async (file: File) => {
     setBusy(true);
     try {
-      await uploadOpsTaskPhoto(task.id, file);
-      toast.success('Photo attached.');
+      const res = await uploadOpsTaskPhoto(task.id, file);
+      toast.success(
+        res.autoCompleted ? 'Photo attached — task complete.' : 'Photo attached.',
+      );
       onChanged();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Upload failed.');
@@ -607,9 +630,35 @@ function TaskRow({
 
   const isDone = task.status === 'DONE';
   const isBlocked = task.status === 'BLOCKED';
+  const isNumeric = task.responseType === 'TEMPERATURE' || task.responseType === 'NUMBER';
+  const isChoice =
+    task.responseType === 'YES_NO' || task.responseType === 'YES_NO_PARTIAL';
+  const isPhotoTask = task.responseType === 'PHOTO';
+
+  const recordNumber = () => {
+    const n = Number(numberDraft);
+    if (!Number.isFinite(n) || numberDraft.trim() === '') {
+      toast.error('Enter a number.');
+      return;
+    }
+    void patch({ answerNumber: n, status: 'DONE' });
+  };
 
   return (
     <div className={cn('py-2.5', isDone && 'opacity-70')}>
+      {/* Always-mounted camera input — inline and expanded buttons share it. */}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void uploadPhoto(f);
+          e.target.value = '';
+        }}
+      />
       <div className="flex items-start gap-3">
         {/* The big tap target: cycles OPEN → DONE (and back). */}
         <button
@@ -692,6 +741,74 @@ function TaskRow({
               )}
             </div>
           </button>
+
+          {/* Inline quick controls — the shift's core loop with no expand
+              tax: type, tap, next. Expand stays for the rich extras. */}
+          {!isDone && !isBlocked && (isNumeric || isChoice || isPhotoTask) && (
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {isNumeric && (
+                <>
+                  <Input
+                    inputMode="decimal"
+                    className="h-8 w-24 coarse:h-10 coarse:w-28 tabular-nums"
+                    value={numberDraft}
+                    onChange={(e) => setNumberDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') recordNumber();
+                    }}
+                    placeholder={
+                      task.responseType === 'TEMPERATURE'
+                        ? (task.tempLabel ?? '°F')
+                        : 'count'
+                    }
+                    aria-label={`${task.title} — ${task.responseType === 'TEMPERATURE' ? 'temperature' : 'count'}`}
+                  />
+                  <Button size="sm" onClick={recordNumber} loading={busy}>
+                    {task.responseType === 'TEMPERATURE' ? (
+                      <Thermometer className="h-3.5 w-3.5" />
+                    ) : (
+                      <Check className="h-3.5 w-3.5" />
+                    )}
+                    Record
+                  </Button>
+                  {task.responseType === 'TEMPERATURE' &&
+                    task.tempMin != null &&
+                    task.tempMax != null && (
+                      <span className="text-2xs tabular-nums text-silver/50">
+                        {task.tempMin}–{task.tempMax}°F
+                      </span>
+                    )}
+                </>
+              )}
+              {isChoice &&
+                (task.responseType === 'YES_NO_PARTIAL'
+                  ? (['YES', 'NO', 'PARTIAL'] as const)
+                  : (['YES', 'NO'] as const)
+                ).map((choice) => (
+                  <Button
+                    key={choice}
+                    size="sm"
+                    variant={task.answerChoice === choice ? 'primary' : 'outline'}
+                    onClick={() => void patch({ answerChoice: choice, status: 'DONE' })}
+                    disabled={busy}
+                    aria-label={`${task.title} — answer ${choice.toLowerCase()}`}
+                  >
+                    {choice === 'YES' ? 'Yes' : choice === 'NO' ? 'No' : 'Partial'}
+                  </Button>
+                ))}
+              {isPhotoTask && (
+                <Button
+                  size="sm"
+                  onClick={() => fileRef.current?.click()}
+                  loading={busy}
+                  aria-label={`${task.title} — take the photo (completes the task)`}
+                >
+                  <Camera className="h-3.5 w-3.5" />
+                  Take photo — done
+                </Button>
+              )}
+            </div>
+          )}
 
           {expanded && (
             <div className="mt-2 space-y-2.5 rounded-md border border-navy-secondary bg-navy-secondary/20 p-3">
@@ -783,18 +900,6 @@ function TaskRow({
 
               {/* Photos — camera-native on touch devices. */}
               <div className="flex flex-wrap items-center gap-2">
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) void uploadPhoto(f);
-                    e.target.value = '';
-                  }}
-                />
                 <Button
                   size="sm"
                   variant="outline"
@@ -841,6 +946,17 @@ function TaskRow({
                       ))}
                     </Select>
                   </div>
+                  {/* Same crew, consecutive tasks — one tap re-tags. */}
+                  {lastTagged && task.doneAssociate?.id !== lastTagged.id && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void patch({ doneAssociateId: lastTagged.id })}
+                      disabled={busy}
+                    >
+                      Tag {lastTagged.name.split(' ')[0]}
+                    </Button>
+                  )}
                 </div>
               )}
 
@@ -851,10 +967,8 @@ function TaskRow({
                     size="sm"
                     variant="destructive"
                     onClick={() => {
-                      const reason = window.prompt('Why is this blocked?');
-                      if (reason?.trim()) {
-                        void patch({ status: 'BLOCKED', blockedReason: reason.trim() });
-                      }
+                      setBlockReason('');
+                      setBlockOpen(true);
                     }}
                     disabled={busy || isDone}
                   >
@@ -876,6 +990,41 @@ function TaskRow({
           )}
         </div>
       </div>
+
+      {/* Block-with-reason — a proper dialog, not a browser prompt. */}
+      <Dialog open={blockOpen} onOpenChange={setBlockOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Mark blocked</DialogTitle>
+            <DialogDescription>“{task.title}” — what&apos;s in the way?</DialogDescription>
+          </DialogHeader>
+          <Input
+            value={blockReason}
+            onChange={(e) => setBlockReason(e.target.value)}
+            placeholder="e.g. Waiting on maintenance for the compactor"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && blockReason.trim()) {
+                setBlockOpen(false);
+                void patch({ status: 'BLOCKED', blockedReason: blockReason.trim() });
+              }
+            }}
+          />
+          <DialogFooter>
+            <Button
+              variant="destructive"
+              disabled={!blockReason.trim()}
+              onClick={() => {
+                setBlockOpen(false);
+                void patch({ status: 'BLOCKED', blockedReason: blockReason.trim() });
+              }}
+            >
+              <Flag className="h-3.5 w-3.5" />
+              Mark blocked
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1059,8 +1208,13 @@ function CloseDialog({
   const [draftKind, setDraftKind] = useState<OpsHandoverKind>('NOTE');
   const [draftBody, setDraftBody] = useState('');
   const [busy, setBusy] = useState(false);
+  // One-tap handover: unfinished tasks become chips — tap to hand over
+  // verbatim instead of re-typing them at the most tired moment of the
+  // shift. Tap again to leave out.
+  const [carriedIds, setCarriedIds] = useState<Set<string>>(new Set());
 
   const openRequired = tasks.filter((t) => t.required && t.status !== 'DONE');
+  const openWork = tasks.filter((t) => t.status !== 'DONE');
 
   useEffect(() => {
     if (open) {
@@ -1068,8 +1222,13 @@ function CloseDialog({
       setItems([]);
       setDraftBody('');
       setDraftKind('NOTE');
+      // Required unfinished work defaults to handed-over — leaving it out
+      // is the deliberate act, not the accident.
+      setCarriedIds(
+        new Set(tasks.filter((t) => t.required && t.status !== 'DONE').map((t) => t.id)),
+      );
     }
-  }, [open]);
+  }, [open, tasks]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1097,9 +1256,53 @@ function CloseDialog({
             </div>
           )}
 
+          {/* Unfinished work as one-tap handover chips. */}
+          {openWork.length > 0 && (
+            <div className="rounded-md border border-navy-secondary bg-navy-secondary/20 p-3">
+              <div className="text-xs font-medium text-white">
+                Hand these over? <span className="text-silver/60">(tap to toggle)</span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {openWork.map((t) => {
+                  const on = carriedIds.has(t.id);
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() =>
+                        setCarriedIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(t.id)) next.delete(t.id);
+                          else next.add(t.id);
+                          return next;
+                        })
+                      }
+                      aria-pressed={on}
+                      className={cn(
+                        'inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                        on
+                          ? 'border-gold/60 bg-gold/10 text-white'
+                          : 'border-navy-secondary text-silver/60 hover:border-gold/30 hover:text-silver',
+                      )}
+                    >
+                      {on ? (
+                        <Check className="h-3 w-3 shrink-0 text-gold" strokeWidth={3} />
+                      ) : (
+                        <Flag className="h-3 w-3 shrink-0" />
+                      )}
+                      <span className="truncate">{t.title}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Handover composer. */}
           <div className="rounded-md border border-navy-secondary bg-navy-secondary/20 p-3 space-y-2">
-            <div className="text-xs font-medium text-white">Handover to the next shift</div>
+            <div className="text-xs font-medium text-white">
+              Anything else for the next shift?
+            </div>
             {items.map((i, idx) => {
               const KindIcon = HANDOVER_KIND_ICON[i.kind];
               return (
@@ -1179,8 +1382,16 @@ function CloseDialog({
             onClick={async () => {
               setBusy(true);
               try {
-                if (items.length > 0) {
-                  await addOpsHandover(shift.id, items);
+                const chipItems = openWork
+                  .filter((t) => carriedIds.has(t.id))
+                  .map((t) => ({
+                    kind: 'UNFINISHED_TASK' as const,
+                    body: t.title,
+                    priority: t.priority,
+                  }));
+                const all = [...chipItems, ...items];
+                if (all.length > 0) {
+                  await addOpsHandover(shift.id, all);
                 }
                 await closeOpsShift(shift.id, summary.trim() || undefined);
                 toast.success('Shift closed — the record is final.');

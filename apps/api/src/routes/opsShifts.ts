@@ -879,8 +879,20 @@ opsRouter.post(
           uploadedById: req.user!.id,
         },
       });
+      // For PHOTO-response tasks the photo IS the completion — landing one
+      // finishes the task in the same gesture (supplementary photos on
+      // other task types never auto-complete anything).
+      let autoCompleted = false;
+      if (task.responseType === 'PHOTO' && task.status !== 'DONE') {
+        await prisma.opsTask.update({
+          where: { id: task.id },
+          data: { status: 'DONE', completedById: req.user!.id, completedAt: new Date() },
+        });
+        autoCompleted = true;
+      }
       res.status(201).json({
         photo: { id: photo.id, filename: photo.filename, createdAt: photo.createdAt.toISOString() },
+        autoCompleted,
       });
     } catch (err) {
       next(err);

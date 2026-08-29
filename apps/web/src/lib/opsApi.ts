@@ -222,7 +222,11 @@ export function patchOpsTask(
 export async function uploadOpsTaskPhoto(
   taskId: string,
   file: File,
-): Promise<{ photo: { id: string; filename: string; createdAt: string } }> {
+): Promise<{
+  photo: { id: string; filename: string; createdAt: string };
+  /** True when the upload completed a PHOTO-response task in one gesture. */
+  autoCompleted?: boolean;
+}> {
   const form = new FormData();
   form.append('file', file);
   const res = await fetch(`/api/ops/tasks/${taskId}/photos`, {
@@ -236,7 +240,10 @@ export async function uploadOpsTaskPhoto(
     } | null;
     throw new Error(body?.error?.message ?? `Upload failed (${res.status})`);
   }
-  return (await res.json()) as { photo: { id: string; filename: string; createdAt: string } };
+  return (await res.json()) as {
+    photo: { id: string; filename: string; createdAt: string };
+    autoCompleted?: boolean;
+  };
 }
 
 export function opsPhotoUrl(photoId: string): string {

@@ -112,6 +112,38 @@ describe('store ops', () => {
     expect(refused.body.error?.code).toBe('photo_required');
   });
 
+  it('for a PHOTO task, landing the photo IS the completion', async () => {
+    const client = await createClient();
+    const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });
+    const agent = await loginAs(sup.email);
+    const open = await agent
+      .post('/ops/shifts/open')
+      .send({ position: 'GM Closing Shift' });
+    const detail = await agent.get(`/ops/shifts/${open.body.shiftId}`);
+    const photoTask = detail.body.tasks.find(
+      (t: { responseType: string }) => t.responseType === 'PHOTO',
+    );
+    expect(photoTask).toBeTruthy();
+
+    // Minimal valid PNG (8-byte signature + IHDR) — passes the magic check.
+    const png = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.from([0x00, 0x00, 0x00, 0x0d]),
+      Buffer.from('IHDR'),
+      Buffer.from([0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00]),
+      Buffer.from([0x1f, 0x15, 0xc4, 0x89]),
+    ]);
+    const res = await agent
+      .post(`/ops/tasks/${photoTask.id}/photos`)
+      .attach('file', png, { filename: 'proof.png', contentType: 'image/png' });
+    expect(res.status).toBe(201);
+    expect(res.body.autoCompleted).toBe(true);
+
+    const after = await prisma.opsTask.findUniqueOrThrow({ where: { id: photoTask.id } });
+    expect(after.status).toBe('DONE');
+    expect(after.completedById).not.toBeNull();
+  });
+
   it('closing stamps completion math and flags incomplete closes to admins', async () => {
     const client = await createClient();
     const { user: admin } = await createUser({ role: 'HR_ADMINISTRATOR' });
