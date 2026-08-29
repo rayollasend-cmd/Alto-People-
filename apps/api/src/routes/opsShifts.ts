@@ -447,6 +447,53 @@ opsRouter.post('/library/templates/:id/tasks', LIB, async (req, res, next) => {
   }
 });
 
+/**
+ * PATCH /ops/library/tasks/:id — edit a task in the standard. Safe by
+ * construction: run shifts snapshot task content at open, so editing the
+ * template never rewrites a shift already run.
+ */
+opsRouter.patch('/library/tasks/:id', LIB, async (req, res, next) => {
+  try {
+    const parsed = z
+      .object({
+        section: z.string().trim().min(1).max(80).optional(),
+        title: z.string().trim().min(1).max(300).optional(),
+        instructions: z.string().trim().max(1000).nullable().optional(),
+        responseType: z
+          .enum(['CHECK', 'YES_NO', 'YES_NO_PARTIAL', 'TEXT', 'NUMBER', 'TEMPERATURE', 'PHOTO'])
+          .optional(),
+        required: z.boolean().optional(),
+        photoRequired: z.boolean().optional(),
+        tempLabel: z.string().trim().max(80).nullable().optional(),
+        tempMin: z.number().nullable().optional(),
+        tempMax: z.number().nullable().optional(),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const task = await prisma.opsSopTemplateTask.findUnique({ where: { id: req.params.id } });
+    if (!task) throw new HttpError(404, 'not_found', 'Task not found');
+    await prisma.opsSopTemplateTask.update({
+      where: { id: task.id },
+      data: parsed.data,
+    });
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'ops.sop_task_updated',
+        entityType: 'OpsSopTemplate',
+        entityId: task.templateId,
+        metadata: { taskId: task.id, title: parsed.data.title ?? task.title },
+      },
+      'ops.library',
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 opsRouter.delete('/library/tasks/:id', LIB, async (req, res, next) => {
   try {
     const task = await prisma.opsSopTemplateTask.findUnique({ where: { id: req.params.id } });

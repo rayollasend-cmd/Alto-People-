@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
   Hash,
   MessageSquare,
+  Pencil,
   Plus,
   ShieldCheck,
   Thermometer,
@@ -39,6 +40,7 @@ import {
   deleteOpsTemplateTask,
   getOpsLibrary,
   patchOpsTemplate,
+  patchOpsTemplateTask,
   type OpsLibraryTemplate,
   type OpsPeriod,
   type OpsResponseType,
@@ -417,6 +419,7 @@ function TemplateTasks({
   const [tempMin, setTempMin] = useState('');
   const [tempMax, setTempMax] = useState('');
   const [busy, setBusy] = useState(false);
+  const [editTask, setEditTask] = useState<OpsLibraryTemplate['tasks'][number] | null>(null);
 
   const sections = [...new Set(tpl.tasks.map((t) => t.section))];
 
@@ -482,24 +485,37 @@ function TemplateTasks({
                         <span className="shrink-0 text-2xs text-silver/40">optional</span>
                       )}
                     </span>
-                    <button
-                      type="button"
-                      className="shrink-0 text-silver/30 opacity-0 transition-opacity hover:text-alert group-hover:opacity-100 focus:opacity-100"
-                      aria-label={`Remove "${task.title}" from this SOP`}
-                      title="Remove from the standard (past shifts keep it)."
-                      onClick={async () => {
-                        try {
-                          await deleteOpsTemplateTask(task.id);
-                          onChanged();
-                        } catch (err) {
-                          toast.error(
-                            err instanceof ApiError ? err.message : 'Could not remove.',
-                          );
-                        }
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    {/* Always visible — hover-reveal hid these entirely on
+                        iPads (no hover exists there). */}
+                    <span className="flex shrink-0 items-center gap-0.5">
+                      <button
+                        type="button"
+                        className="rounded p-1 coarse:p-1.5 text-silver/40 hover:text-gold focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                        aria-label={`Edit "${task.title}"`}
+                        title="Edit this task (past shifts keep their version)."
+                        onClick={() => setEditTask(task)}
+                      >
+                        <Pencil className="h-3.5 w-3.5 coarse:h-4 coarse:w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded p-1 coarse:p-1.5 text-silver/40 hover:text-alert focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                        aria-label={`Remove "${task.title}" from this SOP`}
+                        title="Remove from the standard (past shifts keep it)."
+                        onClick={async () => {
+                          try {
+                            await deleteOpsTemplateTask(task.id);
+                            onChanged();
+                          } catch (err) {
+                            toast.error(
+                              err instanceof ApiError ? err.message : 'Could not remove.',
+                            );
+                          }
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 coarse:h-4 coarse:w-4" />
+                      </button>
+                    </span>
                   </li>
                 );
               })}
@@ -507,6 +523,18 @@ function TemplateTasks({
           </div>
         );
       })}
+
+      {editTask && (
+        <EditTaskDialog
+          task={editTask}
+          sections={sections}
+          onClose={() => setEditTask(null)}
+          onSaved={() => {
+            setEditTask(null);
+            onChanged();
+          }}
+        />
+      )}
 
       {/* Add-task composer. */}
       <div className="flex flex-wrap items-end gap-2 rounded-md border border-dashed border-navy-secondary bg-navy-secondary/10 p-2.5">
@@ -598,6 +626,154 @@ function TemplateTasks({
         </Button>
       </div>
     </div>
+  );
+}
+
+function EditTaskDialog({
+  task,
+  sections,
+  onClose,
+  onSaved,
+}: {
+  task: OpsLibraryTemplate['tasks'][number];
+  sections: string[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [title, setTitle] = useState(task.title);
+  const [section, setSection] = useState(task.section);
+  const [instructions, setInstructions] = useState(task.instructions ?? '');
+  const [responseType, setResponseType] = useState<OpsResponseType>(task.responseType);
+  const [required, setRequired] = useState(task.required);
+  const [tempMin, setTempMin] = useState(task.tempMin != null ? String(task.tempMin) : '');
+  const [tempMax, setTempMax] = useState(task.tempMax != null ? String(task.tempMax) : '');
+  const [tempLabel, setTempLabel] = useState(task.tempLabel ?? '');
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Edit task</DialogTitle>
+          <DialogDescription>
+            Changes apply to future shifts only — every shift already run keeps
+            this task exactly as it was executed.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label className="text-xs">Task</Label>
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <div className="min-w-[150px] flex-1">
+              <Label className="text-xs">Section</Label>
+              <Input
+                value={section}
+                onChange={(e) => setSection(e.target.value)}
+                list={`edit-sections-${task.id}`}
+              />
+              <datalist id={`edit-sections-${task.id}`}>
+                {sections.map((s) => (
+                  <option key={s} value={s} />
+                ))}
+              </datalist>
+            </div>
+            <div className="min-w-[180px] flex-1">
+              <Label className="text-xs">Response</Label>
+              <Select
+                value={responseType}
+                onChange={(e) => setResponseType(e.target.value as OpsResponseType)}
+              >
+                {RESPONSE_TYPES.map((r) => (
+                  <option key={r.value} value={r.value}>
+                    {r.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+          {responseType === 'TEMPERATURE' && (
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-[140px] flex-1">
+                <Label className="text-xs">Reading label</Label>
+                <Input
+                  value={tempLabel}
+                  onChange={(e) => setTempLabel(e.target.value)}
+                  placeholder="e.g. Cooler °F"
+                />
+              </div>
+              <div className="w-24">
+                <Label className="text-xs">Min °F</Label>
+                <Input
+                  inputMode="decimal"
+                  value={tempMin}
+                  onChange={(e) => setTempMin(e.target.value)}
+                />
+              </div>
+              <div className="w-24">
+                <Label className="text-xs">Max °F</Label>
+                <Input
+                  inputMode="decimal"
+                  value={tempMax}
+                  onChange={(e) => setTempMax(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+          <div>
+            <Label className="text-xs">Instructions (optional)</Label>
+            <Input
+              value={instructions}
+              onChange={(e) => setInstructions(e.target.value)}
+              placeholder="Shown to the supervisor under the task"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-silver">
+            <input
+              type="checkbox"
+              checked={required}
+              onChange={(e) => setRequired(e.target.checked)}
+            />
+            Required — closing without it flags the shift incomplete
+          </label>
+        </div>
+        <DialogFooter>
+          <Button
+            loading={busy}
+            disabled={!title.trim() || !section.trim()}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await patchOpsTemplateTask(task.id, {
+                  title: title.trim(),
+                  section: section.trim(),
+                  instructions: instructions.trim() || null,
+                  responseType,
+                  required,
+                  photoRequired: responseType === 'PHOTO',
+                  ...(responseType === 'TEMPERATURE'
+                    ? {
+                        tempLabel: tempLabel.trim() || null,
+                        tempMin: tempMin.trim() === '' ? null : Number(tempMin),
+                        tempMax: tempMax.trim() === '' ? null : Number(tempMax),
+                      }
+                    : {}),
+                });
+                toast.success('Task updated — future shifts pick it up.');
+                onSaved();
+              } catch (err) {
+                toast.error(err instanceof ApiError ? err.message : 'Could not save.');
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Save changes
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

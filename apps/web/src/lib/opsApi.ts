@@ -160,6 +160,24 @@ export function addOpsTemplateTask(
   return apiFetch(`/ops/library/templates/${templateId}/tasks`, { method: 'POST', body });
 }
 
+/** Edit a task in the standard (run shifts keep their snapshots). */
+export function patchOpsTemplateTask(
+  taskId: string,
+  body: {
+    section?: string;
+    title?: string;
+    instructions?: string | null;
+    responseType?: OpsResponseType;
+    required?: boolean;
+    photoRequired?: boolean;
+    tempLabel?: string | null;
+    tempMin?: number | null;
+    tempMax?: number | null;
+  },
+): Promise<{ ok: true }> {
+  return apiFetch(`/ops/library/tasks/${taskId}`, { method: 'PATCH', body });
+}
+
 export function deleteOpsTemplateTask(taskId: string): Promise<void> {
   return apiFetch(`/ops/library/tasks/${taskId}`, { method: 'DELETE' });
 }
