@@ -930,7 +930,7 @@ function TaskRow({
                   >
                     <img
                       src={opsPhotoUrl(p.id)}
-                      alt={`Photo: ${p.filename}`}
+                      alt={`Evidence: ${p.filename}`}
                       className="h-full w-full object-cover"
                     />
                   </a>
