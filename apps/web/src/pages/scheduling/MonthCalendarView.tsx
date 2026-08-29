@@ -16,7 +16,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDayHeaderTz, fmtTimeTz, zonedDayKey } from '@/lib/format';
-import { addDays, sameDay, shiftMinutes, startOfDay, ymd } from './calendarDates';
+import { addDays, paidShiftMinutes, sameDay, startOfDay, ymd } from './calendarDates';
 import { StatusMark, statusLabelClass, statusTileClass } from './shiftTile';
 
 const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -107,7 +107,7 @@ export function MonthCalendarView({
       const t = zonedDayKey(s.startsAt, displayTimeZone);
       const b = map.get(t) ?? { shifts: [], totalMinutes: 0, open: 0, draft: 0 };
       b.shifts.push(s);
-      b.totalMinutes += shiftMinutes(s);
+      b.totalMinutes += paidShiftMinutes(s);
       if (s.status === 'OPEN') b.open += 1;
       else if (s.status === 'DRAFT') b.draft += 1;
       map.set(t, b);
@@ -141,7 +141,7 @@ export function MonthCalendarView({
       if (d.getMonth() !== monthAnchor.getMonth()) continue;
       if (d.getFullYear() !== monthAnchor.getFullYear()) continue;
       totalShifts += 1;
-      totalMinutes += shiftMinutes(s);
+      totalMinutes += paidShiftMinutes(s);
       if (s.status === 'OPEN') openShifts += 1;
       else if (s.status === 'DRAFT') draftShifts += 1;
     }

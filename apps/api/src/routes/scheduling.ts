@@ -61,6 +61,7 @@ import {
   type PublishWeekResponse,
   type PublishWeekSkip,
   type Shift,
+  paidMinutesForRange,
   type ShiftConflict,
   type ShiftListResponse,
   type ShiftSwapRequest as ShiftSwapRequestDTO,
@@ -170,8 +171,11 @@ type RawShift = Prisma.ShiftGetPayload<{
   };
 }>;
 
+/** PAID scheduled minutes — the shared unpaid-break rule (shifts over 6h
+ *  include a 1-hour meal break). All aggregations, OT flags, and cost
+ *  projections use this; per-shift length displays stay wall-clock. */
 function scheduledMinutes(row: { startsAt: Date; endsAt: Date }): number {
-  return Math.max(0, Math.floor((row.endsAt.getTime() - row.startsAt.getTime()) / 60_000));
+  return paidMinutesForRange(row.startsAt, row.endsAt);
 }
 
 /**
@@ -685,7 +689,12 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
         [{ minutes: bigint | null; cost: number | null; norate: bigint | null }]
       >(Prisma.sql`
         SELECT
-          COALESCE(SUM(GREATEST(0, ROUND(EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt")) / 60))), 0)::bigint AS minutes,
+          -- Paid minutes: shifts over 6h carry a 1-hour unpaid break
+          -- (same rule as paidMinutesForRange in @alto-people/shared).
+          COALESCE(SUM(
+            GREATEST(0, ROUND(EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt")) / 60)
+              - CASE WHEN EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt")) / 60 > 360 THEN 60 ELSE 0 END)
+          ), 0)::bigint AS minutes,
           COALESCE(SUM(
             CASE WHEN COALESCE(s."payRate", d."payRate",
                 CASE WHEN COALESCE(p."isLead", false) THEN ${
@@ -700,7 +709,8 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
                 }::numeric ELSE ${
                   env.DEFAULT_ASSOCIATE_PAY_RATE > 0 ? env.DEFAULT_ASSOCIATE_PAY_RATE : null
                 }::numeric END
-              ) * GREATEST(0, ROUND(EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt")) / 60)) / 60
+              ) * GREATEST(0, ROUND(EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt")) / 60)
+                  - CASE WHEN EXTRACT(EPOCH FROM (s."endsAt" - s."startsAt")) / 60 > 360 THEN 60 ELSE 0 END) / 60
               ELSE 0 END
           ), 0)::float8 AS cost,
           COUNT(*) FILTER (WHERE COALESCE(s."payRate", d."payRate",
@@ -1087,10 +1097,7 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, async (req, res, next) => {
         dayWindows.length > 0
           ? windowAggFor(b, winHit ? winHit.label : '__other')
           : null;
-      const minutes = Math.max(
-        0,
-        Math.round((s.endsAt.getTime() - s.startsAt.getTime()) / 60_000),
-      );
+      const minutes = paidMinutesForRange(s.startsAt, s.endsAt);
       const posKey = `${s.clientId}|${s.position}`;
       const isLead = leadSet.has(posKey);
       // Resolution order: the shift's own rate → the (client, position)
@@ -4545,16 +4552,14 @@ schedulingRouter.get('/shifts/:id/auto-fill', MANAGE, async (req, res, next) => 
       );
       const onApprovedTimeOff = ptoAssociateIds.has(a.id);
       const weeklyMinutesScheduled = a.assignedShifts.reduce(
-        (sum, s) => sum + Math.floor((s.endsAt.getTime() - s.startsAt.getTime()) / 60_000),
+        (sum, s) => sum + paidMinutesForRange(s.startsAt, s.endsAt),
         0
       );
       const weeklyMinutesActual = a.timeEntries.reduce(
         (sum, e) => sum + netWorkedMinutes(e, e.breaks),
         0
       );
-      const targetMinutes = Math.floor(
-        (target.endsAt.getTime() - target.startsAt.getTime()) / 60_000
-      );
+      const targetMinutes = paidMinutesForRange(target.startsAt, target.endsAt);
       const wouldExceed40 = weeklyMinutesActual + targetMinutes > 40 * 60;
 
       let score = 0;
@@ -6447,10 +6452,7 @@ schedulingRouter.get('/publish-preflight', MANAGE, async (req, res, next) => {
         minutes: 0,
         shifts: [],
       };
-      entry.minutes += Math.max(
-        0,
-        Math.round((s.endsAt.getTime() - s.startsAt.getTime()) / 60_000),
-      );
+      entry.minutes += paidMinutesForRange(s.startsAt, s.endsAt);
       entry.shifts.push({ startsAt: s.startsAt, endsAt: s.endsAt });
       byAssociate.set(s.assignedAssociateId, entry);
     }

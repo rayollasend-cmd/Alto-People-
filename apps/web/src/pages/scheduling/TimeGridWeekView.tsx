@@ -22,7 +22,7 @@ import {
   zonedMinutesOfDay,
   zonedWallTimeToUtc,
 } from '@/lib/format';
-import { addDays, sameDay, shiftMinutes, startOfDay, ymd } from './calendarDates';
+import { addDays, paidShiftMinutes, sameDay, shiftMinutes, startOfDay, ymd } from './calendarDates';
 import { VirtualizedRows } from './VirtualizedRows';
 import {
   ShiftHoverCard,
@@ -204,7 +204,7 @@ export function TimeGridWeekView({
       if (!daySet.has(zonedDayKey(s.startsAt, displayTimeZone))) continue;
       map.set(
         s.assignedAssociateId,
-        (map.get(s.assignedAssociateId) ?? 0) + shiftMinutes(s),
+        (map.get(s.assignedAssociateId) ?? 0) + paidShiftMinutes(s),
       );
     }
     return map;
@@ -219,7 +219,7 @@ export function TimeGridWeekView({
       const key = zonedDayKey(s.startsAt, displayTimeZone);
       const t = map.get(key) ?? { count: 0, minutes: 0, open: 0 };
       t.count += 1;
-      t.minutes += shiftMinutes(s);
+      t.minutes += paidShiftMinutes(s);
       if (!s.assignedAssociateId && s.status === 'OPEN') t.open += 1;
       map.set(key, t);
     }

@@ -24,7 +24,7 @@ import {
   zonedMinutesOfDay,
   zonedWallTimeToUtc,
 } from '@/lib/format';
-import { addDays, sameDay, shiftMinutes, startOfDay, ymd } from './calendarDates';
+import { addDays, paidShiftMinutes, sameDay, startOfDay, ymd } from './calendarDates';
 import {
   ShiftHoverCard,
   useShiftHoverCard,
@@ -330,7 +330,7 @@ export function WeekCalendarView({
       const day = zonedDayKey(s.startsAt, displayTimeZone);
       const entry = out.get(day);
       if (!entry) continue;
-      const mins = shiftMinutes(s);
+      const mins = paidShiftMinutes(s);
       entry.count += 1;
       entry.minutes += mins;
       // effectivePayRate = explicit shift rate, else the (client, position)
@@ -357,7 +357,7 @@ export function WeekCalendarView({
       if (!daySet.has(zonedDayKey(s.startsAt, displayTimeZone))) continue;
       out.set(
         s.assignedAssociateId,
-        (out.get(s.assignedAssociateId) ?? 0) + shiftMinutes(s)
+        (out.get(s.assignedAssociateId) ?? 0) + paidShiftMinutes(s)
       );
     }
     return out;

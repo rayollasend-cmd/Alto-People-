@@ -45,7 +45,7 @@ import { hapticConfirm } from '@/lib/haptics';
 import { useI18n } from '@/lib/i18n';
 import { AvailabilityEditor } from './AvailabilityEditor';
 import { SwapMarketplace } from './SwapMarketplace';
-import { ShiftCard, shiftMinutes } from './ShiftCard';
+import { ShiftCard, paidShiftMinutes } from './ShiftCard';
 import {
   ScheduleMonthView,
   ScheduleWeekView,
@@ -258,8 +258,8 @@ export function AssociateScheduleView() {
     let nextWeekMin = 0;
     for (const s of all) {
       const t = new Date(s.startsAt).getTime();
-      if (t >= w0 && t < w1) thisWeekMin += shiftMinutes(s);
-      else if (t >= w1 && t < w2) nextWeekMin += shiftMinutes(s);
+      if (t >= w0 && t < w1) thisWeekMin += paidShiftMinutes(s);
+      else if (t >= w1 && t < w2) nextWeekMin += paidShiftMinutes(s);
     }
     const up = all
       .filter((s) => new Date(s.endsAt).getTime() >= now)
@@ -283,7 +283,7 @@ export function AssociateScheduleView() {
       const last = groups[groups.length - 1];
       if (last && last.dayKey === key) {
         last.items.push(s);
-        last.minutes += shiftMinutes(s);
+        last.minutes += paidShiftMinutes(s);
       } else {
         groups.push({
           dayKey: key,
@@ -293,12 +293,12 @@ export function AssociateScheduleView() {
           reactKey: `${key}#${groups.length}`,
           heading: fmtRelativeDayTz(s.startsAt, s.timezone, now),
           isToday: key === zonedDayKey(new Date(now), s.timezone),
-          minutes: shiftMinutes(s),
+          minutes: paidShiftMinutes(s),
           items: [s],
         });
       }
     }
-    const minutes = up.reduce((sum, s) => sum + shiftMinutes(s), 0);
+    const minutes = up.reduce((sum, s) => sum + paidShiftMinutes(s), 0);
     return {
       upcomingDays: groups,
       past: old,

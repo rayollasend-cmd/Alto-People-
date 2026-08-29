@@ -11,6 +11,7 @@
 // source of truth.
 
 import type { PrismaClient } from '@prisma/client';
+import { paidMinutesForRange } from '@alto-people/shared';
 import { env } from '../config/env.js';
 import { notifyAssociate } from './notify.js';
 import { endOfWeekUTC, netWorkedMinutes, startOfWeekUTC } from './timeAnomalies.js';
@@ -109,7 +110,9 @@ export async function computeAssociateEarnings(
   let remainingMin = 0;
   for (const s of shifts) {
     const from = s.startsAt > now ? s.startsAt : now;
-    remainingMin += Math.max(0, Math.round((s.endsAt.getTime() - from.getTime()) / 60_000));
+    // Paid minutes (unpaid-break rule) — never promise money for the
+    // meal hour: a 9h overnight projects 8 paid hours.
+    remainingMin += paidMinutesForRange(from, s.endsAt);
   }
 
   const next = shifts.find(
@@ -120,12 +123,14 @@ export async function computeAssociateEarnings(
         startsAt: next.startsAt.toISOString(),
         endsAt: next.endsAt.toISOString(),
         estAmount: round2(
-          (Math.max(
-            0,
-            Math.round(
-              (next.endsAt.getTime() - Math.max(next.startsAt.getTime(), onClock ? now.getTime() : next.startsAt.getTime())) /
-                60_000,
+          (paidMinutesForRange(
+            new Date(
+              Math.max(
+                next.startsAt.getTime(),
+                onClock ? now.getTime() : next.startsAt.getTime(),
+              ),
             ),
+            next.endsAt,
           ) /
             60) *
             rate,

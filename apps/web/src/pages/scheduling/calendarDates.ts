@@ -1,4 +1,4 @@
-import type { Shift } from '@alto-people/shared';
+import { paidMinutesForRange, type Shift } from '@alto-people/shared';
 
 /**
  * The calendar views' shared date arithmetic. Four views each carried
@@ -40,6 +40,7 @@ export function sameDay(a: Date, b: Date): boolean {
   );
 }
 
+/** WALL-CLOCK shift length — layout geometry and per-shift "9h" labels. */
 export function shiftMinutes(s: Shift): number {
   return Math.max(
     0,
@@ -47,4 +48,11 @@ export function shiftMinutes(s: Shift): number {
       (new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime()) / 60_000,
     ),
   );
+}
+
+/** PAID minutes (shared unpaid-break rule: >6h shifts lose the 1h meal
+ *  break). ALL hour totals, OT tints, and cost math use this — a 9h
+ *  overnight counts 8h toward the week. */
+export function paidShiftMinutes(s: Shift): number {
+  return paidMinutesForRange(s.startsAt, s.endsAt);
 }

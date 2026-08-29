@@ -5,6 +5,7 @@ import { orgDateKey } from './timeAnomalies.js';
 import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
 import { getBlobStore } from './blobStore.js';
 import { METRIC_LABEL } from './opsSops.js';
+import { paidMinutesForRange } from '@alto-people/shared';
 
 /**
  * Weekly Client Service Report — the hand-to-the-store-manager PDF.
@@ -165,7 +166,9 @@ export async function buildClientServiceReport(
   for (const s of shifts) {
     const key = orgDateKey(s.startsAt);
     const day = dayMap.get(key);
-    const hours = Math.max(0, (s.endsAt.getTime() - s.startsAt.getTime()) / 3_600_000);
+    // Paid hours (the shared unpaid-break rule) — the report must
+    // reconcile with the invoice, which bills paid time.
+    const hours = paidMinutesForRange(s.startsAt, s.endsAt) / 60;
     const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
     const who = s.assignedAssociate
       ? `${s.assignedAssociate.firstName} ${s.assignedAssociate.lastName}`

@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import type {
-  Shift,
-  ShiftTeammate,
-  SwapCandidate,
-  TradeOption,
+import {
+  paidMinutesForRange,
+  type Shift,
+  type ShiftTeammate,
+  type SwapCandidate,
+  type TradeOption,
 } from '@alto-people/shared';
 import {
   acknowledgeMyShift,
@@ -43,9 +44,15 @@ export function statusBadge(
   }
 }
 
+/** WALL-CLOCK length — the card's "9h" label stays the true span. */
 export function shiftMinutes(s: Shift): number {
   const ms = new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime();
   return ms > 0 ? Math.round(ms / 60000) : 0;
+}
+
+/** PAID minutes (shared unpaid-break rule) — hour TOTALS use this. */
+export function paidShiftMinutes(s: Shift): number {
+  return paidMinutesForRange(s.startsAt, s.endsAt);
 }
 
 /** "8h", "7h 30m" — shift length for the detail panel. */

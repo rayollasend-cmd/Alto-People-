@@ -3,7 +3,7 @@ import type { Shift } from '@alto-people/shared';
 import { Button } from '@/components/ui/Button';
 import { fmtDateTz, zonedDayKey } from '@/lib/format';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { ShiftCard, shiftMinutes } from './ShiftCard';
+import { ShiftCard, paidShiftMinutes } from './ShiftCard';
 
 /**
  * Day-dot colour for the month grid, ordered by what the associate still
@@ -151,7 +151,7 @@ export function ScheduleWeekView({
   });
   const weekEnd = days[6]!.date;
   const weekMinutes = days.reduce(
-    (sum, d) => sum + (byDay.get(d.key) ?? []).reduce((m, s) => m + shiftMinutes(s), 0),
+    (sum, d) => sum + (byDay.get(d.key) ?? []).reduce((m, s) => m + paidShiftMinutes(s), 0),
     0,
   );
   // fmtDateTz with no zone = browser-local "Jun 28" — the grid's dates are
@@ -428,7 +428,7 @@ export function ScheduleMonthView({
         )}
         {selectedShifts.length > 1 && (
           <p className="mt-2 text-xs text-silver/60 tabular-nums">
-            {(selectedShifts.reduce((m, s) => m + shiftMinutes(s), 0) / 60).toFixed(1)}h
+            {(selectedShifts.reduce((m, s) => m + paidShiftMinutes(s), 0) / 60).toFixed(1)}h
             scheduled this day
           </p>
         )}
