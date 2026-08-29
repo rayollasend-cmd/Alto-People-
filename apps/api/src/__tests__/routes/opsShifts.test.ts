@@ -112,6 +112,55 @@ describe('store ops', () => {
     expect(refused.body.error?.code).toBe('photo_required');
   });
 
+  it('closed loop: an out-of-range temp spawns a re-check; a No spawns explain-and-correct', async () => {
+    const client = await createClient();
+    const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });
+    const agent = await loginAs(sup.email);
+    const open = await agent
+      .post('/ops/shifts/open')
+      .send({ position: 'F&D Evening Shift' });
+    const detail = await agent.get(`/ops/shifts/${open.body.shiftId}`);
+
+    // Out-of-range temperature → TEMPERATURE re-check child, same bounds.
+    const tempTask = detail.body.tasks.find(
+      (t: { responseType: string }) => t.responseType === 'TEMPERATURE',
+    );
+    const tempRes = await agent
+      .patch(`/ops/tasks/${tempTask.id}`)
+      .send({ answerNumber: 44, status: 'DONE' });
+    expect(tempRes.status).toBe(200);
+    expect(tempRes.body.followUp).toBeTruthy();
+    expect(tempRes.body.followUp.source).toBe('FOLLOWUP');
+    expect(tempRes.body.followUp.responseType).toBe('TEMPERATURE');
+    expect(tempRes.body.followUp.tempMin).toBe(tempTask.tempMin);
+    expect(tempRes.body.followUp.required).toBe(true);
+
+    // Deduped: answering out-of-range again spawns nothing new.
+    const again = await agent
+      .patch(`/ops/tasks/${tempTask.id}`)
+      .send({ answerNumber: 45 });
+    expect(again.body.followUp).toBeNull();
+
+    // No on a compliance question → TEXT explain-and-correct child.
+    const yn = detail.body.tasks.find(
+      (t: { responseType: string }) => t.responseType === 'YES_NO_PARTIAL',
+    );
+    expect(yn).toBeTruthy();
+    const noRes = await agent
+      .patch(`/ops/tasks/${yn.id}`)
+      .send({ answerChoice: 'NO', status: 'DONE' });
+    expect(noRes.status).toBe(200);
+    expect(noRes.body.followUp.responseType).toBe('TEXT');
+    expect(noRes.body.followUp.title).toContain('Explain & correct');
+
+    // The metric identity rode the snapshot in.
+    const metric = detail.body.tasks.find(
+      (t: { title: string }) => t.title === 'Receive the delivery',
+    );
+    expect(metric.metricKey).toBe('pallets_received');
+    expect(metric.unit).toBe('pallets');
+  });
+
   it('for a PHOTO task, landing the photo IS the completion', async () => {
     const client = await createClient();
     const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });

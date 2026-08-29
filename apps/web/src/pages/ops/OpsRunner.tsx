@@ -600,10 +600,15 @@ function TaskRow({
   const patch = async (body: Parameters<typeof patchOpsTask>[1]) => {
     setBusy(true);
     try {
-      await patchOpsTask(task.id, body);
+      const res = await patchOpsTask(task.id, body);
       if (body.doneAssociateId) {
         const a = clockedIn.find((x) => x.id === body.doneAssociateId);
         if (a) onTagged(a);
+      }
+      // The closed loop announcing itself: a triggering answer just
+      // spawned a corrective task in this section.
+      if (res.followUp) {
+        toast.warning(`Follow-up added: ${res.followUp.title}`, { duration: 6000 });
       }
       onChanged();
     } catch (err) {
@@ -698,6 +703,9 @@ function TaskRow({
                 <span className="text-2xs text-silver/50">optional</span>
               )}
               {task.source === 'CARRYOVER' && <Badge variant="pending">carried over</Badge>}
+              {task.source === 'FOLLOWUP' && (
+                <Badge variant="destructive">follow-up</Badge>
+              )}
               {task.source === 'ADHOC' && task.priority === 'HIGH' && (
                 <Badge variant="destructive">high</Badge>
               )}
@@ -729,7 +737,9 @@ function TaskRow({
                 </span>
               )}
               {task.responseType === 'NUMBER' && task.answerNumber != null && (
-                <span className="tabular-nums">Count: {task.answerNumber}</span>
+                <span className="tabular-nums">
+                  {task.answerNumber} {task.unit ?? 'recorded'}
+                </span>
               )}
               {task.answerChoice && <span>Answer: {task.answerChoice}</span>}
               {task.doneAssociate && <span> · by {task.doneAssociate.name}</span>}
@@ -759,7 +769,7 @@ function TaskRow({
                     placeholder={
                       task.responseType === 'TEMPERATURE'
                         ? (task.tempLabel ?? '°F')
-                        : 'count'
+                        : (task.unit ?? 'count')
                     }
                     aria-label={`${task.title} — ${task.responseType === 'TEMPERATURE' ? 'temperature' : 'count'}`}
                   />

@@ -39,6 +39,7 @@ import {
   createOpsTemplate,
   deleteOpsTemplateTask,
   getOpsLibrary,
+  METRIC_LABEL,
   patchOpsTemplate,
   patchOpsTemplateTask,
   type OpsLibraryTemplate,
@@ -472,7 +473,7 @@ function TemplateTasks({
                           ) : task.responseType === 'PHOTO' || task.photoRequired ? (
                             'proof'
                           ) : task.responseType === 'NUMBER' ? (
-                            'count'
+                            (task.unit ?? 'count')
                           ) : (
                             'note'
                           )}
@@ -481,10 +482,55 @@ function TemplateTasks({
                       {task.photoRequired && task.responseType !== 'PHOTO' && (
                         <Camera className="h-3 w-3 shrink-0 text-sky" aria-hidden="true" />
                       )}
+                      {task.followUpOn && (
+                        <span
+                          className="shrink-0 rounded-full border border-warning/40 px-1.5 py-0.5 text-2xs text-warning"
+                          title={
+                            task.followUpOn === 'OUT_OF_RANGE'
+                              ? 'Out-of-range readings spawn a re-check task automatically.'
+                              : 'A No answer spawns an explain-and-correct task automatically.'
+                          }
+                        >
+                          loop
+                        </span>
+                      )}
                       {!task.required && (
                         <span className="shrink-0 text-2xs text-silver/40">optional</span>
                       )}
                     </span>
+                    {/* Reality annotation: how this LINE performs (28d). */}
+                    {task.stats.runs >= 3 && (
+                      <span className="ml-auto flex shrink-0 items-center gap-2 text-2xs tabular-nums">
+                        <span
+                          className={cn(
+                            Math.round((task.stats.done / task.stats.runs) * 100) >= 90
+                              ? 'text-success'
+                              : Math.round((task.stats.done / task.stats.runs) * 100) >= 60
+                                ? 'text-silver/60'
+                                : 'text-warning',
+                          )}
+                          title={`Completed on ${task.stats.done} of ${task.stats.runs} shifts in 28 days.`}
+                        >
+                          {Math.round((task.stats.done / task.stats.runs) * 100)}%
+                        </span>
+                        {task.stats.noCount + task.stats.partialCount > 0 && (
+                          <span
+                            className="text-warning"
+                            title={`${task.stats.noCount} No, ${task.stats.partialCount} Partial in 28 days.`}
+                          >
+                            {task.stats.noCount + task.stats.partialCount} flagged
+                          </span>
+                        )}
+                        {task.stats.outOfRange > 0 && (
+                          <span
+                            className="text-alert"
+                            title={`${task.stats.outOfRange} out-of-range reading${task.stats.outOfRange === 1 ? '' : 's'} in 28 days.`}
+                          >
+                            {task.stats.outOfRange}⚠
+                          </span>
+                        )}
+                      </span>
+                    )}
                     {/* Always visible — hover-reveal hid these entirely on
                         iPads (no hover exists there). */}
                     <span className="flex shrink-0 items-center gap-0.5">
@@ -648,6 +694,9 @@ function EditTaskDialog({
   const [tempMin, setTempMin] = useState(task.tempMin != null ? String(task.tempMin) : '');
   const [tempMax, setTempMax] = useState(task.tempMax != null ? String(task.tempMax) : '');
   const [tempLabel, setTempLabel] = useState(task.tempLabel ?? '');
+  const [metricKey, setMetricKey] = useState(task.metricKey ?? '');
+  const [unit, setUnit] = useState(task.unit ?? '');
+  const [followUpOn, setFollowUpOn] = useState<string>(task.followUpOn ?? '');
   const [busy, setBusy] = useState(false);
 
   return (
@@ -721,6 +770,56 @@ function EditTaskDialog({
               </div>
             </div>
           )}
+          {responseType === 'NUMBER' && (
+            <div className="flex flex-wrap gap-3">
+              <div className="min-w-[180px] flex-1">
+                <Label className="text-xs">Metric (for reporting)</Label>
+                <Select value={metricKey} onChange={(e) => setMetricKey(e.target.value)}>
+                  <option value="">— unnamed count —</option>
+                  {Object.entries(METRIC_LABEL)
+                    .filter(([k]) => k !== 'recorded')
+                    .map(([k, label]) => (
+                      <option key={k} value={k}>
+                        {label}
+                      </option>
+                    ))}
+                </Select>
+              </div>
+              <div className="w-32">
+                <Label className="text-xs">Unit</Label>
+                <Input
+                  value={unit}
+                  onChange={(e) => setUnit(e.target.value)}
+                  placeholder="e.g. cases"
+                />
+              </div>
+            </div>
+          )}
+          {(responseType === 'YES_NO' ||
+            responseType === 'YES_NO_PARTIAL' ||
+            responseType === 'TEMPERATURE') && (
+            <div>
+              <Label className="text-xs">Closed loop — spawn a follow-up task when…</Label>
+              <Select value={followUpOn} onChange={(e) => setFollowUpOn(e.target.value)}>
+                <option value="">Never</option>
+                {responseType === 'TEMPERATURE' ? (
+                  <option value="OUT_OF_RANGE">The reading is out of range</option>
+                ) : (
+                  <>
+                    <option value="NO">The answer is No</option>
+                    {responseType === 'YES_NO_PARTIAL' && (
+                      <option value="NO_OR_PARTIAL">The answer is No or Partial</option>
+                    )}
+                  </>
+                )}
+              </Select>
+              <p className="mt-1 text-2xs text-silver/60">
+                Out-of-range spawns a re-check with the same bounds; No spawns an
+                explain-and-correct task. Both are required, so an unresolved loop
+                shows in the shift record.
+              </p>
+            </div>
+          )}
           <div>
             <Label className="text-xs">Instructions (optional)</Label>
             <Input
@@ -752,6 +851,13 @@ function EditTaskDialog({
                   responseType,
                   required,
                   photoRequired: responseType === 'PHOTO',
+                  metricKey: responseType === 'NUMBER' ? metricKey || null : null,
+                  unit: responseType === 'NUMBER' ? unit.trim() || null : null,
+                  followUpOn: (followUpOn || null) as
+                    | 'NO'
+                    | 'NO_OR_PARTIAL'
+                    | 'OUT_OF_RANGE'
+                    | null,
                   ...(responseType === 'TEMPERATURE'
                     ? {
                         tempLabel: tempLabel.trim() || null,

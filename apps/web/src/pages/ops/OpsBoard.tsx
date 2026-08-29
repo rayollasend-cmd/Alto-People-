@@ -38,6 +38,7 @@ import {
   getOpsFeed,
   getOpsInsights,
   getOpsScorecard,
+  metricLabel,
   opsPhotoUrl,
   type OpsFeedEvent,
   type OpsShiftHeader,
@@ -489,14 +490,23 @@ export function OpsBoard() {
               </div>
               <p className="mt-1 text-2xs text-silver/60">
                 Task completions per hour across all stores — the floors&apos; heartbeat.
-                {insights.production.readings > 0 && (
-                  <span className="text-white">
-                    {' '}
-                    {insights.production.units.toLocaleString('en-US')} units/cases recorded
-                    today across {insights.production.readings} counts.
-                  </span>
-                )}
               </p>
+              {insights.metrics.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {insights.metrics.slice(0, 5).map((m) => (
+                    <span
+                      key={m.metricKey}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-navy-secondary bg-navy-secondary/30 px-2.5 py-1 text-2xs"
+                      title={`${m.readings} reading${m.readings === 1 ? '' : 's'} in 24h`}
+                    >
+                      <span className="font-semibold tabular-nums text-white">
+                        {m.total.toLocaleString('en-US')}
+                      </span>
+                      <span className="text-silver/70">{metricLabel(m.metricKey)}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 

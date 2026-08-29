@@ -423,10 +423,65 @@ export const OPS_SEED_TEMPLATES: SeedTemplate[] = [
   ...GENERAL_MERCH,
 ];
 
+/* ===== Metric identity + closed-loop enrichment ========================== */
+
+/**
+ * Named metrics for the seed library's NUMBER tasks — "84" only becomes
+ * data once it's cases_stocked in cases. Keys are the aggregation
+ * identity across stores, departments and weeks.
+ */
+export const METRIC_BY_TITLE: Record<string, { metricKey: string; unit: string }> = {
+  'Identify out-of-stocks, mispicks, and damaged products': { metricKey: 'oos_found', unit: 'items' },
+  'Record out-of-stocks': { metricKey: 'oos_found', unit: 'items' },
+  'Stock cases on the sales floor': { metricKey: 'cases_stocked', unit: 'cases' },
+  'Stock shelves': { metricKey: 'cases_stocked', unit: 'cases' },
+  'Stock Frozen': { metricKey: 'cases_stocked', unit: 'cases' },
+  'Stock Dairy': { metricKey: 'cases_stocked', unit: 'cases' },
+  'Receive the delivery': { metricKey: 'pallets_received', unit: 'pallets' },
+  'Complete damage and expiration logs': { metricKey: 'items_discarded', unit: 'items' },
+  'Dispose of spoiled products correctly': { metricKey: 'items_discarded', unit: 'items' },
+  'Pull expired deli or bakery products': { metricKey: 'items_discarded', unit: 'items' },
+  'Discard expired items': { metricKey: 'items_discarded', unit: 'items' },
+  'Pull expired grocery items': { metricKey: 'items_discarded', unit: 'items' },
+  'Mark down products': { metricKey: 'items_marked_down', unit: 'items' },
+  'Execute price changes or markdowns': { metricKey: 'price_changes', unit: 'changes' },
+};
+
+/**
+ * Closed-loop rules by response type: every temperature check re-verifies
+ * on an out-of-range reading; every compliance question demands an
+ * explanation on No (or Partial where partial exists).
+ */
+function followUpFor(task: SeedTask): {
+  followUpOn: 'NO' | 'NO_OR_PARTIAL' | 'OUT_OF_RANGE' | null;
+} {
+  const rt = task.responseType ?? 'CHECK';
+  if (rt === 'TEMPERATURE') return { followUpOn: 'OUT_OF_RANGE' };
+  if (rt === 'YES_NO') return { followUpOn: 'NO' };
+  if (rt === 'YES_NO_PARTIAL') return { followUpOn: 'NO_OR_PARTIAL' };
+  return { followUpOn: null };
+}
+
+function enrichmentFor(task: SeedTask): {
+  metricKey: string | null;
+  unit: string | null;
+  followUpOn: 'NO' | 'NO_OR_PARTIAL' | 'OUT_OF_RANGE' | null;
+} {
+  const metric = METRIC_BY_TITLE[task.title] ?? null;
+  return {
+    metricKey: metric?.metricKey ?? null,
+    unit: metric?.unit ?? null,
+    ...followUpFor(task),
+  };
+}
+
 /** Idempotent lazy seed: inserts the library only when it's empty. */
 export async function ensureOpsSeed(prisma: PrismaClient): Promise<void> {
   const existing = await prisma.opsSopTemplate.count();
-  if (existing > 0) return;
+  if (existing > 0) {
+    await ensureOpsEnrichment(prisma);
+    return;
+  }
   for (const tpl of OPS_SEED_TEMPLATES) {
     await prisma.opsSopTemplate.create({
       data: {
@@ -446,12 +501,49 @@ export async function ensureOpsSeed(prisma: PrismaClient): Promise<void> {
             tempLabel: task.tempLabel ?? null,
             tempMin: task.tempMin ?? null,
             tempMax: task.tempMax ?? null,
+            ...enrichmentFor(task),
           })),
         },
       },
     });
   }
 }
+
+/**
+ * One-time upgrade for libraries seeded BEFORE metrics/closed-loop
+ * existed: fill metricKey/unit/followUpOn on seed-shaped tasks that
+ * still have them null. Never overwrites an admin's explicit values,
+ * and skips entirely once any enrichment is present.
+ */
+async function ensureOpsEnrichment(prisma: PrismaClient): Promise<void> {
+  const already = await prisma.opsSopTemplateTask.count({
+    where: { OR: [{ metricKey: { not: null } }, { followUpOn: { not: null } }] },
+  });
+  if (already > 0) return;
+  for (const tpl of OPS_SEED_TEMPLATES) {
+    for (const task of tpl.tasks) {
+      const e = enrichmentFor(task);
+      if (!e.metricKey && !e.followUpOn) continue;
+      await prisma.opsSopTemplateTask.updateMany({
+        where: { title: task.title, template: { is: { name: tpl.name } } },
+        data: {
+          ...(e.metricKey ? { metricKey: e.metricKey, unit: e.unit } : {}),
+          ...(e.followUpOn ? { followUpOn: e.followUpOn } : {}),
+        },
+      });
+    }
+  }
+}
+
+/** Human labels for the seeded metric keys (client fallback humanizes). */
+export const METRIC_LABEL: Record<string, string> = {
+  cases_stocked: 'Cases stocked',
+  items_discarded: 'Items discarded',
+  items_marked_down: 'Items marked down',
+  oos_found: 'Out-of-stocks found',
+  pallets_received: 'Pallets received',
+  price_changes: 'Price changes',
+};
 
 /* ===== Position mapping ================================================== */
 

@@ -105,6 +105,8 @@ const taskSelect = {
   tempLabel: true,
   tempMin: true,
   tempMax: true,
+  metricKey: true,
+  unit: true,
   answerChoice: true,
   answerNumber: true,
   answerText: true,
@@ -132,6 +134,8 @@ function toTask(t: Prisma.OpsTaskGetPayload<{ select: typeof taskSelect }>) {
     tempLabel: t.tempLabel,
     tempMin: t.tempMin != null ? Number(t.tempMin) : null,
     tempMax: t.tempMax != null ? Number(t.tempMax) : null,
+    metricKey: t.metricKey,
+    unit: t.unit,
     answerChoice: t.answerChoice,
     answerNumber: t.answerNumber != null ? Number(t.answerNumber) : null,
     answerText: t.answerText,
@@ -284,6 +288,65 @@ opsRouter.get('/library', LIB_READ, async (_req, res, next) => {
         },
       ]),
     );
+    // Task-level truth: how each LINE of the standard performs in practice
+    // (28 days of run instances, keyed by the snapshot's templateTaskId).
+    const taskIds = templates.flatMap((t) => t.tasks.map((x) => x.id));
+    const [statusAgg, choiceAgg, oorAgg] =
+      taskIds.length > 0
+        ? await Promise.all([
+            prisma.opsTask.groupBy({
+              by: ['templateTaskId', 'status'],
+              where: { templateTaskId: { in: taskIds }, createdAt: { gte: since } },
+              _count: { _all: true },
+            }),
+            prisma.opsTask.groupBy({
+              by: ['templateTaskId', 'answerChoice'],
+              where: {
+                templateTaskId: { in: taskIds },
+                createdAt: { gte: since },
+                answerChoice: { not: null },
+              },
+              _count: { _all: true },
+            }),
+            prisma.opsTask.groupBy({
+              by: ['templateTaskId'],
+              where: {
+                templateTaskId: { in: taskIds },
+                createdAt: { gte: since },
+                tempOutOfRange: true,
+              },
+              _count: { _all: true },
+            }),
+          ])
+        : [[], [], []];
+    const taskStats = new Map<
+      string,
+      { runs: number; done: number; noCount: number; partialCount: number; outOfRange: number }
+    >();
+    const stat = (id: string) => {
+      const row = taskStats.get(id) ?? {
+        runs: 0,
+        done: 0,
+        noCount: 0,
+        partialCount: 0,
+        outOfRange: 0,
+      };
+      taskStats.set(id, row);
+      return row;
+    };
+    for (const r of statusAgg) {
+      const row = stat(r.templateTaskId!);
+      row.runs += r._count._all;
+      if (r.status === 'DONE') row.done += r._count._all;
+    }
+    for (const r of choiceAgg) {
+      const row = stat(r.templateTaskId!);
+      if (r.answerChoice === 'NO') row.noCount += r._count._all;
+      if (r.answerChoice === 'PARTIAL') row.partialCount += r._count._all;
+    }
+    for (const r of oorAgg) {
+      stat(r.templateTaskId!).outOfRange += r._count._all;
+    }
     res.json({
       departments: OPS_DEPARTMENTS,
       templates: templates.map((tpl) => ({
@@ -308,6 +371,16 @@ opsRouter.get('/library', LIB_READ, async (_req, res, next) => {
           tempLabel: task.tempLabel,
           tempMin: task.tempMin != null ? Number(task.tempMin) : null,
           tempMax: task.tempMax != null ? Number(task.tempMax) : null,
+          metricKey: task.metricKey,
+          unit: task.unit,
+          followUpOn: task.followUpOn,
+          stats: taskStats.get(task.id) ?? {
+            runs: 0,
+            done: 0,
+            noCount: 0,
+            partialCount: 0,
+            outOfRange: 0,
+          },
         })),
       })),
     });
@@ -403,6 +476,11 @@ const TemplateTaskInputSchema = z.object({
   tempLabel: z.string().trim().max(80).optional(),
   tempMin: z.number().optional(),
   tempMax: z.number().optional(),
+  metricKey: z.string().trim().max(60).optional(),
+  unit: z.string().trim().max(30).optional(),
+  followUpOn: z.enum(['NO', 'NO_OR_PARTIAL', 'OUT_OF_RANGE']).nullable().optional(),
+  followUpRequirePhoto: z.boolean().optional(),
+  followUpTaskTitle: z.string().trim().max(300).optional(),
 });
 
 opsRouter.post('/library/templates/:id/tasks', LIB, async (req, res, next) => {
@@ -429,6 +507,11 @@ opsRouter.post('/library/templates/:id/tasks', LIB, async (req, res, next) => {
         tempLabel: parsed.data.tempLabel ?? null,
         tempMin: parsed.data.tempMin ?? null,
         tempMax: parsed.data.tempMax ?? null,
+        metricKey: parsed.data.metricKey ?? null,
+        unit: parsed.data.unit ?? null,
+        followUpOn: parsed.data.followUpOn ?? null,
+        followUpRequirePhoto: parsed.data.followUpRequirePhoto ?? false,
+        followUpTaskTitle: parsed.data.followUpTaskTitle ?? null,
       },
     });
     enqueueAudit(
@@ -467,6 +550,11 @@ opsRouter.patch('/library/tasks/:id', LIB, async (req, res, next) => {
         tempLabel: z.string().trim().max(80).nullable().optional(),
         tempMin: z.number().nullable().optional(),
         tempMax: z.number().nullable().optional(),
+        metricKey: z.string().trim().max(60).nullable().optional(),
+        unit: z.string().trim().max(30).nullable().optional(),
+        followUpOn: z.enum(['NO', 'NO_OR_PARTIAL', 'OUT_OF_RANGE']).nullable().optional(),
+        followUpRequirePhoto: z.boolean().optional(),
+        followUpTaskTitle: z.string().trim().max(300).nullable().optional(),
       })
       .safeParse(req.body);
     if (!parsed.success) {
@@ -650,6 +738,11 @@ opsRouter.post('/shifts/open', RUN, async (req, res, next) => {
                 tempLabel: task.tempLabel,
                 tempMin: task.tempMin,
                 tempMax: task.tempMax,
+                metricKey: task.metricKey,
+                unit: task.unit,
+                followUpOn: task.followUpOn,
+                followUpRequirePhoto: task.followUpRequirePhoto,
+                followUpTaskTitle: task.followUpTaskTitle,
               })),
             }
           : undefined,
@@ -880,7 +973,61 @@ opsRouter.patch('/tasks/:id', RUN, async (req, res, next) => {
       });
     }
 
-    res.json({ task: toTask(updated) });
+    // ---- Closed loop: detect → explain → correct → verify -----------------
+    // A triggering answer spawns ONE corrective child task on the same
+    // shift (deduped per parent): out-of-range temps re-verify with the
+    // same bounds; No/Partial compliance answers demand an explanation
+    // (or photo proof when the rule says so). The child is required, so
+    // an unresolved loop shows up in close-incomplete and handover like
+    // any other unfinished work.
+    let followUp: ReturnType<typeof toTask> | null = null;
+    const triggered =
+      (task.followUpOn === 'OUT_OF_RANGE' && newAlert) ||
+      (task.followUpOn === 'NO' && input.answerChoice === 'NO') ||
+      (task.followUpOn === 'NO_OR_PARTIAL' &&
+        (input.answerChoice === 'NO' || input.answerChoice === 'PARTIAL'));
+    if (triggered) {
+      const existingChild = await prisma.opsTask.findFirst({
+        where: { parentTaskId: task.id },
+        select: { id: true },
+      });
+      if (!existingChild) {
+        const isTemp = task.responseType === 'TEMPERATURE';
+        const child = await prisma.opsTask.create({
+          data: {
+            opsShiftId: task.opsShift.id,
+            source: 'FOLLOWUP',
+            parentTaskId: task.id,
+            section: task.section,
+            order: task.order,
+            title:
+              task.followUpTaskTitle ??
+              (isTemp
+                ? `Re-check — ${task.tempLabel ?? task.title}`
+                : `Explain & correct — ${task.title}`),
+            instructions: isTemp
+              ? 'The last reading was out of range. Fix the cause, then record a fresh reading.'
+              : 'The answer flagged a problem. Say what was wrong and what was done about it.',
+            priority: 'HIGH',
+            responseType: isTemp
+              ? 'TEMPERATURE'
+              : task.followUpRequirePhoto
+                ? 'PHOTO'
+                : 'TEXT',
+            required: true,
+            photoRequired: !isTemp && task.followUpRequirePhoto,
+            ...(isTemp
+              ? { tempLabel: task.tempLabel, tempMin: task.tempMin, tempMax: task.tempMax }
+              : {}),
+            createdById: req.user!.id,
+          },
+          select: taskSelect,
+        });
+        followUp = toTask(child);
+      }
+    }
+
+    res.json({ task: toTask(updated), followUp });
   } catch (err) {
     next(err);
   }
@@ -1299,7 +1446,13 @@ opsRouter.get('/insights', BOARD, async (_req, res, next) => {
           where: {
             completedAt: { gte: new Date(now.getTime() - 24 * 3_600_000) },
           },
-          select: { completedAt: true, responseType: true, answerNumber: true },
+          select: {
+            completedAt: true,
+            responseType: true,
+            answerNumber: true,
+            metricKey: true,
+            unit: true,
+          },
           take: 2000,
         }),
         prisma.opsShift.findMany({
@@ -1390,13 +1543,23 @@ opsRouter.get('/insights', BOARD, async (_req, res, next) => {
         pct: r.total > 0 ? Math.round((r.done / r.total) * 100) : null,
       }));
 
-    // Production volume: every NUMBER reading recorded in the last 24h.
-    const production = todayDone
-      .filter((t) => t.responseType === 'NUMBER' && t.answerNumber != null)
-      .reduce(
-        (acc, t) => ({ readings: acc.readings + 1, units: acc.units + Number(t.answerNumber) }),
-        { readings: 0, units: 0 },
-      );
+    // Production, by NAMED metric — cases stocked is not items discarded.
+    const metricMap = new Map<string, { unit: string | null; total: number; readings: number }>();
+    for (const t of todayDone) {
+      if (t.responseType !== 'NUMBER' || t.answerNumber == null) continue;
+      const key = t.metricKey ?? 'recorded';
+      const row = metricMap.get(key) ?? { unit: t.unit, total: 0, readings: 0 };
+      row.total += Number(t.answerNumber);
+      row.readings += 1;
+      metricMap.set(key, row);
+    }
+    const metrics = [...metricMap.entries()]
+      .map(([metricKey, r]) => ({ metricKey, ...r }))
+      .sort((a, b) => b.total - a.total);
+    const production = metrics.reduce(
+      (acc, m) => ({ readings: acc.readings + m.readings, units: acc.units + m.total }),
+      { readings: 0, units: 0 },
+    );
 
     res.json({
       stores: [...storeMap.values()]
@@ -1417,6 +1580,7 @@ opsRouter.get('/insights', BOARD, async (_req, res, next) => {
       hourly,
       sopTrend,
       production,
+      metrics,
     });
   } catch (err) {
     next(err);

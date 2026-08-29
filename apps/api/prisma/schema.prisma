@@ -1616,6 +1616,15 @@ enum OpsTaskSource {
   SOP
   ADHOC
   CARRYOVER
+  FOLLOWUP
+}
+
+// When a task's answer triggers the closed loop (detect → explain →
+// correct → verify): a corrective child task spawns on the same shift.
+enum OpsFollowUpOn {
+  NO
+  NO_OR_PARTIAL
+  OUT_OF_RANGE
 }
 
 enum OpsTaskStatus {
@@ -1681,6 +1690,14 @@ model OpsSopTemplateTask {
   tempLabel     String?         @db.VarChar(80)
   tempMin       Decimal?        @db.Decimal(6, 1)
   tempMax       Decimal?        @db.Decimal(6, 1)
+  // Metric identity for NUMBER answers — "84" means nothing until it's
+  // cases_stocked in cases. Powers real production aggregation.
+  metricKey     String?         @db.VarChar(60)
+  unit          String?         @db.VarChar(30)
+  // Closed-loop rule: what answer triggers a corrective child task.
+  followUpOn          OpsFollowUpOn?
+  followUpRequirePhoto Boolean        @default(false)
+  followUpTaskTitle   String?         @db.VarChar(300)
 
   @@index([templateId, order])
 }
@@ -1742,6 +1759,15 @@ model OpsTask {
   tempLabel       String?         @db.VarChar(80)
   tempMin         Decimal?        @db.Decimal(6, 1)
   tempMax         Decimal?        @db.Decimal(6, 1)
+  metricKey       String?         @db.VarChar(60)
+  unit            String?         @db.VarChar(30)
+  followUpOn          OpsFollowUpOn?
+  followUpRequirePhoto Boolean        @default(false)
+  followUpTaskTitle   String?         @db.VarChar(300)
+  // Corrective child ← the parent whose answer spawned it.
+  parentTaskId    String?         @db.Uuid
+  parentTask      OpsTask?        @relation("OpsTaskFollowUp", fields: [parentTaskId], references: [id], onDelete: SetNull)
+  followUps       OpsTask[]       @relation("OpsTaskFollowUp")
   answerChoice    String?         @db.VarChar(10)
   answerNumber    Decimal?        @db.Decimal(12, 2)
   answerText      String?         @db.VarChar(2000)

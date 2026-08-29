@@ -48,9 +48,11 @@ export interface OpsShiftHeader {
   closingSummary: string | null;
 }
 
+export type OpsFollowUpOn = 'NO' | 'NO_OR_PARTIAL' | 'OUT_OF_RANGE';
+
 export interface OpsTaskRow {
   id: string;
-  source: 'SOP' | 'ADHOC' | 'CARRYOVER';
+  source: 'SOP' | 'ADHOC' | 'CARRYOVER' | 'FOLLOWUP';
   section: string | null;
   order: number;
   title: string;
@@ -63,6 +65,8 @@ export interface OpsTaskRow {
   tempLabel: string | null;
   tempMin: number | null;
   tempMax: number | null;
+  metricKey: string | null;
+  unit: string | null;
   answerChoice: 'YES' | 'NO' | 'PARTIAL' | null;
   answerNumber: number | null;
   answerText: string | null;
@@ -117,7 +121,36 @@ export interface OpsLibraryTemplate {
     tempLabel: string | null;
     tempMin: number | null;
     tempMax: number | null;
+    metricKey: string | null;
+    unit: string | null;
+    followUpOn: OpsFollowUpOn | null;
+    /** How this LINE of the standard performs in practice (28d). */
+    stats: {
+      runs: number;
+      done: number;
+      noCount: number;
+      partialCount: number;
+      outOfRange: number;
+    };
   }[];
+}
+
+/** Human labels for the seeded metric keys. */
+export const METRIC_LABEL: Record<string, string> = {
+  cases_stocked: 'Cases stocked',
+  items_discarded: 'Items discarded',
+  items_marked_down: 'Items marked down',
+  oos_found: 'Out-of-stocks found',
+  pallets_received: 'Pallets received',
+  price_changes: 'Price changes',
+  recorded: 'Recorded',
+};
+
+export function metricLabel(key: string): string {
+  return (
+    METRIC_LABEL[key] ??
+    key.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
+  );
 }
 
 export function getOpsLibrary(): Promise<{
@@ -173,6 +206,11 @@ export function patchOpsTemplateTask(
     tempLabel?: string | null;
     tempMin?: number | null;
     tempMax?: number | null;
+    metricKey?: string | null;
+    unit?: string | null;
+    followUpOn?: OpsFollowUpOn | null;
+    followUpRequirePhoto?: boolean;
+    followUpTaskTitle?: string | null;
   },
 ): Promise<{ ok: true }> {
   return apiFetch(`/ops/library/tasks/${taskId}`, { method: 'PATCH', body });
@@ -233,7 +271,7 @@ export function patchOpsTask(
     doneAssociateId?: string | null;
     priority?: OpsPriority;
   },
-): Promise<{ task: OpsTaskRow }> {
+): Promise<{ task: OpsTaskRow; followUp?: OpsTaskRow | null }> {
   return apiFetch(`/ops/tasks/${taskId}`, { method: 'PATCH', body });
 }
 
@@ -338,6 +376,8 @@ export function getOpsInsights(): Promise<{
   hourly: { hour: string; count: number }[];
   sopTrend: { dateKey: string; pct: number | null }[];
   production: { readings: number; units: number };
+  /** Named production series — cases stocked ≠ items discarded. */
+  metrics: { metricKey: string; unit: string | null; total: number; readings: number }[];
 }> {
   return apiFetch('/ops/insights');
 }

@@ -4,6 +4,7 @@ import { computeStatementSnapshot, type StatementSnapshot } from './clientStatem
 import { orgDateKey } from './timeAnomalies.js';
 import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
 import { getBlobStore } from './blobStore.js';
+import { METRIC_LABEL } from './opsSops.js';
 
 /**
  * Weekly Client Service Report — the hand-to-the-store-manager PDF.
@@ -83,6 +84,8 @@ export interface ServiceReportData {
     incompleteCloses: number;
     handoverItems: number;
     photos: Buffer[];
+    /** Named production volumes for the week (cases stocked, discards…). */
+    metrics: { label: string; total: number; unit: string | null }[];
   } | null;
 }
 
@@ -312,7 +315,7 @@ export async function buildClientServiceReport(
   let ops: ServiceReportData['ops'] = null;
   if (opsShifts.length > 0) {
     const shiftIds = opsShifts.map((s) => s.id);
-    const [tempAgg, handoverItems, photoRows] = await Promise.all([
+    const [tempAgg, handoverItems, photoRows, numberAgg] = await Promise.all([
       prisma.opsTask.groupBy({
         by: ['tempOutOfRange'],
         where: {
@@ -328,6 +331,16 @@ export async function buildClientServiceReport(
         orderBy: { createdAt: 'desc' },
         take: 3,
         select: { s3Key: true },
+      }),
+      prisma.opsTask.groupBy({
+        by: ['metricKey', 'unit'],
+        where: {
+          opsShiftId: { in: shiftIds },
+          responseType: 'NUMBER',
+          answerNumber: { not: null },
+          metricKey: { not: null },
+        },
+        _sum: { answerNumber: true },
       }),
     ]);
     const sopDone = opsShifts.reduce((n, s) => n + s.sopDone, 0);
@@ -351,6 +364,14 @@ export async function buildClientServiceReport(
       incompleteCloses: opsShifts.filter((s) => s.closedIncomplete).length,
       handoverItems,
       photos,
+      metrics: numberAgg
+        .map((m) => ({
+          label: METRIC_LABEL[m.metricKey!] ?? m.metricKey!.replace(/_/g, ' '),
+          total: Number(m._sum.answerNumber ?? 0),
+          unit: m.unit,
+        }))
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 5),
     };
   }
 
@@ -818,6 +839,24 @@ export function renderClientServiceReportPdf(data: ServiceReportData): Promise<B
           doc.y,
           { width },
         );
+      if (data.ops.metrics.length > 0) {
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(9)
+          .fillColor(NAVY)
+          .text(
+            data.ops.metrics
+              .map(
+                (m) =>
+                  `${m.total.toLocaleString('en-US')} ${m.unit ?? ''} ${m.label.toLowerCase()}`.replace(/\s+/g, ' '),
+              )
+              .join('   ·   '),
+            left,
+            doc.y + 4,
+            { width },
+          );
+        doc.y += 4;
+      }
       if (data.ops.photos.length > 0) {
         doc.y += 6;
         ensure(96);
