@@ -363,6 +363,33 @@ export function WeekCalendarView({
     return out;
   }, [shifts, dayKeys, displayTimeZone]);
 
+  // The receipts behind each weekly total — hovering the hours figure
+  // lists every counted shift ("Mon 10p–7a · Stocker · 8h paid [draft]").
+  // A number a supervisor can't audit is a number they stop trusting.
+  const weeklyBreakdown = useMemo(() => {
+    const daySet = new Set(dayKeys);
+    const out = new Map<string, string[]>();
+    const rows: { id: string; at: number; line: string }[] = [];
+    for (const s of shifts) {
+      if (!s.assignedAssociateId) continue;
+      if (s.status === 'CANCELLED') continue;
+      if (!daySet.has(zonedDayKey(s.startsAt, displayTimeZone))) continue;
+      const at = new Date(s.startsAt).getTime();
+      rows.push({
+        id: s.assignedAssociateId,
+        at,
+        line: `${fmtWeekdayTz(s.startsAt, displayTimeZone)} ${compactRange(s.startsAt, s.endsAt, displayTimeZone)} · ${s.position} · ${(paidShiftMinutes(s) / 60).toFixed(1)}h paid${s.status === 'DRAFT' ? ' [draft]' : ''}`,
+      });
+    }
+    rows.sort((a, b) => a.at - b.at);
+    for (const r of rows) {
+      const list = out.get(r.id) ?? [];
+      list.push(r.line);
+      out.set(r.id, list);
+    }
+    return out;
+  }, [shifts, dayKeys, displayTimeZone]);
+
   // Decide which associate rows to render.
   // Default = those with shifts in the VISIBLE week (compact view) — the
   // membership check keeps an associate whose only shift sits on a padded
@@ -621,6 +648,7 @@ export function WeekCalendarView({
                 key={a.id}
                 associate={a}
                 minutes={mins}
+                breakdown={weeklyBreakdown.get(a.id) ?? null}
                 overTime={overTime}
                 nearOT={nearOT}
                 colsStyle={colsStyle}
@@ -784,6 +812,7 @@ export function WeekCalendarView({
 const Row = memo(function Row({
   associate,
   minutes,
+  breakdown = null,
   overTime,
   nearOT,
   colsStyle,
@@ -794,6 +823,8 @@ const Row = memo(function Row({
 }: {
   associate: AssociateLite;
   minutes: number;
+  /** The counted shifts behind `minutes`, one line each — the receipts. */
+  breakdown?: string[] | null;
   overTime: boolean;
   /** 36h ≤ weekly hours ≤ 40h — approaching overtime. */
   nearOT: boolean;
@@ -869,10 +900,17 @@ const Row = memo(function Row({
           </div>
           <div className="text-2xs tabular-nums">
             <span
-              className={
-                overTime || nearOT ? 'text-warning' : 'text-silver/70'
+              className={cn(
+                overTime || nearOT ? 'text-warning' : 'text-silver/70',
+                breakdown && breakdown.length > 0 && 'cursor-help underline decoration-dotted decoration-silver/30 underline-offset-2',
+              )}
+              title={
+                breakdown && breakdown.length > 0
+                  ? `Counted shifts (paid hours — shifts over 6h include the 1h unpaid break):\n${breakdown.join('\n')}`
+                  : nearOT
+                    ? 'Near OT — 36–40h scheduled this week'
+                    : undefined
               }
-              title={nearOT ? 'Near OT — 36–40h scheduled this week' : undefined}
             >
               {(minutes / 60).toFixed(1)}h
               {overTime && ' • OT'}
