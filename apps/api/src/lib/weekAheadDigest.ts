@@ -16,6 +16,7 @@
 // starts alert on different evenings by design).
 
 import type { PrismaClient } from '@prisma/client';
+import { paidMinutesForRange } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import {
@@ -73,10 +74,7 @@ function buildBody(shifts: DigestShift[], tz: string): { subject: string; body: 
     lines.push(`…and ${shifts.length - MAX_LINES} more — see your schedule.`);
   }
   const hours =
-    shifts.reduce(
-      (sum, s) => sum + Math.max(0, s.endsAt.getTime() - s.startsAt.getTime()),
-      0,
-    ) / 3_600_000;
+    shifts.reduce((sum, s) => sum + paidMinutesForRange(s.startsAt, s.endsAt), 0) / 60;
   const first = shifts[0];
   return {
     subject: `Your week ahead — ${shifts.length} shift${shifts.length === 1 ? '' : 's'} · ${hours.toFixed(1)}h`,

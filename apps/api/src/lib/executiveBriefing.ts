@@ -8,6 +8,7 @@
 // Read-only, computed on demand for GET /executive/briefing.
 
 import type { PrismaClient } from '@prisma/client';
+import { paidMinutesForRange } from '@alto-people/shared';
 import { env } from '../config/env.js';
 import {
   computeExecutiveDecisions,
@@ -268,7 +269,7 @@ export async function computeExecutiveBriefing(
   const assignedToday = todayShifts.filter((s) => s.assignedAssociateId !== null);
   const openToday = todayShifts.filter((s) => s.assignedAssociateId === null);
   const scheduledMinToday = todayShifts.reduce(
-    (n, s) => n + Math.max(0, (s.endsAt.getTime() - s.startsAt.getTime()) / 60_000),
+    (n, s) => n + paidMinutesForRange(s.startsAt, s.endsAt),
     0,
   );
   const clientNames = new Map<string, string>();

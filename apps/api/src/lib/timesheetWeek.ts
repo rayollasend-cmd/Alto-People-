@@ -26,6 +26,7 @@ import type {
   TimesheetScheduleRow,
   TimesheetWeekResponse,
 } from '@alto-people/shared';
+import { paidMinutesForRange } from '@alto-people/shared';
 import { localDateKey, formatTimeInZone, DEFAULT_TIMEZONE } from './timezone.js';
 import { netWorkedMinutes, type BreakFacts } from './timeAnomalies.js';
 import { round2 } from './payroll.js';
@@ -302,7 +303,7 @@ export async function buildTimesheetWeek(
   for (const s of shifts) {
     if (!s.assignedAssociateId) continue;
     if (!dateKeySet.has(localDateKey(s.startsAt, s.locationRel?.timezone ?? timeZone))) continue;
-    const mins = Math.max(0, (s.endsAt.getTime() - s.startsAt.getTime()) / 60000);
+    const mins = paidMinutesForRange(s.startsAt, s.endsAt);
     const worker = s.assignedAssociate
       ? `${s.assignedAssociate.lastName}, ${s.assignedAssociate.firstName}`.trim()
       : '—';

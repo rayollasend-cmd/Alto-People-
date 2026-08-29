@@ -1957,8 +1957,11 @@ schedulingRouter.get('/ot-outlook', MANAGE_OR_EXEC, async (req, res, next) => {
     });
     const remaining = new Map<string, { min: number; clients: Set<string> }>();
     for (const s of weekShifts) {
-      const from = Math.max(s.startsAt.getTime(), now.getTime());
-      const min = Math.max(0, (s.endsAt.getTime() - from) / 60_000);
+      const from = new Date(Math.max(s.startsAt.getTime(), now.getTime()));
+      // PAID minutes (unpaid-break rule) — this radar was still counting
+      // meal hours, projecting phantom OT for every full-week associate
+      // (a 45.0h wall projection is 40h paid: zero overtime).
+      const min = paidMinutesForRange(from, s.endsAt);
       if (min <= 0) continue;
       const cur = remaining.get(s.assignedAssociateId!) ?? {
         min: 0,

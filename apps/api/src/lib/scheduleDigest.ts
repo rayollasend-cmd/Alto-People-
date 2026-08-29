@@ -18,7 +18,7 @@
 // is something to report, not "empty report at 6am, silence after".
 
 import type { PrismaClient } from '@prisma/client';
-import { rolesWithCapability } from '@alto-people/shared';
+import { paidMinutesForRange, rolesWithCapability } from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import {
@@ -78,10 +78,7 @@ function buildBody(shifts: DigestShift[], todayLabel: string): {
   const open = shifts.filter((s) => s.status === 'OPEN').length;
   const unconfirmed = shifts.filter((s) => s.unconfirmed).length;
   const hours =
-    shifts.reduce(
-      (sum, s) => sum + Math.max(0, s.endsAt.getTime() - s.startsAt.getTime()),
-      0,
-    ) / 3_600_000;
+    shifts.reduce((sum, s) => sum + paidMinutesForRange(s.startsAt, s.endsAt), 0) / 60;
 
   const counts = [
     `${shifts.length} shift${shifts.length === 1 ? '' : 's'}`,
