@@ -285,6 +285,35 @@ export function getOpsBoard(): Promise<{
   return apiFetch('/ops/board');
 }
 
+export interface OpsStoreWindow {
+  name: string;
+  liveShifts: number;
+  departments: string[];
+  floor: number;
+  tempAlertsToday: number;
+  sopPct: number | null;
+  incompleteToday: number;
+}
+
+/** The chairman's drawn window: store snapshots, temps, rhythm, trend. */
+export function getOpsInsights(): Promise<{
+  stores: OpsStoreWindow[];
+  tempSeries: {
+    at: string;
+    value: number;
+    min: number | null;
+    max: number | null;
+    out: boolean;
+    label: string | null;
+    store: string;
+  }[];
+  hourly: { hour: string; count: number }[];
+  sopTrend: { dateKey: string; pct: number | null }[];
+  production: { readings: number; units: number };
+}> {
+  return apiFetch('/ops/insights');
+}
+
 export interface OpsFeedEvent {
   at: string;
   kind: 'task' | 'temp' | 'photo' | 'open' | 'close';

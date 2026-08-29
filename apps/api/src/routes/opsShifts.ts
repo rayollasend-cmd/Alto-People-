@@ -1155,6 +1155,193 @@ opsRouter.get('/board', BOARD, async (_req, res, next) => {
 });
 
 /**
+ * GET /ops/insights — the chairman's window, drawn: per-store live
+ * snapshots, the 24h temperature picture with safe bands, today's
+ * activity rhythm by hour, the 7-day SOP trend, and today's recorded
+ * production volume. Everything a walk of all four stores would tell
+ * you, on one screen.
+ */
+opsRouter.get('/insights', BOARD, async (_req, res, next) => {
+  try {
+    const now = new Date();
+    const todayKey = orgDateKey(now);
+    const dayAgo = new Date(now.getTime() - 24 * 3_600_000);
+    const weekAgo = new Date(now.getTime() - 7 * DAY_MS);
+
+    const [activeShifts, todayShifts, tempTasks, todayDone, weekClosed, floorEntries] =
+      await Promise.all([
+        prisma.opsShift.findMany({
+          where: { status: 'ACTIVE' },
+          select: {
+            clientId: true,
+            department: true,
+            actualHeadcount: true,
+            scheduledHeadcount: true,
+            tempAlerts: true,
+            client: { select: { name: true } },
+          },
+          take: 100,
+        }),
+        prisma.opsShift.findMany({
+          where: { dateKey: todayKey },
+          select: {
+            clientId: true,
+            status: true,
+            sopDone: true,
+            sopTotal: true,
+            tempAlerts: true,
+            closedIncomplete: true,
+            client: { select: { name: true } },
+          },
+          take: 200,
+        }),
+        prisma.opsTask.findMany({
+          where: {
+            responseType: 'TEMPERATURE',
+            answerNumber: { not: null },
+            completedAt: { gte: dayAgo },
+          },
+          orderBy: { completedAt: 'asc' },
+          take: 200,
+          select: {
+            completedAt: true,
+            answerNumber: true,
+            tempMin: true,
+            tempMax: true,
+            tempOutOfRange: true,
+            tempLabel: true,
+            opsShift: { select: { client: { select: { name: true } } } },
+          },
+        }),
+        prisma.opsTask.findMany({
+          where: {
+            completedAt: { gte: new Date(now.getTime() - 24 * 3_600_000) },
+          },
+          select: { completedAt: true, responseType: true, answerNumber: true },
+          take: 2000,
+        }),
+        prisma.opsShift.findMany({
+          where: { status: 'CLOSED', closedAt: { gte: weekAgo } },
+          select: { dateKey: true, sopDone: true, sopTotal: true },
+          take: 1000,
+        }),
+        prisma.timeEntry.groupBy({
+          by: ['clientId'],
+          where: { status: 'ACTIVE' },
+          _count: { _all: true },
+        }),
+      ]);
+
+    // Per-store windows: live counts + today's SOP so far.
+    const floorByClient = new Map(floorEntries.map((f) => [f.clientId, f._count._all]));
+    const storeMap = new Map<
+      string,
+      {
+        name: string;
+        liveShifts: number;
+        departments: string[];
+        floor: number;
+        tempAlertsToday: number;
+        sopDone: number;
+        sopTotal: number;
+        incompleteToday: number;
+      }
+    >();
+    const touch = (clientId: string, name: string) => {
+      const row = storeMap.get(clientId) ?? {
+        name,
+        liveShifts: 0,
+        departments: [],
+        floor: floorByClient.get(clientId) ?? 0,
+        tempAlertsToday: 0,
+        sopDone: 0,
+        sopTotal: 0,
+        incompleteToday: 0,
+      };
+      storeMap.set(clientId, row);
+      return row;
+    };
+    for (const s of activeShifts) {
+      const row = touch(s.clientId, s.client.name);
+      row.liveShifts += 1;
+      if (!row.departments.includes(s.department)) row.departments.push(s.department);
+    }
+    for (const s of todayShifts) {
+      const row = touch(s.clientId, s.client.name);
+      row.tempAlertsToday += s.tempAlerts;
+      row.sopDone += s.sopDone;
+      row.sopTotal += s.sopTotal;
+      if (s.closedIncomplete) row.incompleteToday += 1;
+    }
+
+    // 24h activity rhythm by org-local hour.
+    const hourFmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      hour12: true,
+    });
+    const rhythm = new Map<string, number>();
+    for (const t of todayDone) {
+      if (!t.completedAt) continue;
+      const label = hourFmt.format(t.completedAt);
+      rhythm.set(label, (rhythm.get(label) ?? 0) + 1);
+    }
+    // Chronological order: walk the last 24 hours hour by hour.
+    const hourly: { hour: string; count: number }[] = [];
+    for (let i = 23; i >= 0; i--) {
+      const label = hourFmt.format(new Date(now.getTime() - i * 3_600_000));
+      hourly.push({ hour: label, count: rhythm.get(label) ?? 0 });
+    }
+
+    // 7-day SOP trend from closed shifts.
+    const trendMap = new Map<string, { done: number; total: number }>();
+    for (const s of weekClosed) {
+      const row = trendMap.get(s.dateKey) ?? { done: 0, total: 0 };
+      row.done += s.sopDone;
+      row.total += s.sopTotal;
+      trendMap.set(s.dateKey, row);
+    }
+    const sopTrend = [...trendMap.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([dateKey, r]) => ({
+        dateKey,
+        pct: r.total > 0 ? Math.round((r.done / r.total) * 100) : null,
+      }));
+
+    // Production volume: every NUMBER reading recorded in the last 24h.
+    const production = todayDone
+      .filter((t) => t.responseType === 'NUMBER' && t.answerNumber != null)
+      .reduce(
+        (acc, t) => ({ readings: acc.readings + 1, units: acc.units + Number(t.answerNumber) }),
+        { readings: 0, units: 0 },
+      );
+
+    res.json({
+      stores: [...storeMap.values()]
+        .map((s) => ({
+          ...s,
+          sopPct: s.sopTotal > 0 ? Math.round((s.sopDone / s.sopTotal) * 100) : null,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      tempSeries: tempTasks.map((t) => ({
+        at: t.completedAt!.toISOString(),
+        value: Number(t.answerNumber),
+        min: t.tempMin != null ? Number(t.tempMin) : null,
+        max: t.tempMax != null ? Number(t.tempMax) : null,
+        out: t.tempOutOfRange,
+        label: t.tempLabel,
+        store: t.opsShift.client.name,
+      })),
+      hourly,
+      sopTrend,
+      production,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
  * GET /ops/feed — the live pulse of every floor. The most recent task
  * completions, temperature readings, photos, opens/closes and handover
  * notes across all stores, merged newest-first: what an executive would

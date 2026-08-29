@@ -10,6 +10,21 @@ import {
   Thermometer,
   Users,
 } from 'lucide-react';
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  ReferenceArea,
+  ResponsiveContainer,
+  Scatter,
+  ScatterChart,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
@@ -21,6 +36,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import {
   getOpsBoard,
   getOpsFeed,
+  getOpsInsights,
   getOpsScorecard,
   opsPhotoUrl,
   type OpsFeedEvent,
@@ -105,6 +121,9 @@ export function OpsBoard() {
     closedToday: BoardShift[];
   } | null>(null);
   const [feed, setFeed] = useState<Awaited<ReturnType<typeof getOpsFeed>> | null>(null);
+  const [insights, setInsights] = useState<Awaited<
+    ReturnType<typeof getOpsInsights>
+  > | null>(null);
   const [scorecard, setScorecard] = useState<Awaited<
     ReturnType<typeof getOpsScorecard>
   > | null>(null);
@@ -125,6 +144,11 @@ export function OpsBoard() {
       getOpsFeed()
         .then((f) => {
           if (!cancelled) setFeed(f);
+        })
+        .catch(() => {});
+      getOpsInsights()
+        .then((ins) => {
+          if (!cancelled) setInsights(ins);
         })
         .catch(() => {});
     };
@@ -231,6 +255,329 @@ export function OpsBoard() {
           </div>
         </div>
       </div>
+
+      {/* ===== Store windows — one pane of glass per store ===== */}
+      {insights && insights.stores.length > 0 && (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {insights.stores.map((store) => (
+            <div
+              key={store.name}
+              className={cn(
+                'relative overflow-hidden rounded-lg border p-4',
+                store.tempAlertsToday > 0
+                  ? 'border-alert/50 bg-alert/[0.05]'
+                  : 'border-navy-secondary bg-navy-secondary/20',
+              )}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0 truncate text-sm font-medium text-white">
+                  {store.name}
+                </div>
+                <span
+                  className={cn(
+                    'relative flex h-2 w-2 shrink-0',
+                    store.liveShifts === 0 && 'opacity-40',
+                  )}
+                >
+                  {store.liveShifts > 0 && (
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+                  )}
+                  <span
+                    className={cn(
+                      'relative inline-flex h-2 w-2 rounded-full',
+                      store.liveShifts > 0 ? 'bg-success' : 'bg-silver/40',
+                    )}
+                  />
+                </span>
+              </div>
+              <div className="mt-2 flex items-end justify-between gap-2">
+                <div>
+                  <div className="text-2xl font-semibold tabular-nums text-white">
+                    {store.floor}
+                  </div>
+                  <div className="text-2xs uppercase tracking-wider text-silver/60">
+                    on the floor
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div
+                    className={cn(
+                      'text-2xl font-semibold tabular-nums',
+                      store.sopPct == null
+                        ? 'text-silver/40'
+                        : store.sopPct >= 80
+                          ? 'text-success'
+                          : 'text-warning',
+                    )}
+                  >
+                    {store.sopPct == null ? '—' : `${store.sopPct}%`}
+                  </div>
+                  <div className="text-2xs uppercase tracking-wider text-silver/60">
+                    SOP today
+                  </div>
+                </div>
+              </div>
+              <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-silver/70">
+                <span>
+                  {store.liveShifts > 0
+                    ? `${store.liveShifts} live: ${store.departments.join(', ')}`
+                    : 'no ops shift running'}
+                </span>
+                {store.tempAlertsToday > 0 && (
+                  <span className="inline-flex items-center gap-1 text-alert">
+                    <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                    {store.tempAlertsToday} temp
+                  </span>
+                )}
+                {store.incompleteToday > 0 && (
+                  <span className="text-warning">{store.incompleteToday} incomplete</span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ===== The drawn picture: temps, rhythm, trend ===== */}
+      {insights && (
+        <div className="grid gap-4 lg:grid-cols-3">
+          {/* Temperature watch — every reading in 24h against the safe band. */}
+          <Card className="lg:col-span-1">
+            <CardHeader className="pb-1">
+              <CardTitle className="text-base">
+                <Thermometer className="mr-1.5 inline h-4 w-4 text-teal" aria-hidden="true" />
+                Temperature watch — 24h
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {insights.tempSeries.length === 0 ? (
+                <p className="py-6 text-center text-xs text-silver/60">
+                  No temperature readings yet.
+                </p>
+              ) : (
+                <>
+                  <div className="h-40">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <ScatterChart margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+                        <CartesianGrid stroke="rgb(var(--color-silver) / 0.10)" />
+                        <XAxis
+                          dataKey="ts"
+                          type="number"
+                          domain={['dataMin', 'dataMax']}
+                          tick={false}
+                          axisLine={{ stroke: 'rgb(var(--color-silver) / 0.2)' }}
+                        />
+                        <YAxis
+                          dataKey="value"
+                          type="number"
+                          tick={{ fill: 'rgb(var(--color-silver) / 0.7)', fontSize: 10 }}
+                          axisLine={false}
+                          tickLine={false}
+                          width={40}
+                          unit="°"
+                        />
+                        {/* Freezer + cooler safe bands, painted behind. */}
+                        <ReferenceArea
+                          y1={-10}
+                          y2={10}
+                          fill="rgb(var(--color-teal) / 0.08)"
+                          stroke="none"
+                        />
+                        <ReferenceArea
+                          y1={33}
+                          y2={41}
+                          fill="rgb(var(--color-teal) / 0.08)"
+                          stroke="none"
+                        />
+                        <Tooltip
+                          cursor={{ stroke: 'rgb(var(--color-gold) / 0.4)' }}
+                          contentStyle={{
+                            background: 'rgb(var(--color-navy))',
+                            border: '1px solid rgb(var(--color-navy-secondary))',
+                            borderRadius: 8,
+                            fontSize: 11,
+                          }}
+                          formatter={(value) => [`${String(value)}°F`, 'reading']}
+                          labelFormatter={() => ''}
+                        />
+                        <Scatter
+                          data={insights.tempSeries.map((t) => ({
+                            ...t,
+                            ts: new Date(t.at).getTime(),
+                          }))}
+                        >
+                          {insights.tempSeries.map((t, i) => (
+                            <Cell
+                              key={i}
+                              fill={
+                                t.out
+                                  ? 'rgb(var(--color-alert))'
+                                  : 'rgb(var(--color-teal))'
+                              }
+                            />
+                          ))}
+                        </Scatter>
+                      </ScatterChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <p className="mt-1 text-2xs text-silver/60">
+                    Shaded bands = safe ranges (freezer −10–10°F, cooler 33–41°F).{' '}
+                    {insights.tempSeries.filter((t) => t.out).length === 0 ? (
+                      <span className="text-success">All readings in range.</span>
+                    ) : (
+                      <span className="text-alert">
+                        {insights.tempSeries.filter((t) => t.out).length} out of range —
+                        already escalated.
+                      </span>
+                    )}
+                  </p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* The day's rhythm — completions per hour. */}
+          <Card className="lg:col-span-1">
+            <CardHeader className="pb-1">
+              <CardTitle className="text-base">
+                <Activity className="mr-1.5 inline h-4 w-4 text-gold" aria-hidden="true" />
+                Floor rhythm — 24h
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-40">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={insights.hourly}
+                    margin={{ top: 8, right: 8, bottom: 0, left: -22 }}
+                  >
+                    <CartesianGrid
+                      stroke="rgb(var(--color-silver) / 0.10)"
+                      vertical={false}
+                    />
+                    <XAxis
+                      dataKey="hour"
+                      tick={{ fill: 'rgb(var(--color-silver) / 0.6)', fontSize: 9 }}
+                      interval={3}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      tick={{ fill: 'rgb(var(--color-silver) / 0.7)', fontSize: 10 }}
+                      axisLine={false}
+                      tickLine={false}
+                      allowDecimals={false}
+                      width={34}
+                    />
+                    <Tooltip
+                      cursor={{ fill: 'rgb(var(--color-gold) / 0.08)' }}
+                      contentStyle={{
+                        background: 'rgb(var(--color-navy))',
+                        border: '1px solid rgb(var(--color-navy-secondary))',
+                        borderRadius: 8,
+                        fontSize: 11,
+                      }}
+                      formatter={(value) => [`${String(value)} tasks`, 'completed']}
+                    />
+                    <Bar
+                      dataKey="count"
+                      radius={[3, 3, 0, 0]}
+                      fill="rgb(var(--color-gold) / 0.75)"
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <p className="mt-1 text-2xs text-silver/60">
+                Task completions per hour across all stores — the floors&apos; heartbeat.
+                {insights.production.readings > 0 && (
+                  <span className="text-white">
+                    {' '}
+                    {insights.production.units.toLocaleString('en-US')} units/cases recorded
+                    today across {insights.production.readings} counts.
+                  </span>
+                )}
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* 7-day SOP trend. */}
+          <Card className="lg:col-span-1">
+            <CardHeader className="pb-1">
+              <CardTitle className="text-base">
+                <ClipboardList className="mr-1.5 inline h-4 w-4 text-success" aria-hidden="true" />
+                SOP compliance — 7 days
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {insights.sopTrend.length === 0 ? (
+                <p className="py-6 text-center text-xs text-silver/60">
+                  Trend appears after the first closed shifts.
+                </p>
+              ) : (
+                <div className="h-40">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart
+                      data={insights.sopTrend}
+                      margin={{ top: 8, right: 8, bottom: 0, left: -22 }}
+                    >
+                      <defs>
+                        <linearGradient id="sopFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop
+                            offset="0%"
+                            stopColor="rgb(var(--color-success))"
+                            stopOpacity={0.35}
+                          />
+                          <stop
+                            offset="100%"
+                            stopColor="rgb(var(--color-success))"
+                            stopOpacity={0}
+                          />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid
+                        stroke="rgb(var(--color-silver) / 0.10)"
+                        vertical={false}
+                      />
+                      <XAxis
+                        dataKey="dateKey"
+                        tickFormatter={(v: string) => v.slice(5)}
+                        tick={{ fill: 'rgb(var(--color-silver) / 0.6)', fontSize: 9 }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        domain={[0, 100]}
+                        tick={{ fill: 'rgb(var(--color-silver) / 0.7)', fontSize: 10 }}
+                        axisLine={false}
+                        tickLine={false}
+                        width={34}
+                        unit="%"
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          background: 'rgb(var(--color-navy))',
+                          border: '1px solid rgb(var(--color-navy-secondary))',
+                          borderRadius: 8,
+                          fontSize: 11,
+                        }}
+                        formatter={(value) => [`${String(value)}%`, 'SOP compliance']}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="pct"
+                        stroke="rgb(var(--color-success))"
+                        strokeWidth={2}
+                        fill="url(#sopFill)"
+                        connectNulls
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
         <div className="space-y-4 min-w-0">
