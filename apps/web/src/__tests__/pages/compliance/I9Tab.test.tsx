@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { ReactElement } from 'react';
 
 // The drawer header links to the associate's profile, so renders need a
@@ -368,5 +368,84 @@ describe('<I9Tab> Section 2 verifier card', () => {
     // Legacy form contains "Section 1 complete" + "Section 2 complete" checkboxes.
     expect(await screen.findByLabelText(/section 1 complete/i)).toBeInTheDocument();
     expect(listI9Documents).not.toHaveBeenCalled();
+  });
+});
+
+describe('<I9Tab> ?return= round-trip from the application drawer', () => {
+  const RETURN_TO = `/onboarding?applicationId=${APP_ID}`;
+
+  // Routes so the tab can actually navigate somewhere assertable.
+  const renderAt = (entry: string) =>
+    rtlRender(
+      <MemoryRouter initialEntries={[entry]}>
+        <Routes>
+          <Route path="/compliance" element={<I9Tab canManage={true} />} />
+          <Route path="/onboarding" element={<div>Onboarding return probe</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+  const passportDoc = {
+    id: DOC_FRONT,
+    kind: 'ID' as const,
+    filename: 'passport.jpg',
+    mimeType: 'image/jpeg',
+    size: 100_000,
+    status: 'UPLOADED' as const,
+    side: null,
+    i9DocTitle: 'U.S. Passport or Passport Card',
+    i9List: 'A' as const,
+    createdAt: '2026-04-25T18:01:00.000Z',
+    fileAvailable: true,
+  };
+
+  it('deep link with return= shows "Back to application" and navigates back after verify', async () => {
+    vi.mocked(listI9s).mockResolvedValue({ i9s: [pendingRow()] });
+    vi.mocked(listI9Documents).mockResolvedValue({ documents: [passportDoc] });
+    vi.mocked(submitI9Section2).mockResolvedValue({
+      section2CompletedAt: '2026-04-26T20:00:00.000Z',
+      documentList: 'LIST_A',
+      supportingDocIds: [DOC_FRONT],
+    });
+
+    const user = userEvent.setup();
+    renderAt(
+      `/compliance?tab=i9&associateId=${ASSOC_ID}&return=${encodeURIComponent(RETURN_TO)}`,
+    );
+
+    // The deep link auto-opens the drawer; the return path surfaces a way back.
+    expect(
+      await screen.findByRole('link', { name: /back to application/i }),
+    ).toBeInTheDocument();
+
+    // Passport pre-checked → verify with zero extra clicks.
+    await user.click(
+      await screen.findByRole('button', { name: /verify section 2 \(1 doc\)/i }),
+    );
+
+    await waitFor(() =>
+      expect(submitI9Section2).toHaveBeenCalledWith(APP_ID, {
+        documentList: 'LIST_A',
+        supportingDocIds: [DOC_FRONT],
+      }),
+    );
+    // Successful verify returns the reviewer to the application page.
+    expect(await screen.findByText('Onboarding return probe')).toBeInTheDocument();
+  });
+
+  it('rejects non-app return paths (protocol-relative URL is ignored)', async () => {
+    vi.mocked(listI9s).mockResolvedValue({ i9s: [pendingRow()] });
+    vi.mocked(listI9Documents).mockResolvedValue({ documents: [passportDoc] });
+
+    renderAt(
+      `/compliance?tab=i9&associateId=${ASSOC_ID}&return=${encodeURIComponent('//evil.example.com/steal')}`,
+    );
+
+    // Drawer opens for the deep-linked associate…
+    await screen.findByRole('button', { name: /verify section 2 \(1 doc\)/i });
+    // …but the poisoned return path is dropped entirely.
+    expect(
+      screen.queryByRole('link', { name: /back to application/i }),
+    ).not.toBeInTheDocument();
   });
 });

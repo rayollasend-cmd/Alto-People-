@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -22,6 +22,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   UserCheck,
+  XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -37,6 +38,7 @@ import {
   type ApplicationDetail as ApplicationDetailType,
   type AuditLogEntry,
   type ChecklistTask,
+  type I9DocumentList,
   type InviteDeliveryInfo,
 } from '@alto-people/shared';
 import {
@@ -57,8 +59,14 @@ import {
 import {
   getI9Status,
   listI9Documents,
+  submitI9Section2,
   type I9DocumentListItem,
 } from '@/lib/i9Api';
+import {
+  autoDetectSection2,
+  minDocsForSection2List,
+} from '@/pages/compliance/section2Verification';
+import { RejectDocumentDialog } from '@/components/RejectDocumentDialog';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { statusTone } from '@/lib/status';
@@ -179,7 +187,18 @@ interface ApplicationDetailBodyProps {
 export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetailBodyProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
+  // Where the Compliance verifier should send the reviewer back to. The
+  // list's slide-over drawer is component state (not URL-synced), so in
+  // drawer mode the current URL would reopen the LIST with the drawer
+  // closed — link the application's canonical route instead; it restores
+  // the same body plus the review-next chain. Page mode keeps the exact
+  // location (path + query).
+  const returnTo =
+    mode === 'drawer' && applicationId
+      ? `/onboarding/applications/${applicationId}`
+      : `${location.pathname}${location.search}`;
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [approveOpen, setApproveOpen] = useState(false);
   // Non-null once the approve endpoint answered 409 `approval_warnings`.
@@ -204,6 +223,12 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
   // INTERNAL_RECRUITER, WORKFORCE_MANAGER, MARKETING_MANAGER — can
   // approve/reject. Hardcoded role list here used to lock out recruiters.
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
+  // The document reject endpoint (/documents/admin/:id/reject) is gated on
+  // manage:documents, not manage:onboarding — mirror it exactly so the
+  // affordance never renders for a caller who'd only 403.
+  const canRejectDocs = user
+    ? hasCapability(user.role, 'manage:documents')
+    : false;
 
   const detailQuery = useQuery({
     queryKey: ['application', applicationId],
@@ -536,7 +561,11 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
             }
             // Destinations are admin surfaces (People directory, Compliance)
             // that invite-scoped roles can't open — no dead links for them.
-            destination={canManage ? taskDestination(t.kind, detail.associateId) : null}
+            destination={
+              canManage
+                ? taskDestination(t.kind, detail.associateId, returnTo)
+                : null
+            }
           />
         ))}
       </section>
@@ -562,6 +591,9 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
             applicationId={detail.id}
             startDate={detail.startDate}
             associateId={detail.associateId}
+            canVerify={canManage}
+            canReject={canRejectDocs}
+            returnTo={returnTo}
           />
         </section>
       )}
@@ -1193,6 +1225,18 @@ const STATUS_TONE: Record<
 };
 
 /**
+ * Deep link into the Compliance Section 2 verifier for one associate.
+ * `returnTo` (this page's path + query) rides along as ?return= so the
+ * verifier can send the reviewer straight back after verifying — leaving
+ * for /compliance used to strand them there mid-review-chain.
+ */
+function i9VerifierHref(associateId: string, returnTo?: string): string {
+  return `/compliance?tab=i9&associateId=${associateId}${
+    returnTo ? `&return=${encodeURIComponent(returnTo)}` : ''
+  }`;
+}
+
+/**
  * Where each checklist task's FULL record lives. The tiles used to be dead
  * ends — seeing the I-9 meant menu → Compliance → I-9 → find the person
  * again. Every destination is a deep link that lands with the person open.
@@ -1200,6 +1244,8 @@ const STATUS_TONE: Record<
 function taskDestination(
   kind: string,
   associateId: string,
+  /** When set, the I-9 verifier gets a ?return= back to this page. */
+  returnTo?: string,
 ): { to: string; label: string } | null {
   switch (kind) {
     case 'PROFILE_INFO':
@@ -1215,7 +1261,7 @@ function taskDestination(
       };
     case 'I9_VERIFICATION':
       return {
-        to: `/compliance?tab=i9&associateId=${associateId}`,
+        to: i9VerifierHref(associateId, returnTo),
         label: 'Open I-9 in Compliance',
       };
     case 'BACKGROUND_CHECK':
@@ -1714,12 +1760,24 @@ function I9Card({
   applicationId,
   startDate,
   associateId,
+  canVerify,
+  canReject,
+  returnTo,
 }: {
   applicationId: string;
   startDate: string | null;
   /** Powers the "Open in Compliance" deep link to this person's I-9. */
   associateId: string;
+  /** manage:onboarding — the capability the Section 2 verify endpoint
+   *  (POST /onboarding/applications/:id/i9/section2) requires. */
+  canVerify: boolean;
+  /** manage:documents — the capability the per-document reject endpoint
+   *  (POST /documents/admin/:id/reject) requires. */
+  canReject: boolean;
+  /** This page's path + query, for the verifier round-trip deep link. */
+  returnTo: string;
 }) {
+  const queryClient = useQueryClient();
   // Keyed under ['application', id, …] so the parent's prefix-match
   // invalidation (after skip/approve) refreshes these too.
   const statusQuery = useQuery({
@@ -1737,6 +1795,84 @@ function I9Card({
   const loading = statusQuery.isPending || docsQuery.isPending;
   const status = statusQuery.data ?? null;
   const docs = docsQuery.data ?? [];
+
+  /* Inline Section 2 verifier — same rules as the Compliance drawer's
+     verifier (shared via section2Verification) so HR can finish the I-9
+     without leaving the application. */
+  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const [documentList, setDocumentList] = useState<I9DocumentList>('LIST_A');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<I9DocumentListItem | null>(
+    null,
+  );
+
+  // Seed the auto-detected list + pre-checked docs once per application.
+  // Later refetches (e.g. after an inline reject) only prune picks whose
+  // documents vanished — they must not clobber the reviewer's choices.
+  const seededFor = useRef<string | null>(null);
+  useEffect(() => {
+    const loaded = docsQuery.data;
+    if (!loaded) return;
+    if (seededFor.current !== applicationId) {
+      seededFor.current = applicationId;
+      const auto = autoDetectSection2(loaded);
+      if (auto) {
+        setDocumentList(auto.documentList);
+        setPicked(new Set(auto.preChecked));
+      }
+      return;
+    }
+    setPicked((prev) => {
+      const available = new Set(
+        loaded.filter((d) => d.fileAvailable).map((d) => d.id),
+      );
+      const next = new Set([...prev].filter((id) => available.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [docsQuery.data, applicationId]);
+
+  const togglePick = (id: string) => {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Only at the "Section 1 done, Section 2 pending" stage — before Section 1
+  // there's nothing to attest against, after Section 2 there's nothing to do.
+  const showInlineVerifier =
+    canVerify && !!status?.section1 && !status?.section2;
+  const minDocs = minDocsForSection2List(documentList);
+  const canSubmit = picked.size >= minDocs && !submitting;
+
+  const handleVerify = async () => {
+    if (!canSubmit) return;
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      await submitI9Section2(applicationId, {
+        documentList,
+        supportingDocIds: Array.from(picked),
+      });
+      toast.success('I-9 Section 2 verified.');
+      // Prefix-match refreshes the application detail (percentComplete,
+      // task status — may light up Approve) plus this card's queries.
+      await queryClient.invalidateQueries({
+        queryKey: ['application', applicationId],
+      });
+    } catch (err) {
+      setSubmitError(
+        err instanceof ApiError ? err.message : 'Verification failed.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const verifierHref = i9VerifierHref(associateId, returnTo);
 
   // Section 2 deadline: startDate + 3 business days. Only meaningful while
   // Section 2 is incomplete and a start date exists.
@@ -1764,7 +1900,7 @@ function I9Card({
             I-9 employment verification
           </CardTitle>
           <Link
-            to={`/compliance?tab=i9&associateId=${associateId}`}
+            to={verifierHref}
             className="inline-flex items-center gap-1 text-xs text-gold hover:underline"
           >
             Open in Compliance
@@ -1824,7 +1960,20 @@ function I9Card({
                   </span>
                 </div>
               </div>
-              {docs.length > 0 && <I9DocumentGrid docs={docs} />}
+              {docs.length > 0 && showInlineVerifier && (
+                <p className="mt-1 ml-6 text-2xs text-silver">
+                  Check the documents you inspected — need at least {minDocs}{' '}
+                  for {documentList === 'LIST_A' ? 'List A' : 'Lists B + C'}.
+                </p>
+              )}
+              {docs.length > 0 && (
+                <I9DocumentGrid
+                  docs={docs}
+                  picked={showInlineVerifier ? picked : undefined}
+                  onTogglePick={showInlineVerifier ? togglePick : undefined}
+                  onReject={canReject ? setRejectTarget : undefined}
+                />
+              )}
             </div>
 
             {/* Section 2 — employer verification */}
@@ -1848,14 +1997,57 @@ function I9Card({
                     {daysLeft !== null && daysLeft < 0 ? ' — past due' : ''}
                   </div>
                 )}
+                {showInlineVerifier && (
+                  <div className="mt-3 space-y-3">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="block text-xs2 uppercase tracking-wider text-silver">
+                        Document list
+                      </span>
+                      {(['LIST_A', 'LIST_B_AND_C'] as const).map((opt) => (
+                        <label
+                          key={opt}
+                          className="flex items-center gap-2 text-sm text-white"
+                        >
+                          <input
+                            type="radio"
+                            name={`i9-doc-list-${applicationId}`}
+                            value={opt}
+                            checked={documentList === opt}
+                            onChange={() => setDocumentList(opt)}
+                          />
+                          {opt === 'LIST_A'
+                            ? 'List A (identity + work auth in one doc)'
+                            : 'Lists B + C (identity + work auth)'}
+                        </label>
+                      ))}
+                    </div>
+                    {submitError && <ErrorBanner>{submitError}</ErrorBanner>}
+                  </div>
+                )}
                 {!status?.section2 && (
-                  <div className="mt-2">
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {showInlineVerifier && (
+                      <Button
+                        size="sm"
+                        onClick={() => void handleVerify()}
+                        loading={submitting}
+                        disabled={!canSubmit}
+                        title={
+                          canSubmit
+                            ? undefined
+                            : `Check at least ${minDocs} inspected document${minDocs === 1 ? '' : 's'} above`
+                        }
+                      >
+                        <ShieldCheck className="h-4 w-4" />
+                        {`Verify Section 2 (${picked.size} doc${picked.size === 1 ? '' : 's'})`}
+                      </Button>
+                    )}
                     <Button asChild variant="outline" size="sm">
                       {/* Same deep link the header uses — landing on bare
-                          /compliance lost the tab AND the person. */}
-                      <Link to={`/compliance?tab=i9&associateId=${associateId}`}>
-                        Open Section 2 verifier
-                      </Link>
+                          /compliance lost the tab AND the person. Kept as a
+                          secondary affordance next to the inline verifier:
+                          work-auth updates and manual edits live there. */}
+                      <Link to={verifierHref}>Open Section 2 verifier</Link>
                     </Button>
                   </div>
                 )}
@@ -1864,6 +2056,25 @@ function I9Card({
           </div>
         )}
       </CardContent>
+      <RejectDocumentDialog
+        doc={rejectTarget}
+        onClose={() => setRejectTarget(null)}
+        onRejected={(docId) => {
+          // A just-rejected document can't stay picked for verification.
+          setPicked((prev) => {
+            if (!prev.has(docId)) return prev;
+            const next = new Set(prev);
+            next.delete(docId);
+            return next;
+          });
+          // Refreshes the I-9 doc list AND the application detail (the
+          // reject endpoint rewinds the upload task, so percentComplete
+          // and the checklist tiles change too).
+          void queryClient.invalidateQueries({
+            queryKey: ['application', applicationId],
+          });
+        }}
+      />
     </Card>
   );
 }
@@ -1871,72 +2082,163 @@ function I9Card({
 /**
  * In-place viewer for the uploaded identity documents — HR used to have
  * to leave for /compliance just to look at them. Mirrors the Section 2
- * verifier's thumbnail grid (compliance I9Tab) minus its pick-for-
- * verification checkboxes; clicking a tile opens the shared
- * DocumentViewer overlay, so review happens without ever leaving the
- * application drawer.
+ * verifier's thumbnail grid (compliance I9Tab); clicking a tile opens the
+ * shared DocumentViewer overlay, so review happens without ever leaving
+ * the application drawer.
+ *
+ * With `picked`/`onTogglePick` the grid becomes the inline Section 2
+ * verifier's document picker: each tile is a checkbox (styled like the
+ * I9Tab verifier's tiles) and viewing moves to a small "View" affordance.
+ * `onReject` adds a per-tile reject affordance for the statuses the
+ * documents vault allows rejecting (UPLOADED / VERIFIED).
  */
-function I9DocumentGrid({ docs }: { docs: I9DocumentListItem[] }) {
+function I9DocumentGrid({
+  docs,
+  picked,
+  onTogglePick,
+  onReject,
+}: {
+  docs: I9DocumentListItem[];
+  picked?: Set<string>;
+  onTogglePick?: (id: string) => void;
+  onReject?: (doc: I9DocumentListItem) => void;
+}) {
   const [viewerAt, setViewerAt] = useState<number | null>(null);
+  const pickMode = picked !== undefined && onTogglePick !== undefined;
   return (
     <>
       <ul className="mt-2 ml-6 grid grid-cols-2 sm:grid-cols-3 gap-3">
         {docs.map((d, i) => {
           const isImage = d.mimeType.startsWith('image/');
           const missing = !d.fileAvailable;
+          const checked = pickMode && !missing && !!picked?.has(d.id);
+          // Mirror the vault: only UPLOADED / VERIFIED docs are rejectable.
+          const rejectable =
+            !!onReject && (d.status === 'UPLOADED' || d.status === 'VERIFIED');
           const title =
             d.i9DocTitle ?? I9_DOC_KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' ');
+          const thumb = (
+            <div className="flex aspect-[3/2] items-center justify-center bg-navy-secondary">
+              {missing ? (
+                <span className="px-2 text-center text-2xs leading-tight text-alert">
+                  File missing on server
+                </span>
+              ) : isImage ? (
+                <img
+                  src={previewDocumentUrl(d.id)}
+                  // "Evidence:" phrasing on purpose, and never the kind
+                  // label — that's "Photo ID" for ID docs, and
+                  // photo/image words are lint-banned in alt text.
+                  alt={`Evidence: ${d.i9DocTitle ?? d.filename}`}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span className="text-xs text-silver">PDF</span>
+              )}
+            </div>
+          );
+          const meta = (
+            <div className="px-2 py-1.5">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="truncate text-xs text-white">{title}</span>
+                <Badge size="sm" variant={statusTone(d.status)} className="shrink-0">
+                  {I9_DOC_STATUS_LABEL[d.status] ?? d.status}
+                </Badge>
+              </div>
+              <div className="mt-0.5 text-2xs text-silver truncate">
+                {d.i9List ? `List ${d.i9List} · ` : ''}
+                {d.side ? (d.side === 'FRONT' ? 'Front' : 'Back') : 'Document'}
+                {missing && (
+                  <>
+                    {' '}
+                    · <span className="text-alert">re-upload required</span>
+                  </>
+                )}
+                {pickMode && !missing && (
+                  <>
+                    {' '}
+                    ·{' '}
+                    {/* preventDefault so a click here never toggles the
+                        surrounding checkbox label. */}
+                    <button
+                      type="button"
+                      className="text-gold hover:underline"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setViewerAt(i);
+                      }}
+                    >
+                      View
+                    </button>
+                  </>
+                )}
+              </div>
+              {rejectable && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onReject?.(d);
+                  }}
+                  className="mt-1 inline-flex items-center gap-1 text-2xs text-alert/80 transition-colors hover:text-alert"
+                  title="Reject this document — the associate is asked to re-upload"
+                >
+                  <XCircle className="h-3 w-3" aria-hidden />
+                  Reject
+                </button>
+              )}
+            </div>
+          );
           return (
             <li key={d.id}>
-              <button
-                type="button"
-                onClick={() => setViewerAt(i)}
-                disabled={missing}
-                aria-label={`View ${d.filename}`}
-                className={cn(
-                  'block w-full overflow-hidden rounded border text-left transition-colors',
-                  missing
-                    ? 'cursor-not-allowed border-alert/40 bg-alert/5'
-                    : 'border-navy-secondary hover:border-gold/60',
-                )}
-              >
-                <div className="flex aspect-[3/2] items-center justify-center bg-navy-secondary">
-                  {missing ? (
-                    <span className="px-2 text-center text-2xs leading-tight text-alert">
-                      File missing on server
-                    </span>
-                  ) : isImage ? (
-                    <img
-                      src={previewDocumentUrl(d.id)}
-                      // "Evidence:" phrasing on purpose, and never the kind
-                      // label — that's "Photo ID" for ID docs, and
-                      // photo/image words are lint-banned in alt text.
-                      alt={`Evidence: ${d.i9DocTitle ?? d.filename}`}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <span className="text-xs text-silver">PDF</span>
+              {pickMode ? (
+                <label
+                  className={cn(
+                    'block w-full overflow-hidden rounded border transition-colors',
+                    missing
+                      ? 'cursor-not-allowed border-alert/40 bg-alert/5'
+                      : checked
+                        ? 'cursor-pointer border-gold bg-gold/10'
+                        : 'cursor-pointer border-navy-secondary hover:border-silver/40',
                   )}
-                </div>
-                <div className="px-2 py-1.5">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="truncate text-xs text-white">{title}</span>
-                    <Badge size="sm" variant={statusTone(d.status)} className="shrink-0">
-                      {I9_DOC_STATUS_LABEL[d.status] ?? d.status}
-                    </Badge>
-                  </div>
-                  <div className="mt-0.5 text-2xs text-silver truncate">
-                    {d.i9List ? `List ${d.i9List} · ` : ''}
-                    {d.side ? (d.side === 'FRONT' ? 'Front' : 'Back') : 'Document'}
-                    {missing && (
-                      <>
-                        {' '}
-                        · <span className="text-alert">re-upload required</span>
-                      </>
+                >
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={checked}
+                    onChange={() => !missing && onTogglePick?.(d.id)}
+                    disabled={missing}
+                    aria-label={`${d.i9DocTitle ?? d.kind} ${d.side ?? ''}`.trim()}
+                  />
+                  {thumb}
+                  {meta}
+                </label>
+              ) : (
+                <div
+                  className={cn(
+                    'overflow-hidden rounded border transition-colors',
+                    missing
+                      ? 'border-alert/40 bg-alert/5'
+                      : 'border-navy-secondary hover:border-gold/60',
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setViewerAt(i)}
+                    disabled={missing}
+                    aria-label={`View ${d.filename}`}
+                    className={cn(
+                      'block w-full text-left',
+                      missing && 'cursor-not-allowed',
                     )}
-                  </div>
+                  >
+                    {thumb}
+                  </button>
+                  {meta}
                 </div>
-              </button>
+              )}
             </li>
           );
         })}

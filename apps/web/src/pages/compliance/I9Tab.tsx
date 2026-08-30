@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { CheckCircle2, Download, ExternalLink, FileCheck, Fingerprint, XCircle } from 'lucide-react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, CheckCircle2, Download, ExternalLink, FileCheck, Fingerprint, XCircle } from 'lucide-react';
 import { DirectorateHeader, Kpi, KpiStrip } from './DirectorateShell';
 import type { I9DocumentList, I9Verification } from '@alto-people/shared';
 import { listI9s, upsertI9 } from '@/lib/complianceApi';
@@ -9,6 +9,11 @@ import {
   submitI9Section2,
   type I9DocumentListItem,
 } from '@/lib/i9Api';
+import {
+  autoDetectSection2,
+  minDocsForSection2List,
+  sanitizeReturnPath,
+} from './section2Verification';
 import { ApiError } from '@/lib/api';
 import { DocumentViewer } from '@/components/DocumentViewer';
 import {
@@ -119,9 +124,27 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   // ?associateId= deep-links one person's I-9 (the onboarding checklist
   // links here) — start on the ALL filter so they're present whatever
   // their state, then auto-open their drawer once rows arrive.
-  const [deepLinkParams] = useSearchParams();
+  const [deepLinkParams, setDeepLinkParams] = useSearchParams();
   const deepLinkAssociateId = deepLinkParams.get('associateId');
   const deepLinkOpened = useRef(false);
+  const navigate = useNavigate();
+  // ?return= is the application drawer the reviewer came from. Captured
+  // into state once (survives the URL cleanup below) so the drawer can
+  // offer a way back and the verify success path can return automatically.
+  const [returnPath] = useState<string | null>(() =>
+    sanitizeReturnPath(deepLinkParams.get('return')),
+  );
+  // Consume the param: tab switches copy the current search params, so a
+  // lingering ?return= would follow the user around the Compliance page
+  // (and re-arm on refresh). replace: true keeps Back-button history sane.
+  const returnConsumed = useRef(false);
+  useEffect(() => {
+    if (returnConsumed.current || !deepLinkParams.has('return')) return;
+    returnConsumed.current = true;
+    const params = new URLSearchParams(deepLinkParams);
+    params.delete('return');
+    setDeepLinkParams(params, { replace: true });
+  }, [deepLinkParams, setDeepLinkParams]);
   const [storedFilter, setStoredFilter] = usePersistentState<I9Filter>(
     'alto:list.compliance-i9.status.v1',
     'pending',
@@ -202,6 +225,17 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
     refresh();
   };
 
+  // Successful single verify: if the reviewer came from an application
+  // drawer, put them back exactly where they were instead of stranding
+  // them on this tab; otherwise close + refresh as before.
+  const handleVerified = () => {
+    if (returnPath) {
+      navigate(returnPath);
+      return;
+    }
+    closeAndRefresh();
+  };
+
   // Hiring-wave assembly line (same pattern as EVerifyTab's "Next pending"):
   // after a successful verify, hop straight to the next Section-2-pending row
   // in the current filtered view instead of dumping HR back to the list.
@@ -218,7 +252,8 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
       }
     }
     toast.success('All caught up — no more pending I-9s in this view.');
-    closeAndRefresh();
+    // The chain's final close honors the return path too.
+    handleVerified();
   };
 
   // Client-side view over the fetched rows: work-auth window filter, name
@@ -492,8 +527,10 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
             current={drawerTarget}
             canManage={canManage}
             onDone={closeAndRefresh}
+            onVerified={handleVerified}
             onVerifiedNext={advanceAfterVerify}
             onRefresh={() => void refresh()}
+            returnPath={returnPath}
           />
         )}
       </Drawer>
@@ -539,16 +576,22 @@ function I9DetailPanel({
   current,
   canManage,
   onDone,
+  onVerified,
   onVerifiedNext,
   onRefresh,
+  returnPath,
 }: {
   current: I9Verification;
   canManage: boolean;
   onDone: () => void;
+  /** Successful single verify — honors the ?return= round-trip. */
+  onVerified: () => void;
   /** After a successful verify, advance to the next pending row in view. */
   onVerifiedNext: () => void;
   /** Reload the list without closing the drawer (in-place updates). */
   onRefresh: () => void;
+  /** Application page the reviewer deep-linked from (null = none). */
+  returnPath: string | null;
 }) {
   const sec1Done = !!current.section1CompletedAt;
   const sec2Done = !!current.section2CompletedAt;
@@ -572,13 +615,24 @@ function I9DetailPanel({
               {current.associateEmail}
             </DrawerDescription>
           </div>
-          <Link
-            to={`/people?associateId=${current.associateId}`}
-            className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"
-          >
-            View profile
-            <ExternalLink className="h-3 w-3" />
-          </Link>
+          <div className="ml-auto flex shrink-0 flex-col items-end gap-1.5">
+            {returnPath && (
+              <Link
+                to={returnPath}
+                className="inline-flex items-center gap-1 text-xs text-gold hover:underline"
+              >
+                <ArrowLeft className="h-3 w-3" />
+                Back to application
+              </Link>
+            )}
+            <Link
+              to={`/people?associateId=${current.associateId}`}
+              className="inline-flex items-center gap-1 text-xs text-gold hover:underline"
+            >
+              View profile
+              <ExternalLink className="h-3 w-3" />
+            </Link>
+          </div>
         </div>
       </DrawerHeader>
       <DrawerBody>
@@ -632,7 +686,7 @@ function I9DetailPanel({
           <Section2Verifier
             applicationId={current.applicationId}
             associateId={current.associateId}
-            onDone={onDone}
+            onDone={onVerified}
             onDoneNext={onVerifiedNext}
           />
         )}
@@ -754,35 +808,12 @@ function Section2Verifier({
       .then((res) => {
         if (cancelled) return;
         setDocs(res.documents);
-        // Pre-select the list the associate's classified uploads support —
-        // a passport pre-picks List A, license + SSN card pre-pick B+C.
-        // Unclassified (pre-catalog) docs suggest nothing; HR still decides.
-        const usable = res.documents.filter((d) => d.status !== 'REJECTED');
-        let auto: I9DocumentList | null = null;
-        if (usable.some((d) => d.i9List === 'A')) {
-          auto = 'LIST_A';
-        } else if (
-          usable.some((d) => d.i9List === 'B') &&
-          usable.some((d) => d.i9List === 'C')
-        ) {
-          auto = 'LIST_B_AND_C';
-        }
+        // Shared with the application drawer's inline verifier — see
+        // autoDetectSection2 for the list/pre-check rules.
+        const auto = autoDetectSection2(res.documents);
         if (auto) {
-          setDocumentList(auto);
-          // Pre-check the documents the classifier already matched to that
-          // list — HR adjusts the picks instead of re-selecting what the
-          // system identified. Missing-blob docs stay unpicked: their
-          // checkbox is disabled and they can't have been inspected.
-          const wanted = auto === 'LIST_A' ? ['A'] : ['B', 'C'];
-          setPicked(
-            new Set(
-              usable
-                .filter(
-                  (d) => d.fileAvailable && d.i9List && wanted.includes(d.i9List),
-                )
-                .map((d) => d.id),
-            ),
-          );
+          setDocumentList(auto.documentList);
+          setPicked(new Set(auto.preChecked));
         }
       })
       .catch((err) => {
@@ -807,7 +838,7 @@ function Section2Verifier({
     });
   };
 
-  const minDocs = documentList === 'LIST_A' ? 1 : 2;
+  const minDocs = minDocsForSection2List(documentList);
   const canSubmit = picked.size >= minDocs && !submitting;
 
   const handleSubmit = async (advance: boolean) => {
