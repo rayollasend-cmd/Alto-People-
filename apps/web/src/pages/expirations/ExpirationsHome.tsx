@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { AlertCircle, Calendar, Clock, Download, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
@@ -13,11 +13,18 @@ import { grantAssociateQual } from '@/lib/qualApi';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { usePersistentState } from '@/lib/usePersistentState';
+import { useSelection, type Selection } from '@/lib/useSelection';
 import {
   Badge,
   Button,
   Card,
   CardContent,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   Drawer,
   DrawerBody,
   DrawerFooter,
@@ -69,6 +76,9 @@ export function ExpirationsHome() {
   );
   const [search, setSearch] = useState('');
   const [renewTarget, setRenewTarget] = useState<ExpirationItem | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkExpiresAt, setBulkExpiresAt] = useState('');
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   // Keeps the previous buckets on screen while a filter flip refetches —
   // no full-skeleton flash. The sequence guard drops out-of-order responses
@@ -95,15 +105,94 @@ export function ExpirationsHome() {
   }, [days, filter]);
 
   const q = search.trim().toLowerCase();
-  const matches = (i: ExpirationItem) =>
-    !q ||
-    i.associateName.toLowerCase().includes(q) ||
-    i.associateEmail.toLowerCase().includes(q) ||
-    i.qualificationName.toLowerCase().includes(q) ||
-    i.qualificationCode.toLowerCase().includes(q);
-  const expired = data ? data.expired.filter(matches) : [];
-  const dueSoon = data ? data.dueSoon.filter(matches) : [];
-  const dueLater = data ? data.dueLater.filter(matches) : [];
+  const { expired, dueSoon, dueLater } = useMemo(() => {
+    const matches = (i: ExpirationItem) =>
+      !q ||
+      i.associateName.toLowerCase().includes(q) ||
+      i.associateEmail.toLowerCase().includes(q) ||
+      i.qualificationName.toLowerCase().includes(q) ||
+      i.qualificationCode.toLowerCase().includes(q);
+    return {
+      expired: data ? data.expired.filter(matches) : [],
+      dueSoon: data ? data.dueSoon.filter(matches) : [],
+      dueLater: data ? data.dueLater.filter(matches) : [],
+    };
+  }, [data, q]);
+
+  // Every bucket row renews through the same grantAssociateQual upsert, so
+  // any mix of kinds (work auth, drug test, certs) can share one bulk date.
+  // Memoized ids: a fresh array identity every render defeats memoization
+  // inside useSelection.
+  const renewableIds = useMemo(
+    () =>
+      canRenew
+        ? [...expired, ...dueSoon, ...dueLater].map((i) => i.id)
+        : [],
+    [canRenew, expired, dueSoon, dueLater],
+  );
+  const sel = useSelection(renewableIds);
+  // Resolve against the currently visible (filtered) rows so ids left over
+  // from a previous search/window can never be submitted.
+  const selectedItems = useMemo(
+    () =>
+      [...expired, ...dueSoon, ...dueLater].filter((i) =>
+        sel.selected.has(i.id),
+      ),
+    [expired, dueSoon, dueLater, sel.selected],
+  );
+
+  const openBulk = () => {
+    // Same smart default as the per-row drawer: one year from today,
+    // computed in local time.
+    const d = new Date();
+    d.setFullYear(d.getFullYear() + 1);
+    setBulkExpiresAt(ymdLocal(d));
+    setBulkOpen(true);
+  };
+
+  const bulkSubmit = async () => {
+    const today = ymdLocal();
+    if (!bulkExpiresAt) {
+      toast.error('New expiration date is required.');
+      return;
+    }
+    if (bulkExpiresAt <= today) {
+      toast.error('Expiration must be after today.');
+      return;
+    }
+    const items = selectedItems;
+    setBulkBusy(true);
+    const results = await Promise.allSettled(
+      items.map((i) =>
+        grantAssociateQual(i.associateId, {
+          qualificationId: i.qualificationId,
+          acquiredAt: today,
+          expiresAt: bulkExpiresAt,
+          evidenceKey: null,
+        }),
+      ),
+    );
+    setBulkBusy(false);
+    let ok = 0;
+    results.forEach((r, idx) => {
+      if (r.status === 'fulfilled') {
+        ok += 1;
+        return;
+      }
+      const item = items[idx];
+      const msg =
+        r.reason instanceof ApiError ? r.reason.message : 'Failed.';
+      toast.error(
+        `${item.associateName} — ${item.qualificationName}: ${msg}`,
+      );
+    });
+    if (ok > 0) {
+      toast.success(`Marked ${ok} renewal${ok === 1 ? '' : 's'}.`);
+    }
+    setBulkOpen(false);
+    sel.clear();
+    refresh();
+  };
 
   const onExportCsv = () => {
     if (!data) return;
@@ -196,6 +285,7 @@ export function ExpirationsHome() {
             emptyHint={q ? 'No matches.' : 'Nothing expired.'}
             canRenew={canRenew}
             onRenew={setRenewTarget}
+            selection={canRenew ? sel : null}
           />
           <Bucket
             title={`Due in next ${data.days} days`}
@@ -206,6 +296,7 @@ export function ExpirationsHome() {
             emptyHint={q ? 'No matches.' : 'Nothing due soon.'}
             canRenew={canRenew}
             onRenew={setRenewTarget}
+            selection={canRenew ? sel : null}
           />
           <Bucket
             title="Due later (within 1 year)"
@@ -216,9 +307,65 @@ export function ExpirationsHome() {
             emptyHint={q ? 'No matches.' : 'Nothing further out.'}
             canRenew={canRenew}
             onRenew={setRenewTarget}
+            selection={canRenew ? sel : null}
           />
         </div>
       )}
+
+      {/* Sticky bulk bar — appears with the first checked row. */}
+      {canRenew && selectedItems.length > 0 && (
+        <div className="sticky bottom-4 z-20 mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-navy-secondary bg-navy p-3 elev-2">
+          <span className="text-sm text-silver tabular-nums">
+            {selectedItems.length} selected
+          </span>
+          <Button size="sm" onClick={openBulk} disabled={bulkBusy}>
+            Mark renewed ({selectedItems.length})…
+          </Button>
+          <Button size="sm" variant="ghost" onClick={sel.clear} disabled={bulkBusy}>
+            Clear
+          </Button>
+        </div>
+      )}
+
+      <Dialog
+        open={bulkOpen}
+        onOpenChange={(open) => {
+          if (!open && !bulkBusy) setBulkOpen(false);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mark {selectedItems.length} renewed</DialogTitle>
+            <DialogDescription>
+              Records each selected qualification as renewed today with the
+              same new expiration date. Use the per-row drawer for a
+              different date or an evidence reference.
+            </DialogDescription>
+          </DialogHeader>
+          <div>
+            <Label htmlFor="bulkExpiresAt">New expiration (all selected)</Label>
+            <Input
+              id="bulkExpiresAt"
+              type="date"
+              className="mt-1"
+              value={bulkExpiresAt}
+              onChange={(e) => setBulkExpiresAt(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setBulkOpen(false)}
+              disabled={bulkBusy}
+            >
+              Cancel
+            </Button>
+            <Button onClick={bulkSubmit} loading={bulkBusy}>
+              {bulkBusy ? 'Marking…' : 'Mark renewed'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {renewTarget && (
         <RenewDrawer
@@ -243,6 +390,7 @@ function Bucket({
   emptyHint,
   canRenew,
   onRenew,
+  selection,
 }: {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -252,10 +400,22 @@ function Bucket({
   emptyHint: string;
   canRenew: boolean;
   onRenew: (item: ExpirationItem) => void;
+  selection: Selection | null;
 }) {
   const [showAll, setShowAll] = useState(false);
   const truncated = !showAll && items.length > 100;
   const shown = truncated ? items.slice(0, 100) : items;
+  // Header checkbox covers exactly the rows on screen — never rows hidden
+  // behind the 100-row truncation.
+  const shownIds = shown.map((i) => i.id);
+  const allShown =
+    selection !== null &&
+    shownIds.length > 0 &&
+    shownIds.every((id) => selection.isSelected(id));
+  const someShown =
+    selection !== null &&
+    !allShown &&
+    shownIds.some((id) => selection.isSelected(id));
   return (
     <Card>
       <CardContent className="p-0">
@@ -272,6 +432,19 @@ function Bucket({
           <Table>
             <TableHeader>
               <TableRow>
+                {selection && (
+                  <TableHead className="w-8">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select all in ${title}`}
+                      checked={allShown}
+                      ref={(el) => {
+                        if (el) el.indeterminate = someShown;
+                      }}
+                      onChange={() => selection.setMany(shownIds, !allShown)}
+                    />
+                  </TableHead>
+                )}
                 <TableHead>Associate</TableHead>
                 <TableHead className="hidden md:table-cell">Email</TableHead>
                 <TableHead>Qualification</TableHead>
@@ -288,6 +461,19 @@ function Bucket({
                   className={canRenew ? 'cursor-pointer' : ''}
                   onClick={canRenew ? () => onRenew(i) : undefined}
                 >
+                  {selection && (
+                    <TableCell
+                      className="w-8"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${i.qualificationName} for ${i.associateName}`}
+                        checked={selection.isSelected(i.id)}
+                        onChange={() => selection.toggle(i.id)}
+                      />
+                    </TableCell>
+                  )}
                   <TableCell className="font-medium text-white">
                     <AssociateLink associateId={i.associateId}>{i.associateName}</AssociateLink>
                     <div className="text-xs2 text-silver/70 md:hidden">{i.associateEmail}</div>

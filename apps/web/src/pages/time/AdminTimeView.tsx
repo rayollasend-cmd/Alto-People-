@@ -73,6 +73,7 @@ import {
   fmtDateTz,
   fmtPayRate,
   fmtTime,
+  parseYmd,
   tzAbbrev,
   ymdLocal,
   ymdToIsoEndExclusive,
@@ -1602,6 +1603,22 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                 ))}
               </div>
             </div>
+
+            {/* Checkboxes + the bulk bar only exist on the Completed filter.
+                A reviewer parked on ALL sees neither — say why, with a
+                one-click way over, instead of leaving them hunting. */}
+            {canManage && filter !== 'COMPLETED' && selectableIds.length > 0 && (
+              <p className="text-xs text-silver/70">
+                Bulk actions live on the Completed filter —{' '}
+                <Button
+                  variant="link"
+                  onClick={() => setFilter('COMPLETED')}
+                  className="text-xs font-normal text-gold underline hover:text-gold-bright"
+                >
+                  Switch
+                </Button>
+              </p>
+            )}
 
             {/* Phase 65 — date range + free-text search + export buttons. */}
             <div className="flex flex-wrap items-end gap-3">
@@ -3627,6 +3644,25 @@ function SummaryExportDialog({
   );
 }
 
+/** `ymd` + `days`, as YYYY-MM-DD. Calendar math (DST-safe), no toLocale. */
+function ymdAddDays(ymd: string, days: number): string {
+  const d = parseYmd(ymd);
+  if (!d) return '';
+  d.setDate(d.getDate() + days);
+  return ymdLocal(d);
+}
+
+/**
+ * Next batch-reference suggestion: a trailing number increments, keeping
+ * zero-padding ("ADP run #4412" → "…#4413", "BATCH-007" → "BATCH-008");
+ * anything else prefills unchanged for hand-editing.
+ */
+function suggestNextReference(last: string): string {
+  const m = /^(.*?)(\d{1,15})$/.exec(last);
+  if (!m) return last;
+  return m[1] + String(Number(m[2]) + 1).padStart(m[2].length, '0');
+}
+
 /**
  * Record pay period — the batch external-payment recorder. One row per
  * associate with APPROVED time in the period, hours + suggested gross
@@ -3656,28 +3692,29 @@ function RecordPayPeriodDialog({
   const [reference, setReference] = useState('');
   const [busy, setBusy] = useState<'load' | 'save' | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Last run's habits, remembered across visits: the gap between period end
+  // and pay date, and the batch reference — both prefilled on open so a
+  // steady cadence needs zero retyping.
+  const [payOffsetDays, setPayOffsetDays] = usePersistentState<number>(
+    'alto:form.time.recordPeriod.payOffsetDays.v1',
+    5,
+    (v): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 60,
+  );
+  const [lastReference, setLastReference] = usePersistentState<string>(
+    'alto:form.time.recordPeriod.reference.v1',
+    '',
+    (v): v is string => typeof v === 'string',
+  );
 
-  useEffect(() => {
-    if (!open) return;
-    setFromYmd(defaultFromYmd);
-    setToYmd(defaultToYmd);
-    setRows(null);
-    setChecked(new Set());
-    setGrossById({});
-    setPayDate('');
-    setReference('');
-    setErr(null);
-  }, [open, defaultFromYmd, defaultToYmd]);
-
-  const load = async () => {
-    if (!fromYmd || !toYmd || toYmd < fromYmd) {
+  const load = async (f = fromYmd, t = toYmd) => {
+    if (!f || !t || t < f) {
       setErr('Pick a valid pay period (end on or after start).');
       return;
     }
     setBusy('load');
     setErr(null);
     try {
-      const r = await getPeriodPrefill(fromYmd, toYmd);
+      const r = await getPeriodPrefill(f, t);
       setRows(r.rows);
       // Default: everyone with hours is checked; already-recorded rows too
       // (re-recording just refreshes them — idempotent server-side).
@@ -3699,6 +3736,26 @@ function RecordPayPeriodDialog({
       setBusy(null);
     }
   };
+
+  useEffect(() => {
+    if (!open) return;
+    setFromYmd(defaultFromYmd);
+    setToYmd(defaultToYmd);
+    setRows(null);
+    setChecked(new Set());
+    setGrossById({});
+    setPayDate(defaultToYmd ? ymdAddDays(defaultToYmd, payOffsetDays) : '');
+    setReference(suggestNextReference(lastReference));
+    setErr(null);
+    // The period read is idempotent, so fire it on open when the prefilled
+    // dates are already valid; the button stays for hand-edited dates.
+    if (defaultFromYmd && defaultToYmd && defaultToYmd >= defaultFromYmd) {
+      void load(defaultFromYmd, defaultToYmd);
+    }
+    // payOffsetDays / lastReference / load: open-time snapshots only —
+    // re-running mid-session would wipe the loaded rows.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, defaultFromYmd, defaultToYmd]);
 
   const record = async () => {
     if (!rows) return;
@@ -3727,6 +3784,15 @@ function RecordPayPeriodDialog({
       toast.success(
         `Pay period recorded: ${res.created} new, ${res.updated} refreshed${res.skipped > 0 ? `, ${res.skipped} skipped` : ''}.`,
       );
+      // Remember this run's habits for next open (only sane offsets — a
+      // one-off backdated correction shouldn't poison future prefills).
+      const end = parseYmd(toYmd);
+      const paid = parseYmd(payDate);
+      if (end && paid) {
+        const offset = Math.round((paid.getTime() - end.getTime()) / 86_400_000);
+        if (offset >= 0 && offset <= 60) setPayOffsetDays(offset);
+      }
+      if (reference.trim()) setLastReference(reference.trim());
       onOpenChange(false);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : 'Recording failed.');

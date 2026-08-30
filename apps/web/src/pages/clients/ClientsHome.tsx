@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
@@ -16,7 +16,10 @@ import {
 import type { ClientListItem, ClientStatus } from '@alto-people/shared';
 import { clientServiceReportUrl, listClients } from '@/lib/clientsApi';
 import { ApiError } from '@/lib/api';
-import { fmtRelativeDate } from '@/lib/format';
+import { fmtDate, fmtRelativeDate, ymdLocal } from '@/lib/format';
+// Org-week helper — despite the name it starts weeks on SATURDAY, the
+// Sat→Fri week every payroll/report surface runs on.
+import { startOfWeekMonday } from '@/pages/scheduling/WeekCalendarView';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { StatusBadge } from '@/lib/status';
@@ -27,6 +30,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { FilterBar, FilterChip, SearchInput } from '@/components/ui/FilterBar';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Select } from '@/components/ui/Select';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import {
   Table,
@@ -53,19 +57,46 @@ type ClientsView = (typeof VIEW_OPTIONS)[number];
 // Shared relative formatter — one "time ago" dialect across the app.
 const fmtRelative = (iso: string | null): string => fmtRelativeDate(iso);
 
+/** The 8 most recent COMPLETED org weeks (Sat 00:00 → Fri), newest first —
+ *  the weeks the service-report endpoint can cover. `value` is the week
+ *  start as YYYY-MM-DD, the shape the `week` query param expects. */
+export function serviceReportWeekOptions(): Array<{ value: string; label: string }> {
+  const currentStart = startOfWeekMonday(new Date());
+  const out: Array<{ value: string; label: string }> = [];
+  for (let i = 1; i <= 8; i++) {
+    const start = new Date(currentStart);
+    start.setDate(start.getDate() - 7 * i);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    out.push({ value: ymdLocal(start), label: `${fmtDate(start)} – ${fmtDate(end)}` });
+  }
+  return out;
+}
+
 export function ClientsHome() {
   const { can } = useAuth();
   const canManage = can('manage:clients');
   // The weekly service-report endpoint is billing-gated; the button only
   // renders for logins that can actually download it.
   const canReport = can('process:payroll') || can('view:executive');
-  const [reportBusyId, setReportBusyId] = useState<string | null>(null);
+  // Per-row busy tracking so several clients' reports can generate in
+  // parallel — a single busy id serialized the whole run.
+  const [reportBusyIds, setReportBusyIds] = useState<Set<string>>(new Set());
+  // Which org week every per-row PDF link covers. Defaults to the last
+  // completed week — the server's own default when no week is passed.
+  const reportWeeks = useMemo(serviceReportWeekOptions, []);
+  const [reportWeek, setReportWeek] = useState(reportWeeks[0].value);
 
   const downloadReport = async (clientId: string, clientName: string) => {
-    if (reportBusyId) return;
-    setReportBusyId(clientId);
+    if (reportBusyIds.has(clientId)) return;
+    // Functional updates — concurrent downloads must not clear each other.
+    setReportBusyIds((prev) => {
+      const n = new Set(prev);
+      n.add(clientId);
+      return n;
+    });
     try {
-      const res = await fetch(clientServiceReportUrl(clientId), {
+      const res = await fetch(clientServiceReportUrl(clientId, reportWeek), {
         credentials: 'include',
       });
       if (!res.ok) throw new Error(String(res.status));
@@ -75,7 +106,7 @@ export function ClientsHome() {
       const objUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = objUrl;
-      a.download = m?.[1] ?? `service-report-${clientName}.pdf`;
+      a.download = m?.[1] ?? `service-report-${clientName}-${reportWeek}.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -84,7 +115,11 @@ export function ClientsHome() {
     } catch {
       toast.error(`Could not generate the report for ${clientName}.`);
     } finally {
-      setReportBusyId(null);
+      setReportBusyIds((prev) => {
+        const n = new Set(prev);
+        n.delete(clientId);
+        return n;
+      });
     }
   };
 
@@ -223,6 +258,22 @@ export function ClientsHome() {
               : `${items.length} client${items.length === 1 ? '' : 's'}`
             : ''}
         </span>
+        {canReport && view === 'table' && (
+          <Select
+            size="sm"
+            aria-label="Service report week"
+            title="Org week (Sat–Fri) each row's service-report PDF covers"
+            value={reportWeek}
+            onChange={(e) => setReportWeek(e.target.value)}
+            className="max-w-[16rem]"
+          >
+            {reportWeeks.map((w) => (
+              <option key={w.value} value={w.value}>
+                {w.label}
+              </option>
+            ))}
+          </Select>
+        )}
         <ViewToggle<ClientsView>
           value={view}
           onChange={setView}
@@ -345,9 +396,8 @@ export function ClientsHome() {
                         size="sm"
                         variant="ghost"
                         onClick={() => void downloadReport(c.id, c.name)}
-                        loading={reportBusyId === c.id}
-                        disabled={reportBusyId !== null && reportBusyId !== c.id}
-                        title={`Download ${c.name}'s weekly service report (last completed week) — the client-facing PDF.`}
+                        loading={reportBusyIds.has(c.id)}
+                        title={`Download ${c.name}'s weekly service report for the selected week — the client-facing PDF.`}
                         aria-label={`Download service report for ${c.name}`}
                       >
                         <FileText className="h-3.5 w-3.5" />

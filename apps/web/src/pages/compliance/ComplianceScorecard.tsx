@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   ChevronRight,
   ClipboardList,
@@ -17,6 +18,7 @@ import {
   TrendingUp,
   WifiOff,
 } from 'lucide-react';
+import { toast } from 'sonner';
 // Recharts (~290 KB) lives behind a lazy boundary — see ComplianceDonut below.
 const ComplianceDonut = lazy(() =>
   import('./ComplianceDonut').then((m) => ({ default: m.ComplianceDonut })),
@@ -420,6 +422,17 @@ function ExpirationsTile({ refreshEpoch }: { refreshEpoch: number }) {
   // upsert returns, without waiting for the next 15-min tile refresh.
   const signals = localSignals ?? data?.attestations ?? [];
 
+  const applyUpdated = useCallback(
+    (updated: ManualAttestationSignal) => {
+      setLocalSignals((prev) => {
+        const base = prev ?? data?.attestations ?? [];
+        return base.map((s) => (s.key === updated.key ? updated : s));
+      });
+    },
+    [data],
+  );
+  const { attestingKey, quickAttest } = useQuickAttest(applyUpdated);
+
   return (
     <TileShell
       icon={<Clock className="h-4 w-4" />}
@@ -472,6 +485,12 @@ function ExpirationsTile({ refreshEpoch }: { refreshEpoch: number }) {
                     signal={s}
                     canManage={canManage}
                     onClick={() => setDrawerSignal(s)}
+                    attesting={attestingKey === s.key}
+                    onQuickAttest={
+                      canManage && !s.current && s.status !== 'attested'
+                        ? () => void quickAttest(s)
+                        : null
+                    }
                   />
                 ))}
               </ul>
@@ -482,10 +501,7 @@ function ExpirationsTile({ refreshEpoch }: { refreshEpoch: number }) {
             canManage={canManage}
             onClose={() => setDrawerSignal(null)}
             onSaved={(updated) => {
-              setLocalSignals((prev) => {
-                const base = prev ?? data.attestations;
-                return base.map((s) => (s.key === updated.key ? updated : s));
-              });
+              applyUpdated(updated);
               setDrawerSignal(null);
             }}
           />
@@ -564,6 +580,17 @@ function BillingTile({ refreshEpoch }: { refreshEpoch: number }) {
   // upsert returns, without waiting for the next 15-min tile refresh.
   const signals = localSignals ?? data?.attestations ?? [];
 
+  const applyUpdated = useCallback(
+    (updated: ManualAttestationSignal) => {
+      setLocalSignals((prev) => {
+        const base = prev ?? data?.attestations ?? [];
+        return base.map((s) => (s.key === updated.key ? updated : s));
+      });
+    },
+    [data],
+  );
+  const { attestingKey, quickAttest } = useQuickAttest(applyUpdated);
+
   return (
     <TileShell
       icon={<DollarSign className="h-4 w-4" />}
@@ -612,6 +639,12 @@ function BillingTile({ refreshEpoch }: { refreshEpoch: number }) {
                     signal={s}
                     canManage={canManage}
                     onClick={() => setDrawerSignal(s)}
+                    attesting={attestingKey === s.key}
+                    onQuickAttest={
+                      canManage && !s.current && s.status !== 'attested'
+                        ? () => void quickAttest(s)
+                        : null
+                    }
                   />
                 ))}
               </ul>
@@ -622,10 +655,7 @@ function BillingTile({ refreshEpoch }: { refreshEpoch: number }) {
             canManage={canManage}
             onClose={() => setDrawerSignal(null)}
             onSaved={(updated) => {
-              setLocalSignals((prev) => {
-                const base = prev ?? data.attestations;
-                return base.map((s) => (s.key === updated.key ? updated : s));
-              });
+              applyUpdated(updated);
               setDrawerSignal(null);
             }}
           />
@@ -635,14 +665,53 @@ function BillingTile({ refreshEpoch }: { refreshEpoch: number }) {
   );
 }
 
+/**
+ * One-click attest with the drawer's fresh-form defaults: outcome YES,
+ * action taken today, no notes. Offered only on rows with no current
+ * attestation (the drawer would pre-fill from `current` otherwise, so the
+ * defaults would diverge from what it submits). NO / N/A / notes still go
+ * through the drawer.
+ */
+function useQuickAttest(
+  applyUpdated: (updated: ManualAttestationSignal) => void,
+) {
+  const [attestingKey, setAttestingKey] = useState<string | null>(null);
+  const quickAttest = async (signal: ManualAttestationSignal) => {
+    setAttestingKey(signal.key);
+    try {
+      // Same date construction as AttestationDrawer's submit path.
+      const today = new Date().toISOString().slice(0, 10);
+      const r = await upsertAttestation({
+        key: signal.key,
+        periodStart: signal.periodStart,
+        outcome: 'YES',
+        actionTakenAt: new Date(`${today}T12:00:00Z`).toISOString(),
+        notes: null,
+        evidenceDocumentId: signal.current?.evidenceDocumentId ?? null,
+      });
+      applyUpdated(r.signal);
+      toast.success(`${signal.label} attested.`);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Attest failed.');
+    } finally {
+      setAttestingKey(null);
+    }
+  };
+  return { attestingKey, quickAttest };
+}
+
 function AttestationRow({
   signal,
   canManage,
   onClick,
+  attesting,
+  onQuickAttest,
 }: {
   signal: ManualAttestationSignal;
   canManage: boolean;
   onClick: () => void;
+  attesting: boolean;
+  onQuickAttest: (() => void) | null;
 }) {
   const status = signal.status;
   const Icon =
@@ -680,13 +749,15 @@ function AttestationRow({
   })();
 
   return (
-    <li>
+    // The quick-attest button is a SIBLING of the row button, not a child —
+    // nested <button>s are invalid HTML and break click targets.
+    <li className="flex items-start gap-1">
       <button
         type="button"
         onClick={onClick}
         disabled={!canManage}
         className={cn(
-          'w-full text-left flex items-start gap-2 px-2 py-1.5 rounded text-xs',
+          'flex-1 min-w-0 text-left flex items-start gap-2 px-2 py-1.5 rounded text-xs',
           canManage && 'hover:bg-navy-secondary/40 cursor-pointer',
           !canManage && 'cursor-default',
         )}
@@ -698,6 +769,19 @@ function AttestationRow({
           <div className={cn('truncate', colorClass)}>{statusText}</div>
         </div>
       </button>
+      {onQuickAttest && (
+        <Button
+          size="xs"
+          variant="ghost"
+          className="shrink-0 mt-0.5 text-silver hover:text-success"
+          onClick={onQuickAttest}
+          loading={attesting}
+          title="Attest now: Yes, action taken today. Open the row for notes or other outcomes."
+        >
+          Attest
+          <Check className="h-3 w-3" aria-hidden="true" />
+        </Button>
+      )}
     </li>
   );
 }

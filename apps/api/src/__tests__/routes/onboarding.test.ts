@@ -535,6 +535,130 @@ describe('Template listing', () => {
   });
 });
 
+describe('POST /onboarding/applications/nudge-stale (bulk stale nudge)', () => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
+
+  it('nudges every stale application (7-day rule) server-side; unreachable recipients come back skipped', async () => {
+    const client = await createClient();
+
+    // Stale (invited 10d ago, checklist unfinished) + reachable → nudged.
+    const staleAssoc = await createAssociate({ email: 'stale@example.com' });
+    const staleApp = (await createApplicationWithChecklist({
+      associateId: staleAssoc.id,
+      clientId: client.id,
+    })) as { id: string };
+    await prisma.application.update({
+      where: { id: staleApp.id },
+      data: { invitedAt: daysAgo(10) },
+    });
+    const { user: staleUser } = await createUser({
+      role: 'ASSOCIATE',
+      email: staleAssoc.email,
+      associateId: staleAssoc.id,
+    });
+
+    // Stale but the associate has NO user row → counted as skipped.
+    const orphanAssoc = await createAssociate({ email: 'orphan@example.com' });
+    const orphanApp = (await createApplicationWithChecklist({
+      associateId: orphanAssoc.id,
+      clientId: client.id,
+    })) as { id: string };
+    await prisma.application.update({
+      where: { id: orphanApp.id },
+      data: { invitedAt: daysAgo(9) },
+    });
+
+    // Fresh (invited just now) → not stale, untouched.
+    const freshAssoc = await createAssociate({ email: 'fresh@example.com' });
+    await createApplicationWithChecklist({
+      associateId: freshAssoc.id,
+      clientId: client.id,
+    });
+
+    // Old invite but checklist 100% done → not stale, untouched.
+    const doneAssoc = await createAssociate({ email: 'done@example.com' });
+    const doneApp = (await createApplicationWithChecklist({
+      associateId: doneAssoc.id,
+      clientId: client.id,
+    })) as { id: string };
+    await prisma.application.update({
+      where: { id: doneApp.id },
+      data: { invitedAt: daysAgo(20) },
+    });
+    await prisma.onboardingTask.updateMany({
+      where: { checklist: { applicationId: doneApp.id } },
+      data: { status: 'DONE', completedAt: new Date() },
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    // The stats tile and the bulk endpoint share ONE staleness rule — the
+    // count HR confirms in the UI must equal nudged + skipped.
+    const stats = await a.get('/onboarding/applications/stats');
+    expect(stats.status).toBe(200);
+    expect(stats.body.stale).toBe(2);
+
+    const res = await a.post('/onboarding/applications/nudge-stale');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ nudged: 1, skipped: 1 });
+
+    // The nudge went through the single-nudge delivery path: one
+    // Notification row, category onboarding.nudge, personalized around the
+    // first incomplete task ('Profile' in the default fixture checklist).
+    const notifs = await prisma.notification.findMany({
+      where: { category: 'onboarding.nudge' },
+    });
+    expect(notifs.length).toBe(1);
+    expect(notifs[0].recipientUserId).toBe(staleUser.id);
+    expect(notifs[0].recipientEmail).toBe(staleAssoc.email);
+    expect(notifs[0].subject).toBe('Quick nudge: Profile');
+    expect(notifs[0].body).toContain('0% done');
+    expect(notifs[0].status).toBe('SENT');
+
+    await flushPendingAudits();
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: 'onboarding.nudge_sent', entityId: staleApp.id },
+    });
+    expect(audit).not.toBeNull();
+  });
+
+  it('is idempotent-shaped: a second sweep still nudges (no invented cooldown) but a finished checklist drops out', async () => {
+    const client = await createClient();
+    const assoc = await createAssociate({ email: 'twice@example.com' });
+    const app_ = (await createApplicationWithChecklist({
+      associateId: assoc.id,
+      clientId: client.id,
+    })) as { id: string };
+    await prisma.application.update({
+      where: { id: app_.id },
+      data: { invitedAt: daysAgo(8) },
+    });
+    await createUser({ role: 'ASSOCIATE', email: assoc.email, associateId: assoc.id });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const first = await a.post('/onboarding/applications/nudge-stale');
+    expect(first.body).toEqual({ nudged: 1, skipped: 0 });
+
+    // Checklist finishes → the application leaves the stale set entirely.
+    await prisma.onboardingTask.updateMany({
+      where: { checklist: { applicationId: app_.id } },
+      data: { status: 'DONE', completedAt: new Date() },
+    });
+    const second = await a.post('/onboarding/applications/nudge-stale');
+    expect(second.body).toEqual({ nudged: 0, skipped: 0 });
+  });
+
+  it('requires invite:onboarding (ASSOCIATE gets 403)', async () => {
+    const w = await seedWorld();
+    const a = await loginAs(w.associateUser.email);
+    const res = await a.post('/onboarding/applications/nudge-stale');
+    expect(res.status).toBe(403);
+  });
+});
+
 describe('Happy-path checklist progression', () => {
   it('percentComplete advances from 0 to 100 across the four built tasks', async () => {
     const client = await createClient();

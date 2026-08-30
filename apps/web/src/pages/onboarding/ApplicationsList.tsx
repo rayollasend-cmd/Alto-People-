@@ -5,6 +5,7 @@ import {
   Ban,
   BarChart3,
   ClipboardList,
+  Download,
   FileUp,
   LayoutGrid,
   LayoutTemplate,
@@ -29,11 +30,12 @@ import {
   bulkResendInvite,
   getApplicationStats,
   listApplications,
-  nudgeApplicant,
+  nudgeAllStale,
   resendInvite,
 } from '@/lib/onboardingApi';
 import { useConfirm, usePrompt } from '@/lib/confirm';
-import { fmtDate, parseYmd } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
+import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import { listClients } from '@/lib/clientsApi';
 import type { ClientSummary } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -218,16 +220,6 @@ function lastActivityIso(a: ApplicationSummary): string {
   return a.lastActivityAt ?? a.invitedAt;
 }
 
-// Bulk-nudge staleness is deliberately more aggressive than the 7-day
-// "stuck" banner — 3 idle days is when a gentle poke still lands well.
-const NUDGE_STALE_DAYS = 3;
-
-function isNudgeStale(a: ApplicationSummary, now: number): boolean {
-  if (isTerminal(a)) return false;
-  if (a.percentComplete >= 100) return false;
-  return now - new Date(lastActivityIso(a)).getTime() > NUDGE_STALE_DAYS * ONE_DAY_MS;
-}
-
 /** Idle-days tone for the "Blocked on" column. */
 function idleTone(days: number): string {
   if (days >= 7) return 'text-alert';
@@ -251,9 +243,9 @@ function startRisk(a: ApplicationSummary, now: number): 'past' | 'at-risk' | nul
   return null;
 }
 
-/** Personalized nudge subject/body — used both by the single-row dialog
- *  prefill and the bulk "Nudge all stale" loop. The server appends the
- *  portal link, so the body doesn't need one. */
+/** Personalized nudge subject/body for the single-row dialog prefill.
+ *  "Nudge all stale" composes the same content server-side. The server
+ *  appends the portal link, so the body doesn't need one. */
 function nudgeContentFor(a: ApplicationSummary): { subject: string; body: string } {
   const firstName = a.associateName.trim().split(/\s+/)[0] || 'there';
   const subject = a.blockedOnTitle
@@ -465,16 +457,68 @@ export function ApplicationsList() {
   const now = Date.now();
   const stats = statsData ?? EMPTY_STATS;
 
-  // Visible rows that qualify for a bulk nudge: unfinished, non-terminal,
-  // and no movement (task completion, else invite) for > 3 days.
-  const staleNudgeTargets = (items ?? []).filter((a) => isNudgeStale(a, now));
-
   // Selected rows eligible for bulk approve: checklist finished and not
   // already decided. Warning-gated rows still fail server-side per row —
   // this filter just keeps the obvious non-starters out of the batch.
   const approvableSelected = (items ?? []).filter(
     (a) => selected.has(a.id) && a.percentComplete === 100 && !isTerminal(a),
   );
+
+  // CSV export of the ENTIRE filtered result set — same all-pages loop as
+  // PeopleDirectory, so a >1-page backlog doesn't silently truncate.
+  const [exporting, setExporting] = useState(false);
+  const exportCsv = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const all: ApplicationSummary[] = [];
+      let exportPage = 1;
+      let total = Infinity;
+      while (all.length < total) {
+        const res = await listApplications({
+          status,
+          q: urlQ,
+          clientId: clientId || undefined,
+          ...invitedRange(invitedWindow),
+          page: exportPage,
+          pageSize: 200,
+        });
+        all.push(...res.applications);
+        total = res.total;
+        if (res.applications.length === 0) break;
+        exportPage += 1;
+      }
+      if (all.length === 0) return;
+      downloadCsv(`applications-${ymdLocal()}.csv`, [
+        [
+          'Name',
+          'Client',
+          'Position',
+          'Track',
+          'Status',
+          '% complete',
+          'Invited',
+          'Start date',
+          'Blocked on',
+        ],
+        ...all.map((a) => [
+          a.associateName,
+          a.clientName,
+          a.position ?? '',
+          TRACK_LABEL[a.onboardingTrack] ?? a.onboardingTrack,
+          a.status,
+          a.percentComplete,
+          a.invitedAt.slice(0, 10),
+          a.startDate ?? '',
+          a.blockedOnTitle ?? '',
+        ]),
+      ]);
+    } catch {
+      toast.error('Export failed — try again.');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const onResend = async (a: ApplicationSummary) => {
     if (resendingIds.has(a.id)) return;
@@ -619,55 +663,38 @@ export function ApplicationsList() {
     }
   };
 
-  // Bulk nudge — sequential (one email API call at a time, no thundering
-  // herd), each with a body personalized via nudgeContentFor.
+  // Bulk nudge — one server-side sweep over EVERY stale application (the
+  // stats tile's 7-day rule), not just the loaded page. The server builds
+  // the same personalized body nudgeContentFor prefills for a single row.
   const onBulkNudge = async () => {
-    if (bulkNudging) return;
-    const targets = staleNudgeTargets;
-    if (targets.length === 0) return;
-    const n = targets.length;
+    if (bulkNudging || stats.stale === 0) return;
+    const n = stats.stale;
     const ok = await confirm({
       title: `Nudge ${n} stale applicant${n === 1 ? '' : 's'}?`,
       description:
-        `Sends ${n} personalized email${n === 1 ? '' : 's'} — each mentions the recipient's progress and the task they're stuck on. Doesn't rotate invite tokens.`,
+        `Sends a personalized email to every applicant stuck for more than ${STALE_DAYS} days — across all pages, not just the rows shown. Each mentions the recipient's progress and the task they're stuck on. Doesn't rotate invite tokens.`,
       confirmLabel: `Send ${n} nudge${n === 1 ? '' : 's'}`,
     });
     if (!ok) return;
     setBulkNudging(true);
-    let sent = 0;
-    const failures: string[] = [];
     try {
-      for (const a of targets) {
-        const { subject, body } = nudgeContentFor(a);
-        try {
-          const res = await nudgeApplicant(a.id, { subject, body });
-          if (res.emailSent) {
-            sent += 1;
-          } else {
-            failures.push(`${a.associateName}: email delivery failed`);
-          }
-        } catch (err) {
-          failures.push(
-            `${a.associateName}: ${err instanceof ApiError ? err.message : 'request failed'}`,
-          );
-        }
+      const res = await nudgeAllStale();
+      if (res.skipped === 0) {
+        toast.success(`Nudged ${res.nudged} applicant${res.nudged === 1 ? '' : 's'}.`);
+      } else if (res.nudged === 0) {
+        toast.error(`All ${res.skipped} nudges were skipped or failed.`);
+      } else {
+        toast.message(`Nudged ${res.nudged}, ${res.skipped} skipped.`);
       }
+      refresh();
+      refreshStats();
+    } catch (err) {
+      toast.error('Could not nudge stale applicants.', {
+        description: err instanceof ApiError ? err.message : undefined,
+      });
     } finally {
       setBulkNudging(false);
     }
-    if (failures.length === 0) {
-      toast.success(`Nudged ${sent} applicant${sent === 1 ? '' : 's'}.`);
-    } else if (sent === 0) {
-      toast.error(`All ${failures.length} nudges failed.`, {
-        description: failures[0],
-      });
-    } else {
-      toast.message(`Nudged ${sent}, ${failures.length} failed.`, {
-        description: failures[0],
-      });
-    }
-    refresh();
-    refreshStats();
   };
 
   return (
@@ -694,6 +721,15 @@ export function ApplicationsList() {
                   </Link>
                 </>
               )}
+              <Button
+                variant="secondary"
+                onClick={exportCsv}
+                disabled={exporting || filteredTotal === 0}
+                title="Download the current filtered list as CSV (all pages)"
+              >
+                <Download className="h-4 w-4" />
+                {exporting ? 'Exporting…' : 'Export CSV'}
+              </Button>
               <Button variant="secondary" onClick={() => setOpenCsvImport(true)}>
                 <FileUp className="h-4 w-4" />
                 Import CSV
@@ -922,16 +958,16 @@ export function ApplicationsList() {
               </FilterChip>
             ))}
           </div>
-          {staleNudgeTargets.length > 0 && (
+          {stats.stale > 0 && (
             <Button
               size="sm"
               variant="secondary"
               onClick={onBulkNudge}
               loading={bulkNudging}
-              title={`Send a personalized nudge to every visible applicant idle for more than ${NUDGE_STALE_DAYS} days`}
+              title={`Send a personalized nudge to every applicant stuck for more than ${STALE_DAYS} days — across all pages, not just this one`}
             >
               <MessageCircle className="h-4 w-4" />
-              Nudge all stale ({staleNudgeTargets.length})
+              Nudge all stale ({stats.stale})
             </Button>
           )}
           <span className="ml-auto text-2xs text-silver/80 tabular-nums">

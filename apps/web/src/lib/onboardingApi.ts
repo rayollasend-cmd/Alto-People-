@@ -246,6 +246,16 @@ export function nudgeApplicant(
   );
 }
 
+/** Server-side "Nudge all stale": personalized nudge to EVERY stale
+ *  in-flight application in the caller's scope (the stats tile's 7-day
+ *  rule), not just the loaded page. */
+export function nudgeAllStale(): Promise<{ nudged: number; skipped: number }> {
+  return apiFetch<{ nudged: number; skipped: number }>(
+    '/onboarding/applications/nudge-stale',
+    { method: 'POST', body: {} }
+  );
+}
+
 /* ---------------------- Phase 59 — compliance packet --------------------- */
 
 /**

@@ -24,6 +24,7 @@ import {
   patchAdminUser,
   unlockUser,
   type AdminUser,
+  type ListUsersFilters,
   type UserStatus,
 } from '@/lib/usersAdminApi';
 import { listClients } from '@/lib/clientsApi';
@@ -204,6 +205,52 @@ export function UsersAdmin() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Past the cap, "Load all" fetches the rest. The server list endpoint has
+  // a hard 500-row cap and accepts NO limit/cursor/offset parameter
+  // (apps/api/src/routes/users.ts — take: 500), so a bigger page can't be
+  // requested. Instead we fan out one capped request per value of the
+  // finest unpinned filter — role (LIVE_ASN included: system accounts show
+  // in the unfiltered list), or status when a role filter is active — and
+  // merge de-duped. A slice that itself hits the cap leaves rows.length
+  // short of total, so the "Showing N of M" header stays honest.
+  const [loadingAll, setLoadingAll] = useState(false);
+  const canLoadAll = !role || !status;
+  const loadAll = useCallback(async () => {
+    const term = appliedQ.trim() || undefined;
+    const slices: ListUsersFilters[] = !role
+      ? (Object.keys(ROLES) as Role[]).map((r) => ({
+          q: term,
+          role: r,
+          status: status || undefined,
+        }))
+      : STATUS_OPTIONS.map((s) => ({ q: term, role, status: s }));
+    setLoadingAll(true);
+    try {
+      const results = await Promise.allSettled(
+        slices.map((f) => listAdminUsers(f)),
+      );
+      const byId = new Map<string, AdminUser>();
+      let failed = 0;
+      for (const r of results) {
+        if (r.status === 'fulfilled') {
+          for (const u of r.value.users) byId.set(u.id, u);
+        } else {
+          failed++;
+        }
+      }
+      if (failed > 0) {
+        toast.error(`${failed} of ${slices.length} pages failed to load — the list may be short. Try again.`);
+      }
+      // Match the server's newest-first default order.
+      const merged = [...byId.values()].sort((a, b) =>
+        b.createdAt.localeCompare(a.createdAt),
+      );
+      setRows(merged);
+    } finally {
+      setLoadingAll(false);
+    }
+  }, [appliedQ, role, status]);
 
   const sorted = useMemo(() => {
     if (!rows || !sortKey) return rows;
@@ -553,9 +600,23 @@ export function UsersAdmin() {
           <Badge variant="pending">{counts.INVITED} invited</Badge>
           <Badge variant="destructive">{counts.DISABLED} disabled</Badge>
           {rows !== null && total !== null && total > rows.length && (
-            <span className="tabular-nums">
-              Showing {rows.length} of {total} — narrow the filters to see the rest.
-            </span>
+            <>
+              <span className="tabular-nums">
+                Showing {rows.length} of {total}
+                {canLoadAll ? '.' : ' — narrow the search to see the rest.'}
+              </span>
+              {canLoadAll && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void loadAll()}
+                  disabled={loading || loadingAll}
+                  loading={loadingAll}
+                >
+                  Load all {total}
+                </Button>
+              )}
+            </>
           )}
         </div>
       )}

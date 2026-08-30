@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Briefcase, Building2, CalendarClock, FolderTree, Hash, Plus, Sparkles, Trash2, Users } from 'lucide-react';
 import { PositionsTab } from './PositionsTab';
 import { CustomFieldsTab } from './CustomFieldsTab';
@@ -37,6 +38,9 @@ import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
+import { useStoreScope } from '@/lib/storeScope';
+import { usePersistentState } from '@/lib/usePersistentState';
+import { useSelection } from '@/lib/useSelection';
 import { fmtDateTime } from '@/lib/format';
 import { AssociatePicker, type PickedAssociate } from '@/components/ui/AssociatePicker';
 import { AssociateLink } from '@/components/ui/AssociateLink';
@@ -46,6 +50,12 @@ import {
   Button,
   Card,
   CardContent,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   Drawer,
   DrawerBody,
   DrawerDescription,
@@ -95,15 +105,55 @@ export function OrgHome() {
     isError: clientsError,
     refetch: refetchClients,
   } = useClients();
-  const [clientId, setClientId] = useState<string>('');
-  // ?tab= deep-link (the People-directory drawer's "Edit org assignment"
-  // link lands on /org?tab=people&associateId=…). Seeded once at mount.
-  const [tab, setTab] = useState<Tab>(() => {
-    const t = new URLSearchParams(window.location.search).get('tab');
-    return t && (TAB_VALUES as readonly string[]).includes(t)
-      ? (t as Tab)
+  // Client pick used to be plain state that reset to "All clients" on every
+  // visit (the auto-preselect only fired with exactly one client). It now
+  // persists across visits AND syncs both ways with the global Topbar store
+  // scope, same contract as AdminTimeView: a set scope seeds the page on
+  // entry, later scope changes follow, and page-level changes write back so
+  // Scheduling/Time/Labor stay on the same store. Bounded roles are pinned
+  // to their clamp.
+  const boundedClientId = user?.clientId ?? '';
+  const storeScope = useStoreScope();
+  const [pageClientId, setPageClientId] = usePersistentState<string>(
+    'alto:list.org.client.v1',
+    '',
+    (v): v is string => typeof v === 'string',
+  );
+  const scopeClientId =
+    storeScope.enabled && !boundedClientId ? storeScope.clientId : null;
+  const scopeSyncedRef = useRef(false);
+  useEffect(() => {
+    if (scopeClientId === null) return;
+    if (!scopeSyncedRef.current) {
+      scopeSyncedRef.current = true;
+      // On entry a set scope wins over the persisted page pick.
+      if (scopeClientId) setPageClientId(scopeClientId);
+      return;
+    }
+    setPageClientId((prev) => (prev === scopeClientId ? prev : scopeClientId));
+  }, [scopeClientId, setPageClientId]);
+  const clientId = boundedClientId || pageClientId;
+  const setClientId = (id: string) => {
+    setPageClientId(id);
+    // No-op when the scope is disabled (bounded roles / signed-out).
+    storeScope.setClientId(id);
+  };
+  // ?tab= lives in the URL — shareable, and tab changes replace (not push)
+  // so Back leaves the page instead of retracing every tab flip. The
+  // People-directory drawer's "Edit org assignment" link lands on
+  // /org?tab=people&associateId=….
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const tab: Tab =
+    tabParam && (TAB_VALUES as readonly string[]).includes(tabParam)
+      ? (tabParam as Tab)
       : 'departments';
-  });
+  const setTab = (next: Tab) => {
+    const params = new URLSearchParams(searchParams);
+    if (next === 'departments') params.delete('tab');
+    else params.set('tab', next);
+    setSearchParams(params, { replace: true });
+  };
   const deepLinkAssociateId = useRef(
     new URLSearchParams(window.location.search).get('associateId'),
   );
@@ -113,9 +163,15 @@ export function OrgHome() {
   // With exactly one client there is nothing to choose — preselect it.
   useEffect(() => {
     if (clients.length === 1) {
-      setClientId((prev) => prev || clients[0].id);
+      setPageClientId((prev) => prev || clients[0].id);
     }
-  }, [clients]);
+  }, [clients, setPageClientId]);
+
+  // A persisted client that has since been removed falls back to "All".
+  useEffect(() => {
+    if (!pageClientId || clients.length === 0) return;
+    if (!clients.some((c) => c.id === pageClientId)) setPageClientId('');
+  }, [clients, pageClientId, setPageClientId]);
 
   return (
     <div className="space-y-5">
@@ -147,6 +203,7 @@ export function OrgHome() {
             aria-label="Filter by client"
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
+            disabled={!!boundedClientId}
           >
             <option value="">All clients</option>
             {clients.map((c) => (
@@ -1519,6 +1576,51 @@ function PeopleTab({
 
   const clientLabel = clients.find((c) => c.id === clientId)?.name ?? 'All clients';
 
+  // Bulk org-field assignment: checkbox a cohort, fill ONE dialog, done —
+  // instead of ten drawer round-trips for a ten-person start class. The
+  // selection deliberately survives search changes (build the cohort across
+  // several searches); it resets when the client scope changes.
+  const selectableIds = useMemo(
+    () => (filtered ?? []).map((a) => a.id),
+    [filtered],
+  );
+  const sel = useSelection(selectableIds);
+  const clearSel = sel.clear;
+  useEffect(() => {
+    clearSel();
+  }, [clientId, clearSel]);
+  const [bulkOpen, setBulkOpen] = useState(false);
+
+  const applyBulk = async (input: {
+    departmentId?: string;
+    costCenterId?: string;
+    jobProfileId?: string;
+  }) => {
+    const ids = [...sel.selected];
+    const results = await Promise.allSettled(
+      ids.map((id) => assignOrgFields(id, input)),
+    );
+    const failedIds: string[] = [];
+    results.forEach((r, i) => {
+      if (r.status !== 'rejected') return;
+      failedIds.push(ids[i]);
+      const row = rows?.find((a) => a.id === ids[i]);
+      toast.error(
+        `${row ? `${row.firstName} ${row.lastName}` : 'Associate'}: ${
+          r.reason instanceof ApiError ? r.reason.message : 'assignment failed.'
+        }`,
+      );
+    });
+    const ok = ids.length - failedIds.length;
+    if (ok > 0) {
+      toast.success(`Org fields assigned to ${ok} associate${ok === 1 ? '' : 's'}.`);
+    }
+    // Failed rows stay selected so a retry is one click away.
+    sel.selectAll(failedIds);
+    setBulkOpen(false);
+    await refresh();
+  };
+
   return (
     <section>
       <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
@@ -1573,10 +1675,36 @@ function PeopleTab({
           }
         />
       )}
+      {canManage && sel.count > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-navy-secondary bg-navy-secondary/30 px-3 py-2 mb-3">
+          <span className="text-xs text-silver tabular-nums">
+            {sel.count} selected
+          </span>
+          <Button size="sm" variant="secondary" onClick={() => setBulkOpen(true)}>
+            Assign org fields ({sel.count})…
+          </Button>
+          <Button variant="ghost" size="sm" onClick={sel.clear}>
+            Clear selection
+          </Button>
+        </div>
+      )}
       {filtered && filtered.length > 0 && (
         <Table>
           <TableHeader>
             <TableRow>
+              {canManage && (
+                <TableHead className="w-8">
+                  <input
+                    type="checkbox"
+                    checked={sel.allSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = sel.someSelected;
+                    }}
+                    onChange={sel.toggleAll}
+                    aria-label="Select all visible associates"
+                  />
+                </TableHead>
+              )}
               <TableHead>Associate</TableHead>
               <TableHead className="hidden md:table-cell">Manager</TableHead>
               <TableHead className="hidden md:table-cell">Department</TableHead>
@@ -1595,6 +1723,16 @@ function PeopleTab({
                   setTarget(a);
                 }}
               >
+                {canManage && (
+                  <TableCell className="w-8">
+                    <input
+                      type="checkbox"
+                      checked={sel.isSelected(a.id)}
+                      onChange={() => sel.toggle(a.id)}
+                      aria-label={`Select ${a.firstName} ${a.lastName}`}
+                    />
+                  </TableCell>
+                )}
                 <TableCell className="font-medium">
                   <div className="flex items-center gap-2.5">
                     <Avatar src={a.photoUrl} name={`${a.firstName} ${a.lastName}`} email={a.email} size="sm" />
@@ -1648,7 +1786,128 @@ function PeopleTab({
           />
         )}
       </Drawer>
+
+      {/* Mounted per open so the "leave unchanged" defaults reset. */}
+      {bulkOpen && (
+        <BulkOrgFieldsDialog
+          count={sel.count}
+          departments={departments}
+          costCenters={costCenters}
+          jobProfiles={jobProfiles}
+          onClose={() => setBulkOpen(false)}
+          onApply={applyBulk}
+        />
+      )}
     </section>
+  );
+}
+
+function BulkOrgFieldsDialog({
+  count,
+  departments,
+  costCenters,
+  jobProfiles,
+  onClose,
+  onApply,
+}: {
+  count: number;
+  departments: Department[];
+  costCenters: CostCenter[];
+  jobProfiles: JobProfile[];
+  onClose: () => void;
+  onApply: (input: {
+    departmentId?: string;
+    costCenterId?: string;
+    jobProfileId?: string;
+  }) => Promise<void>;
+}) {
+  // '' = leave unchanged — omitted from the payload; the API treats an
+  // omitted field as "keep the current value" (bulk never clears a field).
+  const [departmentId, setDepartmentId] = useState('');
+  const [costCenterId, setCostCenterId] = useState('');
+  const [jobProfileId, setJobProfileId] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const nothingChosen = !departmentId && !costCenterId && !jobProfileId;
+
+  const submit = async () => {
+    setSubmitting(true);
+    try {
+      await onApply({
+        ...(departmentId ? { departmentId } : {}),
+        ...(costCenterId ? { costCenterId } : {}),
+        ...(jobProfileId ? { jobProfileId } : {}),
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && !submitting && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            Assign org fields to {count} associate{count === 1 ? '' : 's'}
+          </DialogTitle>
+          <DialogDescription>
+            Only the fields you pick are applied — everything left on
+            “Leave unchanged” keeps each associate's current value.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Field label="Department">
+            {(p) => (
+              <Select
+                value={departmentId}
+                onChange={(e) => setDepartmentId(e.target.value)}
+                {...p}
+              >
+                <option value="">Leave unchanged</option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="Cost center">
+            {(p) => (
+              <Select
+                value={costCenterId}
+                onChange={(e) => setCostCenterId(e.target.value)}
+                {...p}
+              >
+                <option value="">Leave unchanged</option>
+                {costCenters.map((c) => (
+                  <option key={c.id} value={c.id}>{c.code} · {c.name}</option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="Job profile">
+            {(p) => (
+              <Select
+                value={jobProfileId}
+                onChange={(e) => setJobProfileId(e.target.value)}
+                {...p}
+              >
+                <option value="">Leave unchanged</option>
+                {jobProfiles.map((j) => (
+                  <option key={j.id} value={j.id}>{j.code} · {j.title}</option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button onClick={submit} loading={submitting} disabled={nothingChosen}>
+            Apply to {count}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

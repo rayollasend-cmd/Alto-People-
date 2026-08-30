@@ -21,6 +21,7 @@ import {
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { downloadStatementFile, MarkPaidDialog } from './statementsShared';
+import { serviceReportWeekOptions } from './ClientsHome';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Select } from '@/components/ui/Select';
@@ -129,6 +130,12 @@ export function StatementsSection({ clientId }: { clientId: string }) {
   const confirm = useConfirm();
   const months = useMemo(monthOptions, []);
   const [monthKey, setMonthKey] = useState(months[1]?.key ?? months[0].key);
+  // Service reports are strictly per org week (Sat–Fri) while statements
+  // here can span a month, so the report gets its own week picker instead
+  // of inheriting a statement row's period. Defaults to the last completed
+  // week — the endpoint's own default.
+  const reportWeeks = useMemo(serviceReportWeekOptions, []);
+  const [reportWeek, setReportWeek] = useState(reportWeeks[0].value);
   const [rows, setRows] = useState<ClientStatement[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -239,16 +246,29 @@ export function StatementsSection({ clientId }: { clientId: string }) {
             </Link>
           </div>
           <div className="flex items-center gap-2">
+            <Select
+              size="sm"
+              aria-label="Service report week"
+              title="Org week (Sat–Fri) the service report covers"
+              value={reportWeek}
+              onChange={(e) => setReportWeek(e.target.value)}
+            >
+              {reportWeeks.map((w) => (
+                <option key={w.value} value={w.value}>
+                  {w.label}
+                </option>
+              ))}
+            </Select>
             <Button
               size="sm"
               variant="outline"
               onClick={() =>
                 void download(
-                  clientServiceReportUrl(clientId),
-                  'service-report.pdf',
+                  clientServiceReportUrl(clientId, reportWeek),
+                  `service-report-${reportWeek}.pdf`,
                 )
               }
-              title="The client-facing weekly report: coverage, day-by-day fill, reliability, roster, next-week readiness, and billing status — ready to hand to the store manager. Covers the last completed week."
+              title="The client-facing weekly report: coverage, day-by-day fill, reliability, roster, next-week readiness, and billing status — ready to hand to the store manager. Covers the selected week."
             >
               <FileText className="h-3.5 w-3.5" />
               Service report (PDF)

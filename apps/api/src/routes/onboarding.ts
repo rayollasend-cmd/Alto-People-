@@ -714,6 +714,48 @@ onboardingRouter.get('/applications', async (req, res, next) => {
 const STATS_STALE_DAYS = 7;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * Scoped fetch of the caller's in-flight (undecided) applications — the
+ * population both /applications/stats and /applications/nudge-stale reason
+ * over. Shared so the stats "stuck" count and the bulk-nudge target set
+ * can never diverge.
+ */
+function fetchInFlightApplications(user: Parameters<typeof scopeApplications>[0]) {
+  return prisma.application.findMany({
+    take: 500,
+    where: {
+      ...scopeApplications(user),
+      status: { notIn: ['APPROVED', 'REJECTED'] },
+    },
+    orderBy: { invitedAt: 'desc' },
+    include: {
+      associate: { select: { firstName: true, lastName: true } },
+      client: { select: { name: true } },
+      checklist: {
+        include: {
+          tasks: { select: { status: true, title: true, order: true } },
+        },
+      },
+    },
+  });
+}
+
+/**
+ * THE staleness rule ("stuck"): checklist unfinished and invited more than
+ * STATS_STALE_DAYS ago. Single definition shared by the stats tile and the
+ * bulk nudge so the count HR confirms is the count that gets nudged.
+ */
+function isStaleApplication(
+  invitedAt: Date,
+  percentComplete: number,
+  now: number,
+): boolean {
+  return (
+    percentComplete < 100 &&
+    now - invitedAt.getTime() > STATS_STALE_DAYS * ONE_DAY_MS
+  );
+}
+
 onboardingRouter.get('/applications/stats', async (req, res, next) => {
   try {
     const where: Prisma.ApplicationWhereInput = scopeApplications(req.user!);
@@ -724,16 +766,7 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
         where,
         _count: { _all: true },
       }),
-      prisma.application.findMany({
-        take: 500,
-        where: { ...where, status: { notIn: ['APPROVED', 'REJECTED'] } },
-        orderBy: { invitedAt: 'desc' },
-        include: {
-          associate: { select: { firstName: true, lastName: true } },
-          client: { select: { name: true } },
-          checklist: { include: { tasks: { select: { status: true } } } },
-        },
-      }),
+      fetchInFlightApplications(req.user!),
     ]);
 
     // Seeded with EVERY status at 0. The contract types this as a total
@@ -776,10 +809,8 @@ onboardingRouter.get('/applications/stats', async (req, res, next) => {
     }));
 
     const now = Date.now();
-    const stale = inFlightSummaries.filter(
-      (a) =>
-        a.percentComplete < 100 &&
-        now - new Date(a.invitedAt).getTime() > STATS_STALE_DAYS * ONE_DAY_MS
+    const stale = inFlightSummaries.filter((a) =>
+      isStaleApplication(new Date(a.invitedAt), a.percentComplete, now)
     );
     const bounced = inFlightSummaries.filter(
       (a) => a.lastInviteDelivery?.status === 'FAILED'
@@ -4168,6 +4199,69 @@ onboardingRouter.post(
 // resend (which rotates tokens) — this is a free-form prod nudge: "you
 // still owe us your W-4". Logged as category=onboarding.nudge so we can
 // rate-limit later if needed.
+
+/**
+ * Shared delivery path for the single nudge and the bulk stale sweep:
+ * send the email, persist the Notification row (category
+ * onboarding.nudge), and write the audit event. Provider failures never
+ * throw — the outcome is reported via `emailSent`.
+ */
+async function deliverNudge(
+  req: Request,
+  app: { id: string; clientId: string },
+  recipient: { id: string; email: string },
+  subject: string,
+  body: string,
+  extraMetadata: Record<string, unknown> = {},
+): Promise<{ notificationId: string; emailSent: boolean }> {
+  let emailRef: string | null = null;
+  let emailFailed: string | null = null;
+  try {
+    const r = await send({
+      channel: 'EMAIL',
+      recipient: { userId: recipient.id, phone: null, email: recipient.email },
+      subject,
+      body,
+    });
+    emailRef = r.externalRef;
+  } catch (err) {
+    emailFailed = err instanceof Error ? err.message : String(err);
+  }
+
+  const notif = await prisma.notification.create({
+    data: {
+      channel: 'EMAIL',
+      status: emailFailed ? 'FAILED' : 'SENT',
+      recipientUserId: recipient.id,
+      recipientEmail: recipient.email,
+      subject,
+      body,
+      category: 'onboarding.nudge',
+      externalRef: emailRef,
+      failureReason: emailFailed,
+      sentAt: emailFailed ? null : new Date(),
+      senderUserId: req.user!.id,
+    },
+  });
+
+  await recordOnboardingEvent({
+    actorUserId: req.user!.id,
+    action: 'onboarding.nudge_sent',
+    applicationId: app.id,
+    clientId: app.clientId,
+    metadata: {
+      recipientEmail: recipient.email,
+      subject,
+      notificationId: notif.id,
+      emailFailed,
+      ...extraMetadata,
+    },
+    req,
+  });
+
+  return { notificationId: notif.id, emailSent: emailFailed === null };
+}
+
 onboardingRouter.post(
   '/applications/:id/nudge',
   INVITE,
@@ -4188,57 +4282,122 @@ onboardingRouter.post(
         throw new HttpError(404, 'no_recipient', 'No recipient found for this associate');
       }
 
-      let emailRef: string | null = null;
-      let emailFailed: string | null = null;
-      try {
-        const r = await send({
-          channel: 'EMAIL',
-          recipient: { userId: user.id, phone: null, email: user.email },
-          subject,
-          body,
-        });
-        emailRef = r.externalRef;
-      } catch (err) {
-        emailFailed = err instanceof Error ? err.message : String(err);
-      }
-
-      const notif = await prisma.notification.create({
-        data: {
-          channel: 'EMAIL',
-          status: emailFailed ? 'FAILED' : 'SENT',
-          recipientUserId: user.id,
-          recipientEmail: user.email,
-          subject,
-          body,
-          category: 'onboarding.nudge',
-          externalRef: emailRef,
-          failureReason: emailFailed,
-          sentAt: emailFailed ? null : new Date(),
-          senderUserId: req.user!.id,
-        },
-      });
-
-      await recordOnboardingEvent({
-        actorUserId: req.user!.id,
-        action: 'onboarding.nudge_sent',
-        applicationId: app.id,
-        clientId: app.clientId,
-        metadata: {
-          recipientEmail: user.email,
-          subject,
-          notificationId: notif.id,
-          emailFailed,
-        },
+      const { notificationId, emailSent } = await deliverNudge(
         req,
-      });
+        app,
+        { id: user.id, email: user.email },
+        subject,
+        body,
+      );
 
       const response: NudgeResponse = {
         ok: true,
         recipientEmail: user.email,
-        notificationId: notif.id,
-        emailSent: emailFailed === null,
+        notificationId,
+        emailSent,
       };
       res.status(200).json(response);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/* BULK NUDGE — every stale application, computed server-side ------------ */
+// "Nudge all stale" in the web app used to nudge only the page of rows it
+// had loaded, silently missing the rest of a >1-page backlog. This sweeps
+// the stale set computed with the exact rule the stats tile counts
+// (isStaleApplication over the shared in-flight fetch), builds the same
+// personalized subject/body the web prefills for a single nudge, and
+// reuses the single-nudge delivery path per applicant. `skipped` = no
+// reachable recipient or the provider rejected the send.
+
+/**
+ * Personalized bulk-nudge subject/body — server-side twin of the web's
+ * nudgeContentFor prefill, so a bulk nudge reads exactly like a single
+ * one sent from the dialog.
+ */
+function staleNudgeContent(
+  firstName: string,
+  percentComplete: number,
+  blockedOnTitle: string | null,
+): { subject: string; body: string } {
+  const name = firstName.trim() || 'there';
+  const subject = blockedOnTitle
+    ? `Quick nudge: ${blockedOnTitle}`
+    : 'Quick check-in on your onboarding';
+  const body = [
+    `Hi ${name},`,
+    '',
+    blockedOnTitle
+      ? `Your onboarding is ${percentComplete}% done — the next step is '${blockedOnTitle}'. It only takes a few minutes.`
+      : `Your onboarding is ${percentComplete}% done — just a few tasks left, and each only takes a few minutes.`,
+    '',
+    "Let us know if you're stuck.",
+  ].join('\n');
+  return { subject, body };
+}
+
+onboardingRouter.post(
+  '/applications/nudge-stale',
+  INVITE,
+  async (req, res, next) => {
+    try {
+      const rows = await fetchInFlightApplications(req.user!);
+      const now = Date.now();
+      const stale = rows.filter((row) =>
+        isStaleApplication(
+          row.invitedAt,
+          computePercent(row.checklist?.tasks ?? []),
+          now,
+        ),
+      );
+
+      // One user fetch for the whole set (same batching as bulk-resend).
+      const userRows = await prisma.user.findMany({
+        where: {
+          associateId: { in: [...new Set(stale.map((r) => r.associateId))] },
+        },
+      });
+      const userByAssociateId = new Map<string, (typeof userRows)[number]>();
+      for (const u of userRows) {
+        if (u.associateId && !userByAssociateId.has(u.associateId)) {
+          userByAssociateId.set(u.associateId, u);
+        }
+      }
+
+      let nudged = 0;
+      let skipped = 0;
+      // Serial sends — the email sender already spaces provider calls, and
+      // the stale set is bounded by the in-flight fetch's 500-row cap.
+      for (const row of stale) {
+        const user = userByAssociateId.get(row.associateId);
+        if (!user || !user.email) {
+          skipped++;
+          continue;
+        }
+        const tasks = row.checklist?.tasks ?? [];
+        const blocked = [...tasks]
+          .sort((a, b) => a.order - b.order)
+          .find((t) => t.status !== 'DONE' && t.status !== 'SKIPPED');
+        const { subject, body } = staleNudgeContent(
+          row.associate.firstName,
+          computePercent(tasks),
+          blocked?.title ?? null,
+        );
+        const { emailSent } = await deliverNudge(
+          req,
+          row,
+          { id: user.id, email: user.email },
+          subject,
+          body,
+          { bulk: true },
+        );
+        if (emailSent) nudged++;
+        else skipped++;
+      }
+
+      res.status(200).json({ nudged, skipped });
     } catch (err) {
       next(err);
     }
