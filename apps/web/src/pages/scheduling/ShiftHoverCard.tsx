@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Calendar, Clock, MapPin, StickyNote, User, X } from 'lucide-react';
-import type { Shift } from '@alto-people/shared';
+import type { AutoFillCandidate, Shift } from '@alto-people/shared';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
 import {
@@ -40,6 +40,13 @@ export interface QuickActions {
   onUnpublish: (s: Shift) => Promise<void> | void;
   /** Hard-delete the shift (vs. cancel). */
   onDelete: (s: Shift) => Promise<void> | void;
+  /** Ranked candidates for an OPEN shift, best first. Short-TTL cached by
+   *  the parent, so hover/context opens can call it freely. */
+  getTopCandidates?: (s: Shift) => Promise<AutoFillCandidate[]>;
+  /** One-click assign of a ranked candidate. The parent checks conflicts
+   *  first and falls back to the AssignDialog (candidate preselected)
+   *  instead of silently assigning over a blocking finding. */
+  onAssignCandidate?: (s: Shift, c: AutoFillCandidate) => Promise<void>;
 }
 
 interface Props {
@@ -55,7 +62,13 @@ interface Props {
   // right-click context menu, which receives the complete QuickActions.
   actions: Pick<
     QuickActions,
-    'onEdit' | 'onAssign' | 'onUnassign' | 'onCancel' | 'onDuplicate'
+    | 'onEdit'
+    | 'onAssign'
+    | 'onUnassign'
+    | 'onCancel'
+    | 'onDuplicate'
+    | 'getTopCandidates'
+    | 'onAssignCandidate'
   >;
 }
 
@@ -101,6 +114,41 @@ export function ShiftHoverCard({
 }: Props) {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const [acting, setActing] = useState<null | string>(null);
+
+  // Top-ranked candidate for an OPEN (unassigned) shift — powers the
+  // one-click "Assign → <name>" button. null = none / not applicable.
+  const isOpenUnassigned =
+    shift.status === 'OPEN' && shift.assignedAssociateId === null;
+  const [topCandidate, setTopCandidate] = useState<AutoFillCandidate | null>(null);
+  const [topLoading, setTopLoading] = useState(false);
+  const canQuickAssign =
+    canManage && isOpenUnassigned && !!actions.getTopCandidates && !!actions.onAssignCandidate;
+  useEffect(() => {
+    setTopCandidate(null);
+    if (!canQuickAssign) {
+      setTopLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setTopLoading(true);
+    actions
+      .getTopCandidates!(shift)
+      .then((list) => {
+        if (!cancelled) setTopCandidate(list[0] ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setTopCandidate(null);
+      })
+      .finally(() => {
+        if (!cancelled) setTopLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // `actions` is rebuilt by the parent every render — keying on the shift
+    // id (the real identity of the lookup) keeps this to one fetch per card.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shift.id, canQuickAssign]);
 
   // Close on Escape; let the parent handle outside-click (the card stays
   // open when you click into a button inside it).
@@ -239,6 +287,26 @@ export function ShiftHoverCard({
       {/* Actions */}
       {canManage && shift.status !== 'CANCELLED' && shift.status !== 'COMPLETED' && (
         <div className="border-t border-navy-secondary p-2 flex flex-wrap gap-1.5">
+          {canQuickAssign && topLoading && (
+            <div className="basis-full px-1 py-0.5 text-2xs text-silver/60">
+              Finding best fit…
+            </div>
+          )}
+          {canQuickAssign && !topLoading && topCandidate && (
+            <Button
+              variant="secondary"
+              onClick={wrap('assignTop', () =>
+                actions.onAssignCandidate!(shift, topCandidate),
+              )}
+              loading={acting === 'assignTop'}
+              className="basis-full justify-center text-gold"
+              title="Top-ranked fit — availability, conflicts, PTO, and weekly hours considered"
+            >
+              <span className="truncate">
+                Assign → {topCandidate.associateName}
+              </span>
+            </Button>
+          )}
           <Button
             variant="secondary"
             onClick={() => actions.onEdit(shift)}

@@ -4649,6 +4649,15 @@ export type AssociateOrgAssignmentInput = z.infer<typeof AssociateOrgAssignmentI
 // through onboarding's PROFILE_INFO task which is the source of truth.
 export const AssociateProfilePatchInputSchema = z.object({
   phone: z.string().trim().min(7).max(40).nullable().optional(),
+  // Inline HR fixes to what the directory drawer displays. position and
+  // startDate live on the associate's workplace APPLICATION (newest
+  // APPROVED, else newest) — the same record the directory reads — so the
+  // server patches that application, not the Associate row.
+  position: z.string().trim().min(1).max(120).optional(),
+  startDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')
+    .optional(),
 });
 export type AssociateProfilePatchInput = z.infer<typeof AssociateProfilePatchInputSchema>;
 

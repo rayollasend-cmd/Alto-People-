@@ -12,7 +12,7 @@ import {
 import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useAuth } from '@/lib/auth';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
-import { usePinnedModules } from '@/lib/navPersonalization';
+import { usePinnedModules, useRecentModules } from '@/lib/navPersonalization';
 import { useI18n, type Lang } from '@/lib/i18n';
 import { useTheme, type ThemePreference } from '@/lib/theme';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
@@ -28,8 +28,8 @@ const GROUP_ORDER: Array<Exclude<ModuleGroup, 'core'>> = [
 interface MobileNavProps {
   open: boolean;
   onClose: () => void;
-  /** Opens the command palette (the Topbar trigger is desktop-only, so
-   *  this drawer entry is mobile's ONLY route into search). */
+  /** Opens the command palette (the mobile Topbar also has a one-tap
+   *  search icon; this drawer entry keeps search discoverable here too). */
   onOpenCommandPalette?: () => void;
 }
 
@@ -39,11 +39,19 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
   const { preference, setTheme } = useTheme();
   const approvalsCount = useApprovalsCount();
   const { pinned } = usePinnedModules();
+  const recents = useRecentModules();
   const visible = visibleModules(user?.role, can);
   const byKey = new Map(visible.map((m) => [m.key, m]));
   const pinnedModules = pinned
     .map((k) => byKey.get(k))
     .filter((m): m is ModuleNav => !!m);
+  // Same recipe as Sidebar: the three most-recent modules that aren't
+  // already pinned, restricted to what this user can actually see.
+  const recentModules = recents
+    .filter((k) => !pinned.includes(k))
+    .map((k) => byKey.get(k))
+    .filter((m): m is ModuleNav => !!m)
+    .slice(0, 3);
   const activePath = useActiveNavPath();
   const panelRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -165,6 +173,23 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
               {pinnedModules.map((m) => (
                 <MobileLink
                   key={`pin-${m.key}`}
+                  to={m.path}
+                  active={activePath === m.path}
+                  label={m.label}
+                  icon={MODULE_ICONS[m.key]}
+                  badge={m.key === 'approvals' ? approvalsCount : null}
+                />
+              ))}
+            </div>
+          )}
+          {recentModules.length > 0 && (
+            <div className="mt-3">
+              <div className="px-4 py-1 text-2xs font-semibold uppercase tracking-widest text-silver/80">
+                Recent
+              </div>
+              {recentModules.map((m) => (
+                <MobileLink
+                  key={`recent-${m.key}`}
                   to={m.path}
                   active={activePath === m.path}
                   label={m.label}

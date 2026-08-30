@@ -834,8 +834,36 @@ orgRouter.patch(
       },
       select: { id: true, phone: true },
     });
+    // Position / start date live on the workplace application — the same
+    // record the directory drawer displays (newest APPROVED, else newest).
+    if (input.position !== undefined || input.startDate !== undefined) {
+      const apps = await prisma.application.findMany({
+        where: { associateId: id, deletedAt: null },
+        orderBy: { invitedAt: 'desc' },
+        select: { id: true, status: true },
+      });
+      const workplaceApp = apps.find((x) => x.status === 'APPROVED') ?? apps[0] ?? null;
+      if (!workplaceApp) {
+        throw new HttpError(
+          409,
+          'no_application',
+          'This associate has no application record to carry a position or start date.',
+        );
+      }
+      await prisma.application.update({
+        where: { id: workplaceApp.id },
+        data: {
+          position: input.position ?? undefined,
+          startDate: input.startDate
+            ? new Date(`${input.startDate}T00:00:00.000Z`)
+            : undefined,
+        },
+      });
+    }
     audit(req, 'associate.profile_patch', 'Associate', id, {
       phoneChanged: input.phone !== undefined,
+      positionChanged: input.position !== undefined,
+      startDateChanged: input.startDate !== undefined,
     });
     res.json(updated);
   },

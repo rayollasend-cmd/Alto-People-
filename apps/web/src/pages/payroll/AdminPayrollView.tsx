@@ -56,7 +56,7 @@ import { useConfirm, usePrompt } from '@/lib/confirm';
 import { Select } from '@/components/ui/Select';
 import { AmendPayrollWizard } from './AmendPayrollWizard';
 import { BranchEnrollmentDialog } from './BranchEnrollmentDialog';
-import { RunPayrollWizard } from './RunPayrollWizard';
+import { RunPayrollWizard, type RunPayrollSeed } from './RunPayrollWizard';
 import { PaySchedulesView } from './PaySchedulesView';
 import { GarnishmentsView } from './GarnishmentsView';
 import { WebhookHealthTile } from './WebhookHealthTile';
@@ -188,6 +188,8 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
   const [runs, setRuns] = useState<PayrollRunSummary[] | null>(null);
   const [selected, setSelected] = useState<PayrollRunDetail | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  // Hero-CTA prefill for the wizard; null = generic "New run" (full flow).
+  const [wizardSeed, setWizardSeed] = useState<RunPayrollSeed | null>(null);
   const [confirmDisburse, setConfirmDisburse] = useState(false);
   // Gap 3 — void confirmation modal. The user has to type the run's pay
   // period in MM/DD/YYYY - MM/DD/YYYY format AND supply a free-text
@@ -649,7 +651,12 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   Year-end close
                 </Link>
               </Button>
-              <Button onClick={() => setShowCreate(true)}>
+              <Button
+                onClick={() => {
+                  setWizardSeed(null);
+                  setShowCreate(true);
+                }}
+              >
                 <Plus className="h-4 w-4" />
                 New run
               </Button>
@@ -662,6 +669,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
         <RunPayrollWizard
           open={showCreate}
           onOpenChange={setShowCreate}
+          seed={wizardSeed}
           onCreated={(detail) => {
             setShowCreate(false);
             setSelected(detail);
@@ -681,7 +689,22 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
         upcoming={upcoming}
         loading={upcomingLoading}
         canProcess={canProcess}
-        onStartRun={() => setShowCreate(true)}
+        onStartRun={() => {
+          // Seed the wizard with what the hero already knows — schedule and
+          // period — so step 1 never re-asks; a clean preview then collapses
+          // the whole flow to one review screen.
+          const nr = upcoming?.nextRun;
+          setWizardSeed(
+            nr
+              ? {
+                  scheduleId: nr.scheduleId,
+                  periodStart: nr.periodStart,
+                  periodEnd: nr.periodEnd,
+                }
+              : null
+          );
+          setShowCreate(true);
+        }}
         onResumeRun={(id) => openRun(id)}
         onOpenLastRun={(id) => openRun(id)}
       />

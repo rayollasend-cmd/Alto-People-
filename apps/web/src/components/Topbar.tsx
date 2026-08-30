@@ -192,7 +192,8 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
 
       <StoreScopeBar />
 
-      {/* Cmd-K trigger — desktop only, mobile users open it from the hamburger drawer. */}
+      {/* Cmd-K trigger — desktop gets the wide search box, mobile gets a
+          one-tap icon (below) instead of a drawer detour. */}
       <button
         type="button"
         onClick={onOpenCommandPalette}
@@ -205,6 +206,15 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
           ⌘K
         </kbd>
       </button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="md:hidden"
+        onClick={onOpenCommandPalette}
+        aria-label="Open command palette"
+      >
+        <Search className="h-5 w-5" />
+      </Button>
 
       {isOffline && (
         <Tooltip>

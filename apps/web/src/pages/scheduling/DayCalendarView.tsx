@@ -275,6 +275,15 @@ export function DayCalendarView({
               await quickActions.onDuplicate(s);
               hover.close();
             },
+            getTopCandidates: quickActions.getTopCandidates,
+            onAssignCandidate: quickActions.onAssignCandidate
+              ? async (s, c) => {
+                  // Close first — the flow may open confirm prompts or the
+                  // AssignDialog; the card must not linger over them.
+                  hover.close();
+                  await quickActions.onAssignCandidate!(s, c);
+                }
+              : undefined,
           }}
         />
       )}

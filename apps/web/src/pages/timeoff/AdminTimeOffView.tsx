@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { CalendarCheck, Check, X } from 'lucide-react';
+import { CalendarCheck, Check, MessageSquarePlus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   TimeOffRequest,
@@ -100,6 +100,8 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
   const [denyTarget, setDenyTarget] = useState<TimeOffRequest | null>(null);
   const [bulkDenyOpen, setBulkDenyOpen] = useState(false);
   const [deciding, setDeciding] = useState(false);
+  // Row id currently being one-click approved — drives that row's spinner.
+  const [quickApproveId, setQuickApproveId] = useState<string | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [detail, setDetail] = useState<TimeOffRequest | null>(null);
 
@@ -206,6 +208,30 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
       });
     } finally {
       setBulkBusy(false);
+    }
+  };
+
+  // One-click row approve — same call as the dialog submit, just without
+  // the note stop. "Approve with note…" still opens the dialog.
+  const quickApprove = async (r: TimeOffRequest) => {
+    setQuickApproveId(r.id);
+    try {
+      await approveAdminRequest(r.id, undefined);
+      toast.success(`Approved ${r.associateName ?? 'request'}.`);
+      refresh();
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'insufficient_balance') {
+        const d = err.details as { currentMinutes: number; requestedMinutes: number };
+        toast.error('Insufficient balance.', {
+          description: `Available ${fmtHours(d.currentMinutes)}, requested ${fmtHours(d.requestedMinutes)}`,
+        });
+        return;
+      }
+      toast.error('Could not approve.', {
+        description: err instanceof Error ? err.message : 'Something went wrong.',
+      });
+    } finally {
+      setQuickApproveId(null);
     }
   };
 
@@ -441,16 +467,31 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                onClick={() => setApproveTarget(r)}
-                                disabled={insufficient}
+                                onClick={() => quickApprove(r)}
+                                disabled={insufficient || quickApproveId !== null}
+                                loading={quickApproveId === r.id}
                                 title={
                                   insufficient
                                     ? 'Balance is below the requested hours'
-                                    : undefined
+                                    : 'Approve'
                                 }
                                 aria-label="Approve"
                               >
                                 <Check className="h-4 w-4 text-success" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setApproveTarget(r)}
+                                disabled={insufficient || quickApproveId !== null}
+                                title={
+                                  insufficient
+                                    ? 'Balance is below the requested hours'
+                                    : 'Approve with note…'
+                                }
+                                aria-label="Approve with note"
+                              >
+                                <MessageSquarePlus className="h-4 w-4 text-success/80" />
                               </Button>
                               <Button
                                 size="sm"

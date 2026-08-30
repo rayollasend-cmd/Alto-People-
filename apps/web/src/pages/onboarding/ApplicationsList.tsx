@@ -359,6 +359,19 @@ export function ApplicationsList() {
   const [bulkNudging, setBulkNudging] = useState(false);
   const [openBulkApprove, setOpenBulkApprove] = useState(false);
 
+  // Deep link from the command palette ("Invite associate"): ?new=invite
+  // opens the invite dialog once, then the param is consumed with a replace
+  // navigation so Back / refresh doesn't reopen it. Falls back to Bulk
+  // invite for invite-only roles (no manage:onboarding → no single-create).
+  useEffect(() => {
+    if (searchParams.get('new') !== 'invite') return;
+    if (canManage) setOpenCreate(true);
+    else if (canInvite) setOpenBulkInvite(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('new');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, canManage, canInvite]);
+
   // Bulk-select state. The set holds applicationIds; "select all" applies
   // to the *currently visible* (filtered) rows so it never spans pages
   // worth of work the user can't see.

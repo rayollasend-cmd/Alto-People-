@@ -33,6 +33,7 @@ import type {
   ClientSummary,
   LocationSummary,
   Shift,
+  ShiftConflictsResponse,
   ShiftStatus,
   ShiftTeam as ShiftTeamData,
   ShiftTemplate,
@@ -465,6 +466,58 @@ function fmtPrintRange(from: string, to: string): string {
   return `${left} – ${right}`;
 }
 
+/* ----- Short-TTL request caches (candidates + conflict checks) ----------- */
+// Hover-opening a chip and prefetching the AssignDialog's top picks both
+// re-request the same rankings/checks within seconds. A tiny in-memory
+// promise cache absorbs that without an invalidation story — 30s is short
+// enough that staleness self-heals, and every write path still goes through
+// the server's own validation.
+const RANK_CACHE_TTL_MS = 30_000;
+
+const candidateCache = new Map<
+  string,
+  { at: number; promise: Promise<AutoFillCandidate[]> }
+>();
+/** Ranked candidates for a shift, best first — cached ~30s per shift id. */
+function getCachedCandidates(shiftId: string): Promise<AutoFillCandidate[]> {
+  const hit = candidateCache.get(shiftId);
+  const now = Date.now();
+  if (hit && now - hit.at < RANK_CACHE_TTL_MS) return hit.promise;
+  const promise = getAutoFillCandidates(shiftId).then((r) =>
+    [...r.candidates].sort((a, b) => b.score - a.score),
+  );
+  // Never cache a failure for the whole TTL — the next call retries.
+  promise.catch(() => candidateCache.delete(shiftId));
+  candidateCache.set(shiftId, { at: now, promise });
+  return promise;
+}
+
+const conflictsCache = new Map<
+  string,
+  { at: number; promise: Promise<ShiftConflictsResponse> }
+>();
+/** Conflict check cached ~30s per (shift, associate) pair. */
+function getCachedConflicts(
+  shiftId: string,
+  associateId: string,
+): Promise<ShiftConflictsResponse> {
+  const key = `${shiftId}_${associateId}`;
+  const hit = conflictsCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.at < RANK_CACHE_TTL_MS) return hit.promise;
+  const promise = getShiftConflicts(shiftId, associateId);
+  promise.catch(() => conflictsCache.delete(key));
+  conflictsCache.set(key, { at: now, promise });
+  return promise;
+}
+
+/** True when a fresh conflict check is already cached — lets the
+ *  AssignDialog skip its debounce for prefetched candidates. */
+function hasCachedConflicts(shiftId: string, associateId: string): boolean {
+  const hit = conflictsCache.get(`${shiftId}_${associateId}`);
+  return !!hit && Date.now() - hit.at < RANK_CACHE_TTL_MS;
+}
+
 interface AdminSchedulingViewProps {
   canManage: boolean;
 }
@@ -817,6 +870,20 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     });
   }, []);
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+  // Row/column select from the week grid: one click adds the whole group;
+  // clicking again (every id already selected) clears just that group.
+  const toggleGroupSelection = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      const allSelected = ids.every((id) => next.has(id));
+      for (const id of ids) {
+        if (allSelected) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  }, []);
 
   // "Repeat this week" — copies the visible week forward 1..12 weeks in one
   // action, so staffing a month/quarter isn't a click-per-week grind.
@@ -955,6 +1022,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
   // Dialog state — replaces window.prompt + window.confirm.
   const [assignTarget, setAssignTarget] = useState<Shift | null>(null);
+  // Candidate to preselect when the AssignDialog opens — set by the
+  // one-click "Assign → <top candidate>" flow when a blocking conflict
+  // makes it fall open into the dialog instead of silently assigning.
+  const [assignPreselectId, setAssignPreselectId] = useState<string | null>(null);
   // Shift being edited (date/time/position/rates) — null = closed.
   const [editTarget, setEditTarget] = useState<Shift | null>(null);
   const [cancelTarget, setCancelTarget] = useState<Shift | null>(null);
@@ -1096,6 +1167,24 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   useEffect(() => {
     loadClients();
   }, [loadClients]);
+
+  // ?new=shift (command palette deep link): open the create-shift dialog
+  // once the client list the dialog needs has arrived, then consume the
+  // param via a replace so Back/refresh doesn't reopen it. Read-only
+  // viewers just get the param consumed — there's no dialog to open.
+  const newShiftParamRef = useRef(false);
+  useEffect(() => {
+    if (newShiftParamRef.current) return;
+    if (searchParams.get('new') !== 'shift') return;
+    // Wait for the dialog's client select to be usable (a load failure
+    // still opens — the dialog shows its own error + retry).
+    if (canManage && clients.length === 0 && !clientsError) return;
+    newShiftParamRef.current = true;
+    const next = new URLSearchParams(searchParams);
+    next.delete('new');
+    setSearchParams(next, { replace: true });
+    if (canManage) setShowCreate(true);
+  }, [searchParams, setSearchParams, canManage, clients.length, clientsError]);
 
   // Associate list for the pivot grid Y axis — scoped to the selected
   // client/location so the rows match the filtered schedule (picking a
@@ -1398,6 +1487,25 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       return t >= startMs && t < endMs;
     }).length;
   }, [shifts, view, publishWindow]);
+
+  // OPEN shifts in the visible (filtered) week, day-then-start-time order —
+  // the walk order for the AssignDialog's "Assign & next open shift".
+  const weekOpenShifts = useMemo(() => {
+    if (!filteredShifts) return [] as Shift[];
+    const startMs = publishWindow.from.getTime();
+    const endMs = publishWindow.to.getTime();
+    return filteredShifts
+      .filter((s) => {
+        if (s.status !== 'OPEN' || s.assignedAssociateId !== null) return false;
+        const t = new Date(s.startsAt).getTime();
+        return t >= startMs && t < endMs;
+      })
+      .sort(
+        (a, b) =>
+          new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime() ||
+          a.id.localeCompare(b.id),
+      );
+  }, [filteredShifts, publishWindow]);
 
   // All drafts across the loaded data range (powers the global "Drafts" pill
    // near the view tabs). Lets the manager find unpublished work even when
@@ -2029,6 +2137,48 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     }
   };
 
+  // One-click "Assign → <top candidate>" from the hover card / context
+  // menu. The conflict check runs FIRST: any blocking finding (overlap,
+  // approved PTO, declared unavailable day) — or a failed check — falls
+  // open into the normal AssignDialog with the candidate preselected so
+  // the admin sees the evidence instead of assigning blind. Clean checks
+  // assign directly through the same override-prompt path the dialog uses.
+  const onAssignCandidate = async (s: Shift, c: AutoFillCandidate) => {
+    if (pendingId) return;
+    setPendingId(s.id);
+    try {
+      let blocking = true;
+      try {
+        const chk = await getCachedConflicts(s.id, c.associateId);
+        blocking =
+          chk.conflicts.length > 0 ||
+          chk.timeOffConflicts.length > 0 ||
+          chk.unavailableDays.length > 0;
+      } catch {
+        blocking = true; // couldn't verify — never silently assign
+      }
+      if (blocking) {
+        setAssignPreselectId(c.associateId);
+        setAssignTarget(s);
+        return;
+      }
+      const assigned = await assignWithOverridePrompt(
+        s.id,
+        c.associateId,
+        confirm,
+        c.associateName,
+      );
+      if (assigned) {
+        toast.success(`Assigned to ${c.associateName}.`);
+        await refresh();
+      }
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Assign failed.');
+    } finally {
+      setPendingId(null);
+    }
+  };
+
   const onUnassign = async (s: Shift) => {
     if (pendingId) return;
     setPendingId(s.id);
@@ -2141,7 +2291,10 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // aren't React.memo'd, so a new object reference here costs nothing.
   const quickActions = {
     onEdit: (s: Shift) => setEditTarget(s),
-    onAssign: (s: Shift) => setAssignTarget(s),
+    onAssign: (s: Shift) => {
+      setAssignPreselectId(null);
+      setAssignTarget(s);
+    },
     onUnassign,
     onCancel: onQuickCancel,
     onDuplicate: onQuickDuplicate,
@@ -2149,6 +2302,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     onPublish: onPublishShift,
     onUnpublish: onUnpublishShift,
     onDelete: onDeleteShift,
+    getTopCandidates: (s: Shift) => getCachedCandidates(s.id),
+    onAssignCandidate,
   };
 
   const pullState = usePullToRefresh(refresh);
@@ -2887,6 +3042,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           onShiftResize={onShiftResize}
           quickActions={quickActions}
           selectedIds={selectedIds}
+          onToggleGroupSelection={canManage ? toggleGroupSelection : undefined}
           onTemplateDrop={onTemplateDrop}
           onReorderRow={canReorderRows ? moveAssociateRow : undefined}
           onRemoveFromCrew={canManage && teamFilter ? removeFromCrew : undefined}
@@ -3144,11 +3300,24 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       <AssignDialog
         target={assignTarget}
         associates={associates}
-        onClose={() => setAssignTarget(null)}
+        initialAssociateId={assignPreselectId}
+        openShiftsInWeek={weekOpenShifts}
+        onClose={() => {
+          setAssignTarget(null);
+          setAssignPreselectId(null);
+        }}
         onAssigned={() => {
           setAssignTarget(null);
+          setAssignPreselectId(null);
           toast.success('Shift assigned.');
           refresh();
+        }}
+        onAssignedNext={(next) => {
+          // Stay in the flow: same dialog, next open shift in the week.
+          setAssignPreselectId(null);
+          toast.success('Shift assigned.');
+          refresh();
+          setAssignTarget(next);
         }}
       />
 
@@ -3521,13 +3690,23 @@ type TimeOffRow = { category: string; startDate: string; endDate: string };
 function AssignDialog({
   target,
   associates,
+  initialAssociateId = null,
+  openShiftsInWeek,
   onClose,
   onAssigned,
+  onAssignedNext,
 }: {
   target: Shift | null;
   associates: AssociateLite[];
+  /** Preselect this associate on open (one-click assign fell back here). */
+  initialAssociateId?: string | null;
+  /** OPEN shifts in the visible week, day-then-start order — the walk
+   *  order for "Assign & next open shift". */
+  openShiftsInWeek: Shift[];
   onClose: () => void;
   onAssigned: () => void;
+  /** Assigned successfully AND another open shift remains — advance to it. */
+  onAssignedNext: (next: Shift) => void;
 }) {
   const [picked, setPicked] = useState<AssociateLite | null>(null);
   const [query, setQuery] = useState('');
@@ -3541,23 +3720,32 @@ function AssignDialog({
   // Set when the conflict check itself FAILS (network/500) — distinct from
   // "checked, no conflicts" so the admin isn't misled into assigning blind.
   const [checkError, setCheckError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  // Which submit is in flight: the plain assign or "assign & next".
+  const [submitMode, setSubmitMode] = useState<null | 'one' | 'next'>(null);
+  const submitting = submitMode !== null;
   // Keyboard navigation index in the suggestion list.
   const [highlight, setHighlight] = useState(0);
 
-  // Reset on open.
+  // Reset on open (or on advancing to the next open shift).
   useEffect(() => {
     if (target) {
-      setPicked(null);
+      setPicked(
+        initialAssociateId
+          ? (associates.find((a) => a.id === initialAssociateId) ?? null)
+          : null,
+      );
       setQuery('');
       setConflicts(null);
       setTimeOff(null);
       setUnavailable(null);
       setCheckError(null);
-      setSubmitting(false);
+      setSubmitMode(null);
       setChecking(false);
       setHighlight(0);
     }
+    // Reset only when the TARGET changes — a mid-dialog associates refetch
+    // must not wipe the admin's picked candidate.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target]);
 
   // Ranked fit for THIS shift — availability, conflicts, PTO, weekly hours.
@@ -3568,10 +3756,13 @@ function AssignDialog({
     setCandidates(null);
     if (!target) return;
     let cancelled = false;
-    getAutoFillCandidates(target.id)
-      .then((r) => {
-        if (!cancelled) {
-          setCandidates([...r.candidates].sort((a, b) => b.score - a.score));
+    getCachedCandidates(target.id)
+      .then((ranked) => {
+        if (!cancelled) setCandidates(ranked);
+        // Prefetch conflict checks for the top picks so choosing one of
+        // them renders its verdict without the debounce round-trip.
+        for (const c of ranked.slice(0, 3)) {
+          getCachedConflicts(target.id, c.associateId).catch(() => {});
         }
       })
       .catch(() => {
@@ -3586,7 +3777,9 @@ function AssignDialog({
     [candidates],
   );
 
-  // Live conflict check on the picked associate — debounced.
+  // Live conflict check on the picked associate — debounced, except when a
+  // fresh prefetched result is already cached (top candidates): then the
+  // check resolves immediately instead of sitting out the debounce.
   useEffect(() => {
     if (!target || !picked) {
       setConflicts(null);
@@ -3596,10 +3789,11 @@ function AssignDialog({
       return;
     }
     let cancelled = false;
+    const delay = hasCachedConflicts(target.id, picked.id) ? 0 : 250;
     const handle = setTimeout(async () => {
       setChecking(true);
       try {
-        const c = await getShiftConflicts(target.id, picked.id);
+        const c = await getCachedConflicts(target.id, picked.id);
         if (cancelled) return;
         setCheckError(null);
         setConflicts(
@@ -3627,16 +3821,16 @@ function AssignDialog({
       } finally {
         if (!cancelled) setChecking(false);
       }
-    }, 250);
+    }, delay);
     return () => {
       cancelled = true;
       clearTimeout(handle);
     };
   }, [picked, target]);
 
-  const submit = async () => {
-    if (!target || !picked) return;
-    setSubmitting(true);
+  const submit = async (mode: 'one' | 'next' = 'one') => {
+    if (!target || !picked || submitting) return;
+    setSubmitMode(mode);
     try {
       const assigned = await assignWithOverridePrompt(
         target.id,
@@ -3645,13 +3839,28 @@ function AssignDialog({
         `${picked.firstName} ${picked.lastName}`,
       );
       if (assigned) {
+        if (mode === 'next') {
+          // Next OPEN shift in day/start order after the one just filled;
+          // wrap to the earliest remaining so nothing gets stranded.
+          const remaining = openShiftsInWeek.filter((s) => s.id !== target.id);
+          const at = new Date(target.startsAt).getTime();
+          const next =
+            remaining.find((s) => new Date(s.startsAt).getTime() >= at) ??
+            remaining[0] ??
+            null;
+          if (next) {
+            onAssignedNext(next);
+            return;
+          }
+          toast('No more open shifts this week.');
+        }
         onAssigned();
         return;
       }
-      setSubmitting(false);
+      setSubmitMode(null);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Assign failed.');
-      setSubmitting(false);
+      setSubmitMode(null);
     }
   };
 
@@ -3945,11 +4154,24 @@ function AssignDialog({
             <Button type="button" variant="secondary" onClick={onClose}>
               Cancel
             </Button>
+            {/* Batch mode: assign, then hop straight to the week's next
+                open shift instead of closing — filling a week is a chain
+                of these, not one-offs. */}
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => submit('next')}
+              loading={submitMode === 'next'}
+              disabled={!picked || submitting}
+              title="Assign, then advance to the next open shift in this week"
+            >
+              Assign &amp; next open shift
+            </Button>
             <Button
               type="submit"
               variant={hasConflicts || hasTimeOff ? 'destructive' : 'primary'}
-              loading={submitting}
-              disabled={!picked}
+              loading={submitMode === 'one'}
+              disabled={!picked || submitting}
             >
               {hasConflicts || hasTimeOff ? 'Assign anyway' : 'Assign'}
             </Button>

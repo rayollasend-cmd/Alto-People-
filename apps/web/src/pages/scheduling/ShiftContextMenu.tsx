@@ -11,7 +11,7 @@ import {
   Send,
   FileText,
 } from 'lucide-react';
-import type { Shift } from '@alto-people/shared';
+import type { AutoFillCandidate, Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
 import type { QuickActions } from './ShiftHoverCard';
 
@@ -60,6 +60,37 @@ const MENU_ITEM_HEIGHT = 32;
 export function ShiftContextMenu({ active, onClose, canManage, actions }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
 
+  // Top-ranked candidate for an OPEN (unassigned) shift — the one-click
+  // "Assign → <name>" item. undefined = loading, null = none available.
+  const wantTopCandidate =
+    canManage &&
+    active.shift.status === 'OPEN' &&
+    active.shift.assignedAssociateId === null &&
+    !!actions.getTopCandidates &&
+    !!actions.onAssignCandidate;
+  const [topCandidate, setTopCandidate] = useState<
+    AutoFillCandidate | null | undefined
+  >(undefined);
+  useEffect(() => {
+    if (!wantTopCandidate) return;
+    let cancelled = false;
+    setTopCandidate(undefined);
+    actions
+      .getTopCandidates!(active.shift)
+      .then((list) => {
+        if (!cancelled) setTopCandidate(list[0] ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setTopCandidate(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // `actions` is rebuilt by the parent every render; the shift id is the
+    // real identity of this lookup (results are short-TTL cached upstream).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wantTopCandidate, active.shift.id]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -95,6 +126,28 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
       },
     });
     if (active.shift.assignedAssociateId === null) {
+      // One-click best-fit assign. Loading shows a compact disabled stub;
+      // "no candidates" hides the item entirely (nothing useful to click).
+      if (wantTopCandidate && topCandidate !== null) {
+        items.push({
+          kind: 'item',
+          label:
+            topCandidate === undefined
+              ? 'Assign → …'
+              : `Assign → ${topCandidate.associateName}`,
+          icon: UserPlus,
+          disabled: topCandidate === undefined,
+          onClick: () => {
+            if (!topCandidate) return;
+            const shift = active.shift;
+            // Close first — the assign flow may open confirm prompts or
+            // fall back into the AssignDialog; errors surface via toasts
+            // from the handler itself.
+            onClose();
+            void actions.onAssignCandidate!(shift, topCandidate);
+          },
+        });
+      }
       items.push({
         kind: 'item',
         label: 'Assign…',
@@ -258,8 +311,8 @@ export function ShiftContextMenu({ active, onClose, canManage, actions }: Props)
               it.disabled && 'opacity-40 cursor-not-allowed',
             )}
           >
-            <it.icon className="h-3.5 w-3.5" />
-            {it.label}
+            <it.icon className="h-3.5 w-3.5 shrink-0" />
+            <span className="flex-1 min-w-0 truncate">{it.label}</span>
           </button>
         ),
       )}

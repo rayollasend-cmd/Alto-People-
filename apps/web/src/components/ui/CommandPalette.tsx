@@ -177,12 +177,13 @@ export function CommandPalette({
           {
             id: 'action-new-shift',
             label: 'New shift',
-            hint: 'Open scheduling to create a shift',
+            hint: 'Create a shift',
             icon: CalendarPlus,
             keywords: 'create schedule add',
             group: 'Actions',
             perform: ({ navigate, close }: PerformCtx) => {
-              navigate('/scheduling');
+              // ?new=shift → scheduling opens its create-shift dialog directly.
+              navigate('/scheduling?new=shift');
               close();
             },
           } satisfies PaletteItem,
@@ -241,12 +242,13 @@ export function CommandPalette({
           {
             id: 'action-invite-associate',
             label: 'Invite associate',
-            hint: 'Open onboarding to send an application',
+            hint: 'Send an onboarding application',
             icon: UserPlus,
             keywords: 'new hire application send',
             group: 'Actions',
             perform: ({ navigate, close }: PerformCtx) => {
-              navigate('/onboarding');
+              // ?new=invite → onboarding opens its invite dialog directly.
+              navigate('/onboarding?new=invite');
               close();
             },
           } satisfies PaletteItem,

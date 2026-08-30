@@ -806,6 +806,37 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entryParam, liveOnly]);
 
+  // Deep-link: ?associate=<id> (optionally &name=) opens that associate's
+  // focused timesheet — the landing the profile drawer's "Timesheet" button
+  // and payroll-exception "Fix" links target. Same consume-once semantics
+  // as ?entry= above.
+  const associateParam = tabParams.get('associate');
+  useEffect(() => {
+    if (!associateParam || liveOnly) return;
+    const params = new URLSearchParams(tabParams);
+    const nameParam = params.get('name');
+    params.delete('associate');
+    params.delete('name');
+    params.set('tab', 'queue');
+    setTabParams(params, { replace: true });
+    setFilter('ALL');
+    setFocusAssociate({ id: associateParam, name: nameParam ?? '—' });
+    // Same rationale as the ?entry= effect for the trimmed dep list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [associateParam, liveOnly]);
+
+  // A nameless deep link shows '—' until the focused fetch returns a row
+  // that carries the display name — then adopt it.
+  useEffect(() => {
+    if (!focusAssociate || focusAssociate.name !== '—' || !entries) return;
+    const match = entries.find(
+      (e) => e.associateId === focusAssociate.id && e.associateName,
+    );
+    if (match) {
+      setFocusAssociate({ id: focusAssociate.id, name: match.associateName ?? '—' });
+    }
+  }, [entries, focusAssociate]);
+
   // Once the focused timesheet has rendered the target row, bring it into
   // view; the flash ring clears itself after ~2s.
   useEffect(() => {
@@ -1196,6 +1227,16 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     return visibleEntries.filter((e) => e.status === 'COMPLETED').map((e) => e.id);
   }, [visibleEntries]);
 
+  // "Select clean only" pool — COMPLETED rows with no anomaly flags, so
+  // one click stages the uncontroversial approvals without sweeping in
+  // flagged rows the way the header select-all does.
+  const cleanSelectableIds = useMemo(() => {
+    if (!visibleEntries) return [] as string[];
+    return visibleEntries
+      .filter((e) => e.status === 'COMPLETED' && (e.anomalies?.length ?? 0) === 0)
+      .map((e) => e.id);
+  }, [visibleEntries]);
+
   // Shared selection mechanics; selectableIds carries this page's RULE
   // (only COMPLETED rows). toggleMany is the day-header checkbox in the
   // individual timesheet: select/clear a whole day's pending entries in
@@ -1204,6 +1245,7 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     selected,
     toggle: toggleOne,
     setMany: toggleMany,
+    selectAll: replaceSelection,
     clear: clearSelection,
     allSelected,
     someSelected,
@@ -1778,50 +1820,80 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
             </div>
           </CardHeader>
 
-          {/* Bulk-action toolbar — only shown when rows are selectable & any selected. */}
-          {canManage && filter === 'COMPLETED' && selected.size > 0 && (
-            <div className="mx-5 mb-3 flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-md border border-gold/40 bg-gold/10">
-              <div className="text-sm text-gold">
+          {/* Bulk-action toolbar — shown when rows are selected, or quietly
+              when clean rows are available to stage with one click. */}
+          {canManage &&
+            filter === 'COMPLETED' &&
+            (selected.size > 0 || cleanSelectableIds.length > 0) && (
+            <div
+              className={cn(
+                'mx-5 mb-3 flex flex-wrap items-center justify-between gap-3 px-3 py-2 rounded-md border',
+                selected.size > 0
+                  ? 'border-gold/40 bg-gold/10'
+                  : 'border-navy-secondary bg-navy-secondary/30',
+              )}
+            >
+              <div
+                className={cn(
+                  'text-sm',
+                  selected.size > 0 ? 'text-gold' : 'text-silver',
+                )}
+              >
                 <span className="font-medium tabular-nums">{selected.size}</span>{' '}
                 selected
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="primary"
-                  onClick={onBulkApprove}
-                  loading={bulkBusy}
-                  disabled={bulkBusy}
-                >
-                  <CheckCircle2 className="h-4 w-4" />
-                  Approve {selected.size}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  onClick={() => setRejectOpen({ mode: 'bulk' })}
-                  disabled={bulkBusy}
-                >
-                  Reject {selected.size}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={onBulkApplyBreak}
-                  disabled={bulkBusy}
-                  title="Book the standard 1-hour unpaid meal break, centered mid-shift, on each selected entry that has none (6h+ shifts only)"
-                >
-                  <Coffee className="h-4 w-4" />
-                  Apply 1h break
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={clearSelection}
-                  disabled={bulkBusy}
-                >
-                  Clear
-                </Button>
+                {cleanSelectableIds.length > 0 && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => replaceSelection(cleanSelectableIds)}
+                    disabled={bulkBusy}
+                    title="Select only completed entries with no anomaly flags (replaces the current selection)"
+                  >
+                    Select clean ({cleanSelectableIds.length})
+                  </Button>
+                )}
+                {selected.size > 0 && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={onBulkApprove}
+                      loading={bulkBusy}
+                      disabled={bulkBusy}
+                    >
+                      <CheckCircle2 className="h-4 w-4" />
+                      Approve {selected.size}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => setRejectOpen({ mode: 'bulk' })}
+                      disabled={bulkBusy}
+                    >
+                      Reject {selected.size}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={onBulkApplyBreak}
+                      disabled={bulkBusy}
+                      title="Book the standard 1-hour unpaid meal break, centered mid-shift, on each selected entry that has none (6h+ shifts only)"
+                    >
+                      <Coffee className="h-4 w-4" />
+                      Apply 1h break
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={clearSelection}
+                      disabled={bulkBusy}
+                    >
+                      Clear
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
           )}

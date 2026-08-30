@@ -114,6 +114,10 @@ interface Props {
   onShiftClick: (s: Shift, e: React.MouseEvent) => void;
   /** Set of currently-selected shift ids (for bulk actions). */
   selectedIds: Set<string>;
+  /** One-click group select: toggle a whole row's / day column's shifts.
+   *  The parent adds all ids, or clears them when every one is already
+   *  selected. Undefined = no row/column select affordance (read-only). */
+  onToggleGroupSelection?: (ids: string[]) => void;
   /** Click "+" in a cell. associateId is null for the Unassigned row. */
   onCellCreate: (dayStart: Date, associateId: string | null) => void;
   /** Move an associate's ROW above/below its visible neighbor (the saved
@@ -197,6 +201,7 @@ export function WeekCalendarView({
   onShiftResize,
   quickActions,
   selectedIds,
+  onToggleGroupSelection,
   onTemplateDrop,
   showAllAssociates,
   availabilityFit = null,
@@ -587,16 +592,10 @@ export function WeekCalendarView({
           <div className="sticky left-0 z-20 bg-navy/95 backdrop-blur border-b border-r border-navy-secondary px-3 py-2 text-2xs uppercase tracking-wider text-silver">
             Schedule
           </div>
-          {days.map((d) => {
+          {days.map((d, i) => {
             const isToday = sameDay(d, today);
-            return (
-              <div
-                key={d.toISOString()}
-                className={cn(
-                  'border-b border-navy-secondary px-2 py-2 sticky top-0 z-10 bg-navy/95 backdrop-blur',
-                  isToday && 'bg-gold/10'
-                )}
-              >
+            const header = (
+              <>
                 <div
                   className={cn(
                     'text-2xs uppercase tracking-wider',
@@ -615,6 +614,44 @@ export function WeekCalendarView({
                 >
                   {fmtDateTz(d)}
                 </div>
+              </>
+            );
+            return (
+              <div
+                key={d.toISOString()}
+                className={cn(
+                  'border-b border-navy-secondary sticky top-0 z-10 bg-navy/95 backdrop-blur',
+                  isToday && 'bg-gold/10'
+                )}
+              >
+                {onToggleGroupSelection ? (
+                  // Quiet affordance: the header is also a one-click "select
+                  // this day's shifts" toggle (selection shows on the chips).
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const dayKey = dayKeys[i];
+                      const ids: string[] = [];
+                      for (const s of byCell.get(`${UNASSIGNED_ROW_ID}_${dayKey}`) ??
+                        EMPTY_SHIFTS) {
+                        ids.push(s.id);
+                      }
+                      for (const a of visibleAssociates) {
+                        for (const s of byCell.get(`${a.id}_${dayKey}`) ??
+                          EMPTY_SHIFTS) {
+                          ids.push(s.id);
+                        }
+                      }
+                      onToggleGroupSelection(ids);
+                    }}
+                    className="block w-full text-left px-2 py-2 cursor-pointer hover:bg-gold/[0.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+                    title="Click to select this day's shifts"
+                  >
+                    {header}
+                  </button>
+                ) : (
+                  <div className="px-2 py-2">{header}</div>
+                )}
               </div>
             );
           })}
@@ -679,6 +716,20 @@ export function WeekCalendarView({
                 rowDragActive={draggingRowId !== null}
                 onRemoveFromCrew={
                   onRemoveFromCrew ? () => onRemoveFromCrew(a.id) : undefined
+                }
+                onSelectRow={
+                  onToggleGroupSelection
+                    ? () => {
+                        const ids: string[] = [];
+                        for (const key of dayKeys) {
+                          for (const s of byCell.get(`${a.id}_${key}`) ??
+                            EMPTY_SHIFTS) {
+                            ids.push(s.id);
+                          }
+                        }
+                        onToggleGroupSelection(ids);
+                      }
+                    : undefined
                 }
               >
                 {days.map((d, i) => {
@@ -815,6 +866,15 @@ export function WeekCalendarView({
               await quickActions.onDuplicate(s);
               hover.close();
             },
+            getTopCandidates: quickActions.getTopCandidates,
+            onAssignCandidate: quickActions.onAssignCandidate
+              ? async (s, c) => {
+                  // Close first — the flow may open confirm prompts or the
+                  // AssignDialog; the card must not linger over them.
+                  hover.close();
+                  await quickActions.onAssignCandidate!(s, c);
+                }
+              : undefined,
           }}
         />
       )}
@@ -844,6 +904,7 @@ const Row = memo(function Row({
   reorderArmed = false,
   rowDragActive = false,
   onRemoveFromCrew,
+  onSelectRow,
 }: {
   associate: AssociateLite;
   minutes: number;
@@ -863,6 +924,9 @@ const Row = memo(function Row({
   rowDragActive?: boolean;
   /** Remove this row's associate from the active crew filter. */
   onRemoveFromCrew?: () => void;
+  /** Toggle selection of every one of this row's shifts in the visible
+   *  week. Undefined = name cell stays a plain label. */
+  onSelectRow?: () => void;
 }) {
   const initials = `${associate.firstName[0] ?? ''}${associate.lastName[0] ?? ''}`.toUpperCase();
   // Row-reorder drag: the grip is the draggable, the name cell the drop
@@ -922,13 +986,27 @@ const Row = memo(function Row({
         </div>
         <div className="min-w-0 flex-1">
           {/* Two lines + full-name tooltip: "Adolfo Fernando Reinoso
-              Hernadez" must be identifiable, not a 6-character sliver. */}
-          <div
-            className="text-sm text-white leading-tight line-clamp-2 break-words"
-            title={`${associate.firstName} ${associate.lastName}`}
-          >
-            {associate.firstName} {associate.lastName}
-          </div>
+              Hernadez" must be identifiable, not a 6-character sliver.
+              With onSelectRow the name doubles as a quiet click target that
+              toggles selection of the whole row's shifts — a button (not a
+              cell-wide onClick) so the drag grip and crew ✕ stay clean. */}
+          {onSelectRow ? (
+            <button
+              type="button"
+              onClick={onSelectRow}
+              className="block w-full text-left text-sm text-white leading-tight line-clamp-2 break-words cursor-pointer hover:text-gold rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+              title={`${associate.firstName} ${associate.lastName} — click to select this row's shifts`}
+            >
+              {associate.firstName} {associate.lastName}
+            </button>
+          ) : (
+            <div
+              className="text-sm text-white leading-tight line-clamp-2 break-words"
+              title={`${associate.firstName} ${associate.lastName}`}
+            >
+              {associate.firstName} {associate.lastName}
+            </div>
+          )}
           <div className="text-2xs tabular-nums">
             <span
               className={cn(

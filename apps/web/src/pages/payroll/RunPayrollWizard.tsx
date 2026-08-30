@@ -70,10 +70,24 @@ import { fmtDate, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
 const fmtPeriod = (startYmd: string, endYmd: string) =>
   `${fmtDate(parseYmd(startYmd))} → ${fmtDate(parseYmd(endYmd))}`;
 
+/** Prefill handed in by the hero card so step 1 doesn't re-ask. */
+export interface RunPayrollSeed {
+  scheduleId: string;
+  periodStart: string;
+  periodEnd: string;
+}
+
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onCreated: (detail: PayrollRunDetail) => void;
+  /**
+   * When set, the wizard opens with schedule + period already applied and,
+   * if the preview comes back with zero blocking exceptions, collapses the
+   * four steps into a single review-and-create screen. Omit (or null) for
+   * the generic "New run" entry points, which keep the full flow.
+   */
+  seed?: RunPayrollSeed | null;
 }
 
 type Step = 1 | 2 | 3 | 4;
@@ -87,7 +101,7 @@ const STEP_TITLES: Record<Step, string> = {
 
 type RunKind = 'REGULAR' | 'OFF_CYCLE';
 
-export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
+export function RunPayrollWizard({ open, onOpenChange, onCreated, seed }: Props) {
   const [step, setStep] = useState<Step>(1);
   const [runKind, setRunKind] = useState<RunKind>('REGULAR');
   const [schedules, setSchedules] = useState<PayrollSchedule[] | null>(null);
@@ -105,9 +119,29 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
   const [exceptions, setExceptions] = useState<PayrollExceptionsResponse | null>(null);
   const [exceptionsLoading, setExceptionsLoading] = useState(false);
   const [overrideBlocking, setOverrideBlocking] = useState(false);
+  // Seeded opens collapse to a single review screen while the preview is
+  // clean (zero blocking exceptions). quickPending bridges the gap between
+  // open and the schedule list resolving (the auto-preview needs it).
+  const [quickReview, setQuickReview] = useState(false);
+  const [quickPending, setQuickPending] = useState(false);
+
+  // In-progress state survives an ACCIDENTAL close (outside click / Escape /
+  // the X). sessionKey remembers which seed the live session was built from:
+  // null = no session, so the next open re-initializes; reopening from the
+  // same entry point (same seed) resumes as-is, while a different seed —
+  // or the unseeded "New run" button — starts fresh.
+  const seedKey = seed
+    ? `${seed.scheduleId}|${seed.periodStart}|${seed.periodEnd}`
+    : '';
+  const sessionKeyRef = useRef<string | null>(null);
+  // A seeded open must keep the hero's exact period — the schedule-default
+  // effect below would otherwise clobber it when the schedule list resolves.
+  const seededPeriodRef = useRef(false);
 
   useEffect(() => {
     if (!open) return;
+    if (sessionKeyRef.current === seedKey) return; // accidental close → resume as-is
+    sessionKeyRef.current = seedKey;
     setStep(1);
     setRunKind('REGULAR');
     setNotes('');
@@ -117,12 +151,20 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
     setPreviewError(null);
     setExceptions(null);
     setOverrideBlocking(false);
+    setScheduleId(seed?.scheduleId ?? '');
+    setPeriodStart(seed?.periodStart ?? '');
+    setPeriodEnd(seed?.periodEnd ?? '');
+    seededPeriodRef.current = !!seed;
+    setQuickReview(!!seed);
+    setQuickPending(!!seed);
     listPayrollSchedules()
       .then((res) => setSchedules(res.schedules))
       .catch((err) =>
         toast.error(err instanceof ApiError ? err.message : 'Failed to load schedules.')
       );
-  }, [open]);
+    // seedKey is the value-compare proxy for `seed`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, seedKey]);
 
   const activeSchedule = useMemo(
     () => schedules?.find((s) => s.id === scheduleId) ?? null,
@@ -134,6 +176,12 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
   // dates — the schedule only scopes the client there.
   useEffect(() => {
     if (!activeSchedule || runKind === 'OFF_CYCLE') return;
+    if (seededPeriodRef.current) {
+      // First resolve after a seeded open — the seed already carries the
+      // exact period the hero projected; don't overwrite it.
+      seededPeriodRef.current = false;
+      return;
+    }
     setPeriodStart(activeSchedule.nextPeriodStart);
     setPeriodEnd(activeSchedule.nextPeriodEnd);
   }, [activeSchedule, runKind]);
@@ -196,6 +244,43 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
     }
   };
 
+  // Seeded opens auto-run the preview once the schedule list resolves —
+  // fetchPreview scopes by the seeded schedule's clientId, which isn't
+  // known until then.
+  useEffect(() => {
+    if (!open || !quickPending || !schedules) return;
+    setQuickPending(false);
+    void fetchPreview();
+    // fetchPreview reads current state; keyed on the schedule list arriving.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, quickPending, schedules]);
+
+  // The collapsed review only holds while the run is clean — any blocking
+  // exception drops back to the full wizard at the hours step.
+  useEffect(() => {
+    if (!quickReview || !exceptions) return;
+    if (exceptions.counts.blocking > 0) {
+      setQuickReview(false);
+      setStep(2);
+    }
+  }, [quickReview, exceptions]);
+
+  // Re-run just the pre-flight exception scan in place, so "Fix in a new
+  // tab → Re-check" never costs the wizard its state.
+  const recheckExceptions = async () => {
+    if (exceptionsLoading) return;
+    setExceptionsLoading(true);
+    const clientId = activeSchedule?.clientId ?? null;
+    try {
+      const res = await listPayrollExceptions({ clientId, periodStart, periodEnd });
+      setExceptions(res);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Exception re-check failed.');
+    } finally {
+      setExceptionsLoading(false);
+    }
+  };
+
   const next = async () => {
     if (!canAdvance[step]) return;
     if (step === 1) {
@@ -219,6 +304,13 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
     if (step > 1) setStep((step - 1) as Step);
   };
 
+  // Explicit cancel wipes the in-progress session; the Dialog's own
+  // dismiss paths (outside click / Escape / X) intentionally do not.
+  const cancel = () => {
+    sessionKeyRef.current = null;
+    onOpenChange(false);
+  };
+
   const submit = async () => {
     if (submitting || !canSubmit) return;
     setSubmitting(true);
@@ -236,6 +328,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
           ? 'Off-cycle run created — add earning lines on the run page to build the paychecks.'
           : `Run created — ${detail.items.length} paystubs aggregated.`
       );
+      sessionKeyRef.current = null; // done — the next open starts fresh
       onCreated(detail);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Create failed.');
@@ -249,23 +342,43 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
         <DialogHeader>
           <DialogTitle>Run payroll</DialogTitle>
           <DialogDescription>
-            {STEP_TITLES[step]} ({step} of 4)
+            {quickReview
+              ? 'Review & create'
+              : `${STEP_TITLES[step]} (${step} of 4)`}
           </DialogDescription>
         </DialogHeader>
 
-        <Stepper
-          current={step}
-          steps={[
-            { label: STEP_TITLES[1] },
-            { label: STEP_TITLES[2] },
-            { label: STEP_TITLES[3] },
-            { label: STEP_TITLES[4] },
-          ]}
-          className="mb-4"
-        />
+        {!quickReview && (
+          <Stepper
+            current={step}
+            steps={[
+              { label: STEP_TITLES[1] },
+              { label: STEP_TITLES[2] },
+              { label: STEP_TITLES[3] },
+              { label: STEP_TITLES[4] },
+            ]}
+            className="mb-4"
+          />
+        )}
 
         <div className="min-h-[260px]">
-          {step === 1 && (
+          {quickReview && (
+            <QuickReview
+              periodStart={periodStart}
+              periodEnd={periodEnd}
+              schedule={activeSchedule}
+              preview={preview}
+              loading={previewLoading || quickPending}
+              error={previewError}
+              onRetry={fetchPreview}
+              exceptions={exceptions}
+              exceptionsLoading={exceptionsLoading}
+              onRecheck={recheckExceptions}
+              notes={notes}
+              setNotes={setNotes}
+            />
+          )}
+          {!quickReview && step === 1 && (
             <Step1
               runKind={runKind}
               onRunKindChange={chooseRunKind}
@@ -280,7 +393,7 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
               setDefaultRate={setDefaultRate}
             />
           )}
-          {step === 2 && (
+          {!quickReview && step === 2 && (
             <Step2
               offCycle={runKind === 'OFF_CYCLE'}
               periodStart={periodStart}
@@ -292,9 +405,10 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
               onRetry={fetchPreview}
               exceptions={exceptions}
               exceptionsLoading={exceptionsLoading}
+              onRecheck={recheckExceptions}
             />
           )}
-          {step === 3 && (
+          {!quickReview && step === 3 && (
             <Step3
               offCycle={runKind === 'OFF_CYCLE'}
               periodStart={periodStart}
@@ -306,9 +420,10 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
               onRetry={fetchPreview}
               exceptions={exceptions}
               exceptionsLoading={exceptionsLoading}
+              onRecheck={recheckExceptions}
             />
           )}
-          {step === 4 && (
+          {!quickReview && step === 4 && (
             <Step4
               offCycle={runKind === 'OFF_CYCLE'}
               periodStart={periodStart}
@@ -328,17 +443,42 @@ export function RunPayrollWizard({ open, onOpenChange, onCreated }: Props) {
           <Button
             type="button"
             variant="secondary"
-            onClick={step === 1 ? () => onOpenChange(false) : back}
+            onClick={quickReview || step === 1 ? cancel : back}
             disabled={submitting}
           >
-            {step === 1 ? 'Cancel' : (
+            {quickReview || step === 1 ? 'Cancel' : (
               <span className="inline-flex items-center gap-1.5">
                 <ArrowLeft className="h-4 w-4" />
                 Back
               </span>
             )}
           </Button>
-          {step < 4 ? (
+          {quickReview ? (
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="text-xs text-gold hover:underline"
+                onClick={() => {
+                  // Expand into the full 4-step path with the loaded data.
+                  setQuickReview(false);
+                  setStep(2);
+                }}
+              >
+                Review in detail
+              </button>
+              <Button
+                type="button"
+                onClick={submit}
+                loading={submitting}
+                disabled={
+                  previewLoading || quickPending || !!previewError || !canSubmit
+                }
+              >
+                <CheckCircle2 className="mr-1.5 h-4 w-4" />
+                Create run
+              </Button>
+            </div>
+          ) : step < 4 ? (
             <Button
               type="button"
               onClick={next}
@@ -497,6 +637,7 @@ interface PreviewProps {
   onRetry: () => void;
   exceptions: PayrollExceptionsResponse | null;
   exceptionsLoading: boolean;
+  onRecheck: () => void;
 }
 
 function PreviewStateBanner({
@@ -564,12 +705,24 @@ const EXCEPTION_COPY: Record<PayrollException['kind'], { label: string }> = {
   MISSING_COMP_RECORD: { label: 'No comp record' },
 };
 
+/**
+ * Best fix surface per exception kind: unapproved time is resolved on the
+ * Time page (approve the entries there), everything else on the associate
+ * profile. Opened in a new tab so the in-progress wizard survives.
+ */
+const fixHref = (ex: PayrollException) =>
+  ex.kind === 'UNAPPROVED_TIME'
+    ? `/time-attendance?associate=${ex.associateId}`
+    : `/people?associateId=${ex.associateId}`;
+
 function ExceptionStrip({
   exceptions,
   loading,
+  onRecheck,
 }: {
   exceptions: PayrollExceptionsResponse | null;
   loading: boolean;
+  onRecheck?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   if (loading) {
@@ -584,7 +737,19 @@ function ExceptionStrip({
     return (
       <div className="flex items-center gap-2 rounded border border-success/20 bg-success/5 px-3 py-2 text-xs2 text-success">
         <CheckCircle2 className="h-3.5 w-3.5" />
-        No exceptions — every associate has a W-4, a payout method, and a supported state.
+        <span className="flex-1">
+          No exceptions — every associate has a W-4, a payout method, and a supported state.
+        </span>
+        {onRecheck && exceptions && (
+          <button
+            type="button"
+            onClick={onRecheck}
+            className="shrink-0 text-2xs text-gold hover:underline"
+            title="Re-run the pre-flight scan"
+          >
+            Re-check
+          </button>
+        )}
       </div>
     );
   }
@@ -598,26 +763,38 @@ function ExceptionStrip({
 
   return (
     <div className={cn('rounded border', tone.split(' ').slice(0, 2).join(' '))}>
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left"
-        aria-expanded={open}
-      >
-        <span className={cn('flex items-center gap-2 text-xs', tone.split(' ')[2])}>
-          <Icon className="h-4 w-4" />
-          <span className="font-medium">
-            {blocking > 0
-              ? `${blocking} blocking ${blocking === 1 ? 'issue' : 'issues'}`
-              : `${exceptions.exceptions.length} ${exceptions.exceptions.length === 1 ? 'issue' : 'issues'} to review`}
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex-1 flex items-center justify-between gap-2 px-3 py-2 text-left"
+          aria-expanded={open}
+        >
+          <span className={cn('flex items-center gap-2 text-xs', tone.split(' ')[2])}>
+            <Icon className="h-4 w-4" />
+            <span className="font-medium">
+              {blocking > 0
+                ? `${blocking} blocking ${blocking === 1 ? 'issue' : 'issues'}`
+                : `${exceptions.exceptions.length} ${exceptions.exceptions.length === 1 ? 'issue' : 'issues'} to review`}
+            </span>
+            <span className="text-silver/70">
+              {warning > 0 && ` · ${warning} warning${warning === 1 ? '' : 's'}`}
+              {info > 0 && ` · ${info} info`}
+            </span>
           </span>
-          <span className="text-silver/70">
-            {warning > 0 && ` · ${warning} warning${warning === 1 ? '' : 's'}`}
-            {info > 0 && ` · ${info} info`}
-          </span>
-        </span>
-        {open ? <ChevronDown className="h-4 w-4 text-silver/70" /> : <ChevronRight className="h-4 w-4 text-silver/70" />}
-      </button>
+          {open ? <ChevronDown className="h-4 w-4 text-silver/70" /> : <ChevronRight className="h-4 w-4 text-silver/70" />}
+        </button>
+        {onRecheck && (
+          <button
+            type="button"
+            onClick={onRecheck}
+            className="shrink-0 px-2 py-2 text-2xs text-gold hover:underline"
+            title="Re-run the pre-flight scan after fixing issues in another tab"
+          >
+            Re-check
+          </button>
+        )}
+      </div>
       {open && (
         <ul className="border-t border-silver/10 divide-y divide-silver/5 max-h-56 overflow-y-auto">
           {exceptions.exceptions.map((ex, i) => (
@@ -641,9 +818,11 @@ function ExceptionStrip({
                   {EXCEPTION_COPY[ex.kind].label}
                 </Badge>
                 <Link
-                  to={`/people?associateId=${ex.associateId}`}
+                  to={fixHref(ex)}
+                  target="_blank"
+                  rel="noreferrer"
                   className="ml-auto inline-flex items-center gap-1 text-2xs text-gold hover:underline"
-                  title="Open associate profile to fix"
+                  title="Fix in a new tab — the wizard stays where it is"
                 >
                   Fix <ExternalLink className="h-2.5 w-2.5" />
                 </Link>
@@ -1037,6 +1216,7 @@ function Step2({
   onRetry,
   exceptions,
   exceptionsLoading,
+  onRecheck,
 }: PreviewProps) {
   const exMap = exceptionsByAssociate(exceptions);
   if (offCycle) {
@@ -1060,7 +1240,7 @@ function Step2({
         {fmtPeriod(periodStart, periodEnd)}{schedule ? ` · ${schedule.name}` : ''}
       </Pill>
 
-      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} />
+      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} onRecheck={onRecheck} />
 
       <p className="text-silver/70 text-xs">
         Hours come from <strong>APPROVED</strong> time entries in this period.
@@ -1111,6 +1291,7 @@ function Step3({
   onRetry,
   exceptions,
   exceptionsLoading,
+  onRecheck,
 }: PreviewProps) {
   void periodStart;
   void periodEnd;
@@ -1128,7 +1309,7 @@ function Step3({
   }
   return (
     <div className="space-y-3 text-sm">
-      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} />
+      <ExceptionStrip exceptions={exceptions} loading={exceptionsLoading} onRecheck={onRecheck} />
 
       <PreviewStateBanner loading={loading} error={error} onRetry={onRetry} />
 
@@ -1182,6 +1363,122 @@ function Step3({
           <strong className="text-silver/80">{fmtDate(parseYmd(schedule.nextPayDate))}</strong>{' '}
           ({schedule.payDateOffsetDays} day offset from period end).
         </p>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- *
+ *  Collapsed clean-run review
+ *
+ *  Shown instead of the 4-step flow when the wizard opened seeded (hero CTA)
+ *  and the preview came back with zero blocking exceptions: exception strip
+ *  on top, hours + deductions rollup and per-paycheck cards in one scroll,
+ *  Create run as the primary action. "Review in detail" in the footer
+ *  expands back into the full step path.
+ * -------------------------------------------------------------------------- */
+
+function QuickReview({
+  periodStart,
+  periodEnd,
+  schedule,
+  preview,
+  loading,
+  error,
+  onRetry,
+  exceptions,
+  exceptionsLoading,
+  onRecheck,
+  notes,
+  setNotes,
+}: {
+  periodStart: string;
+  periodEnd: string;
+  schedule: PayrollSchedule | null;
+  preview: PayrollRunPreviewResponse | null;
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  exceptions: PayrollExceptionsResponse | null;
+  exceptionsLoading: boolean;
+  onRecheck: () => void;
+  notes: string;
+  setNotes: (v: string) => void;
+}) {
+  const exMap = exceptionsByAssociate(exceptions);
+  return (
+    <div className="space-y-3 text-sm">
+      <Pill icon={<Calendar className="h-3.5 w-3.5" />}>
+        {fmtPeriod(periodStart, periodEnd)}{schedule ? ` · ${schedule.name}` : ''}
+      </Pill>
+
+      <ExceptionStrip
+        exceptions={exceptions}
+        loading={exceptionsLoading}
+        onRecheck={onRecheck}
+      />
+
+      <PreviewStateBanner loading={loading} error={error} onRetry={onRetry} />
+
+      {preview && preview.items.length === 0 && (
+        <div className="rounded border border-silver/15 bg-black/30 p-3 text-xs text-silver/70">
+          No approved time entries fell inside this period. Either the period
+          is wrong or no one's time is approved yet.
+        </div>
+      )}
+
+      {preview && preview.items.length > 0 && (
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
+            <Stat label="Paystubs" value={String(preview.totals.itemCount)} />
+            <Stat
+              label={<>Gross<InfoTip text={TAX_TOOLTIPS.GROSS} /></>}
+              value={fmtMoney(preview.totals.totalGross)}
+            />
+            <Stat
+              label={<>Employee tax<InfoTip text={TAX_TOOLTIPS.EMPLOYEE_TAX} /></>}
+              value={`−${fmtMoney(preview.totals.totalEmployeeTax)}`}
+            />
+            <Stat
+              label={<>Employer cost<InfoTip text={TAX_TOOLTIPS.EMPLOYER} /></>}
+              value={fmtMoney(preview.totals.totalEmployerTax)}
+            />
+            <Stat label="Net" value={fmtMoney(preview.totals.totalNet)} highlight />
+          </div>
+
+          <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+            {preview.items.map((it) => (
+              <PaycheckCard
+                key={it.associateId}
+                item={it}
+                exceptions={exMap.get(it.associateId) ?? []}
+                variant="hours"
+              />
+            ))}
+          </div>
+
+          {schedule && (
+            <p className="text-xs text-silver/70">
+              Pay date will land on{' '}
+              <strong className="text-silver/80">{fmtDate(parseYmd(schedule.nextPayDate))}</strong>{' '}
+              ({schedule.payDateOffsetDays} day offset from period end).
+            </p>
+          )}
+        </>
+      )}
+
+      {preview && (
+        <Field label="Notes (optional)">
+          {(p) => (
+            <Textarea
+              rows={2}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="e.g. Holiday week — pay date moved to Thursday"
+              {...p}
+            />
+          )}
+        </Field>
       )}
     </div>
   );

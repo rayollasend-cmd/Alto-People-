@@ -88,6 +88,7 @@ import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { nudgeApplicant } from '@/lib/onboardingApi';
 import {
+  assignOrgFields,
   eraseAssociatePersonalData,
   getAssociatePayoutMethod,
   getAssociatePersonalInfo,
@@ -1204,7 +1205,9 @@ function DirectoryDrawer({
           </Link>
         </Button>
         <Button asChild variant="outline" size="sm">
-          <Link to={`/time-attendance?associate=${a.id}`}>
+          <Link
+            to={`/time-attendance?associate=${a.id}&name=${encodeURIComponent(`${a.firstName} ${a.lastName}`)}`}
+          >
             <Clock className="h-3.5 w-3.5" />
             Timesheet
           </Link>
@@ -1273,14 +1276,26 @@ function ProfileTab({
           label="Location"
           value={a.currentLocationName ?? '—'}
         />
-        <InfoRow
+        <InlineFieldRow
           icon={<Briefcase className="h-3.5 w-3.5" />}
           label="Position"
-          value={a.position ?? '—'}
+          display={a.position ?? '—'}
+          current={a.position ?? ''}
+          placeholder="e.g. Stocking Associate"
+          onSave={async (next) => {
+            await patchAssociateProfile(a.id, { position: next });
+            onAssociateChange({ position: next });
+          }}
         />
-        <InfoRow
+        <InlineFieldRow
           label="Start date"
-          value={a.startDate ? fmtDate(parseYmd(a.startDate) ?? a.startDate) : '—'}
+          display={a.startDate ? fmtDate(parseYmd(a.startDate) ?? a.startDate) : '—'}
+          current={a.startDate ?? ''}
+          inputType="date"
+          onSave={async (next) => {
+            await patchAssociateProfile(a.id, { startDate: next });
+            onAssociateChange({ startDate: next });
+          }}
         />
         {a.status === 'PENDING' && a.onboardingPercent !== null && (
           <InfoRow
@@ -1364,7 +1379,12 @@ function ProfileTab({
             )
           }
         />
-        <InfoRow label="Department" value={a.departmentName ?? '—'} />
+        <DepartmentField
+          associate={a}
+          onSaved={(departmentId, departmentName) =>
+            onAssociateChange({ departmentId, departmentName })
+          }
+        />
         <InfoRow label="Job profile" value={a.jobProfileTitle ?? '—'} />
       </Section>
 
@@ -1853,6 +1873,256 @@ function PhoneField({
             title="Edit"
             // Always visible on touch devices (no hover to reveal it);
             // hover-revealed on pointer devices to keep the row clean.
+            className="opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      }
+    />
+  );
+}
+
+// Inline pencil-edit for a single text/date profile field — the PhoneField
+// interaction (pencil → input → Enter saves, Esc cancels) generalized, so
+// fixing a position or start date is one click instead of a round trip to
+// the /org people editor.
+function InlineFieldRow({
+  label,
+  icon,
+  display,
+  current,
+  inputType = 'text',
+  placeholder,
+  onSave,
+}: {
+  label: string;
+  icon?: React.ReactNode;
+  display: React.ReactNode;
+  /** Canonical value in input form ('' when unset). */
+  current: string;
+  inputType?: 'text' | 'date';
+  placeholder?: string;
+  /** Persist the trimmed non-empty value; throw to keep the editor open. */
+  onSave: (next: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(current);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!editing) setDraft(current);
+  }, [current, editing]);
+
+  async function save() {
+    if (saving) return;
+    const trimmed = draft.trim();
+    if (trimmed === current) {
+      setEditing(false);
+      return;
+    }
+    if (trimmed.length === 0) {
+      toast.error(`${label} cannot be cleared here.`);
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave(trimmed);
+      toast.success(`${label} updated.`);
+      setEditing(false);
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : 'Could not save.';
+      toast.error(msg);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="flex items-start gap-3 text-sm">
+        <div className="w-32 text-silver text-xs flex items-center gap-1.5 pt-2">
+          {icon}
+          <span>{label}</span>
+        </div>
+        <div className="flex-1 min-w-0 flex items-center gap-1">
+          <Input
+            type={inputType}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={placeholder}
+            className="h-8 text-sm"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void save();
+              } else if (e.key === 'Escape') {
+                e.preventDefault();
+                setDraft(current);
+                setEditing(false);
+              }
+            }}
+          />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => void save()}
+            disabled={saving}
+            aria-label={`Save ${label.toLowerCase()}`}
+            title="Save"
+          >
+            <Check className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => {
+              setDraft(current);
+              setEditing(false);
+            }}
+            disabled={saving}
+            aria-label="Cancel"
+            title="Cancel"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <InfoRow
+      icon={icon}
+      label={label}
+      value={
+        <div className="flex items-center gap-2 group">
+          <span className="flex-1 min-w-0">{display}</span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setEditing(true)}
+            aria-label={`Edit ${label.toLowerCase()}`}
+            title="Edit"
+            className="opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      }
+    />
+  );
+}
+
+// Department picks from the org's department list inline — same pencil
+// interaction, but a select (departments are a managed vocabulary, not
+// free text). Loads the list on first edit.
+function DepartmentField({
+  associate: a,
+  onSaved,
+}: {
+  associate: DirectoryEntry;
+  onSaved: (departmentId: string | null, departmentName: string | null) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [departments, setDepartments] = useState<
+    Array<{ id: string; name: string }> | null
+  >(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (!editing || departments !== null) return;
+    let alive = true;
+    listDepartments()
+      .then((r) => {
+        if (alive) setDepartments(r.departments.map((d) => ({ id: d.id, name: d.name })));
+      })
+      .catch(() => {
+        if (alive) {
+          toast.error('Could not load departments.');
+          setEditing(false);
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, [editing, departments]);
+
+  async function save(next: string) {
+    if (saving) return;
+    const nextId = next || null;
+    if (nextId === (a.departmentId ?? null)) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      await assignOrgFields(a.id, { departmentId: nextId });
+      onSaved(nextId, departments?.find((d) => d.id === nextId)?.name ?? null);
+      toast.success('Department updated.');
+      setEditing(false);
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : 'Could not save.';
+      toast.error(msg);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="flex items-start gap-3 text-sm">
+        <div className="w-32 text-silver text-xs flex items-center pt-2">
+          <span>Department</span>
+        </div>
+        <div className="flex-1 min-w-0 flex items-center gap-1">
+          {departments === null ? (
+            <span className="text-xs text-silver pt-2">Loading…</span>
+          ) : (
+            <Select
+              size="sm"
+              value={a.departmentId ?? ''}
+              onChange={(e) => void save(e.target.value)}
+              disabled={saving}
+              aria-label="Department"
+              autoFocus
+            >
+              <option value="">— No department —</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </Select>
+          )}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setEditing(false)}
+            disabled={saving}
+            aria-label="Cancel"
+            title="Cancel"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <InfoRow
+      label="Department"
+      value={
+        <div className="flex items-center gap-2 group">
+          <span className="flex-1 min-w-0">{a.departmentName ?? '—'}</span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setEditing(true)}
+            aria-label="Edit department"
+            title="Edit"
             className="opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
           >
             <Pencil className="h-3.5 w-3.5" />
