@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { authorizeBackgroundCheck } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { TaskShell, inputCls, Field } from './ProfileInfoTask';
+import { TaskShell, inputCls, Field, useNextTask } from './ProfileInfoTask';
 import { Button } from '@/components/ui/Button';
 
 const DISCLOSURE = [
@@ -33,6 +33,7 @@ export function BackgroundCheckTask() {
   const backTo = isAssociate
     ? `/onboarding/me/${applicationId}`
     : `/onboarding/applications/${applicationId}`;
+  const next = useNextTask('BACKGROUND_CHECK');
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -53,7 +54,7 @@ export function BackgroundCheckTask() {
         authorize: true,
       });
       toast.success('Background check authorized.');
-      navigate(backTo, { replace: true });
+      navigate(next?.route ?? backTo, { replace: true });
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'name_mismatch') {
@@ -114,7 +115,11 @@ export function BackgroundCheckTask() {
             disabled={submitting || !accepted || !typedName.trim()}
           >
             {!submitting && <ShieldCheck className="h-4 w-4" />}
-            {submitting ? 'Authorizing…' : 'Authorize background check'}
+            {submitting
+              ? 'Authorizing…'
+              : next
+                ? `Authorize & continue → ${next.label}`
+                : 'Authorize background check'}
           </Button>
           <Link to={backTo} className="text-sm text-silver hover:text-white">
             Cancel

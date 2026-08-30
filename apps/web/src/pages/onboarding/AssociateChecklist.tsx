@@ -12,8 +12,10 @@ import {
 import type {
   ApplicationDetail,
   ChecklistTask,
+  DocumentRecord,
 } from '@alto-people/shared';
 import { getApplication } from '@/lib/onboardingApi';
+import { listMyDocuments } from '@/lib/documentsApi';
 import { ApiError } from '@/lib/api';
 import { ProgressBar } from '@/components/ProgressBar';
 import {
@@ -88,9 +90,59 @@ const REAL_KINDS = new Set([
   'E_SIGN',
 ]);
 
+// Which checklist row a rejected document belongs to. The checklist task
+// payload itself carries no rejection info, so this is derived from the
+// associate's own document vault (one extra GET) — kind → task kind.
+const REJECTION_TASK_FOR_KIND: Record<string, string> = {
+  ID: 'DOCUMENT_UPLOAD',
+  SSN_CARD: 'DOCUMENT_UPLOAD',
+  I9_SUPPORTING: 'DOCUMENT_UPLOAD',
+  J1_VISA: 'J1_DOCS',
+  J1_DS2019: 'J1_DOCS',
+};
+
+/**
+ * task.kind → the human line to show under that row when one of its
+ * documents was rejected. Identity-document rejections land on the
+ * Documents row (that's where the replace flow lives), falling back to the
+ * I-9 row for templates that collect documents there instead.
+ */
+function rejectionByTask(
+  tasks: ChecklistTask[],
+  docs: DocumentRecord[]
+): Map<string, string> {
+  const out = new Map<string, string>();
+  const kinds = new Set<string>(tasks.map((t) => t.kind));
+  const grouped = new Map<string, DocumentRecord[]>();
+  for (const d of docs) {
+    if (d.status !== 'REJECTED') continue;
+    let taskKind = REJECTION_TASK_FOR_KIND[d.kind];
+    if (!taskKind) continue;
+    if (taskKind === 'DOCUMENT_UPLOAD' && !kinds.has('DOCUMENT_UPLOAD')) {
+      taskKind = 'I9_VERIFICATION';
+    }
+    if (!kinds.has(taskKind)) continue;
+    const list = grouped.get(taskKind) ?? [];
+    list.push(d);
+    grouped.set(taskKind, list);
+  }
+  for (const [taskKind, list] of grouped) {
+    const first = list[0];
+    const what = first.i9DocTitle ?? first.filename;
+    out.set(
+      taskKind,
+      list.length === 1
+        ? `${what} was rejected${first.rejectionReason ? ` — ${first.rejectionReason}` : ''}. Open this step to replace it.`
+        : `${list.length} documents were rejected. Open this step to replace them.`
+    );
+  }
+  return out;
+}
+
 export function AssociateChecklist() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const [detail, setDetail] = useState<ApplicationDetail | null>(null);
+  const [rejectedDocs, setRejectedDocs] = useState<DocumentRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   // Confetti fires only when 100% is REACHED in this session — someone
   // revisiting an already-complete checklist shouldn't get the party again.
@@ -108,6 +160,14 @@ export function AssociateChecklist() {
       setDetail(next);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to load.');
+    }
+    // Rejection context is best-effort — a failed vault fetch must never
+    // block the checklist itself.
+    try {
+      const r = await listMyDocuments();
+      setRejectedDocs(r.documents.filter((d) => d.status === 'REJECTED'));
+    } catch {
+      // leave whatever we had
     }
   }, [applicationId]);
 
@@ -227,17 +287,21 @@ export function AssociateChecklist() {
       </Card>
 
       <section className="space-y-2.5">
-        {detail.tasks.map((t) => (
-          <AssociateTaskRow
-            key={t.id}
-            task={t}
-            applicationId={detail.id}
-            isNext={nextTask?.id === t.id}
-            canRevisit={
-              detail.status !== 'APPROVED' && detail.status !== 'REJECTED'
-            }
-          />
-        ))}
+        {(() => {
+          const attention = rejectionByTask(detail.tasks, rejectedDocs);
+          return detail.tasks.map((t) => (
+            <AssociateTaskRow
+              key={t.id}
+              task={t}
+              applicationId={detail.id}
+              isNext={nextTask?.id === t.id}
+              attention={attention.get(t.kind)}
+              canRevisit={
+                detail.status !== 'APPROVED' && detail.status !== 'REJECTED'
+              }
+            />
+          ));
+        })()}
       </section>
     </div>
   );
@@ -300,11 +364,13 @@ interface AssociateTaskRowProps {
   task: ChecklistTask;
   applicationId: string;
   isNext: boolean;
+  /** Alert line under the row: a rejected document needs replacing here. */
+  attention?: string;
   /** True until HR approves/rejects — completed tasks re-open for edits. */
   canRevisit: boolean;
 }
 
-function AssociateTaskRow({ task, applicationId, isNext, canRevisit }: AssociateTaskRowProps) {
+function AssociateTaskRow({ task, applicationId, isNext, attention, canRevisit }: AssociateTaskRowProps) {
   const isComplete = task.status === 'DONE' || task.status === 'SKIPPED';
   const isReal = REAL_KINDS.has(task.kind);
   // Completed tasks stay linkable until HR settles the application — each
@@ -326,6 +392,12 @@ function AssociateTaskRow({ task, applicationId, isNext, canRevisit }: Associate
         {task.description && (
           <div className="text-xs text-silver mt-1 line-clamp-2">
             {task.description}
+          </div>
+        )}
+        {attention && (
+          <div className="flex items-start gap-1.5 text-xs text-alert mt-1">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" aria-hidden />
+            <span>{attention}</span>
           </div>
         )}
       </div>
@@ -375,6 +447,9 @@ function AssociateTaskRow({ task, applicationId, isNext, canRevisit }: Associate
     isNext && linkable
       ? 'bg-gold/[0.05] border-gold/50 ring-1 ring-gold/20 hover:border-gold/80 hover:ring-gold/40'
       : cn(tone.bg, tone.border, linkable && 'hover:border-gold/60'),
+    // A rejected document outranks every other tone — the row must answer
+    // "which step needs me?" at a glance.
+    attention && 'border-alert/50 bg-alert/[0.05] ring-1 ring-alert/20',
     linkable && 'cursor-pointer',
     !linkable && !isComplete && 'opacity-80'
   );

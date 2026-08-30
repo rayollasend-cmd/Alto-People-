@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowDown,
   ArrowUp,
@@ -94,6 +94,10 @@ export function TemplateEditor() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const isNew = !id || id === 'new';
+  // "Duplicate" from the list opens /templates/new?from=<sourceId>: the
+  // form is seeded as an unsaved copy and nothing exists until Save.
+  const [searchParams] = useSearchParams();
+  const duplicateFromId = isNew ? searchParams.get('from') : null;
 
   const { can } = useAuth();
   const canManage = can('manage:onboarding');
@@ -160,11 +164,40 @@ export function TemplateEditor() {
           !cancelled &&
           setError(err instanceof ApiError ? err.message : 'Failed to load.')
         );
+    } else if (duplicateFromId) {
+      // Seed the new-template form from the source. The pristine snapshot
+      // is deliberately NOT updated: a fresh duplicate is unsaved work, so
+      // navigating away without saving warns like any other dirty form.
+      listTemplates()
+        .then((r) => {
+          if (cancelled) return;
+          const t = r.templates.find((x) => x.id === duplicateFromId);
+          if (!t) {
+            setError('Template to duplicate not found.');
+            return;
+          }
+          setName(`${t.name} (copy)`);
+          setTrack(t.track);
+          setClientId(t.clientId ?? '');
+          setTasks(
+            t.tasks.map((tk) => ({
+              _key: tk.id,
+              kind: tk.kind,
+              title: tk.title,
+              description: tk.description ?? '',
+              dueOffsetDays: tk.dueOffsetDays ?? null,
+            })),
+          );
+        })
+        .catch((err) =>
+          !cancelled &&
+          setError(err instanceof ApiError ? err.message : 'Failed to load.')
+        );
     }
     return () => {
       cancelled = true;
     };
-  }, [id, isNew]);
+  }, [id, isNew, duplicateFromId]);
 
   const updateTask = (i: number, patch: Partial<DraftTask>) => {
     setTasks((prev) => prev.map((t, idx) => (idx === i ? { ...t, ...patch } : t)));
@@ -390,9 +423,24 @@ export function TemplateEditor() {
                   {(p) => (
                     <Select
                       value={t.kind}
-                      onChange={(e) =>
-                        updateTask(i, { kind: e.target.value as TaskKind })
-                      }
+                      onChange={(e) => {
+                        const kind = e.target.value as TaskKind;
+                        // Follow the kind with its default title, but only
+                        // while the title is still a stock kind label — a
+                        // customized title is never clobbered.
+                        const label = TASK_KIND_OPTIONS.find(
+                          (o) => o.value === kind,
+                        )?.label;
+                        const isStockTitle = TASK_KIND_OPTIONS.some(
+                          (o) => o.label === t.title.trim(),
+                        );
+                        updateTask(
+                          i,
+                          label && isStockTitle
+                            ? { kind, title: label }
+                            : { kind },
+                        );
+                      }}
                       {...p}
                     >
                       {TASK_KIND_OPTIONS.map((o) => (

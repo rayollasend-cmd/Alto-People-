@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Globe, LayoutTemplate, Plus, Trash2 } from 'lucide-react';
+import { Copy, Globe, LayoutTemplate, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   ClientSummary,
@@ -209,6 +209,17 @@ export function TemplatesList() {
                       </span>
                     </div>
                     <div className="flex justify-end gap-1.5">
+                      {/* Opens the editor in "new" mode prefilled from this
+                          template — nothing is created until Save. */}
+                      <Link to={`/onboarding/templates/new?from=${t.id}`}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="Duplicate template"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                      </Link>
                       <Button
                         variant="ghost"
                         size="sm"

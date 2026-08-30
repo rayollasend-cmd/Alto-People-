@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import { useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2, Upload } from 'lucide-react';
+import { Camera, CheckCircle2, Upload } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { getW4, submitW4, type W4Status } from '@/lib/onboardingApi';
 import { uploadI9Document } from '@/lib/i9Api';
@@ -9,7 +9,7 @@ import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fmtDateTime } from '@/lib/format';
 import { Select } from '@/components/ui/Select';
-import { Field, SubmitRow, TaskShell, inputCls } from './ProfileInfoTask';
+import { Field, SubmitRow, TaskShell, inputCls, useNextTask } from './ProfileInfoTask';
 
 const SSN_PATTERN = /^\d{3}-?\d{2}-?\d{4}$/;
 
@@ -34,7 +34,10 @@ export function W4Task() {
   const [replaceSsn, setReplaceSsn] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const cardInputRef = useRef<HTMLInputElement | null>(null);
+  // Two pickers, one handler: `capture` locks iOS to the camera, so a
+  // camera-only input made an emailed PDF of the card unselectable.
+  const cardCameraRef = useRef<HTMLInputElement | null>(null);
+  const cardFileRef = useRef<HTMLInputElement | null>(null);
   const [cardOnFile, setCardOnFile] = useState(false);
   const [cardUploading, setCardUploading] = useState(false);
   const [cardFilename, setCardFilename] = useState<string | null>(null);
@@ -43,6 +46,7 @@ export function W4Task() {
   const backTo = isAssociate
     ? `/onboarding/me/${applicationId}`
     : `/onboarding/applications/${applicationId}`;
+  const next = useNextTask('W4');
 
   // Hydrate from server so re-opens show "•••-••-1234" rather than asking
   // the associate to retype an already-encrypted SSN.
@@ -132,7 +136,7 @@ export function W4Task() {
         extraWithholding: Number(extraWithholding) || 0,
         ssn: showSsnInput ? ssn : undefined,
       });
-      navigate(backTo, { replace: true });
+      navigate(next?.route ?? backTo, { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Submission failed.');
     } finally {
@@ -250,7 +254,17 @@ export function W4Task() {
             {(p) => (
               <div>
                 <input
-                  ref={cardInputRef}
+                  ref={cardCameraRef}
+                  type="file"
+                  accept={CARD_ACCEPTED_MIMES}
+                  capture="environment"
+                  onChange={onCardFileChange}
+                  className="hidden"
+                  aria-hidden="true"
+                  tabIndex={-1}
+                />
+                <input
+                  ref={cardFileRef}
                   type="file"
                   accept={CARD_ACCEPTED_MIMES}
                   onChange={onCardFileChange}
@@ -269,31 +283,53 @@ export function W4Task() {
                     <button
                       type="button"
                       {...p}
-                      onClick={() => cardInputRef.current?.click()}
+                      onClick={() => cardCameraRef.current?.click()}
                       disabled={cardUploading}
                       className="ml-auto text-gold hover:text-gold-bright whitespace-nowrap"
                     >
-                      Upload a different photo
+                      Take new photo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => cardFileRef.current?.click()}
+                      disabled={cardUploading}
+                      className="text-gold hover:text-gold-bright whitespace-nowrap"
+                    >
+                      Choose file
                     </button>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    {...p}
-                    onClick={() => cardInputRef.current?.click()}
-                    disabled={cardUploading}
-                    className={cn(
-                      'w-full px-4 py-5 rounded-md border-2 border-dashed transition-colors text-sm',
-                      cardUploading
-                        ? 'border-navy-secondary text-silver/70 cursor-wait'
-                        : 'border-navy-secondary text-silver hover:border-gold/60 hover:text-gold',
-                    )}
-                  >
-                    <Upload className="h-4 w-4 inline-block mr-2 -mt-0.5" />
-                    {cardUploading
-                      ? 'Uploading…'
-                      : 'Click to upload your Social Security card'}
-                  </button>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      {...p}
+                      onClick={() => cardCameraRef.current?.click()}
+                      disabled={cardUploading}
+                      className={cn(
+                        'px-4 py-5 rounded-md border-2 border-dashed transition-colors text-sm',
+                        cardUploading
+                          ? 'border-navy-secondary text-silver/70 cursor-wait'
+                          : 'border-navy-secondary text-silver hover:border-gold/60 hover:text-gold',
+                      )}
+                    >
+                      <Camera className="h-4 w-4 inline-block mr-2 -mt-0.5" />
+                      {cardUploading ? 'Uploading…' : 'Take photo'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => cardFileRef.current?.click()}
+                      disabled={cardUploading}
+                      className={cn(
+                        'px-4 py-5 rounded-md border-2 border-dashed transition-colors text-sm',
+                        cardUploading
+                          ? 'border-navy-secondary text-silver/70 cursor-wait'
+                          : 'border-navy-secondary text-silver hover:border-gold/60 hover:text-gold',
+                      )}
+                    >
+                      <Upload className="h-4 w-4 inline-block mr-2 -mt-0.5" />
+                      {cardUploading ? 'Uploading…' : 'Choose file'}
+                    </button>
+                  </div>
                 )}
               </div>
             )}
@@ -359,7 +395,7 @@ export function W4Task() {
           </p>
         )}
 
-        <SubmitRow submitting={submitting} backTo={backTo} label="Submit W-4" />
+        <SubmitRow submitting={submitting} backTo={backTo} label="Submit W-4" next={next} />
       </form>
     </TaskShell>
   );

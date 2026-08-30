@@ -63,9 +63,7 @@ export function AcceptInvite() {
   const [error, setError] = useState<string | null>(null);
 
   const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   // The "account already active" conflict: the error text says "try signing
   // in instead", so the page must actually offer that action.
@@ -104,7 +102,10 @@ export function AcceptInvite() {
     };
   }, [token]);
 
-  const passwordOk = password.length >= 12 && password === confirm;
+  // No confirm field: the eye toggle lets them verify what they typed, and
+  // a mistyped password still has the self-service reset path — cheaper
+  // than making 50 phone-first hires a week type 12+ characters twice.
+  const passwordOk = password.length >= 12;
   const strength = passwordStrength(password);
 
   const handleRenew = async (e: FormEvent) => {
@@ -264,7 +265,7 @@ export function AcceptInvite() {
                       ? 'Strength: ok — mix upper and lower case with a number to make it strong.'
                       : 'Minimum 12 characters.'
                 }
-                className="mb-4"
+                className="mb-2"
               >
                 {(p) => (
                   <div className="relative">
@@ -284,39 +285,6 @@ export function AcceptInvite() {
                     <ShowPasswordToggle
                       shown={showPassword}
                       onToggle={() => setShowPassword((v) => !v)}
-                    />
-                  </div>
-                )}
-              </Field>
-
-              <Field
-                label="Confirm password"
-                required
-                error={
-                  confirm && password !== confirm
-                    ? "Passwords don't match."
-                    : undefined
-                }
-                className="mb-2"
-              >
-                {(p) => (
-                  <div className="relative">
-                    <Lock
-                      className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-silver/70 pointer-events-none"
-                      aria-hidden="true"
-                    />
-                    <Input
-                      type={showConfirm ? 'text' : 'password'}
-                      autoComplete="new-password"
-                      minLength={12}
-                      value={confirm}
-                      onChange={(e) => setConfirm(e.target.value)}
-                      className="pl-9 pr-10"
-                      {...p}
-                    />
-                    <ShowPasswordToggle
-                      shown={showConfirm}
-                      onToggle={() => setShowConfirm((v) => !v)}
                     />
                   </div>
                 )}

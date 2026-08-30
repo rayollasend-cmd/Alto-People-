@@ -122,6 +122,13 @@ const EnvSchema = z.object({
   // unaccepted after 3 days and abandoned onboardings after 10 idle days
   // (final notice at 8). On by default (6h scan). Set 0 to disable.
   ONBOARDING_PURGE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
+  // Automatic stale-application nudge (lib/staleNudge.ts): the same
+  // personalized "you're X% done" email as the manual Nudge-all-stale
+  // button, on a timer, for in-flight applications past the 7-day
+  // staleness rule. Per recipient: at most one automatic nudge per 72h
+  // and 3 ever — the manual button stays uncapped. On by default (6h
+  // scan). Set 0 to disable.
+  STALE_NUDGE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
   // Dormancy auto-deactivation (lib/dormancySweep.ts): associates with no
   // clock-ins, worked shifts, or upcoming schedule for DEACTIVATE_DAYS are
   // auto-deactivated (same pause as the manual button — one-click

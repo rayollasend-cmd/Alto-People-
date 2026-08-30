@@ -11,6 +11,7 @@ import { logger } from './lib/logger.js';
 import { startKeepAlive } from './lib/keepalive.js';
 import { startInviteReminderCron } from './lib/inviteReminder.js';
 import { startOnboardingPurgeCron } from './lib/onboardingPurge.js';
+import { startStaleNudgeCron } from './lib/staleNudge.js';
 import { startDormancySweepCron } from './lib/dormancySweep.js';
 import { startOpsDigestCron } from './lib/opsDigest.js';
 import { startAttestationReminderCron } from './lib/attestationReminder.js';
@@ -63,6 +64,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
 
   startInviteReminderCron();
   startOnboardingPurgeCron();
+  startStaleNudgeCron();
   startDormancySweepCron();
   startOpsDigestCron();
   startAttestationReminderCron();

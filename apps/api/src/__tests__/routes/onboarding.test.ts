@@ -4,6 +4,7 @@ import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import { decryptString } from '../../lib/crypto.js';
 import { flushPendingAudits } from '../../lib/audit.js';
+import { runStaleNudgeSweep } from '../../lib/staleNudge.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createApplicationWithChecklist,
@@ -401,7 +402,7 @@ describe('POLICY_ACK', () => {
 
 describe('Cross-tenant isolation', () => {
   it('ASSOCIATE for client A cannot read application for client B (404)', async () => {
-    const clientA = await createClient('A');
+    await createClient('A');
     const clientB = await createClient('B');
     const assocA = await createAssociate();
     const assocB = await createAssociate();
@@ -421,7 +422,7 @@ describe('Cross-tenant isolation', () => {
   });
 
   it('ASSOCIATE cannot submit profile to another tenant\'s application', async () => {
-    const clientA = await createClient('A');
+    await createClient('A');
     const clientB = await createClient('B');
     const assocA = await createAssociate();
     const assocB = await createAssociate();
@@ -656,6 +657,91 @@ describe('POST /onboarding/applications/nudge-stale (bulk stale nudge)', () => {
     const a = await loginAs(w.associateUser.email);
     const res = await a.post('/onboarding/applications/nudge-stale');
     expect(res.status).toBe(403);
+  });
+});
+
+describe('automatic stale-nudge sweep (lib/staleNudge.ts cron variant)', () => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);
+  const hoursAhead = (n: number) => new Date(Date.now() + n * 60 * 60 * 1000);
+
+  async function seedStale() {
+    const client = await createClient();
+    const assoc = await createAssociate({ email: 'stalled@example.com' });
+    const app_ = (await createApplicationWithChecklist({
+      associateId: assoc.id,
+      clientId: client.id,
+    })) as { id: string };
+    await prisma.application.update({
+      where: { id: app_.id },
+      data: { invitedAt: daysAgo(10) },
+    });
+    const { user } = await createUser({
+      role: 'ASSOCIATE',
+      email: assoc.email,
+      associateId: assoc.id,
+    });
+    return { app_, user };
+  }
+
+  it('cooldown respected: a second automatic sweep within 72h sends nothing', async () => {
+    const { user } = await seedStale();
+
+    const first = await runStaleNudgeSweep();
+    expect(first).toEqual({ nudged: 1, skipped: 0 });
+    const rows = await prisma.notification.findMany({
+      where: { category: 'onboarding.nudge' },
+    });
+    expect(rows.length).toBe(1);
+    expect(rows[0].recipientUserId).toBe(user.id);
+    // Automatic rows carry no sender — that's what the lifetime cap counts.
+    expect(rows[0].senderUserId).toBeNull();
+
+    // Immediately again → inside the 72h cooldown, nothing sent.
+    const second = await runStaleNudgeSweep();
+    expect(second).toEqual({ nudged: 0, skipped: 1 });
+    expect(
+      await prisma.notification.count({ where: { category: 'onboarding.nudge' } }),
+    ).toBe(1);
+
+    // Past the cooldown the sweep nudges again (cap not yet reached).
+    const third = await runStaleNudgeSweep({ now: hoursAhead(73) });
+    expect(third).toEqual({ nudged: 1, skipped: 0 });
+  });
+
+  it('lifetime cap respected: the 4th automatic nudge is never sent; the manual route stays uncapped', async () => {
+    await seedStale();
+
+    // Three sweeps, each safely past the previous one's cooldown.
+    expect(await runStaleNudgeSweep()).toEqual({ nudged: 1, skipped: 0 });
+    expect(await runStaleNudgeSweep({ now: hoursAhead(4 * 24) })).toEqual({
+      nudged: 1,
+      skipped: 0,
+    });
+    expect(await runStaleNudgeSweep({ now: hoursAhead(8 * 24) })).toEqual({
+      nudged: 1,
+      skipped: 0,
+    });
+
+    // Cap of 3 automatic nudges reached — the 4th never goes out, no
+    // matter how much time passes.
+    expect(await runStaleNudgeSweep({ now: hoursAhead(12 * 24) })).toEqual({
+      nudged: 0,
+      skipped: 1,
+    });
+    expect(
+      await prisma.notification.count({ where: { category: 'onboarding.nudge' } }),
+    ).toBe(3);
+
+    // Human judgment is exempt: the manual bulk route still nudges.
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const manual = await a.post('/onboarding/applications/nudge-stale');
+    expect(manual.status).toBe(200);
+    expect(manual.body).toEqual({ nudged: 1, skipped: 0 });
+    const manualRow = await prisma.notification.findFirst({
+      where: { category: 'onboarding.nudge', senderUserId: { not: null } },
+    });
+    expect(manualRow?.senderUserId).toBe(hr.id);
   });
 });
 

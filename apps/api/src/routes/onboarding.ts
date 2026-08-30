@@ -50,6 +50,7 @@ import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
 import { generateInviteToken } from '../lib/inviteToken.js';
 import { runWithConcurrency } from '../lib/concurrency.js';
 import { sendReminderForUser } from '../lib/inviteReminder.js';
+import { runStaleNudgeSweep } from '../lib/staleNudge.js';
 import { send } from '../lib/notifications.js';
 import { hashSignedPdf, renderSignedAgreement } from '../lib/esign.js';
 import { autoFileOfferLetter } from '../lib/offerLetters.js';
@@ -718,13 +719,16 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
  * Scoped fetch of the caller's in-flight (undecided) applications — the
  * population both /applications/stats and /applications/nudge-stale reason
  * over. Shared so the stats "stuck" count and the bulk-nudge target set
- * can never diverge.
+ * can never diverge. `null` (the automatic sweep in lib/staleNudge.ts,
+ * which has no session) means org-wide.
  */
-function fetchInFlightApplications(user: Parameters<typeof scopeApplications>[0]) {
+export function fetchInFlightApplications(
+  user: Parameters<typeof scopeApplications>[0] | null,
+) {
   return prisma.application.findMany({
     take: 500,
     where: {
-      ...scopeApplications(user),
+      ...(user ? scopeApplications(user) : { deletedAt: null }),
       status: { notIn: ['APPROVED', 'REJECTED'] },
     },
     orderBy: { invitedAt: 'desc' },
@@ -745,7 +749,7 @@ function fetchInFlightApplications(user: Parameters<typeof scopeApplications>[0]
  * STATS_STALE_DAYS ago. Single definition shared by the stats tile and the
  * bulk nudge so the count HR confirms is the count that gets nudged.
  */
-function isStaleApplication(
+export function isStaleApplication(
   invitedAt: Date,
   percentComplete: number,
   now: number,
@@ -4205,9 +4209,13 @@ onboardingRouter.post(
  * send the email, persist the Notification row (category
  * onboarding.nudge), and write the audit event. Provider failures never
  * throw — the outcome is reported via `emailSent`.
+ *
+ * `actor` is the HR user behind a manual nudge; `null` means the
+ * automatic sweep (lib/staleNudge.ts), whose rows get senderUserId null —
+ * that's what its per-recipient cap counts.
  */
-async function deliverNudge(
-  req: Request,
+export async function deliverNudge(
+  actor: { userId: string; req: Request } | null,
   app: { id: string; clientId: string },
   recipient: { id: string; email: string },
   subject: string,
@@ -4240,12 +4248,12 @@ async function deliverNudge(
       externalRef: emailRef,
       failureReason: emailFailed,
       sentAt: emailFailed ? null : new Date(),
-      senderUserId: req.user!.id,
+      senderUserId: actor ? actor.userId : null,
     },
   });
 
   await recordOnboardingEvent({
-    actorUserId: req.user!.id,
+    actorUserId: actor ? actor.userId : null,
     action: 'onboarding.nudge_sent',
     applicationId: app.id,
     clientId: app.clientId,
@@ -4256,7 +4264,7 @@ async function deliverNudge(
       emailFailed,
       ...extraMetadata,
     },
-    req,
+    req: actor?.req,
   });
 
   return { notificationId: notif.id, emailSent: emailFailed === null };
@@ -4283,7 +4291,7 @@ onboardingRouter.post(
       }
 
       const { notificationId, emailSent } = await deliverNudge(
-        req,
+        { userId: req.user!.id, req },
         app,
         { id: user.id, email: user.email },
         subject,
@@ -4317,7 +4325,7 @@ onboardingRouter.post(
  * nudgeContentFor prefill, so a bulk nudge reads exactly like a single
  * one sent from the dialog.
  */
-function staleNudgeContent(
+export function staleNudgeContent(
   firstName: string,
   percentComplete: number,
   blockedOnTitle: string | null,
@@ -4343,60 +4351,13 @@ onboardingRouter.post(
   INVITE,
   async (req, res, next) => {
     try {
-      const rows = await fetchInFlightApplications(req.user!);
-      const now = Date.now();
-      const stale = rows.filter((row) =>
-        isStaleApplication(
-          row.invitedAt,
-          computePercent(row.checklist?.tasks ?? []),
-          now,
-        ),
-      );
-
-      // One user fetch for the whole set (same batching as bulk-resend).
-      const userRows = await prisma.user.findMany({
-        where: {
-          associateId: { in: [...new Set(stale.map((r) => r.associateId))] },
-        },
+      // Same sweep the automatic cron runs (lib/staleNudge.ts), scoped to
+      // the caller. A human actor means NO cooldown/cap — HR clicking the
+      // button is the judgment call.
+      const { nudged, skipped } = await runStaleNudgeSweep({
+        scope: req.user!,
+        actor: { userId: req.user!.id, req },
       });
-      const userByAssociateId = new Map<string, (typeof userRows)[number]>();
-      for (const u of userRows) {
-        if (u.associateId && !userByAssociateId.has(u.associateId)) {
-          userByAssociateId.set(u.associateId, u);
-        }
-      }
-
-      let nudged = 0;
-      let skipped = 0;
-      // Serial sends — the email sender already spaces provider calls, and
-      // the stale set is bounded by the in-flight fetch's 500-row cap.
-      for (const row of stale) {
-        const user = userByAssociateId.get(row.associateId);
-        if (!user || !user.email) {
-          skipped++;
-          continue;
-        }
-        const tasks = row.checklist?.tasks ?? [];
-        const blocked = [...tasks]
-          .sort((a, b) => a.order - b.order)
-          .find((t) => t.status !== 'DONE' && t.status !== 'SKIPPED');
-        const { subject, body } = staleNudgeContent(
-          row.associate.firstName,
-          computePercent(tasks),
-          blocked?.title ?? null,
-        );
-        const { emailSent } = await deliverNudge(
-          req,
-          row,
-          { id: user.id, email: user.email },
-          subject,
-          body,
-          { bulk: true },
-        );
-        if (emailSent) nudged++;
-        else skipped++;
-      }
-
       res.status(200).json({ nudged, skipped });
     } catch (err) {
       next(err);

@@ -387,9 +387,10 @@ describe('HR verify / reject', () => {
     });
     expect(reopen).not.toBeNull();
 
-    // In-app bell row should deeplink to the live application's checklist
-    // (not the generic /me/documents page) so the associate lands where
-    // the just-reopened task is waiting.
+    // In-app bell row should deeplink straight to the just-reopened
+    // document-upload task page (not the bare checklist, and not the
+    // generic /me/documents page) so the associate lands where the
+    // re-upload happens.
     await flushPendingNotifications();
     const assocUserRow = await prisma.user.findUniqueOrThrow({
       where: { id: assocUser.id },
@@ -401,7 +402,7 @@ describe('HR verify / reject', () => {
         category: 'documents',
       },
     });
-    expect(bellRow?.linkUrl).toBe(`/onboarding/me/${app.id}`);
+    expect(bellRow?.linkUrl).toBe(`/onboarding/me/${app.id}/tasks/document_upload`);
   });
 
   it('rejecting a non-checklist doc kind does NOT rewind a task', async () => {
@@ -460,7 +461,7 @@ describe('HR verify / reject', () => {
 });
 
 describe('POST /documents/admin/:id/request-reupload', () => {
-  it('EXPIRED ID doc: rewinds the upload task, audits, and bell-links to the checklist', async () => {
+  it('EXPIRED ID doc: rewinds the upload task, audits, and bell-links to the upload task page', async () => {
     const { client, associate, user: assocUser } = await seedAssociate();
     const app = await createApplicationWithChecklist({
       associateId: associate.id,
@@ -516,8 +517,8 @@ describe('POST /documents/admin/:id/request-reupload', () => {
     const reopenMeta = reopen!.metadata as Record<string, unknown>;
     expect(reopenMeta.reason).toBe('document_expired');
 
-    // Renewal-specific copy, deep-linked at the live application's
-    // checklist where the just-reopened task is waiting.
+    // Renewal-specific copy, deep-linked straight at the just-reopened
+    // document-upload task page.
     await flushPendingNotifications();
     const bellRow = await prisma.notification.findFirst({
       where: {
@@ -526,7 +527,7 @@ describe('POST /documents/admin/:id/request-reupload', () => {
         category: 'documents',
       },
     });
-    expect(bellRow?.linkUrl).toBe(`/onboarding/me/${app.id}`);
+    expect(bellRow?.linkUrl).toBe(`/onboarding/me/${app.id}/tasks/document_upload`);
     expect(bellRow?.subject).toContain('has expired');
   });
 

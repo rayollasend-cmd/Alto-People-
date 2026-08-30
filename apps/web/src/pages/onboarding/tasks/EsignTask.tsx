@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2, FileSignature } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import {
@@ -9,7 +9,7 @@ import {
 } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { fmtDateTime } from '@/lib/format';
-import { Field, TaskShell, inputCls } from './ProfileInfoTask';
+import { Field, TaskShell, inputCls, useNextTask } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
@@ -25,6 +25,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 export function EsignTask() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [agreements, setAgreements] = useState<EsignAgreement[] | null>(null);
   const [topError, setTopError] = useState<string | null>(null);
 
@@ -32,20 +33,33 @@ export function EsignTask() {
   const backTo = isAssociate
     ? `/onboarding/me/${applicationId}`
     : `/onboarding/applications/${applicationId}`;
+  const next = useNextTask('E_SIGN');
 
-  const refresh = useCallback(async () => {
-    if (!applicationId) return;
+  const refresh = useCallback(async (): Promise<EsignAgreement[] | null> => {
+    if (!applicationId) return null;
     try {
       const r = await listEsignAgreements(applicationId);
       setAgreements(r.agreements);
+      return r.agreements;
     } catch (err) {
       setTopError(err instanceof ApiError ? err.message : 'Failed to load.');
+      return null;
     }
   }, [applicationId]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // The task's final success action: once the LAST agreement is signed,
+  // chain forward like the sibling tasks. Intermediate signatures stay an
+  // in-place refetch.
+  const handleSigned = useCallback(async () => {
+    const fresh = await refresh();
+    if (fresh && fresh.length > 0 && fresh.every((a) => a.signedAt)) {
+      navigate(next?.route ?? backTo, { replace: true });
+    }
+  }, [refresh, navigate, next, backTo]);
 
   if (!applicationId) return null;
 
@@ -88,7 +102,7 @@ export function EsignTask() {
               key={a.id}
               applicationId={applicationId}
               agreement={a}
-              onSigned={refresh}
+              onSigned={handleSigned}
             />
           ))}
         </ul>

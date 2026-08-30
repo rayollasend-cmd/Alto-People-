@@ -978,17 +978,22 @@ documentsRouter.post('/admin/bulk-verify', MANAGE, async (req, res, next) => {
  * Returns the live application's id (for the notification deep link) or
  * null when there's nothing to point the associate at beyond
  * /me/documents. The id is returned even if a later rewind step failed —
- * the checklist is still the best landing page for them.
+ * the checklist is still the best landing page for them. `linkTaskKind`
+ * is the reopened task's kind when the live checklist actually has one —
+ * callers deep-link straight to that task page (the web's
+ * /onboarding/me/:id/tasks/<kind-lowercased> routes) instead of dropping
+ * the associate on the bare checklist with no visible reason.
  */
 async function reopenUploadTaskForDoc(
   user: { id: string },
   doc: { id: string; kind: DocumentKind; associateId: string },
   reason: 'document_rejected' | 'document_expired',
   req: Request,
-): Promise<string | null> {
+): Promise<{ liveApplicationId: string | null; linkTaskKind: TaskKind | null }> {
   const taskKind = DOC_KIND_TO_TASK_KIND[doc.kind];
-  if (!taskKind) return null;
+  if (!taskKind) return { liveApplicationId: null, linkTaskKind: null };
   let liveApplicationId: string | null = null;
+  let linkTaskKind: TaskKind | null = null;
   try {
     const liveApp = await prisma.application.findFirst({
       where: {
@@ -1042,6 +1047,14 @@ async function reopenUploadTaskForDoc(
         });
       }
       if (liveApp.checklist) {
+        // Deep-link only to a task the checklist actually has — templates
+        // vary, and a task already sitting PENDING (never DONE) still
+        // deserves the direct link even though nothing gets flipped below.
+        const taskOnChecklist = await prisma.onboardingTask.findFirst({
+          where: { checklistId: liveApp.checklist.id, kind: taskKind },
+          select: { id: true },
+        });
+        if (taskOnChecklist) linkTaskKind = taskKind;
         const reopened = await markTaskTodoByKind(
           prisma,
           liveApp.checklist.id,
@@ -1068,7 +1081,7 @@ async function reopenUploadTaskForDoc(
     // Best-effort — the calling action has already succeeded and been
     // audited; a rewind failure is recoverable by admin re-saving.
   }
-  return liveApplicationId;
+  return { liveApplicationId, linkTaskKind };
 }
 
 documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
@@ -1111,9 +1124,10 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
 
     // Onboarding rewind + deep-link target — see reopenUploadTaskForDoc.
     // If there's an active application, the rejection email points the
-    // associate at its checklist rather than the generic /me/documents
-    // page, so they land where the (now-reopened) task is waiting.
-    const liveApplicationId = await reopenUploadTaskForDoc(
+    // associate straight at the reopened upload task (falling back to the
+    // checklist, then the generic /me/documents page), so they land where
+    // the fix happens instead of hunting for it.
+    const { liveApplicationId, linkTaskKind } = await reopenUploadTaskForDoc(
       user,
       updated,
       'document_rejected',
@@ -1132,7 +1146,9 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
     // onboarding checklist when there's a live application, generic
     // documents view otherwise.
     const associateLinkPath = liveApplicationId
-      ? `/onboarding/me/${liveApplicationId}`
+      ? linkTaskKind
+        ? `/onboarding/me/${liveApplicationId}/tasks/${linkTaskKind.toLowerCase()}`
+        : `/onboarding/me/${liveApplicationId}`
       : `/me/documents`;
     const documentsUrl = `${env.APP_BASE_URL}${associateLinkPath}`;
     const assocTpl = documentRejectedAssociateTemplate({
@@ -1216,18 +1232,20 @@ documentsRouter.post('/admin/:id/request-reupload', MANAGE, async (req, res, nex
       req,
     });
 
-    const liveApplicationId = await reopenUploadTaskForDoc(
+    const { liveApplicationId, linkTaskKind } = await reopenUploadTaskForDoc(
       user,
       doc,
       'document_expired',
       req,
     );
 
-    // Same two link forms as reject: relative path for the bell's
-    // navigate(), absolute for the email — both land the associate where
-    // they can upload the replacement.
+    // Same link forms as reject: relative path for the bell's navigate(),
+    // absolute for the email — both land the associate on the reopened
+    // upload task where the replacement goes.
     const associateLinkPath = liveApplicationId
-      ? `/onboarding/me/${liveApplicationId}`
+      ? linkTaskKind
+        ? `/onboarding/me/${liveApplicationId}/tasks/${linkTaskKind.toLowerCase()}`
+        : `/onboarding/me/${liveApplicationId}`
       : `/me/documents`;
     const docKindLabel = doc.kind.replace(/_/g, ' ').toLowerCase();
     const expiredOn = doc.expiresAt

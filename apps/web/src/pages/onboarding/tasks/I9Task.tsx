@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { RotateCcw } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import {
@@ -20,7 +21,7 @@ import {
   i9SetSatisfied,
 } from '@alto-people/shared';
 import { fmtDate, fmtDateTime, fmtSize, parseYmd } from '@/lib/format';
-import { Field, TaskShell, inputCls } from './ProfileInfoTask';
+import { Field, TaskShell, inputCls, useNextTask } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -68,11 +69,13 @@ const CITIZENSHIP_OPTIONS: { value: CitizenshipStatus; label: string }[] = [
 export function I9Task() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   const isAssociate = user?.role === 'ASSOCIATE';
   const backTo = isAssociate
     ? `/onboarding/me/${applicationId}`
     : `/onboarding/applications/${applicationId}`;
+  const next = useNextTask('I9_VERIFICATION');
 
   const [status, setStatus] = useState<I9Status | null>(null);
   const [loading, setLoading] = useState(true);
@@ -128,6 +131,7 @@ export function I9Task() {
         applicationId={applicationId}
         status={status}
         onChanged={refresh}
+        onSubmitted={() => navigate(next?.route ?? backTo, { replace: true })}
       />
       <Section2Status status={status} />
 
@@ -307,10 +311,13 @@ function DocumentsCard({
   applicationId,
   status,
   onChanged,
+  onSubmitted,
 }: {
   applicationId: string;
   status: I9Status;
   onChanged: () => void;
+  /** Fires after submit-for-review succeeds — the task's final action. */
+  onSubmitted: () => void;
 }) {
   const [docs, setDocs] = useState<I9DocumentListItem[] | null>(null);
   // Doc count from the FIRST fetch this session — i.e. before any upload
@@ -321,7 +328,18 @@ function DocumentsCard({
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Two pickers, one handler: `capture` locks iOS to the camera, so a
+  // camera-only input made a passport PDF sitting in email unselectable.
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // A failed upload keeps its File (and the classification chosen at pick
+  // time) so "Retry" needs no trip back into the camera roll.
+  const [failedUpload, setFailedUpload] = useState<{
+    file: File;
+    kind: I9DocumentKind;
+    side: I9DocumentSide | undefined;
+    title: string | undefined;
+  } | null>(null);
   const [docTitle, setDocTitle] = useState<string>(I9_DOC_CATALOG[0].title);
   const [docSide, setDocSide] = useState<I9DocumentSide | ''>('');
   const section2Done = status.section2 !== null;
@@ -363,6 +381,27 @@ function DocumentsCard({
     void refresh();
   }, [refresh]);
 
+  const doUpload = async (
+    file: File,
+    kind: I9DocumentKind,
+    side: I9DocumentSide | undefined,
+    title: string | undefined,
+  ) => {
+    setError(null);
+    setUploading(true);
+    try {
+      await uploadI9Document(applicationId, file, kind, side, title);
+      setFailedUpload(null);
+      await refresh();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Upload failed.');
+      setFailedUpload({ file, kind, side, title });
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handlePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // allow re-picking the same file
@@ -375,23 +414,12 @@ function DocumentsCard({
       );
       return;
     }
-    setError(null);
-    setUploading(true);
-    try {
-      await uploadI9Document(
-        applicationId,
-        file,
-        selectedKind,
-        selectedEntry?.card && docSide !== '' ? docSide : undefined,
-        selectedEntry?.title
-      );
-      await refresh();
-      onChanged();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Upload failed.');
-    } finally {
-      setUploading(false);
-    }
+    await doUpload(
+      file,
+      selectedKind,
+      selectedEntry?.card && docSide !== '' ? docSide : undefined,
+      selectedEntry?.title,
+    );
   };
 
   const handleSubmit = async () => {
@@ -400,7 +428,7 @@ function DocumentsCard({
     setSubmitting(true);
     try {
       await submitI9ForReview(applicationId);
-      onChanged();
+      onSubmitted();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Submit failed.');
     } finally {
@@ -430,11 +458,11 @@ function DocumentsCard({
         </span>
       </header>
       <p className="text-sm text-silver mb-4">
-        Take photos of your identification (driver's license, passport,
-        Social Security card, etc.). On a phone, the camera opens directly.
-        On a computer, choose the file. Pick the document type and front/back
-        before uploading so HR can verify quickly. PDF / JPG / PNG / WEBP up
-        to 10 MB.
+        Add your identification (driver's license, passport, Social Security
+        card, etc.) — "Take photo" opens the camera, "Choose file" picks a
+        saved scan or PDF. Pick the document type and front/back before
+        uploading so HR can verify quickly. PDF / JPG / PNG / WEBP up to
+        10 MB.
       </p>
 
       {!section2Done && !submitted && (
@@ -522,24 +550,83 @@ function DocumentsCard({
             </p>
           )}
           <div className="mb-4">
-            <label className="inline-flex items-center gap-2 px-4 py-2.5 rounded bg-gold text-navy hover:bg-gold-bright cursor-pointer transition">
-              <input
-                ref={fileInputRef}
-                type="file"
-                // The server's exact allowlist, not `image/*`: iPhones
-                // shoot HEIC by default, which passed this picker and was
-                // then rejected on upload. Every sibling task already
-                // offers precisely what the server accepts.
-                accept={UPLOAD_ACCEPT_ATTR}
-                capture="environment"
-                className="hidden"
-                onChange={handlePick}
+            {/* The server's exact allowlist, not `image/*`: iPhones shoot
+                HEIC by default, which passed this picker and was then
+                rejected on upload. Every sibling task already offers
+                precisely what the server accepts. */}
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept={UPLOAD_ACCEPT_ATTR}
+              capture="environment"
+              className="hidden"
+              onChange={handlePick}
+              disabled={uploading}
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={UPLOAD_ACCEPT_ATTR}
+              className="hidden"
+              onChange={handlePick}
+              disabled={uploading}
+            />
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                onClick={() => cameraInputRef.current?.click()}
                 disabled={uploading}
-              />
-              <span className="font-medium">
-                {uploading ? 'Uploading…' : 'Take or upload photo'}
-              </span>
-            </label>
+              >
+                {uploading ? 'Uploading…' : 'Take photo'}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+              >
+                {uploading ? 'Uploading…' : 'Choose file'}
+              </Button>
+            </div>
+            {failedUpload && !uploading && (
+              <div
+                role="alert"
+                className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5 rounded border border-alert/40 bg-alert/[0.06] text-sm"
+              >
+                <span className="min-w-0 flex-1 basis-48 truncate text-white">
+                  {failedUpload.file.name}
+                  <span className="block text-xs text-alert">
+                    Upload failed — your file is still here.
+                  </span>
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() =>
+                    doUpload(
+                      failedUpload.file,
+                      failedUpload.kind,
+                      failedUpload.side,
+                      failedUpload.title,
+                    )
+                  }
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Retry upload
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFailedUpload(null);
+                    setError(null);
+                    fileInputRef.current?.click();
+                  }}
+                  className="text-sm text-silver hover:text-white coarse:min-h-11 inline-flex items-center"
+                >
+                  Choose different file
+                </button>
+              </div>
+            )}
             {error && <ErrorBanner className="mt-2">{error}</ErrorBanner>}
           </div>
         </>

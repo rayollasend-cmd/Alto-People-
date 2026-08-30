@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2, FileText, RotateCcw, Trash2, Upload } from 'lucide-react';
+import { Camera, CheckCircle2, FileText, RotateCcw, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
 import { I9_DOC_CATALOG, i9CatalogEntry, i9SetSatisfied } from '@alto-people/shared';
@@ -13,7 +13,7 @@ import {
 import { finishDocumentUpload } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { TaskShell, Field } from './ProfileInfoTask';
+import { TaskShell, Field, useNextTask } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { fmtSize } from '@/lib/format';
 import { statusTone } from '@/lib/status';
@@ -57,6 +57,9 @@ export function DocumentUploadTask() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
   const navigate = useNavigate();
+  // Two pickers, one handler: `capture` locks iOS to the camera, so a
+  // camera-only input made a passport PDF sitting in email unselectable.
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [docs, setDocs] = useState<DocumentRecord[] | null>(null);
@@ -72,6 +75,7 @@ export function DocumentUploadTask() {
   const backTo = isAssociate
     ? `/onboarding/me/${applicationId}`
     : `/onboarding/applications/${applicationId}`;
+  const next = useNextTask('DOCUMENT_UPLOAD');
 
   const refresh = useCallback(async () => {
     try {
@@ -110,21 +114,15 @@ export function DocumentUploadTask() {
   // it under the SAME kind, then delete the rejected original. One click
   // for the associate instead of delete + re-upload.
   const [replaceTarget, setReplaceTarget] = useState<DocumentRecord | null>(null);
-
-  const onPickFile = () => fileInputRef.current?.click();
-
-  const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = ''; // allow same-file re-selection
-    if (!file) return;
-    if (file.size > MAX_BYTES) {
-      setError(`File too large (max ${fmtSize(MAX_BYTES)}).`);
-      return;
-    }
+  // A failed upload keeps its File in memory so "Retry" needs no re-pick —
+  // on flaky signal, re-opening the camera roll was where associates gave up.
+  const [failedUpload, setFailedUpload] = useState<{
+    file: File;
+    target: DocumentRecord | null;
+  } | null>(null);
+  const doUpload = async (file: File, target: DocumentRecord | null) => {
     setError(null);
     setUploading(true);
-    const target = replaceTarget;
-    setReplaceTarget(null);
     try {
       // Replacement: upload fresh under the same kind + classification,
       // THEN delete the old doc. If the upload fails we keep the original
@@ -153,12 +151,27 @@ export function DocumentUploadTask() {
       } else {
         toast.success(`Uploaded ${file.name}.`);
       }
+      setFailedUpload(null);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed.');
+      setFailedUpload({ file, target });
     } finally {
       setUploading(false);
     }
+  };
+
+  const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow same-file re-selection
+    const target = replaceTarget;
+    setReplaceTarget(null);
+    if (!file) return;
+    if (file.size > MAX_BYTES) {
+      setError(`File too large (max ${fmtSize(MAX_BYTES)}).`);
+      return;
+    }
+    await doUpload(file, target);
   };
 
   const onDelete = (d: DocumentRecord) => {
@@ -199,7 +212,7 @@ export function DocumentUploadTask() {
     try {
       await finishDocumentUpload(applicationId);
       toast.success('Documents submitted — HR will review them shortly.');
-      navigate(backTo, { replace: true });
+      navigate(next?.route ?? backTo, { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not finish.');
     } finally {
@@ -291,27 +304,85 @@ export function DocumentUploadTask() {
         )}
 
         <input
-          ref={fileInputRef}
+          ref={cameraInputRef}
           type="file"
           accept={ACCEPTED_MIMES}
           capture="environment"
           onChange={onFileChange}
           className="hidden"
         />
-        <button
-          type="button"
-          onClick={onPickFile}
-          disabled={uploading}
-          className={cn(
-            'w-full px-4 py-6 rounded-md border-2 border-dashed transition-colors',
-            uploading
-              ? 'border-navy-secondary text-silver/70 cursor-wait'
-              : 'border-navy-secondary text-silver hover:border-gold/60 hover:text-gold'
-          )}
-        >
-          <Upload className="h-5 w-5 inline-block mr-2 -mt-1" />
-          {uploading ? 'Uploading…' : 'Click to choose a file'}
-        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPTED_MIMES}
+          onChange={onFileChange}
+          className="hidden"
+        />
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => cameraInputRef.current?.click()}
+            disabled={uploading}
+            className={cn(
+              'px-4 py-6 rounded-md border-2 border-dashed transition-colors',
+              uploading
+                ? 'border-navy-secondary text-silver/70 cursor-wait'
+                : 'border-navy-secondary text-silver hover:border-gold/60 hover:text-gold'
+            )}
+          >
+            <Camera className="h-5 w-5 inline-block mr-2 -mt-1" />
+            {uploading ? 'Uploading…' : 'Take photo'}
+          </button>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className={cn(
+              'px-4 py-6 rounded-md border-2 border-dashed transition-colors',
+              uploading
+                ? 'border-navy-secondary text-silver/70 cursor-wait'
+                : 'border-navy-secondary text-silver hover:border-gold/60 hover:text-gold'
+            )}
+          >
+            <Upload className="h-5 w-5 inline-block mr-2 -mt-1" />
+            {uploading ? 'Uploading…' : 'Choose file'}
+          </button>
+        </div>
+
+        {failedUpload && !uploading && (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5 rounded-md border border-alert/40 bg-alert/[0.06] text-sm"
+          >
+            <span className="min-w-0 flex-1 basis-48 truncate text-white">
+              {failedUpload.file.name}
+              <span className="block text-xs text-alert">
+                Upload failed — your file is still here.
+              </span>
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => doUpload(failedUpload.file, failedUpload.target)}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Retry upload
+            </Button>
+            <button
+              type="button"
+              onClick={() => {
+                // Keep the replace intent (if any) armed for the fresh pick.
+                setReplaceTarget(failedUpload.target);
+                setFailedUpload(null);
+                setError(null);
+                fileInputRef.current?.click();
+              }}
+              className="text-sm text-silver hover:text-white coarse:min-h-11 inline-flex items-center"
+            >
+              Choose different file
+            </button>
+          </div>
+        )}
 
         {/* Uploaded list ------------------------------------------------ */}
         <div>
@@ -419,7 +490,9 @@ export function DocumentUploadTask() {
             {finishing
               ? 'Submitting…'
               : canSubmit
-                ? "I'm done — submit for review"
+                ? next
+                  ? `Submit & continue → ${next.label}`
+                  : "I'm done — submit for review"
                 : hasAtLeastOne
                   ? 'List A, or List B + C, still needed'
                   : 'Upload at least one'}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { CheckCircle2, FileText, Save, Trash2, Upload } from 'lucide-react';
+import { Camera, CheckCircle2, FileText, Save, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
 import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
@@ -12,7 +12,7 @@ import {
 import { finishJ1Docs, getJ1Profile, saveJ1Profile } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { TaskShell, inputCls, Field } from './ProfileInfoTask';
+import { TaskShell, inputCls, Field, useNextTask } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { fmtSize } from '@/lib/format';
 import { statusTone } from '@/lib/status';
@@ -47,6 +47,9 @@ export function J1DocsTask() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
   const navigate = useNavigate();
+  // Two pickers, one handler: `capture` locks iOS to the camera, while a
+  // plain input reaches Files/photo library — a DS-2019 is often a PDF.
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // J1 profile fields
@@ -72,6 +75,7 @@ export function J1DocsTask() {
   const backTo = isAssociate
     ? `/onboarding/me/${applicationId}`
     : `/onboarding/applications/${applicationId}`;
+  const next = useNextTask('J1_DOCS');
 
   const refresh = useCallback(async () => {
     try {
@@ -159,8 +163,6 @@ export function J1DocsTask() {
     }
   };
 
-  const onPickFile = () => fileInputRef.current?.click();
-
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -214,7 +216,7 @@ export function J1DocsTask() {
     try {
       await finishJ1Docs(applicationId);
       toast.success('J-1 documents submitted — HR will review them shortly.');
-      navigate(backTo, { replace: true });
+      navigate(next?.route ?? backTo, { replace: true });
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'no_profile') {
@@ -357,26 +359,50 @@ export function J1DocsTask() {
         </Field>
 
         <input
+          ref={cameraInputRef}
+          type="file"
+          accept={ACCEPTED_MIMES}
+          capture="environment"
+          onChange={onFileChange}
+          className="hidden"
+        />
+        <input
           ref={fileInputRef}
           type="file"
           accept={ACCEPTED_MIMES}
           onChange={onFileChange}
           className="hidden"
         />
-        <button
-          type="button"
-          onClick={onPickFile}
-          disabled={uploading}
-          className={cn(
-            'w-full px-4 py-6 rounded-md border-2 border-dashed transition-colors',
-            uploading
-              ? 'border-navy-secondary text-silver/70 cursor-wait'
-              : 'border-navy-secondary text-silver hover:border-gold/60 hover:text-gold'
-          )}
-        >
-          <Upload className="h-5 w-5 inline-block mr-2 -mt-1" />
-          {uploading ? 'Uploading…' : 'Click to choose a file'}
-        </button>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => cameraInputRef.current?.click()}
+            disabled={uploading}
+            className={cn(
+              'px-4 py-6 rounded-md border-2 border-dashed transition-colors',
+              uploading
+                ? 'border-navy-secondary text-silver/70 cursor-wait'
+                : 'border-navy-secondary text-silver hover:border-gold/60 hover:text-gold'
+            )}
+          >
+            <Camera className="h-5 w-5 inline-block mr-2 -mt-1" />
+            {uploading ? 'Uploading…' : 'Take photo'}
+          </button>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className={cn(
+              'px-4 py-6 rounded-md border-2 border-dashed transition-colors',
+              uploading
+                ? 'border-navy-secondary text-silver/70 cursor-wait'
+                : 'border-navy-secondary text-silver hover:border-gold/60 hover:text-gold'
+            )}
+          >
+            <Upload className="h-5 w-5 inline-block mr-2 -mt-1" />
+            {uploading ? 'Uploading…' : 'Choose file'}
+          </button>
+        </div>
 
         <div>
           <div className="text-xs uppercase tracking-widest text-silver mb-2">
@@ -456,7 +482,9 @@ export function J1DocsTask() {
                 ? 'Save program details first'
                 : !hasAtLeastOneDoc
                   ? 'Upload at least one document'
-                  : "I'm done — submit for review"}
+                  : next
+                    ? `Submit & continue → ${next.label}`
+                    : "I'm done — submit for review"}
           </Button>
           <Link to={backTo} className="text-sm text-silver hover:text-white">
             Cancel

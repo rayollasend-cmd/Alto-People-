@@ -12,7 +12,7 @@ import { cn } from '@/lib/cn';
 import { fmtDateTime } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
-import { Field, SubmitRow, TaskShell, inputCls } from './ProfileInfoTask';
+import { Field, SubmitRow, TaskShell, inputCls, useNextTask } from './ProfileInfoTask';
 
 // ABA mod-10 checksum — same one the API enforces. Keeping client-side too
 // gives instant validation feedback before they hit submit.
@@ -46,6 +46,7 @@ export function DirectDepositTask() {
   const backTo = isAssociate
     ? `/onboarding/me/${applicationId}`
     : `/onboarding/applications/${applicationId}`;
+  const next = useNextTask('DIRECT_DEPOSIT');
 
   // Hydrate so re-opens show the redacted view rather than blank fields.
   useEffect(() => {
@@ -107,7 +108,7 @@ export function DirectDepositTask() {
               branchCardId,
             };
       await submitDirectDeposit(applicationId, body);
-      navigate(backTo, { replace: true });
+      navigate(next?.route ?? backTo, { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Submission failed.');
     } finally {
@@ -242,7 +243,7 @@ export function DirectDepositTask() {
               </p>
             )}
 
-            <SubmitRow submitting={submitting} backTo={backTo} label="Save payout method" />
+            <SubmitRow submitting={submitting} backTo={backTo} label="Save payout method" next={next} />
           </form>
         </>
       )}

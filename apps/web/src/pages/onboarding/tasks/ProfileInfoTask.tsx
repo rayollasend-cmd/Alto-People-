@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
-import { getProfile, submitProfile } from '@/lib/onboardingApi';
+import { getApplication, getProfile, submitProfile } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
@@ -69,6 +69,7 @@ export function ProfileInfoTask() {
   const backTo = isAssociate
     ? `/onboarding/me/${applicationId}`
     : `/onboarding/applications/${applicationId}`;
+  const next = useNextTask('PROFILE_INFO');
 
   // Hydrate from the server, seeding only fields the user (or their draft)
   // hasn't already filled — server values must never clobber typed input.
@@ -176,7 +177,7 @@ export function ProfileInfoTask() {
       } catch {
         // best-effort
       }
-      navigate(backTo, { replace: true });
+      navigate(next?.route ?? backTo, { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Submission failed.');
     } finally {
@@ -302,13 +303,99 @@ export function ProfileInfoTask() {
           </p>
         )}
 
-        <SubmitRow submitting={submitting} backTo={backTo} />
+        <SubmitRow submitting={submitting} backTo={backTo} next={next} />
       </form>
     </TaskShell>
   );
 }
 
 /* Shared bits exported so the other task forms reuse them ---------------- */
+
+// Task kinds with a real associate-facing page — mirrors the checklist's
+// REAL_KINDS set. Chaining must never land on the StubTask placeholder.
+const CHAINABLE_KINDS = new Set([
+  'PROFILE_INFO',
+  'W4',
+  'DIRECT_DEPOSIT',
+  'POLICY_ACK',
+  'I9_VERIFICATION',
+  'DOCUMENT_UPLOAD',
+  'BACKGROUND_CHECK',
+  'J1_DOCS',
+  'E_SIGN',
+]);
+
+// Short names for the "Save & continue → …" button suffix.
+const TASK_SHORT_LABEL: Record<string, string> = {
+  PROFILE_INFO: 'Profile',
+  DOCUMENT_UPLOAD: 'Documents',
+  E_SIGN: 'E-sign',
+  BACKGROUND_CHECK: 'Background check',
+  W4: 'W-4',
+  DIRECT_DEPOSIT: 'Direct deposit',
+  POLICY_ACK: 'Policies',
+  J1_DOCS: 'J-1 docs',
+  I9_VERIFICATION: 'I-9',
+};
+
+export interface NextTaskTarget {
+  route: string;
+  label: string;
+}
+
+/**
+ * "Save & continue" chaining: the next incomplete real task after the one
+ * currently open, so a successful submit can jump straight there instead of
+ * round-tripping through the checklist (a tap + a page load per task, ×8).
+ * Best-effort — when the application can't be loaded (or the viewer is HR,
+ * who reviews rather than fills), callers fall back to the checklist.
+ */
+export function useNextTask(currentKind: string): NextTaskTarget | null {
+  const { applicationId } = useParams<{ applicationId: string }>();
+  const { user } = useAuth();
+  const [next, setNext] = useState<NextTaskTarget | null>(null);
+  const isAssociate = user?.role === 'ASSOCIATE';
+
+  useEffect(() => {
+    if (!applicationId || !isAssociate) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const detail = await getApplication(applicationId);
+        if (cancelled) return;
+        const candidates = detail.tasks.filter(
+          (t) =>
+            t.kind !== currentKind &&
+            t.status !== 'DONE' &&
+            t.status !== 'SKIPPED' &&
+            CHAINABLE_KINDS.has(t.kind)
+        );
+        // Prefer the first incomplete task AFTER this one in checklist order;
+        // wrap around to earlier unfinished ones so nothing gets stranded.
+        const curIdx = detail.tasks.findIndex((t) => t.kind === currentKind);
+        const target =
+          candidates.find((t) => detail.tasks.indexOf(t) > curIdx) ??
+          candidates[0] ??
+          null;
+        setNext(
+          target
+            ? {
+                route: `/onboarding/me/${applicationId}/tasks/${target.kind.toLowerCase()}`,
+                label: TASK_SHORT_LABEL[target.kind] ?? target.title,
+              }
+            : null
+        );
+      } catch {
+        // Chaining is an enhancement — the checklist fallback always works.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [applicationId, isAssociate, currentKind]);
+
+  return next;
+}
 
 // Touch parity with ui/Input: explicit height (comfortable finger target,
 // 44px on coarse pointers) and 16px text on touch so iOS Safari never
@@ -328,10 +415,13 @@ export function SubmitRow({
   submitting,
   backTo,
   label = 'Save',
+  next,
 }: {
   submitting: boolean;
   backTo: string;
   label?: string;
+  /** When set, the button advertises the chained jump to the next task. */
+  next?: NextTaskTarget | null;
 }) {
   return (
     // Sticky on phones: "Submit W-4" used to sit below ~3 screens of form,
@@ -345,7 +435,11 @@ export function SubmitRow({
         Cancel
       </Link>
       <Button type="submit" loading={submitting} disabled={submitting}>
-        {submitting ? 'Saving…' : label}
+        {submitting
+          ? 'Saving…'
+          : next
+            ? `${label} & continue → ${next.label}`
+            : label}
       </Button>
     </div>
   );

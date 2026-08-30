@@ -475,6 +475,21 @@ export function skipTask(
   );
 }
 
+/** Skip a sensitive task (W-4, direct deposit, …) with a stated reason.
+ *  Same endpoint as skipTask; the route currently ignores the body, so the
+ *  reason is a deliberate-intent gate in the UI (and forward-compatible if
+ *  the API starts persisting it to the audit event). */
+export function skipTaskWithReason(
+  applicationId: string,
+  taskId: string,
+  reason: string
+): Promise<void> {
+  return apiFetch<void>(
+    `/onboarding/applications/${applicationId}/tasks/${taskId}/skip`,
+    { method: 'POST', body: { reason } }
+  );
+}
+
 /* ---------------------- Phase 63 — stub task completion ---------------- */
 
 export function finishDocumentUpload(

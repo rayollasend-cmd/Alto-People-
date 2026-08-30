@@ -3,8 +3,10 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
+  CalendarDays,
   CheckCircle2,
   Circle,
+  ClipboardList,
   Clock,
   Copy,
   Eye,
@@ -22,7 +24,14 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { fmtDate, fmtRelativeDate, fmtWeekdayTz, parseYmd, ymdLocal } from '@/lib/format';
+import {
+  fmtDate,
+  fmtMoney,
+  fmtRelativeDate,
+  fmtWeekdayTz,
+  parseYmd,
+  ymdLocal,
+} from '@/lib/format';
 import {
   hasCapability,
   type ApplicationDetail as ApplicationDetailType,
@@ -35,10 +44,15 @@ import {
   compliancePacketUrl,
   getApplication,
   getApplicationAudit,
+  getApplicationPolicies,
+  getDirectDeposit,
+  getProfile,
+  getW4,
   nextReviewApplication,
   rejectApplication,
   resendInvite,
   skipTask,
+  skipTaskWithReason,
 } from '@/lib/onboardingApi';
 import {
   getI9Status,
@@ -101,6 +115,12 @@ const TASK_LABEL: Record<string, string> = {
   I9_VERIFICATION: 'I-9 verification',
 };
 
+// Kinds whose skip is a one-click outline button (the historical set).
+// Every other kind is skippable too — the API accepts any kind — but the
+// remaining ones (profile, W-4, direct deposit, policy acks) carry payroll/
+// compliance weight, so their skip is a quiet text affordance behind a
+// required-reason dialog instead of an inviting button. Without this a
+// 1099 contractor could never reach 100%.
 const STUB_KINDS = new Set([
   'DOCUMENT_UPLOAD',
   'E_SIGN',
@@ -108,6 +128,20 @@ const STUB_KINDS = new Set([
   'I9_VERIFICATION',
   'J1_DOCS',
 ]);
+
+/** Task kinds whose submitted data renders inline in SubmittedDataCard. */
+const SUBMITTED_DATA_KINDS = new Set([
+  'PROFILE_INFO',
+  'W4',
+  'DIRECT_DEPOSIT',
+  'POLICY_ACK',
+]);
+
+const W4_FILING_LABEL: Record<string, string> = {
+  SINGLE: 'Single',
+  MARRIED_FILING_JOINTLY: 'Married filing jointly',
+  HEAD_OF_HOUSEHOLD: 'Head of household',
+};
 
 /** Route component — the standalone page. */
 export function ApplicationDetail() {
@@ -153,6 +187,10 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
   // "Approve anyway" (which resubmits with acknowledgeWarnings: true).
   const [approveWarnings, setApproveWarnings] = useState<string[] | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
+  // In-flight flag for the header's one-click approve (no dialog to own it).
+  const [directApproving, setDirectApproving] = useState(false);
+  // Task pending the required-reason skip confirmation (sensitive kinds only).
+  const [skipTarget, setSkipTarget] = useState<ChecklistTask | null>(null);
   // Ceremony screen surfaced after a successful approval. Captures the
   // hire date so the celebration can show it; cleared when the user
   // dismisses or navigates. The standard toast no longer fires for
@@ -232,6 +270,19 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
     }
   };
 
+  // Sensitive kinds land here from the required-reason dialog.
+  const handleSkipWithReason = async (reason: string) => {
+    if (!skipTarget) return;
+    try {
+      await skipTaskWithReason(detail.id, skipTarget.id, reason);
+      setSkipTarget(null);
+      await refresh();
+    } catch (err) {
+      setSkipTarget(null);
+      setError(err instanceof ApiError ? err.message : 'Skip failed.');
+    }
+  };
+
   const handleResend = async () => {
     try {
       const res = await resendInvite(detail.id);
@@ -278,8 +329,11 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
     } catch (err) {
       if (err instanceof ApiError && err.code === 'approval_warnings') {
         // Not a failure toast — surface the gaps inside the dialog so the
-        // admin can read them and either cancel or approve anyway.
+        // admin can read them and either cancel or approve anyway. The
+        // one-click header approve lands here with the dialog still closed,
+        // so open it too (no-op when the dialog triggered the attempt).
         setApproveWarnings(extractApprovalWarnings(err.details));
+        setApproveOpen(true);
         return;
       }
       const msg =
@@ -300,6 +354,24 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Could not reject.';
       toast.error('Rejection failed.', { description: msg });
+    }
+  };
+
+  // One-click approve: only when the record already holds a usable hire
+  // date (today or future, LOCAL — same rule as the dialog's prefill). A
+  // past start date still needs the dialog so it can't silently become the
+  // official hire date that drives I-9/E-Verify deadlines.
+  const startYmd = detail.startDate ? detail.startDate.slice(0, 10) : null;
+  const directApproveDate =
+    startYmd && startYmd >= ymdLocal() ? startYmd : null;
+
+  const handleDirectApprove = async () => {
+    if (!directApproveDate || directApproving) return;
+    setDirectApproving(true);
+    try {
+      await handleApprove(directApproveDate, false);
+    } finally {
+      setDirectApproving(false);
     }
   };
 
@@ -338,6 +410,9 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
                 onResend={handleResend}
                 onApprove={() => setApproveOpen(true)}
                 onReject={() => setRejectOpen(true)}
+                directApproveDate={directApproveDate}
+                directApproving={directApproving}
+                onDirectApprove={handleDirectApprove}
               />
             )}
           </div>
@@ -351,6 +426,9 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
                 onResend={handleResend}
                 onApprove={() => setApproveOpen(true)}
                 onReject={() => setRejectOpen(true)}
+                directApproveDate={directApproveDate}
+                directApproving={directApproving}
+                onDirectApprove={handleDirectApprove}
                 compact
               />
             )}
@@ -449,14 +527,29 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
           <TaskTile
             key={t.id}
             task={t}
-            canSkip={canManage && STUB_KINDS.has(t.kind)}
-            onSkip={() => handleSkip(t)}
+            canSkip={canManage}
+            // Payroll/compliance kinds detour through the required-reason
+            // confirmation; the historical stub kinds keep one-click skip.
+            quietSkip={!STUB_KINDS.has(t.kind)}
+            onSkip={() =>
+              STUB_KINDS.has(t.kind) ? void handleSkip(t) : setSkipTarget(t)
+            }
             // Destinations are admin surfaces (People directory, Compliance)
             // that invite-scoped roles can't open — no dead links for them.
             destination={canManage ? taskDestination(t.kind, detail.associateId) : null}
           />
         ))}
       </section>
+
+      {/* Submitted W-4 / direct deposit / policy-ack / profile data, inline.
+          These endpoints are gated exactly like the I-9 card below (manage
+          scope via assertCanModifyApplication) — same reason for canManage. */}
+      {canManage &&
+        detail.tasks.some((t) => SUBMITTED_DATA_KINDS.has(t.kind)) && (
+          <section className="mb-6">
+            <SubmittedDataCard detail={detail} mode={mode} />
+          </section>
+        )}
 
       {/* I-9 Section 1 data and the uploaded identity documents behind it are
           HR-only — invite-scoped roles (SHIFT_SUPERVISOR) see checklist
@@ -546,6 +639,21 @@ export function ApplicationDetailBody({ applicationId, mode }: ApplicationDetail
         reasonPlaceholder="e.g. Failed background check, withdrew, role no longer available"
         onConfirm={handleReject}
       />
+      <ConfirmDialog
+        open={skipTarget !== null}
+        onOpenChange={(o) => !o && setSkipTarget(null)}
+        title="Skip task"
+        description={
+          skipTarget
+            ? `Skip "${TASK_LABEL[skipTarget.kind] ?? skipTarget.title}" for ${detail.associateName}? The checklist counts it as complete without any input from them.`
+            : undefined
+        }
+        confirmLabel="Skip task"
+        requireReason
+        reasonLabel="Reason"
+        reasonPlaceholder="e.g. 1099 contractor — W-4 withholding not applicable"
+        onConfirm={handleSkipWithReason}
+      />
     </>
   );
 }
@@ -595,12 +703,21 @@ function DetailActions({
   onResend,
   onApprove,
   onReject,
+  directApproveDate,
+  directApproving,
+  onDirectApprove,
   compact,
 }: {
   detail: ApplicationDetailType;
   onResend: () => void;
+  /** Opens the hire-date dialog (also the fallback when no usable date). */
   onApprove: () => void;
   onReject: () => void;
+  /** YYYY-MM-DD when the record's start date is today-or-future — enables
+   *  the one-click approve; null falls back to the dialog. */
+  directApproveDate: string | null;
+  directApproving: boolean;
+  onDirectApprove: () => void;
   compact?: boolean;
 }) {
   // Approve / Reject only shown while the application is still under review.
@@ -669,19 +786,41 @@ function DetailActions({
           Reject
         </Button>
       )}
+      {/* One-click approve when the record already holds a usable start
+          date: the primary button submits directly with that date, and the
+          small calendar button beside it opens the old dialog to change it.
+          No usable date → the primary button IS the dialog path. */}
+      {!decided && directApproveDate && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onApprove}
+          disabled={!checklistComplete || directApproving}
+          className="px-2"
+          aria-label="Approve with a different hire date"
+          title="Change the hire date before approving"
+        >
+          <CalendarDays className="h-4 w-4" />
+        </Button>
+      )}
       {!decided && (
         <Button
           size="sm"
-          onClick={onApprove}
+          onClick={directApproveDate ? onDirectApprove : onApprove}
+          loading={directApproving}
           disabled={!checklistComplete}
           title={
             checklistComplete
-              ? undefined
+              ? directApproveDate
+                ? 'Approve now with the start date already on file'
+                : undefined
               : 'Checklist must be 100% before approving'
           }
         >
           <ThumbsUp className="h-4 w-4" />
-          Approve
+          {directApproveDate
+            ? `Approve · starts ${fmtDateLabel(directApproveDate)}`
+            : 'Approve'}
         </Button>
       )}
     </div>
@@ -986,6 +1125,9 @@ function CountChip({
 interface TaskTileProps {
   task: ChecklistTask;
   canSkip: boolean;
+  /** Payroll/compliance kinds: render the skip as a subdued text affordance
+   *  (reason-gated by the parent) instead of the inviting outline button. */
+  quietSkip: boolean;
   onSkip: () => void;
   /** Deep link to where this task's full record lives (null = no link). */
   destination: { to: string; label: string } | null;
@@ -1091,7 +1233,7 @@ function taskDestination(
   }
 }
 
-function TaskTile({ task, canSkip, onSkip, destination }: TaskTileProps) {
+function TaskTile({ task, canSkip, quietSkip, onSkip, destination }: TaskTileProps) {
   const tone = STATUS_TONE[task.status] ?? STATUS_TONE.PENDING;
   const Icon = tone.icon;
   const isComplete = task.status === 'DONE' || task.status === 'SKIPPED';
@@ -1138,13 +1280,379 @@ function TaskTile({ task, canSkip, onSkip, destination }: TaskTileProps) {
           )}
         </div>
         {canSkip && !isComplete && (
-          <Button size="sm" variant="outline" onClick={onSkip} className="shrink-0">
-            Skip
-          </Button>
+          quietSkip ? (
+            // Deliberately understated: skipping W-4 / deposit / policy /
+            // profile is legitimate (1099 contractors) but shouldn't read
+            // as a casual shortcut. The trailing ellipsis signals the
+            // required-reason dialog behind it.
+            <button
+              type="button"
+              onClick={onSkip}
+              className="shrink-0 self-start text-xs text-silver/60 hover:text-silver underline-offset-4 hover:underline transition-colors"
+              title="Mark not applicable — requires a reason"
+            >
+              Skip…
+            </button>
+          ) : (
+            <Button size="sm" variant="outline" onClick={onSkip} className="shrink-0">
+              Skip
+            </Button>
+          )
         )}
       </div>
     </div>
   );
+}
+
+/* ===== Submitted data card ================================================ */
+
+/**
+ * Read-only inline view of what the associate actually submitted for the
+ * W-4, direct deposit, policy-ack and profile tasks. Reviewing these used
+ * to mean leaving the drawer for the People directory / document vault
+ * (~6 clicks + 2 page loads per application), which also destroyed the
+ * review-next chain. Everything shown here is exactly what the four GET
+ * endpoints already return to this caller — no additional PII.
+ */
+function SubmittedDataCard({
+  detail,
+  mode,
+}: {
+  detail: ApplicationDetailType;
+  mode: 'page' | 'drawer';
+}) {
+  const id = detail.id;
+  const kinds = new Set(detail.tasks.map((t) => t.kind));
+
+  // Keyed under ['application', id, …] so the parent's prefix-match
+  // invalidation (after skip/approve) refreshes these too. retry: false —
+  // a 403/404 answer is an answer, not a flake.
+  const profileQuery = useQuery({
+    queryKey: ['application', id, 'submitted', 'profile'],
+    queryFn: () => getProfile(id),
+    enabled: kinds.has('PROFILE_INFO'),
+    retry: false,
+  });
+  const w4Query = useQuery({
+    queryKey: ['application', id, 'submitted', 'w4'],
+    queryFn: () => getW4(id),
+    enabled: kinds.has('W4'),
+    retry: false,
+  });
+  const depositQuery = useQuery({
+    queryKey: ['application', id, 'submitted', 'direct-deposit'],
+    queryFn: () => getDirectDeposit(id),
+    enabled: kinds.has('DIRECT_DEPOSIT'),
+    retry: false,
+  });
+  const policiesQuery = useQuery({
+    queryKey: ['application', id, 'submitted', 'policies'],
+    queryFn: async () => (await getApplicationPolicies(id)).policies,
+    enabled: kinds.has('POLICY_ACK'),
+    retry: false,
+  });
+
+  const w4 = w4Query.data ?? null;
+  const deposit = depositQuery.data ?? null;
+  const profile = profileQuery.data ?? null;
+  const policies = policiesQuery.data ?? [];
+  const ackedCount = policies.filter((p) => p.acknowledged).length;
+  const profileEmpty =
+    !!profile && !profile.dob && !profile.phone && !profile.addressLine1;
+  const addressLine = profile
+    ? [
+        profile.addressLine1,
+        profile.addressLine2,
+        profile.city,
+        [profile.state, profile.zip].filter(Boolean).join(' '),
+      ]
+        .filter(Boolean)
+        .join(', ')
+    : '';
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <ClipboardList className="h-4 w-4 text-gold" aria-hidden />
+          Submitted data
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div
+          className={cn(
+            'grid grid-cols-1 gap-x-8 gap-y-5',
+            mode === 'drawer' ? '' : 'md:grid-cols-2'
+          )}
+        >
+          {kinds.has('W4') && (
+            <SubmittedSection
+              title="W-4 tax withholding"
+              link={taskDestination('W4', detail.associateId)}
+            >
+              {w4Query.isPending ? (
+                <SectionSkeleton />
+              ) : w4Query.isError ? (
+                <SectionError error={w4Query.error} />
+              ) : !w4?.hasSubmission ? (
+                <NotSubmitted />
+              ) : (
+                <>
+                  <DataRow
+                    label="Filing status"
+                    value={
+                      w4.filingStatus
+                        ? W4_FILING_LABEL[w4.filingStatus] ?? w4.filingStatus
+                        : '—'
+                    }
+                  />
+                  <DataRow label="Dependents" value={fmtMoney(w4.dependentsAmount)} />
+                  <DataRow
+                    label="Extra withholding"
+                    value={fmtMoney(w4.extraWithholding)}
+                  />
+                  <DataRow
+                    label="SSN"
+                    value={
+                      <span className="inline-flex items-center gap-2 flex-wrap">
+                        <span className="tabular-nums">
+                          {w4.ssnLast4 ? `•••-••-${w4.ssnLast4}` : '—'}
+                        </span>
+                        {w4.hasSsnCardOnFile ? (
+                          <span className="inline-flex items-center gap-1 text-xs text-success">
+                            <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+                            Card on file
+                          </span>
+                        ) : (
+                          <span className="text-xs text-silver">No card on file</span>
+                        )}
+                      </span>
+                    }
+                  />
+                  <DataRow label="Submitted" value={fmtDate(w4.submittedAt)} />
+                </>
+              )}
+            </SubmittedSection>
+          )}
+
+          {kinds.has('DIRECT_DEPOSIT') && (
+            <SubmittedSection
+              title="Direct deposit"
+              link={taskDestination('DIRECT_DEPOSIT', detail.associateId)}
+            >
+              {depositQuery.isPending ? (
+                <SectionSkeleton />
+              ) : depositQuery.isError ? (
+                <SectionError error={depositQuery.error} />
+              ) : !deposit?.hasPayoutMethod ? (
+                <NotSubmitted />
+              ) : deposit.type === 'BRANCH_CARD' ? (
+                <>
+                  <DataRow label="Method" value="Branch pay card" />
+                  <DataRow
+                    label="Verified"
+                    value={
+                      deposit.verifiedAt ? (
+                        fmtDate(deposit.verifiedAt)
+                      ) : (
+                        <span className="text-warning">Not verified</span>
+                      )
+                    }
+                  />
+                </>
+              ) : (
+                <>
+                  <DataRow label="Bank" value={deposit.bankName ?? '—'} />
+                  <DataRow
+                    label="Account type"
+                    value={
+                      deposit.accountType === 'SAVINGS'
+                        ? 'Savings'
+                        : deposit.accountType === 'CHECKING'
+                          ? 'Checking'
+                          : '—'
+                    }
+                  />
+                  <DataRow
+                    label="Routing"
+                    value={
+                      <span className="tabular-nums">
+                        {deposit.routingMasked ?? '—'}
+                      </span>
+                    }
+                  />
+                  <DataRow
+                    label="Account"
+                    value={
+                      <span className="tabular-nums">
+                        {deposit.accountLast4 ? `••••${deposit.accountLast4}` : '—'}
+                      </span>
+                    }
+                  />
+                  <DataRow
+                    label="Verified"
+                    value={
+                      deposit.verifiedAt ? (
+                        fmtDate(deposit.verifiedAt)
+                      ) : (
+                        <span className="text-warning">Not verified</span>
+                      )
+                    }
+                  />
+                </>
+              )}
+            </SubmittedSection>
+          )}
+
+          {kinds.has('POLICY_ACK') && (
+            <SubmittedSection
+              title="Policy acknowledgments"
+              link={taskDestination('POLICY_ACK', detail.associateId)}
+            >
+              {policiesQuery.isPending ? (
+                <SectionSkeleton />
+              ) : policiesQuery.isError ? (
+                <SectionError error={policiesQuery.error} />
+              ) : policies.length === 0 ? (
+                <div className="text-sm text-silver">No policies assigned</div>
+              ) : (
+                <details>
+                  <summary
+                    className={cn(
+                      'cursor-pointer list-none text-sm tabular-nums select-none',
+                      'text-white hover:text-gold transition-colors',
+                      '[&::-webkit-details-marker]:hidden'
+                    )}
+                  >
+                    {ackedCount} of {policies.length} acknowledged{' '}
+                    <span className="text-xs text-silver">(show list)</span>
+                  </summary>
+                  <ul className="mt-2 space-y-1">
+                    {policies.map((p) => (
+                      <li key={p.id} className="flex items-start gap-2 text-xs">
+                        {p.acknowledged ? (
+                          <CheckCircle2
+                            className="h-3.5 w-3.5 mt-0.5 shrink-0 text-success"
+                            aria-hidden
+                          />
+                        ) : (
+                          <Circle
+                            className="h-3.5 w-3.5 mt-0.5 shrink-0 text-silver/70"
+                            aria-hidden
+                          />
+                        )}
+                        <span className="text-white min-w-0 truncate">{p.title}</span>
+                        {p.acknowledgedAt && (
+                          <span className="text-silver shrink-0">
+                            {fmtDate(p.acknowledgedAt)}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </SubmittedSection>
+          )}
+
+          {kinds.has('PROFILE_INFO') && (
+            <SubmittedSection
+              title="Profile"
+              link={taskDestination('PROFILE_INFO', detail.associateId)}
+            >
+              {profileQuery.isPending ? (
+                <SectionSkeleton />
+              ) : profileQuery.isError ? (
+                <SectionError error={profileQuery.error} />
+              ) : profileEmpty ? (
+                <NotSubmitted />
+              ) : (
+                <>
+                  <DataRow
+                    label="Date of birth"
+                    value={profile?.dob ? fmtDateLabel(profile.dob) : '—'}
+                  />
+                  <DataRow label="Phone" value={profile?.phone ?? '—'} />
+                  <DataRow label="Address" value={addressLine || '—'} />
+                </>
+              )}
+            </SubmittedSection>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SubmittedSection({
+  title,
+  link,
+  children,
+}: {
+  title: string;
+  /** Deep link to the full record (small "open full record" affordance). */
+  link: { to: string; label: string } | null;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="text-2xs uppercase tracking-widest text-silver">
+          {title}
+        </div>
+        {link && (
+          <Link
+            to={link.to}
+            className="inline-flex items-center gap-1 text-xs text-gold hover:underline shrink-0"
+          >
+            {link.label}
+            <ExternalLink className="h-3 w-3" aria-hidden />
+          </Link>
+        )}
+      </div>
+      <div className="space-y-1.5">{children}</div>
+    </div>
+  );
+}
+
+function DataRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-3 text-sm">
+      <div className="w-32 shrink-0 text-xs text-silver pt-0.5">{label}</div>
+      <div className="flex-1 min-w-0 text-white break-words">{value}</div>
+    </div>
+  );
+}
+
+function SectionSkeleton() {
+  return (
+    <div className="space-y-2">
+      <Skeleton className="h-4 w-40" />
+      <Skeleton className="h-4 w-52" />
+      <Skeleton className="h-4 w-32" />
+    </div>
+  );
+}
+
+function NotSubmitted() {
+  return <div className="text-sm text-silver">Not submitted yet</div>;
+}
+
+/** 403/404 read as "nothing to show yet"; anything else is a real failure. */
+function SectionError({ error }: { error: unknown }) {
+  if (
+    error instanceof ApiError &&
+    (error.status === 404 || error.status === 403)
+  ) {
+    return <NotSubmitted />;
+  }
+  return <div className="text-sm text-alert">Couldn't load.</div>;
 }
 
 /* ===== I-9 employment verification card =================================== */
