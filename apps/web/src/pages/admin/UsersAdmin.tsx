@@ -60,10 +60,15 @@ const ROLE_OPTIONS: Role[] = (Object.keys(ROLES) as Role[]).filter(
   (r) => r !== 'LIVE_ASN',
 );
 
-// Roles that are pinned to a single client — show a client picker for them.
-const CLIENT_PICKER_ROLES = new Set<Role>(['SHIFT_SUPERVISOR', 'CLIENT_PORTAL']);
-// …and the subset that CANNOT run without a client (blocks clearing it).
-const CLIENT_REQUIRED_ROLES = new Set<Role>(['SHIFT_SUPERVISOR']);
+// Every role can carry a client scope, so every row gets the picker. For
+// supervisors / client portal it's the hard clamp their access depends on;
+// for org-wide roles (HR admin, ops, …) it's an optional home-site focus
+// (decision feed, defaults) that clears to "All clients" — without the
+// picker those rows were stuck read-only with no way to widen someone.
+// The REQUIRED set mirrors the server's CLIENT_SCOPED_ROLES exactly
+// (SHIFT_SUPERVISOR + FLOOR_SUPERVISOR) — those fail closed without a
+// client, so clearing is blocked here before the server 400s.
+const CLIENT_REQUIRED_ROLES = new Set<Role>(['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR']);
 
 // Bulk role assignment can't collect a per-user client, so roles that
 // REQUIRE a client are excluded — assign those one row at a time.
@@ -804,33 +809,33 @@ export function UsersAdmin() {
                         </div>
                       </TableCell>
                       <TableCell className="text-silver text-xs hidden md:table-cell">
-                        {CLIENT_PICKER_ROLES.has(draftRole[u.id] ?? u.role) ? (
-                          clientsError ? (
-                            <button
-                              type="button"
-                              onClick={() => void loadClients()}
-                              className="text-alert underline underline-offset-2 hover:text-white"
-                            >
-                              Couldn't load clients — retry
-                            </button>
-                          ) : (
-                            <Select
-                              size="sm"
-                              value={u.clientId ?? ''}
-                              onChange={(e) => onAssignClient(u, e.target.value)}
-                              disabled={isMe || busy}
-                              aria-label="Assign client"
-                            >
-                              <option value="">— select client —</option>
-                              {clients.map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  {c.name}
-                                </option>
-                              ))}
-                            </Select>
-                          )
+                        {clientsError ? (
+                          <button
+                            type="button"
+                            onClick={() => void loadClients()}
+                            className="text-alert underline underline-offset-2 hover:text-white"
+                          >
+                            Couldn't load clients — retry
+                          </button>
                         ) : (
-                          (u.clientName ?? '—')
+                          <Select
+                            size="sm"
+                            value={u.clientId ?? ''}
+                            onChange={(e) => onAssignClient(u, e.target.value)}
+                            disabled={isMe || busy}
+                            aria-label="Assign client"
+                          >
+                            <option value="">
+                              {CLIENT_REQUIRED_ROLES.has(draftRole[u.id] ?? u.role)
+                                ? '— select client —'
+                                : 'All clients'}
+                            </option>
+                            {clients.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </Select>
                         )}
                       </TableCell>
                       <TableCell className="text-silver text-xs hidden lg:table-cell">
