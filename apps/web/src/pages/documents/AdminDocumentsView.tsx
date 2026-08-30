@@ -13,6 +13,7 @@ import {
   FileText,
   Folder,
   LayoutList,
+  RefreshCw,
   ShieldCheck,
   ShieldAlert,
   Clock,
@@ -29,10 +30,12 @@ import type {
 } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import {
+  DOCUMENT_KIND_LABEL,
   bulkVerifyDocuments,
   downloadAllDocumentsUrl,
   listAdminDocuments,
   rejectDocument,
+  requestDocumentReupload,
   verifyDocument,
 } from '@/lib/documentsApi';
 import { fmtDate, fmtRelativeDate, fmtSize } from '@/lib/format';
@@ -109,13 +112,22 @@ const STATUS_LABELS: Record<DocumentStatus, string> = {
   EXPIRED: 'Expired',
 };
 
-// Canned reasons for the bulk-reject panel — the common cases HR types
-// over and over. Clicking one fills the free-text field (still editable).
-const BULK_REJECT_PRESETS = [
+// Canned reasons shared by the single-row and bulk reject dialogs — the
+// common cases HR types over and over. Clicking one fills the free-text
+// field (still editable).
+const REJECT_PRESETS = [
   'Blurry / unreadable',
   'Expired document',
   'Wrong document type',
 ] as const;
+
+// "drug test result", "ID", … for toasts about a document's kind.
+const kindPhrase = (k: DocumentKind): string => {
+  const label = DOCUMENT_KIND_LABEL[k] ?? k.replace(/_/g, ' ');
+  // Acronym labels (ID, SSN card, DS-2019…) keep their casing; sentence-
+  // case labels read better lowercased mid-sentence.
+  return /^[A-Z][a-z]/.test(label) ? label.toLowerCase() : label;
+};
 
 
 const fmtKind = (k: string): string =>
@@ -171,6 +183,13 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
   const [rejectTarget, setRejectTarget] = useState<DocumentRecord | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [rejectSubmitting, setRejectSubmitting] = useState(false);
+  // Session-local "requested <ago>" markers for EXPIRED rows (doc id →
+  // epoch ms). The server doesn't stamp renewal requests on the document
+  // row (that'd be a schema change), so the marker only survives as long
+  // as this mount — good enough to stop double-sends while triaging.
+  const [reuploadRequestedAt, setReuploadRequestedAt] = useState<
+    Record<string, number>
+  >({});
   const [selectedAssociateId, setSelectedAssociateId] = useState<string | null>(null);
   // The open folder's docs, fetched directly with ?associateId= so the
   // drawer is complete even when the global list is truncated at the cap.
@@ -514,6 +533,28 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     }
   };
 
+  // Renewal nudge for an EXPIRED row: reopens the associate's upload task
+  // server-side and notifies them. The row itself doesn't change (it stays
+  // EXPIRED until the replacement arrives as a new record), so no refetch —
+  // just remember the send locally for the quiet "requested" marker.
+  const onRequestReupload = async (d: DocumentRecord) => {
+    if (pendingId) return;
+    setPendingId(d.id);
+    try {
+      await requestDocumentReupload(d.id);
+      toast.success(
+        `Asked ${d.associateName ?? 'the associate'} for a new ${kindPhrase(d.kind)}.`,
+      );
+      setReuploadRequestedAt((m) => ({ ...m, [d.id]: Date.now() }));
+    } catch (err) {
+      toast.error('Request failed.', {
+        description: err instanceof ApiError ? err.message : undefined,
+      });
+    } finally {
+      setPendingId(null);
+    }
+  };
+
   const onBulkVerify = async () => {
     if (bulkBusy || selectedDocs.size === 0) return;
     setBulkBusy(true);
@@ -654,6 +695,12 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
             label="Expired"
             value={String(stats.expired)}
             tone={stats.expired > 0 ? 'text-alert' : 'text-silver'}
+            onClick={() => {
+              // Land on the queue's EXPIRED slice — the chips (and the
+              // status filter) only exist in the queue view.
+              setView('queue');
+              setFilter('EXPIRED');
+            }}
           />
           {stats.oldestUploadedDays !== null && stats.oldestUploadedDays >= 3 && (
             <Kpi
@@ -1096,6 +1143,31 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                             <span className="ml-1 hidden lg:inline">Reject</span>
                           </Button>
                         )}
+                        {d.status === 'EXPIRED' && (
+                          <>
+                            {reuploadRequestedAt[d.id] !== undefined && (
+                              <span className="text-2xs text-silver/70 tabular-nums whitespace-nowrap">
+                                requested{' '}
+                                {fmtRelativeDate(
+                                  new Date(reuploadRequestedAt[d.id]).toISOString(),
+                                )}
+                              </span>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => onRequestReupload(d)}
+                              loading={pendingId === d.id}
+                              title="Ask the associate to upload a current copy"
+                              className="text-gold hover:text-gold"
+                            >
+                              <RefreshCw className="h-3.5 w-3.5" />
+                              <span className="ml-1 hidden lg:inline">
+                                Request re-upload
+                              </span>
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </TableCell>
                   )}
@@ -1371,6 +1443,30 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                                 <ShieldAlert className="h-3.5 w-3.5" />
                               </Button>
                             )}
+                            {d.status === 'EXPIRED' && (
+                              <>
+                                {reuploadRequestedAt[d.id] !== undefined && (
+                                  <span className="text-2xs text-silver/70 tabular-nums whitespace-nowrap">
+                                    requested{' '}
+                                    {fmtRelativeDate(
+                                      new Date(
+                                        reuploadRequestedAt[d.id],
+                                      ).toISOString(),
+                                    )}
+                                  </span>
+                                )}
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => onRequestReupload(d)}
+                                  loading={pendingId === d.id}
+                                  title="Ask the associate to upload a current copy"
+                                  className="text-gold hover:text-gold"
+                                >
+                                  <RefreshCw className="h-3.5 w-3.5" />
+                                </Button>
+                              </>
+                            )}
                           </div>
                         </TableCell>
                       )}
@@ -1498,6 +1594,24 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                   {rejectTarget.associateName ? ` · ${rejectTarget.associateName}` : ''}
                 </div>
               </div>
+              <div className="flex flex-wrap gap-1.5">
+                {REJECT_PRESETS.map((r) => (
+                  <Button
+                    key={r}
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={() => setRejectReason(r)}
+                    className={cn(
+                      'rounded-md',
+                      rejectReason === r &&
+                        'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
+                    )}
+                  >
+                    {r}
+                  </Button>
+                ))}
+              </div>
               <Field label="Reason" required>
                 {(p) => (
                   <Textarea
@@ -1505,7 +1619,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     onChange={(e) => setRejectReason(e.target.value)}
                     rows={4}
                     maxLength={500}
-                    placeholder="e.g. Document is blurry — please re-upload a clearer scan."
+                    placeholder="Pick a preset above or write your own."
                     className="mt-1"
                     autoFocus
                     {...p}
@@ -1561,7 +1675,7 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
               </div>
             )}
             <div className="flex flex-wrap gap-1.5">
-              {BULK_REJECT_PRESETS.map((r) => (
+              {REJECT_PRESETS.map((r) => (
                 <Button
                   key={r}
                   type="button"
@@ -1618,18 +1732,34 @@ function Kpi({
   label,
   value,
   tone = 'text-white',
+  onClick,
 }: {
   label: string;
   value: string;
   tone?: string;
+  /** When set, the stat renders as a button that jumps to its filtered list. */
+  onClick?: () => void;
 }) {
-  return (
-    <div className="min-w-[6rem]">
+  const body = (
+    <>
       <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
         {label}
       </div>
       <div className={cn('text-xl font-semibold tabular-nums', tone)}>{value}</div>
-    </div>
+    </>
   );
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        title={`Show ${label.toLowerCase()} documents`}
+        className="min-w-[6rem] rounded-md text-left transition-opacity hover:opacity-75"
+      >
+        {body}
+      </button>
+    );
+  }
+  return <div className="min-w-[6rem]">{body}</div>;
 }
 

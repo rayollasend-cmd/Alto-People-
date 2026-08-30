@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactElement } from 'react';
 
@@ -19,7 +19,7 @@ vi.mock('@/lib/i9Api', () => ({
   submitI9Section2: vi.fn(),
 }));
 
-import { listI9s } from '@/lib/complianceApi';
+import { listI9s, upsertI9 } from '@/lib/complianceApi';
 import { listI9Documents, submitI9Section2 } from '@/lib/i9Api';
 import { I9Tab } from '@/pages/compliance/I9Tab';
 
@@ -49,6 +49,10 @@ beforeEach(() => {
   vi.mocked(listI9s).mockReset();
   vi.mocked(listI9Documents).mockReset();
   vi.mocked(submitI9Section2).mockReset();
+  vi.mocked(upsertI9).mockReset();
+  // The tab persists its status/client filters — isolate tests from each
+  // other's clicks.
+  window.localStorage.clear();
 });
 
 // In the new UI, an I-9 row is a clickable Card (no explicit "Verify Section 2"
@@ -216,6 +220,130 @@ describe('<I9Tab> Section 2 verifier card', () => {
     expect(
       screen.getByRole('button', { name: /verify section 2 \(0 docs\)/i }),
     ).toBeDisabled();
+  });
+
+  it('pre-checks classified docs matching the auto-picked list (missing blobs stay unpicked)', async () => {
+    vi.mocked(listI9s).mockResolvedValue({ i9s: [pendingRow()] });
+    vi.mocked(listI9Documents).mockResolvedValue({
+      documents: [
+        {
+          id: DOC_FRONT,
+          kind: 'ID',
+          filename: 'passport.jpg',
+          mimeType: 'image/jpeg',
+          size: 100_000,
+          status: 'UPLOADED',
+          side: null,
+          i9DocTitle: 'U.S. Passport or Passport Card',
+          i9List: 'A',
+          createdAt: '2026-04-25T18:01:00.000Z',
+          fileAvailable: true,
+        },
+        {
+          id: DOC_BACK,
+          kind: 'ID',
+          filename: 'passport-2.jpg',
+          mimeType: 'image/jpeg',
+          size: 100_000,
+          status: 'UPLOADED',
+          side: null,
+          i9DocTitle: 'U.S. Passport or Passport Card',
+          i9List: 'A',
+          createdAt: '2026-04-25T18:02:00.000Z',
+          // Missing blob → disabled checkbox, must never be pre-picked.
+          fileAvailable: false,
+        },
+      ],
+    });
+
+    const user = userEvent.setup();
+    render(<I9Tab canManage={true} />);
+
+    await openRowDrawer(user);
+    // One usable List-A doc pre-checked — submit is enabled with no clicks.
+    const submit = await screen.findByRole('button', {
+      name: /verify section 2 \(1 doc\)/i,
+    });
+    expect(submit).toBeEnabled();
+  });
+
+  it('"Verify & next" advances the drawer to the next pending row in view', async () => {
+    const APP2 = '00000000-0000-4000-8000-00000000aab2';
+    const row2: I9Verification = {
+      ...pendingRow(),
+      id: '00000000-0000-4000-8000-00000000bbb2',
+      associateId: '00000000-0000-4000-8000-00000000ccc2',
+      associateName: 'John Roe',
+      associateEmail: 'john@example.com',
+      applicationId: APP2,
+    };
+    vi.mocked(listI9s).mockResolvedValue({ i9s: [pendingRow(), row2] });
+    vi.mocked(listI9Documents).mockResolvedValue({
+      documents: [
+        {
+          id: DOC_FRONT,
+          kind: 'ID',
+          filename: 'passport.jpg',
+          mimeType: 'image/jpeg',
+          size: 100_000,
+          status: 'UPLOADED',
+          side: null,
+          i9DocTitle: 'U.S. Passport or Passport Card',
+          i9List: 'A',
+          createdAt: '2026-04-25T18:01:00.000Z',
+          fileAvailable: true,
+        },
+      ],
+    });
+    vi.mocked(submitI9Section2).mockResolvedValue({
+      section2CompletedAt: '2026-04-26T20:00:00.000Z',
+      documentList: 'LIST_A',
+      supportingDocIds: [DOC_FRONT],
+    });
+
+    const user = userEvent.setup();
+    render(<I9Tab canManage={true} />);
+
+    await openRowDrawer(user); // Maria first
+    await screen.findByRole('button', { name: /verify section 2 \(1 doc\)/i });
+
+    await user.click(screen.getByRole('button', { name: /verify & next/i }));
+
+    // The drawer hops to John's pending I-9 and loads HIS documents.
+    await waitFor(() => expect(listI9Documents).toHaveBeenCalledWith(APP2));
+    expect(submitI9Section2).toHaveBeenCalledWith(APP_ID, {
+      documentList: 'LIST_A',
+      supportingDocIds: [DOC_FRONT],
+    });
+  });
+
+  it('expiring work auth gets an inline update form that PATCHes the new expiry', async () => {
+    // 30 days out — inside the ≤90d window whatever day the test runs.
+    const soon = new Date();
+    soon.setDate(soon.getDate() + 30);
+    const soonYmd = `${soon.getFullYear()}-${String(soon.getMonth() + 1).padStart(2, '0')}-${String(soon.getDate()).padStart(2, '0')}`;
+    vi.mocked(listI9s).mockResolvedValue({
+      i9s: [{ ...pendingRow(), workAuthExpiresAt: soonYmd }],
+    });
+    vi.mocked(listI9Documents).mockResolvedValue({ documents: [] });
+    vi.mocked(upsertI9).mockResolvedValue({
+      ...pendingRow(),
+      workAuthExpiresAt: '2027-06-30',
+    });
+
+    const user = userEvent.setup();
+    render(<I9Tab canManage={true} />);
+
+    await openRowDrawer(user);
+    const input = await screen.findByLabelText(/new expiry date/i);
+    fireEvent.change(input, { target: { value: '2027-06-30' } });
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(upsertI9).toHaveBeenCalledWith(ASSOC_ID, {
+        workAuthExpiresAt: '2027-06-30',
+      }),
+    );
   });
 
   it('shows the legacy edit form (not the verifier card) when section2 already complete', async () => {

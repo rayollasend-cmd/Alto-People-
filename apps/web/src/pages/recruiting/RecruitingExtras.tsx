@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Briefcase, ClipboardList, Download, Gift, Plus, Send, UserPlus, X } from 'lucide-react';
 import type { Candidate } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
@@ -28,9 +29,10 @@ import {
   type ReferralRecord,
   type ReferralStatus,
 } from '@/lib/recruiting90Api';
-import { listCandidates } from '@/lib/recruitingApi';
+import { getCandidate, listCandidates } from '@/lib/recruitingApi';
 import { listClients } from '@/lib/clientsApi';
 import { downloadCsv } from '@/lib/csv';
+import { usePersistentState } from '@/lib/usePersistentState';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
 import { hasCapability } from '@/lib/roles';
@@ -68,6 +70,12 @@ import { fmtDate, fmtDateTime, fmtMoney, parseYmd, ymdLocal } from '@/lib/format
 import { toast } from 'sonner';
 
 type Tab = 'kits' | 'offers' | 'referrals' | 'postings';
+
+const TABS: readonly Tab[] = ['kits', 'offers', 'referrals', 'postings'];
+
+function isTab(v: string | null): v is Tab {
+  return v !== null && (TABS as readonly string[]).includes(v);
+}
 
 // ----- Shared bits -------------------------------------------------------
 
@@ -242,7 +250,47 @@ function CandidatePicker({
 export function RecruitingExtras() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:recruiting') : false;
-  const [tab, setTab] = useState<Tab>('kits');
+
+  // ?tab= lives in the URL (same pattern as RecruitingHome's ?stage=) so the
+  // candidate drawer's "Extend offer" handoff can land on the right tab.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const tab: Tab = isTab(tabParam) ? tabParam : 'kits';
+  const setTab = useCallback(
+    (v: Tab) =>
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        if (v === 'kits') next.delete('tab'); // default tab keeps the URL clean
+        else next.set('tab', v);
+        return next;
+      }),
+    [setSearchParams],
+  );
+
+  // ?new=1[&candidate=<id>] — pre-open the offer drawer, optionally seeded
+  // with a candidate (from the drawer's "No offers extended." dead end).
+  // Captured once, then the params are consumed so refresh/Back don't
+  // re-open the drawer.
+  const [offerSeed, setOfferSeed] = useState<{ candidateId: string | null } | null>(
+    () => {
+      const sp = new URLSearchParams(window.location.search);
+      return sp.get('new') === '1' ? { candidateId: sp.get('candidate') } : null;
+    },
+  );
+  useEffect(() => {
+    if (!offerSeed) return;
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('new');
+        next.delete('candidate');
+        return next;
+      },
+      { replace: true },
+    );
+    // Consume exactly once, on mount — offerSeed is captured before render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="space-y-5">
@@ -267,7 +315,13 @@ export function RecruitingExtras() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="kits"><KitsTab canManage={canManage} /></TabsContent>
-        <TabsContent value="offers"><OffersTab canManage={canManage} /></TabsContent>
+        <TabsContent value="offers">
+          <OffersTab
+            canManage={canManage}
+            seed={canManage ? offerSeed : null}
+            onSeedConsumed={() => setOfferSeed(null)}
+          />
+        </TabsContent>
         <TabsContent value="referrals"><ReferralsTab canManage={canManage} /></TabsContent>
         <TabsContent value="postings"><PostingsTab canManage={canManage} /></TabsContent>
       </Tabs>
@@ -567,11 +621,28 @@ function NewKitDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
 // terminal-good.
 const OFFER_STATUS_TONES = { SENT: 'accent', ACCEPTED: 'success' } as const;
 
-function OffersTab({ canManage }: { canManage: boolean }) {
+function OffersTab({
+  canManage,
+  seed,
+  onSeedConsumed,
+}: {
+  canManage: boolean;
+  /** Open the new-offer drawer on mount, pre-seeded with this candidate. */
+  seed?: { candidateId: string | null } | null;
+  onSeedConsumed?: () => void;
+}) {
   const [offers, setOffers] = useState<OfferRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [showNew, setShowNew] = useState(false);
+  const [seedCandidateId, setSeedCandidateId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!seed) return;
+    setSeedCandidateId(seed.candidateId);
+    setShowNew(true);
+    onSeedConsumed?.();
+  }, [seed, onSeedConsumed]);
 
   const refresh = () => {
     setOffers(null);
@@ -749,9 +820,14 @@ function OffersTab({ canManage }: { canManage: boolean }) {
       </Card>
       {showNew && (
         <NewOfferDrawer
-          onClose={() => setShowNew(false)}
+          seedCandidateId={seedCandidateId}
+          onClose={() => {
+            setShowNew(false);
+            setSeedCandidateId(null);
+          }}
           onSaved={() => {
             setShowNew(false);
+            setSeedCandidateId(null);
             refresh();
           }}
         />
@@ -760,9 +836,24 @@ function OffersTab({ canManage }: { canManage: boolean }) {
   );
 }
 
-function NewOfferDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+function NewOfferDrawer({
+  seedCandidateId,
+  onClose,
+  onSaved,
+}: {
+  /** Pre-fill this candidate (and their position) instead of the picker. */
+  seedCandidateId?: string | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
   const [candidate, setCandidate] = useState<PickedCandidate | null>(null);
-  const [clientId, setClientId] = useState('');
+  // Offers cluster on the same client week after week — remember the last
+  // pick so most drafts start with the client already right.
+  const [lastClientId, setLastClientId] = usePersistentState<string>(
+    'alto:recruiting.offers.lastClientId.v1',
+    '',
+  );
+  const [clientId, setClientId] = useState(lastClientId);
   const [jobTitle, setJobTitle] = useState('');
   const [startDate, setStartDate] = useState('');
   const [salary, setSalary] = useState('');
@@ -770,6 +861,34 @@ function NewOfferDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: ()
   const [letterBody, setLetterBody] = useState('');
   const [saving, setSaving] = useState(false);
   const { clients, error: clientsError, reload: reloadClients } = useClients();
+
+  // A remembered client that has since been archived would sit invisibly
+  // selected (no matching <option>) — drop it once the list is in hand.
+  useEffect(() => {
+    if (clients && clientId && !clients.some((c) => c.id === clientId)) {
+      setClientId('');
+    }
+  }, [clients, clientId]);
+
+  // Resolve the seeded candidate to {id, name} + default the job title to
+  // their applied-for position. Failure just leaves the picker for manual
+  // selection — the drawer must not block on it.
+  useEffect(() => {
+    if (!seedCandidateId) return;
+    let live = true;
+    getCandidate(seedCandidateId)
+      .then((c) => {
+        if (!live) return;
+        setCandidate({ id: c.id, name: `${c.firstName} ${c.lastName}`.trim() });
+        if (c.position) setJobTitle((prev) => prev || c.position!);
+      })
+      .catch(() => {
+        if (live) toast.error('Could not load the candidate — pick them manually.');
+      });
+    return () => {
+      live = false;
+    };
+  }, [seedCandidateId]);
 
   const onSubmit = async () => {
     if (!candidate || !clientId || !jobTitle || !startDate) {
@@ -791,6 +910,7 @@ function NewOfferDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: ()
         hourlyRate: hourlyRate ? Number(hourlyRate) : null,
         letterBody: letterBody.trim() || null,
       });
+      setLastClientId(clientId);
       toast.success('Offer drafted.');
       onSaved();
     } catch (err) {

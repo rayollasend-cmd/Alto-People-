@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { CalendarClock, FileText, Link2, Mail, Phone } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { CalendarClock, FileText, Link2, Mail, Phone, Send } from 'lucide-react';
 import type { Candidate, CandidateStage } from '@alto-people/shared';
 import { safeHref } from '@alto-people/shared';
 import {
@@ -9,12 +10,14 @@ import {
   type OfferRecord,
 } from '@/lib/recruiting90Api';
 import { ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
   Avatar,
   Badge,
+  Button,
   Drawer,
   DrawerBody,
   DrawerDescription,
@@ -174,6 +177,7 @@ export function CandidateDetailDrawer({
    */
   actions?: ReactNode;
 }) {
+  const { can } = useAuth();
   const [interviews, setInterviews] = useState<InterviewRecord[] | null>(null);
   const [offers, setOffers] = useState<OfferRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -211,6 +215,15 @@ export function CandidateDetailDrawer({
 
   const fullName = `${candidate.firstName} ${candidate.lastName}`;
   const outcome = candidate.rejectedReason ?? candidate.withdrawnReason;
+  // The empty interviews/offers sections were dead ends; the offer one now
+  // hands off to the offer drawer, pre-seeded. Only for candidates still in
+  // the funnel — extending an offer to a rejected/withdrawn/hired person
+  // is a per-candidate judgment call, not a shortcut.
+  const isTerminal =
+    candidate.stage === 'HIRED' ||
+    candidate.stage === 'REJECTED' ||
+    candidate.stage === 'WITHDRAWN';
+  const canExtendOffer = can('manage:recruiting') && !isTerminal;
 
   return (
     <Drawer open={candidate !== null} onOpenChange={onOpenChange} width="max-w-xl">
@@ -370,7 +383,19 @@ export function CandidateDetailDrawer({
           {offers === null && !error ? (
             <SkeletonRows count={1} />
           ) : !offers?.length ? (
-            <p className="text-sm text-silver/70">No offers extended.</p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-silver/70">No offers extended.</p>
+              {canExtendOffer && (
+                <Button asChild size="sm" variant="outline">
+                  <Link
+                    to={`/recruiting/extras?tab=offers&new=1&candidate=${candidate.id}`}
+                  >
+                    <Send className="h-3.5 w-3.5" />
+                    Extend offer
+                  </Link>
+                </Button>
+              )}
+            </div>
           ) : (
             <ul className="space-y-2">
               {offers.map((o) => (

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { FileArchive, ShieldAlert } from 'lucide-react';
 import { useClients } from '@/lib/useClients';
 import { ymdLocal } from '@/lib/format';
+import { usePersistentState } from '@/lib/usePersistentState';
 import {
   AssociatePicker,
   Button,
@@ -55,6 +56,18 @@ const WORKFORCE_SCOPES: ReadonlyArray<PacketScope> = [
   'INACTIVE_WORKFORCE',
 ];
 
+// Canned openers for the audit-log reason — each clears the ≥10-char rule on
+// its own; HR appends the specifics (who asked, when it's due).
+const REASON_TEMPLATES = [
+  'Client vendor audit',
+  'Wage claim response',
+  'Subpoena / records request',
+  'Internal periodic review',
+] as const;
+
+const isYmd = (v: unknown): v is string =>
+  typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+
 /**
  * One-click client-audit response packet (built to Walmart's vendor-audit
  * scope letter): pick the client and audit period, state the reason (it
@@ -65,8 +78,19 @@ const WORKFORCE_SCOPES: ReadonlyArray<PacketScope> = [
  */
 export function AuditPacketTab() {
   const { clients } = useClients();
-  const [scope, setScope] = useState<PacketScope>('CLIENT_PERIOD');
-  const [clientId, setClientId] = useState('');
+  // Scope, client, and period survive revisits — audits are worked over days
+  // and the same request shape gets rebuilt each time. The reason stays
+  // volatile: it names ONE request and must be typed per export.
+  const [scope, setScope] = usePersistentState<PacketScope>(
+    'alto:list.audit-packet.scope.v1',
+    'CLIENT_PERIOD',
+    (v): v is PacketScope => typeof v === 'string' && v in SCOPE_LABEL,
+  );
+  const [clientId, setClientId] = usePersistentState<string>(
+    'alto:list.audit-packet.client.v1',
+    '',
+    (v): v is string => typeof v === 'string',
+  );
   const [associate, setAssociate] = useState<PickedAssociate | null>(null);
   const [workforceConfirmed, setWorkforceConfirmed] = useState(false);
   const today = ymdLocal();
@@ -75,11 +99,45 @@ export function AuditPacketTab() {
     d.setFullYear(d.getFullYear() - 1);
     return ymdLocal(d);
   })();
-  const [periodStart, setPeriodStart] = useState(yearAgo);
-  const [periodEnd, setPeriodEnd] = useState(today);
+  const [periodStart, setPeriodStart] = usePersistentState<string>(
+    'alto:list.audit-packet.periodStart.v1',
+    yearAgo,
+    isYmd,
+  );
+  const [periodEnd, setPeriodEnd] = usePersistentState<string>(
+    'alto:list.audit-packet.periodEnd.v1',
+    today,
+    isYmd,
+  );
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Calendar-period presets, computed with plain date math (no toLocale*).
+  const presets = (() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const qStartMonth = Math.floor(now.getMonth() / 3) * 3;
+    return [
+      {
+        label: 'Last quarter',
+        // Date() normalizes month -3 → Q4 of the previous year; day 0 of
+        // the current quarter's start month is the last day of last quarter.
+        start: ymdLocal(new Date(y, qStartMonth - 3, 1)),
+        end: ymdLocal(new Date(y, qStartMonth, 0)),
+      },
+      {
+        label: 'Last year',
+        start: `${y - 1}-01-01`,
+        end: `${y - 1}-12-31`,
+      },
+      {
+        label: 'Year to date',
+        start: `${y}-01-01`,
+        end: ymdLocal(now),
+      },
+    ];
+  })();
 
   const generate = async () => {
     setError(null);
@@ -246,6 +304,26 @@ export function AuditPacketTab() {
             </label>
           )}
 
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-2xs uppercase tracking-widest text-silver/80">
+              Period preset
+            </span>
+            {presets.map((p) => (
+              <Button
+                key={p.label}
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setPeriodStart(p.start);
+                  setPeriodEnd(p.end);
+                }}
+              >
+                {p.label}
+              </Button>
+            ))}
+          </div>
+
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <Label htmlFor="audit-start">Audit period start</Label>
@@ -270,7 +348,27 @@ export function AuditPacketTab() {
           </div>
 
           <div>
-            <Label htmlFor="audit-reason">Reason for export</Label>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label htmlFor="audit-reason">Reason for export</Label>
+              <Select
+                size="sm"
+                className="w-auto"
+                aria-label="Insert a reason template"
+                // Always renders the placeholder — picking an option fills
+                // the textarea below (still editable) and resets here.
+                value=""
+                onChange={(e) => {
+                  if (e.target.value) setReason(e.target.value);
+                }}
+              >
+                <option value="">Insert template…</option>
+                {REASON_TEMPLATES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </Select>
+            </div>
             <Textarea
               id="audit-reason"
               className="mt-1"

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { ChevronDown, Download, FileText, Lock, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ClientStatement } from '@alto-people/shared';
@@ -19,6 +20,7 @@ import {
 } from '@/lib/clientsApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { downloadStatementFile, MarkPaidDialog } from './statementsShared';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Select } from '@/components/ui/Select';
@@ -131,6 +133,7 @@ export function StatementsSection({ clientId }: { clientId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [payTarget, setPayTarget] = useState<ClientStatement | null>(null);
 
   // Executives read statements (list + PDF/CSV); drafting and finalizing
   // stay with payroll.
@@ -183,16 +186,12 @@ export function StatementsSection({ clientId }: { clientId: string }) {
     }
   };
 
-  const markPaid = async (s: ClientStatement) => {
-    const ref = window.prompt(
-      'Payment reference (check / ACH number) — optional:',
-      '',
-    );
-    if (ref === null) return; // cancelled
+  const markPaid = async (s: ClientStatement, ref: string | undefined) => {
     setBusy(`paid-${s.id}`);
     try {
-      await markClientStatementPaid(clientId, s.id, ref.trim() || undefined);
+      await markClientStatementPaid(clientId, s.id, ref);
       toast.success('Payment recorded — statement moved out of receivables.');
+      setPayTarget(null);
       await load();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not record payment.');
@@ -201,27 +200,7 @@ export function StatementsSection({ clientId }: { clientId: string }) {
     }
   };
 
-  // Fetch-then-save instead of a bare <a download>: an auth failure or 500
-  // on a raw link dumps the user on a JSON error page with no way back.
-  const download = async (url: string, fallbackName: string) => {
-    try {
-      const res = await fetch(url, { credentials: 'include' });
-      if (!res.ok) throw new Error(String(res.status));
-      const blob = await res.blob();
-      const cd = res.headers.get('content-disposition') ?? '';
-      const m = /filename="([^"]+)"/.exec(cd);
-      const objUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objUrl;
-      a.download = m?.[1] ?? fallbackName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(objUrl);
-    } catch {
-      toast.error('Download failed — try again.');
-    }
-  };
+  const download = downloadStatementFile;
 
   const finalize = async (s: ClientStatement) => {
     if (
@@ -250,7 +229,15 @@ export function StatementsSection({ clientId }: { clientId: string }) {
     <Card>
       <CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <CardTitle>Statements</CardTitle>
+          <div className="flex items-baseline gap-3">
+            <CardTitle>Statements</CardTitle>
+            <Link
+              to="/clients/statements"
+              className="text-xs text-gold hover:text-gold-bright"
+            >
+              All clients →
+            </Link>
+          </div>
           <div className="flex items-center gap-2">
             <Button
               size="sm"
@@ -426,7 +413,7 @@ export function StatementsSection({ clientId }: { clientId: string }) {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => void markPaid(s)}
+                          onClick={() => setPayTarget(s)}
                           loading={busy === `paid-${s.id}`}
                           disabled={busy !== null}
                         >
@@ -442,6 +429,19 @@ export function StatementsSection({ clientId }: { clientId: string }) {
           </ul>
         )}
       </CardContent>
+      <MarkPaidDialog
+        open={payTarget !== null}
+        onOpenChange={(o) => !o && setPayTarget(null)}
+        statementLabel={
+          payTarget
+            ? `${fmtDate(payTarget.periodStart)} – ${fmtDate(payTarget.periodEnd)}`
+            : ''
+        }
+        busy={busy !== null && busy.startsWith('paid-')}
+        onConfirm={(ref) => {
+          if (payTarget) void markPaid(payTarget, ref);
+        }}
+      />
     </Card>
   );
 }

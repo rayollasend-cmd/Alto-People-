@@ -26,6 +26,7 @@ import {
 import { listPositions } from '@/lib/positionsApi';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, ymdLocal } from '@/lib/format';
+import { useSelection } from '@/lib/useSelection';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -134,6 +135,11 @@ function daysSince(iso: string): number {
   return Math.max(0, Math.floor((Date.now() - t) / 86_400_000));
 }
 
+/** Still in the funnel — the only candidates bulk advance/reject applies to. */
+function isOpenStage(c: Candidate): boolean {
+  return c.stage !== 'HIRED' && c.stage !== 'REJECTED' && c.stage !== 'WITHDRAWN';
+}
+
 type DialogState =
   | { kind: 'reject'; candidate: Candidate }
   | { kind: 'withdraw'; candidate: Candidate }
@@ -173,6 +179,8 @@ export function RecruitingHome() {
   const [kpiError, setKpiError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<DialogState>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
 
   // Stage filter, search, and the open candidate drawer all live in the
   // URL (same source-of-truth pattern as ComplianceHome's ?tab= and the
@@ -404,6 +412,87 @@ export function RecruitingHome() {
     [allCandidates, candidateMatches],
   );
 
+  // Bulk selection (list view only — the board keeps drag as its bulk
+  // mechanic). Only open-stage candidates are selectable; closed ones have
+  // no advance/reject path.
+  const selectableIds = useMemo(
+    () => (visibleCandidates ?? []).filter(isOpenStage).map((c) => c.id),
+    [visibleCandidates],
+  );
+  const sel = useSelection(canManage && view === 'list' ? selectableIds : []);
+  const { clear: clearSelection } = sel;
+  // A filter/search change swaps the visible rows out from under the
+  // selection — drop it rather than acting on rows no longer on screen.
+  useEffect(() => {
+    clearSelection();
+  }, [filter, debouncedSearch, view, clearSelection]);
+
+  const selectedRows = useMemo(
+    () => (visibleCandidates ?? []).filter((c) => sel.selected.has(c.id)),
+    [visibleCandidates, sel.selected],
+  );
+  const advanceableRows = useMemo(
+    () => selectedRows.filter((c) => NEXT_STAGE[c.stage] !== undefined),
+    [selectedRows],
+  );
+
+  const bulkAdvance = async () => {
+    if (bulkBusy || advanceableRows.length === 0) return;
+    setBulkBusy(true);
+    const targets = advanceableRows;
+    const results = await Promise.allSettled(
+      targets.map((c) => advanceCandidate(c.id, { stage: NEXT_STAGE[c.stage]! })),
+    );
+    let ok = 0;
+    results.forEach((res, i) => {
+      if (res.status === 'fulfilled') {
+        ok++;
+      } else {
+        const c = targets[i];
+        toast.error(
+          `${c.firstName} ${c.lastName}: ${
+            res.reason instanceof ApiError ? res.reason.message : 'advance failed.'
+          }`,
+        );
+      }
+    });
+    if (ok > 0) {
+      toast.success(`Advanced ${ok} candidate${ok === 1 ? '' : 's'} to the next stage.`);
+    }
+    clearSelection();
+    setBulkBusy(false);
+    await Promise.all([refresh(), refreshKpis()]);
+  };
+
+  const bulkReject = async (reason: string) => {
+    if (bulkBusy || selectedRows.length === 0) return;
+    setBulkBusy(true);
+    const targets = selectedRows;
+    const results = await Promise.allSettled(
+      targets.map((c) =>
+        advanceCandidate(c.id, { stage: 'REJECTED', rejectedReason: reason }),
+      ),
+    );
+    let ok = 0;
+    results.forEach((res, i) => {
+      if (res.status === 'fulfilled') {
+        ok++;
+      } else {
+        const c = targets[i];
+        toast.error(
+          `${c.firstName} ${c.lastName}: ${
+            res.reason instanceof ApiError ? res.reason.message : 'reject failed.'
+          }`,
+        );
+      }
+    });
+    if (ok > 0) toast.success(`Rejected ${ok} candidate${ok === 1 ? '' : 's'}.`);
+    setBulkRejectOpen(false);
+    clearSelection();
+    setBulkBusy(false);
+    await Promise.all([refresh(), refreshKpis()]);
+  };
+
   const onExportCsv = () => {
     const rows = view === 'list' ? visibleCandidates : visibleAll;
     if (!rows || rows.length === 0) return;
@@ -625,6 +714,20 @@ export function RecruitingHome() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      {canManage && (
+                        <TableHead className="w-8">
+                          <input
+                            type="checkbox"
+                            aria-label="Select all open candidates"
+                            checked={sel.allSelected}
+                            ref={(el) => {
+                              if (el) el.indeterminate = sel.someSelected;
+                            }}
+                            onChange={sel.toggleAll}
+                            disabled={selectableIds.length === 0}
+                          />
+                        </TableHead>
+                      )}
                       <TableHead>Name</TableHead>
                       <TableHead>Email</TableHead>
                       <TableHead>Position</TableHead>
@@ -639,6 +742,18 @@ export function RecruitingHome() {
                   <TableBody>
                     {visibleCandidates.map((c) => (
                       <TableRow key={c.id} className="group">
+                        {canManage && (
+                          <TableCell className="w-8">
+                            {isOpenStage(c) && (
+                              <input
+                                type="checkbox"
+                                aria-label={`Select ${c.firstName} ${c.lastName}`}
+                                checked={sel.isSelected(c.id)}
+                                onChange={() => sel.toggle(c.id)}
+                              />
+                            )}
+                          </TableCell>
+                        )}
                         <TableCell className="font-medium">
                           <CandidateNameCell c={c} onOpen={(x) => setDetailId(x.id)} />
                         </TableCell>
@@ -699,7 +814,17 @@ export function RecruitingHome() {
                     className="rounded-md border border-navy-secondary bg-navy/40 p-3"
                   >
                     <div className="flex items-start justify-between gap-2">
-                      <CandidateNameCell c={c} onOpen={(x) => setDetailId(x.id)} />
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        {canManage && isOpenStage(c) && (
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${c.firstName} ${c.lastName}`}
+                            checked={sel.isSelected(c.id)}
+                            onChange={() => sel.toggle(c.id)}
+                          />
+                        )}
+                        <CandidateNameCell c={c} onOpen={(x) => setDetailId(x.id)} />
+                      </div>
                       <Badge
                         variant={STAGE_VARIANT[c.stage]}
                         className="shrink-0"
@@ -749,6 +874,50 @@ export function RecruitingHome() {
           )}
         </CardContent>
       </Card>
+
+      {/* Sticky bulk bar — appears with the first checked row (list view). */}
+      {canManage && view === 'list' && selectedRows.length > 0 && (
+        <div className="sticky bottom-4 z-20 mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-navy-secondary bg-navy p-3 elev-2">
+          <span className="text-sm text-silver tabular-nums">
+            {selectedRows.length} selected
+          </span>
+          <Button
+            size="sm"
+            onClick={() => void bulkAdvance()}
+            loading={bulkBusy}
+            disabled={bulkBusy || advanceableRows.length === 0}
+            title="Each candidate moves to their own next stage (Applied → Screening → Interview → Offer). Offer-stage candidates are skipped — hiring stays a per-candidate decision."
+          >
+            <ArrowRight className="h-3.5 w-3.5" />
+            Advance selected ({advanceableRows.length})
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-alert hover:text-alert hover:bg-alert/10"
+            onClick={() => setBulkRejectOpen(true)}
+            disabled={bulkBusy}
+          >
+            Reject selected ({selectedRows.length})
+          </Button>
+          <Button size="sm" variant="ghost" onClick={clearSelection} disabled={bulkBusy}>
+            Clear
+          </Button>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={bulkRejectOpen}
+        onOpenChange={(o) => !o && setBulkRejectOpen(false)}
+        title={`Reject ${selectedRows.length} candidate${selectedRows.length === 1 ? '' : 's'}?`}
+        description="One reason is recorded on every selected candidate for the audit trail."
+        confirmLabel="Reject candidates"
+        destructive
+        requireReason
+        reasonPlaceholder="e.g., Position filled — no openings remain this season."
+        busy={bulkBusy}
+        onConfirm={bulkReject}
+      />
 
       <CreateCandidateDialog
         open={showCreate}

@@ -163,6 +163,16 @@ export function rejectDocument(
   });
 }
 
+// Renewal nudge for an EXPIRED document: reopens the associate's upload
+// task (when one applies) and notifies them to submit a current copy. The
+// document row itself is untouched — it stays EXPIRED as evidence and the
+// replacement arrives as a new record.
+export function requestDocumentReupload(id: string): Promise<DocumentRecord> {
+  return apiFetch<DocumentRecord>(`/documents/admin/${id}/request-reupload`, {
+    method: 'POST',
+  });
+}
+
 /** Human labels for every document kind bucket. */
 export const DOCUMENT_KIND_LABEL: Record<string, string> = {
   ID: 'ID',

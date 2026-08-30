@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { AlertCircle, Calendar, Clock, Download, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
@@ -12,6 +12,7 @@ import {
 import { grantAssociateQual } from '@/lib/qualApi';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
+import { usePersistentState } from '@/lib/usePersistentState';
 import {
   Badge,
   Button,
@@ -56,20 +57,36 @@ export function ExpirationsHome() {
     : false;
   const [data, setData] = useState<ExpirationsResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [days, setDays] = useState<30 | 60 | 90>(60);
-  const [filter, setFilter] = useState<'all' | 'cert'>('all');
+  const [days, setDays] = usePersistentState<30 | 60 | 90>(
+    'alto:list.expirations.days.v1',
+    60,
+    (v): v is 30 | 60 | 90 => v === 30 || v === 60 || v === 90,
+  );
+  const [filter, setFilter] = usePersistentState<'all' | 'cert'>(
+    'alto:list.expirations.type.v1',
+    'all',
+    (v): v is 'all' | 'cert' => v === 'all' || v === 'cert',
+  );
   const [search, setSearch] = useState('');
   const [renewTarget, setRenewTarget] = useState<ExpirationItem | null>(null);
 
+  // Keeps the previous buckets on screen while a filter flip refetches —
+  // no full-skeleton flash. The sequence guard drops out-of-order responses
+  // from rapid toggling.
+  const reqSeq = useRef(0);
   const refresh = () => {
-    setData(null);
+    const seq = ++reqSeq.current;
     setLoadError(null);
     getExpirations({
       days,
       isCert: filter === 'cert' ? true : undefined,
     })
-      .then(setData)
-      .catch(() => setLoadError('Failed to load expirations.'));
+      .then((d) => {
+        if (seq === reqSeq.current) setData(d);
+      })
+      .catch(() => {
+        if (seq === reqSeq.current) setLoadError('Failed to load expirations.');
+      });
   };
 
   useEffect(() => {

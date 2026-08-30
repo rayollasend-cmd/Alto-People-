@@ -1160,6 +1160,7 @@ export function ExecutiveDashboard() {
                   ? `${recv.totals.outstandingCount} statement${recv.totals.outstandingCount === 1 ? '' : 's'}${recv.totals.avgDaysToPay !== null ? ` · pays in ~${recv.totals.avgDaysToPay}d` : ''}`
                   : undefined
               }
+              to="/clients/statements"
             />
             <Tile
               label="Turnover cost (90d)"
@@ -1280,15 +1281,20 @@ export function ExecutiveDashboard() {
                     </div>
                     <ul className="divide-y divide-navy-secondary/60">
                       {recv.outstanding.slice(0, 5).map((s) => (
-                        <li key={s.id} className="flex items-center justify-between py-1.5 text-sm">
-                          <span className="min-w-0 truncate text-white">
-                            {s.clientName} #{s.number ?? '—'}
-                          </span>
-                          <span
-                            className={`tabular-nums ${s.ageDays >= 45 ? 'text-alert' : 'text-silver'}`}
+                        <li key={s.id} className="py-1.5 text-sm">
+                          <Link
+                            to={`/clients/statements?statement=${s.id}`}
+                            className="flex items-center justify-between gap-2 hover:text-gold"
                           >
-                            {fmtMoney(s.amount)} · {s.ageDays}d
-                          </span>
+                            <span className="min-w-0 truncate text-white">
+                              {s.clientName} #{s.number ?? '—'}
+                            </span>
+                            <span
+                              className={`tabular-nums ${s.ageDays >= 45 ? 'text-alert' : 'text-silver'}`}
+                            >
+                              {fmtMoney(s.amount)} · {s.ageDays}d
+                            </span>
+                          </Link>
                         </li>
                       ))}
                     </ul>
@@ -1345,7 +1351,12 @@ export function ExecutiveDashboard() {
                   {summary.concentration.slice(0, 4).map((c) => (
                     <div key={c.clientId} className="mb-2">
                       <div className="flex items-center justify-between text-sm">
-                        <span className="min-w-0 truncate text-white">{c.clientName}</span>
+                        <Link
+                          to={`/clients/${c.clientId}`}
+                          className="min-w-0 truncate text-white hover:text-gold"
+                        >
+                          {c.clientName}
+                        </Link>
                         <span
                           className={`tabular-nums ${c.sharePct >= 70 ? 'text-warning' : 'text-silver'}`}
                         >
@@ -1381,14 +1392,21 @@ export function ExecutiveDashboard() {
                         .filter((p) => p.stage !== 'LOST' && p.stage !== 'WON')
                         .slice(0, 5)
                         .map((p) => (
-                          <li key={p.id} className="flex items-center justify-between py-1.5 text-sm">
-                            <span className="min-w-0 truncate text-white">{p.name}</span>
-                            <span className="tabular-nums text-silver">
-                              {p.stage.toLowerCase()}
-                              {p.estWeeklyHours && p.estBillRate
-                                ? ` · ~${fmtMoney(p.estWeeklyHours * p.estBillRate)}/wk`
-                                : ''}
-                            </span>
+                          <li key={p.id} className="py-1.5 text-sm">
+                            {/* Prospects live in the Clients page's pipeline
+                                section — no per-prospect page exists. */}
+                            <Link
+                              to="/clients"
+                              className="flex items-center justify-between gap-2 hover:text-gold"
+                            >
+                              <span className="min-w-0 truncate text-white">{p.name}</span>
+                              <span className="tabular-nums text-silver">
+                                {p.stage.toLowerCase()}
+                                {p.estWeeklyHours && p.estBillRate
+                                  ? ` · ~${fmtMoney(p.estWeeklyHours * p.estBillRate)}/wk`
+                                  : ''}
+                              </span>
+                            </Link>
                           </li>
                         ))}
                     </ul>

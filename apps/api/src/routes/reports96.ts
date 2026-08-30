@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
+import { ReportPeriodTokenSchema, type ReportPeriodToken } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -45,6 +46,22 @@ const ReportInputSchema = z.object({
   isPublic: z.boolean().optional(),
 });
 
+/** First relative-period token in a raw spec Json, for the list's window
+ *  label ("Last week") — defensive: list rows must render even when a
+ *  legacy spec wouldn't pass SpecSchema. */
+function specPeriodToken(spec: unknown): ReportPeriodToken | null {
+  if (!spec || typeof spec !== 'object') return null;
+  const filters = (spec as { filters?: unknown }).filters;
+  if (!Array.isArray(filters)) return null;
+  for (const f of filters) {
+    if (f && typeof f === 'object' && (f as { op?: unknown }).op === 'period') {
+      const token = ReportPeriodTokenSchema.safeParse((f as { value?: unknown }).value);
+      if (token.success) return token.data;
+    }
+  }
+  return null;
+}
+
 // ----- Reports CRUD ------------------------------------------------------
 
 reports96Router.get('/reports', VIEW, async (req, res) => {
@@ -63,6 +80,7 @@ reports96Router.get('/reports', VIEW, async (req, res) => {
       description: r.description,
       entity: r.entity,
       isPublic: r.isPublic,
+      period: specPeriodToken(r.spec),
       createdAt: r.createdAt.toISOString(),
     })),
   });
@@ -118,6 +136,38 @@ reports96Router.post('/reports', VIEW, async (req, res) => {
     },
   });
   res.status(201).json({ id: created.id });
+});
+
+reports96Router.patch('/reports/:id', VIEW, async (req, res) => {
+  const r = await prisma.report.findUnique({ where: { id: req.params.id } });
+  if (!r || r.deletedAt) throw new HttpError(404, 'not_found', 'Report not found.');
+  // Same ownership rule as delete — a shared report authored by someone
+  // else can be duplicated, never edited in place. createdById is never
+  // touched, so authorship survives every edit.
+  if (r.createdById !== req.user!.id) {
+    throw new HttpError(403, 'forbidden', 'Only the author can edit a report.');
+  }
+  const input = ReportInputSchema.partial().parse(req.body);
+  // Validate the EFFECTIVE entity+spec pair (an entity change without a
+  // matching spec must fail the whitelist, not save a broken report).
+  const entity = input.entity ?? r.entity;
+  const spec = input.spec ?? SpecSchema.parse(r.spec);
+  buildSelect(entity, spec.columns);
+  buildWhere(entity, spec.filters);
+  buildOrderBy(entity, spec.sort);
+
+  await prisma.report.update({
+    where: { id: r.id },
+    data: {
+      name: input.name,
+      // undefined = leave alone, null = clear (Prisma skips undefined).
+      description: input.description,
+      entity,
+      spec: spec as unknown as Prisma.InputJsonValue,
+      isPublic: input.isPublic,
+    },
+  });
+  res.json({ id: r.id });
 });
 
 reports96Router.delete('/reports/:id', VIEW, async (req, res) => {

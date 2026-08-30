@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import multer from 'multer';
 import { Prisma } from '@prisma/client';
@@ -965,6 +965,112 @@ documentsRouter.post('/admin/bulk-verify', MANAGE, async (req, res, next) => {
   }
 });
 
+/**
+ * Put the ball back in the associate's court after a document stops being
+ * usable. Shared by reject AND request-reupload (expiry renewal): if the
+ * doc was tied to a self-serve task on the associate's in-flight
+ * application, flip that task back to PENDING so the checklist re-opens.
+ * Looks at the most recent non-terminal application (DRAFT / SUBMITTED /
+ * IN_REVIEW) for this associate; if they have no live application (e.g.
+ * doc uploaded post-hire via /me/documents) this is a no-op. Best-effort —
+ * failures never block the calling endpoint.
+ *
+ * Returns the live application's id (for the notification deep link) or
+ * null when there's nothing to point the associate at beyond
+ * /me/documents. The id is returned even if a later rewind step failed —
+ * the checklist is still the best landing page for them.
+ */
+async function reopenUploadTaskForDoc(
+  user: { id: string },
+  doc: { id: string; kind: DocumentKind; associateId: string },
+  reason: 'document_rejected' | 'document_expired',
+  req: Request,
+): Promise<string | null> {
+  const taskKind = DOC_KIND_TO_TASK_KIND[doc.kind];
+  if (!taskKind) return null;
+  let liveApplicationId: string | null = null;
+  try {
+    const liveApp = await prisma.application.findFirst({
+      where: {
+        associateId: doc.associateId,
+        status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] },
+        // Every other application lookup filters tombstones; without
+        // this, a soft-deleted app newer than the real one absorbed
+        // the rewind (and the notification deep-linked to it)
+        // while the live application's task never reopened.
+        deletedAt: null,
+      },
+      orderBy: { invitedAt: 'desc' },
+      include: { checklist: { select: { id: true } } },
+    });
+    if (liveApp) {
+      liveApplicationId = liveApp.id;
+      // The application is no longer "ready for review": clear the
+      // submitted stamp (and roll SUBMITTED back to DRAFT) so the
+      // ready-for-review notification RE-FIRES when the associate
+      // fixes the document — without this, the app sat at 100% again
+      // with nobody told.
+      if (liveApp.submittedAt || liveApp.status === 'SUBMITTED') {
+        await prisma.application.update({
+          where: { id: liveApp.id },
+          data: {
+            submittedAt: null,
+            // A rewind starts a fresh review cycle — reset the
+            // post-submission-edit stamp so the next applicant edit
+            // after resubmission notifies reviewers again.
+            updatedAfterSubmitAt: null,
+            ...(liveApp.status === 'SUBMITTED' ? { status: 'DRAFT' } : {}),
+          },
+        });
+      }
+      // An I-9-class rewind also reopens the associate's I-9 upload
+      // step — documentsSubmittedAt was set-once, which left them
+      // staring at "awaiting HR" with no way to act.
+      if (
+        doc.kind === 'ID' ||
+        doc.kind === 'SSN_CARD' ||
+        doc.kind === 'I9_SUPPORTING' ||
+        doc.kind === 'J1_VISA' ||
+        doc.kind === 'J1_DS2019'
+      ) {
+        await prisma.i9Verification.updateMany({
+          where: {
+            associateId: doc.associateId,
+            section2CompletedAt: null,
+          },
+          data: { documentsSubmittedAt: null },
+        });
+      }
+      if (liveApp.checklist) {
+        const reopened = await markTaskTodoByKind(
+          prisma,
+          liveApp.checklist.id,
+          taskKind
+        );
+        if (reopened > 0) {
+          await recordOnboardingEvent({
+            actorUserId: user.id,
+            action: 'onboarding.task_reopened',
+            applicationId: liveApp.id,
+            clientId: liveApp.clientId,
+            metadata: {
+              taskKind,
+              reason,
+              documentId: doc.id,
+              documentKind: doc.kind,
+            },
+            req,
+          });
+        }
+      }
+    }
+  } catch {
+    // Best-effort — the calling action has already succeeded and been
+    // audited; a rewind failure is recoverable by admin re-saving.
+  }
+  return liveApplicationId;
+}
+
 documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
   try {
     const user = req.user!;
@@ -1003,101 +1109,16 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
       req,
     });
 
-    // Onboarding rewind — if the rejected doc was tied to a self-serve
-    // task on the associate's in-flight application, flip that task back
-    // to PENDING so the checklist re-opens. Looks at the most recent
-    // non-terminal application (DRAFT / SUBMITTED / IN_REVIEW) for this
-    // associate; if they have no live application (e.g. doc uploaded
-    // post-hire via /me/documents) this is a no-op. Best-effort —
-    // failures don't block the rejection itself.
-    //
-    // Also drives the deep link in the rejection email: if there's an
-    // active application, point the associate at its checklist rather
-    // than the generic /me/documents page, so they land where the
-    // (now-reopened) task is waiting for them.
-    const taskKind = DOC_KIND_TO_TASK_KIND[updated.kind];
-    let liveApplicationId: string | null = null;
-    if (taskKind) {
-      try {
-        const liveApp = await prisma.application.findFirst({
-          where: {
-            associateId: updated.associateId,
-            status: { in: ['DRAFT', 'SUBMITTED', 'IN_REVIEW'] },
-            // Every other application lookup filters tombstones; without
-            // this, a soft-deleted app newer than the real one absorbed
-            // the rewind (and the rejection email deep-linked to it)
-            // while the live application's task never reopened.
-            deletedAt: null,
-          },
-          orderBy: { invitedAt: 'desc' },
-          include: { checklist: { select: { id: true } } },
-        });
-        if (liveApp) {
-          liveApplicationId = liveApp.id;
-          // The application is no longer "ready for review": clear the
-          // submitted stamp (and roll SUBMITTED back to DRAFT) so the
-          // ready-for-review notification RE-FIRES when the associate
-          // fixes the document — without this, the app sat at 100% again
-          // with nobody told.
-          if (liveApp.submittedAt || liveApp.status === 'SUBMITTED') {
-            await prisma.application.update({
-              where: { id: liveApp.id },
-              data: {
-                submittedAt: null,
-                // A rewind starts a fresh review cycle — reset the
-                // post-submission-edit stamp so the next applicant edit
-                // after resubmission notifies reviewers again.
-                updatedAfterSubmitAt: null,
-                ...(liveApp.status === 'SUBMITTED' ? { status: 'DRAFT' } : {}),
-              },
-            });
-          }
-          // An I-9-class rejection also reopens the associate's I-9 upload
-          // step — documentsSubmittedAt was set-once, which left them
-          // staring at "awaiting HR" with no way to act.
-          if (
-            updated.kind === 'ID' ||
-            updated.kind === 'SSN_CARD' ||
-            updated.kind === 'I9_SUPPORTING' ||
-            updated.kind === 'J1_VISA' ||
-            updated.kind === 'J1_DS2019'
-          ) {
-            await prisma.i9Verification.updateMany({
-              where: {
-                associateId: updated.associateId,
-                section2CompletedAt: null,
-              },
-              data: { documentsSubmittedAt: null },
-            });
-          }
-          if (liveApp.checklist) {
-            const reopened = await markTaskTodoByKind(
-              prisma,
-              liveApp.checklist.id,
-              taskKind
-            );
-            if (reopened > 0) {
-              await recordOnboardingEvent({
-                actorUserId: user.id,
-                action: 'onboarding.task_reopened',
-                applicationId: liveApp.id,
-                clientId: liveApp.clientId,
-                metadata: {
-                  taskKind,
-                  reason: 'document_rejected',
-                  documentId: updated.id,
-                  documentKind: updated.kind,
-                },
-                req,
-              });
-            }
-          }
-        }
-      } catch {
-        // Best-effort — the rejection itself has already succeeded and
-        // been audited; a rewind failure is recoverable by admin re-saving.
-      }
-    }
+    // Onboarding rewind + deep-link target — see reopenUploadTaskForDoc.
+    // If there's an active application, the rejection email points the
+    // associate at its checklist rather than the generic /me/documents
+    // page, so they land where the (now-reopened) task is waiting.
+    const liveApplicationId = await reopenUploadTaskForDoc(
+      user,
+      updated,
+      'document_rejected',
+      req,
+    );
 
     const rejAssoc = await prisma.associate.findUnique({
       where: { id: updated.associateId },
@@ -1149,6 +1170,83 @@ documentsRouter.post('/admin/:id/reject', MANAGE, async (req, res, next) => {
     });
 
     res.json(toRecord(updated));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /documents/admin/:id/request-reupload — renewal nudge for an
+ * EXPIRED document.
+ *
+ * The reject machinery (task rewind + notify) covered every state except
+ * the one that happens on its own: a verified doc lapsing past its expiry.
+ * EXPIRED rows sat in the "Action needed" queue with no action to take.
+ * This reuses the reject endpoint's rewind (reopenUploadTaskForDoc) but
+ * leaves the document row untouched — the EXPIRED record stays as evidence
+ * of what lapsed, and the associate's fresh upload arrives as a NEW row.
+ */
+documentsRouter.post('/admin/:id/request-reupload', MANAGE, async (req, res, next) => {
+  try {
+    const user = req.user!;
+    const doc = await prisma.documentRecord.findFirst({
+      where: { id: req.params.id, deletedAt: null },
+      include: DOC_INCLUDE,
+    });
+    if (!doc) throw new HttpError(404, 'document_not_found', 'Document not found');
+    if (doc.status !== 'EXPIRED') {
+      throw new HttpError(
+        409,
+        'not_expired',
+        'Only an EXPIRED document can be sent a renewal request',
+      );
+    }
+
+    await recordDocumentEvent({
+      actorUserId: user.id,
+      action: 'document.reupload_requested',
+      documentId: doc.id,
+      associateId: doc.associateId,
+      clientId: doc.clientId,
+      metadata: {
+        kind: doc.kind,
+        filename: doc.filename,
+        expiredAt: doc.expiresAt ? doc.expiresAt.toISOString() : null,
+      },
+      req,
+    });
+
+    const liveApplicationId = await reopenUploadTaskForDoc(
+      user,
+      doc,
+      'document_expired',
+      req,
+    );
+
+    // Same two link forms as reject: relative path for the bell's
+    // navigate(), absolute for the email — both land the associate where
+    // they can upload the replacement.
+    const associateLinkPath = liveApplicationId
+      ? `/onboarding/me/${liveApplicationId}`
+      : `/me/documents`;
+    const docKindLabel = doc.kind.replace(/_/g, ' ').toLowerCase();
+    const expiredOn = doc.expiresAt
+      ? ` on ${doc.expiresAt.toISOString().slice(0, 10)}`
+      : '';
+    // Renewal-specific copy. No html passed on purpose: the notify layer
+    // wraps html-less sends in the branded generic email layout, and the
+    // in-app bell only ever renders the text body.
+    void notifyAssociate(doc.associateId, {
+      subject: `[Action Required] Your ${docKindLabel} has expired — please upload a current one`,
+      body:
+        `${doc.associate?.firstName ?? 'There'}, your ${docKindLabel} on file ` +
+        `(${doc.filename}) expired${expiredOn}. Please upload a current one so ` +
+        `your records stay compliant.`,
+      category: 'documents',
+      linkUrl: associateLinkPath,
+    });
+
+    res.json(toRecord(doc));
   } catch (err) {
     next(err);
   }

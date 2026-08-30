@@ -68,6 +68,38 @@ describe('I-9 endpoints', () => {
     expect(audit).not.toBeNull();
   });
 
+  it('updates work-authorization expiry (reverification) and can clear it', async () => {
+    const associate = await createAssociate();
+    await prisma.i9Verification.create({
+      data: {
+        associateId: associate.id,
+        section1CompletedAt: new Date(),
+        workAuthExpiresAt: new Date('2026-09-30T00:00:00.000Z'),
+      },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const res = await a
+      .post(`/compliance/i9/${associate.id}`)
+      .send({ workAuthExpiresAt: '2027-06-30' });
+    expect(res.status).toBe(200);
+    expect(res.body.workAuthExpiresAt).toBe('2027-06-30');
+    // The date-only field must not disturb the section timestamps.
+    expect(res.body.section1CompletedAt).not.toBeNull();
+
+    const cleared = await a
+      .post(`/compliance/i9/${associate.id}`)
+      .send({ workAuthExpiresAt: null });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.workAuthExpiresAt).toBeNull();
+
+    const bad = await a
+      .post(`/compliance/i9/${associate.id}`)
+      .send({ workAuthExpiresAt: 'June 2027' });
+    expect(bad.status).toBe(400);
+  });
+
   it('rejects section 2 record without documentList → 400', async () => {
     const associate = await createAssociate();
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });

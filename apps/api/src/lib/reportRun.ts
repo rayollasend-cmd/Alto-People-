@@ -1,8 +1,18 @@
 import type { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
+import {
+  ReportPeriodTokenSchema,
+  type ReportPeriodToken,
+} from '@alto-people/shared';
 import { prisma as defaultPrisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import type { SessionUser } from '../types/express.js';
+import {
+  endOfWeekUTC,
+  orgDateKey,
+  startOfWeekUTC,
+  utcInstantOfLocalMidnight,
+} from './timeAnomalies.js';
 import {
   scopeApplications,
   scopeAssociates,
@@ -86,7 +96,9 @@ export const ENTITY_COLUMNS: Record<string, Record<string, string>> = {
   },
 };
 
-export const FILTER_OPS = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'contains', 'in'] as const;
+// `period` takes a REPORT_PERIOD_TOKENS value (e.g. 'last-week') instead of
+// a literal, and is resolved to a [start, end) window at run time.
+export const FILTER_OPS = ['eq', 'ne', 'gt', 'gte', 'lt', 'lte', 'contains', 'in', 'period'] as const;
 
 export const FilterSchema = z.object({
   column: z.string(),
@@ -108,9 +120,60 @@ export const SpecSchema = z.object({
 
 export type ReportSpec = z.infer<typeof SpecSchema>;
 
+// Same tz constant as timeAnomalies.WEEK_TZ_FALLBACK (not exported there);
+// every store is in Florida.
+const ORG_TZ = 'America/New_York';
+
+/** Columns holding instants — the only legal targets for `period` filters.
+ *  Mirrors the web builder's isDateColumn heuristic over the PUBLIC keys. */
+const isDateColumnKey = (c: string) =>
+  /At$/.test(c) || c === 'periodStart' || c === 'periodEnd' || c === 'clockIn' || c === 'clockOut';
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * Resolve a relative period token to a concrete [start, end) window as of
+ * `now`. Week tokens use the org Saturday-start workweek helpers; month/
+ * year tokens are org-local calendar windows. To-date tokens end at `now`
+ * itself rather than a period boundary.
+ */
+export function resolvePeriodWindow(
+  token: ReportPeriodToken,
+  now: Date = new Date(),
+): { start: Date; end: Date } {
+  switch (token) {
+    case 'this-week':
+      return { start: startOfWeekUTC(now), end: endOfWeekUTC(now) };
+    case 'last-week': {
+      const end = startOfWeekUTC(now);
+      // 36h back from the boundary lands mid-previous-week regardless of
+      // DST — same trick as executiveSummary / executiveDecisions.
+      return { start: startOfWeekUTC(new Date(end.getTime() - 36 * 3600_000)), end };
+    }
+    case 'last-month': {
+      const [y, m] = orgDateKey(now).split('-').map(Number);
+      const prevY = m === 1 ? y - 1 : y;
+      const prevM = m === 1 ? 12 : m - 1;
+      return {
+        start: utcInstantOfLocalMidnight(`${prevY}-${pad2(prevM)}-01`, ORG_TZ),
+        end: utcInstantOfLocalMidnight(`${y}-${pad2(m)}-01`, ORG_TZ),
+      };
+    }
+    case 'month-to-date': {
+      const [y, m] = orgDateKey(now).split('-').map(Number);
+      return { start: utcInstantOfLocalMidnight(`${y}-${pad2(m)}-01`, ORG_TZ), end: now };
+    }
+    case 'year-to-date': {
+      const [y] = orgDateKey(now).split('-').map(Number);
+      return { start: utcInstantOfLocalMidnight(`${y}-01-01`, ORG_TZ), end: now };
+    }
+  }
+}
+
 export function buildWhere(
   entity: string,
   filters: z.infer<typeof FilterSchema>[],
+  now: Date = new Date(),
 ): Record<string, unknown> {
   const cols = ENTITY_COLUMNS[entity];
   if (!cols) throw new HttpError(400, 'invalid_entity', 'Unknown report entity.');
@@ -133,6 +196,24 @@ export function buildWhere(
       where[col] = { in: f.value };
     } else if (f.op === 'contains') {
       where[col] = { contains: String(f.value), mode: 'insensitive' };
+    } else if (f.op === 'period') {
+      const token = ReportPeriodTokenSchema.safeParse(f.value);
+      if (!token.success) {
+        throw new HttpError(
+          400,
+          'invalid_value',
+          '`period` requires a relative-period token (e.g. "last-week").',
+        );
+      }
+      if (!isDateColumnKey(f.column)) {
+        throw new HttpError(
+          400,
+          'invalid_column',
+          `Column "${f.column}" is not a date column — \`period\` filters need one.`,
+        );
+      }
+      const { start, end } = resolvePeriodWindow(token.data, now);
+      where[col] = { gte: start, lt: end };
     } else {
       where[col] = { [f.op]: f.value };
     }
@@ -191,8 +272,10 @@ export async function runReport(
   spec: ReportSpec,
   user: SessionUser,
   db: PrismaClient = defaultPrisma,
+  // Injectable so tests can pin the instant `period` tokens resolve against.
+  now: Date = new Date(),
 ): Promise<unknown[]> {
-  const specWhere = buildWhere(entity, spec.filters);
+  const specWhere = buildWhere(entity, spec.filters, now);
   const select = buildSelect(entity, spec.columns);
   const orderBy = buildOrderBy(entity, spec.sort);
   const scoped = <T>(scope: T) => ({ AND: [specWhere, scope] });

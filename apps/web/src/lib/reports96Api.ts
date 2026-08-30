@@ -1,3 +1,4 @@
+import type { ReportPeriodToken } from '@alto-people/shared';
 import { apiFetch } from './api';
 
 export type ReportEntity =
@@ -9,7 +10,9 @@ export type ReportEntity =
   | 'EXPENSE'
   | 'CANDIDATE';
 
-export type FilterOp = 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'in';
+// `period` pairs with a ReportPeriodToken value ('last-week', …); the
+// server resolves the token to a concrete date window at run time.
+export type FilterOp = 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'in' | 'period';
 
 export interface ReportFilter {
   column: string;
@@ -35,6 +38,8 @@ export interface ReportSummary {
   description: string | null;
   entity: ReportEntity;
   isPublic: boolean;
+  /** First relative-period token in the spec, for the list's window label. */
+  period: ReportPeriodToken | null;
   createdAt: string;
 }
 
@@ -70,6 +75,18 @@ export const createReport = (input: {
   spec: ReportSpec;
   isPublic?: boolean;
 }) => apiFetch<{ id: string }>('/reports', { method: 'POST', body: input });
+
+/** Author-only in-place edit — authorship (createdById) is preserved. */
+export const updateReport = (
+  id: string,
+  input: {
+    name?: string;
+    description?: string | null;
+    entity?: ReportEntity;
+    spec?: ReportSpec;
+    isPublic?: boolean;
+  },
+) => apiFetch<{ id: string }>(`/reports/${id}`, { method: 'PATCH', body: input });
 
 export const deleteReport = (id: string) =>
   apiFetch<void>(`/reports/${id}`, { method: 'DELETE' });

@@ -40,6 +40,8 @@ import { cn } from '@/lib/cn';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, ymdLocal } from '@/lib/format';
 import { statusTone } from '@/lib/status';
+import { usePersistentState } from '@/lib/usePersistentState';
+import { useStoreScope } from '@/lib/storeScope';
 import { toast } from 'sonner';
 import {
   Badge,
@@ -106,9 +108,12 @@ const CITIZENSHIP_LABEL: Record<string, string> = {
   ALIEN_AUTHORIZED_TO_WORK: 'An alien authorized to work',
 };
 
-type StatusFilter = 'all' | 'not_run' | 'pending' | 'authorized' | 'issue' | 'overdue';
-type HiredFilter = 'any' | 'today' | 'yesterday' | 'week' | 'month';
-type SortMode = 'name' | 'newest' | 'due';
+const STATUS_FILTER_VALUES = ['all', 'not_run', 'pending', 'authorized', 'issue', 'overdue'] as const;
+type StatusFilter = (typeof STATUS_FILTER_VALUES)[number];
+const HIRED_FILTER_VALUES = ['any', 'today', 'yesterday', 'week', 'month'] as const;
+type HiredFilter = (typeof HIRED_FILTER_VALUES)[number];
+const SORT_MODE_VALUES = ['name', 'newest', 'due'] as const;
+type SortMode = (typeof SORT_MODE_VALUES)[number];
 
 /** Local calendar date as YYYY-MM-DD — hireDate comparisons are date-only,
  *  in the viewer's own day ("hired today" means today where HR sits). */
@@ -154,11 +159,47 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<StatusFilter>('all');
-  const [hired, setHired] = useState<HiredFilter>('any');
-  const [sort, setSort] = useState<SortMode>('name');
+  const [filter, setFilter] = usePersistentState<StatusFilter>(
+    'alto:list.everify.status.v1',
+    'all',
+    (v): v is StatusFilter => STATUS_FILTER_VALUES.some((s) => s === v),
+  );
+  const [hired, setHired] = usePersistentState<HiredFilter>(
+    'alto:list.everify.hired.v1',
+    'any',
+    (v): v is HiredFilter => HIRED_FILTER_VALUES.some((s) => s === v),
+  );
+  const [sort, setSort] = usePersistentState<SortMode>(
+    'alto:list.everify.sort.v1',
+    'name',
+    (v): v is SortMode => SORT_MODE_VALUES.some((s) => s === v),
+  );
   // '' = all clients; 'none' = rows with no client attribution.
-  const [clientFilter, setClientFilter] = useState('');
+  const [clientFilter, setClientFilter] = usePersistentState<string>(
+    'alto:list.everify.client.v1',
+    '',
+    (v): v is string => typeof v === 'string',
+  );
+  // Global Topbar store scope drives the default client filter (same wiring
+  // as AdminTimeView): adopt it on arrival when one is chosen, follow later
+  // Topbar switches, and push page-level changes back so other modules stay
+  // in step.
+  const storeScope = useStoreScope();
+  const scopeClientId = storeScope.enabled ? storeScope.clientId : null;
+  const scopeSyncedRef = useRef(false);
+  useEffect(() => {
+    if (scopeClientId === null) return;
+    if (!scopeSyncedRef.current) {
+      scopeSyncedRef.current = true;
+      if (!scopeClientId) return;
+    }
+    setClientFilter((prev) => (prev === scopeClientId ? prev : scopeClientId));
+  }, [scopeClientId, setClientFilter]);
+  const changeClientFilter = (id: string) => {
+    setClientFilter(id);
+    // 'none' is a page-local synthetic bucket, not a store the scope knows.
+    if (id !== 'none') storeScope.setClientId(id);
+  };
   const [openFor, setOpenFor] = useState<string | null>(null);
   const { user } = useAuth();
   const canOpenCase = user ? hasCapability(user.role, 'manage:compliance') : false;
@@ -314,7 +355,7 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
         </Select>
         <Select
           value={clientFilter}
-          onChange={(e) => setClientFilter(e.target.value)}
+          onChange={(e) => changeClientFilter(e.target.value)}
           size="sm"
           className="w-auto"
           aria-label="Filter by client"

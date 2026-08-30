@@ -197,7 +197,7 @@ export function AssociateDashboard() {
         {failed.timeOff ? (
           <LoadFailedCard label={t('dash.timeOff')} icon={CalendarOff} onRetry={refreshAll} />
         ) : (
-          <TimeOffCard balances={balances} onView={() => navigate('/time-off')} />
+          <TimeOffCard balances={balances} onView={() => navigate('/time-off?new=1')} />
         )}
       </div>
 
@@ -814,7 +814,8 @@ const QUICK_LINKS: { to: string; labelKey: MessageKey; icon: typeof Clock }[] = 
   { to: '/time-attendance', labelKey: 'dash.myTimesheet', icon: Clock },
   { to: '/scheduling', labelKey: 'dash.scheduleSwaps', icon: Timer },
   { to: '/documents', labelKey: 'dash.documents', icon: FileText },
-  { to: '/time-off', labelKey: 'dash.requestTimeOff', icon: CalendarOff },
+  // ?new=1 lands straight in the request dialog — one tap to ask for a day.
+  { to: '/time-off?new=1', labelKey: 'dash.requestTimeOff', icon: CalendarOff },
 ];
 
 function QuickActions() {

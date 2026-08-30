@@ -459,6 +459,124 @@ describe('HR verify / reject', () => {
   });
 });
 
+describe('POST /documents/admin/:id/request-reupload', () => {
+  it('EXPIRED ID doc: rewinds the upload task, audits, and bell-links to the checklist', async () => {
+    const { client, associate, user: assocUser } = await seedAssociate();
+    const app = await createApplicationWithChecklist({
+      associateId: associate.id,
+      clientId: client.id,
+    });
+    const docTask = app.checklist!.tasks.find((t) => t.kind === 'DOCUMENT_UPLOAD')!;
+    await prisma.onboardingTask.update({
+      where: { id: docTask.id },
+      data: { status: 'DONE', completedAt: new Date() },
+    });
+
+    const aAgent = await loginAs(assocUser.email);
+    const upload = await aAgent
+      .post('/documents/me/upload')
+      .field('kind', 'ID')
+      .attach('file', TINY_PNG, { filename: 'license.png', contentType: 'image/png' });
+    expect(upload.status).toBe(201);
+
+    // Simulate the daily expiry sweep: verified doc lapsed past its expiry.
+    await prisma.documentRecord.update({
+      where: { id: upload.body.id },
+      data: {
+        status: 'EXPIRED',
+        expiresAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const res = await hrAgent.post(
+      `/documents/admin/${upload.body.id}/request-reupload`,
+    );
+    expect(res.status).toBe(200);
+    // The row itself is untouched — it stays EXPIRED as evidence; the
+    // replacement arrives as a new record.
+    expect(res.body.status).toBe('EXPIRED');
+
+    const after = await prisma.onboardingTask.findUniqueOrThrow({
+      where: { id: docTask.id },
+    });
+    expect(after.status).toBe('PENDING');
+    expect(after.completedAt).toBeNull();
+
+    await flushPendingAudits();
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: 'document.reupload_requested', entityId: upload.body.id },
+    });
+    expect(audit).not.toBeNull();
+    const reopen = await prisma.auditLog.findFirst({
+      where: { action: 'onboarding.task_reopened', entityId: app.id },
+    });
+    expect(reopen).not.toBeNull();
+    const reopenMeta = reopen!.metadata as Record<string, unknown>;
+    expect(reopenMeta.reason).toBe('document_expired');
+
+    // Renewal-specific copy, deep-linked at the live application's
+    // checklist where the just-reopened task is waiting.
+    await flushPendingNotifications();
+    const bellRow = await prisma.notification.findFirst({
+      where: {
+        channel: 'IN_APP',
+        recipientUserId: assocUser.id,
+        category: 'documents',
+      },
+    });
+    expect(bellRow?.linkUrl).toBe(`/onboarding/me/${app.id}`);
+    expect(bellRow?.subject).toContain('has expired');
+  });
+
+  it('non-EXPIRED doc → 409 not_expired; row is left alone', async () => {
+    const { user: assocUser } = await seedAssociate();
+    const aAgent = await loginAs(assocUser.email);
+    const upload = await aAgent
+      .post('/documents/me/upload')
+      .field('kind', 'ID')
+      .attach('file', TINY_PNG, { filename: 'license.png', contentType: 'image/png' });
+
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const res = await hrAgent.post(
+      `/documents/admin/${upload.body.id}/request-reupload`,
+    );
+    expect(res.status).toBe(409);
+    expect(res.body.error?.code).toBe('not_expired');
+
+    const row = await prisma.documentRecord.findUniqueOrThrow({
+      where: { id: upload.body.id },
+    });
+    expect(row.status).toBe('UPLOADED');
+  });
+
+  it('unknown id 404s; associates lack manage:documents → 403', async () => {
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hrAgent = await loginAs(hr.email);
+    const missing = await hrAgent.post(
+      '/documents/admin/00000000-0000-4000-8000-000000000000/request-reupload',
+    );
+    expect(missing.status).toBe(404);
+
+    const { user: assocUser } = await seedAssociate();
+    const aAgent = await loginAs(assocUser.email);
+    const upload = await aAgent
+      .post('/documents/me/upload')
+      .field('kind', 'ID')
+      .attach('file', TINY_PNG, { filename: 'x.png', contentType: 'image/png' });
+    await prisma.documentRecord.update({
+      where: { id: upload.body.id },
+      data: { status: 'EXPIRED' },
+    });
+    const forbidden = await aAgent.post(
+      `/documents/admin/${upload.body.id}/request-reupload`,
+    );
+    expect(forbidden.status).toBe(403);
+  });
+});
+
 describe('DELETE /documents/me/:id', () => {
   it('soft-deletes an UPLOADED doc and removes the file from disk', async () => {
     const { user } = await seedAssociate();

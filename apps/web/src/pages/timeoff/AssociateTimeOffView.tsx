@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarOff, Plus, Wallet } from 'lucide-react';
 import { toast } from 'sonner';
@@ -122,6 +123,23 @@ export function AssociateTimeOffView() {
   const [statusFilter, setStatusFilter] = useState<
     TimeOffRequest['status'] | 'ALL'
   >('ALL');
+
+  // ?new=1 deep link (dashboard tiles) — auto-open the request dialog.
+  // Consumed once with a replace so Back/refresh don't re-open it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const wantsNew = searchParams.get('new') === '1';
+  useEffect(() => {
+    if (!wantsNew) return;
+    setOpenCreate(true);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('new');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [wantsNew, setSearchParams]);
 
   const balancesQuery = useQuery({
     queryKey: BALANCE_KEY,
@@ -387,6 +405,15 @@ interface CreateProps {
   onCreated: () => void;
 }
 
+// "Single day" / "Date range" aren't in the typed i18n catalog (MessageKey
+// additions ripple through every locale record, which lives outside this
+// page) — inline both languages so Spanish speakers aren't dropped to
+// English for just this control.
+const RANGE_MODE_LABELS = {
+  en: { single: 'Single day', range: 'Date range', date: 'Date', mode: 'Single day or date range' },
+  es: { single: 'Un solo día', range: 'Rango de fechas', date: 'Fecha', mode: 'Un solo día o rango de fechas' },
+} as const;
+
 function CreateRequestDialog({
   open,
   onOpenChange,
@@ -394,10 +421,15 @@ function CreateRequestDialog({
   requests,
   onCreated,
 }: CreateProps) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const L = RANGE_MODE_LABELS[lang] ?? RANGE_MODE_LABELS.en;
   const [category, setCategory] = useState<Category>('VACATION');
   const [startDate, setStartDate] = useState(ymdLocal());
   const [endDate, setEndDate] = useState(ymdLocal());
+  // Single-day preset collapses the start/end pair to one date input
+  // (end mirrors start) — the most common request shape for hourly
+  // associates. Off by default so the familiar range form stays put.
+  const [singleDay, setSingleDay] = useState(false);
   const [hours, setHours] = useState('8');
   // Once the associate types their own hours, stop auto-computing from the
   // date range — their number wins.
@@ -584,31 +616,59 @@ function CreateRequestDialog({
             )}
           </Field>
 
-          {/* Stack the date pair on phones — two native date inputs
-              side-by-side don't fit inside the 360px bottom sheet. */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Field label={t('timeoff.startDate')} required>
+          <SegmentedControl<'single' | 'range'>
+            options={[
+              { value: 'single', label: L.single },
+              { value: 'range', label: L.range },
+            ]}
+            value={singleDay ? 'single' : 'range'}
+            onChange={(v) => {
+              const s = v === 'single';
+              setSingleDay(s);
+              // Collapsing to one day mirrors the end onto the start.
+              if (s) setDates(startDate, startDate);
+            }}
+            ariaLabel={L.mode}
+          />
+
+          {singleDay ? (
+            <Field label={L.date} required>
               {(p) => (
                 <Input
                   type="date"
                   value={startDate}
-                  onChange={(e) => setDates(e.target.value, endDate)}
+                  onChange={(e) => setDates(e.target.value, e.target.value)}
                   {...p}
                 />
               )}
             </Field>
-            <Field label={t('timeoff.endDate')} required>
-              {(p) => (
-                <Input
-                  type="date"
-                  value={endDate}
-                  min={startDate || undefined}
-                  onChange={(e) => setDates(startDate, e.target.value)}
-                  {...p}
-                />
-              )}
-            </Field>
-          </div>
+          ) : (
+            /* Stack the date pair on phones — two native date inputs
+               side-by-side don't fit inside the 360px bottom sheet. */
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label={t('timeoff.startDate')} required>
+                {(p) => (
+                  <Input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setDates(e.target.value, endDate)}
+                    {...p}
+                  />
+                )}
+              </Field>
+              <Field label={t('timeoff.endDate')} required>
+                {(p) => (
+                  <Input
+                    type="date"
+                    value={endDate}
+                    min={startDate || undefined}
+                    onChange={(e) => setDates(startDate, e.target.value)}
+                    {...p}
+                  />
+                )}
+              </Field>
+            </div>
+          )}
 
           {dayInfo.weekdays > 0 && (
             <p className="text-xs text-silver tabular-nums">

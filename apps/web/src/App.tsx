@@ -111,6 +111,7 @@ const ReimbursementsHome = lazyNamed(() => import('@/pages/reimbursements/Reimbu
 // Clients / org / people
 const ClientsHome = lazyNamed(() => import('@/pages/clients/ClientsHome'), 'ClientsHome');
 const ClientDetail = lazyNamed(() => import('@/pages/clients/ClientDetail'), 'ClientDetail');
+const ClientStatementsRollup = lazyNamed(() => import('@/pages/clients/ClientStatementsRollup'), 'ClientStatementsRollup');
 const PeopleDirectory = lazyNamed(() => import('@/pages/people/PeopleDirectory'), 'PeopleDirectory');
 const OrgHome = lazyNamed(() => import('@/pages/org/OrgHome'), 'OrgHome');
 const OrgChart = lazyNamed(() => import('@/pages/org/OrgChart'), 'OrgChart');
@@ -341,6 +342,9 @@ const LAYOUT_ROUTES = [
   // FINANCE_ACCOUNTANT…) deep-linking into a module it can't see gets the
   // styled "no access" screen instead of a broken page of 403s.
   { path: 'clients', element: <RequireCapability cap="view:clients"><ClientsHome /></RequireCapability> },
+  // Weekly-close roll-up — same audience as ClientDetail's StatementsSection:
+  // payroll finalizes, executives read. Static segment outranks `clients/:id`.
+  { path: 'clients/statements', element: <RequireCapability cap="process:payroll" anyOf={['view:executive']}><ClientStatementsRollup /></RequireCapability> },
   { path: 'clients/:id', element: <RequireCapability cap="view:clients"><ClientDetail /></RequireCapability> },
   { path: 'scheduling', element: <SchedulingHome /> },
   { path: 'approvals', element: <RequireCapability cap="manage:scheduling"><ApprovalsHome /></RequireCapability> },

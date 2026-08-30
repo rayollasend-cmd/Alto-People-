@@ -3342,6 +3342,13 @@ export const I9UpsertInputSchema = z
     section2CompletedAt: z.string().datetime().nullable().optional(),
     documentList: I9DocumentListSchema.nullable().optional(),
     supportingDocIds: z.array(UuidSchema).optional(),
+    /** Reverification (Supplement B): renewed work-auth expiry, YYYY-MM-DD.
+     *  Null clears it (e.g. status changed to one that never expires). */
+    workAuthExpiresAt: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'workAuthExpiresAt must be YYYY-MM-DD')
+      .nullable()
+      .optional(),
   })
   .refine(
     (v) =>
@@ -5747,4 +5754,29 @@ export const CsvImportCommitResponseSchema = z.object({
   }),
 });
 export type CsvImportCommitResponse = z.infer<typeof CsvImportCommitResponseSchema>;
+
+/* ===== Phase 96 — Reports: relative period tokens ======================== */
+
+/** Relative date-window tokens for saved report filters (`op: 'period'`).
+ *  Stored in the spec verbatim and resolved to concrete instants on the
+ *  server at RUN time, so a saved "last week's hours" report never goes
+ *  stale. Week tokens follow the org workweek (Saturday 00:00 → Friday
+ *  24:00, org-local); month/year tokens are org-local calendar windows. */
+export const REPORT_PERIOD_TOKENS = [
+  'last-week',
+  'this-week',
+  'last-month',
+  'month-to-date',
+  'year-to-date',
+] as const;
+export const ReportPeriodTokenSchema = z.enum(REPORT_PERIOD_TOKENS);
+export type ReportPeriodToken = z.infer<typeof ReportPeriodTokenSchema>;
+
+export const REPORT_PERIOD_LABELS: Record<ReportPeriodToken, string> = {
+  'last-week': 'Last week',
+  'this-week': 'This week',
+  'last-month': 'Last month',
+  'month-to-date': 'Month to date',
+  'year-to-date': 'Year to date',
+};
 

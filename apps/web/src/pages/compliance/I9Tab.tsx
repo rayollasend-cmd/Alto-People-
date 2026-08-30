@@ -18,6 +18,9 @@ import {
 } from '@/lib/documentsApi';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtDateTime } from '@/lib/format';
+import { usePersistentState } from '@/lib/usePersistentState';
+import { useStoreScope } from '@/lib/storeScope';
+import { toast } from 'sonner';
 import {
   Avatar,
   Badge,
@@ -32,6 +35,8 @@ import {
   DrawerTitle,
   EmptyState,
   ErrorBanner,
+  Input,
+  Label,
   Select,
   SkeletonRows,
 } from '@/components/ui';
@@ -117,10 +122,48 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   const [deepLinkParams] = useSearchParams();
   const deepLinkAssociateId = deepLinkParams.get('associateId');
   const deepLinkOpened = useRef(false);
-  const [filter, setFilter] = useState<I9Filter>(deepLinkAssociateId ? 'all' : 'pending');
+  const [storedFilter, setStoredFilter] = usePersistentState<I9Filter>(
+    'alto:list.compliance-i9.status.v1',
+    'pending',
+    (v): v is I9Filter => I9_FILTERS.some((f) => f.value === v),
+  );
+  // A deep link lands on ALL for this visit only — a checklist click must
+  // not overwrite the chip the user deliberately saved.
+  const [filterOverride, setFilterOverride] = useState<I9Filter | null>(
+    deepLinkAssociateId ? 'all' : null,
+  );
+  const filter = filterOverride ?? storedFilter;
+  const setFilter = (f: I9Filter) => {
+    setFilterOverride(null);
+    setStoredFilter(f);
+  };
   const [started, setStarted] = useState<StartedFilter>('any');
   // '' = all clients; 'none' = rows with no client attribution.
-  const [clientFilter, setClientFilter] = useState('');
+  const [clientFilter, setClientFilter] = usePersistentState<string>(
+    'alto:list.compliance-i9.client.v1',
+    '',
+    (v): v is string => typeof v === 'string',
+  );
+  // The global Topbar store scope is this tab's default client filter: adopt
+  // it on arrival when one is chosen, follow later Topbar switches, and push
+  // page-level changes back so Scheduling/Time/People stay in step. Deep
+  // links skip the initial adoption so the scope can't hide the linked row.
+  const storeScope = useStoreScope();
+  const scopeClientId = storeScope.enabled ? storeScope.clientId : null;
+  const scopeSyncedRef = useRef(false);
+  useEffect(() => {
+    if (scopeClientId === null) return;
+    if (!scopeSyncedRef.current) {
+      scopeSyncedRef.current = true;
+      if (!scopeClientId || deepLinkAssociateId) return;
+    }
+    setClientFilter((prev) => (prev === scopeClientId ? prev : scopeClientId));
+  }, [scopeClientId, deepLinkAssociateId, setClientFilter]);
+  const changeClientFilter = (id: string) => {
+    setClientFilter(id);
+    // 'none' is a page-local synthetic bucket, not a store the scope knows.
+    if (id !== 'none') storeScope.setClientId(id);
+  };
   const [search, setSearch] = useState('');
   const [rows, setRows] = useState<I9Verification[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -157,6 +200,25 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
   const closeAndRefresh = () => {
     setDrawerTarget(null);
     refresh();
+  };
+
+  // Hiring-wave assembly line (same pattern as EVerifyTab's "Next pending"):
+  // after a successful verify, hop straight to the next Section-2-pending row
+  // in the current filtered view instead of dumping HR back to the list.
+  const advanceAfterVerify = () => {
+    const list = displayRows ?? [];
+    const currentId = drawerTarget?.id;
+    const idx = currentId ? list.findIndex((r) => r.id === currentId) : -1;
+    for (let i = 1; i <= list.length; i++) {
+      const r = list[(idx + i) % list.length];
+      if (r && r.id !== currentId && !r.section2CompletedAt) {
+        setDrawerTarget(r);
+        void refresh();
+        return;
+      }
+    }
+    toast.success('All caught up — no more pending I-9s in this view.');
+    closeAndRefresh();
   };
 
   // Client-side view over the fetched rows: work-auth window filter, name
@@ -289,7 +351,7 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
         ))}
         <Select
           value={clientFilter}
-          onChange={(e) => setClientFilter(e.target.value)}
+          onChange={(e) => changeClientFilter(e.target.value)}
           size="sm"
           className="w-auto"
           aria-label="Filter by client"
@@ -424,9 +486,14 @@ export function I9Tab({ canManage }: { canManage: boolean }) {
       >
         {drawerTarget && (
           <I9DetailPanel
+            // Keyed so "Verify & next" resets the verifier's picks/doc-list
+            // state when the drawer hops to another associate.
+            key={drawerTarget.id}
             current={drawerTarget}
             canManage={canManage}
             onDone={closeAndRefresh}
+            onVerifiedNext={advanceAfterVerify}
+            onRefresh={() => void refresh()}
           />
         )}
       </Drawer>
@@ -472,14 +539,24 @@ function I9DetailPanel({
   current,
   canManage,
   onDone,
+  onVerifiedNext,
+  onRefresh,
 }: {
   current: I9Verification;
   canManage: boolean;
   onDone: () => void;
+  /** After a successful verify, advance to the next pending row in view. */
+  onVerifiedNext: () => void;
+  /** Reload the list without closing the drawer (in-place updates). */
+  onRefresh: () => void;
 }) {
   const sec1Done = !!current.section1CompletedAt;
   const sec2Done = !!current.section2CompletedAt;
   const showVerifier = canManage && sec1Done && !sec2Done && !!current.applicationId;
+  const workAuthExpiring =
+    canManage &&
+    !!current.workAuthExpiresAt &&
+    daysFromToday(parseLocalDate(current.workAuthExpiresAt)) <= WORK_AUTH_WINDOW_DAYS;
   return (
     <>
       <DrawerHeader>
@@ -547,11 +624,16 @@ function I9DetailPanel({
           </DetailRow>
         </dl>
 
+        {workAuthExpiring && (
+          <WorkAuthUpdateForm current={current} onSaved={onRefresh} />
+        )}
+
         {showVerifier && current.applicationId && (
           <Section2Verifier
             applicationId={current.applicationId}
             associateId={current.associateId}
             onDone={onDone}
+            onDoneNext={onVerifiedNext}
           />
         )}
         {canManage && !showVerifier && (
@@ -576,20 +658,92 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
+/**
+ * Inline reverification for the "Work auth ≤ 90d" population — records the
+ * renewed expiry right here so HR doesn't round-trip through /people and
+ * lose the tab's filters. The expiry lives on I9Verification itself, so the
+ * existing upsert endpoint carries it.
+ */
+function WorkAuthUpdateForm({
+  current,
+  onSaved,
+}: {
+  current: I9Verification;
+  onSaved: () => void;
+}) {
+  const [expiry, setExpiry] = useState(current.workAuthExpiresAt ?? '');
+  const [saving, setSaving] = useState(false);
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (saving || !expiry || expiry === current.workAuthExpiresAt) return;
+    setSaving(true);
+    try {
+      await upsertI9(current.associateId, { workAuthExpiresAt: expiry });
+      toast.success('Work authorization updated.');
+      onSaved();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Update failed.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form
+      onSubmit={save}
+      className="mb-5 rounded-md border border-warning/40 bg-warning/[0.07] p-3"
+    >
+      <div className="text-2xs uppercase tracking-widest text-silver/80">
+        Update work authorization
+      </div>
+      <p className="mt-0.5 text-2xs text-silver/60">
+        Reverification — record the renewed document&apos;s new expiry date;
+        the row leaves the expiring queue immediately.
+      </p>
+      <div className="mt-2 flex flex-wrap items-end gap-3">
+        <div>
+          <Label htmlFor={`workauth-expiry-${current.id}`}>New expiry date</Label>
+          <Input
+            id={`workauth-expiry-${current.id}`}
+            type="date"
+            value={expiry}
+            onChange={(e) => setExpiry(e.target.value)}
+            className="mt-1 h-9 w-44 text-sm"
+          />
+        </div>
+        <Button
+          type="submit"
+          size="sm"
+          loading={saving}
+          disabled={saving || !expiry || expiry === current.workAuthExpiresAt}
+        >
+          Save
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 function Section2Verifier({
   applicationId,
   associateId,
   onDone,
+  onDoneNext,
 }: {
   applicationId: string;
   associateId: string;
   onDone: () => void;
+  /** Success path for "Verify & next" — advance instead of closing. */
+  onDoneNext: () => void;
 }) {
   const [docs, setDocs] = useState<I9DocumentListItem[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
   const [documentList, setDocumentList] = useState<I9DocumentList>('LIST_A');
-  const [submitting, setSubmitting] = useState(false);
+  // Which footer button is in flight — the two verify actions share the
+  // guard but only the clicked one should show its spinner.
+  const [submitting, setSubmitting] = useState<false | 'stay' | 'next'>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   /** Index into `docs` currently open in the full-screen viewer. */
   const [viewerAt, setViewerAt] = useState<number | null>(null);
@@ -604,13 +758,31 @@ function Section2Verifier({
         // a passport pre-picks List A, license + SSN card pre-pick B+C.
         // Unclassified (pre-catalog) docs suggest nothing; HR still decides.
         const usable = res.documents.filter((d) => d.status !== 'REJECTED');
+        let auto: I9DocumentList | null = null;
         if (usable.some((d) => d.i9List === 'A')) {
-          setDocumentList('LIST_A');
+          auto = 'LIST_A';
         } else if (
           usable.some((d) => d.i9List === 'B') &&
           usable.some((d) => d.i9List === 'C')
         ) {
-          setDocumentList('LIST_B_AND_C');
+          auto = 'LIST_B_AND_C';
+        }
+        if (auto) {
+          setDocumentList(auto);
+          // Pre-check the documents the classifier already matched to that
+          // list — HR adjusts the picks instead of re-selecting what the
+          // system identified. Missing-blob docs stay unpicked: their
+          // checkbox is disabled and they can't have been inspected.
+          const wanted = auto === 'LIST_A' ? ['A'] : ['B', 'C'];
+          setPicked(
+            new Set(
+              usable
+                .filter(
+                  (d) => d.fileAvailable && d.i9List && wanted.includes(d.i9List),
+                )
+                .map((d) => d.id),
+            ),
+          );
         }
       })
       .catch((err) => {
@@ -638,16 +810,17 @@ function Section2Verifier({
   const minDocs = documentList === 'LIST_A' ? 1 : 2;
   const canSubmit = picked.size >= minDocs && !submitting;
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (advance: boolean) => {
     if (!canSubmit) return;
     setSubmitError(null);
-    setSubmitting(true);
+    setSubmitting(advance ? 'next' : 'stay');
     try {
       await submitI9Section2(applicationId, {
         documentList,
         supportingDocIds: Array.from(picked),
       });
-      onDone();
+      if (advance) onDoneNext();
+      else onDone();
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : 'Verification failed.');
     } finally {
@@ -802,11 +975,21 @@ function Section2Verifier({
       <DrawerFooter className="-mx-6 -mb-6 mt-2">
         <Button
           type="button"
-          onClick={handleSubmit}
-          loading={submitting}
+          variant="secondary"
+          onClick={() => void handleSubmit(false)}
+          loading={submitting === 'stay'}
           disabled={!canSubmit}
         >
           {`Verify Section 2 (${picked.size} doc${picked.size === 1 ? '' : 's'})`}
+        </Button>
+        <Button
+          type="button"
+          onClick={() => void handleSubmit(true)}
+          loading={submitting === 'next'}
+          disabled={!canSubmit}
+          title="Verify, then open the next pending I-9 in this view."
+        >
+          Verify &amp; next
         </Button>
       </DrawerFooter>
     </div>

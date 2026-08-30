@@ -5,16 +5,19 @@ import {
   BarChart3,
   CalendarClock,
   Copy,
+  Download,
   Pencil,
   Play,
   Plus,
   Trash2,
   X,
 } from 'lucide-react';
+import { REPORT_PERIOD_LABELS, REPORT_PERIOD_TOKENS } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import { useConfirm } from '@/lib/confirm';
 import { downloadCsv } from '@/lib/csv';
+import { usePersistentState } from '@/lib/usePersistentState';
 import {
   createReport,
   createSchedule,
@@ -26,6 +29,7 @@ import {
   listSchedules,
   previewReport,
   runReport,
+  updateReport,
   type ReportEntity,
   type ReportFull,
   type ReportSchedule,
@@ -100,12 +104,43 @@ interface BuilderSeed {
   report: ReportFull;
 }
 
+/** One CSV mapping for both the row's one-click download and the preview
+ *  drawer's export, so the two files are byte-identical. */
+function exportRowsAsCsv(
+  name: string,
+  columns: string[],
+  rows: Array<Record<string, unknown>>,
+) {
+  downloadCsv(`${name.replace(/\s+/g, '_')}.csv`, [
+    columns,
+    ...rows.map((r) =>
+      columns.map((c) => {
+        const v = r[c];
+        if (v === null || v === undefined) return '';
+        if (typeof v === 'number') return v;
+        if (typeof v === 'object') return JSON.stringify(v);
+        return String(v);
+      }),
+    ),
+  ]);
+}
+
 export function ReportsHome() {
   const confirm = useConfirm();
   const [rows, setRows] = useState<ReportSummary[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [entityFilter, setEntityFilter] = useState<'' | ReportEntity>('');
+  // 2-3 recurring weekly exports live here — losing the search/entity
+  // narrowing on every visit costs more clicks than a stale query risks.
+  const [search, setSearch] = usePersistentState<string>(
+    'alto:list.reports.search.v1',
+    '',
+    (v): v is string => typeof v === 'string',
+  );
+  const [entityFilter, setEntityFilter] = usePersistentState<'' | ReportEntity>(
+    'alto:list.reports.entity.v1',
+    '',
+    (v): v is '' | ReportEntity => v === '' || ENTITIES.includes(v as ReportEntity),
+  );
   const [builder, setBuilder] = useState<{ seed: BuilderSeed | null } | null>(null);
   const [schedulesFor, setSchedulesFor] = useState<ReportSummary | null>(null);
   const [running, setRunning] = useState<{
@@ -145,6 +180,17 @@ export function ReportsHome() {
         columns: res.columns,
         rows: res.rows as Array<Record<string, unknown>>,
       });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    }
+  };
+
+  // One-click Run → CSV, skipping the preview drawer entirely.
+  const onCsv = async (r: ReportSummary) => {
+    try {
+      const res = await runReport(r.id);
+      exportRowsAsCsv(r.name, res.columns, res.rows as Array<Record<string, unknown>>);
+      toast.success(`Exported ${res.rows.length} rows.`);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     }
@@ -249,7 +295,12 @@ export function ReportsHome() {
                 {filtered.map((r) => (
                   <TableRow key={r.id} className="group">
                     <TableCell className="font-medium text-white">
-                      {r.name}
+                      <span className="inline-flex items-center gap-2">
+                        {r.name}
+                        {r.period && (
+                          <Badge variant="outline">{REPORT_PERIOD_LABELS[r.period]}</Badge>
+                        )}
+                      </span>
                       <div className="text-xs2 text-silver/70 md:hidden font-normal">{ENTITY_LABELS[r.entity] ?? r.entity}</div>
                       <div className="text-xs2 text-silver/70 lg:hidden font-normal">{fmtDate(r.createdAt)}</div>
                     </TableCell>
@@ -265,6 +316,15 @@ export function ReportsHome() {
                     <TableCell className="text-right whitespace-nowrap space-x-1">
                       <Button size="sm" onClick={() => onRun(r)}>
                         <Play className="mr-1 h-3 w-3" /> Run
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => onCsv(r)}
+                        title="Run and download CSV"
+                        aria-label={`Download CSV for "${r.name}"`}
+                      >
+                        <Download className="mr-1 h-3 w-3" /> CSV
                       </Button>
                       <Button
                         size="sm"
@@ -337,7 +397,7 @@ export function ReportsHome() {
   );
 }
 
-type FilterOp = 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'in';
+type FilterOp = 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'in' | 'period';
 
 interface FilterRow {
   column: string;
@@ -352,6 +412,8 @@ interface SortRow {
   dir: 'asc' | 'desc';
 }
 
+// `period` is deliberately absent — it's driven by the preset Select on
+// date columns, not the operator dropdown.
 const FILTER_OPS: { value: FilterOp; label: string }[] = [
   { value: 'eq', label: 'equals' },
   { value: 'ne', label: 'not equals' },
@@ -362,6 +424,10 @@ const FILTER_OPS: { value: FilterOp; label: string }[] = [
   { value: 'contains', label: 'contains' },
   { value: 'in', label: 'in (comma-separated)' },
 ];
+
+/** Sentinel for the preset Select's "pick concrete dates" branch —
+ *  distinct from every REPORT_PERIOD_TOKENS value. */
+const CUSTOM_PERIOD = 'custom';
 
 /** Map a saved spec's filters back into editable rows. */
 function specToFilterRows(spec: ReportSpec): FilterRow[] {
@@ -446,7 +512,8 @@ function ReportBuilder({
     // Convert each filter row to the API shape. `in` splits the comma-list;
     // numeric ops coerce when the value parses cleanly so reports compare
     // numbers as numbers, not strings. Date columns are widened to full
-    // ISO datetimes (Prisma DateTime filters reject bare dates).
+    // ISO datetimes (Prisma DateTime filters reject bare dates). `period`
+    // tokens pass through verbatim — the server resolves them at run time.
     const compiledFilters = filters
       .filter((f) => f.column && f.value.trim())
       .map((f) => {
@@ -505,26 +572,26 @@ function ReportBuilder({
       return;
     }
     setSaving(true);
+    const input = { name: name.trim(), entity, spec: buildSpec(), isPublic };
     try {
-      await createReport({
-        name: name.trim(),
-        entity,
-        spec: buildSpec(),
-        isPublic,
-      });
       if (seed?.mode === 'edit') {
-        // The API has no update endpoint — "editing" saves a replacement
-        // and retires the original (author-only; a shared report by
-        // someone else can only be duplicated, not replaced).
         try {
-          await deleteReport(seed.report.id);
+          await updateReport(seed.report.id, input);
           toast.success('Report updated.');
-        } catch {
-          toast.warning(
-            'Saved as a new report — the original could not be replaced (only its author can delete it).',
-          );
+        } catch (err) {
+          // Not the author (403) or the original is gone (404) — the edit
+          // is still worth keeping, so save it as a new report instead.
+          if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+            await createReport(input);
+            toast.warning(
+              'Saved as a new report — only the author can edit the original.',
+            );
+          } else {
+            throw err;
+          }
         }
       } else {
+        await createReport(input);
         toast.success('Report saved.');
       }
       onSaved();
@@ -652,15 +719,21 @@ function ReportBuilder({
                       size="sm"
                       className="font-mono"
                       value={f.column}
-                      onChange={(e) =>
+                      onChange={(e) => {
                         // Column switch changes the value control type —
                         // reset the value so a stale id/date can't leak in.
+                        // A period token is column-independent, so it
+                        // survives a date→date switch; otherwise `period`
+                        // has to fall back to a real operator.
+                        const column = e.target.value;
+                        const keepToken = f.op === 'period' && isDateColumn(column);
                         updateFilter(i, {
-                          column: e.target.value,
-                          value: '',
+                          column,
+                          op: f.op === 'period' && !keepToken ? 'eq' : f.op,
+                          value: keepToken ? f.value : '',
                           valueLabel: undefined,
-                        })
-                      }
+                        });
+                      }}
                     >
                       {allColumns.map((c) => (
                         <option key={c} value={c}>
@@ -669,20 +742,44 @@ function ReportBuilder({
                       ))}
                     </Select>
                   </div>
-                  <Select
-                    size="sm"
-                    value={f.op}
-                    onChange={(e) =>
-                      updateFilter(i, { op: e.target.value as FilterOp })
-                    }
-                  >
-                    {FILTER_OPS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </Select>
-                  {isAssociateColumn(f.column) && f.op !== 'in' ? (
+                  {isDateColumn(f.column) && (
+                    <Select
+                      size="sm"
+                      value={f.op === 'period' ? f.value : CUSTOM_PERIOD}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === CUSTOM_PERIOD) {
+                          updateFilter(i, { op: 'gte', value: '' });
+                        } else {
+                          updateFilter(i, { op: 'period', value: v });
+                        }
+                      }}
+                      aria-label={`Filter ${i + 1} period preset`}
+                    >
+                      {REPORT_PERIOD_TOKENS.map((t) => (
+                        <option key={t} value={t}>
+                          {REPORT_PERIOD_LABELS[t]}
+                        </option>
+                      ))}
+                      <option value={CUSTOM_PERIOD}>Custom dates</option>
+                    </Select>
+                  )}
+                  {f.op !== 'period' && (
+                    <Select
+                      size="sm"
+                      value={f.op}
+                      onChange={(e) =>
+                        updateFilter(i, { op: e.target.value as FilterOp })
+                      }
+                    >
+                      {FILTER_OPS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </Select>
+                  )}
+                  {f.op === 'period' ? null : isAssociateColumn(f.column) && f.op !== 'in' ? (
                     <div className="flex-1">
                       <AssociatePicker
                         value={
@@ -1029,20 +1126,7 @@ function RunResultDrawer({
   rows: Array<Record<string, unknown>>;
   onClose: () => void;
 }) {
-  const exportCsv = () => {
-    downloadCsv(`${name.replace(/\s+/g, '_')}.csv`, [
-      columns,
-      ...rows.map((r) =>
-        columns.map((c) => {
-          const v = r[c];
-          if (v === null || v === undefined) return '';
-          if (typeof v === 'number') return v;
-          if (typeof v === 'object') return JSON.stringify(v);
-          return String(v);
-        }),
-      ),
-    ]);
-  };
+  const exportCsv = () => exportRowsAsCsv(name, columns, rows);
 
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-5xl">

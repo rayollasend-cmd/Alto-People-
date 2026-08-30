@@ -165,6 +165,16 @@ export function ClientsHome() {
         title="Clients"
         subtitle="Configure work-site state, geofence, and per-client jobs."
         breadcrumbs={[{ label: 'Workforce' }, { label: 'Clients' }]}
+        secondaryActions={
+          canReport ? (
+            <Button asChild variant="outline">
+              <Link to="/clients/statements">
+                <FileText className="h-4 w-4" />
+                Weekly statements
+              </Link>
+            </Button>
+          ) : undefined
+        }
         primaryAction={
           canManage ? (
             <Button onClick={() => setShowNew(true)}>

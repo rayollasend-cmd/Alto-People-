@@ -169,6 +169,13 @@ complianceRouter.post('/i9/:associateId', MANAGE, async (req, res, next) => {
     }
     if (i.documentList !== undefined) data.documentList = i.documentList;
     if (i.supportingDocIds !== undefined) data.supportingDocIds = i.supportingDocIds;
+    if (i.workAuthExpiresAt !== undefined) {
+      // @db.Date column — store at UTC midnight (same convention as J-1
+      // program dates) so ymd round-trips without timezone drift.
+      data.workAuthExpiresAt = i.workAuthExpiresAt
+        ? new Date(`${i.workAuthExpiresAt}T00:00:00.000Z`)
+        : null;
+    }
 
     const row = await prisma.i9Verification.upsert({
       where: { associateId: associate.id },
@@ -214,6 +221,9 @@ complianceRouter.post('/i9/:associateId', MANAGE, async (req, res, next) => {
         section1: !!row.section1CompletedAt,
         section2: !!row.section2CompletedAt,
         documentList: row.documentList,
+        workAuthExpiresAt: row.workAuthExpiresAt
+          ? row.workAuthExpiresAt.toISOString().slice(0, 10)
+          : null,
       },
       req,
     });
