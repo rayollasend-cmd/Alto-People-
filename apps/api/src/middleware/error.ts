@@ -5,6 +5,35 @@ import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import { ZodError } from 'zod';
 import { captureException } from '../lib/sentry.js';
 import { logger } from '../lib/logger.js';
+import {
+  htmlErrorCopy,
+  htmlErrorPage,
+  isBrowserNavigation,
+} from '../lib/browserNavigation.js';
+
+// Errors owe the client its own dialect: API callers (fetch/XHR,
+// integrations, pollers) get the JSON envelope they parse, but a browser
+// PAGE LOAD that errors — an expired paystub link, a 404 on a document
+// download, a dead calendar URL — must never render raw JSON on screen.
+// Those get a small branded HTML page instead. (Page paths themselves
+// never reach here on a navigation — app.ts serves the SPA shell first —
+// so this only fires for the file-download URLs that are exempt from the
+// shell, plus any future gap. Belt to app.ts's suspenders.)
+function sendError(
+  req: Request,
+  res: Response,
+  status: number,
+  body: { code: string; message: string; details?: unknown },
+): void {
+  if (isBrowserNavigation(req)) {
+    res
+      .status(status)
+      .type('html')
+      .send(htmlErrorPage({ status, ...htmlErrorCopy(status), requestId: req.id }));
+    return;
+  }
+  res.status(status).json({ error: { ...body, requestId: req.id } });
+}
 
 export class HttpError extends Error {
   constructor(
@@ -19,9 +48,7 @@ export class HttpError extends Error {
 }
 
 export function notFoundHandler(req: Request, res: Response) {
-  res.status(404).json({
-    error: { code: 'not_found', message: 'Route not found', requestId: req.id },
-  });
+  sendError(req, res, 404, { code: 'not_found', message: 'Route not found' });
 }
 
 export function errorHandler(
@@ -54,8 +81,10 @@ export function errorHandler(
   }
 
   if (err instanceof HttpError) {
-    res.status(err.status).json({
-      error: { code: err.code, message: err.message, details: err.details, requestId },
+    sendError(req, res, err.status, {
+      code: err.code,
+      message: err.message,
+      details: err.details,
     });
     return;
   }
@@ -65,13 +94,10 @@ export function errorHandler(
   // those into a clean 400 with the field-level details, so clients
   // get something actionable instead of a generic 500.
   if (err instanceof ZodError) {
-    res.status(400).json({
-      error: {
-        code: 'invalid_body',
-        message: 'Invalid request body',
-        details: err.flatten(),
-        requestId,
-      },
+    sendError(req, res, 400, {
+      code: 'invalid_body',
+      message: 'Invalid request body',
+      details: err.flatten(),
     });
     return;
   }
@@ -93,7 +119,7 @@ export function errorHandler(
       err.code === 'LIMIT_FILE_SIZE'
         ? `That file is too large. The limit is ${Math.round(UPLOAD_MAX_BYTES / (1024 * 1024))} MB.`
         : 'That upload could not be read. Try a different file.';
-    res.status(status).json({ error: { code, message, requestId } });
+    sendError(req, res, status, { code, message });
     return;
   }
 
@@ -108,13 +134,9 @@ export function errorHandler(
     (err.code === 'P2023' || err.code === 'P2025')
   ) {
     if (err.code === 'P2025') {
-      res.status(404).json({
-        error: { code: 'not_found', message: 'Record not found.', requestId },
-      });
+      sendError(req, res, 404, { code: 'not_found', message: 'Record not found.' });
     } else {
-      res.status(400).json({
-        error: { code: 'invalid_id', message: 'Malformed identifier.', requestId },
-      });
+      sendError(req, res, 400, { code: 'invalid_id', message: 'Malformed identifier.' });
     }
     return;
   }
@@ -125,8 +147,9 @@ export function errorHandler(
     err instanceof SyntaxError &&
     'body' in (err as SyntaxError & { body?: unknown })
   ) {
-    res.status(400).json({
-      error: { code: 'invalid_json', message: 'Request body is not valid JSON.', requestId },
+    sendError(req, res, 400, {
+      code: 'invalid_json',
+      message: 'Request body is not valid JSON.',
     });
     return;
   }
@@ -148,7 +171,5 @@ export function errorHandler(
     path: req.path,
     userId: req.user?.id ?? null,
   });
-  res.status(500).json({
-    error: { code: 'internal_error', message: 'Internal server error', requestId },
-  });
+  sendError(req, res, 500, { code: 'internal_error', message: 'Internal server error' });
 }

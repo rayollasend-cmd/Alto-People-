@@ -11,6 +11,12 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { env } from './config/env.js';
+import {
+  NAVIGABLE_FILE_PATTERN,
+  htmlErrorCopy,
+  htmlErrorPage,
+  isBrowserNavigation,
+} from './lib/browserNavigation.js';
 import { healthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
 import { oidcAuthRouter } from './routes/oidcAuth.js';
@@ -130,20 +136,10 @@ function stripApiPrefix(
   next();
 }
 
-function isBrowserNavigation(req: Request): boolean {
-  if (req.method !== 'GET') return false;
-  const mode = req.headers['sec-fetch-mode'];
-  if (mode !== undefined) {
-    return mode === 'navigate' && req.headers['sec-fetch-dest'] === 'document';
-  }
-  // Safari before 16.4, iOS in-app webviews, and some older browsers send
-  // NO Sec-Fetch-* headers at all — on those, page loads of /users et al.
-  // fell through to the API router and rendered raw JSON. Fall back to
-  // content negotiation: a top-level page load asks for text/html first;
-  // fetch()/XHR (Accept: */* or application/json), images, and calendar
-  // pollers never do, so API clients keep getting JSON.
-  return (req.headers.accept ?? '').includes('text/html');
-}
+// Classification + HTML fallbacks live in lib/browserNavigation.ts (unit-
+// tested against real browser header sets — Chrome, Safari 15, webviews,
+// fetch/XHR, pollers). error.ts uses the same helpers so navigations that
+// reach an error path get HTML too, never JSON.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // Resolves apps/api/dist/app.js → apps/web/dist
@@ -169,15 +165,23 @@ export function createApp() {
   // <a href> navigation on purpose (document downloads, packet/paystub
   // PDFs, CSV exports, calendar feeds). /api/*-tagged calls are exempt so
   // API clients always get JSON.
-  const NAVIGABLE_FILE_PATTERN = /\.(pdf|zip|csv|ics)$|\/(download|pdf)(\/|$)/i;
   app.use((req: Request & { isApiCall?: boolean }, res, next) => {
     if (
       env.NODE_ENV === 'production' &&
-      existsSync(WEB_DIST) &&
       !req.isApiCall &&
       isBrowserNavigation(req) &&
       !NAVIGABLE_FILE_PATTERN.test(req.path)
     ) {
+      // A page load NEVER falls through to the JSON routers — even when
+      // the web bundle is missing (mid-deploy, broken build), the browser
+      // gets an HTML "refresh in a moment" page rather than raw API data.
+      if (!existsSync(WEB_DIST)) {
+        res
+          .status(503)
+          .type('html')
+          .send(htmlErrorPage({ status: 503, ...htmlErrorCopy(503) }));
+        return;
+      }
       const isKiosk = req.path === '/kiosk' || req.path.startsWith('/kiosk/');
       res.sendFile(path.join(WEB_DIST, isKiosk ? 'kiosk.html' : 'index.html'), {
         headers: { 'Cache-Control': 'no-cache' },
