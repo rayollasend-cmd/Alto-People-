@@ -30,6 +30,7 @@ import { invalidateUserCache, requireAnyCapability, requireCapability } from '..
 import { effectiveClientIdFilter } from '../lib/scope.js';
 import { asOf, recordChange } from '../lib/associateHistory.js';
 import { eraseAssociate } from '../lib/erasure.js';
+import { executeDeactivation } from '../lib/deactivation.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
@@ -876,48 +877,14 @@ orgRouter.post(
       );
     }
     const now = new Date();
-    const disabledUserIds: string[] = [];
-    let releasedShifts = 0;
-    let expiredClaims = 0;
-    await prisma.$transaction(async (tx) => {
-      await tx.associate.update({
-        where: { id },
-        data: {
-          deactivatedAt: now,
-          deactivatedById: req.user!.id,
-          deactivationReason: input.reason,
-        },
+    // Shared with the dormancy auto-sweep — one transaction, two callers.
+    const { releasedShifts, expiredClaims, disabledUserIds } =
+      await executeDeactivation(prisma, {
+        associateId: id,
+        byUserId: req.user!.id,
+        reason: input.reason,
+        now,
       });
-      // Release their future shifts so supervisors can re-cover them and
-      // the reminder/no-show sweeps stop targeting someone who's out.
-      const released = await tx.shift.updateMany({
-        where: {
-          assignedAssociateId: id,
-          status: 'ASSIGNED',
-          startsAt: { gt: now },
-        },
-        data: { status: 'OPEN', assignedAssociateId: null },
-      });
-      releasedShifts = released.count;
-      const expired = await tx.openShiftClaim.updateMany({
-        where: { associateId: id, status: 'PENDING' },
-        data: { status: 'EXPIRED', decisionNote: 'Associate deactivated.' },
-      });
-      expiredClaims = expired.count;
-      // Same access-revocation pattern as separation completion.
-      const users = await tx.user.findMany({
-        where: { associateId: id, deletedAt: null, status: { not: 'DISABLED' } },
-        select: { id: true },
-      });
-      if (users.length > 0) {
-        await tx.user.updateMany({
-          where: { id: { in: users.map((u) => u.id) } },
-          data: { status: 'DISABLED', tokenVersion: { increment: 1 } },
-        });
-        disabledUserIds.push(...users.map((u) => u.id));
-      }
-    });
-    for (const uid of disabledUserIds) invalidateUserCache(uid);
     audit(req, 'associate.deactivated', 'Associate', id, {
       reason: input.reason,
       releasedShifts,
@@ -953,7 +920,17 @@ orgRouter.post(
     await prisma.$transaction(async (tx) => {
       await tx.associate.update({
         where: { id },
-        data: { deactivatedAt: null, deactivatedById: null, deactivationReason: null },
+        data: {
+          deactivatedAt: null,
+          deactivatedById: null,
+          deactivationReason: null,
+          // Fresh dormancy window — without this stamp the auto-sweep
+          // would re-deactivate a just-restored associate the same night
+          // (their newest clock-in may be months old). Warning stamp
+          // clears with it so any future warning starts clean.
+          reactivatedAt: new Date(),
+          dormancyWarnedAt: null,
+        },
       });
       // Re-enable exactly what deactivation disabled. INVITED accounts
       // stay INVITED — reactivation never mints login ability that

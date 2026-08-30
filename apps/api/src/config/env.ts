@@ -122,6 +122,14 @@ const EnvSchema = z.object({
   // unaccepted after 3 days and abandoned onboardings after 10 idle days
   // (final notice at 8). On by default (6h scan). Set 0 to disable.
   ONBOARDING_PURGE_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
+  // Dormancy auto-deactivation (lib/dormancySweep.ts): associates with no
+  // clock-ins, worked shifts, or upcoming schedule for DEACTIVATE_DAYS are
+  // auto-deactivated (same pause as the manual button — one-click
+  // Reactivate restores them), with an admin warning WARN_DAYS ahead.
+  // Scan every 6h by default; either 0 disables the whole sweep.
+  DORMANCY_SWEEP_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(21600),
+  DORMANCY_DEACTIVATE_DAYS: z.coerce.number().int().min(0).default(30),
+  DORMANCY_WARN_DAYS: z.coerce.number().int().min(1).default(7),
   // Store-ops evening digest (lib/opsDigest.ts): summarizes each store's
   // ops shifts once per org-day after 8pm. On by default (hourly scan).
   // Set 0 to disable.

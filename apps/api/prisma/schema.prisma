@@ -1193,6 +1193,15 @@ model Associate {
   // before any purge. Never set for people with work history — the sweep's
   // guards exclude them entirely.
   purgeWarnedAt       DateTime?          @db.Timestamptz(6)
+  // Dormancy sweep (lib/dormancySweep.ts). dormancyWarnedAt stamps the
+  // admin heads-up ("inactive, auto-deactivation in ~7 days"); any later
+  // activity makes the stamp stale (activity > stamp), which re-arms a
+  // fresh warning before any auto-deactivation — nobody is deactivated
+  // un-warned. reactivatedAt stamps each Reactivate so a just-restored
+  // associate gets a full fresh dormancy window instead of being swept
+  // again the same night (their last clock-in may be months old).
+  dormancyWarnedAt    DateTime?          @db.Timestamptz(6)
+  reactivatedAt       DateTime?          @db.Timestamptz(6)
   createdAt           DateTime           @default(now()) @db.Timestamptz(6)
   updatedAt           DateTime           @updatedAt @db.Timestamptz(6)
   deletedAt           DateTime?          @db.Timestamptz(6)
