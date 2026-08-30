@@ -204,6 +204,9 @@ timeOffRouter.post('/me/requests', idempotent, async (req, res, next) => {
       body: tpl.text,
       html: tpl.html,
       category: 'time-off',
+      // Every approver's bell lands on the exact row in the approvals
+      // page's time-off panel, not the top of the queue.
+      linkUrl: `/approvals?request=${created.id}`,
     };
     if (created.associate.managerId) {
       void notifyManager(user.associateId, opts);
@@ -236,7 +239,6 @@ timeOffRouter.post('/me/requests', idempotent, async (req, res, next) => {
         const { notifyClientSupervisors } = await import('../lib/notify.js');
         await notifyClientSupervisors(clientId, {
           ...opts,
-          linkUrl: '/approvals',
           excludeUserId: user.id,
         });
       } catch (err) {

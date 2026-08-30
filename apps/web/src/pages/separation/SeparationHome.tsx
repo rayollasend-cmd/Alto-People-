@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, LogOut, MessageSquareQuote, Plus } from 'lucide-react';
 import { toast } from 'sonner';
@@ -20,6 +21,7 @@ import {
 } from '@/lib/separation119Api';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
+import { listDirectory } from '@/lib/directoryApi';
 import { statusTone } from '@/lib/status';
 import {
   AssociatePicker,
@@ -72,6 +74,40 @@ export function SeparationHome() {
   const [filter, setFilter] = useState<SeparationStatus | 'ALL'>('PLANNED');
   const [showNew, setShowNew] = useState(false);
   const [openRow, setOpenRow] = useState<SeparationRow | null>(null);
+
+  // ?associateId= deep-links straight into "Initiate separation" with the
+  // person pre-selected (PeopleDirectory's profile drawer links here).
+  // Same convention as the I-9 tab deep link: consume the param once so
+  // back/refresh doesn't re-open the drawer after the user closed it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [newDrawerAssoc, setNewDrawerAssoc] = useState<PickedAssociate | null>(null);
+  const deepLinkHandled = useRef(false);
+  useEffect(() => {
+    const associateId = searchParams.get('associateId');
+    if (!associateId || deepLinkHandled.current || !canManage) return;
+    deepLinkHandled.current = true;
+    // Strip the param synchronously — the effect re-runs on the URL change
+    // and bails out above, while the resolve below keeps going.
+    const next = new URLSearchParams(searchParams);
+    next.delete('associateId');
+    setSearchParams(next, { replace: true });
+    // Resolve the name from the same directory the picker searches —
+    // there's no single-associate getter, so match within the list.
+    listDirectory({ limit: 500 })
+      .then((r) => {
+        const match = r.associates.find((a) => a.id === associateId);
+        if (match) {
+          setNewDrawerAssoc({
+            id: match.id,
+            name: `${match.firstName} ${match.lastName}`.trim(),
+          });
+        } else {
+          toast.error("Couldn't find that associate — pick them manually.");
+        }
+        setShowNew(true);
+      })
+      .catch(() => setShowNew(true));
+  }, [searchParams, setSearchParams, canManage]);
 
   const refresh = () => {
     setRows(null);
@@ -301,9 +337,14 @@ export function SeparationHome() {
 
       {showNew && (
         <NewSeparationDrawer
-          onClose={() => setShowNew(false)}
+          initialAssociate={newDrawerAssoc}
+          onClose={() => {
+            setShowNew(false);
+            setNewDrawerAssoc(null);
+          }}
           onSaved={() => {
             setShowNew(false);
+            setNewDrawerAssoc(null);
             refresh();
           }}
         />
@@ -337,13 +378,18 @@ function KpiCard({ label, value }: { label: string; value: string }) {
 }
 
 function NewSeparationDrawer({
+  initialAssociate = null,
   onClose,
   onSaved,
 }: {
+  /** Pre-selected associate (the ?associateId= deep link). */
+  initialAssociate?: PickedAssociate | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [assoc, setAssoc] = useState<PickedAssociate | null>(null);
+  // Mounted fresh on every open (conditional render), so seeding initial
+  // state is enough — no sync effect needed.
+  const [assoc, setAssoc] = useState<PickedAssociate | null>(initialAssociate);
   const [reason, setReason] = useState<SeparationReason>(
     'VOLUNTARY_OTHER_OPPORTUNITY',
   );

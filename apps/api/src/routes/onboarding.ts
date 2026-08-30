@@ -1,9 +1,10 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
 import {
   ApplicationCreateInputSchema,
   ApproveApplicationInputSchema,
+  BulkApproveInputSchema,
   BackgroundCheckAuthorizeInputSchema,
   BulkInviteInputSchema,
   APPLICATION_STATUSES,
@@ -25,6 +26,8 @@ import {
   type ApplicationSummary,
   type AuditLogEntry,
   type AuditLogListResponse,
+  type BulkApproveResponse,
+  type BulkApproveResultRow,
   type BulkInviteResponse,
   type BulkInviteResultRow,
   type BulkResendResponse,
@@ -935,6 +938,227 @@ onboardingRouter.get('/review-queue/next', MANAGE, async (req, res, next) => {
   }
 });
 
+/**
+ * The single source of approval business logic — shared by
+ * POST /applications/:id/approve and /applications/bulk-approve so the
+ * two paths can never drift. Throws HttpError on every failure mode
+ * (not found, already decided, incomplete checklist, unacknowledged
+ * verification warnings); on success runs the full side-effect train:
+ * status flip, hireDate, user activation, assignment open, audit event,
+ * offer-letter auto-file, webhooks, and notification emails.
+ */
+async function approveOneApplication(
+  req: Request,
+  applicationId: string,
+  hireDate: string,
+  acknowledgeWarnings: boolean,
+): Promise<void> {
+  const app = await prisma.application.findFirst({
+    where: { ...scopeApplications(req.user!), id: applicationId },
+    include: { checklist: { include: { tasks: true } } },
+  });
+  if (!app) {
+    throw new HttpError(
+      404,
+      'application_not_found',
+      'Application not found'
+    );
+  }
+  if (app.status === 'APPROVED' || app.status === 'REJECTED') {
+    throw new HttpError(
+      409,
+      'application_already_decided',
+      `Application is already ${app.status}.`
+    );
+  }
+  const tasks = app.checklist?.tasks ?? [];
+  const percent = computePercent(tasks);
+  // A checklist-less application (CSV silent migration, legacy rows)
+  // computes 0% forever — there are no tasks to finish, so this hard
+  // gate would make it permanently unapprovable (and its associate
+  // permanently unschedulable, since the scheduling roster only shows
+  // APPROVED-or-assigned people). Route it through the warning gate
+  // below instead, which demands an explicit acknowledgement.
+  if (tasks.length > 0 && percent < 100) {
+    throw new HttpError(
+      409,
+      'checklist_incomplete',
+      `Checklist is ${percent}% complete — finish all tasks before approving.`
+    );
+  }
+
+  // 100% is not the same as VERIFIED: skipped tasks count as complete
+  // and an uploaded-but-unreviewed document completes the upload task.
+  // Surface every verification gap and require explicit acknowledgement
+  // — a hire must not be silently activated with no I-9 on file and no
+  // document ever opened by a human.
+  const approvalWarnings: string[] = [];
+  if (tasks.length === 0) {
+    approvalWarnings.push(
+      'This application has no onboarding checklist — approving records the hire with no completed onboarding tasks on file.',
+    );
+  }
+  const skipped = tasks.filter((t) => t.status === 'SKIPPED');
+  for (const t of skipped) {
+    approvalWarnings.push(`Task skipped without completion: ${t.title}`);
+  }
+  const idClassDocs = await prisma.documentRecord.findMany({
+    where: {
+      associateId: app.associateId,
+      deletedAt: null,
+      kind: { in: ['ID', 'SSN_CARD', 'I9_SUPPORTING', 'J1_VISA', 'J1_DS2019'] },
+    },
+    select: { status: true },
+  });
+  if (
+    idClassDocs.length > 0 &&
+    !idClassDocs.some((d) => d.status === 'VERIFIED')
+  ) {
+    approvalWarnings.push(
+      'Identity documents were uploaded but none have been verified by a reviewer.',
+    );
+  }
+  if (tasks.some((t) => t.kind === 'I9_VERIFICATION')) {
+    const i9 = await prisma.i9Verification.findUnique({
+      where: { associateId: app.associateId },
+      select: { section2CompletedAt: true },
+    });
+    if (!i9?.section2CompletedAt) {
+      approvalWarnings.push(
+        'I-9 Section 2 has not been completed — federal law requires it within 3 business days of the start date.',
+      );
+    }
+  }
+  if (approvalWarnings.length > 0 && !acknowledgeWarnings) {
+    throw new HttpError(
+      409,
+      'approval_warnings',
+      'This application has verification gaps. Review them and re-submit with acknowledgeWarnings to approve anyway.',
+      { warnings: approvalWarnings },
+    );
+  }
+
+  // Date-only — strip the time so a midday approval doesn't accidentally
+  // backdate the hireDate to the previous day in some timezones.
+  const hireDateValue = new Date(`${hireDate}T00:00:00.000Z`);
+  const now = new Date();
+
+  await prisma.$transaction(async (tx) => {
+    await tx.application.update({
+      where: { id: app.id },
+      data: { status: 'APPROVED', approvedAt: now },
+    });
+    await tx.associate.update({
+      where: { id: app.associateId },
+      data: { hireDate: hireDateValue },
+    });
+    // Activate the associate's User (if one exists). tokenVersion bump
+    // invalidates any pre-hire invite session so they must sign in via
+    // the now-activated account.
+    await tx.user.updateMany({
+      where: { associateId: app.associateId },
+      data: { status: 'ACTIVE', tokenVersion: { increment: 1 } },
+    });
+    // Phase 131 — open the first AssociateAssignment if the
+    // Application has a Location. We close any pre-existing open
+    // row first (re-hire / re-onboarding edge case) so the partial
+    // unique index never trips.
+    if (app.locationId) {
+      await tx.associateAssignment.updateMany({
+        where: { associateId: app.associateId, endedAt: null },
+        data: { endedAt: hireDateValue },
+      });
+      await tx.associateAssignment.create({
+        data: {
+          associateId: app.associateId,
+          locationId: app.locationId,
+          startedAt: hireDateValue,
+          reason: 'Onboarding approved',
+          notedById: req.user!.id,
+        },
+      });
+    }
+  }, TX_OPTS);
+
+  await recordOnboardingEvent({
+    actorUserId: req.user!.id,
+    action: 'application.approved',
+    applicationId: app.id,
+    clientId: app.clientId,
+    metadata: { hireDate, percentComplete: percent },
+    req,
+  });
+
+  // Approval IS the hire moment — file the offer letter now so the
+  // compliance scorecard's "Offer letter on file" signal tracks hires
+  // automatically. Non-fatal by design: a missing template or a data
+  // gap (unresolved tokens are never filed) must not block the
+  // approval — the periodic sweep in lib/offerLetters.ts retries those
+  // once the template/data is fixed.
+  try {
+    await autoFileOfferLetter({
+      associateId: app.associateId,
+      clientId: app.clientId,
+      actorUserId: req.user!.id,
+      req,
+    });
+  } catch (err) {
+    console.error('[alto-people/api] offer-letter auto-file at approval failed:', err);
+  }
+
+  // Outbound webhooks — approval is both "onboarding done" and the
+  // hire moment (hireDate lands, the User activates). Ids + dates
+  // only; enrichment is the consumer's job via the public API.
+  void emitWebhookEvent(
+    'onboarding.completed',
+    {
+      applicationId: app.id,
+      associateId: app.associateId,
+      clientId: app.clientId,
+      approvedAt: now.toISOString(),
+    },
+    { clientId: app.clientId },
+  );
+  void emitWebhookEvent(
+    'associate.hired',
+    {
+      associateId: app.associateId,
+      applicationId: app.id,
+      clientId: app.clientId,
+      hireDate,
+    },
+    { clientId: app.clientId },
+  );
+
+  const approvedAssoc = await prisma.associate.findUnique({
+    where: { id: app.associateId },
+    select: { firstName: true, lastName: true },
+  });
+  const approvedClient = await prisma.client.findUnique({
+    where: { id: app.clientId },
+    select: { name: true },
+  });
+  const approvedTpl = applicationApprovedTemplate({
+    firstName: approvedAssoc?.firstName ?? 'there',
+    clientName: approvedClient?.name ?? 'your assigned client',
+    hireDate,
+    appUrl: env.APP_BASE_URL,
+  });
+  void notifyAssociate(app.associateId, {
+    subject: approvedTpl.subject,
+    body: approvedTpl.text,
+    html: approvedTpl.html,
+    category: 'onboarding',
+  });
+  // Manager copy so the new hire's direct manager knows they're cleared
+  // to start — no-op if no manager assigned.
+  void notifyManager(app.associateId, {
+    subject: 'New hire approved on your team',
+    body: `One of your direct reports was just approved${hireDate ? ` with a hire date of ${hireDate}` : ''}. Reach out to set up day-1 expectations.`,
+    category: 'onboarding',
+  });
+}
+
 onboardingRouter.post(
   '/applications/:id/approve',
   MANAGE,
@@ -949,212 +1173,12 @@ onboardingRouter.post(
           parsed.error.flatten()
         );
       }
-      const { hireDate } = parsed.data;
-      const app = await prisma.application.findFirst({
-        where: { ...scopeApplications(req.user!), id: req.params.id },
-        include: { checklist: { include: { tasks: true } } },
-      });
-      if (!app) {
-        throw new HttpError(
-          404,
-          'application_not_found',
-          'Application not found'
-        );
-      }
-      if (app.status === 'APPROVED' || app.status === 'REJECTED') {
-        throw new HttpError(
-          409,
-          'application_already_decided',
-          `Application is already ${app.status}.`
-        );
-      }
-      const tasks = app.checklist?.tasks ?? [];
-      const percent = computePercent(tasks);
-      // A checklist-less application (CSV silent migration, legacy rows)
-      // computes 0% forever — there are no tasks to finish, so this hard
-      // gate would make it permanently unapprovable (and its associate
-      // permanently unschedulable, since the scheduling roster only shows
-      // APPROVED-or-assigned people). Route it through the warning gate
-      // below instead, which demands an explicit acknowledgement.
-      if (tasks.length > 0 && percent < 100) {
-        throw new HttpError(
-          409,
-          'checklist_incomplete',
-          `Checklist is ${percent}% complete — finish all tasks before approving.`
-        );
-      }
-
-      // 100% is not the same as VERIFIED: skipped tasks count as complete
-      // and an uploaded-but-unreviewed document completes the upload task.
-      // Surface every verification gap and require explicit acknowledgement
-      // — a hire must not be silently activated with no I-9 on file and no
-      // document ever opened by a human.
-      const approvalWarnings: string[] = [];
-      if (tasks.length === 0) {
-        approvalWarnings.push(
-          'This application has no onboarding checklist — approving records the hire with no completed onboarding tasks on file.',
-        );
-      }
-      const skipped = tasks.filter((t) => t.status === 'SKIPPED');
-      for (const t of skipped) {
-        approvalWarnings.push(`Task skipped without completion: ${t.title}`);
-      }
-      const idClassDocs = await prisma.documentRecord.findMany({
-        where: {
-          associateId: app.associateId,
-          deletedAt: null,
-          kind: { in: ['ID', 'SSN_CARD', 'I9_SUPPORTING', 'J1_VISA', 'J1_DS2019'] },
-        },
-        select: { status: true },
-      });
-      if (
-        idClassDocs.length > 0 &&
-        !idClassDocs.some((d) => d.status === 'VERIFIED')
-      ) {
-        approvalWarnings.push(
-          'Identity documents were uploaded but none have been verified by a reviewer.',
-        );
-      }
-      if (tasks.some((t) => t.kind === 'I9_VERIFICATION')) {
-        const i9 = await prisma.i9Verification.findUnique({
-          where: { associateId: app.associateId },
-          select: { section2CompletedAt: true },
-        });
-        if (!i9?.section2CompletedAt) {
-          approvalWarnings.push(
-            'I-9 Section 2 has not been completed — federal law requires it within 3 business days of the start date.',
-          );
-        }
-      }
-      if (approvalWarnings.length > 0 && !parsed.data.acknowledgeWarnings) {
-        throw new HttpError(
-          409,
-          'approval_warnings',
-          'This application has verification gaps. Review them and re-submit with acknowledgeWarnings to approve anyway.',
-          { warnings: approvalWarnings },
-        );
-      }
-
-      // Date-only — strip the time so a midday approval doesn't accidentally
-      // backdate the hireDate to the previous day in some timezones.
-      const hireDateValue = new Date(`${hireDate}T00:00:00.000Z`);
-      const now = new Date();
-
-      await prisma.$transaction(async (tx) => {
-        await tx.application.update({
-          where: { id: app.id },
-          data: { status: 'APPROVED', approvedAt: now },
-        });
-        await tx.associate.update({
-          where: { id: app.associateId },
-          data: { hireDate: hireDateValue },
-        });
-        // Activate the associate's User (if one exists). tokenVersion bump
-        // invalidates any pre-hire invite session so they must sign in via
-        // the now-activated account.
-        await tx.user.updateMany({
-          where: { associateId: app.associateId },
-          data: { status: 'ACTIVE', tokenVersion: { increment: 1 } },
-        });
-        // Phase 131 — open the first AssociateAssignment if the
-        // Application has a Location. We close any pre-existing open
-        // row first (re-hire / re-onboarding edge case) so the partial
-        // unique index never trips.
-        if (app.locationId) {
-          await tx.associateAssignment.updateMany({
-            where: { associateId: app.associateId, endedAt: null },
-            data: { endedAt: hireDateValue },
-          });
-          await tx.associateAssignment.create({
-            data: {
-              associateId: app.associateId,
-              locationId: app.locationId,
-              startedAt: hireDateValue,
-              reason: 'Onboarding approved',
-              notedById: req.user!.id,
-            },
-          });
-        }
-      }, TX_OPTS);
-
-      await recordOnboardingEvent({
-        actorUserId: req.user!.id,
-        action: 'application.approved',
-        applicationId: app.id,
-        clientId: app.clientId,
-        metadata: { hireDate, percentComplete: percent },
+      await approveOneApplication(
         req,
-      });
-
-      // Approval IS the hire moment — file the offer letter now so the
-      // compliance scorecard's "Offer letter on file" signal tracks hires
-      // automatically. Non-fatal by design: a missing template or a data
-      // gap (unresolved tokens are never filed) must not block the
-      // approval — the periodic sweep in lib/offerLetters.ts retries those
-      // once the template/data is fixed.
-      try {
-        await autoFileOfferLetter({
-          associateId: app.associateId,
-          clientId: app.clientId,
-          actorUserId: req.user!.id,
-          req,
-        });
-      } catch (err) {
-        console.error('[alto-people/api] offer-letter auto-file at approval failed:', err);
-      }
-
-      // Outbound webhooks — approval is both "onboarding done" and the
-      // hire moment (hireDate lands, the User activates). Ids + dates
-      // only; enrichment is the consumer's job via the public API.
-      void emitWebhookEvent(
-        'onboarding.completed',
-        {
-          applicationId: app.id,
-          associateId: app.associateId,
-          clientId: app.clientId,
-          approvedAt: now.toISOString(),
-        },
-        { clientId: app.clientId },
+        req.params.id,
+        parsed.data.hireDate,
+        parsed.data.acknowledgeWarnings ?? false,
       );
-      void emitWebhookEvent(
-        'associate.hired',
-        {
-          associateId: app.associateId,
-          applicationId: app.id,
-          clientId: app.clientId,
-          hireDate,
-        },
-        { clientId: app.clientId },
-      );
-
-      const approvedAssoc = await prisma.associate.findUnique({
-        where: { id: app.associateId },
-        select: { firstName: true, lastName: true },
-      });
-      const approvedClient = await prisma.client.findUnique({
-        where: { id: app.clientId },
-        select: { name: true },
-      });
-      const approvedTpl = applicationApprovedTemplate({
-        firstName: approvedAssoc?.firstName ?? 'there',
-        clientName: approvedClient?.name ?? 'your assigned client',
-        hireDate,
-        appUrl: env.APP_BASE_URL,
-      });
-      void notifyAssociate(app.associateId, {
-        subject: approvedTpl.subject,
-        body: approvedTpl.text,
-        html: approvedTpl.html,
-        category: 'onboarding',
-      });
-      // Manager copy so the new hire's direct manager knows they're cleared
-      // to start — no-op if no manager assigned.
-      void notifyManager(app.associateId, {
-        subject: 'New hire approved on your team',
-        body: `One of your direct reports was just approved${hireDate ? ` with a hire date of ${hireDate}` : ''}. Reach out to set up day-1 expectations.`,
-        category: 'onboarding',
-      });
-
       res.status(204).end();
     } catch (err) {
       next(err);
@@ -4084,6 +4108,55 @@ onboardingRouter.post(
       }
 
       res.json({ rejected, skipped });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+/* BULK APPROVE (HR/Ops only) ------------------------------------------- */
+// Approve many finished applications at once with one shared hire date.
+// Each row runs the exact single-approve path (approveOneApplication), so
+// per-row failures — not found, already decided, incomplete checklist,
+// approval_warnings — come back as row errors without sinking the batch.
+// Warnings are NEVER auto-acknowledged in bulk: a hire with verification
+// gaps must be opened and approved individually, eyes on the gaps.
+onboardingRouter.post(
+  '/applications/bulk-approve',
+  MANAGE,
+  async (req, res, next) => {
+    try {
+      const parsed = BulkApproveInputSchema.safeParse(req.body);
+      if (!parsed.success) {
+        throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+      }
+      const { applicationIds, hireDate } = parsed.data;
+
+      const results: BulkApproveResultRow[] = [];
+      let succeeded = 0;
+      let failed = 0;
+
+      // Serial like bulk-reject — each approval runs a multi-statement
+      // interactive transaction plus notification sends; overlapping
+      // those 4-wide bought little and risked Neon tx-slot contention.
+      for (const applicationId of applicationIds) {
+        try {
+          await approveOneApplication(req, applicationId, hireDate, false);
+          results.push({ applicationId, ok: true, errorCode: null, errorMessage: null });
+          succeeded++;
+        } catch (err) {
+          results.push({
+            applicationId,
+            ok: false,
+            errorCode: err instanceof HttpError ? err.code : 'approve_failed',
+            errorMessage: err instanceof Error ? err.message : String(err),
+          });
+          failed++;
+        }
+      }
+
+      const body: BulkApproveResponse = { succeeded, failed, results };
+      res.status(200).json(body);
     } catch (err) {
       next(err);
     }

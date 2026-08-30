@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -301,6 +302,11 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
               <Button size="sm" variant="ghost" onClick={() => setRoomKey(focus.key)}>
                 Open room
               </Button>
+              {/* Straight to the thing itself — the room is for deciding,
+                  this is for doing. */}
+              <Button asChild size="sm" variant="ghost">
+                <Link to={focus.linkUrl}>Open →</Link>
+              </Button>
               {rows && rows.length > 1 && (
                 <Button
                   size="sm"
@@ -363,6 +369,11 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
                       />
                     )}
                   </span>
+                  {/* Direct jump to the item's own page; the title click
+                      keeps opening the room. */}
+                  <Button asChild size="xs" variant="ghost" className="shrink-0">
+                    <Link to={d.linkUrl}>Open →</Link>
+                  </Button>
                   <Button
                     size="xs"
                     variant={d.quickAction && !(d.claimedBy && !d.claimedByMe) ? 'primary' : 'ghost'}

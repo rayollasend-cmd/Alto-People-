@@ -23,6 +23,9 @@ const TPL_CLIENT_A = '00000000-0000-4000-8000-00000000dddd';
 const TPL_CLIENT_B = '00000000-0000-4000-8000-00000000eeee';
 
 beforeEach(() => {
+  // The dialog persists last-used picks under alto:invite.lastUsed.v1 —
+  // clear between tests so one test's create doesn't seed the next.
+  window.localStorage.clear();
   vi.mocked(listClients).mockResolvedValue({
     clients: [
       { id: CLIENT_A, name: 'Coastal Resort', industry: 'hospitality', status: 'ACTIVE', state: 'CA' },
@@ -109,7 +112,7 @@ describe('<NewApplicationDialog>', () => {
     await user.selectOptions(screen.getByLabelText(/onboarding template/i), TPL_GLOBAL);
     await user.type(screen.getByLabelText(/position/i), 'Server');
 
-    await user.click(screen.getByRole('button', { name: /create.*invite/i }));
+    await user.click(screen.getByRole('button', { name: /^create & invite$/i }));
 
     // The start date now prefills to next Monday (local), sent as a UTC
     // midnight ISO string — mirror the dialog's formula.
@@ -157,7 +160,7 @@ describe('<NewApplicationDialog>', () => {
     );
     await user.selectOptions(screen.getByLabelText(/onboarding template/i), TPL_GLOBAL);
 
-    await user.click(screen.getByRole('button', { name: /create.*invite/i }));
+    await user.click(screen.getByRole('button', { name: /^create & invite$/i }));
 
     await waitFor(() => {
       expect(screen.getByText(stubUrl)).toBeInTheDocument();

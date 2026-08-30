@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { hapticConfirm } from '@/lib/haptics';
@@ -189,6 +189,47 @@ const CATEGORY_LABELS: Record<string, string> = {
  *  day early west of UTC. */
 const fmtYmd = (iso: string) => fmtDate(parseYmd(iso));
 
+/**
+ * Notification deep-link landing (?request=<id> for time off, ?walkin=<id>
+ * for kiosk clock-ins): once the panel's rows have loaded, scroll the target
+ * row (DOM id `<param>-<rowId>`) into view and flash it for ~2s. The query
+ * param is consumed either way so refetches and Back don't re-trigger; a
+ * target that's no longer pending gets an explanatory toast instead.
+ */
+function useDeepLinkFlash(
+  param: 'request' | 'walkin',
+  ids: string[] | null,
+): string | null {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const target = searchParams.get(param);
+  useEffect(() => {
+    if (!target || ids === null) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete(param);
+    setSearchParams(next, { replace: true });
+    if (!ids.includes(target)) {
+      toast.info('That request is no longer pending — it may already be decided.');
+      return;
+    }
+    setFlashId(target);
+    // Let the row paint before scrolling to it.
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`${param}-${target}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    window.setTimeout(() => setFlashId(null), 2000);
+    // searchParams/setSearchParams change identity on the consume above;
+    // target going null ends the cycle, so they're deliberately not deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [param, target, ids]);
+  return flashId;
+}
+
+/** Deep-link flash ring — appended to the target row's classes for ~2s. */
+const FLASH_ROW_CLASS = 'ring-2 ring-gold bg-gold/10';
+
 /** Loop a single-approve endpoint over the selection; report both halves. */
 async function approveAllSettled(
   ids: string[],
@@ -218,6 +259,7 @@ function waitingSince(iso: string): string {
 function WalkInClockInsPanel() {
   const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [denyTarget, setDenyTarget] = useState<ClockInRequestRow | null>(null);
   const [denyReason, setDenyReason] = useState('');
 
@@ -243,6 +285,12 @@ function WalkInClockInsPanel() {
       ? query.error.message
       : 'Could not load clock-in requests.'
     : null;
+  // Memoized: a fresh array identity on every render defeats memoization
+  // inside useSelection, and this panel refetches itself every minute.
+  const itemIds = useMemo(() => items?.map((r) => r.id) ?? [], [items]);
+  const { selected, toggle, clear, allSelected, someSelected, toggleAll } =
+    useSelection(itemIds);
+  const flashId = useDeepLinkFlash('walkin', items === null ? null : itemIds);
 
   // Optimistic removal, matching PendingTimeOffPanel directly below —
   // two panels in one stack must not behave differently under the same tap.
@@ -266,12 +314,31 @@ function WalkInClockInsPanel() {
     }
   };
 
+  // No bulk endpoint for clock-in requests — loop the single-approve calls
+  // and settle them all, then report both halves (same as swaps/pickups).
+  const bulkApprove = async () => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setBulkBusy(true);
+    await approveAllSettled(ids, (id) => approveClockInRequest(id), 'clock-in');
+    clear();
+    setBulkBusy(false);
+    queryClient.invalidateQueries({ queryKey: CLOCK_INS_KEY });
+  };
+
   if (forbidden) return null;
 
   return (
     <Card className="mt-8">
       <CardHeader>
-        <CardTitle>Walk-in clock-ins waiting at the kiosk</CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle>Walk-in clock-ins waiting at the kiosk</CardTitle>
+          {selected.size > 0 && (
+            <Button size="sm" onClick={bulkApprove} loading={bulkBusy}>
+              Approve selected ({selected.size})
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent>
         {error && (
@@ -290,32 +357,58 @@ function WalkInClockInsPanel() {
           </p>
         )}
         {!error && items && items.length > 0 && (
+          <>
+            {/* Tri-state select-all — same pattern as the sibling panels. */}
+            <label className="flex w-fit cursor-pointer items-center gap-3 px-3 pb-2 text-xs text-silver">
+              <input
+                type="checkbox"
+                aria-label="Select all clock-in requests"
+                checked={allSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = someSelected;
+                }}
+                onChange={toggleAll}
+              />
+              Select all
+            </label>
           <ul className="divide-y divide-navy-secondary/60">
             {items.map((r) => (
               <li
                 key={r.id}
-                className="flex flex-wrap items-center justify-between gap-3 py-2.5"
+                id={`walkin-${r.id}`}
+                className={`flex flex-wrap items-center justify-between gap-3 py-2.5${
+                  flashId === r.id ? ` rounded-md ${FLASH_ROW_CLASS}` : ''
+                }`}
               >
-                <div className="min-w-0">
-                  <div className="font-medium text-white">
-                    <AssociateLink associateId={r.associateId}>
-                      {r.associateName}
-                    </AssociateLink>
-                  </div>
-                  <div className="text-xs text-silver">
-                    {r.locationName ?? r.clientName ?? 'Kiosk'}
-                    {/* Time-only: these are minutes old — a full date reads
-                        like paperwork, not a person at a kiosk. */}
-                    {' · punched '}
-                    {fmtTime(r.requestedAt)}
-                    {' · '}
-                    <span className="tabular-nums text-warning">
-                      {waitingSince(r.requestedAt)}
-                    </span>
-                  </div>
-                  <div className="text-2xs text-silver/60">
-                    Approving clocks them in from the punch time; they do not
-                    need to punch again.
+                <div className="flex items-start gap-3 min-w-0">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    aria-label={`Select clock-in from ${r.associateName}`}
+                    checked={selected.has(r.id)}
+                    onChange={() => toggle(r.id)}
+                  />
+                  <div className="min-w-0">
+                    <div className="font-medium text-white">
+                      <AssociateLink associateId={r.associateId}>
+                        {r.associateName}
+                      </AssociateLink>
+                    </div>
+                    <div className="text-xs text-silver">
+                      {r.locationName ?? r.clientName ?? 'Kiosk'}
+                      {/* Time-only: these are minutes old — a full date reads
+                          like paperwork, not a person at a kiosk. */}
+                      {' · punched '}
+                      {fmtTime(r.requestedAt)}
+                      {' · '}
+                      <span className="tabular-nums text-warning">
+                        {waitingSince(r.requestedAt)}
+                      </span>
+                    </div>
+                    <div className="text-2xs text-silver/60">
+                      Approving clocks them in from the punch time; they do not
+                      need to punch again.
+                    </div>
                   </div>
                 </div>
                 <div className="flex gap-2">
@@ -329,7 +422,7 @@ function WalkInClockInsPanel() {
                       )
                     }
                     loading={pendingId === r.id}
-                    disabled={pendingId !== null}
+                    disabled={pendingId === r.id || bulkBusy}
                   >
                     <Check className="h-4 w-4" />
                     Approve
@@ -341,7 +434,7 @@ function WalkInClockInsPanel() {
                       setDenyReason('');
                       setDenyTarget(r);
                     }}
-                    disabled={pendingId !== null}
+                    disabled={pendingId === r.id || bulkBusy}
                   >
                     <X className="h-4 w-4" />
                     Deny
@@ -350,6 +443,7 @@ function WalkInClockInsPanel() {
               </li>
             ))}
           </ul>
+          </>
         )}
       </CardContent>
 
@@ -423,6 +517,7 @@ function PendingTimeOffPanel({
   const { selected, toggle, clear, allSelected, someSelected, toggleAll } =
     useSelection(itemIds);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const flashId = useDeepLinkFlash('request', items === null ? null : itemIds);
 
   // Optimistically drop the row from the cached list the moment a
   // decision is submitted; snapshot the previous list so onError can
@@ -564,7 +659,10 @@ function PendingTimeOffPanel({
             {items.map((r) => (
               <li
                 key={r.id}
-                className="p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md flex items-start justify-between gap-3 flex-wrap"
+                id={`request-${r.id}`}
+                className={`p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md flex items-start justify-between gap-3 flex-wrap${
+                  flashId === r.id ? ` ${FLASH_ROW_CLASS}` : ''
+                }`}
               >
                 <div className="flex items-start gap-3">
                   <input

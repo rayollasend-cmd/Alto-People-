@@ -49,10 +49,14 @@ import {
 } from '@/components/ui';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useStoreScope } from '@/lib/storeScope';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtMoney, fmtMoneyCompact, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
+import { ymd } from './calendarDates';
+// Despite the legacy name, this is the ORG workweek start (Saturday).
+import { startOfWeekMonday } from './WeekCalendarView';
 import { PageHeader } from '@/components/ui/PageHeader';
 import {
   Button,
@@ -447,6 +451,18 @@ function OtOutlookCard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Follow the global Topbar store scope. This lens filters by client NAME
+  // (rows carry a display string, not ids), so the scope id is mapped
+  // through the scope's own client list.
+  const otScope = useStoreScope();
+  const otScopeClientName = otScope.enabled
+    ? (otScope.clients.find((c) => c.id === otScope.clientId)?.name ?? '')
+    : null;
+  useEffect(() => {
+    if (otScopeClientName === null) return;
+    setClientFilter((prev) => (prev === otScopeClientName ? prev : otScopeClientName));
+  }, [otScopeClientName]);
+
   // Client options come from the rows themselves (an associate can span
   // clients within the week — they match any of theirs).
   const clientOptions = useMemo(() => {
@@ -611,6 +627,12 @@ function OtOutlookCard() {
 
 function OtOutlookTable({ rows }: { rows: OtOutlookResponse['rows'] }) {
   const h = (min: number) => (min / 60).toFixed(1);
+  // The radar projects the CURRENT org workweek (Sat→Fri), so each name
+  // deep-links to that exact week in the schedule, focused on the person.
+  // The rows carry no client/location ids, so those params are omitted.
+  const weekParam = ymd(startOfWeekMonday(new Date()));
+  const scheduleLink = (associateId: string) =>
+    `/scheduling?view=week&week=${weekParam}&associate=${associateId}`;
   return (
     <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -631,7 +653,15 @@ function OtOutlookTable({ rows }: { rows: OtOutlookResponse['rows'] }) {
           <tbody className="divide-y divide-navy-secondary/50">
             {rows.map((r) => (
               <tr key={r.associateId}>
-                <td className="py-1.5 pr-3 text-white">{r.associateName}</td>
+                <td className="py-1.5 pr-3">
+                  <Link
+                    to={scheduleLink(r.associateId)}
+                    className="text-white hover:text-gold hover:underline"
+                    title={`Open ${r.associateName}'s week on the schedule to trim a shift`}
+                  >
+                    {r.associateName}
+                  </Link>
+                </td>
                 <td className="py-1.5 px-3 text-silver hidden md:table-cell">
                   {r.clientNames}
                 </td>
@@ -1565,6 +1595,19 @@ export function LaborCostsHome() {
   const [clientFilter, setClientFilter] = useState('');
   const [locationFilter, setLocationFilter] = useState('');
   const [targetsOpen, setTargetsOpen] = useState(false);
+  // Follow the global Topbar store scope (one-way — this select is a local
+  // lens, so it doesn't write back). Manual picks stand until the next
+  // scope change.
+  const boardScope = useStoreScope();
+  const boardScopeClientId = boardScope.enabled ? boardScope.clientId : null;
+  useEffect(() => {
+    if (boardScopeClientId === null) return;
+    setClientFilter((prev) => {
+      if (prev === boardScopeClientId) return prev;
+      setLocationFilter('');
+      return boardScopeClientId;
+    });
+  }, [boardScopeClientId]);
 
   const load = useCallback(async () => {
     if (!from || !toInclusive || toInclusive < from) return;

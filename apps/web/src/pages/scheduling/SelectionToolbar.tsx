@@ -2,8 +2,10 @@ import { useState } from 'react';
 import {
   CalendarRange,
   CheckCircle2,
+  Clock,
   Copy as CopyIcon,
   Send,
+  Tag,
   Trash2,
   UserPlus,
   X,
@@ -31,6 +33,15 @@ function plusDaysIso(iso: string, days: number): string {
   return d.toISOString();
 }
 
+/** Same calendar date as `iso`, new wall-clock HH:MM (browser-local, the
+ *  same clock plusDaysIso moves in). */
+function withTimeIso(iso: string, hhmm: string): string {
+  const [h, m] = hhmm.split(':').map(Number);
+  const d = new Date(iso);
+  d.setHours(h, m, 0, 0);
+  return d.toISOString();
+}
+
 /**
  * Floating action bar that appears when one or more chips are selected.
  *
@@ -52,12 +63,24 @@ interface Props {
 export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
   const confirm = useConfirm();
   const [busy, setBusy] = useState<
-    null | 'publish' | 'cancel' | 'unassign' | 'duplicate' | 'delete' | 'reassign' | 'move'
+    | null
+    | 'publish'
+    | 'cancel'
+    | 'unassign'
+    | 'duplicate'
+    | 'delete'
+    | 'reassign'
+    | 'move'
+    | 'times'
+    | 'position'
   >(null);
   // Small popover panels above the bar.
-  const [panel, setPanel] = useState<null | 'reassign' | 'move'>(null);
+  const [panel, setPanel] = useState<null | 'reassign' | 'move' | 'times' | 'position'>(null);
   const [reassignTo, setReassignTo] = useState<PickedAssociate | null>(null);
   const [moveDays, setMoveDays] = useState('7');
+  const [timesStart, setTimesStart] = useState('');
+  const [timesEnd, setTimesEnd] = useState('');
+  const [positionValue, setPositionValue] = useState('');
 
   if (selected.length === 0) return null;
 
@@ -254,6 +277,54 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
     }
   };
 
+  const onSetTimes = async () => {
+    if (!timesStart && !timesEnd) {
+      toast.error('Enter a start time, an end time, or both.');
+      return;
+    }
+    setBusy('times');
+    try {
+      await runBatch<Shift>(async (s) => {
+        if (s.status === 'CANCELLED' || s.status === 'COMPLETED') return s;
+        const startsAt = timesStart ? withTimeIso(s.startsAt, timesStart) : s.startsAt;
+        // End anchors on the shift's (possibly-updated) start DATE so each
+        // shift keeps its own day; an end at-or-before the start means an
+        // overnight shift and rolls to the next day.
+        let endsAt = timesEnd ? withTimeIso(startsAt, timesEnd) : s.endsAt;
+        if (timesEnd && new Date(endsAt) <= new Date(startsAt)) {
+          endsAt = plusDaysIso(endsAt, 1);
+        }
+        if (startsAt === s.startsAt && endsAt === s.endsAt) return s;
+        return updateShift(s.id, { startsAt, endsAt });
+      }, 'Set times on');
+      setPanel(null);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onSetPosition = async () => {
+    const pos = positionValue.trim();
+    if (!pos) {
+      toast.error('Enter a position.');
+      return;
+    }
+    setBusy('position');
+    try {
+      await runBatch<Shift>(async (s) => {
+        if (s.status === 'CANCELLED' || s.status === 'COMPLETED') return s;
+        if (s.position === pos) return s;
+        return updateShift(s.id, { position: pos });
+      }, `Set position "${pos}" on`);
+      setPanel(null);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Distinct positions among the selection — the datalist's suggestions.
+  const positionOptions = [...new Set(selected.map((s) => s.position))].sort();
+
   return (
     <div className="fixed left-1/2 -translate-x-1/2 z-40 no-print bottom-[max(1.5rem,calc(env(safe-area-inset-bottom)+0.5rem))] max-w-[calc(100vw-1rem)]">
       {panel === 'reassign' && (
@@ -304,6 +375,77 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
           </div>
         </div>
       )}
+      {panel === 'times' && (
+        <div className="mb-2 rounded-lg bg-navy border border-navy-secondary elev-3 p-3 w-72">
+          <div className="mb-1 text-2xs uppercase tracking-widest text-silver">
+            Set times on all {selected.length}
+          </div>
+          <div className="flex items-center gap-2">
+            <Input
+              type="time"
+              value={timesStart}
+              onChange={(e) => setTimesStart(e.target.value)}
+              aria-label="New start time (blank keeps each shift's start)"
+            />
+            <span className="text-silver/70">–</span>
+            <Input
+              type="time"
+              value={timesEnd}
+              onChange={(e) => setTimesEnd(e.target.value)}
+              aria-label="New end time (blank keeps each shift's end)"
+            />
+          </div>
+          <p className="mt-1 text-2xs text-silver/60">
+            Each shift keeps its own day. Leave a side blank to keep it. An end
+            at or before the start rolls to the next morning.
+          </p>
+          <div className="mt-2 flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setPanel(null)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={onSetTimes}
+              loading={busy === 'times'}
+              disabled={(!timesStart && !timesEnd) || busy !== null}
+            >
+              Apply
+            </Button>
+          </div>
+        </div>
+      )}
+      {panel === 'position' && (
+        <div className="mb-2 rounded-lg bg-navy border border-navy-secondary elev-3 p-3 w-72">
+          <div className="mb-1 text-2xs uppercase tracking-widest text-silver">
+            Set position on all {selected.length}
+          </div>
+          <Input
+            list="selection-toolbar-positions"
+            value={positionValue}
+            onChange={(e) => setPositionValue(e.target.value)}
+            placeholder="e.g. Stocker"
+            aria-label="New position for every selected shift"
+          />
+          <datalist id="selection-toolbar-positions">
+            {positionOptions.map((p) => (
+              <option key={p} value={p} />
+            ))}
+          </datalist>
+          <div className="mt-2 flex justify-end gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setPanel(null)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={onSetPosition}
+              loading={busy === 'position'}
+              disabled={!positionValue.trim() || busy !== null}
+            >
+              Apply
+            </Button>
+          </div>
+        </div>
+      )}
       {/* flex-wrap + viewport ceiling: seven actions previously formed a
           fixed ~900px row that clipped off both edges of anything narrower
           than a desktop monitor. */}
@@ -349,6 +491,24 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
         >
           <CalendarRange className="h-3.5 w-3.5" />
           Move…
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={() => setPanel(panel === 'times' ? null : 'times')}
+          disabled={busy !== null}
+          title="Set every selected shift's start/end time (each keeps its own day)"
+        >
+          <Clock className="h-3.5 w-3.5" />
+          Set times…
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={() => setPanel(panel === 'position' ? null : 'position')}
+          disabled={busy !== null}
+          title="Set every selected shift's position"
+        >
+          <Tag className="h-3.5 w-3.5" />
+          Set position…
         </Button>
         <Button
           variant="ghost"

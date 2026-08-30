@@ -92,7 +92,8 @@ describe('decision notifications', () => {
     expect(rejectNote).not.toBeNull();
     expect(rejectNote?.subject).toBe('Time entry rejected');
     expect(rejectNote?.body).toContain('duplicate punch');
-    expect(rejectNote?.linkUrl).toBe('/time-attendance');
+    // Deep-links to the exact record on the time page.
+    expect(rejectNote?.linkUrl).toBe(`/time-attendance?entry=${entry.id}`);
 
     const approve = await request(app())
       .post(`/time/admin/entries/${entry.id}/approve`)

@@ -633,6 +633,32 @@ export const BulkResendResponseSchema = z.object({
 });
 export type BulkResendResponse = z.infer<typeof BulkResendResponseSchema>;
 
+// Bulk approve — one shared hireDate for the whole batch. Deliberately NO
+// acknowledgeWarnings passthrough: rows with verification gaps fail with
+// `approval_warnings` so a human reviews each one individually — a bulk
+// action must never blanket-acknowledge unverified hires.
+export const BulkApproveInputSchema = z.object({
+  applicationIds: z.array(UuidSchema).min(1).max(200),
+  /** YYYY-MM-DD — same shape as the single-approve hireDate. */
+  hireDate: z.string().date(),
+});
+export type BulkApproveInput = z.infer<typeof BulkApproveInputSchema>;
+
+export const BulkApproveResultRowSchema = z.object({
+  applicationId: UuidSchema,
+  ok: z.boolean(),
+  errorCode: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+});
+export type BulkApproveResultRow = z.infer<typeof BulkApproveResultRowSchema>;
+
+export const BulkApproveResponseSchema = z.object({
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  results: z.array(BulkApproveResultRowSchema),
+});
+export type BulkApproveResponse = z.infer<typeof BulkApproveResponseSchema>;
+
 // HR-composed nudge email. Sent through the same Notification pipe as
 // invites, but flagged with category = "onboarding.nudge" for filtering.
 export const NudgeInputSchema = z.object({
@@ -1915,6 +1941,10 @@ export type ShiftAssignInput = z.infer<typeof ShiftAssignInputSchema>;
 export const PublishPreflightResponseSchema = z.object({
   /** Draft shifts in the window (what publish would flip live). */
   drafts: z.number().int().nonnegative(),
+  /** Drafts inside a fair-workweek 14-day notice window that still lack a
+   *  late-notice reason — publish skips these unless the publish call
+   *  carries a batch `lateNoticeReason`. */
+  noticeWindowDrafts: z.number().int().nonnegative().optional(),
   /** OPEN (unassigned, non-draft) shifts still needing a person. */
   open: z.number().int().nonnegative(),
   /** People projected past 40h scheduled in the window's week. */
@@ -2383,6 +2413,13 @@ export const PublishWeekInputSchema = z.object({
   weekEnd: z.string().datetime().optional(),
   /** When set, only DRAFT shifts for this client are published. */
   clientId: UuidSchema.optional(),
+  /**
+   * Batch late-notice reason. When present, drafts inside a fair-workweek
+   * state's 14-day notice window are published WITH this reason recorded
+   * (drafts carrying their own reason keep it) instead of being skipped.
+   * Absent = those drafts are skipped, exactly as before.
+   */
+  lateNoticeReason: z.string().trim().min(1).max(500).optional(),
 });
 export type PublishWeekInput = z.infer<typeof PublishWeekInputSchema>;
 

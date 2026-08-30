@@ -15,6 +15,7 @@ import { ThemeProvider } from '@/lib/theme';
 import { DensityProvider } from '@/lib/density';
 import { PageTitleProvider } from '@/lib/pageTitle';
 import { ConfirmProvider } from '@/lib/confirm';
+import { StoreScopeProvider } from '@/lib/storeScope';
 import { Toaster, toast } from '@/components/ui/Toaster';
 import { GlobalErrorBoundary } from '@/components/GlobalErrorBoundary';
 
@@ -156,12 +157,14 @@ ReactDOM.createRoot(rootEl).render(
           <ThemeProvider>
             <DensityProvider>
               <AuthProvider>
-                <PageTitleProvider>
-                  <ConfirmProvider>
-                    <RouterProvider router={router} />
-                    <Toaster />
-                  </ConfirmProvider>
-                </PageTitleProvider>
+                <StoreScopeProvider>
+                  <PageTitleProvider>
+                    <ConfirmProvider>
+                      <RouterProvider router={router} />
+                      <Toaster />
+                    </ConfirmProvider>
+                  </PageTitleProvider>
+                </StoreScopeProvider>
               </AuthProvider>
             </DensityProvider>
           </ThemeProvider>

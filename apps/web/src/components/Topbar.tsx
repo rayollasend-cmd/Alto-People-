@@ -3,10 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { ChevronRight, LogOut, Menu, Search, User, WifiOff } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
+import { shortStoreName, useStoreScope } from '@/lib/storeScope';
 import { ROLE_LABELS } from '@/lib/roles';
 import { usePageBreadcrumbs, usePageTitle } from '@/lib/pageTitle';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,6 +26,72 @@ import { Logo } from '@/components/Logo';
 interface TopbarProps {
   onOpenMobileNav: () => void;
   onOpenCommandPalette: () => void;
+}
+
+// One-click store scope — set once here, followed by Scheduling / Time /
+// Labor / People. Segmented bar for the normal 4-store fleet; collapses to
+// a select if the client list ever outgrows it. Hidden for bounded roles
+// (their scope is pinned server-side) and on small screens (the per-page
+// pickers still exist there).
+function StoreScopeBar() {
+  const { enabled, clients, clientId, setClientId } = useStoreScope();
+  if (!enabled || clients.length < 2) return null;
+
+  if (clients.length > 6) {
+    return (
+      <div className="hidden lg:block">
+        <Select
+          size="sm"
+          value={clientId}
+          onChange={(e) => setClientId(e.target.value)}
+          aria-label="Store scope"
+        >
+          <option value="">All stores</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {shortStoreName(c.name)}
+            </option>
+          ))}
+        </Select>
+      </div>
+    );
+  }
+
+  const seg = (active: boolean) =>
+    cn(
+      'px-2.5 h-7 rounded text-xs whitespace-nowrap transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+      active
+        ? 'bg-gold text-navy font-semibold'
+        : 'text-silver hover:text-white hover:bg-navy-secondary/60',
+    );
+  return (
+    <div
+      role="group"
+      aria-label="Store scope"
+      className="hidden lg:inline-flex items-center gap-0.5 rounded-md border border-navy-secondary bg-navy-secondary/30 p-0.5"
+    >
+      <button
+        type="button"
+        className={seg(clientId === '')}
+        aria-pressed={clientId === ''}
+        onClick={() => setClientId('')}
+      >
+        All
+      </button>
+      {clients.map((c) => (
+        <button
+          key={c.id}
+          type="button"
+          className={seg(clientId === c.id)}
+          aria-pressed={clientId === c.id}
+          onClick={() => setClientId(c.id)}
+          title={c.name}
+        >
+          {shortStoreName(c.name)}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
@@ -121,6 +189,8 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
       )}
 
       <div className="flex-1 min-w-0" />
+
+      <StoreScopeBar />
 
       {/* Cmd-K trigger — desktop only, mobile users open it from the hamburger drawer. */}
       <button

@@ -6463,14 +6463,29 @@ schedulingRouter.get('/publish-preflight', MANAGE, async (req, res, next) => {
         status: true,
         startsAt: true,
         endsAt: true,
+        lateNoticeReason: true,
         assignedAssociateId: true,
         assignedAssociate: { select: { firstName: true, lastName: true } },
+        client: { select: { state: true } },
       },
       orderBy: { startsAt: 'asc' },
       take: 3000,
     });
 
     const drafts = rows.filter((s) => s.status === 'DRAFT').length;
+    // Drafts publish-week would SKIP for lacking a late-notice reason —
+    // lets the publish dialog offer one batch reason up front.
+    const preflightNow = new Date();
+    const noticeWindowDrafts = rows.filter(
+      (s) =>
+        s.status === 'DRAFT' &&
+        !s.lateNoticeReason &&
+        evaluateShiftNotice({
+          state: s.client?.state ?? null,
+          startsAt: s.startsAt,
+          publishAt: preflightNow,
+        }).requiresReason,
+    ).length;
     const open = rows.filter(
       (s) => s.status === 'OPEN' || (s.status === 'DRAFT' && !s.assignedAssociateId),
     ).length;
@@ -6522,6 +6537,7 @@ schedulingRouter.get('/publish-preflight', MANAGE, async (req, res, next) => {
     res.json(
       PublishPreflightResponseSchema.parse({
         drafts,
+        noticeWindowDrafts,
         open,
         otProjected: otProjected.slice(0, 10),
         restGaps: restGaps.slice(0, 10),
@@ -6544,6 +6560,8 @@ schedulingRouter.get('/publish-preflight', MANAGE, async (req, res, next) => {
  * the 14-day notice window without a documented `lateNoticeReason` is
  * SKIPPED rather than failing the whole batch — HR can still publish the
  * compliant ones in one click and resolve the noisy ones individually.
+ * A batch `lateNoticeReason` in the body flips that: it's recorded on each
+ * such draft (drafts with their own reason keep theirs) and they publish.
  */
 schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
   try {
@@ -6598,6 +6616,10 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
     const now = new Date();
     const skipped: PublishWeekSkip[] = [];
     const publishable: typeof drafts = [];
+    // Batch late-notice reason: applied to every notice-window draft that
+    // lacks its own, instead of skipping them (drafts with their own keep it).
+    const batchLateNoticeReason = parsed.data.lateNoticeReason ?? null;
+    const lateNoticeIds: string[] = [];
 
     // Tracks each associate's occupied windows as this batch is admitted,
     // so two overlapping DRAFTS for the same person can't both publish
@@ -6638,7 +6660,8 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
         startsAt: s.startsAt,
         publishAt: now,
       });
-      if (evaluation.requiresReason && !s.lateNoticeReason) {
+      const needsBatchReason = evaluation.requiresReason && !s.lateNoticeReason;
+      if (needsBatchReason && !batchLateNoticeReason) {
         skipped.push({
           shiftId: s.id,
           reason: 'predictive_schedule_violation',
@@ -6670,6 +6693,9 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
         admittedByAssociate.set(s.assignedAssociateId, inBatch);
       }
       publishable.push(s);
+      // Only ADMITTED shifts get the batch reason — a double-booking skip
+      // above must not leave a reason stamped on a still-DRAFT shift.
+      if (needsBatchReason) lateNoticeIds.push(s.id);
     }
 
     // Bucket publishable shifts by assignee so we can send ONE digest
@@ -6696,6 +6722,16 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
     // Two bulk writes instead of one update per shift (a big week was 100+
     // serial round-trips that could brush the request timeout).
     await prisma.$transaction([
+      // Reason first, so a publish that also stamps a reason is atomic —
+      // no window where a shift is live without its documented reason.
+      ...(batchLateNoticeReason && lateNoticeIds.length > 0
+        ? [
+            prisma.shift.updateMany({
+              where: { id: { in: lateNoticeIds } },
+              data: { lateNoticeReason: batchLateNoticeReason },
+            }),
+          ]
+        : []),
       ...(assignedIds.length > 0
         ? [
             prisma.shift.updateMany({
@@ -6726,6 +6762,13 @@ schedulingRouter.post('/publish-week', MANAGE, async (req, res, next) => {
           fields: ['status', 'publishedAt'],
           publish: 'week',
           count: publishedCount,
+          ...(batchLateNoticeReason && lateNoticeIds.length > 0
+            ? {
+                lateNotice: true,
+                lateNoticeReason: batchLateNoticeReason,
+                lateNoticeCount: lateNoticeIds.length,
+              }
+            : {}),
         },
         req,
       });

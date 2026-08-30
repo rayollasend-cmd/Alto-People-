@@ -163,6 +163,9 @@ interface Props {
   coverageTarget?: number | null;
   /** Tap the shortfall in a day's footer → create that many open shifts. */
   onCoverageGap?: (dayStart: Date, gap: number) => void;
+  /** Deep-link focus: scroll this associate's row into view and ring it
+   *  while set (the parent clears it after a beat). */
+  highlightAssociateId?: string | null;
 }
 
 /**
@@ -202,6 +205,7 @@ export function WeekCalendarView({
   onCoverageGap,
   onReorderRow,
   onRemoveFromCrew,
+  highlightAssociateId = null,
 }: Props) {
   const hover = useShiftHoverCard();
   const ctxMenu = useShiftContextMenu();
@@ -408,6 +412,24 @@ export function WeekCalendarView({
   }, [associates, shifts, showAllAssociates, dayKeys, displayTimeZone]);
 
   const today = startOfDay(new Date());
+
+  // Deep-link focus: bring the highlighted associate's row on screen once it
+  // exists. One scroll per target — re-renders while the ring is up must not
+  // keep yanking the viewport.
+  const scrolledToRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!highlightAssociateId) {
+      scrolledToRef.current = null;
+      return;
+    }
+    if (scrolledToRef.current === highlightAssociateId) return;
+    const el = document.querySelector(
+      `[data-associate-row="${highlightAssociateId}"]`,
+    );
+    if (!el) return; // row filtered out (or virtualized away) — no-op
+    scrolledToRef.current = highlightAssociateId;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [highlightAssociateId, visibleAssociates]);
 
   const sensors = useSensors(
     // 6px activation distance — chip clicks shouldn't accidentally start a drag.
@@ -651,6 +673,7 @@ export function WeekCalendarView({
                 breakdown={weeklyBreakdown.get(a.id) ?? null}
                 overTime={overTime}
                 nearOT={nearOT}
+                highlighted={a.id === highlightAssociateId}
                 colsStyle={colsStyle}
                 reorderArmed={!!onReorderRow}
                 rowDragActive={draggingRowId !== null}
@@ -815,6 +838,7 @@ const Row = memo(function Row({
   breakdown = null,
   overTime,
   nearOT,
+  highlighted = false,
   colsStyle,
   children,
   reorderArmed = false,
@@ -828,6 +852,8 @@ const Row = memo(function Row({
   overTime: boolean;
   /** 36h ≤ weekly hours ≤ 40h — approaching overtime. */
   nearOT: boolean;
+  /** Deep-link focus ring — the row a `?associate=` link points at. */
+  highlighted?: boolean;
   /** Shared column template — every row grid matches the header's. */
   colsStyle: React.CSSProperties;
   children: React.ReactNode;
@@ -860,7 +886,12 @@ const Row = memo(function Row({
     : {};
   return (
     <div
-      className={cn('grid', rowDrag.isDragging && 'opacity-90')}
+      data-associate-row={associate.id}
+      className={cn(
+        'grid',
+        rowDrag.isDragging && 'opacity-90',
+        highlighted && 'ring-2 ring-inset ring-gold bg-gold/10 transition-colors',
+      )}
       style={{ ...colsStyle, ...dragStyle }}
     >
       <div

@@ -50,6 +50,8 @@ import { useAuth } from '@/lib/auth';
 import { statusTone } from '@/lib/status';
 import { ProgressBar } from '@/components/ProgressBar';
 import { AuditTimeline } from '@/components/AuditTimeline';
+import { DocumentViewer } from '@/components/DocumentViewer';
+import { previewDocumentUrl } from '@/lib/documentsApi';
 import { Badge } from '@/components/ui/Badge';
 import { Breadcrumb } from '@/components/ui/Breadcrumb';
 import { Button } from '@/components/ui/Button';
@@ -1314,30 +1316,7 @@ function I9Card({
                   </span>
                 </div>
               </div>
-              {docs.length > 0 && (
-                <ul className="mt-2 ml-6 space-y-1.5">
-                  {docs.map((d) => (
-                    <li
-                      key={d.id}
-                      className="flex items-center gap-2 flex-wrap text-xs"
-                    >
-                      <span className="text-white truncate max-w-[16rem]">
-                        {d.filename}
-                      </span>
-                      <span className="text-2xs uppercase tracking-wider text-silver/70">
-                        {d.i9DocTitle ?? I9_DOC_KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' ')}
-                        {d.i9List ? ` · List ${d.i9List}` : ''}
-                        {d.side
-                          ? ` · ${d.side === 'FRONT' ? 'Front' : 'Back'}`
-                          : ''}
-                      </span>
-                      <Badge size="sm" variant={statusTone(d.status)}>
-                        {I9_DOC_STATUS_LABEL[d.status] ?? d.status}
-                      </Badge>
-                    </li>
-                  ))}
-                </ul>
-              )}
+              {docs.length > 0 && <I9DocumentGrid docs={docs} />}
             </div>
 
             {/* Section 2 — employer verification */}
@@ -1378,6 +1357,90 @@ function I9Card({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * In-place viewer for the uploaded identity documents — HR used to have
+ * to leave for /compliance just to look at them. Mirrors the Section 2
+ * verifier's thumbnail grid (compliance I9Tab) minus its pick-for-
+ * verification checkboxes; clicking a tile opens the shared
+ * DocumentViewer overlay, so review happens without ever leaving the
+ * application drawer.
+ */
+function I9DocumentGrid({ docs }: { docs: I9DocumentListItem[] }) {
+  const [viewerAt, setViewerAt] = useState<number | null>(null);
+  return (
+    <>
+      <ul className="mt-2 ml-6 grid grid-cols-2 sm:grid-cols-3 gap-3">
+        {docs.map((d, i) => {
+          const isImage = d.mimeType.startsWith('image/');
+          const missing = !d.fileAvailable;
+          const title =
+            d.i9DocTitle ?? I9_DOC_KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' ');
+          return (
+            <li key={d.id}>
+              <button
+                type="button"
+                onClick={() => setViewerAt(i)}
+                disabled={missing}
+                aria-label={`View ${d.filename}`}
+                className={cn(
+                  'block w-full overflow-hidden rounded border text-left transition-colors',
+                  missing
+                    ? 'cursor-not-allowed border-alert/40 bg-alert/5'
+                    : 'border-navy-secondary hover:border-gold/60',
+                )}
+              >
+                <div className="flex aspect-[3/2] items-center justify-center bg-navy-secondary">
+                  {missing ? (
+                    <span className="px-2 text-center text-2xs leading-tight text-alert">
+                      File missing on server
+                    </span>
+                  ) : isImage ? (
+                    <img
+                      src={previewDocumentUrl(d.id)}
+                      // "Evidence:" phrasing on purpose, and never the kind
+                      // label — that's "Photo ID" for ID docs, and
+                      // photo/image words are lint-banned in alt text.
+                      alt={`Evidence: ${d.i9DocTitle ?? d.filename}`}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-xs text-silver">PDF</span>
+                  )}
+                </div>
+                <div className="px-2 py-1.5">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="truncate text-xs text-white">{title}</span>
+                    <Badge size="sm" variant={statusTone(d.status)} className="shrink-0">
+                      {I9_DOC_STATUS_LABEL[d.status] ?? d.status}
+                    </Badge>
+                  </div>
+                  <div className="mt-0.5 text-2xs text-silver truncate">
+                    {d.i9List ? `List ${d.i9List} · ` : ''}
+                    {d.side ? (d.side === 'FRONT' ? 'Front' : 'Back') : 'Document'}
+                    {missing && (
+                      <>
+                        {' '}
+                        · <span className="text-alert">re-upload required</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {viewerAt !== null && (
+        <DocumentViewer
+          documents={docs}
+          startIndex={viewerAt}
+          onClose={() => setViewerAt(null)}
+        />
+      )}
+    </>
   );
 }
 

@@ -11,7 +11,9 @@ import {
   ArrowLeftRight,
   Briefcase,
   Building2,
+  CalendarDays,
   Check,
+  Clock,
   Download,
   Eye,
   EyeOff,
@@ -1192,6 +1194,20 @@ function DirectoryDrawer({
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
           Close
+        </Button>
+        {/* One-click jumps to this person's slice of the two busiest
+            modules — the target pages read the ?associate= param. */}
+        <Button asChild variant="outline" size="sm">
+          <Link to={`/scheduling?associate=${a.id}`}>
+            <CalendarDays className="h-3.5 w-3.5" />
+            Schedule
+          </Link>
+        </Button>
+        <Button asChild variant="outline" size="sm">
+          <Link to={`/time-attendance?associate=${a.id}`}>
+            <Clock className="h-3.5 w-3.5" />
+            Timesheet
+          </Link>
         </Button>
         <Button asChild variant="outline" size="sm">
           <Link to={`/org?tab=people&associateId=${a.id}`}>

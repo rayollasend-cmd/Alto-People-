@@ -347,7 +347,9 @@ function ActionRequiredSection({
             ? 'Application to review'
             : 'Applications to review',
         hint: 'Move them through onboarding.',
-        to: '/onboarding',
+        // Straight to the review slice — the URL param beats the user's
+        // persisted status chip on the applications list.
+        to: '/onboarding?status=SUBMITTED',
         cta: 'Open onboarding',
         icon: ClipboardList,
         severity:
@@ -359,7 +361,8 @@ function ActionRequiredSection({
         count: kpis.pendingI9Section2,
         label: 'I-9 Section 2 due',
         hint: 'Federal deadline: 3 business days from hire.',
-        to: '/compliance',
+        // Land on the I-9 tab, not the Scorecard default.
+        to: '/compliance?tab=i9',
         cta: 'Complete Section 2',
         icon: ShieldCheck,
         severity: 'urgent',
@@ -635,7 +638,9 @@ function buildKpis(k: DashboardKPIs, role: Role | null): Kpi[] {
           ? `${k.pendingI9Section2} I-9 Section 2 pending`
           : 'I-9s up to date',
       icon: ClipboardList,
-      to: linkTo('/onboarding', 'view:onboarding'),
+      // ACTIVE = the in-flight working set the tile counts — beats a
+      // persisted "Archived" chip from a previous visit.
+      to: linkTo('/onboarding?status=ACTIVE', 'view:onboarding'),
       // Series is new applications per week.
       trend: withLabel(k.trends?.applications, 'new vs last wk'),
     });
@@ -776,7 +781,9 @@ function OnboardingFunnel({ kpis }: { kpis: DashboardKPIs | null }) {
       <div className="flex items-end justify-between gap-3">
         <SectionTitle icon={ClipboardList}>Onboarding pipeline</SectionTitle>
         <Link
-          to="/onboarding"
+          // "View all" means ALL — the explicit param beats the persisted
+          // status chip, which could silently narrow the landing.
+          to="/onboarding?status=ALL"
           className="text-xs text-gold hover:text-gold-bright inline-flex items-center gap-1"
         >
           View all

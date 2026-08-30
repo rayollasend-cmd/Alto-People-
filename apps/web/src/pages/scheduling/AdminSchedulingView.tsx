@@ -73,8 +73,9 @@ import {
 } from '@/lib/schedulingApi';
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useStoreScope } from '@/lib/storeScope';
 import { hasCapability } from '@/lib/roles';
-import { useConfirm, type ConfirmOptions } from '@/lib/confirm';
+import { useConfirm, usePrompt, type ConfirmOptions } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
@@ -479,6 +480,7 @@ function parseView(raw: string | null): ViewMode {
 
 export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const confirm = useConfirm();
+  const promptReason = usePrompt();
   const { user } = useAuth();
   // Client-scoped roles (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Pin every client control to their one bound client
@@ -497,6 +499,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         : null,
     [user?.clientId, user?.clientName],
   );
+  // Global Topbar store scope — one click there re-scopes this page (and
+  // Time / Labor), and this page's own client select writes back to it.
+  const storeScope = useStoreScope();
   const [searchParams, setSearchParams] = useSearchParams();
   // View mode persists in the URL so deep links stay stable.
   const view: ViewMode = parseView(searchParams.get('view'));
@@ -583,8 +588,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const [posFilter, setPosFilter] = useState<string>(
     () => readStoredFilters()?.position ?? '',
   );
+  // Deep-link params (?client / ?location / ?week / ?associate) beat the
+  // persisted localStorage filters — a shared link must show ITS scope.
+  // Next in line is the global Topbar store scope (when one is chosen);
+  // the page-local persisted filter is the final fallback.
   const [clientFilter, setClientFilter] = useState<string>(
-    () => boundedClient?.id ?? readStoredFilters()?.client ?? '',
+    () =>
+      boundedClient?.id ??
+      searchParams.get('client') ??
+      (storeScope.enabled && storeScope.clientId ? storeScope.clientId : null) ??
+      readStoredFilters()?.client ??
+      '',
   ); // '' = all
   // Belt-and-braces: a bounded user's scope can never widen (Clear button,
   // stale localStorage, late-arriving auth state) — re-pin whenever it drifts.
@@ -593,8 +607,35 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       setClientFilter(boundedClient.id);
     }
   }, [boundedClient, clientFilter]);
+  // Follow the Topbar store bar AFTER mount: clicking a store there re-scopes
+  // this page (and clears the site, which belongs to the old client). The
+  // first invocation is skipped so a ?client= deep link — which this mount
+  // effect pushes INTO the global scope below — can't be clobbered by the
+  // scope's pre-click value.
+  const scopeClientId = storeScope.enabled && !boundedClient ? storeScope.clientId : null;
+  const scopeSyncedRef = useRef(false);
+  useEffect(() => {
+    if (scopeClientId === null) return;
+    if (!scopeSyncedRef.current) {
+      scopeSyncedRef.current = true;
+      return;
+    }
+    setClientFilter((prev) => {
+      if (prev === scopeClientId) return prev;
+      setLocationFilter('');
+      return scopeClientId;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeClientId]);
+  // A ?client= deep link focuses the whole app on that store, not just this
+  // page — push it into the global scope once so Time/Labor follow along.
+  useEffect(() => {
+    const urlClient = searchParams.get('client');
+    if (urlClient && !boundedClient) storeScope.setClientId(urlClient);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [locationFilter, setLocationFilter] = useState<string>(
-    () => readStoredFilters()?.location ?? '',
+    () => searchParams.get('location') ?? readStoredFilters()?.location ?? '',
   ); // '' = all
   // Persist the scope + status chip so they survive navigating away and back.
   useEffect(() => {
@@ -642,9 +683,16 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // to Monday) and weekDayCount is how many days the grid spans — so the
   // user picks an exact start and end. Defaults to the Mon–Sun week (7
   // days) so existing behavior is unchanged until they widen/move it.
-  const [weekStart, setWeekStart] = useState<Date>(
-    () => readStoredWeekRange()?.start ?? startOfWeekMonday(new Date()),
-  );
+  const [weekStart, setWeekStart] = useState<Date>(() => {
+    // ?week=YYYY-MM-DD (a full ISO datetime's date part also works) anchors
+    // the range to that week — URL beats the stored range.
+    const wk = searchParams.get('week');
+    if (wk) {
+      const d = fromYmd(wk.slice(0, 10));
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+    return readStoredWeekRange()?.start ?? startOfWeekMonday(new Date());
+  });
   const [weekDayCount, setWeekDayCount] = useState<number>(
     () => readStoredWeekRange()?.days ?? 7,
   );
@@ -665,6 +713,18 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     () => addDaysLocal(weekStart, weekDayCount - 1),
     [weekStart, weekDayCount],
   );
+
+  // Deep-link highlight (?associate=<id>): the week grid scrolls to that
+  // associate's row and rings it briefly, then the highlight clears itself.
+  const [highlightAssociateId, setHighlightAssociateId] = useState<string | null>(
+    () => searchParams.get('associate'),
+  );
+  const shiftsLoaded = shifts !== null;
+  useEffect(() => {
+    if (!highlightAssociateId || !shiftsLoaded) return;
+    const t = window.setTimeout(() => setHighlightAssociateId(null), 2500);
+    return () => window.clearTimeout(t);
+  }, [highlightAssociateId, shiftsLoaded]);
 
   // Day-view anchor (defaults to today, or the last day viewed). Independent
   // of weekStart so the user can have a "calendar week" they're planning AND a
@@ -1471,12 +1531,14 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     // Preflight: name the problems BEFORE the notifications go out. Best-
     // effort — a failed report never blocks publishing.
     let health = '';
+    let noticeWindowDrafts = 0;
     try {
       const pf = await getPublishPreflight({
         from: publishWindow.from.toISOString(),
         to: publishWindow.to.toISOString(),
         ...(clientFilter ? { clientId: clientFilter } : {}),
       });
+      noticeWindowDrafts = pf.noticeWindowDrafts ?? 0;
       const lines: string[] = [];
       if (pf.open > 0) {
         lines.push(`• ${pf.open} shift${pf.open === 1 ? '' : 's'} still unfilled`);
@@ -1506,22 +1568,40 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     } catch {
       // Report unavailable — publish flow proceeds with the basics.
     }
-    const ok = await confirm({
-      title: `Publish ${draftsInWeek} draft shift${draftsInWeek === 1 ? '' : 's'}?`,
-      description: `Assigned associates will be notified. Drafts inside a fair-workweek state's 14-day notice window will be skipped — open those individually (Edit) to add a late-notice reason before publishing.${
-        listTruncated
-          ? ' WARNING: this range is showing a truncated shift list — narrow the range first so you can see everything you are publishing.'
-          : ''
-      }${health}`,
-      confirmLabel: 'Publish week',
-    });
-    if (!ok) return;
+    const truncatedWarning = listTruncated
+      ? ' WARNING: this range is showing a truncated shift list — narrow the range first so you can see everything you are publishing.'
+      : '';
+    // With notice-window drafts in the batch, the confirm grows a textarea so
+    // one shared reason can publish them all in this same click. Blank keeps
+    // the old behavior (they're skipped). Without any, the plain confirm.
+    let lateNoticeReason: string | undefined;
+    if (noticeWindowDrafts > 0) {
+      const reason = await promptReason({
+        title: `Publish ${draftsInWeek} draft shift${draftsInWeek === 1 ? '' : 's'}?`,
+        description: `Assigned associates will be notified. ${noticeWindowDrafts} draft${noticeWindowDrafts === 1 ? ' is' : 's are'} inside a fair-workweek state's 14-day notice window: give one reason below to publish ${noticeWindowDrafts === 1 ? 'it' : 'them'} too, or leave it blank to skip ${noticeWindowDrafts === 1 ? 'it' : 'them'} (add reasons individually via Edit).${truncatedWarning}${health}`,
+        confirmLabel: 'Publish week',
+        reasonLabel: `Reason for short notice (applies to all ${noticeWindowDrafts} shift${noticeWindowDrafts === 1 ? '' : 's'})`,
+        reasonPlaceholder: 'e.g. Volume spike — client added coverage after the posting deadline',
+        reasonMaxLength: 500,
+        required: false,
+      });
+      if (reason === null) return; // cancelled
+      if (reason) lateNoticeReason = reason;
+    } else {
+      const ok = await confirm({
+        title: `Publish ${draftsInWeek} draft shift${draftsInWeek === 1 ? '' : 's'}?`,
+        description: `Assigned associates will be notified. Drafts inside a fair-workweek state's 14-day notice window will be skipped — open those individually (Edit) to add a late-notice reason before publishing.${truncatedWarning}${health}`,
+        confirmLabel: 'Publish week',
+      });
+      if (!ok) return;
+    }
     setPublishing(true);
     try {
       const res = await publishWeek({
         weekStart: publishWindow.from.toISOString(),
         weekEnd: publishWindow.to.toISOString(),
         ...(clientFilter ? { clientId: clientFilter } : {}),
+        ...(lateNoticeReason ? { lateNoticeReason } : {}),
       });
       if (res.truncated) {
         toast.warning(
@@ -2784,6 +2864,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           associates={associates}
           weekStart={weekStart}
           dayCount={weekDayCount}
+          highlightAssociateId={highlightAssociateId}
           displayTimeZone={gridTimeZone}
           canManage={canManage}
           showAllAssociates={showAllAssociates}
@@ -5736,6 +5817,9 @@ function FilterBar({
   setShowAllAssociates: (v: boolean) => void;
   showAssociateToggle: boolean;
 }) {
+  // Client changes here write back to the global Topbar store scope so
+  // Time / Labor follow the same store.
+  const storeScope = useStoreScope();
   const anyActive =
     posFilter.trim() !== '' ||
     (!boundedClient && clientFilter !== '') ||
@@ -5812,7 +5896,10 @@ function FilterBar({
           <div className="min-w-[10rem]">
             <Select
               value={clientFilter}
-              onChange={(e) => setClientFilter(e.target.value)}
+              onChange={(e) => {
+                setClientFilter(e.target.value);
+                storeScope.setClientId(e.target.value);
+              }}
               size="sm"
               aria-label="Filter by client"
             >
@@ -5903,7 +5990,10 @@ function FilterBar({
               setPosFilter('');
               // A bounded viewer's client can't be cleared — only widened
               // filters below it reset.
-              if (!boundedClient) setClientFilter('');
+              if (!boundedClient) {
+                setClientFilter('');
+                storeScope.setClientId('');
+              }
               setLocationFilter('');
               setTeamFilter('');
             }}

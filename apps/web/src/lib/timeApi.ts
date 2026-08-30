@@ -146,8 +146,12 @@ export function listAdminTimeEntries(filters: {
   from?: string;
   to?: string;
   search?: string;
+  /** Exact-id lookup (notification deep-links) — pass alone, without a
+   *  date window, to find the entry wherever it sits. */
+  entryId?: string;
 } = {}): Promise<TimeEntryListResponse> {
   const params = new URLSearchParams();
+  if (filters.entryId) params.set('entryId', filters.entryId);
   if (filters.status) params.set('status', filters.status);
   if (filters.associateId) params.set('associateId', filters.associateId);
   if (filters.clientId) params.set('clientId', filters.clientId);

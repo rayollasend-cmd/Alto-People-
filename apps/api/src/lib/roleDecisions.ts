@@ -322,7 +322,9 @@ export async function computeRoleDecisions(
         detail: 'Every stalled day risks losing them to another employer.',
         stakes: null,
         ageDays: null,
-        linkUrl: '/onboarding',
+        // Carry the filter that made this fire — the URL param beats the
+        // list's persisted status chip.
+        linkUrl: '/onboarding?status=SUBMITTED',
       });
     }
     if (i9Pending > 0) {
@@ -334,7 +336,8 @@ export async function computeRoleDecisions(
         detail: 'Federal deadline: Section 2 within 3 business days of the start date.',
         stakes: null,
         ageDays: null,
-        linkUrl: '/compliance',
+        // Land on the I-9 tab, not the Scorecard default.
+        linkUrl: '/compliance?tab=i9',
       });
     }
   }

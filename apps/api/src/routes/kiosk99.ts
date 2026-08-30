@@ -1721,13 +1721,14 @@ async function fileClockInRequest(opts: {
     select: { id: true },
   });
   if (existing) return;
-  await prisma.clockInRequest.create({
+  const request = await prisma.clockInRequest.create({
     data: {
       associateId: opts.associateId,
       clientId: opts.device.clientId,
       locationId: opts.device.locationId,
       requestedAt: opts.at,
     },
+    select: { id: true },
   });
   // Bell the deciders (fire-and-forget — the request row is the source of
   // truth; a notification hiccup must not fail the kiosk response).
@@ -1759,7 +1760,9 @@ async function fileClockInRequest(opts: {
         recipientUserId: u.id,
         subject: 'Walk-in clock-in needs a decision',
         body: `${opts.associateName} is at ${locationName ?? 'the kiosk'} but is not on today's schedule. Approve or deny their clock-in on the Approvals page.`,
-        linkUrl: '/approvals',
+        // Deep-links to the exact walk-in row (ApprovalsHome reads ?walkin=
+        // and scrolls/flashes it) — deciders land on the person, not a list.
+        linkUrl: `/approvals?walkin=${request.id}`,
         sentAt: now,
       })),
     });

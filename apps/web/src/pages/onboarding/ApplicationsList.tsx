@@ -69,6 +69,7 @@ import {
 import { ViewToggle, useViewMode } from '@/components/ui/ViewToggle';
 import { toast } from 'sonner';
 import { ApplicationDetailBody } from './ApplicationDetail';
+import { BulkApproveDialog } from './BulkApproveDialog';
 import { BulkInviteDialog } from './BulkInviteDialog';
 import { CsvImportDialog } from './CsvImportDialog';
 import { NewApplicationDialog } from './NewApplicationDialog';
@@ -356,6 +357,7 @@ export function ApplicationsList() {
   const [bulkResending, setBulkResending] = useState(false);
   const [bulkRejecting, setBulkRejecting] = useState(false);
   const [bulkNudging, setBulkNudging] = useState(false);
+  const [openBulkApprove, setOpenBulkApprove] = useState(false);
 
   // Bulk-select state. The set holds applicationIds; "select all" applies
   // to the *currently visible* (filtered) rows so it never spans pages
@@ -453,6 +455,13 @@ export function ApplicationsList() {
   // Visible rows that qualify for a bulk nudge: unfinished, non-terminal,
   // and no movement (task completion, else invite) for > 3 days.
   const staleNudgeTargets = (items ?? []).filter((a) => isNudgeStale(a, now));
+
+  // Selected rows eligible for bulk approve: checklist finished and not
+  // already decided. Warning-gated rows still fail server-side per row —
+  // this filter just keeps the obvious non-starters out of the batch.
+  const approvableSelected = (items ?? []).filter(
+    (a) => selected.has(a.id) && a.percentComplete === 100 && !isTerminal(a),
+  );
 
   const onResend = async (a: ApplicationSummary) => {
     if (resendingIds.has(a.id)) return;
@@ -1006,6 +1015,17 @@ export function ApplicationsList() {
         }}
       />
 
+      <BulkApproveDialog
+        open={openBulkApprove}
+        onOpenChange={setOpenBulkApprove}
+        applications={approvableSelected}
+        onApproved={() => {
+          setSelected(new Set());
+          refresh();
+          refreshStats();
+        }}
+      />
+
       <NudgeDialog
         open={!!nudgeTarget}
         onOpenChange={(v) => !v && setNudgeTarget(null)}
@@ -1037,6 +1057,24 @@ export function ApplicationsList() {
             <MailPlus className="h-4 w-4" />
             Resend invite
           </Button>
+          {canManage && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setOpenBulkApprove(true)}
+              disabled={
+                bulkResending || bulkRejecting || approvableSelected.length === 0
+              }
+              title={
+                approvableSelected.length === 0
+                  ? 'No selected rows are 100% complete and undecided'
+                  : 'Approve every selected row that is 100% complete'
+              }
+            >
+              <UserCheck className="h-4 w-4" />
+              Approve ({approvableSelected.length})
+            </Button>
+          )}
           {canManage && (
             <Button
               size="sm"

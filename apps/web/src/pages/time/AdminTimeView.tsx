@@ -23,7 +23,6 @@ import {
 import type {
   ActiveDashboardEntry,
   PayPeriod,
-  Shift,
   TimeEntry,
   TimeEntryStatus,
 } from '@alto-people/shared';
@@ -59,6 +58,7 @@ import { listShifts, listSchedulingAssociates } from '@/lib/schedulingApi';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useStoreScope } from '@/lib/storeScope';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useSelection } from '@/lib/useSelection';
@@ -673,7 +673,39 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     ? { id: user.clientId, name: user.clientName ?? 'Your client' }
     : null;
   const { clients } = useClients({ enabled: !boundedClient });
-  const [clientFilter, setClientFilter] = useState(boundedClient?.id ?? '');
+  // The global Topbar store scope is this page's default client filter —
+  // previously the filter reset to "all clients" on every visit while
+  // Scheduling remembered its own, which made both feel broken. A ?entry=
+  // deep link skips the default so the scope can't hide an entry that
+  // lives at another store; page-level select changes write back to the
+  // scope so Scheduling/Labor follow along.
+  const storeScope = useStoreScope();
+  const [clientFilter, setClientFilter] = useState(
+    () =>
+      boundedClient?.id ??
+      (storeScope.enabled &&
+      storeScope.clientId &&
+      !new URLSearchParams(window.location.search).get('entry')
+        ? storeScope.clientId
+        : ''),
+  );
+  const scopeClientId = storeScope.enabled && !boundedClient ? storeScope.clientId : null;
+  const scopeSyncedRef = useRef(false);
+  useEffect(() => {
+    if (scopeClientId === null) return;
+    if (!scopeSyncedRef.current) {
+      scopeSyncedRef.current = true;
+      return;
+    }
+    setClientFilter((prev) => (prev === scopeClientId ? prev : scopeClientId));
+  }, [scopeClientId]);
+  const changeClientFilter = useCallback(
+    (id: string) => {
+      setClientFilter(id);
+      storeScope.setClientId(id);
+    },
+    [storeScope],
+  );
   const [locationFilter, setLocationFilter] = useState('');
   const [locationOptions, setLocationOptions] = useState<Array<{ id: string; name: string }>>([]);
   useEffect(() => {
@@ -703,6 +735,9 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
   // Admin clock-in/out + edit on behalf of an associate.
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<TimeEntry | null>(null);
+  // Edit opened from the detail drawer → Save returns there (with fresh
+  // data) instead of dumping the reviewer back to the list.
+  const [editFromDetail, setEditFromDetail] = useState(false);
 
   // Individual timesheet focus: click an associate's name in the queue to
   // scope every filter to just their entries, with range totals up top.
@@ -723,6 +758,64 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     },
     [setFilter],
   );
+
+  // Notification deep-link: ?entry=<id> lands on the exact record — queue
+  // tab, that associate's focused timesheet (which guarantees the row is on
+  // screen regardless of the persisted status filter), date window widened
+  // to cover the entry, detail drawer open, row flashed briefly. The param
+  // is consumed once so refreshes/back don't re-trigger.
+  const [flashEntryId, setFlashEntryId] = useState<string | null>(null);
+  const entryParam = tabParams.get('entry');
+  useEffect(() => {
+    if (!entryParam || liveOnly) return;
+    let cancelled = false;
+    (async () => {
+      let target: TimeEntry | null = null;
+      try {
+        const res = await listAdminTimeEntries({ entryId: entryParam });
+        target = res.entries[0] ?? null;
+      } catch {
+        // Fall through — consume the param and explain below.
+      }
+      if (cancelled) return;
+      const params = new URLSearchParams(tabParams);
+      params.delete('entry');
+      if (!target) {
+        setTabParams(params, { replace: true });
+        setError('That time entry could not be found — it may have been deleted.');
+        return;
+      }
+      params.set('tab', 'queue');
+      setTabParams(params, { replace: true });
+      setFilter('ALL');
+      setFocusAssociate({
+        id: target.associateId,
+        name: target.associateName ?? '—',
+      });
+      const day = ymdLocal(new Date(target.clockInAt));
+      setFromYmd((cur) => (day < cur ? day : cur));
+      setToYmd((cur) => (day > cur ? day : cur));
+      setDrawerTarget(target);
+      setFlashEntryId(target.id);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // tabParams/setters change identity every render; entryParam going null
+    // after the consume ends the cycle, so they're deliberately not deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entryParam, liveOnly]);
+
+  // Once the focused timesheet has rendered the target row, bring it into
+  // view; the flash ring clears itself after ~2s.
+  useEffect(() => {
+    if (!flashEntryId || !entries) return;
+    document
+      .querySelector(`[data-entry-id="${flashEntryId}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const t = window.setTimeout(() => setFlashEntryId(null), 2000);
+    return () => window.clearTimeout(t);
+  }, [flashEntryId, entries]);
 
   // Sequence-guarded like the scheduling grid's refresh: filters, dates,
   // and the search debounce all re-fire this, and without the guard a slow
@@ -1219,7 +1312,7 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                 boundedClient={boundedClient}
                 clients={clients}
                 clientFilter={clientFilter}
-                onClientChange={setClientFilter}
+                onClientChange={changeClientFilter}
                 locationFilter={locationFilter}
                 onLocationChange={setLocationFilter}
                 locationOptions={locationOptions}
@@ -1479,7 +1572,7 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                     boundedClient={boundedClient}
                     clients={clients}
                     clientFilter={clientFilter}
-                    onClientChange={setClientFilter}
+                    onClientChange={changeClientFilter}
                     locationFilter={locationFilter}
                     onLocationChange={setLocationFilter}
                     locationOptions={locationOptions}
@@ -1762,6 +1855,7 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                 selected={selected}
                 pendingId={pendingId}
                 bulkBusy={bulkBusy}
+                flashId={flashEntryId}
                 onToggleSelect={toggleOne}
                 onToggleMany={toggleMany}
                 onOpen={openDrawer}
@@ -2020,6 +2114,7 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
               setDrawerTarget(null);
             }}
             onEdit={() => {
+              setEditFromDetail(true);
               setEditTarget(drawerTarget);
               setDrawerTarget(null);
             }}
@@ -2073,9 +2168,16 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
         <TimeEntryFormDrawer
           mode="edit"
           entry={editTarget}
-          onClose={() => setEditTarget(null)}
-          onSaved={async () => {
+          onClose={() => {
             setEditTarget(null);
+            setEditFromDetail(false);
+          }}
+          onSaved={async (updated) => {
+            setEditTarget(null);
+            // Back to the detail drawer the reviewer came from, showing the
+            // saved (and possibly approved) entry — not down to the list.
+            if (editFromDetail && updated) setDrawerTarget(updated);
+            setEditFromDetail(false);
             await afterMutation();
           }}
         />
@@ -2101,6 +2203,7 @@ function FocusTimesheet({
   selected,
   pendingId,
   bulkBusy,
+  flashId,
   onToggleSelect,
   onToggleMany,
   onOpen,
@@ -2113,6 +2216,7 @@ function FocusTimesheet({
   selected: ReadonlySet<string>;
   pendingId: string | null;
   bulkBusy: boolean;
+  flashId: string | null;
   onToggleSelect: (id: string) => void;
   onToggleMany: (ids: string[], select: boolean) => void;
   onOpen: (entry: TimeEntry) => void;
@@ -2146,6 +2250,7 @@ function FocusTimesheet({
           isSelected={selected.has(e.id)}
           isPending={pendingId === e.id}
           bulkBusy={bulkBusy}
+          isFlashed={flashId === e.id}
           onToggleSelect={onToggleSelect}
           onOpen={onOpen}
           onApprove={onApprove}
@@ -2163,6 +2268,7 @@ function FocusEntryRow({
   isSelected,
   isPending,
   bulkBusy,
+  isFlashed,
   onToggleSelect,
   onOpen,
   onApprove,
@@ -2174,6 +2280,7 @@ function FocusEntryRow({
   isSelected: boolean;
   isPending: boolean;
   bulkBusy: boolean;
+  isFlashed: boolean;
   onToggleSelect: (id: string) => void;
   onOpen: (entry: TimeEntry) => void;
   onApprove: (id: string) => void;
@@ -2199,9 +2306,12 @@ function FocusEntryRow({
           onOpen(e);
         }
       }}
+      data-entry-id={e.id}
       className={cn(
         'group flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 cursor-pointer transition-colors hover:bg-navy-secondary/30 active:bg-navy-secondary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
         isSelected && 'bg-gold/5',
+        // Deep-link landing flash (~2s) — see flashEntryId in AdminTimeView.
+        isFlashed && 'ring-2 ring-inset ring-gold bg-gold/10',
       )}
     >
       {showSelect && (
@@ -2704,7 +2814,9 @@ function TimeEntryFormDrawer({
   mode: 'create' | 'edit';
   entry?: TimeEntry;
   onClose: () => void;
-  onSaved: () => void;
+  /** Called after a successful save with the freshest server copy of the
+   *  entry (when one is available) so the caller can reopen its detail. */
+  onSaved: (updated?: TimeEntry) => void;
 }) {
   const [assoc, setAssoc] = useState<{ id: string; name: string } | null>(
     mode === 'edit' && entry
@@ -2768,6 +2880,9 @@ function TimeEntryFormDrawer({
       : [],
   );
   const [busy, setBusy] = useState(false);
+  // Which footer button is in flight — both share `busy`, only the clicked
+  // one shows its spinner.
+  const [approveIntent, setApproveIntent] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const isActive = mode === 'edit' && entry?.status === 'ACTIVE';
@@ -2790,10 +2905,20 @@ function TimeEntryFormDrawer({
     combineWall(dateStr, t, startTime && t < startTime ? 1 : 0);
 
   // The associate's rostered shift for the picked day — one click prefills
-  // the times instead of retyping what scheduling already knows.
-  const [schedShift, setSchedShift] = useState<Shift | null>(null);
+  // the times instead of retyping what scheduling already knows. Edit mode
+  // (where missing clock-outs get repaired) shows the same chip: the entry's
+  // own linked shift times are already denormalized on the row (zero extra
+  // fetch); unlinked entries fall back to the create-mode schedule lookup.
+  const [schedShift, setSchedShift] = useState<{
+    startsAt: string;
+    endsAt: string;
+  } | null>(null);
   useEffect(() => {
-    if (mode !== 'create' || !assoc || !dateStr) {
+    if (mode === 'edit' && entry?.shiftStartsAt && entry?.shiftEndsAt) {
+      setSchedShift({ startsAt: entry.shiftStartsAt, endsAt: entry.shiftEndsAt });
+      return;
+    }
+    if (!assoc || !dateStr) {
       setSchedShift(null);
       return;
     }
@@ -2819,7 +2944,7 @@ function TimeEntryFormDrawer({
     return () => {
       cancelled = true;
     };
-  }, [mode, assoc, dateStr]);
+  }, [mode, entry, assoc, dateStr]);
 
   const applySchedule = () => {
     if (!schedShift) return;
@@ -2873,7 +2998,8 @@ function TimeEntryFormDrawer({
     return be > bs ? acc + (be - bs) / 60_000 : acc;
   }, 0);
 
-  const submit = async () => {
+  const submit = async (andApprove = false) => {
+    setApproveIntent(andApprove);
     setErr(null);
     if (mode === 'create' && !assoc) {
       setErr('Pick an associate.');
@@ -2936,6 +3062,9 @@ function TimeEntryFormDrawer({
     setBusy(true);
     try {
       let entryId: string;
+      // Freshest server copy of the entry across the save/break/approve
+      // calls — handed to onSaved so the detail drawer can reopen updated.
+      let latest: TimeEntry | undefined;
       if (mode === 'create') {
         const created = await adminCreateTimeEntry({
           associateId: assoc!.id,
@@ -2945,6 +3074,7 @@ function TimeEntryFormDrawer({
           notes: notes.trim() || null,
         });
         entryId = created.id;
+        latest = created;
         // No job picked and no open assignment to resolve one from — the
         // entry saved clientless, which keeps it out of every client-scoped
         // payroll export. Say so now, not at export time.
@@ -2960,17 +3090,20 @@ function TimeEntryFormDrawer({
         }
       } else {
         entryId = entry!.id;
-        await adminEditTimeEntry(entry!.id, {
+        latest = await adminEditTimeEntry(entry!.id, {
           clockInAt: inDate.toISOString(),
           clockOutAt: outDate ? outDate.toISOString() : null,
           payRate: payRateVal,
           notes: notes.trim() || null,
         });
-        toast.success(
-          isActive && outDate
-            ? `Clocked out ${entry!.associateName ?? 'associate'}.`
-            : 'Entry updated.',
-        );
+        // Save & approve gets ONE toast, after the approval below.
+        if (!andApprove) {
+          toast.success(
+            isActive && outDate
+              ? `Clocked out ${entry!.associateName ?? 'associate'}.`
+              : 'Entry updated.',
+          );
+        }
       }
       // Sync breaks AFTER the entry saved — deletions, then edits, then
       // adds. A failure here must not strand the drawer (the entry write
@@ -2980,11 +3113,11 @@ function TimeEntryFormDrawer({
         const origBreaks = mode === 'edit' ? (entry?.breaks ?? []) : [];
         const keptIds = new Set(breakRows.map((r) => r.id).filter(Boolean));
         for (const b of origBreaks) {
-          if (!keptIds.has(b.id)) await deleteTimeEntryBreak(b.id);
+          if (!keptIds.has(b.id)) latest = await deleteTimeEntryBreak(b.id);
         }
         for (const r of breakRows) {
           if (!r.id) {
-            await addTimeEntryBreak(entryId, {
+            latest = await addTimeEntryBreak(entryId, {
               startedAt: breakDate(r.startTime).toISOString(),
               endedAt: breakDate(r.endTime).toISOString(),
             });
@@ -2999,7 +3132,7 @@ function TimeEntryFormDrawer({
             (orig.endedAt ? new Date(orig.endedAt).getTime() : null) !==
             (r.endTime ? breakDate(r.endTime).getTime() : null);
           if (!startChanged && !endChanged) continue;
-          await updateTimeEntryBreak(r.id, {
+          latest = await updateTimeEntryBreak(r.id, {
             ...(startChanged
               ? { startedAt: breakDate(r.startTime).toISOString() }
               : {}),
@@ -3016,7 +3149,25 @@ function TimeEntryFormDrawer({
           { duration: 10000 },
         );
       }
-      onSaved();
+      // Save & approve: the times just written are what gets approved. An
+      // approval failure must not strand the drawer — the save already
+      // landed, so warn and fall back to the queue's Approve button.
+      if (andApprove && mode === 'edit') {
+        try {
+          latest = await approveTimeEntry(entryId);
+          toast.success(
+            `Saved and approved — ${entry!.associateName ?? 'associate'}.`,
+          );
+        } catch (approveErr) {
+          toast.warning(
+            `Entry saved, but approving it failed: ${
+              approveErr instanceof ApiError ? approveErr.message : 'unknown error'
+            }. Approve it from the queue.`,
+            { duration: 10000 },
+          );
+        }
+      }
+      onSaved(latest);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : 'Save failed.');
     } finally {
@@ -3252,7 +3403,25 @@ function TimeEntryFormDrawer({
         <Button variant="ghost" onClick={onClose} disabled={busy}>
           Cancel
         </Button>
-        <Button onClick={submit} loading={busy} disabled={busy}>
+        {/* One click instead of Save → find the row → Approve. Only when a
+            clock-out is set (an ACTIVE entry can't be approved) and the
+            entry isn't already approved. */}
+        {mode === 'edit' && entry && entry.status !== 'APPROVED' && !!endTime && (
+          <Button
+            variant="outline"
+            onClick={() => submit(true)}
+            loading={busy && approveIntent}
+            disabled={busy}
+          >
+            <CheckCircle2 className="mr-2 h-4 w-4" />
+            Save &amp; approve
+          </Button>
+        )}
+        <Button
+          onClick={() => submit(false)}
+          loading={busy && !approveIntent}
+          disabled={busy}
+        >
           {mode === 'create' ? 'Create entry' : 'Save changes'}
         </Button>
       </DrawerFooter>

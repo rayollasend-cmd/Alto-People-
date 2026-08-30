@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, Send, X as XIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
@@ -24,6 +24,13 @@ import { Field } from '@/components/ui/Field';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { cn } from '@/lib/cn';
+import { usePersistentState } from '@/lib/usePersistentState';
+import {
+  EMPTY_INVITE_LAST_USED,
+  INVITE_LAST_USED_KEY,
+  isInviteLastUsed,
+  type InviteLastUsed,
+} from './inviteLastUsed';
 
 const TRACK_LABEL: Record<string, string> = {
   STANDARD: 'Standard',
@@ -171,11 +178,24 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
   const [clients, setClients] = useState<ClientSummary[] | null>(null);
   const [clientsFailed, setClientsFailed] = useState(false);
   const [templates, setTemplates] = useState<OnboardingTemplate[] | null>(null);
-  const [clientId, setClientId] = useState('');
+  // Last-used picks — shared key with NewApplicationDialog, so whichever
+  // dialog HR invited from last seeds this one's defaults.
+  const [lastUsed, setLastUsed] = usePersistentState<InviteLastUsed>(
+    INVITE_LAST_USED_KEY,
+    EMPTY_INVITE_LAST_USED,
+    isInviteLastUsed,
+  );
+  const [clientId, setClientId] = useState(lastUsed.clientId);
   const [locationId, setLocationId] = useState('');
   const [locations, setLocations] = useState<LocationSummary[] | null>(null);
-  const [templateId, setTemplateId] = useState('');
-  const [employmentType, setEmploymentType] = useState<EmploymentType>('W2_EMPLOYEE');
+  const [templateId, setTemplateId] = useState(lastUsed.templateId);
+  const [employmentType, setEmploymentType] = useState<EmploymentType>(
+    lastUsed.employmentType,
+  );
+  // The location effect wipes locationId on every clientId change (incl.
+  // the persisted seed) — restore the stored one once, after its client's
+  // location list confirms it still exists.
+  const restoreLocationId = useRef(lastUsed.locationId);
   const [paste, setPaste] = useState('');
   // "Apply to all" fallbacks — used for rows that didn't carry their own
   // position / start-date column.
@@ -184,11 +204,9 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [results, setResults] = useState<BulkInviteResultRow[] | null>(null);
 
+  // Batch-specific fields only — the client/location/template/employment
+  // picks persist as the "last used" defaults for the next invite.
   const reset = () => {
-    setClientId('');
-    setLocationId('');
-    setTemplateId('');
-    setEmploymentType('W2_EMPLOYEE');
     setPaste('');
     setDefaultPosition('');
     setDefaultStartDate('');
@@ -207,6 +225,12 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
           // client back from the scoped list — don't make them answer a
           // question with one possible answer. The server clamps this anyway.
           if (r.clients.length === 1) setClientId(r.clients[0].id);
+          // A persisted client can be stale — fall back to '' rather than
+          // submitting a ghost id.
+          else
+            setClientId((prev) =>
+              prev && !r.clients.some((c) => c.id === prev) ? '' : prev,
+            );
         })
         .catch(() => {
           if (cancelled) return;
@@ -241,6 +265,14 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
       .then((r) => {
         if (cancelled) return;
         setLocations(r.locations);
+        // Restore the persisted work site (once) if it still belongs to
+        // this client — a stale id falls through to the defaults below.
+        const restore = restoreLocationId.current;
+        restoreLocationId.current = '';
+        if (restore && r.locations.some((l) => l.id === restore)) {
+          setLocationId(restore);
+          return;
+        }
         // One possible answer — don't make them pick it.
         if (r.locations.length === 1) setLocationId(r.locations[0].id);
       })
@@ -256,11 +288,17 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
     return templates.filter((t) => t.clientId === null || t.clientId === clientId);
   }, [templates, clientId]);
 
+  // Only prune once templates have loaded — visibleTemplates is [] while
+  // in flight, and clearing then would wipe the restored last-used pick.
   useEffect(() => {
-    if (templateId && !visibleTemplates.some((t) => t.id === templateId)) {
+    if (
+      templates &&
+      templateId &&
+      !visibleTemplates.some((t) => t.id === templateId)
+    ) {
       setTemplateId('');
     }
-  }, [visibleTemplates, templateId]);
+  }, [templates, visibleTemplates, templateId]);
 
   // Parse the paste box live. De-dup by email so the same address pasted
   // twice doesn't double-invite.
@@ -323,7 +361,11 @@ export function BulkInviteDialog({ open, onOpenChange, onCreated }: Props) {
         applicants,
       });
       setResults(res.results);
-      if (res.succeeded > 0) onCreated();
+      if (res.succeeded > 0) {
+        onCreated();
+        // Remember the picks for the next invite (either dialog).
+        setLastUsed({ clientId, locationId, templateId, employmentType });
+      }
       if (res.failed === 0) {
         toast.success(`Invited ${res.succeeded} applicant${res.succeeded === 1 ? '' : 's'}.`);
       } else if (res.succeeded === 0) {

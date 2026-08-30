@@ -7,6 +7,8 @@ import type {
   AuditLogListResponse,
   BackgroundCheck,
   BackgroundCheckAuthorizeInput,
+  BulkApproveInput,
+  BulkApproveResponse,
   BulkInviteInput,
   LocationListResponse,
   BulkInviteResponse,
@@ -217,6 +219,18 @@ export function bulkRejectApplications(body: {
   reason: string;
 }): Promise<BulkRejectResult> {
   return apiFetch<BulkRejectResult>('/onboarding/applications/bulk-reject', {
+    method: 'POST',
+    body,
+  });
+}
+
+/** Approve many finished applications with one shared hire date. Rows
+ *  with verification gaps come back as per-row `approval_warnings`
+ *  failures — bulk never auto-acknowledges; open those individually. */
+export function bulkApproveApplications(
+  body: BulkApproveInput
+): Promise<BulkApproveResponse> {
+  return apiFetch<BulkApproveResponse>('/onboarding/applications/bulk-approve', {
     method: 'POST',
     body,
   });

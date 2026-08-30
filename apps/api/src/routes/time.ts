@@ -110,7 +110,7 @@ const ENTRY_INCLUDE = {
  * push via the shared pipeline.
  */
 function notifyEntryDecision(
-  entry: { associateId: string; clockInAt: Date; clockOutAt: Date | null },
+  entry: { id: string; associateId: string; clockInAt: Date; clockOutAt: Date | null },
   decision:
     | { kind: 'approved'; minutes: number }
     | { kind: 'rejected'; reason: string },
@@ -120,19 +120,21 @@ function notifyEntryDecision(
   const range = `${formatTimeInZone(entry.clockInAt, tz)}–${
     entry.clockOutAt ? formatTimeInZone(entry.clockOutAt, tz) : '…'
   }`;
+  // ?entry= lands viewers of the admin queue on the exact record; other
+  // views of /time-attendance ignore it.
   if (decision.kind === 'approved') {
     void notifyAssociate(entry.associateId, {
       subject: 'Hours approved',
       body: `Your ${day} time entry (${range}) was approved — ${(decision.minutes / 60).toFixed(1)}h.`,
       category: 'time_entry',
-      linkUrl: '/time-attendance',
+      linkUrl: `/time-attendance?entry=${entry.id}`,
     });
   } else {
     void notifyAssociate(entry.associateId, {
       subject: 'Time entry rejected',
       body: `Your ${day} time entry (${range}) was rejected: "${decision.reason}". Talk to your manager if this looks wrong.`,
       category: 'time_entry',
-      linkUrl: '/time-attendance',
+      linkUrl: `/time-attendance?entry=${entry.id}`,
     });
   }
 }
@@ -913,9 +915,14 @@ timeRouter.get('/admin/entries', MANAGE, async (req, res, next) => {
     const fromStr = req.query.from?.toString();
     const toStr = req.query.to?.toString();
     const search = req.query.search?.toString().trim();
+    // Exact-id lookup for notification deep-links (?entry= on the queue) —
+    // still tenant-scoped by the spread below, so a bounded caller can't
+    // read another client's entry by guessing an id.
+    const entryId = req.query.entryId?.toString();
 
     const where: Prisma.TimeEntryWhereInput = {
       ...scopeTimeEntries(req.user!),
+      ...(entryId ? { id: entryId } : {}),
       ...(status ? { status: status as Prisma.TimeEntryWhereInput['status'] } : {}),
       ...(associateId ? { associateId } : {}),
       ...(clientId ? { clientId } : {}),
@@ -1201,7 +1208,7 @@ timeRouter.post('/admin/clock-in-requests/:id/approve', MANAGE, async (req, res,
       subject: "You're clocked in",
       body: `Your supervisor approved your clock-in — you are on the clock as of ${formatTimeInZone(request.requestedAt, DEFAULT_TIMEZONE)}. No need to punch again; clock out at the kiosk as usual.`,
       category: 'time_entry',
-      linkUrl: '/time-attendance',
+      linkUrl: `/time-attendance?entry=${entry.id}`,
     });
     res.json({ ok: true, timeEntryId: entry.id });
   } catch (err) {
@@ -1654,7 +1661,7 @@ timeRouter.patch('/admin/entries/:id', MANAGE, async (req, res, next) => {
         subject: 'Approved hours adjusted',
         body: `Your approved ${day} time entry was corrected by an admin — it now reads ${range} (${(netWorkedMinutes(updated, updated.breaks) / 60).toFixed(1)}h). Talk to your manager if this looks wrong.`,
         category: 'time_entry',
-        linkUrl: '/time-attendance',
+        linkUrl: `/time-attendance?entry=${updated.id}`,
       });
     }
 
@@ -1768,7 +1775,7 @@ async function finishBreakMutation(opts: {
       subject: 'Approved hours adjusted',
       body: 'An admin adjusted the break time on one of your approved entries, which changes your paid hours. Talk to your manager if this looks wrong.',
       category: 'time_entry',
-      linkUrl: '/time-attendance',
+      linkUrl: `/time-attendance?entry=${entry.id}`,
     });
   }
   if (entry.clockOutAt) await recomputeEntryAnomalies(prisma, entry.id);

@@ -213,3 +213,87 @@ describe('predictive scheduling — PATCH /scheduling/shifts/:id (DRAFT→OPEN t
     expect(patched.body.publishedAt).toBe(originalPublishedAt);
   });
 });
+
+describe('predictive scheduling — POST /scheduling/publish-week (batch late-notice reason)', () => {
+  const hoursOut = (h: number) => new Date(Date.now() + h * 3_600_000);
+  const mkDraft = (
+    clientId: string,
+    startsAt: Date,
+    over: Record<string, unknown> = {},
+  ) =>
+    prisma.shift.create({
+      data: {
+        clientId,
+        position: 'Server',
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + 8 * 3_600_000),
+        status: 'DRAFT',
+        publishedAt: null,
+        ...over,
+      } as never,
+    });
+
+  it('publish-week without a batch reason skips notice-window drafts (unchanged)', async () => {
+    const client = await createClientInState('NY');
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    // 24h out — inside NY's 14-day notice window.
+    const draft = await mkDraft(client.id, hoursOut(24));
+
+    // Preflight surfaces the count the publish dialog builds its batch-reason
+    // textarea from.
+    const pf = await a.get(
+      `/scheduling/publish-preflight?from=${new Date().toISOString()}&to=${hoursOut(7 * 24).toISOString()}`,
+    );
+    expect(pf.status).toBe(200);
+    expect(pf.body.noticeWindowDrafts).toBe(1);
+
+    const res = await a.post('/scheduling/publish-week').send({
+      weekStart: new Date().toISOString(),
+      weekEnd: hoursOut(7 * 24).toISOString(),
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.published).toBe(0);
+    expect(res.body.skipped).toHaveLength(1);
+    expect(res.body.skipped[0].reason).toBe('predictive_schedule_violation');
+
+    const after = await prisma.shift.findUniqueOrThrow({ where: { id: draft.id } });
+    expect(after.status).toBe('DRAFT');
+    expect(after.publishedAt).toBeNull();
+    expect(after.lateNoticeReason).toBeNull();
+  });
+
+  it('publish-week WITH a batch reason publishes notice-window drafts with that reason; own reasons and out-of-window drafts keep theirs', async () => {
+    const client = await createClientInState('NY');
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+    const bare = await mkDraft(client.id, hoursOut(24));
+    const ownReason = await mkDraft(client.id, hoursOut(48), {
+      lateNoticeReason: 'Mutual agreement — swap approved',
+    });
+    // 20 days out — beyond the 14-day window, must NOT get the batch reason.
+    const farOut = await mkDraft(client.id, hoursOut(20 * 24));
+
+    const res = await a.post('/scheduling/publish-week').send({
+      weekStart: new Date().toISOString(),
+      weekEnd: hoursOut(30 * 24).toISOString(),
+      lateNoticeReason: 'Storm coverage — schedule rebuilt after the posting deadline',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.published).toBe(3);
+    expect(res.body.skipped).toHaveLength(0);
+
+    const [bareAfter, ownAfter, farAfter] = await Promise.all([
+      prisma.shift.findUniqueOrThrow({ where: { id: bare.id } }),
+      prisma.shift.findUniqueOrThrow({ where: { id: ownReason.id } }),
+      prisma.shift.findUniqueOrThrow({ where: { id: farOut.id } }),
+    ]);
+    expect(bareAfter.status).toBe('OPEN'); // unassigned draft → OPEN
+    expect(bareAfter.publishedAt).not.toBeNull();
+    expect(bareAfter.lateNoticeReason).toMatch(/storm coverage/i);
+    expect(ownAfter.status).toBe('OPEN');
+    expect(ownAfter.lateNoticeReason).toMatch(/mutual agreement/i);
+    expect(farAfter.status).toBe('OPEN');
+    expect(farAfter.lateNoticeReason).toBeNull();
+  });
+});

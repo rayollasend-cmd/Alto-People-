@@ -156,6 +156,75 @@ describe('POST /onboarding/applications/:id/approve — verification gaps', () =
   });
 });
 
+describe('POST /onboarding/applications/bulk-approve', () => {
+  it('approves finished rows and returns per-row errors for gated ones', async () => {
+    const client = await createClient();
+    // Row 1 — genuinely done: approves cleanly.
+    const doneAssoc = await createAssociate({ firstName: 'Done', lastName: 'Row' });
+    const doneApp = await createApplicationWithChecklist({
+      associateId: doneAssoc.id,
+      clientId: client.id,
+    });
+    await markAllTasks(doneApp.checklist!.id, 'DONE');
+    // Row 2 — one skipped task: bulk NEVER acknowledges warnings, so this
+    // row must fail with approval_warnings instead of silently activating.
+    const gapAssoc = await createAssociate({ firstName: 'Gap', lastName: 'Row' });
+    const gapApp = await createApplicationWithChecklist({
+      associateId: gapAssoc.id,
+      clientId: client.id,
+    });
+    await markAllTasks(gapApp.checklist!.id, 'DONE');
+    await prisma.onboardingTask.updateMany({
+      where: { checklistId: gapApp.checklist!.id, kind: 'DOCUMENT_UPLOAD' },
+      data: { status: 'SKIPPED' },
+    });
+    // Row 3 — already decided: per-row 409 error, batch unaffected.
+    const decidedAssoc = await createAssociate({ firstName: 'Late', lastName: 'Row' });
+    const decidedApp = await createApplicationWithChecklist({
+      associateId: decidedAssoc.id,
+      clientId: client.id,
+    });
+    await markAllTasks(decidedApp.checklist!.id, 'DONE');
+    await prisma.application.update({
+      where: { id: decidedApp.id },
+      data: { status: 'REJECTED', rejectedAt: new Date() },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const a = await loginAs(hr.email);
+
+    const res = await a.post('/onboarding/applications/bulk-approve').send({
+      applicationIds: [doneApp.id, gapApp.id, decidedApp.id],
+      hireDate: '2026-08-03',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.succeeded).toBe(1);
+    expect(res.body.failed).toBe(2);
+
+    const rowFor = (id: string) =>
+      res.body.results.find((r: { applicationId: string }) => r.applicationId === id);
+    expect(rowFor(doneApp.id)?.ok).toBe(true);
+    expect(rowFor(gapApp.id)?.ok).toBe(false);
+    expect(rowFor(gapApp.id)?.errorCode).toBe('approval_warnings');
+    expect(rowFor(decidedApp.id)?.ok).toBe(false);
+    expect(rowFor(decidedApp.id)?.errorCode).toBe('application_already_decided');
+
+    const doneAfter = await prisma.application.findUniqueOrThrow({
+      where: { id: doneApp.id },
+    });
+    expect(doneAfter.status).toBe('APPROVED');
+    const gapAfter = await prisma.application.findUniqueOrThrow({
+      where: { id: gapApp.id },
+    });
+    expect(gapAfter.status).not.toBe('APPROVED');
+    // The clean approve ran the full single-approve side-effect train —
+    // hireDate landed on the associate.
+    const doneAssocAfter = await prisma.associate.findUniqueOrThrow({
+      where: { id: doneAssoc.id },
+    });
+    expect(doneAssocAfter.hireDate?.toISOString().slice(0, 10)).toBe('2026-08-03');
+  });
+});
+
 describe('document rejection re-arms the ready-for-review notification', () => {
   it('clears submittedAt and rolls SUBMITTED back to DRAFT', async () => {
     const client = await createClient();

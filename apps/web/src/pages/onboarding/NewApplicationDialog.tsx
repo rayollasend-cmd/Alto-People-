@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Copy, Mail } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Copy, Mail, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   ClientSummary,
@@ -29,6 +29,13 @@ import {
 import { Field } from '@/components/ui/Field';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { usePersistentState } from '@/lib/usePersistentState';
+import {
+  EMPTY_INVITE_LAST_USED,
+  INVITE_LAST_USED_KEY,
+  isInviteLastUsed,
+  type InviteLastUsed,
+} from './inviteLastUsed';
 
 const TRACK_LABEL: Record<string, string> = {
   STANDARD: 'Standard',
@@ -82,34 +89,51 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
   const [clientsFailed, setClientsFailed] = useState(false);
   const [templates, setTemplates] = useState<OnboardingTemplate[] | null>(null);
 
+  // Last-used client / location / template / employment type — shared with
+  // BulkInviteDialog so back-to-back invites skip the repeated dropdowns.
+  const [lastUsed, setLastUsed] = usePersistentState<InviteLastUsed>(
+    INVITE_LAST_USED_KEY,
+    EMPTY_INVITE_LAST_USED,
+    isInviteLastUsed,
+  );
+
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [position, setPosition] = useState('');
   const [startDate, setStartDate] = useState('');
-  const [clientId, setClientId] = useState('');
+  const [clientId, setClientId] = useState(lastUsed.clientId);
   const [locationId, setLocationId] = useState('');
   const [locations, setLocations] = useState<LocationSummary[] | null>(null);
-  const [templateId, setTemplateId] = useState('');
-  const [employmentType, setEmploymentType] = useState<EmploymentType>('W2_EMPLOYEE');
+  const [templateId, setTemplateId] = useState(lastUsed.templateId);
+  const [employmentType, setEmploymentType] = useState<EmploymentType>(
+    lastUsed.employmentType,
+  );
   const [hireRole, setHireRole] = useState<HireableRole>('ASSOCIATE');
+  // The location effect below wipes locationId whenever clientId changes
+  // (including the initial seed), so the persisted location is restored
+  // once — after its client's location list loads and confirms it exists.
+  const restoreLocationId = useRef(lastUsed.locationId);
+  const firstNameRef = useRef<HTMLInputElement>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [inviteLink, setInviteLink] = useState<string | null>(null);
 
-  const reset = () => {
+  // Per-person fields only. The client/location/template/employment picks
+  // survive both a close and a successful create — they're the "last used"
+  // memory that saves re-answering the same dropdowns on the next invite.
+  const resetPerson = () => {
     setFirstName('');
     setLastName('');
     setEmail('');
     setPosition('');
-    setStartDate('');
-    setClientId('');
-    setLocationId('');
-    setLocations(null);
-    setTemplateId('');
-    setEmploymentType('W2_EMPLOYEE');
-    setHireRole('ASSOCIATE');
     setInviteLink(null);
+  };
+
+  const reset = () => {
+    resetPerson();
+    setStartDate('');
+    setHireRole('ASSOCIATE');
   };
 
   // Default the start date to next Monday — the usual first day for a new
@@ -136,6 +160,11 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
           if (cancelled) return;
           setClients(r.clients);
           setClientsFailed(false);
+          // A persisted client can be stale (deleted / out of scope) —
+          // fall back to '' rather than submitting a ghost id.
+          setClientId((prev) =>
+            prev && !r.clients.some((c) => c.id === prev) ? '' : prev,
+          );
         })
         .catch(() => {
           if (cancelled) return;
@@ -171,6 +200,14 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
       .then((r) => {
         if (cancelled) return;
         setLocations(r.locations);
+        // Restore the persisted location (once) if it still belongs to
+        // this client — a stale id falls through to the defaults below.
+        const restore = restoreLocationId.current;
+        restoreLocationId.current = '';
+        if (restore && r.locations.some((l) => l.id === restore)) {
+          setLocationId(restore);
+          return;
+        }
         // One possible answer — pick it (the server auto-defaults a sole
         // site anyway; this keeps the form's required check in agreement).
         if (r.locations.length === 1) setLocationId(r.locations[0].id);
@@ -209,14 +246,23 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
     return templates.filter((t) => t.clientId === null || t.clientId === clientId);
   }, [templates, clientId]);
 
-  // If the chosen template is hidden by a client switch, drop the selection.
+  // If the chosen template is hidden by a client switch (or was persisted
+  // and no longer exists), drop the selection. Only once templates have
+  // actually loaded — visibleTemplates is [] while in flight, and clearing
+  // then would wipe the restored last-used template before it can render.
   useEffect(() => {
-    if (templateId && !visibleTemplates.some((t) => t.id === templateId)) {
+    if (
+      templates &&
+      templateId &&
+      !visibleTemplates.some((t) => t.id === templateId)
+    ) {
       setTemplateId('');
     }
-  }, [visibleTemplates, templateId]);
+  }, [templates, visibleTemplates, templateId]);
 
-  const submit = async () => {
+  /** `keepOpen` — "Create & invite another": stay open, clear only the
+   *  per-person fields, and hand focus back to First name. */
+  const submit = async (keepOpen: boolean) => {
     if (!firstName.trim() || !lastName.trim() || !email.trim()) {
       toast.error('Name and email are required.');
       return;
@@ -255,11 +301,18 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
         ...(locationId ? { locationId } : {}),
       });
       onCreated();
+      // Remember the picks for the next invite (this dialog + bulk invite).
+      setLastUsed({ clientId, locationId, templateId, employmentType });
       if (res.inviteUrl) {
         // Dev-stub mode: keep the dialog open and surface the link so HR
-        // can copy it. Closing only happens via the Close button below.
+        // can copy it. Closing only happens via the buttons below.
         setInviteLink(res.inviteUrl);
         toast.success('Application created — invite link ready to copy.');
+      } else if (keepOpen) {
+        toast.success('Application created — invite emailed.');
+        resetPerson();
+        // Focus lands after React swaps the cleared inputs back in.
+        requestAnimationFrame(() => firstNameRef.current?.focus());
       } else {
         toast.success('Application created — invite emailed.');
         reset();
@@ -312,6 +365,7 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
               <Field label="First name" required>
                 {(p) => (
                   <Input
+                    ref={firstNameRef}
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
                     autoFocus
@@ -544,13 +598,35 @@ export function NewApplicationDialog({ open, onOpenChange, onCreated }: Props) {
 
         <DialogFooter>
           {inviteLink ? (
-            <Button onClick={() => onOpenChange(false)}>Close</Button>
+            <>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  // Dev-stub follow-up: clear the link + person fields and
+                  // go straight into the next invite with the picks kept.
+                  resetPerson();
+                  requestAnimationFrame(() => firstNameRef.current?.focus());
+                }}
+              >
+                <UserPlus className="h-4 w-4" />
+                Invite another
+              </Button>
+              <Button onClick={() => onOpenChange(false)}>Close</Button>
+            </>
           ) : (
             <>
               <Button variant="ghost" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
-              <Button onClick={submit} loading={submitting}>
+              <Button
+                variant="secondary"
+                onClick={() => submit(true)}
+                loading={submitting}
+              >
+                <UserPlus className="h-4 w-4" />
+                Create &amp; invite another
+              </Button>
+              <Button onClick={() => submit(false)} loading={submitting}>
                 <Mail className="h-4 w-4" />
                 Create &amp; invite
               </Button>
