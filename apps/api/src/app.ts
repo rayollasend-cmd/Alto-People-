@@ -131,11 +131,18 @@ function stripApiPrefix(
 }
 
 function isBrowserNavigation(req: Request): boolean {
-  return (
-    req.method === 'GET' &&
-    req.headers['sec-fetch-mode'] === 'navigate' &&
-    req.headers['sec-fetch-dest'] === 'document'
-  );
+  if (req.method !== 'GET') return false;
+  const mode = req.headers['sec-fetch-mode'];
+  if (mode !== undefined) {
+    return mode === 'navigate' && req.headers['sec-fetch-dest'] === 'document';
+  }
+  // Safari before 16.4, iOS in-app webviews, and some older browsers send
+  // NO Sec-Fetch-* headers at all — on those, page loads of /users et al.
+  // fell through to the API router and rendered raw JSON. Fall back to
+  // content negotiation: a top-level page load asks for text/html first;
+  // fetch()/XHR (Accept: */* or application/json), images, and calendar
+  // pollers never do, so API clients keep getting JSON.
+  return (req.headers.accept ?? '').includes('text/html');
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
