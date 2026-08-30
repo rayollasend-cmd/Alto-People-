@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { Download, Lock, MessageCircle, Plus, Tag } from 'lucide-react';
 import { toast } from 'sonner';
@@ -99,6 +100,20 @@ export function HrCasesHome() {
   const [search, setSearch] = useState('');
   const [mineError, setMineError] = useState<string | null>(null);
   const [queueError, setQueueError] = useState<string | null>(null);
+
+  // Notification deep-link: ?case=<id> opens that case's drawer directly
+  // (the drawer fetches by id, so no list lookup is needed and the server
+  // enforces visibility). Consumed once — same pattern as ?associateId=
+  // on People — so back/refresh don't re-open a drawer the user closed.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const caseParam = searchParams.get('case');
+    if (!caseParam) return;
+    setOpenId(caseParam);
+    const next = new URLSearchParams(searchParams);
+    next.delete('case');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const refresh = () => {
     if (tab === 'mine') {
@@ -558,6 +573,40 @@ function NewCaseDrawer({
   );
 }
 
+// Case bodies render as plain text, but time disputes auto-attach an
+// app path ("Open the entry: /time-attendance?entry=…"). Make ONLY
+// app-internal paths (whitespace-preceded, leading '/') clickable — this
+// is deliberately not a general URL linkifier: bodies are associate-typed
+// free text and external links would be a phishing surface.
+const INTERNAL_PATH_RE = /(^|\s)(\/[a-z][\w-]*(?:\/[\w-]+)*(?:\?[\w=&-]+)?)/g;
+
+function LinkifiedBody({ text }: { text: string }) {
+  const nodes: ReactNode[] = [];
+  let last = 0;
+  INTERNAL_PATH_RE.lastIndex = 0;
+  for (
+    let m = INTERNAL_PATH_RE.exec(text);
+    m !== null;
+    m = INTERNAL_PATH_RE.exec(text)
+  ) {
+    const start = m.index + m[1].length;
+    if (start > last) nodes.push(text.slice(last, start));
+    nodes.push(
+      <Link
+        key={start}
+        to={m[2]}
+        className="text-gold hover:underline underline-offset-4"
+      >
+        {m[2]}
+      </Link>,
+    );
+    last = start + m[2].length;
+  }
+  if (last === 0) return <>{text}</>;
+  if (last < text.length) nodes.push(text.slice(last));
+  return <>{nodes}</>;
+}
+
 function CaseDetailDrawer({
   caseId,
   canManage,
@@ -642,7 +691,7 @@ function CaseDetailDrawer({
               Filed by {data.associateName} · {fmtDateTime(data.createdAt)}
             </div>
             <div className="text-sm text-white whitespace-pre-wrap p-3 rounded border border-navy-secondary bg-midnight">
-              {data.description}
+              <LinkifiedBody text={data.description} />
             </div>
 
             {canManage && (
@@ -677,7 +726,7 @@ function CaseDetailDrawer({
                         )}
                       </div>
                       <div className="text-sm text-white whitespace-pre-wrap">
-                        {c.body}
+                        <LinkifiedBody text={c.body} />
                       </div>
                     </div>
                   ))}

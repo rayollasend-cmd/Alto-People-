@@ -2115,9 +2115,10 @@ timeRouter.post('/admin/bulk-reject', MANAGE, async (req, res, next) => {
 
 // Most associates never punch their meal break, so 6h+ shifts pile up in
 // review flagged NO_BREAK. This lets a reviewer select those entries and
-// book the site's standard unpaid meal — 1 hour, centered mid-shift — in
-// one action. Deliberately an explicit reviewer action, never automatic:
-// hours are docked only when a human chose to.
+// book the site's standard unpaid meal — 1 hour by default (15/30 min on
+// request), centered mid-shift — in one action. Deliberately an explicit
+// reviewer action, never automatic: hours are docked only when a human
+// chose to.
 const APPLIED_BREAK_MINUTES = 60;
 // Only shifts long enough that the NO_BREAK flag fires (6h) qualify;
 // docking an hour from a short shift is a payroll error, not a cleanup.
@@ -2125,6 +2126,11 @@ const APPLY_BREAK_MIN_SHIFT_HOURS = 6;
 
 const BulkApplyBreakSchema = z.object({
   entryIds: z.array(z.string().uuid()).min(1).max(500),
+  /** Break length to book. Constrained to the standard site lengths — a
+   *  free-form number would let a typo dock arbitrary paid time. */
+  minutes: z
+    .union([z.literal(15), z.literal(30), z.literal(60)])
+    .default(APPLIED_BREAK_MINUTES),
 });
 
 timeRouter.post('/admin/bulk-apply-break', MANAGE, async (req, res, next) => {
@@ -2134,6 +2140,7 @@ timeRouter.post('/admin/bulk-apply-break', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const user = req.user!;
+    const breakMinutes = parsed.data.minutes;
     let succeeded = 0;
     let failed = 0;
     // PERF: one batched scope+breaks read for the whole id set, then
@@ -2165,7 +2172,7 @@ timeRouter.post('/admin/bulk-apply-break', MANAGE, async (req, res, next) => {
         }
         const midMs =
           (entry.clockInAt.getTime() + entry.clockOutAt.getTime()) / 2;
-        const halfBreakMs = (APPLIED_BREAK_MINUTES / 2) * 60_000;
+        const halfBreakMs = (breakMinutes / 2) * 60_000;
         await prisma.breakEntry.create({
           data: {
             timeEntryId: entry.id,
@@ -2184,7 +2191,7 @@ timeRouter.post('/admin/bulk-apply-break', MANAGE, async (req, res, next) => {
           timeEntryId: entry.id,
           associateId: entry.associateId,
           clientId: entry.clientId,
-          metadata: { minutes: APPLIED_BREAK_MINUTES, standard: true },
+          metadata: { minutes: breakMinutes, standard: true },
           req,
         });
         results[i] = { entryId, ok: true, errorCode: null, errorMessage: null };

@@ -150,7 +150,7 @@ export function ApprovalsHome() {
           wrap={
             timesheetFailed
               ? undefined
-              : (children) => <Link to="/time-attendance">{children}</Link>
+              : (children) => <Link to="/time-attendance?tab=queue">{children}</Link>
           }
         />
       </div>
@@ -259,8 +259,12 @@ function waitingSince(iso: string): string {
 function WalkInClockInsPanel() {
   const queryClient = useQueryClient();
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const [bulkBusy, setBulkBusy] = useState(false);
+  // Which bulk action is in flight — so only its button shows the spinner.
+  const [bulkBusy, setBulkBusy] = useState<'approve' | 'deny' | null>(null);
   const [denyTarget, setDenyTarget] = useState<ClockInRequestRow | null>(null);
+  // The deny dialog serves both the per-row deny (denyTarget set) and the
+  // bulk deny (bulkDenyOpen) — one optional reason shared across the batch.
+  const [bulkDenyOpen, setBulkDenyOpen] = useState(false);
   const [denyReason, setDenyReason] = useState('');
 
   const query = useQuery({
@@ -319,10 +323,41 @@ function WalkInClockInsPanel() {
   const bulkApprove = async () => {
     const ids = [...selected];
     if (ids.length === 0) return;
-    setBulkBusy(true);
+    setBulkBusy('approve');
     await approveAllSettled(ids, (id) => approveClockInRequest(id), 'clock-in');
     clear();
-    setBulkBusy(false);
+    setBulkBusy(null);
+    queryClient.invalidateQueries({ queryKey: CLOCK_INS_KEY });
+  };
+
+  // Same settle-them-all pattern as bulkApprove, but failures name the
+  // associate — a denial that silently didn't land leaves someone standing
+  // at the kiosk assuming they were told no.
+  const bulkDeny = async () => {
+    const rows = (items ?? []).filter((r) => selected.has(r.id));
+    if (rows.length === 0) return;
+    setBulkBusy('deny');
+    const reason = denyReason.trim() || undefined;
+    const results = await Promise.allSettled(
+      rows.map((r) => denyClockInRequest(r.id, reason)),
+    );
+    let ok = 0;
+    results.forEach((res, i) => {
+      if (res.status === 'fulfilled') {
+        ok += 1;
+        return;
+      }
+      toast.error(`Could not deny ${rows[i].associateName}.`, {
+        description:
+          res.reason instanceof ApiError ? res.reason.message : undefined,
+      });
+    });
+    if (ok > 0) {
+      hapticConfirm();
+      toast.success(`Denied ${ok} clock-in${ok === 1 ? '' : 's'}.`);
+    }
+    clear();
+    setBulkBusy(null);
     queryClient.invalidateQueries({ queryKey: CLOCK_INS_KEY });
   };
 
@@ -334,9 +369,28 @@ function WalkInClockInsPanel() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle>Walk-in clock-ins waiting at the kiosk</CardTitle>
           {selected.size > 0 && (
-            <Button size="sm" onClick={bulkApprove} loading={bulkBusy}>
-              Approve selected ({selected.size})
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                onClick={bulkApprove}
+                loading={bulkBusy === 'approve'}
+                disabled={bulkBusy !== null}
+              >
+                Approve selected ({selected.size})
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setDenyReason('');
+                  setBulkDenyOpen(true);
+                }}
+                loading={bulkBusy === 'deny'}
+                disabled={bulkBusy !== null}
+              >
+                Deny selected ({selected.size})
+              </Button>
+            </div>
           )}
         </div>
       </CardHeader>
@@ -422,7 +476,7 @@ function WalkInClockInsPanel() {
                       )
                     }
                     loading={pendingId === r.id}
-                    disabled={pendingId === r.id || bulkBusy}
+                    disabled={pendingId === r.id || bulkBusy !== null}
                   >
                     <Check className="h-4 w-4" />
                     Approve
@@ -434,7 +488,7 @@ function WalkInClockInsPanel() {
                       setDenyReason('');
                       setDenyTarget(r);
                     }}
-                    disabled={pendingId === r.id || bulkBusy}
+                    disabled={pendingId === r.id || bulkBusy !== null}
                   >
                     <X className="h-4 w-4" />
                     Deny
@@ -448,20 +502,34 @@ function WalkInClockInsPanel() {
       </CardContent>
 
       <Dialog
-        open={denyTarget !== null}
+        open={denyTarget !== null || bulkDenyOpen}
         onOpenChange={(open) => {
-          if (!open) setDenyTarget(null);
+          if (!open) {
+            setDenyTarget(null);
+            setBulkDenyOpen(false);
+          }
         }}
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Deny this clock-in?</DialogTitle>
+            <DialogTitle>
+              {bulkDenyOpen
+                ? `Deny ${selected.size} clock-in${selected.size === 1 ? '' : 's'}?`
+                : 'Deny this clock-in?'}
+            </DialogTitle>
             <DialogDescription>
-              {denyTarget?.associateName} will be notified that their clock-in
-              was not approved. No time entry is created.
+              {bulkDenyOpen
+                ? 'Each selected associate will be notified that their clock-in was not approved. No time entries are created.'
+                : `${denyTarget?.associateName} will be notified that their clock-in was not approved. No time entry is created.`}
             </DialogDescription>
           </DialogHeader>
-          <Field label="Reason (optional, shared with the associate)">
+          <Field
+            label={
+              bulkDenyOpen
+                ? 'Reason (optional, shared with every selected associate)'
+                : 'Reason (optional, shared with the associate)'
+            }
+          >
             <Textarea
               value={denyReason}
               onChange={(e) => setDenyReason(e.target.value)}
@@ -471,12 +539,23 @@ function WalkInClockInsPanel() {
             />
           </Field>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setDenyTarget(null)}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setDenyTarget(null);
+                setBulkDenyOpen(false);
+              }}
+            >
               Cancel
             </Button>
             <Button
               variant="destructive"
               onClick={() => {
+                if (bulkDenyOpen) {
+                  setBulkDenyOpen(false);
+                  void bulkDeny();
+                  return;
+                }
                 const target = denyTarget;
                 setDenyTarget(null);
                 if (target) {
@@ -488,7 +567,9 @@ function WalkInClockInsPanel() {
                 }
               }}
             >
-              Deny clock-in
+              {bulkDenyOpen
+                ? `Deny ${selected.size} clock-in${selected.size === 1 ? '' : 's'}`
+                : 'Deny clock-in'}
             </Button>
           </DialogFooter>
         </DialogContent>

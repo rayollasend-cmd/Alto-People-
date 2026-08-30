@@ -199,7 +199,7 @@ export function CommandPalette({
             keywords: 'approve time attendance punches',
             group: 'Actions',
             perform: ({ navigate, close }: PerformCtx) => {
-              navigate('/time-attendance');
+              navigate('/time-attendance?tab=queue');
               close();
             },
           } satisfies PaletteItem,

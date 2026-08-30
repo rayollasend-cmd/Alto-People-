@@ -366,6 +366,100 @@ describe('net-of-breaks visibility + provisional summary warning', () => {
   });
 });
 
+describe('POST /time/admin/bulk-apply-break — standard break length', () => {
+  const MIN = 60 * 1000;
+
+  it('books the 1h meal centered mid-shift by default', async () => {
+    const { entry } = await setupCompletedShift();
+    const cookie = await adminCookie();
+
+    const res = await request(app())
+      .post('/time/admin/bulk-apply-break')
+      .set('Cookie', [cookie])
+      .send({ entryIds: [entry.id] });
+    expect(res.status).toBe(200);
+    expect(res.body.succeeded).toBe(1);
+    expect(res.body.failed).toBe(0);
+
+    const breaks = await prisma.breakEntry.findMany({
+      where: { timeEntryId: entry.id },
+    });
+    expect(breaks).toHaveLength(1);
+    expect(breaks[0].type).toBe('MEAL');
+    expect(
+      (breaks[0].endedAt!.getTime() - breaks[0].startedAt.getTime()) / MIN,
+    ).toBe(60);
+    // Centered on the shift's midpoint.
+    const midMs =
+      (entry.clockInAt.getTime() + entry.clockOutAt!.getTime()) / 2;
+    expect(breaks[0].startedAt.getTime()).toBe(midMs - 30 * MIN);
+    expect(breaks[0].endedAt!.getTime()).toBe(midMs + 30 * MIN);
+  });
+
+  it('honors an explicit minutes=30 override, still centered', async () => {
+    const { entry } = await setupCompletedShift();
+    const cookie = await adminCookie();
+
+    const res = await request(app())
+      .post('/time/admin/bulk-apply-break')
+      .set('Cookie', [cookie])
+      .send({ entryIds: [entry.id], minutes: 30 });
+    expect(res.status).toBe(200);
+    expect(res.body.succeeded).toBe(1);
+
+    const breaks = await prisma.breakEntry.findMany({
+      where: { timeEntryId: entry.id },
+    });
+    expect(breaks).toHaveLength(1);
+    expect(
+      (breaks[0].endedAt!.getTime() - breaks[0].startedAt.getTime()) / MIN,
+    ).toBe(30);
+    const midMs =
+      (entry.clockInAt.getTime() + entry.clockOutAt!.getTime()) / 2;
+    expect(breaks[0].startedAt.getTime()).toBe(midMs - 15 * MIN);
+  });
+
+  it('rejects a non-standard minutes value (only 15/30/60)', async () => {
+    const { entry } = await setupCompletedShift();
+    const cookie = await adminCookie();
+
+    const res = await request(app())
+      .post('/time/admin/bulk-apply-break')
+      .set('Cookie', [cookie])
+      .send({ entryIds: [entry.id], minutes: 45 });
+    expect(res.status).toBe(400);
+    expect(
+      await prisma.breakEntry.count({ where: { timeEntryId: entry.id } }),
+    ).toBe(0);
+  });
+
+  it('keeps the guardrails: an existing meal break makes the row a skip, not a double-dock', async () => {
+    const { entry } = await setupCompletedShift();
+    const cookie = await adminCookie();
+    const breakStart = new Date(entry.clockInAt.getTime() + 3 * HOUR);
+    await prisma.breakEntry.create({
+      data: {
+        timeEntryId: entry.id,
+        type: 'MEAL',
+        startedAt: breakStart,
+        endedAt: new Date(breakStart.getTime() + HOUR),
+      },
+    });
+
+    const res = await request(app())
+      .post('/time/admin/bulk-apply-break')
+      .set('Cookie', [cookie])
+      .send({ entryIds: [entry.id], minutes: 15 });
+    expect(res.status).toBe(200);
+    expect(res.body.succeeded).toBe(0);
+    expect(res.body.failed).toBe(1);
+    expect(res.body.results[0].errorCode).toBe('already_has_break');
+    expect(
+      await prisma.breakEntry.count({ where: { timeEntryId: entry.id } }),
+    ).toBe(1);
+  });
+});
+
 describe('GET /time/admin/entries — search', () => {
   it('matches a full "First Last" search (used to return nothing)', async () => {
     const { entry } = await setupCompletedShift();

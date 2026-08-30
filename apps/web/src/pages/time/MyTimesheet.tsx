@@ -457,6 +457,17 @@ function TimesheetStat({
   );
 }
 
+// Tappable starters for the most common disputes — filling the textarea
+// beats thumb-typing a paragraph at the kiosk door. Deliberately not
+// translated: they land verbatim in the case description, which (like the
+// auto-attached facts below) is written in English for the HR reader.
+const DISPUTE_PRESETS = [
+  'I forgot to clock out — my shift actually ended at …',
+  'My break was shorter than recorded',
+  'I worked but this entry is missing time',
+  "This entry isn't mine",
+] as const;
+
 function DisputeDialog({
   target,
   onClose,
@@ -484,7 +495,10 @@ function DisputeDialog({
       await fileCase({
         category: 'PAYROLL',
         subject: `Time entry ${day} (${range})`,
-        description: `${message.trim()}\n\n— Entry details (auto-attached) —\nDate: ${day}\nPunches: ${range}\nStatus: ${target.status}\nEntry id: ${target.id}`,
+        // The last line is an app-internal path the HR-cases page renders
+        // as a link — it lands reviewers on this exact entry (queue tab,
+        // drawer open) instead of a manual search from the prose id.
+        description: `${message.trim()}\n\n— Entry details (auto-attached) —\nDate: ${day}\nPunches: ${range}\nStatus: ${target.status}\nEntry id: ${target.id}\nOpen the entry: /time-attendance?entry=${target.id}`,
       });
       toast.success(t('time.reportSent'));
       setMessage('');
@@ -512,6 +526,25 @@ function DisputeDialog({
             {target.clockOutAt ? fmtTime(target.clockOutAt) : t('time.stillOn')}
           </p>
         )}
+        <div
+          className="flex flex-wrap gap-1.5"
+          role="group"
+          aria-label={t('time.whatsWrong')}
+        >
+          {DISPUTE_PRESETS.map((preset) => (
+            <Button
+              key={preset}
+              size="xs"
+              variant="outline"
+              // xs is chip-height with nowrap; these labels are sentences,
+              // so let them wrap on narrow phones.
+              className="h-auto min-h-7 whitespace-normal py-1.5 text-left coarse:min-h-9"
+              onClick={() => setMessage(preset)}
+            >
+              {preset}
+            </Button>
+          ))}
+        </div>
         <label className="block">
           <span className="text-xs2 uppercase tracking-wider text-silver">
             {t('time.whatsWrong')}

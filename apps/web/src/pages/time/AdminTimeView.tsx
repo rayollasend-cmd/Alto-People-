@@ -62,7 +62,7 @@ import { useStoreScope } from '@/lib/storeScope';
 import { cn } from '@/lib/cn';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { useSelection } from '@/lib/useSelection';
-import { timeAnomalyLabel } from '@/lib/timeLabels';
+import { TIME_ANOMALY_LABELS, timeAnomalyLabel } from '@/lib/timeLabels';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { ShiftTimeline } from './ShiftTimeline';
 import { TimesheetWeeks } from './TimesheetWeeks';
@@ -337,6 +337,25 @@ function defaultFromYmd(): string {
 function defaultToYmd(): string {
   return ymdLocal(new Date());
 }
+
+/** Saturday 00:00 (local) that starts the org's Sat→Fri week containing `d`
+ *  — same convention as TimesheetsView's filing weeks. */
+function startOfSaturdayWeek(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  x.setDate(x.getDate() - ((x.getDay() + 1) % 7)); // Sat→0, Sun→1 … Fri→6
+  return x;
+}
+
+// Quick-range chips over the From/To inputs. Same stateful-chip semantics
+// as MyTimesheet: hand-editing a date clears the active chip so it never
+// lies about what's shown. Weeks follow the org Sat→Fri convention.
+type RangePreset = 'THIS_WEEK' | 'LAST_WEEK' | 'LAST14';
+const RANGE_PRESETS: Array<[RangePreset, string]> = [
+  ['THIS_WEEK', 'This week'],
+  ['LAST_WEEK', 'Last week'],
+  ['LAST14', 'Last 14 days'],
+];
 
 // "Jun 22 – Jul 5" — compact label for a pay-period option. Bare YYYY-MM-DD
 // parses as UTC midnight, so format in UTC or the day shifts west of GMT.
@@ -631,6 +650,9 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
   const [appliedSearch, setAppliedSearch] = useState('');
   const [fromYmd, setFromYmd] = useState<string>(defaultFromYmd());
   const [toYmd, setToYmd] = useState<string>(defaultToYmd());
+  // Which quick-range chip produced the current window; the defaults ARE
+  // the last-14-days preset. Manual edits / period picks clear it.
+  const [activePreset, setActivePreset] = useState<RangePreset | null>('LAST14');
   // Pay-period picker: choosing a period drives From/To; hand-editing
   // either date drops back to "Custom range" (stateful-chip pattern).
   const [payPeriods, setPayPeriods] = useState<PayPeriod[] | null>(null);
@@ -643,6 +665,10 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     false,
     (v): v is boolean => typeof v === 'boolean',
   );
+  // Anomaly-TYPE chips inside the anomalies lens: multiple picks OR
+  // together, none = every flagged entry. Session-only — a persisted
+  // type pick would silently hide next week's different pile.
+  const [anomalyTypes, setAnomalyTypes] = useState<string[]>([]);
   // Shift lens: narrow the queue to one shift window (e.g. the 6–2), same
   // client-side scope as the anomalies lens. '' = all; 'none' = entries
   // with no matched shift; otherwise a "<startMin>-<endMin>" window key.
@@ -650,6 +676,17 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
   // (right now vs a date range), so one shared value would cross-reset.
   const [shiftFilter, setShiftFilter] = useState('');
   const [liveShiftFilter, setLiveShiftFilter] = useState('');
+  // Live-board lenses: longest-elapsed-first surfaces runaway sessions;
+  // the off-site lens narrows to geofence violations (also reachable via
+  // the Off-site KPI tile).
+  const [liveSortLongest, setLiveSortLongest] = useState(false);
+  const [liveOffSiteOnly, setLiveOffSiteOnly] = useState(false);
+  // Rows with a one-click clock-out in flight (single or group action).
+  const [liveClockOutIds, setLiveClockOutIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  // Bulk apply-break length — the button next to the picker reads it.
+  const [bulkBreakMinutes, setBulkBreakMinutes] = useState<15 | 30 | 60>(60);
   // Server hit its row cap — the window has MORE rows than shown.
   const [truncated, setTruncated] = useState(false);
   const [exportBusy, setExportBusy] = useState<null | 'csv' | 'pdf'>(null);
@@ -760,6 +797,34 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     [setFilter],
   );
 
+  // Deep-link: ?from=YYYY-MM-DD&to=YYYY-MM-DD presets the queue's date
+  // window (report links pair it with &associate=). Consume-once like the
+  // ?entry/?associate params below; invalid values are consumed and
+  // ignored. Runs before those effects so a combined associate+range link
+  // lands on the right window.
+  const fromParam = tabParams.get('from');
+  const toParam = tabParams.get('to');
+  useEffect(() => {
+    if ((!fromParam && !toParam) || liveOnly) return;
+    const valid = (s: string | null): s is string =>
+      !!s && /^\d{4}-\d{2}-\d{2}$/.test(s) && parseYmd(s) !== null;
+    const f = valid(fromParam) ? fromParam : null;
+    const t = valid(toParam) ? toParam : null;
+    const params = new URLSearchParams(tabParams);
+    params.delete('from');
+    params.delete('to');
+    setTabParams(params, { replace: true });
+    if (f && t && f > t) return; // inverted range — ignore both
+    if (f) setFromYmd(f);
+    if (t) setToYmd(t);
+    if (f || t) {
+      setPeriodKey('');
+      setActivePreset(null);
+    }
+    // Same rationale as the ?entry effect below for the trimmed dep list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromParam, toParam, liveOnly]);
+
   // Notification deep-link: ?entry=<id> lands on the exact record — queue
   // tab, that associate's focused timesheet (which guarantees the row is on
   // screen regardless of the persisted status filter), date window widened
@@ -781,6 +846,10 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
       if (cancelled) return;
       const params = new URLSearchParams(tabParams);
       params.delete('entry');
+      // This write happens async off a mount-time snapshot — drop the
+      // date params too so it can't resurrect ones consumed above.
+      params.delete('from');
+      params.delete('to');
       if (!target) {
         setTabParams(params, { replace: true });
         setError('That time entry could not be found — it may have been deleted.');
@@ -796,6 +865,9 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
       const day = ymdLocal(new Date(target.clockInAt));
       setFromYmd((cur) => (day < cur ? day : cur));
       setToYmd((cur) => (day > cur ? day : cur));
+      // A widened window is no longer any preset/period.
+      setActivePreset(null);
+      setPeriodKey('');
       setDrawerTarget(target);
       setFlashEntryId(target.id);
     })();
@@ -818,6 +890,10 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     const nameParam = params.get('name');
     params.delete('associate');
     params.delete('name');
+    // The ?from/?to effect above consumed these already this commit; drop
+    // them here too so this write can't resurrect them from its snapshot.
+    params.delete('from');
+    params.delete('to');
     params.set('tab', 'queue');
     setTabParams(params, { replace: true });
     setFilter('ALL');
@@ -963,8 +1039,32 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     if (!key) return; // back to custom range — keep current dates
     const p = (payPeriods ?? []).find((x) => `${x.start}|${x.end}` === key);
     if (!p) return;
+    setActivePreset(null);
     setFromYmd(p.start);
     setToYmd(p.end);
+  };
+
+  const applyPreset = (p: RangePreset) => {
+    setActivePreset(p);
+    setPeriodKey('');
+    const now = new Date();
+    if (p === 'LAST14') {
+      setFromYmd(defaultFromYmd());
+      setToYmd(ymdLocal(now));
+      return;
+    }
+    const thisWeekStart = startOfSaturdayWeek(now);
+    if (p === 'THIS_WEEK') {
+      setFromYmd(ymdLocal(thisWeekStart));
+      setToYmd(ymdLocal(now));
+    } else {
+      const lastStart = new Date(thisWeekStart);
+      lastStart.setDate(lastStart.getDate() - 7);
+      const lastEnd = new Date(thisWeekStart);
+      lastEnd.setDate(lastEnd.getDate() - 1);
+      setFromYmd(ymdLocal(lastStart));
+      setToYmd(ymdLocal(lastEnd));
+    }
   };
 
   // Auto-refresh the live tab every 30s while it's open — paused while the
@@ -1018,6 +1118,91 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     [],
   );
   const openDrawer = useCallback((e: TimeEntry) => setDrawerTarget(e), []);
+
+  // Row-level edit — straight to the edit drawer, skipping the detail stop.
+  const openEditRow = useCallback((e: TimeEntry) => {
+    setEditFromDetail(false);
+    setEditTarget(e);
+  }, []);
+
+  // FORGOT_CLOCKOUT one-clicker: approve with the clock-out corrected to
+  // the scheduled shift end in the same call (TimeApproveInput override).
+  const onApproveAtShiftEnd = useCallback(
+    async (e: TimeEntry) => {
+      if (pendingIdRef.current || !e.shiftEndsAt) return;
+      pendingIdRef.current = e.id;
+      setPendingId(e.id);
+      try {
+        await approveTimeEntry(e.id, { clockOutAt: e.shiftEndsAt });
+        toast.success(
+          `Approved ${e.associateName ?? 'entry'} — clock-out set to the scheduled ${fmtPunchTime(e.shiftEndsAt, e.locationTimezone)}.`,
+        );
+        await Promise.all([refresh(), refreshPendingCount()]);
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Approve failed.');
+      } finally {
+        pendingIdRef.current = null;
+        setPendingId(null);
+      }
+    },
+    [refresh, refreshPendingCount],
+  );
+
+  // Live board: one-click clock-out at "now" — the drawer stays available
+  // behind the quiet "Adjust…" action for anything needing a typed time.
+  const clockOutNow = useCallback(
+    async (e: ActiveDashboardEntry) => {
+      setLiveClockOutIds((prev) => new Set(prev).add(e.id));
+      try {
+        await adminEditTimeEntry(e.id, { clockOutAt: new Date().toISOString() });
+        toast.success(`Clocked out ${e.associateName}.`);
+        await Promise.all([refreshActive(), refreshPendingCount()]);
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Clock out failed.');
+      } finally {
+        setLiveClockOutIds((prev) => {
+          const next = new Set(prev);
+          next.delete(e.id);
+          return next;
+        });
+      }
+    },
+    [refreshActive, refreshPendingCount],
+  );
+
+  // Group header sweep: clock out everyone still on the clock at a client.
+  // allSettled — one refused row (already out, say) must not strand the
+  // rest mid-flight.
+  const clockOutGroup = useCallback(
+    async (rows: ActiveDashboardEntry[]) => {
+      if (rows.length === 0) return;
+      const nowIso = new Date().toISOString();
+      setLiveClockOutIds((prev) => new Set([...prev, ...rows.map((r) => r.id)]));
+      try {
+        const settled = await Promise.allSettled(
+          rows.map((r) => adminEditTimeEntry(r.id, { clockOutAt: nowIso })),
+        );
+        const ok = settled.filter((s) => s.status === 'fulfilled').length;
+        const failedCount = rows.length - ok;
+        if (ok > 0) {
+          toast.success(`Clocked out ${ok} associate${ok === 1 ? '' : 's'}.`);
+        }
+        if (failedCount > 0) {
+          toast.warning(
+            `${failedCount} ${failedCount === 1 ? 'associate' : 'associates'} could not be clocked out.`,
+          );
+        }
+        await Promise.all([refreshActive(), refreshPendingCount()]);
+      } finally {
+        setLiveClockOutIds((prev) => {
+          const next = new Set(prev);
+          for (const r of rows) next.delete(r.id);
+          return next;
+        });
+      }
+    },
+    [refreshActive, refreshPendingCount],
+  );
 
   const onSubmitReject = async (reason: string) => {
     if (!rejectOpen) return;
@@ -1075,18 +1260,22 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     }
   };
 
-  // Standard-break cleanup for NO_BREAK piles: book the 1h unpaid meal on
-  // every selected entry. The server skips entries that already have a
-  // meal break, are under 6h, or aren't pending review — so a reviewer
-  // can sweep-select and let the guardrails sort it out.
+  // Standard-break cleanup for NO_BREAK piles: book the picked unpaid meal
+  // (15m/30m/1h) on every selected entry. The server skips entries that
+  // already have a meal break, are under 6h, or aren't pending review — so
+  // a reviewer can sweep-select and let the guardrails sort it out.
   const onBulkApplyBreak = async () => {
     if (selected.size === 0 || bulkBusy) return;
     setBulkBusy(true);
+    const lengthLabel = bulkBreakMinutes === 60 ? '1h' : `${bulkBreakMinutes}m`;
     try {
-      const res = await bulkApplyBreakTimeEntries(Array.from(selected));
+      const res = await bulkApplyBreakTimeEntries(
+        Array.from(selected),
+        bulkBreakMinutes,
+      );
       if (res.succeeded > 0) {
         toast.success(
-          `1h meal break applied to ${res.succeeded} ${res.succeeded === 1 ? 'entry' : 'entries'}.`,
+          `${lengthLabel} meal break applied to ${res.succeeded} ${res.succeeded === 1 ? 'entry' : 'entries'}.`,
         );
       }
       if (res.failed > 0) {
@@ -1159,6 +1348,16 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     if (liveShiftFilter) {
       list = list.filter((e) => matchesShiftPick(e, liveShiftFilter));
     }
+    // Off-site lens — geofenceOk is already on every live row, so this is
+    // pure client-side narrowing (the Off-site KPI tile turns it on).
+    if (liveOffSiteOnly) {
+      list = list.filter((e) => e.geofenceOk === false);
+    }
+    // Longest-elapsed first surfaces runaway sessions (a 14h "shift" is a
+    // forgotten clock-out, not a worker). Applies inside each client group.
+    if (liveSortLongest) {
+      list = [...list].sort((a, b) => b.minutesElapsed - a.minutesElapsed);
+    }
     const q = liveSearch.trim().toLowerCase();
     if (!q) return list;
     return list.filter(
@@ -1167,7 +1366,7 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
         (e.clientName ?? '').toLowerCase().includes(q) ||
         (e.jobName ?? '').toLowerCase().includes(q)
     );
-  }, [active, liveSearch, liveShiftFilter]);
+  }, [active, liveSearch, liveShiftFilter, liveOffSiteOnly, liveSortLongest]);
 
   // Group the live board by client when viewing all clients — the one big
   // pile reads as organized places, each with a headcount. A single client
@@ -1196,15 +1395,62 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     if (!shiftPickStillThere(shiftFilter, shiftOptions)) setShiftFilter('');
   }, [entries, shiftFilter, shiftOptions]);
 
-  // What the queue actually renders — the shift + anomalies lenses apply
-  // here so select-all and the empty state follow what's on screen.
+  // The flagged slice the anomaly-type chips further narrow: shift lens
+  // applied, anomalies present. Counting off this list (not visibleEntries)
+  // keeps each chip's count stable while other chips are toggled.
+  const flaggedEntries = useMemo(() => {
+    if (!entries) return null;
+    let list = entries;
+    if (shiftFilter) list = list.filter((e) => matchesShiftPick(e, shiftFilter));
+    return list.filter((e) => (e.anomalies?.length ?? 0) > 0);
+  }, [entries, shiftFilter]);
+
+  // Chip options: only the anomaly TYPES present on screen, with counts,
+  // in the label map's stable order (unknown future codes trail behind).
+  const anomalyTypeOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const e of flaggedEntries ?? []) {
+      for (const a of e.anomalies ?? []) {
+        counts.set(a, (counts.get(a) ?? 0) + 1);
+      }
+    }
+    const known = Object.keys(TIME_ANOMALY_LABELS);
+    return [...counts.entries()].sort((x, y) => {
+      const xi = known.indexOf(x[0]);
+      const yi = known.indexOf(y[0]);
+      return (xi === -1 ? known.length : xi) - (yi === -1 ? known.length : yi);
+    });
+  }, [flaggedEntries]);
+
+  // A picked type that vanished from the refreshed page would silently
+  // render an empty queue — drop it (same guard as the shift lens).
+  useEffect(() => {
+    if (!flaggedEntries) return;
+    setAnomalyTypes((prev) => {
+      const next = prev.filter((t) =>
+        flaggedEntries.some((e) => e.anomalies?.includes(t)),
+      );
+      return next.length === prev.length ? prev : next;
+    });
+  }, [flaggedEntries]);
+
+  // What the queue actually renders — the shift + anomalies lenses (and
+  // the anomaly-type chips inside the latter) apply here so select-all
+  // and the empty state follow what's on screen.
   const visibleEntries = useMemo(() => {
     if (!entries) return null;
     let list = entries;
     if (shiftFilter) list = list.filter((e) => matchesShiftPick(e, shiftFilter));
     if (!anomaliesOnly) return list;
-    return list.filter((e) => (e.anomalies?.length ?? 0) > 0);
-  }, [entries, anomaliesOnly, shiftFilter]);
+    list = list.filter((e) => (e.anomalies?.length ?? 0) > 0);
+    if (anomalyTypes.length > 0) {
+      // Multiple chips OR together.
+      list = list.filter((e) =>
+        (e.anomalies ?? []).some((a) => anomalyTypes.includes(a)),
+      );
+    }
+    return list;
+  }, [entries, anomaliesOnly, shiftFilter, anomalyTypes]);
 
   // Click-to-sort for the queue's desktop table. Sorts the filtered page
   // the table renders; the md:hidden card stack keeps server order.
@@ -1291,31 +1537,46 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
         }
       />
 
-      {/* KPI strip — mirrors the onboarding analytics pattern. */}
+      {/* KPI strip — mirrors the onboarding analytics pattern. Tiles are
+          shortcuts too: the live trio jumps to the live board (Off-site
+          also applies the off-site lens), Pending review opens the queue. */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <KpiCard
           icon={Activity}
           label="Clocked in"
           value={liveStats.total === null ? '—' : String(liveStats.total)}
           tone="default"
+          onClick={() => {
+            setLiveOffSiteOnly(false);
+            setTab('live');
+          }}
         />
         <KpiCard
           icon={Coffee}
           label="On break"
           value={liveStats.onBreak === null ? '—' : String(liveStats.onBreak)}
           tone="warning"
+          onClick={() => {
+            setLiveOffSiteOnly(false);
+            setTab('live');
+          }}
         />
         <KpiCard
           icon={MapPinOff}
           label="Off-site"
           value={liveStats.offSite === null ? '—' : String(liveStats.offSite)}
           tone={liveStats.offSite && liveStats.offSite > 0 ? 'alert' : 'silver'}
+          onClick={() => {
+            setLiveOffSiteOnly(true);
+            setTab('live');
+          }}
         />
         <KpiCard
           icon={ListChecks}
           label="Pending review"
           value={pendingCount === null ? '—' : String(pendingCount)}
           tone={pendingCount && pendingCount > 0 ? 'warning' : 'success'}
+          onClick={liveOnly ? undefined : () => setTab('queue')}
         />
       </div>
 
@@ -1367,6 +1628,27 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                 options={liveShiftOptions}
                 aria-label="Shift"
               />
+              <button
+                type="button"
+                aria-pressed={liveOffSiteOnly}
+                onClick={() => setLiveOffSiteOnly((v) => !v)}
+                className={cn(
+                  'h-9 rounded-md border px-3 text-sm transition-colors',
+                  liveOffSiteOnly
+                    ? 'border-alert/60 bg-alert/15 text-alert'
+                    : 'border-navy-secondary bg-navy-secondary/40 text-silver hover:text-white',
+                )}
+              >
+                <MapPinOff className="mr-1 inline h-3.5 w-3.5" /> Off-site only
+              </button>
+              <FilterChip
+                active={liveSortLongest}
+                title="Sort by elapsed time, longest first — runaway sessions rise to the top"
+                onClick={() => setLiveSortLongest((v) => !v)}
+                className="h-9"
+              >
+                Longest first
+              </FilterChip>
               <div className="relative w-64">
                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-silver/70 pointer-events-none" />
                 <Input
@@ -1418,10 +1700,28 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                                 colSpan={canManage ? 8 : 7}
                                 className="py-1.5 text-xs font-medium text-silver"
                               >
-                                {groupName}
-                                <span className="ml-2 tabular-nums text-silver/60">
-                                  {groupRows.length} clocked in
-                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span>
+                                    {groupName}
+                                    <span className="ml-2 tabular-nums text-silver/60">
+                                      {groupRows.length} clocked in
+                                    </span>
+                                  </span>
+                                  {canManage && (
+                                    <Button
+                                      size="xs"
+                                      variant="ghost"
+                                      className="ml-auto text-silver/70 hover:text-white"
+                                      onClick={() => clockOutGroup(groupRows)}
+                                      disabled={groupRows.some((r) =>
+                                        liveClockOutIds.has(r.id),
+                                      )}
+                                      title="Clock everyone in this group out at the current time"
+                                    >
+                                      Clock out all ({groupRows.length})
+                                    </Button>
+                                  )}
+                                </div>
                               </TableCell>
                             </TableRow>
                           )}
@@ -1460,13 +1760,25 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                             )}
                           </TableCell>
                           {canManage && (
-                            <TableCell className="text-right">
+                            <TableCell className="text-right whitespace-nowrap">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => clockOutNow(e)}
+                                loading={liveClockOutIds.has(e.id)}
+                                disabled={liveClockOutIds.has(e.id)}
+                              >
+                                Clock out now
+                              </Button>
                               <Button
                                 size="sm"
                                 variant="ghost"
+                                className="ml-1 text-silver/70 hover:text-white"
                                 onClick={() => setEditTarget(liveEntryToTimeEntry(e))}
+                                disabled={liveClockOutIds.has(e.id)}
+                                title="Open the edit drawer to type an exact clock-out time"
                               >
-                                Clock out
+                                Adjust…
                               </Button>
                             </TableCell>
                           )}
@@ -1524,13 +1836,24 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                         </span>
                       </div>
                       {canManage && (
-                        <div className="mt-2 flex justify-end">
+                        <div className="mt-2 flex justify-end gap-1">
                           <Button
                             size="sm"
                             variant="ghost"
+                            className="text-silver/70 hover:text-white"
                             onClick={() => setEditTarget(liveEntryToTimeEntry(e))}
+                            disabled={liveClockOutIds.has(e.id)}
                           >
-                            Clock out
+                            Adjust…
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => clockOutNow(e)}
+                            loading={liveClockOutIds.has(e.id)}
+                            disabled={liveClockOutIds.has(e.id)}
+                          >
+                            Clock out now
                           </Button>
                         </div>
                       )}
@@ -1684,6 +2007,35 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                   </Select>
                 </div>
               )}
+              <div>
+                <span className="block text-2xs uppercase tracking-wider text-silver mb-1">
+                  Range
+                </span>
+                <div
+                  className="flex h-9 items-center gap-1.5"
+                  role="group"
+                  aria-label="Quick date range"
+                >
+                  {RANGE_PRESETS.map(([preset, label]) => {
+                    const isActive = activePreset === preset;
+                    return (
+                      <Button
+                        key={preset}
+                        size="xs"
+                        variant="outline"
+                        aria-pressed={isActive}
+                        onClick={() => applyPreset(preset)}
+                        className={cn(
+                          isActive &&
+                            'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
+                        )}
+                      >
+                        {label}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
               <div className="flex items-end gap-2">
                 <div>
                   <label className="block text-2xs uppercase tracking-wider text-silver mb-1">
@@ -1695,6 +2047,7 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                     max={toYmd}
                     onChange={(e) => {
                       setPeriodKey('');
+                      setActivePreset(null);
                       setFromYmd(e.target.value || defaultFromYmd());
                     }}
                     className="h-9 text-sm w-40"
@@ -1710,6 +2063,7 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                     min={fromYmd}
                     onChange={(e) => {
                       setPeriodKey('');
+                      setActivePreset(null);
                       setToYmd(e.target.value || defaultToYmd());
                     }}
                     className="h-9 text-sm w-40"
@@ -1746,7 +2100,11 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
 
               <button
                 type="button"
-                onClick={() => setAnomaliesOnly((v) => !v)}
+                onClick={() => {
+                  // Turning the lens off retires its type chips too.
+                  if (anomaliesOnly) setAnomalyTypes([]);
+                  setAnomaliesOnly(!anomaliesOnly);
+                }}
                 className={cn(
                   'h-9 rounded-md border px-3 text-sm transition-colors self-end',
                   anomaliesOnly
@@ -1835,6 +2193,52 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
               )}
 
             </div>
+
+            {/* Anomaly-TYPE chips — only while the anomalies lens is on.
+                Chip styling matches AnomalyChips; multiple picks OR. */}
+            {anomaliesOnly && anomalyTypeOptions.length > 0 && (
+              <div
+                className="flex flex-wrap items-center gap-1.5"
+                role="group"
+                aria-label="Anomaly type"
+              >
+                {anomalyTypeOptions.map(([type, count]) => {
+                  const isActive = anomalyTypes.includes(type);
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      aria-pressed={isActive}
+                      onClick={() =>
+                        setAnomalyTypes((prev) =>
+                          isActive
+                            ? prev.filter((t) => t !== type)
+                            : [...prev, type],
+                        )
+                      }
+                      className={cn(
+                        'text-2xs uppercase tracking-widest px-1.5 py-0.5 rounded border whitespace-nowrap transition-colors',
+                        isActive
+                          ? 'border-warning bg-warning/25 text-warning'
+                          : 'border-warning/40 bg-warning/10 text-warning/70 hover:text-warning',
+                      )}
+                    >
+                      {timeAnomalyLabel(type)} ({count})
+                    </button>
+                  );
+                })}
+                {anomalyTypes.length > 0 && (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => setAnomalyTypes([])}
+                    className="text-silver/70 hover:text-white"
+                  >
+                    Clear types
+                  </Button>
+                )}
+              </div>
+            )}
           </CardHeader>
 
           {/* Bulk-action toolbar — shown when rows are selected, or quietly
@@ -1891,16 +2295,34 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                     >
                       Reject {selected.size}
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={onBulkApplyBreak}
-                      disabled={bulkBusy}
-                      title="Book the standard 1-hour unpaid meal break, centered mid-shift, on each selected entry that has none (6h+ shifts only)"
-                    >
-                      <Coffee className="h-4 w-4" />
-                      Apply 1h break
-                    </Button>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={onBulkApplyBreak}
+                        disabled={bulkBusy}
+                        title="Book the standard unpaid meal break of the picked length, centered mid-shift, on each selected entry that has none (6h+ shifts only)"
+                      >
+                        <Coffee className="h-4 w-4" />
+                        Apply {bulkBreakMinutes === 60 ? '1h' : `${bulkBreakMinutes}m`}{' '}
+                        break
+                      </Button>
+                      <Select
+                        aria-label="Break length"
+                        value={String(bulkBreakMinutes)}
+                        onChange={(e) =>
+                          setBulkBreakMinutes(
+                            Number(e.target.value) as 15 | 30 | 60,
+                          )
+                        }
+                        disabled={bulkBusy}
+                        className="h-8 w-auto text-sm"
+                      >
+                        <option value="15">15 min</option>
+                        <option value="30">30 min</option>
+                        <option value="60">1 h</option>
+                      </Select>
+                    </div>
                     <Button
                       size="sm"
                       variant="ghost"
@@ -2011,6 +2433,8 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                           onOpen={openDrawer}
                           onApprove={onApprove}
                           onReject={openRejectOne}
+                          onEdit={openEditRow}
+                          onApproveAtShiftEnd={onApproveAtShiftEnd}
                         />
                       ))}
                     </TableBody>
@@ -2121,7 +2545,7 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                               e.status === 'APPROVED' ||
                               e.status === 'REJECTED') && (
                               <div
-                                className="flex gap-2 px-3 pb-3 pt-0"
+                                className="flex flex-wrap gap-2 px-3 pb-3 pt-0"
                                 data-no-row-click
                                 onClick={(ev) => ev.stopPropagation()}
                               >
@@ -2136,6 +2560,31 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                                     Approve
                                   </Button>
                                 )}
+                                {(e.status === 'COMPLETED' || e.status === 'REJECTED') &&
+                                  !!e.shiftEndsAt &&
+                                  (e.anomalies ?? []).includes('FORGOT_CLOCKOUT') && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => onApproveAtShiftEnd(e)}
+                                      loading={pendingId === e.id}
+                                      disabled={pendingId === e.id || bulkBusy}
+                                      title="Approve with the clock-out corrected to the scheduled shift end"
+                                    >
+                                      Approve at sched. end{' '}
+                                      {fmtPunchTime(e.shiftEndsAt, e.locationTimezone)}
+                                    </Button>
+                                  )}
+                                <Button
+                                  size="icon-sm"
+                                  variant="ghost"
+                                  aria-label={`Edit entry for ${e.associateName ?? 'associate'}`}
+                                  title="Edit times"
+                                  onClick={() => openEditRow(e)}
+                                  disabled={pendingId === e.id || bulkBusy}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                                </Button>
                                 {(e.status === 'COMPLETED' || e.status === 'APPROVED') && (
                                   <Button
                                     size="sm"
@@ -2216,6 +2665,8 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
         onOpenChange={setSummaryOpen}
         fromIso={ymdToIsoStart(fromYmd)}
         toIso={ymdToIsoEndExclusive(toYmd)}
+        defaultClientId={clientFilter}
+        defaultLocationId={locationFilter}
       />
 
       <PayrollSheetDialog
@@ -2223,6 +2674,7 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
         onOpenChange={setPayrollOpen}
         defaultFromYmd={fromYmd}
         defaultToYmd={toYmd}
+        defaultClientId={clientFilter}
       />
 
       {canExportPayrollPii && (
@@ -2231,6 +2683,7 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
           onOpenChange={setExternalOpen}
           defaultFromYmd={fromYmd}
           defaultToYmd={toYmd}
+          defaultClientId={clientFilter}
         />
       )}
 
@@ -2255,18 +2708,49 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
       )}
       {editTarget && (
         <TimeEntryFormDrawer
+          // Keyed so "Save, approve & next" remounts the drawer on the next
+          // entry (its fields initialize from `entry` once, on mount).
+          key={editTarget.id}
           mode="edit"
           entry={editTarget}
+          showApproveNext={tab === 'queue'}
           onClose={() => {
             setEditTarget(null);
             setEditFromDetail(false);
           }}
-          onSaved={async (updated) => {
+          onSaved={async (updated, advanceNext) => {
+            const savedId = editTarget.id;
             setEditTarget(null);
-            // Back to the detail drawer the reviewer came from, showing the
-            // saved (and possibly approved) entry — not down to the list.
-            if (editFromDetail && updated) setDrawerTarget(updated);
-            setEditFromDetail(false);
+            if (advanceNext) {
+              // Triage loop: jump straight to the next flagged entry still
+              // pending review in the CURRENT view (anomaly-type chips
+              // included), wrapping past the end of the list.
+              setEditFromDetail(false);
+              const list = visibleEntries ?? [];
+              const idx = list.findIndex((x) => x.id === savedId);
+              const ordered =
+                idx >= 0 ? [...list.slice(idx + 1), ...list.slice(0, idx)] : list;
+              const next = ordered.find(
+                (x) =>
+                  x.id !== savedId &&
+                  x.status === 'COMPLETED' &&
+                  (x.anomalies?.length ?? 0) > 0 &&
+                  (anomalyTypes.length === 0 ||
+                    (x.anomalies ?? []).some((a) => anomalyTypes.includes(a))),
+              );
+              if (next) {
+                setEditTarget(next);
+              } else {
+                toast.success('All caught up — no more flagged entries in view.');
+              }
+            } else if (editFromDetail && updated) {
+              // Back to the detail drawer the reviewer came from, showing
+              // the saved (and possibly approved) entry — not the list.
+              setDrawerTarget(updated);
+              setEditFromDetail(false);
+            } else {
+              setEditFromDetail(false);
+            }
             await afterMutation();
           }}
         />
@@ -2492,6 +2976,8 @@ const QueueEntryRow = memo(function QueueEntryRow({
   onOpen,
   onApprove,
   onReject,
+  onEdit,
+  onApproveAtShiftEnd,
 }: {
   entry: TimeEntry;
   canManage: boolean;
@@ -2504,8 +2990,17 @@ const QueueEntryRow = memo(function QueueEntryRow({
   onOpen: (entry: TimeEntry) => void;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
+  onEdit: (entry: TimeEntry) => void;
+  onApproveAtShiftEnd: (entry: TimeEntry) => void;
 }) {
   const isSelectable = showSelect && e.status === 'COMPLETED';
+  // FORGOT_CLOCKOUT + a scheduled end on a non-ACTIVE, approvable row →
+  // offer the one-click "approve at the scheduled end" correction.
+  const canApproveAtShiftEnd =
+    canManage &&
+    (e.status === 'COMPLETED' || e.status === 'REJECTED') &&
+    !!e.shiftEndsAt &&
+    (e.anomalies ?? []).includes('FORGOT_CLOCKOUT');
   return (
     <TableRow
       className="group cursor-pointer"
@@ -2575,6 +3070,30 @@ const QueueEntryRow = memo(function QueueEntryRow({
       {canManage && (
         <TableCell className="text-right whitespace-nowrap">
           <div className="can-hover:opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity inline-flex items-center gap-1">
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label={`Edit entry for ${e.associateName ?? 'associate'}`}
+              title="Edit times"
+              onClick={() => onEdit(e)}
+              disabled={isPending || bulkBusy}
+              className="opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+            >
+              <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+            </Button>
+            {canApproveAtShiftEnd && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onApproveAtShiftEnd(e)}
+                loading={isPending}
+                disabled={isPending || bulkBusy}
+                title="Approve with the clock-out corrected to the scheduled shift end"
+              >
+                Approve at sched. end{' '}
+                {fmtPunchTime(e.shiftEndsAt!, e.locationTimezone)}
+              </Button>
+            )}
             {(e.status === 'COMPLETED' || e.status === 'REJECTED') && (
               <Button
                 size="sm"
@@ -2899,13 +3418,19 @@ function TimeEntryFormDrawer({
   entry,
   onClose,
   onSaved,
+  showApproveNext = false,
 }: {
   mode: 'create' | 'edit';
   entry?: TimeEntry;
   onClose: () => void;
   /** Called after a successful save with the freshest server copy of the
-   *  entry (when one is available) so the caller can reopen its detail. */
-  onSaved: (updated?: TimeEntry) => void;
+   *  entry (when one is available) so the caller can reopen its detail.
+   *  `advanceNext` is true when "Save, approve & next" was used — the
+   *  caller advances the drawer to the next flagged entry. */
+  onSaved: (updated?: TimeEntry, advanceNext?: boolean) => void;
+  /** Offer the "Save, approve & next" triage button (queue context only —
+   *  advancing needs the queue's visible list behind it). */
+  showApproveNext?: boolean;
 }) {
   const [assoc, setAssoc] = useState<{ id: string; name: string } | null>(
     mode === 'edit' && entry
@@ -2969,9 +3494,10 @@ function TimeEntryFormDrawer({
       : [],
   );
   const [busy, setBusy] = useState(false);
-  // Which footer button is in flight — both share `busy`, only the clicked
+  // Which footer button is in flight — all share `busy`, only the clicked
   // one shows its spinner.
   const [approveIntent, setApproveIntent] = useState(false);
+  const [nextIntent, setNextIntent] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const isActive = mode === 'edit' && entry?.status === 'ACTIVE';
@@ -3087,8 +3613,9 @@ function TimeEntryFormDrawer({
     return be > bs ? acc + (be - bs) / 60_000 : acc;
   }, 0);
 
-  const submit = async (andApprove = false) => {
+  const submit = async (andApprove = false, andNext = false) => {
     setApproveIntent(andApprove);
+    setNextIntent(andNext);
     setErr(null);
     if (mode === 'create' && !assoc) {
       setErr('Pick an associate.');
@@ -3256,7 +3783,7 @@ function TimeEntryFormDrawer({
           );
         }
       }
-      onSaved(latest);
+      onSaved(latest, andNext);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : 'Save failed.');
     } finally {
@@ -3496,15 +4023,30 @@ function TimeEntryFormDrawer({
             clock-out is set (an ACTIVE entry can't be approved) and the
             entry isn't already approved. */}
         {mode === 'edit' && entry && entry.status !== 'APPROVED' && !!endTime && (
-          <Button
-            variant="outline"
-            onClick={() => submit(true)}
-            loading={busy && approveIntent}
-            disabled={busy}
-          >
-            <CheckCircle2 className="mr-2 h-4 w-4" />
-            Save &amp; approve
-          </Button>
+          <>
+            <Button
+              variant="outline"
+              onClick={() => submit(true)}
+              loading={busy && approveIntent && !nextIntent}
+              disabled={busy}
+            >
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Save &amp; approve
+            </Button>
+            {/* Triage loop: same save+approve, then the caller advances
+                this drawer to the next flagged entry in view. */}
+            {showApproveNext && (
+              <Button
+                variant="outline"
+                onClick={() => submit(true, true)}
+                loading={busy && nextIntent}
+                disabled={busy}
+              >
+                <CheckCircle2 className="mr-2 h-4 w-4" />
+                Save, approve &amp; next
+              </Button>
+            )}
+          </>
         )}
         <Button
           onClick={() => submit(false)}
@@ -3525,11 +4067,17 @@ function SummaryExportDialog({
   onOpenChange,
   fromIso,
   toIso,
+  defaultClientId,
+  defaultLocationId,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   fromIso: string;
   toIso: string;
+  /** The page's current client/site scope — seeds the dialog on open so
+   *  the common "export what I'm looking at" case is zero extra clicks. */
+  defaultClientId: string;
+  defaultLocationId: string;
 }) {
   const { user } = useAuth();
   // Client-bound roles can't list clients (403) — pin the dropdown to
@@ -3546,8 +4094,22 @@ function SummaryExportDialog({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // The clientId-change effect below wipes locationId (an in-dialog client
+  // switch invalidates the site pick); this ref carries the page's seed
+  // across that wipe when opening re-seeds BOTH at once.
+  const seedLocationRef = useRef('');
   useEffect(() => {
-    setLocationId('');
+    if (!open) return;
+    seedLocationRef.current = defaultLocationId;
+    setClientId(boundedClient?.id ?? defaultClientId);
+    setLocationId(defaultLocationId);
+    // boundedClient is a per-render literal; open/defaults drive this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, defaultClientId, defaultLocationId]);
+
+  useEffect(() => {
+    setLocationId(seedLocationRef.current);
+    seedLocationRef.current = '';
     if (!clientId) {
       setLocations([]);
       return;
@@ -3979,11 +4541,14 @@ function ExternalPayrollSheetDialog({
   onOpenChange,
   defaultFromYmd,
   defaultToYmd,
+  defaultClientId,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   defaultFromYmd: string;
   defaultToYmd: string;
+  /** The page's current client scope — seeded on open, still editable. */
+  defaultClientId: string;
 }) {
   const { user } = useAuth();
   const boundedClient = user?.clientId
@@ -4001,10 +4566,13 @@ function ExternalPayrollSheetDialog({
     if (!open) return;
     setFromYmd(defaultFromYmd);
     setToYmd(defaultToYmd);
+    setClientId(boundedClient?.id ?? defaultClientId);
     setErr(null);
     // Re-arm every time. A sticky acknowledgement would defeat the point.
     setAcknowledged(false);
-  }, [open, defaultFromYmd, defaultToYmd]);
+    // boundedClient is a per-render literal; open/defaults drive this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, defaultFromYmd, defaultToYmd, defaultClientId]);
 
   const download = async (format: 'pdf' | 'xlsx') => {
     if (!fromYmd || !toYmd || toYmd < fromYmd) {
@@ -4189,11 +4757,15 @@ function PayrollSheetDialog({
   onOpenChange,
   defaultFromYmd,
   defaultToYmd,
+  defaultClientId,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   defaultFromYmd: string;
   defaultToYmd: string;
+  /** The page's current client scope — seeded on open, still editable.
+   *  Kills the "Pick a client first." stop for the common case. */
+  defaultClientId: string;
 }) {
   const { user } = useAuth();
   // Client-bound roles can't list clients (403) — pin the required client
@@ -4214,8 +4786,11 @@ function PayrollSheetDialog({
     if (!open) return;
     setFromYmd(defaultFromYmd);
     setToYmd(defaultToYmd);
+    setClientId(boundedClient?.id ?? defaultClientId);
     setErr(null);
-  }, [open, defaultFromYmd, defaultToYmd]);
+    // boundedClient is a per-render literal; open/defaults drive this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, defaultFromYmd, defaultToYmd, defaultClientId]);
 
   const download = async (format: 'pdf' | 'xlsx') => {
     if (!clientId) {
@@ -4235,8 +4810,12 @@ function PayrollSheetDialog({
         clientId,
       });
       if (noClientCount > 0) {
+        // Honest about the fix: there is no client field on a time entry —
+        // the client comes from the associate's job at punch time, so the
+        // old "attach the client" instruction pointed at a control that
+        // doesn't exist.
         toast.warning(
-          `${noClientCount} approved ${noClientCount === 1 ? 'entry' : 'entries'} in this period ${noClientCount === 1 ? 'has' : 'have'} no client attached and ${noClientCount === 1 ? 'was' : 'were'} left out of the sheet. Find ${noClientCount === 1 ? 'it' : 'them'} under the Approved filter and attach the client.`,
+          `${noClientCount} approved ${noClientCount === 1 ? 'entry' : 'entries'} in this period ${noClientCount === 1 ? 'has' : 'have'} no client attached and ${noClientCount === 1 ? 'was' : 'were'} left out of the sheet. An entry takes its client from the associate's job at punch time — assign those associates to a job for this client so their shifts land on future sheets.`,
           { duration: 12000 },
         );
       }
@@ -4362,6 +4941,8 @@ interface KpiCardProps {
   label: string;
   value: string;
   tone: 'success' | 'warning' | 'alert' | 'default' | 'silver';
+  /** Present = the tile is a shortcut (renders as a real button). */
+  onClick?: () => void;
 }
 
 const TONE_TEXT: Record<KpiCardProps['tone'], string> = {
@@ -4372,7 +4953,7 @@ const TONE_TEXT: Record<KpiCardProps['tone'], string> = {
   silver: 'text-silver',
 };
 
-function KpiCard({ icon: Icon, label, value, tone }: KpiCardProps) {
+function KpiCard({ icon: Icon, label, value, tone, onClick }: KpiCardProps) {
   if (value === '—') {
     return (
       <Card className="p-4">
@@ -4386,8 +4967,8 @@ function KpiCard({ icon: Icon, label, value, tone }: KpiCardProps) {
       </Card>
     );
   }
-  return (
-    <Card className="p-4">
+  const body = (
+    <>
       <div className="flex items-start justify-between mb-1">
         <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
           {label}
@@ -4397,8 +4978,22 @@ function KpiCard({ icon: Icon, label, value, tone }: KpiCardProps) {
       <div className={cn('text-3xl font-display tabular-nums', TONE_TEXT[tone])}>
         {value}
       </div>
-    </Card>
+    </>
   );
+  if (onClick) {
+    // A real <button> (Card renders a div) so the shortcut is keyboard-
+    // and screen-reader reachable; classes mirror Card + interactive.
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="rounded-lg border border-navy-secondary bg-navy text-white elev-1 p-4 text-left transition-colors hover:border-steel hover:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+      >
+        {body}
+      </button>
+    );
+  }
+  return <Card className="p-4">{body}</Card>;
 }
 
 interface RejectTimeDialogProps {
@@ -4408,6 +5003,14 @@ interface RejectTimeDialogProps {
   busy: boolean;
   onSubmit: (reason: string) => void;
 }
+
+// The three reasons reviewers type over and over — one tap fills the box,
+// still editable, still required.
+const REJECT_REASON_PRESETS = [
+  'Forgot to clock out — please re-submit',
+  'Punched at the wrong site',
+  'Duplicate punch',
+];
 
 function RejectTimeDialog({ open, onOpenChange, count, busy, onSubmit }: RejectTimeDialogProps) {
   const [reason, setReason] = useState('');
@@ -4436,6 +5039,23 @@ function RejectTimeDialog({ open, onOpenChange, count, busy, onSubmit }: RejectT
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="grid gap-3">
+          <div className="flex flex-wrap gap-1.5">
+            {REJECT_REASON_PRESETS.map((preset) => (
+              <Button
+                key={preset}
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={() => setReason(preset)}
+                className={cn(
+                  reason === preset &&
+                    'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
+                )}
+              >
+                {preset}
+              </Button>
+            ))}
+          </div>
           <Textarea
             autoFocus
             required

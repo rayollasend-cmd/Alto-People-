@@ -12,7 +12,7 @@ import {
   Search,
   CheckCircle2,
 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type {
   TimesheetWeekResponse,
   TimesheetAssociateDetailResponse,
@@ -544,20 +544,47 @@ export function TimesheetsView() {
               {data.issues.length} {data.issues.length === 1 ? 'issue' : 'issues'} to review before
               filing
             </div>
-            <Button variant="ghost" size="sm" onClick={() => navigate('/time-attendance')}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() =>
+                navigate(
+                  `/time-attendance?tab=queue&from=${data.weekStart}&to=${data.weekEndIso}`,
+                )
+              }
+            >
               Review in Time &amp; Attendance
             </Button>
           </div>
           <ul className="space-y-1 text-xs">
-            {data.issues.map((iss, i) => (
-              <li key={`${iss.associateId ?? i}-${iss.kind}`} className="flex flex-wrap gap-x-2">
-                <span className="shrink-0 font-semibold text-gold/90">
-                  {ISSUE_LABEL[iss.kind]}
-                </span>
-                <span className="font-medium text-white">{iss.worker}</span>
-                <span className="text-silver/70">— {iss.detail}</span>
-              </li>
-            ))}
+            {data.issues.map((iss, i) => {
+              const inner = (
+                <>
+                  <span className="shrink-0 font-semibold text-gold/90">
+                    {ISSUE_LABEL[iss.kind]}
+                  </span>
+                  <span className="font-medium text-white group-hover:underline">
+                    {iss.worker}
+                  </span>
+                  <span className="text-silver/70">— {iss.detail}</span>
+                </>
+              );
+              return (
+                <li key={`${iss.associateId ?? i}-${iss.kind}`}>
+                  {iss.associateId ? (
+                    <Link
+                      to={`/time-attendance?tab=queue&associate=${iss.associateId}&name=${encodeURIComponent(iss.worker)}&from=${data.weekStart}&to=${data.weekEndIso}`}
+                      className="group flex flex-wrap gap-x-2"
+                      title="Open this associate's week in the approval queue"
+                    >
+                      {inner}
+                    </Link>
+                  ) : (
+                    <div className="flex flex-wrap gap-x-2">{inner}</div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       ) : data && allRows.length > 0 ? (

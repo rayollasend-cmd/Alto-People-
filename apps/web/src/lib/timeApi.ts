@@ -254,22 +254,50 @@ export function adminEditTimeEntry(
   }));
 }
 
+/** The bulk contracts cap entryIds at 200 per request, but the queue loads
+ *  (and select-alls) up to 500 rows — an unchunked "Approve 347" was a
+ *  guaranteed 400. Chunk sequentially and merge the per-chunk counts so
+ *  callers still see one BulkTimeResponse for the whole selection. */
+const BULK_TIME_CHUNK_SIZE = 200;
+
+async function bulkTimeInChunks(
+  entryIds: string[],
+  call: (ids: string[]) => Promise<BulkTimeResponse>,
+): Promise<BulkTimeResponse> {
+  const total: BulkTimeResponse = { succeeded: 0, failed: 0, results: [] };
+  for (let i = 0; i < entryIds.length; i += BULK_TIME_CHUNK_SIZE) {
+    const res = await call(entryIds.slice(i, i + BULK_TIME_CHUNK_SIZE));
+    total.succeeded += res.succeeded;
+    total.failed += res.failed;
+    total.results.push(...res.results);
+  }
+  return total;
+}
+
 export function bulkApproveTimeEntries(
   body: BulkTimeApproveInput
 ): Promise<BulkTimeResponse> {
-  return announced(apiFetch<BulkTimeResponse>('/time/admin/bulk-approve', {
-    method: 'POST',
-    body,
-  }));
+  return announced(
+    bulkTimeInChunks(body.entryIds, (ids) =>
+      apiFetch<BulkTimeResponse>('/time/admin/bulk-approve', {
+        method: 'POST',
+        body: { entryIds: ids },
+      }),
+    ),
+  );
 }
 
 export function bulkRejectTimeEntries(
   body: BulkTimeRejectInput
 ): Promise<BulkTimeResponse> {
-  return announced(apiFetch<BulkTimeResponse>('/time/admin/bulk-reject', {
-    method: 'POST',
-    body,
-  }));
+  return announced(
+    bulkTimeInChunks(body.entryIds, (ids) =>
+      apiFetch<BulkTimeResponse>('/time/admin/bulk-reject', {
+        method: 'POST',
+        body: { entryIds: ids, reason: body.reason },
+      }),
+    ),
+  );
 }
 
 /** Admin break editing — each call returns the full updated entry so the
@@ -300,15 +328,16 @@ export function deleteTimeEntryBreak(breakId: string): Promise<TimeEntry> {
   }));
 }
 
-/** Book the standard unpaid 1-hour meal break, centered mid-shift, on each
- *  selected COMPLETED entry that has none — the reviewer's answer to a
+/** Book the standard unpaid meal break (default 1h), centered mid-shift, on
+ *  each selected COMPLETED entry that has none — the reviewer's answer to a
  *  NO_BREAK flag when the crew skipped their break punches. */
 export function bulkApplyBreakTimeEntries(
-  entryIds: string[]
+  entryIds: string[],
+  minutes?: 15 | 30 | 60,
 ): Promise<BulkTimeResponse> {
   return announced(apiFetch<BulkTimeResponse>('/time/admin/bulk-apply-break', {
     method: 'POST',
-    body: { entryIds },
+    body: { entryIds, ...(minutes ? { minutes } : {}) },
   }));
 }
 

@@ -72,7 +72,8 @@ hrCases123Router.post('/hr-cases', requireAuth, async (req, res) => {
     subject: `New HR case: ${input.subject}`,
     body: `A new HR case was filed (category ${input.category}, priority ${input.priority}): "${input.subject}".`,
     category: 'hr-cases',
-    linkUrl: '/hr-cases',
+    // ?case=<id> opens that case's drawer directly on the HR-cases page.
+    linkUrl: `/hr-cases?case=${created.id}`,
     excludeUserId: req.user!.id,
   });
   res.status(201).json({ id: created.id });
@@ -273,7 +274,7 @@ hrCases123Router.post(
         subject: 'New reply on your HR case',
         body: `HR replied on your case "${c.subject}". Open HR cases to read and respond.`,
         category: 'hr-cases',
-        linkUrl: '/hr-cases',
+        linkUrl: `/hr-cases?case=${id}`,
         emailFallback: true,
       });
     }
@@ -319,7 +320,7 @@ hrCases123Router.patch('/hr-cases/:id', MANAGE, async (req, res) => {
         `Your case "${c.subject}" has been marked resolved.` +
         (resolution ? ` Resolution: ${resolution}` : ''),
       category: 'hr-cases',
-      linkUrl: '/hr-cases',
+      linkUrl: `/hr-cases?case=${id}`,
       emailFallback: true,
     });
   }

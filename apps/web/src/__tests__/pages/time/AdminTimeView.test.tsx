@@ -43,6 +43,8 @@ vi.mock('@/lib/schedulingApi', () => ({
 import {
   addTimeEntryBreak,
   adminCreateTimeEntry,
+  adminEditTimeEntry,
+  approveTimeEntry,
   exportTimeEntries,
   getActiveDashboard,
   listAdminTimeEntries,
@@ -81,7 +83,7 @@ const AUTH_VALUE = {
   can: () => true,
 } as never;
 
-function renderQueueTab() {
+function renderAtPath(path: string) {
   // Fresh client per render — the view's dialogs read the shared
   // ['clients','list'] key via useClients(), and a leaked cache would
   // couple tests.
@@ -91,13 +93,17 @@ function renderQueueTab() {
   render(
     <QueryClientProvider client={queryClient}>
       <AuthContext.Provider value={AUTH_VALUE}>
-        <MemoryRouter>
+        <MemoryRouter initialEntries={[path]}>
           <AdminTimeView canManage />
         </MemoryRouter>
       </AuthContext.Provider>
     </QueryClientProvider>,
   );
   return userEvent.setup();
+}
+
+function renderQueueTab() {
+  return renderAtPath('/');
 }
 
 beforeEach(() => {
@@ -658,5 +664,231 @@ describe('<AdminTimeView> individual timesheet (focus mode)', () => {
     );
     // The sortable triage table is back.
     expect(screen.getByRole('table')).toBeInTheDocument();
+  });
+});
+
+describe('<AdminTimeView> quick-range chips', () => {
+  /** Local Saturday that starts the org Sat→Fri week containing `d`. */
+  const satWeekStart = (d: Date) => {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    x.setDate(x.getDate() - ((x.getDay() + 1) % 7));
+    return x;
+  };
+
+  it('"Last week" fills the previous Sat→Fri window; a manual edit clears the chip', async () => {
+    const user = renderQueueTab();
+    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
+
+    await user.click(await screen.findByRole('button', { name: /^last week$/i }));
+
+    const lastSat = satWeekStart(new Date());
+    lastSat.setDate(lastSat.getDate() - 7);
+    const lastFri = new Date(lastSat);
+    lastFri.setDate(lastFri.getDate() + 6);
+    expect(screen.getByDisplayValue(localDateStr(lastSat))).toBeInTheDocument();
+    expect(screen.getByDisplayValue(localDateStr(lastFri))).toBeInTheDocument();
+
+    const chip = screen.getByRole('button', { name: /^last week$/i });
+    expect(chip).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.change(screen.getByDisplayValue(localDateStr(lastSat)), {
+      target: { value: '2026-01-01' },
+    });
+    expect(chip).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('picking a pay period clears the active chip', async () => {
+    const user = renderQueueTab();
+    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
+    await user.click(await screen.findByRole('button', { name: /^this week$/i }));
+    expect(
+      screen.getByRole('button', { name: /^this week$/i }),
+    ).toHaveAttribute('aria-pressed', 'true');
+
+    await user.selectOptions(
+      await screen.findByLabelText(/pay period/i),
+      '2026-06-22|2026-06-28',
+    );
+    expect(
+      screen.getByRole('button', { name: /^this week$/i }),
+    ).toHaveAttribute('aria-pressed', 'false');
+  });
+});
+
+describe('<AdminTimeView> ?from/?to deep link', () => {
+  it('consumes valid params into the queue date window', async () => {
+    renderAtPath('/?tab=queue&from=2026-06-01&to=2026-06-10');
+    expect(await screen.findByDisplayValue('2026-06-01')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('2026-06-10')).toBeInTheDocument();
+  });
+
+  it('ignores an inverted pair (consumed, defaults kept)', async () => {
+    renderAtPath('/?tab=queue&from=2026-06-10&to=2026-06-01');
+    await screen.findByRole('button', { name: /anomalies only/i });
+    expect(screen.queryByDisplayValue('2026-06-10')).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue('2026-06-01')).not.toBeInTheDocument();
+  });
+
+  it('composes with an ?associate deep link', async () => {
+    renderAtPath(
+      '/?associate=a-maria&name=Maria%20Lopez&from=2026-06-01&to=2026-06-10',
+    );
+    expect(
+      await screen.findByText(/maria lopez — timesheet/i),
+    ).toBeInTheDocument();
+    expect(await screen.findByDisplayValue('2026-06-01')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('2026-06-10')).toBeInTheDocument();
+  });
+});
+
+describe('<AdminTimeView> anomaly triage', () => {
+  const base = {
+    associateId: 'a1',
+    clientId: null,
+    clientName: 'Walmart',
+    status: 'COMPLETED' as const,
+    notes: null,
+    rejectionReason: null,
+    approvedById: null,
+    approverEmail: null,
+    approvedAt: null,
+    minutesElapsed: 480,
+    netMinutes: 480,
+  };
+  const FLAGGED = [
+    {
+      ...base,
+      id: 'n1',
+      associateName: 'Nora NoBreak',
+      clockInAt: '2026-06-24T06:00:00.000Z',
+      clockOutAt: '2026-06-24T14:00:00.000Z',
+      anomalies: ['NO_BREAK'],
+    },
+    {
+      ...base,
+      id: 'f1',
+      associateName: 'Frank Forgot',
+      clockInAt: '2026-06-24T14:00:00.000Z',
+      clockOutAt: '2026-06-25T02:00:00.000Z',
+      anomalies: ['FORGOT_CLOCKOUT'],
+      shiftStartsAt: '2026-06-24T14:00:00.000Z',
+      shiftEndsAt: '2026-06-24T22:00:00.000Z',
+    },
+    {
+      ...base,
+      id: 'c1',
+      associateName: 'Carl Clean',
+      clockInAt: '2026-06-24T09:00:00.000Z',
+      clockOutAt: '2026-06-24T17:00:00.000Z',
+      anomalies: [],
+    },
+  ];
+
+  it('anomaly-type chips list the present types with counts and OR together', async () => {
+    vi.mocked(listAdminTimeEntries).mockResolvedValue({ entries: FLAGGED } as never);
+    const user = renderQueueTab();
+    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
+    await screen.findAllByText('Carl Clean');
+
+    await user.click(screen.getByRole('button', { name: /anomalies only/i }));
+    // Lens on: clean rows gone, one chip per type present.
+    expect(screen.queryByText('Carl Clean')).not.toBeInTheDocument();
+    const noBreakChip = await screen.findByRole('button', {
+      name: /no break taken \(1\)/i,
+    });
+    const forgotChip = screen.getByRole('button', {
+      name: /forgot clock-out \(1\)/i,
+    });
+
+    await user.click(noBreakChip);
+    expect(screen.getAllByText('Nora NoBreak').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Frank Forgot')).not.toBeInTheDocument();
+
+    // Second chip ORs in the other type.
+    await user.click(forgotChip);
+    expect(screen.getAllByText('Nora NoBreak').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Frank Forgot').length).toBeGreaterThan(0);
+  });
+
+  it('offers "Approve at sched. end" on FORGOT_CLOCKOUT rows and sends the override', async () => {
+    vi.mocked(listAdminTimeEntries).mockResolvedValue({ entries: FLAGGED } as never);
+    vi.mocked(approveTimeEntry).mockResolvedValue({} as never);
+    const user = renderQueueTab();
+    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
+    await screen.findAllByText('Frank Forgot');
+
+    // Only the FORGOT_CLOCKOUT row with a scheduled end offers it. (The
+    // clickable row itself is also role=button, so anchor to the start.)
+    const buttons = screen.getAllByRole('button', {
+      name: /^approve at sched\. end/i,
+    });
+    expect(buttons).toHaveLength(1);
+    await user.click(buttons[0]);
+    await waitFor(() =>
+      expect(approveTimeEntry).toHaveBeenCalledWith('f1', {
+        clockOutAt: '2026-06-24T22:00:00.000Z',
+      }),
+    );
+  });
+
+  it('reject presets fill the reason box (still editable)', async () => {
+    vi.mocked(listAdminTimeEntries).mockResolvedValue({ entries: FLAGGED } as never);
+    const user = renderQueueTab();
+    await user.click(await screen.findByRole('tab', { name: /approval queue/i }));
+    await screen.findAllByText('Carl Clean');
+
+    await user.click(screen.getAllByRole('button', { name: /^reject$/i })[0]);
+    const dialog = within(await screen.findByRole('dialog'));
+    await user.click(dialog.getByRole('button', { name: /duplicate punch/i }));
+    expect(dialog.getByRole('textbox')).toHaveValue('Duplicate punch');
+  });
+});
+
+describe('<AdminTimeView> live board one-click clock out', () => {
+  const ACTIVE_ROW = {
+    id: 'l1',
+    associateId: 'a1',
+    associateName: 'Ana Morning',
+    clientId: null,
+    clientName: 'Walmart',
+    jobId: null,
+    jobName: null,
+    clockInAt: '2026-06-24T06:00:00.000Z',
+    minutesElapsed: 125,
+    onBreak: false,
+    geofenceOk: null,
+    clockInLat: null,
+    clockInLng: null,
+    shiftStartsAt: null,
+    shiftEndsAt: null,
+  };
+
+  it('clocks the row out at "now" without opening the drawer', async () => {
+    vi.mocked(getActiveDashboard).mockResolvedValue({
+      entries: [ACTIVE_ROW],
+    } as never);
+    vi.mocked(adminEditTimeEntry).mockResolvedValue({} as never);
+    const user = renderQueueTab();
+    await screen.findAllByText('Ana Morning');
+
+    await user.click(screen.getByRole('button', { name: /clock out now/i }));
+    await waitFor(() => expect(adminEditTimeEntry).toHaveBeenCalled());
+    const [id, body] = vi.mocked(adminEditTimeEntry).mock.calls.at(-1)!;
+    expect(id).toBe('l1');
+    expect(typeof body.clockOutAt).toBe('string');
+    // No drawer opened — this is the one-click path.
+    expect(screen.queryByText(/edit time entry/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('<AdminTimeView> clickable KPI tiles', () => {
+  it('"Pending review" jumps to the approval queue', async () => {
+    const user = renderQueueTab();
+    // Tile becomes a button once its count resolves (mock: 0).
+    const tile = await screen.findByRole('button', { name: /pending review/i });
+    await user.click(tile);
+    expect(
+      await screen.findByRole('button', { name: /anomalies only/i }),
+    ).toBeInTheDocument();
   });
 });

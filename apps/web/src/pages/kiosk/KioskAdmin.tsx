@@ -1,4 +1,5 @@
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -48,6 +49,8 @@ import {
 import { listDirectory } from '@/lib/directoryApi';
 import { listClientLocations } from '@/lib/clientsApi';
 import { useClients } from '@/lib/useClients';
+import { useStoreScope } from '@/lib/storeScope';
+import { usePersistentState } from '@/lib/usePersistentState';
 import type { LocationSummary } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
@@ -90,7 +93,24 @@ type Tab = 'devices' | 'pins' | 'review' | 'log' | 'faces';
 export function KioskAdmin() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:time') : false;
-  const [tab, setTab] = useState<Tab>('devices');
+  // Active tab lives in ?tab= so views are linkable ("check the punch log")
+  // and a refresh doesn't dump HR back on Devices. Replace-writes keep tab
+  // hops from stacking up in Back history.
+  const [tabParams, setTabParams] = useSearchParams();
+  const tabParam = tabParams.get('tab');
+  const tab: Tab =
+    tabParam === 'pins' ||
+    tabParam === 'review' ||
+    tabParam === 'log' ||
+    tabParam === 'faces'
+      ? tabParam
+      : 'devices';
+  const setTab = (next: Tab) => {
+    const params = new URLSearchParams(tabParams);
+    if (next === 'devices') params.delete('tab');
+    else params.set('tab', next);
+    setTabParams(params, { replace: true });
+  };
 
   // Lightweight counts for the tab badges so HR sees pending review work
   // and broken kiosks at a glance without opening each tab. Refetched on
@@ -273,6 +293,21 @@ function isDeviceOffline(d: KioskDevice): boolean {
   return ageMs > OFFLINE_THRESHOLD_HOURS * 60 * 60 * 1000;
 }
 
+// Active devices whose token dies within 14 days — the kiosk stops
+// accepting punches the moment it lapses (the hourly server job also
+// emails admins at the 14- and 3-day marks).
+function isTokenExpiringSoon(d: KioskDevice): boolean {
+  if (!d.isActive || !d.tokenExpiresAt) return false;
+  const msLeft = new Date(d.tokenExpiresAt).getTime() - Date.now();
+  return msLeft > 0 && msLeft <= 14 * 24 * 60 * 60 * 1000;
+}
+
+// Table sort band: problem devices first — offline (punches silently
+// lost) ahead of token-expiring ahead of healthy.
+function deviceHealthRank(d: KioskDevice): number {
+  return isDeviceOffline(d) ? 0 : isTokenExpiringSoon(d) ? 1 : 2;
+}
+
 function DevicesTab({
   canManage,
   onChanged,
@@ -300,16 +335,23 @@ function DevicesTab({
   }, []);
 
   const offline = rows ? rows.filter(isDeviceOffline) : [];
-  // Active devices whose token dies within 14 days — the kiosk stops
-  // accepting punches the moment it lapses, so name them here (the
-  // hourly server job also emails admins at the 14- and 3-day marks).
-  const expiringSoon = rows
-    ? rows.filter((d) => {
-        if (!d.isActive || !d.tokenExpiresAt) return false;
-        const msLeft = new Date(d.tokenExpiresAt).getTime() - Date.now();
-        return msLeft > 0 && msLeft <= 14 * 24 * 60 * 60 * 1000;
-      })
-    : [];
+  const expiringSoon = rows ? rows.filter(isTokenExpiringSoon) : [];
+  // The health tiles double as filters over the table; 'all' = no filter.
+  const [healthFilter, setHealthFilter] = useState<'all' | 'offline' | 'expiring'>(
+    'all',
+  );
+  // Problem devices surface first regardless of filter. sort() is stable,
+  // so within each health band the server's ordering is untouched.
+  const visibleRows = useMemo(() => {
+    if (!rows) return null;
+    const list =
+      healthFilter === 'offline'
+        ? rows.filter(isDeviceOffline)
+        : healthFilter === 'expiring'
+          ? rows.filter(isTokenExpiringSoon)
+          : rows;
+    return [...list].sort((a, b) => deviceHealthRank(a) - deviceHealthRank(b));
+  }, [rows, healthFilter]);
   // "Front Door (Walmart FB), Break Room (Acme)" — enough to act on
   // without scanning the table; truncate past three.
   const nameList = (ds: KioskDevice[]) => {
@@ -323,18 +365,36 @@ function DevicesTab({
     <div className="space-y-4">
       {rows && rows.length > 0 && (
         <div className="flex gap-3 flex-wrap">
-          <div className="flex-1 min-w-[180px] bg-navy-secondary/40 border border-navy-secondary rounded-lg px-4 py-3">
+          <button
+            type="button"
+            onClick={() => setHealthFilter('all')}
+            aria-pressed={healthFilter === 'all'}
+            title="Show all devices"
+            className="flex-1 min-w-[180px] rounded-lg border px-4 py-3 text-left transition-colors bg-navy-secondary/40 border-navy-secondary"
+          >
             <div className="text-xs uppercase tracking-widest text-silver">Kiosks</div>
             <div className="text-2xl font-medium text-white">
               {rows.filter((d) => d.isActive).length}
             </div>
             <div className="text-xs text-silver">{rows.length} total</div>
-          </div>
-          <div
-            className={`flex-1 min-w-[180px] rounded-lg px-4 py-3 border ${
-              offline.length > 0
-                ? 'bg-warning/10 border-warning/40'
-                : 'bg-navy-secondary/40 border-navy-secondary'
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              setHealthFilter((f) => (f === 'offline' ? 'all' : 'offline'))
+            }
+            aria-pressed={healthFilter === 'offline'}
+            title={
+              healthFilter === 'offline'
+                ? 'Show all devices'
+                : 'Filter the table to offline devices'
+            }
+            className={`flex-1 min-w-[180px] rounded-lg px-4 py-3 border text-left transition-colors ${
+              healthFilter === 'offline'
+                ? 'bg-gold/10 border-gold/60'
+                : offline.length > 0
+                  ? 'bg-warning/10 border-warning/40'
+                  : 'bg-navy-secondary/40 border-navy-secondary'
             }`}
           >
             <div className="text-xs uppercase tracking-widest text-silver">
@@ -352,12 +412,24 @@ function DevicesTab({
                 ? 'All active kiosks reported in.'
                 : nameList(offline)}
             </div>
-          </div>
-          <div
-            className={`flex-1 min-w-[180px] rounded-lg px-4 py-3 border ${
-              expiringSoon.length > 0
-                ? 'bg-warning/10 border-warning/40'
-                : 'bg-navy-secondary/40 border-navy-secondary'
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              setHealthFilter((f) => (f === 'expiring' ? 'all' : 'expiring'))
+            }
+            aria-pressed={healthFilter === 'expiring'}
+            title={
+              healthFilter === 'expiring'
+                ? 'Show all devices'
+                : 'Filter the table to devices with expiring tokens'
+            }
+            className={`flex-1 min-w-[180px] rounded-lg px-4 py-3 border text-left transition-colors ${
+              healthFilter === 'expiring'
+                ? 'bg-gold/10 border-gold/60'
+                : expiringSoon.length > 0
+                  ? 'bg-warning/10 border-warning/40'
+                  : 'bg-navy-secondary/40 border-navy-secondary'
             }`}
           >
             <div className="text-xs uppercase tracking-widest text-silver">
@@ -375,7 +447,7 @@ function DevicesTab({
                 ? 'No tokens lapsing soon.'
                 : `Rotate: ${nameList(expiringSoon)}`}
             </div>
-          </div>
+          </button>
         </div>
       )}
       {canManage && (
@@ -406,6 +478,15 @@ function DevicesTab({
               title="No kiosks"
               description="Register a tablet to enable PIN-based clock in/out."
             />
+          ) : (visibleRows ?? []).length === 0 ? (
+            // A refresh can resolve the problem set while its filter is
+            // still active — offer the way back instead of a dead end.
+            <div className="flex flex-wrap items-center justify-between gap-2 p-6 text-sm text-silver">
+              <span>No devices match this filter.</span>
+              <Button size="sm" variant="ghost" onClick={() => setHealthFilter('all')}>
+                Show all
+              </Button>
+            </div>
           ) : (
             <Table caption="Kiosk devices">
               <TableHeader>
@@ -421,7 +502,7 @@ function DevicesTab({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((d) => (
+                {(visibleRows ?? []).map((d) => (
                   <TableRow key={d.id} className="group">
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
@@ -575,17 +656,28 @@ function NewDeviceDrawer({
     : clientsLoading
       ? null
       : clientList.map((c) => ({ id: c.id, name: c.name }));
-  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
+  // Seed from the global Topbar store scope — registering a kiosk while
+  // scoped to a store shouldn't re-ask which store. Transient drawer, so
+  // no follow/write-back; a pick here stays local.
+  const storeScope = useStoreScope();
+  const [clientId, setClientId] = useState(
+    boundedClient?.id ??
+      (storeScope.enabled && storeScope.clientId ? storeScope.clientId : ''),
+  );
   const [locations, setLocations] = useState<LocationSummary[] | null>(null);
   const [locationId, setLocationId] = useState('');
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // Default to the first client once the list is in, matching the old
-  // fetch-then-preselect behavior.
+  // Default to the first client once the list is in (a scope-seeded id
+  // that's stale — client since removed — falls back the same way).
   useEffect(() => {
     if (boundedClient || clientsLoading) return;
-    if (!clientId && clientList.length > 0) setClientId(clientList[0]!.id);
+    if (
+      !clientList.some((c) => c.id === clientId) &&
+      clientList.length > 0
+    )
+      setClientId(clientList[0]!.id);
     // boundedClient is stable for the session (derived from the signed-in user).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientsLoading, clientList]);
@@ -910,7 +1002,47 @@ function PinsTab({ canManage }: { canManage: boolean }) {
     : clientsLoading
       ? null
       : clientList.map((c) => ({ id: c.id, name: c.name }));
-  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
+  // The global Topbar store scope is this tab's default client; when the
+  // scope is "all stores" the last page-local pick (persisted below —
+  // ALL_CLIENTS is a valid pick) wins instead, so a multi-store operator
+  // never re-picks on every visit.
+  const storeScope = useStoreScope();
+  const [persistedClientId, setPersistedClientId] = usePersistentState<string>(
+    'alto:list.kiosk.pins.client.v1',
+    '',
+    (v): v is string => typeof v === 'string',
+  );
+  const [clientId, setClientIdState] = useState(
+    () =>
+      boundedClient?.id ??
+      (storeScope.enabled && storeScope.clientId
+        ? storeScope.clientId
+        : persistedClientId),
+  );
+  // Follow LATER Topbar scope changes without fighting the initializer:
+  // skip the effect's first run, then mirror every change ('' = all stores
+  // maps to the All clients view).
+  const scopeClientId =
+    storeScope.enabled && !boundedClient ? storeScope.clientId : null;
+  const scopeSyncedRef = useRef(false);
+  useEffect(() => {
+    if (scopeClientId === null) return;
+    if (!scopeSyncedRef.current) {
+      scopeSyncedRef.current = true;
+      return;
+    }
+    setClientIdState((prev) => {
+      const next = scopeClientId || ALL_CLIENTS;
+      return prev === next ? prev : next;
+    });
+  }, [scopeClientId]);
+  // Page-level picks write back to the global scope (Scheduling / Time
+  // follow along) and persist as this tab's scope-is-all fallback.
+  const setClientId = (id: string) => {
+    setClientIdState(id);
+    setPersistedClientId(id);
+    storeScope.setClientId(id === ALL_CLIENTS ? '' : id);
+  };
   const [rows, setRows] = useState<KioskPin[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [showNew, setShowNew] = useState(false);
@@ -935,10 +1067,15 @@ function PinsTab({ canManage }: { canManage: boolean }) {
   // When issuing from a "missing" row, preselect that associate in the drawer.
   const [issueFor, setIssueFor] = useState<string | null>(null);
 
-  // Default to the first client so HR doesn't land on an empty state.
+  // Default to the first client so HR doesn't land on an empty state; a
+  // stale persisted/scoped id (client since removed) falls back the same
+  // way. Local set only — a fallback isn't a pick, so it doesn't write to
+  // the global scope or the persisted value.
   useEffect(() => {
     if (boundedClient || clientsLoading) return;
-    if (!clientId && clientList.length > 0) setClientId(clientList[0]!.id);
+    const valid =
+      clientId === ALL_CLIENTS || clientList.some((c) => c.id === clientId);
+    if (!valid && clientList.length > 0) setClientIdState(clientList[0]!.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clientsLoading, clientList]);
 
