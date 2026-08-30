@@ -400,6 +400,22 @@ function CreateGarnishmentDialog({
     setSubmitting(false);
   }, [open]);
 
+  // Real dirty check for the Dialog's discard guard — any field the user
+  // actually typed/picked beyond the open-time defaults. A half-entered
+  // court order (case number, remit address, caps…) used to vanish on a
+  // stray Esc / outside click.
+  const isDirty = () =>
+    associate !== null ||
+    amountPerRun !== '' ||
+    percentOfDisp !== '' ||
+    caseNumber !== '' ||
+    agencyName !== '' ||
+    totalCap !== '' ||
+    remitTo !== '' ||
+    remitAddress !== '' ||
+    endDate !== '' ||
+    notes !== '';
+
   // Live preview of the configured deduction. Purely presentational — the
   // real cap math (CCPA %, Pub 1494) happens server-side at run creation.
   const previewFlat = amountMode === 'flat' ? Number(amountPerRun) : NaN;
@@ -445,7 +461,7 @@ function CreateGarnishmentDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange} confirmDiscard={isDirty}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>New garnishment</DialogTitle>

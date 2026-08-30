@@ -180,7 +180,11 @@ describe('<RecruitingHome> candidate detail', () => {
     const drawer = await openMaria(user);
 
     const link = drawer.getByRole('link', { name: /maria lopez/i });
-    expect(link).toHaveAttribute('href', '/people?associateId=assoc-9');
+    // AssociateLink appends a return leg (the current path) by default so
+    // the profile drawer can offer a "Back to …" chip.
+    expect(link.getAttribute('href')).toMatch(
+      /^\/people\?associateId=assoc-9&return=/,
+    );
   });
 
   it('still opens terminal candidates, which cannot be dragged', async () => {

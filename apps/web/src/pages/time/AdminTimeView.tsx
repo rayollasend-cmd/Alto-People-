@@ -768,7 +768,12 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     };
   }, [clientFilter]);
   const [bulkBusy, setBulkBusy] = useState(false);
-  const [rejectOpen, setRejectOpen] = useState<null | { mode: 'one'; id: string } | { mode: 'bulk' }>(null);
+  // advanceOnDone: the reject came from the detail drawer mid-triage —
+  // when it completes, open the next flagged entry's drawer (Fix: the
+  // common triage path used to dump the reviewer back to the list).
+  const [rejectOpen, setRejectOpen] = useState<
+    null | { mode: 'one'; id: string; advanceOnDone?: boolean } | { mode: 'bulk' }
+  >(null);
   const [drawerTarget, setDrawerTarget] = useState<TimeEntry | null>(null);
   // Admin clock-in/out + edit on behalf of an associate.
   const [createOpen, setCreateOpen] = useState(false);
@@ -786,15 +791,50 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     name: string;
   } | null>(null);
 
+  // Ref mirrors so the stable focus callbacks can read the CURRENT filter
+  // and focus without carrying them as deps (which would re-render the
+  // memoised queue rows on every filter flip).
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
+  const focusAssociateRef = useRef(focusAssociate);
+  focusAssociateRef.current = focusAssociate;
+  // Entering focus mode forces the status filter to ALL — but that filter
+  // is PERSISTED, so without a snapshot the reviewer's slice (usually
+  // "Pending review") was permanently overwritten. Snapshot on entry,
+  // restore on clear.
+  const preFocusFilterRef = useRef<TimeEntryStatus | 'ALL' | null>(null);
+
+  // Focus + force filter to ALL (their full timesheet, not just the
+  // current status slice), snapshotting the filter the first time.
+  const focusWithAllFilter = useCallback(
+    (assoc: { id: string; name: string }) => {
+      if (!focusAssociateRef.current && preFocusFilterRef.current === null) {
+        preFocusFilterRef.current = filterRef.current;
+      }
+      setFocusAssociate(assoc);
+      setFilter('ALL');
+    },
+    [setFilter],
+  );
+
+  // Leaving focus restores the snapshotted filter — unless the reviewer
+  // deliberately moved off ALL while focused (their pick wins).
+  const clearFocus = useCallback(() => {
+    setFocusAssociate(null);
+    const prev = preFocusFilterRef.current;
+    preFocusFilterRef.current = null;
+    if (prev !== null && prev !== 'ALL' && filterRef.current === 'ALL') {
+      setFilter(prev);
+    }
+  }, [setFilter]);
+
   // Stable (useCallback, empty-ish deps) so the memoised queue rows don't
   // re-render when unrelated parent state changes.
   const focusOn = useCallback(
     (e: TimeEntry) => {
-      setFocusAssociate({ id: e.associateId, name: e.associateName ?? '—' });
-      // Their full timesheet, not just the current status slice.
-      setFilter('ALL');
+      focusWithAllFilter({ id: e.associateId, name: e.associateName ?? '—' });
     },
-    [setFilter],
+    [focusWithAllFilter],
   );
 
   // Deep-link: ?from=YYYY-MM-DD&to=YYYY-MM-DD presets the queue's date
@@ -857,8 +897,9 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
       }
       params.set('tab', 'queue');
       setTabParams(params, { replace: true });
-      setFilter('ALL');
-      setFocusAssociate({
+      // Snapshots the persisted status filter before forcing ALL, so
+      // clearing the focus later restores the reviewer's slice.
+      focusWithAllFilter({
         id: target.associateId,
         name: target.associateName ?? '—',
       });
@@ -896,8 +937,9 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     params.delete('to');
     params.set('tab', 'queue');
     setTabParams(params, { replace: true });
-    setFilter('ALL');
-    setFocusAssociate({ id: associateParam, name: nameParam ?? '—' });
+    // Snapshot-then-force, same as ?entry= — the persisted filter comes
+    // back when the focus is cleared.
+    focusWithAllFilter({ id: associateParam, name: nameParam ?? '—' });
     // Same rationale as the ?entry= effect for the trimmed dep list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [associateParam, liveOnly]);
@@ -1208,11 +1250,18 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     if (!rejectOpen) return;
     if (rejectOpen.mode === 'one') {
       const id = rejectOpen.id;
+      const advance = rejectOpen.advanceOnDone === true;
       pendingIdRef.current = id;
       setPendingId(id);
       try {
         await rejectTimeEntry(id, { reason });
         setRejectOpen(null);
+        if (advance) {
+          // Drawer-originated triage: chain to the next flagged entry
+          // (walked off the pre-refresh view, same as the edit path).
+          const next = nextFlaggedAfter(id);
+          if (next) setDrawerTarget(next);
+        }
         await Promise.all([refresh(), refreshPendingCount()]);
       } catch (err) {
         setError(err instanceof ApiError ? err.message : 'Reject failed.');
@@ -1451,6 +1500,31 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     }
     return list;
   }, [entries, anomaliesOnly, shiftFilter, anomalyTypes]);
+
+  // The triage walk: the next flagged entry still pending review in the
+  // CURRENT view (anomaly-type chips honored), starting after `fromId` and
+  // wrapping past the end. One implementation shared by the edit drawer's
+  // "Save, approve & next" and the detail drawer's "Approve & next" /
+  // post-reject advance.
+  const nextFlaggedAfter = useCallback(
+    (fromId: string): TimeEntry | null => {
+      const list = visibleEntries ?? [];
+      const idx = list.findIndex((x) => x.id === fromId);
+      const ordered =
+        idx >= 0 ? [...list.slice(idx + 1), ...list.slice(0, idx)] : list;
+      return (
+        ordered.find(
+          (x) =>
+            x.id !== fromId &&
+            x.status === 'COMPLETED' &&
+            (x.anomalies?.length ?? 0) > 0 &&
+            (anomalyTypes.length === 0 ||
+              (x.anomalies ?? []).some((a) => anomalyTypes.includes(a))),
+        ) ?? null
+      );
+    },
+    [visibleEntries, anomalyTypes],
+  );
 
   // Click-to-sort for the queue's desktop table. Sorts the filtered page
   // the table renders; the md:hidden card stack keeps server order.
@@ -1907,7 +1981,7 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
               <FocusBanner
                 name={focusAssociate.name}
                 entries={entries}
-                onClear={() => setFocusAssociate(null)}
+                onClear={clearFocus}
               />
             )}
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -2079,7 +2153,9 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                 </label>
                 <AssociatePicker
                   value={focusAssociate}
-                  onChange={setFocusAssociate}
+                  // Picking keeps the current filter (only name-clicks and
+                  // deep links force ALL); clearing restores any snapshot.
+                  onChange={(v) => (v ? setFocusAssociate(v) : clearFocus())}
                   placeholder="All associates…"
                   className="h-9 text-sm"
                 />
@@ -2647,8 +2723,49 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
               setDrawerTarget(null);
               await onApprove(id);
             }}
+            // Triage chain — offered only while another flagged entry is
+            // waiting in the current view. Approves in place and advances
+            // the drawer instead of dumping the reviewer to the list; a
+            // failed approve keeps this drawer open.
+            onApproveNext={
+              tab === 'queue' && nextFlaggedAfter(drawerTarget.id)
+                ? async () => {
+                    if (pendingIdRef.current) return;
+                    const id = drawerTarget.id;
+                    pendingIdRef.current = id;
+                    setPendingId(id);
+                    try {
+                      await approveTimeEntry(id);
+                      const next = nextFlaggedAfter(id);
+                      if (next) {
+                        setDrawerTarget(next);
+                      } else {
+                        setDrawerTarget(null);
+                        toast.success(
+                          'All caught up — no more flagged entries in view.',
+                        );
+                      }
+                      await Promise.all([refresh(), refreshPendingCount()]);
+                    } catch (err) {
+                      setError(
+                        err instanceof ApiError ? err.message : 'Approve failed.',
+                      );
+                    } finally {
+                      pendingIdRef.current = null;
+                      setPendingId(null);
+                    }
+                  }
+                : undefined
+            }
             onReject={() => {
-              setRejectOpen({ mode: 'one', id: drawerTarget.id });
+              // advanceOnDone only when the triage chain has somewhere to
+              // go — a lone reject keeps today's close-to-list behavior.
+              setRejectOpen({
+                mode: 'one',
+                id: drawerTarget.id,
+                advanceOnDone:
+                  tab === 'queue' && nextFlaggedAfter(drawerTarget.id) !== null,
+              });
               setDrawerTarget(null);
             }}
             onEdit={() => {
@@ -2723,21 +2840,10 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
             setEditTarget(null);
             if (advanceNext) {
               // Triage loop: jump straight to the next flagged entry still
-              // pending review in the CURRENT view (anomaly-type chips
-              // included), wrapping past the end of the list.
+              // pending review in the CURRENT view (shared walk — same
+              // rules as the detail drawer's Approve & next).
               setEditFromDetail(false);
-              const list = visibleEntries ?? [];
-              const idx = list.findIndex((x) => x.id === savedId);
-              const ordered =
-                idx >= 0 ? [...list.slice(idx + 1), ...list.slice(0, idx)] : list;
-              const next = ordered.find(
-                (x) =>
-                  x.id !== savedId &&
-                  x.status === 'COMPLETED' &&
-                  (x.anomalies?.length ?? 0) > 0 &&
-                  (anomalyTypes.length === 0 ||
-                    (x.anomalies ?? []).some((a) => anomalyTypes.includes(a))),
-              );
+              const next = nextFlaggedAfter(savedId);
               if (next) {
                 setEditTarget(next);
               } else {
@@ -3128,6 +3234,7 @@ function TimeEntryDetailPanel({
   canManage,
   busy,
   onApprove,
+  onApproveNext,
   onReject,
   onEdit,
 }: {
@@ -3135,6 +3242,9 @@ function TimeEntryDetailPanel({
   canManage: boolean;
   busy: boolean;
   onApprove: () => void;
+  /** Triage chain: approve this entry and advance the drawer to the next
+   *  flagged pending entry in view. Absent when there is nowhere to go. */
+  onApproveNext?: () => void;
   onReject: () => void;
   onEdit: () => void;
 }) {
@@ -3276,6 +3386,17 @@ function TimeEntryDetailPanel({
           {showApprove && (
             <Button onClick={onApprove} loading={busy} disabled={busy}>
               Approve
+            </Button>
+          )}
+          {showApprove && onApproveNext && (
+            <Button
+              onClick={onApproveNext}
+              loading={busy}
+              disabled={busy}
+              title="Approve this entry and open the next flagged entry in view"
+            >
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Approve &amp; next
             </Button>
           )}
         </DrawerFooter>
@@ -3499,6 +3620,37 @@ function TimeEntryFormDrawer({
   const [approveIntent, setApproveIntent] = useState(false);
   const [nextIntent, setNextIntent] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Mount-time snapshot for the discard guard — the drawer is keyed per
+  // entry, so first-render state IS the pristine form. Compared field-by-
+  // field so a stray Esc / outside click can't silently destroy edited
+  // punches, breaks, or notes.
+  const breaksKey = (
+    rows: Array<{ id: string | null; startTime: string; endTime: string }>,
+  ) => rows.map((r) => `${r.id ?? ''}|${r.startTime}|${r.endTime}`).join(',');
+  const initialFormRef = useRef({
+    assocId: assoc?.id ?? null,
+    dateStr,
+    startTime,
+    endTime,
+    extraDays,
+    notes,
+    payRate,
+    breaks: breaksKey(breakRows),
+  });
+  const isDirty = () => {
+    const i = initialFormRef.current;
+    return (
+      (assoc?.id ?? null) !== i.assocId ||
+      dateStr !== i.dateStr ||
+      startTime !== i.startTime ||
+      endTime !== i.endTime ||
+      extraDays !== i.extraDays ||
+      notes !== i.notes ||
+      payRate !== i.payRate ||
+      breaksKey(breakRows) !== i.breaks
+    );
+  };
 
   const isActive = mode === 'edit' && entry?.status === 'ACTIVE';
   const clockOutOptional = mode === 'create' || isActive;
@@ -3792,7 +3944,12 @@ function TimeEntryFormDrawer({
   };
 
   return (
-    <Drawer open onOpenChange={(o) => !o && onClose()} width="max-w-lg">
+    <Drawer
+      open
+      onOpenChange={(o) => !o && onClose()}
+      confirmDiscard={isDirty}
+      width="max-w-lg"
+    >
       <DrawerHeader>
         <DrawerTitle>
           {mode === 'create' ? 'Add time entry' : 'Edit time entry'}
@@ -4343,8 +4500,16 @@ function RecordPayPeriodDialog({
           };
         }),
       });
+      // No aggregate "all recorded payments" surface exists — each record
+      // lives on its associate's profile drawer (Payments tab). Name the
+      // period + counts so the toast stands on its own, and say where the
+      // per-person records landed.
       toast.success(
-        `Pay period recorded: ${res.created} new, ${res.updated} refreshed${res.skipped > 0 ? `, ${res.skipped} skipped` : ''}.`,
+        `Pay period ${fmtDateTz(fromYmd, 'UTC')} – ${fmtDateTz(toYmd, 'UTC')} recorded: ${res.created} new, ${res.updated} refreshed${res.skipped > 0 ? `, ${res.skipped} skipped` : ''}.`,
+        {
+          description:
+            "Each associate's payment record is on their profile drawer under Payments.",
+        },
       );
       // Remember this run's habits for next open (only sane offsets — a
       // one-off backdated correction shouldn't poison future prefills).
@@ -4369,8 +4534,19 @@ function RecordPayPeriodDialog({
         .reduce((s, r) => s + (Number(grossById[r.associateId]) || 0), 0)
     : 0;
 
+  // Real dirty check for the discard guard: any typed gross override that
+  // differs from the prefill. Hand-corrected amounts across a long roster
+  // used to vanish on a stray Esc / outside click.
+  const isDirty = () =>
+    !!rows &&
+    rows.some(
+      (r) =>
+        (grossById[r.associateId] ?? '') !==
+        (r.suggestedGross != null ? String(r.suggestedGross) : ''),
+    );
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange} confirmDiscard={isDirty}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Record pay period</DialogTitle>

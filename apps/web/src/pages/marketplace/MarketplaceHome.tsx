@@ -116,6 +116,18 @@ function AvailableTab() {
     refresh();
   }, []);
 
+  // Post-action refetch that keeps the current cards rendered (no
+  // skeleton, no scroll loss) and reconciles in place when server truth
+  // lands. Hard refresh stays for initial load / Retry / empty-state.
+  const refetch = () => {
+    listOpenShifts()
+      .then((r) => setRows(r.shifts))
+      .catch(() => {
+        // Keep showing the current rows — the in-place update after the
+        // action already reflects what changed.
+      });
+  };
+
   const clients = useMemo(
     () => (rows ? Array.from(new Set(rows.map((s) => s.clientName))).sort() : []),
     [rows],
@@ -146,9 +158,18 @@ function AvailableTab() {
 
   const onClaim = async (shiftId: string) => {
     try {
-      await claimShift(shiftId);
+      const r = await claimShift(shiftId);
       toast.success('Claim submitted; awaiting manager approval.');
-      refresh();
+      // Flip the acted card to "Claim pending" in place instead of
+      // collapsing the whole list to a skeleton.
+      setRows((prev) =>
+        prev
+          ? prev.map((s) =>
+              s.id === shiftId ? { ...s, myPendingClaim: r.id } : s,
+            )
+          : prev,
+      );
+      refetch();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     }
@@ -323,6 +344,31 @@ function ClaimsTab() {
     refresh();
   }, []);
 
+  // Post-action refetch: keep the table (and the manager's scroll/selection)
+  // in place, reconcile with server truth when it lands, and prune the
+  // selection to rows that still exist.
+  const refetch = () => {
+    listPendingClaims()
+      .then((r) => {
+        setRows(r.claims);
+        setSelected((prev) => {
+          const ids = new Set(r.claims.map((c) => c.id));
+          return new Set(Array.from(prev).filter((id) => ids.has(id)));
+        });
+      })
+      .catch(() => {
+        toast.error('Could not refresh pending claims.');
+      });
+  };
+
+  // Optimistically drop acted rows (approved/rejected claims leave the
+  // pending queue) and clear ONLY them from the selection.
+  const dropRows = (ids: string[]) => {
+    const drop = new Set(ids);
+    setRows((prev) => (prev ? prev.filter((c) => !drop.has(c.id)) : prev));
+    setSelected((prev) => new Set(Array.from(prev).filter((id) => !drop.has(id))));
+  };
+
   const sorted = useMemo(
     () =>
       rows
@@ -350,7 +396,8 @@ function ClaimsTab() {
     try {
       await updateClaim(c.shiftId, c.id, 'APPROVED', null);
       toast.success('Claim approved.');
-      refresh();
+      dropRows([c.id]);
+      refetch();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     } finally {
@@ -367,11 +414,16 @@ function ClaimsTab() {
       targets.map((c) => updateClaim(c.shiftId, c.id, 'APPROVED', null)),
     );
     setBulkBusy(false);
-    const ok = results.filter((r) => r.status === 'fulfilled').length;
-    const failed = results.length - ok;
-    if (ok > 0) toast.success(`Approved ${ok} claim${ok === 1 ? '' : 's'}.`);
+    const okIds = targets
+      .filter((_, i) => results[i].status === 'fulfilled')
+      .map((c) => c.id);
+    const failed = results.length - okIds.length;
+    if (okIds.length > 0)
+      toast.success(`Approved ${okIds.length} claim${okIds.length === 1 ? '' : 's'}.`);
     if (failed > 0) toast.error(`${failed} approval${failed === 1 ? '' : 's'} failed.`);
-    refresh();
+    // Failed rows stay selected so the manager can retry just those.
+    dropRows(okIds);
+    refetch();
   };
 
   return (
@@ -511,8 +563,9 @@ function ClaimsTab() {
               reason || null,
             );
             toast.success('Claim rejected.');
+            dropRows([rejectTarget.id]);
             setRejectTarget(null);
-            refresh();
+            refetch();
           } catch (err) {
             toast.error(err instanceof ApiError ? err.message : 'Failed.');
           } finally {
@@ -662,7 +715,13 @@ function CatalogTab() {
           )}
         </CardContent>
       </Card>
-      <Drawer open={showNew} onOpenChange={setShowNew}>
+      <Drawer
+        open={showNew}
+        onOpenChange={setShowNew}
+        confirmDiscard={() =>
+          name.trim() !== '' || code.trim() !== '' || description.trim() !== '' || isCert
+        }
+      >
         <DrawerHeader>
           <DrawerTitle>New qualification</DrawerTitle>
         </DrawerHeader>

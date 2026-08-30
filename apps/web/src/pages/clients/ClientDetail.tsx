@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Archive, Building2, MapPin, Save } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ClientStatus, ClientSummary } from '@alto-people/shared';
@@ -65,6 +65,21 @@ export function ClientDetail() {
   const [client, setClient] = useState<ClientSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
+
+  // "?section=<key>" scrolls to that section once the client has loaded —
+  // the QuickBooks OAuth return uses ?section=quickbooks to land back on
+  // the card that started the flow. The param stays in the URL (it's a
+  // shareable deep link); the ref stops re-scrolling on every refresh.
+  const [searchParams] = useSearchParams();
+  const section = searchParams.get('section');
+  const scrolledSectionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!client || !section || scrolledSectionRef.current === section) return;
+    const el = document.getElementById(`section-${section}`);
+    if (!el) return;
+    scrolledSectionRef.current = section;
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [client, section]);
 
   const onArchive = async () => {
     if (!client) return;
@@ -160,30 +175,48 @@ export function ClientDetail() {
         className="mb-0"
       />
 
-      <BasicsEditor
-        client={client}
-        canManage={canManage}
-        onSaved={(updated) => setClient(updated)}
-      />
+      {/* Each section wrapper carries a stable id so ?section=<key> can
+          scroll straight to it (scroll-mt clears the sticky header). */}
+      <div id="section-basics" className="scroll-mt-20 empty:hidden">
+        <BasicsEditor
+          client={client}
+          canManage={canManage}
+          onSaved={(updated) => setClient(updated)}
+        />
+      </div>
 
-      <StateEditor
-        client={client}
-        canManage={canManage}
-        onSaved={(updated) => setClient(updated)}
-      />
+      <div id="section-state" className="scroll-mt-20 empty:hidden">
+        <StateEditor
+          client={client}
+          canManage={canManage}
+          onSaved={(updated) => setClient(updated)}
+        />
+      </div>
 
-      <LocationsSection clientId={client.id} />
+      <div id="section-locations" className="scroll-mt-20 empty:hidden">
+        <LocationsSection clientId={client.id} />
+      </div>
 
-      <JobsSection clientId={client.id} />
+      <div id="section-jobs" className="scroll-mt-20 empty:hidden">
+        <JobsSection clientId={client.id} />
+      </div>
 
-      <RateDefaultsSection clientId={client.id} />
+      <div id="section-rates" className="scroll-mt-20 empty:hidden">
+        <RateDefaultsSection clientId={client.id} />
+      </div>
 
       {/* Renders only for process:payroll holders. */}
-      <StatementsSection clientId={client.id} />
+      <div id="section-statements" className="scroll-mt-20 empty:hidden">
+        <StatementsSection clientId={client.id} />
+      </div>
 
-      <BenefitsPlansSection clientId={client.id} />
+      <div id="section-benefits" className="scroll-mt-20 empty:hidden">
+        <BenefitsPlansSection clientId={client.id} />
+      </div>
 
-      <QuickbooksSection clientId={client.id} />
+      <div id="section-quickbooks" className="scroll-mt-20 empty:hidden">
+        <QuickbooksSection clientId={client.id} />
+      </div>
     </div>
   );
 }

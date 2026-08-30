@@ -47,6 +47,9 @@ import { toast } from '@/components/ui/Toaster';
 export function PayrollReadiness() {
   const [data, setData] = useState<PayrollReadinessResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // "Action required only" lens — the working view when the list is long
+  // and only the red rows matter.
+  const [actionOnly, setActionOnly] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,7 +90,11 @@ export function PayrollReadiness() {
 
       {data && (
         <>
-          <ReadinessSummary data={data} />
+          <ReadinessSummary
+            data={data}
+            actionOnly={actionOnly}
+            onToggleActionOnly={() => setActionOnly((v) => !v)}
+          />
           {data.rows.length === 0 ? (
             <Card>
               <CardContent className="py-6">
@@ -97,7 +104,23 @@ export function PayrollReadiness() {
                 />
               </CardContent>
             </Card>
-          ) : (
+          ) : (() => {
+            const rows = actionOnly ? data.rows.filter((r) => !r.ready) : data.rows;
+            return rows.length === 0 ? (
+              <Card>
+                <CardContent className="py-6">
+                  <EmptyState
+                    title="Everyone is ready"
+                    description="No associate needs action — clear the filter to see the full roster."
+                    action={
+                      <Button variant="outline" size="sm" onClick={() => setActionOnly(false)}>
+                        Show everyone
+                      </Button>
+                    }
+                  />
+                </CardContent>
+              </Card>
+            ) : (
             <Card>
               <CardContent className="p-0">
                 <Table>
@@ -114,21 +137,30 @@ export function PayrollReadiness() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data.rows.map((row) => (
+                    {rows.map((row) => (
                       <ReadinessTableRow key={row.associateId} row={row} />
                     ))}
                   </TableBody>
                 </Table>
               </CardContent>
             </Card>
-          )}
+            );
+          })()}
         </>
       )}
     </div>
   );
 }
 
-function ReadinessSummary({ data }: { data: PayrollReadinessResponse }) {
+function ReadinessSummary({
+  data,
+  actionOnly,
+  onToggleActionOnly,
+}: {
+  data: PayrollReadinessResponse;
+  actionOnly: boolean;
+  onToggleActionOnly: () => void;
+}) {
   return (
     <Card>
       <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-2 py-3 text-sm">
@@ -148,6 +180,18 @@ function ReadinessSummary({ data }: { data: PayrollReadinessResponse }) {
             <span className="text-success">All active associates have complete data.</span>
           )}
         </div>
+        <div className="ml-auto">
+          <Button
+            size="sm"
+            variant={actionOnly ? 'secondary' : 'ghost'}
+            aria-pressed={actionOnly}
+            onClick={onToggleActionOnly}
+          >
+            <XCircle className="h-3.5 w-3.5 text-alert" aria-hidden="true" />
+            Action required only
+            {data.missingCount > 0 ? ` (${data.missingCount})` : ''}
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );
@@ -155,6 +199,9 @@ function ReadinessSummary({ data }: { data: PayrollReadinessResponse }) {
 
 function ReadinessTableRow({ row }: { row: PayrollReadinessRow }) {
   const profileUrl = `/people?associateId=${row.associateId}`;
+  // Document-shaped gaps (W-4/TIN, payout/bank) land on the profile's
+  // Documents tab; the rest open the default profile view.
+  const documentsUrl = `${profileUrl}&tab=documents`;
   const w4Label =
     row.employmentType === 'W2_EMPLOYEE' ? 'W-4 missing' : 'W-9 / TIN missing';
   return (
@@ -183,11 +230,11 @@ function ReadinessTableRow({ row }: { row: PayrollReadinessRow }) {
           {row.employmentType === 'W2_EMPLOYEE' ? 'W-2' : '1099'}
         </Badge>
       </TableCell>
-      <Flag ok={row.flags.w4OnFile} href={profileUrl} title={w4Label} className="hidden md:table-cell" />
+      <Flag ok={row.flags.w4OnFile} href={documentsUrl} title={w4Label} className="hidden md:table-cell" />
       <Flag ok={row.flags.taxStateSet} href={profileUrl} title="Tax state missing or unsupported" className="hidden md:table-cell" />
       <Flag
         ok={row.flags.payoutMethodOnFile}
-        href={profileUrl}
+        href={documentsUrl}
         title="No Branch card or bank account on file"
         className="hidden md:table-cell"
       />
@@ -232,11 +279,15 @@ function Flag({
     );
   }
   // Red — clickable link to the associate profile so HR can fix the gap.
+  // Opens in a NEW TAB so this readiness list (and its filter) survives
+  // the fix; come back and the row is still where you left it.
   return (
     <TableCell className={`text-center ${className ?? ''}`}>
       <Link
         to={href}
-        title={title}
+        target="_blank"
+        rel="noreferrer"
+        title={`${title} — opens the profile in a new tab`}
         aria-label={title}
         className="inline-flex items-center justify-center rounded hover:bg-alert/10 focus:outline-none focus:ring-2 focus:ring-alert"
       >

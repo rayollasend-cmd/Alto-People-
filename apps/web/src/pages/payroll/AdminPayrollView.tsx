@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -43,6 +43,7 @@ import {
   getPayrollUpcoming,
   getWcPremium,
   listPayrollRuns,
+  listPayrollSchedules,
   listRunAddOns,
   retryRunFailures,
   voidPayrollRun,
@@ -382,24 +383,78 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     refreshUpcoming();
   }, [refreshUpcoming]);
 
-  // Deeplink — accept ?run={id} so notifications can land HR directly on
-  // the run drawer (e.g. payroll failure → /payroll?run=xxx). Strips the
-  // param after opening so a refresh doesn't re-open if HR closed it.
+  const loadWcReport = useCallback(async (runId: string) => {
+    try {
+      setWcReport(await getWcPremium(runId));
+    } catch {
+      setWcReport(null);
+    }
+  }, []);
+
+  // Deeplink + recoverability — ?run={id} lands HR on the run drawer
+  // (e.g. payroll failure → /payroll?run=xxx) and STAYS in the URL while
+  // the drawer is open. Leaving to fix a failed payment (on /people) and
+  // pressing Back — or refreshing — reopens the same run instead of a
+  // reset /payroll. The param is removed (replace) only when the drawer
+  // actually closes.
   const [searchParams, setSearchParams] = useSearchParams();
+  const runParam = searchParams.get('run');
+  // One fetch per param value — without this, any searchParams identity
+  // change would re-fetch (and a failing id would retry forever).
+  const attemptedRunRef = useRef<string | null>(null);
+  // True once the drawer has actually been open — distinguishes "user
+  // closed it" (strip ?run) from "initial deep-link fetch still in
+  // flight" (keep ?run).
+  const drawerWasOpenRef = useRef(false);
   useEffect(() => {
-    const runId = searchParams.get('run');
-    if (!runId) return;
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev);
-      next.delete('run');
-      return next;
-    }, { replace: true });
-    getPayrollRun(runId)
-      .then((detail) => setSelected(detail))
+    if (!runParam) {
+      attemptedRunRef.current = null;
+      return;
+    }
+    if (runParam === selected?.id) return;
+    if (attemptedRunRef.current === runParam) return;
+    attemptedRunRef.current = runParam;
+    getPayrollRun(runParam)
+      .then((detail) => {
+        setSelected(detail);
+        setWcReport(null);
+        if (detail.status === 'DISBURSED') void loadWcReport(detail.id);
+      })
       .catch((err) => {
         toast.error(err instanceof ApiError ? err.message : 'Failed to open run.');
+        setSearchParams((prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete('run');
+          return next;
+        }, { replace: true });
       });
-  }, [searchParams, setSearchParams]);
+  }, [runParam, selected?.id, setSearchParams, loadWcReport]);
+
+  // URL ↔ drawer sync: reflect the open run in ?run=, drop it on close.
+  // Both writes replace — history keeps one /payroll entry, with the param
+  // mirroring whatever the drawer shows right now.
+  useEffect(() => {
+    if (selected) {
+      drawerWasOpenRef.current = true;
+      attemptedRunRef.current = selected.id;
+      if (runParam !== selected.id) {
+        setSearchParams((prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('run', selected.id);
+          return next;
+        }, { replace: true });
+      }
+    } else if (drawerWasOpenRef.current) {
+      drawerWasOpenRef.current = false;
+      if (runParam) {
+        setSearchParams((prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete('run');
+          return next;
+        }, { replace: true });
+      }
+    }
+  }, [selected, runParam, setSearchParams]);
 
   const openRun = async (id: string) => {
     try {
@@ -471,14 +526,6 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
       setBusy(false);
     }
   };
-
-  const loadWcReport = useCallback(async (runId: string) => {
-    try {
-      setWcReport(await getWcPremium(runId));
-    } catch {
-      setWcReport(null);
-    }
-  }, []);
 
   const onDisburse = async () => {
     if (!selected || busy) return;
@@ -608,6 +655,39 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
     canVoid &&
     selected.status !== 'CANCELLED' &&
     selected.items.length > 0;
+
+  // Gap 3 follow-up — the void banner's recovery action. Amending a
+  // CANCELLED run is server-rejected (POST /runs/:id/amend 409s with
+  // 'run_cancelled'; amendments are only allowed against DISBURSED runs),
+  // so the documented recovery for a voided run is a FRESH run for the
+  // same period. This opens the RunPayrollWizard seeded with the voided
+  // run's period, resolving the matching schedule (same client) so step 1
+  // is prefilled; with no matching schedule the full flow opens instead.
+  const openCorrectedRun = async () => {
+    if (!selected || busy) return;
+    setBusy(true);
+    let scheduleId: string | null = null;
+    try {
+      const res = await listPayrollSchedules();
+      const forClient = res.schedules.filter(
+        (s) => (s.clientId ?? null) === (selected.clientId ?? null),
+      );
+      scheduleId = (forClient.find((s) => s.isActive) ?? forClient[0])?.id ?? null;
+    } catch {
+      // Non-fatal — the wizard opens unseeded and asks for the schedule.
+    }
+    setWizardSeed(
+      scheduleId
+        ? {
+            scheduleId,
+            periodStart: selected.periodStart,
+            periodEnd: selected.periodEnd,
+          }
+        : null,
+    );
+    setBusy(false);
+    setShowCreate(true);
+  };
 
   return (
     <div className="mx-auto">
@@ -1077,9 +1157,23 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                   )}
                   <div className="text-silver/70 mt-1.5">
                     Alto did not pull funds back from associates. Recover
-                    disbursed amounts out-of-band or via amendment + next-run
-                    deduction.
+                    disbursed amounts out-of-band or via a deduction on the
+                    corrected run. A voided run can&apos;t be amended — create
+                    a corrected run for the same period instead.
                   </div>
+                  {canProcess && (
+                    <div className="mt-2">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={openCorrectedRun}
+                        disabled={busy}
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Create corrected run
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1197,6 +1291,7 @@ export function AdminPayrollView({ canProcess, canVoid }: AdminPayrollViewProps)
                 items={selected.items}
                 canProcess={canProcess}
                 onRetry={onRetryFailures}
+                onEnrollBranch={openEnrollBranch}
                 busy={busy}
               />
               {selected.items.length > 0 && (
@@ -2281,12 +2376,16 @@ function FailedPaymentsSummary({
   items,
   canProcess,
   onRetry,
+  onEnrollBranch,
   busy,
 }: {
   items: import('@alto-people/shared').PayrollItem[];
   canProcess: boolean;
   /** Omit itemIds to retry everything failed/held in the run. */
   onRetry: (itemIds?: string[]) => void | Promise<void>;
+  /** Opens the Branch enrollment dialog IN PLACE — the payout-rail fix no
+   *  longer forces a /people round-trip that resets the page. */
+  onEnrollBranch: (associateId: string, associateName: string | null) => void;
   busy: boolean;
 }) {
   // One memoized pass — on a 1,000+ item run these ran in the render
@@ -2348,7 +2447,13 @@ function FailedPaymentsSummary({
               </p>
             )}
             <ul className="space-y-1">
-              {group.map((it) => (
+              {group.map((it) => {
+                // A payout-rail failure is fixed by enrolling a payout
+                // method, not by retrying — offer that fix inline (the
+                // enrollment dialog opens over the drawer) so the run
+                // page is never abandoned mid-triage.
+                const isRailProblem = (it.failureReason ?? '').startsWith('no_payout_rail');
+                return (
                 <li
                   key={it.id}
                   className="flex items-start justify-between gap-3 text-sm rounded border border-alert/20 bg-black/30 px-2.5 py-1.5"
@@ -2356,10 +2461,14 @@ function FailedPaymentsSummary({
                   <div className="min-w-0 flex-1">
                     <div className="text-white truncate">
                       {it.associateName ? (
+                        // Secondary path — a NEW TAB keeps this run drawer
+                        // (and its ?run= URL) alive behind the profile.
                         <Link
                           to={`/people?associateId=${it.associateId}`}
+                          target="_blank"
+                          rel="noreferrer"
                           className="hover:text-gold-bright"
-                          title="Open this associate's record"
+                          title="Open this associate's record in a new tab"
                         >
                           {it.associateName}
                         </Link>
@@ -2373,6 +2482,18 @@ function FailedPaymentsSummary({
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <div className="tabular-nums text-gold">{fmtMoney(it.netPay)}</div>
+                    {canProcess && isRailProblem && (
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        onClick={() => onEnrollBranch(it.associateId, it.associateName ?? null)}
+                        disabled={busy}
+                        title="Set up the payout method right here — no trip to the People directory"
+                      >
+                        <CreditCard className="h-3 w-3" />
+                        Fix payout method
+                      </Button>
+                    )}
                     {canProcess && (
                       <Button
                         variant="ghost"
@@ -2386,7 +2507,8 @@ function FailedPaymentsSummary({
                     )}
                   </div>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           </div>
         ))}

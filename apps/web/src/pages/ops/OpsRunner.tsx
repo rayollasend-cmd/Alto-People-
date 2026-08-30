@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   Camera,
@@ -54,6 +55,7 @@ import {
   HANDOVER_KIND_LABEL,
   PERIOD_LABEL,
 } from './opsVisuals';
+import { OpsShiftRecordDialog } from './OpsShiftRecord';
 
 /**
  * The shift supervisor's floor tool — the flagship surface where the
@@ -63,31 +65,135 @@ import {
  * who did the physical work.
  */
 
+/* ===== Unsaved-answer drafts (localStorage) ============================= */
+
+/**
+ * Typed-but-unsent answers survive the tablet sleeping or the tab being
+ * discarded: each task's draft persists under one key, hydrates on mount,
+ * and clears on successful submit and on shift close.
+ */
+const opsDraftKey = (shiftId: string, taskId: string) =>
+  `alto:ops.draft.${shiftId}.${taskId}`;
+
+type OpsDraft = { number?: string; text?: string };
+
+function readOpsDraft(shiftId: string, taskId: string): OpsDraft | null {
+  try {
+    const raw = localStorage.getItem(opsDraftKey(shiftId, taskId));
+    return raw ? (JSON.parse(raw) as OpsDraft) : null;
+  } catch {
+    return null;
+  }
+}
+
+function removeOpsDraft(shiftId: string, taskId: string) {
+  try {
+    localStorage.removeItem(opsDraftKey(shiftId, taskId));
+  } catch {
+    // Storage unavailable — nothing persisted to remove.
+  }
+}
+
+/** Drop every draft for a shift — the record is final once it closes. */
+function clearOpsDrafts(shiftId: string) {
+  try {
+    const prefix = `alto:ops.draft.${shiftId}.`;
+    const stale: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(prefix)) stale.push(key);
+    }
+    for (const key of stale) localStorage.removeItem(key);
+  } catch {
+    // Storage unavailable — nothing persisted to clear.
+  }
+}
+
 export function OpsRunner() {
-  const [shiftId, setShiftId] = useState<string | null>(null);
+  // The open shift lives in ?shift= (alongside ?tab=) so a reload, a
+  // discarded tab, or an overnight tablet sleep restores the live
+  // checklist instead of dumping the supervisor on the picker. The id is
+  // validated through the normal detail fetch: a closed, foreign, or
+  // stale id falls back to the picker. Replace-writes keep it out of
+  // Back history.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const shiftId = searchParams.get('shift');
   const [detail, setDetail] = useState<OpsShiftDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The just-closed shift's record — the landing after closing is the
+  // final record, not an abrupt jump back to the picker.
+  const [closedRecordId, setClosedRecordId] = useState<string | null>(null);
+  // Distinguishes "restoring from the URL failed" (→ picker) from "a
+  // refresh mid-shift failed" (→ error surface, context kept).
+  const detailRef = useRef<OpsShiftDetail | null>(null);
+  detailRef.current = detail;
 
-  const load = useCallback(async (id: string) => {
-    try {
-      setDetail(await getOpsShift(id));
-      setError(null);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load the shift.');
-    }
-  }, []);
+  const setShiftParam = useCallback(
+    (id: string | null) => {
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          if (id) params.set('shift', id);
+          else params.delete('shift');
+          return params;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  const load = useCallback(
+    async (id: string) => {
+      try {
+        const d = await getOpsShift(id);
+        if (d.shift.status !== 'ACTIVE') {
+          // Stale link — the shift already closed (another tab, another day).
+          toast.info('That shift is already closed — its record is final.');
+          setDetail(null);
+          setShiftParam(null);
+          return;
+        }
+        setDetail(d);
+        setError(null);
+      } catch (err) {
+        if (detailRef.current?.shift.id === id) {
+          setError(err instanceof ApiError ? err.message : 'Could not load the shift.');
+        } else {
+          // Restore failed (gone, or not this supervisor's) — back to the picker.
+          toast.error(
+            err instanceof ApiError ? err.message : 'Could not resume that shift.',
+          );
+          setDetail(null);
+          setShiftParam(null);
+        }
+      }
+    },
+    [setShiftParam],
+  );
 
   useEffect(() => {
     if (shiftId) void load(shiftId);
+    else setDetail(null);
   }, [shiftId, load]);
 
   if (!shiftId) {
-    return <OpenShiftPanel onOpened={(id) => setShiftId(id)} />;
+    return (
+      <>
+        <OpenShiftPanel onOpened={(id) => setShiftParam(id)} />
+        {closedRecordId && (
+          <OpsShiftRecordDialog
+            shiftId={closedRecordId}
+            onClose={() => setClosedRecordId(null)}
+          />
+        )}
+      </>
+    );
   }
   if (error) {
     return <ErrorBanner>{error}</ErrorBanner>;
   }
-  if (!detail) {
+  if (!detail || detail.shift.id !== shiftId) {
     return <Skeleton className="h-64" />;
   }
   return (
@@ -95,8 +201,10 @@ export function OpsRunner() {
       detail={detail}
       refresh={() => void load(shiftId)}
       onClosed={() => {
-        setShiftId(null);
+        clearOpsDrafts(shiftId);
+        setClosedRecordId(shiftId);
         setDetail(null);
+        setShiftParam(null);
       }}
     />
   );
@@ -281,6 +389,18 @@ function ShiftRunner({
   // The same crew member usually does consecutive tasks — remember the
   // last "done by" pick so tagging the next task is one tap.
   const [lastTagged, setLastTagged] = useState<{ id: string; name: string } | null>(null);
+  // A spawned follow-up announces itself in place: once the refreshed
+  // task list contains it, scroll it into view and flash the row so the
+  // toast points at something real.
+  const [flashTaskId, setFlashTaskId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!flashTaskId || !tasks.some((t) => t.id === flashTaskId)) return;
+    document
+      .getElementById(`ops-task-${flashTaskId}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const timer = window.setTimeout(() => setFlashTaskId(null), 2600);
+    return () => window.clearTimeout(timer);
+  }, [flashTaskId, tasks]);
 
   const sections = useMemo(() => {
     const bySection = new Map<string, OpsTaskRow[]>();
@@ -544,10 +664,13 @@ function ShiftRunner({
                 <TaskRow
                   key={task.id}
                   task={task}
+                  shiftId={shift.id}
                   clockedIn={clockedIn}
                   onChanged={refresh}
                   lastTagged={lastTagged}
                   onTagged={setLastTagged}
+                  flash={task.id === flashTaskId}
+                  onFollowUp={setFlashTaskId}
                 />
               ))}
             </CardContent>
@@ -575,32 +698,80 @@ function ShiftRunner({
 
 function TaskRow({
   task,
+  shiftId,
   clockedIn,
   onChanged,
   lastTagged,
   onTagged,
+  flash,
+  onFollowUp,
 }: {
   task: OpsTaskRow;
+  shiftId: string;
   clockedIn: { id: string; name: string }[];
   onChanged: () => void;
   /** Last "done by" pick this shift — powers one-tap re-tagging. */
   lastTagged: { id: string; name: string } | null;
   onTagged: (a: { id: string; name: string } | null) => void;
+  /** Briefly highlight this row (a follow-up just landed here). */
+  flash: boolean;
+  onFollowUp: (taskId: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [blockOpen, setBlockOpen] = useState(false);
   const [blockReason, setBlockReason] = useState('');
-  const [numberDraft, setNumberDraft] = useState(
-    task.answerNumber != null ? String(task.answerNumber) : '',
-  );
-  const [textDraft, setTextDraft] = useState(task.answerText ?? '');
+  // Drafts hydrate from localStorage first (a typed-but-unsent answer
+  // that survived a reload), then from the saved answer.
+  const [numberDraft, setNumberDraft] = useState(() => {
+    const draft = readOpsDraft(shiftId, task.id);
+    return draft?.number ?? (task.answerNumber != null ? String(task.answerNumber) : '');
+  });
+  const [textDraft, setTextDraft] = useState(() => {
+    const draft = readOpsDraft(shiftId, task.id);
+    return draft?.text ?? task.answerText ?? '';
+  });
   const fileRef = useRef<HTMLInputElement | null>(null);
+  // Failed photo uploads held in memory with their task context — store
+  // wifi drops the request, not the photo. Each queued failure is
+  // retryable. (Future upgrade: a persistent IndexedDB queue like the
+  // kiosk's kioskQueue, surviving reloads too.)
+  const failedSeq = useRef(0);
+  const [failedUploads, setFailedUploads] = useState<{ id: number; file: File }[]>([]);
+
+  // Persist typed-but-unsaved answers, debounced. Cleared when the draft
+  // matches the saved answer (or empties out) — including right after a
+  // successful submit refreshes the task.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const savedNumber = task.answerNumber != null ? String(task.answerNumber) : '';
+      const savedText = task.answerText ?? '';
+      const numberDirty = numberDraft.trim() !== '' && numberDraft !== savedNumber;
+      const textDirty = textDraft.trim() !== '' && textDraft !== savedText;
+      try {
+        if (numberDirty || textDirty) {
+          const draft: OpsDraft = {};
+          if (numberDirty) draft.number = numberDraft;
+          if (textDirty) draft.text = textDraft;
+          localStorage.setItem(opsDraftKey(shiftId, task.id), JSON.stringify(draft));
+        } else {
+          localStorage.removeItem(opsDraftKey(shiftId, task.id));
+        }
+      } catch {
+        // Storage unavailable (private mode / quota) — drafts just don't persist.
+      }
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [numberDraft, textDraft, shiftId, task.id, task.answerNumber, task.answerText]);
 
   const patch = async (body: Parameters<typeof patchOpsTask>[1]) => {
     setBusy(true);
     try {
       const res = await patchOpsTask(task.id, body);
+      // The answer is on the server — the draft has done its job.
+      if (body.answerNumber !== undefined || body.answerText !== undefined) {
+        removeOpsDraft(shiftId, task.id);
+      }
       if (body.doneAssociateId) {
         const a = clockedIn.find((x) => x.id === body.doneAssociateId);
         if (a) onTagged(a);
@@ -609,6 +780,7 @@ function TaskRow({
       // spawned a corrective task in this section.
       if (res.followUp) {
         toast.warning(`Follow-up added: ${res.followUp.title}`, { duration: 6000 });
+        onFollowUp(res.followUp.id);
       }
       onChanged();
     } catch (err) {
@@ -618,15 +790,25 @@ function TaskRow({
     }
   };
 
-  const uploadPhoto = async (file: File) => {
+  const uploadPhoto = async (file: File, retryId?: number) => {
     setBusy(true);
     try {
       const res = await uploadOpsTaskPhoto(task.id, file);
+      if (retryId != null) {
+        setFailedUploads((prev) => prev.filter((f) => f.id !== retryId));
+      }
       toast.success(
         res.autoCompleted ? 'Photo attached — task complete.' : 'Photo attached.',
       );
       onChanged();
     } catch (err) {
+      // Keep the photo: a fresh failure joins the retry queue; a failed
+      // retry stays queued as-is.
+      if (retryId == null) {
+        failedSeq.current += 1;
+        const id = failedSeq.current;
+        setFailedUploads((prev) => [...prev, { id, file }]);
+      }
       toast.error(err instanceof Error ? err.message : 'Upload failed.');
     } finally {
       setBusy(false);
@@ -650,7 +832,14 @@ function TaskRow({
   };
 
   return (
-    <div className={cn('py-2.5', isDone && 'opacity-70')}>
+    <div
+      id={`ops-task-${task.id}`}
+      className={cn(
+        'scroll-mt-16 py-2.5 transition-colors duration-500',
+        isDone && 'opacity-70',
+        flash && 'rounded-md bg-warning/[0.08] ring-1 ring-inset ring-warning/40',
+      )}
+    >
       {/* Always-mounted camera input — inline and expanded buttons share it. */}
       <input
         ref={fileRef}
@@ -751,6 +940,42 @@ function TaskRow({
               )}
             </div>
           </button>
+
+          {/* Failed uploads — the photo is held, never re-shot. */}
+          {failedUploads.map((f) => (
+            <div
+              key={f.id}
+              className="mt-1.5 flex flex-wrap items-center gap-2 rounded-md border border-alert/50 bg-alert/[0.07] px-2.5 py-2"
+            >
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-alert" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate text-xs text-alert">
+                Photo didn&apos;t upload — it&apos;s still here.
+                {f.file.name && (
+                  <span className="ml-1.5 text-silver/70">{f.file.name}</span>
+                )}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void uploadPhoto(f.file, f.id)}
+                loading={busy}
+              >
+                <Camera className="h-3.5 w-3.5" />
+                Retry upload
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setFailedUploads((prev) => prev.filter((x) => x.id !== f.id));
+                  fileRef.current?.click();
+                }}
+                disabled={busy}
+              >
+                Choose different
+              </Button>
+            </div>
+          ))}
 
           {/* Inline quick controls — the shift's core loop with no expand
               tax: type, tap, next. Expand stays for the rich extras. */}
@@ -1226,6 +1451,13 @@ function CloseDialog({
   const openRequired = tasks.filter((t) => t.required && t.status !== 'DONE');
   const openWork = tasks.filter((t) => t.status !== 'DONE');
 
+  // Latest tasks, readable at open time without making the reset effect
+  // depend on `tasks` — a background refresh() used to re-fire the reset
+  // and wipe a half-written handover while the dialog was up.
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+
+  // Reset ONLY on the closed → open transition.
   useEffect(() => {
     if (open) {
       setSummary('');
@@ -1235,13 +1467,27 @@ function CloseDialog({
       // Required unfinished work defaults to handed-over — leaving it out
       // is the deliberate act, not the accident.
       setCarriedIds(
-        new Set(tasks.filter((t) => t.required && t.status !== 'DONE').map((t) => t.id)),
+        new Set(
+          tasksRef.current
+            .filter((t) => t.required && t.status !== 'DONE')
+            .map((t) => t.id),
+        ),
       );
     }
-  }, [open, tasks]);
+    // Seeds from tasksRef so mid-dialog refreshes can't re-run the reset.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      // Esc / overlay tap / X / drag-down can't silently destroy a
+      // composed handover — the most tired moment of the shift.
+      confirmDiscard={() =>
+        summary.trim() !== '' || draftBody.trim() !== '' || items.length > 0
+      }
+    >
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Close shift — handover first</DialogTitle>

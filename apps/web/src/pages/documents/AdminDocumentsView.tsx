@@ -513,8 +513,14 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
     };
   }, [selectedAssociateId, folderDocs, selectedGroup]);
 
-  const onVerify = async (d: DocumentRecord, expiresAt?: string) => {
-    if (pendingId) return;
+  // Returns whether the verify succeeded so callers with follow-up UI (the
+  // preview closes itself on success) don't dismiss on a failure this
+  // handler already swallowed into a toast.
+  const onVerify = async (
+    d: DocumentRecord,
+    expiresAt?: string,
+  ): Promise<boolean> => {
+    if (pendingId) return false;
     setPendingId(d.id);
     try {
       await verifyDocument(d.id, expiresAt ? { expiresAt } : {});
@@ -524,10 +530,12 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
         refreshAll(),
         ...(selectedAssociateId ? [fetchFolder(selectedAssociateId)] : []),
       ]);
+      return true;
     } catch (err) {
       toast.error('Verify failed.', {
         description: err instanceof ApiError ? err.message : undefined,
       });
+      return false;
     } finally {
       setPendingId(null);
     }
@@ -1531,8 +1539,11 @@ export function AdminDocumentsView({ canManage }: AdminDocumentsViewProps) {
                     variant="ghost"
                     onClick={async () => {
                       const target = previewDoc;
-                      await onVerify(target, verifyExpiresAt || undefined);
-                      setPreviewDoc(null);
+                      const ok = await onVerify(target, verifyExpiresAt || undefined);
+                      // Close only on success — a failed verify keeps the
+                      // document (and the typed expiry date) on screen so
+                      // the reviewer can retry instead of re-finding both.
+                      if (ok) setPreviewDoc(null);
                     }}
                     loading={pendingId === previewDoc.id}
                     className="text-success hover:text-success"

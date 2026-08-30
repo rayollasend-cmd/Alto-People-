@@ -128,9 +128,18 @@ export function ClientsHome() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<ClientStatus | 'ALL'>('ALL');
-  const [query, setQuery] = useState('');
-  const [appliedQuery, setAppliedQuery] = useState('');
+  // Filter + search live in the URL (?status=&q=, replace-mode) so
+  // opening a client and coming Back restores the same slice of the list.
+  const [statusFilter, setStatusFilter] = useState<ClientStatus | 'ALL'>(() => {
+    const s = new URLSearchParams(window.location.search).get('status');
+    return s && STATUS_FILTERS.some((f) => f.value === s)
+      ? (s as ClientStatus | 'ALL')
+      : 'ALL';
+  });
+  const [query, setQuery] = useState(
+    () => new URLSearchParams(window.location.search).get('q') ?? '',
+  );
+  const [appliedQuery, setAppliedQuery] = useState(query);
   const [view, setView] = useViewMode<ClientsView>('clients', 'cards', VIEW_OPTIONS);
   useEffect(() => {
     const t = setTimeout(() => setAppliedQuery(query), 250);
@@ -180,6 +189,23 @@ export function ClientsHome() {
   // validation failed before we knew which client to bounce to. Clear the
   // param so a refresh doesn't re-fire the toast.
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // Mirror filter + debounced search into the URL. Replace-mode so
+  // filter clicks don't pile up history entries — Back still leaves the
+  // page in one press, and detail→Back restores the filters.
+  useEffect(() => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (statusFilter === 'ALL') next.delete('status');
+        else next.set('status', statusFilter);
+        if (appliedQuery) next.set('q', appliedQuery);
+        else next.delete('q');
+        return next;
+      },
+      { replace: true },
+    );
+  }, [statusFilter, appliedQuery, setSearchParams]);
   useEffect(() => {
     const code = searchParams.get('qbo_error');
     if (!code) return;

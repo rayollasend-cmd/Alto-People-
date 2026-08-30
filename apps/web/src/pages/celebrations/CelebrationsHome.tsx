@@ -257,7 +257,13 @@ function HighFiveDrawer({
   };
 
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer
+      open={true}
+      onOpenChange={(o) => !o && onClose()}
+      // Only guard once the message has been personalized — losing the
+      // untouched default costs nothing.
+      confirmDiscard={() => msg !== defaultMsg}
+    >
       <DrawerHeader>
         <DrawerTitle>
           High-five {target.associateName}

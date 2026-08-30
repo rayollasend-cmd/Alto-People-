@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Download, ExternalLink, FileCheck2, Plus, FlaskConical } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, Download, ExternalLink, FileCheck2, Plus, FlaskConical } from 'lucide-react';
 import { DirectorateHeader, Kpi, KpiStrip, TableShell } from './DirectorateShell';
+import { sanitizeReturnPath } from './section2Verification';
 import { toast } from 'sonner';
 import type {
   DrugTest,
@@ -23,6 +24,8 @@ import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { downloadCsv } from '@/lib/csv';
 import { fmtDate, fmtDateTime } from '@/lib/format';
+import { usePersistentState } from '@/lib/usePersistentState';
+import { useStoreScope } from '@/lib/storeScope';
 import {
   Avatar,
   Badge,
@@ -125,6 +128,17 @@ function ageTone(days: number): string {
 // also a filter they can click through the dropdown — same idiom as the
 // Background checks tab.
 type StatusFilter = 'all' | 'in_flight' | 'stuck' | 'missing_result' | DrugTestStatus;
+const STATUS_FILTER_VALUES: readonly StatusFilter[] = [
+  'all',
+  'in_flight',
+  'stuck',
+  'missing_result',
+  'INITIATED',
+  'IN_PROGRESS',
+  'NEEDS_REVIEW',
+  'PASSED',
+  'FAILED',
+];
 type OrderedFilter = 'any' | 'week' | 'month' | 'quarter';
 
 function matchesOrdered(initiatedAt: string, f: OrderedFilter): boolean {
@@ -149,16 +163,87 @@ function matchesStatus(t: DrugTest, f: StatusFilter): boolean {
 }
 
 export function DrugTestTab({ canManage }: { canManage: boolean }) {
+  // ?associateId= deep-links one person's test (the scorecard's Fix links
+  // and the profile document vault send it) — auto-open their drawer once
+  // the ledger arrives. ?return= is the surface the reviewer came from; the
+  // drawer offers a way back. Both are captured into state once, then
+  // consumed (replace: true): ComplianceHome tab switches copy the current
+  // search params, so lingering params would re-arm on every tab visit.
+  const [deepLinkParams, setDeepLinkParams] = useSearchParams();
+  const [deepLinkAssociateId] = useState<string | null>(() =>
+    deepLinkParams.get('associateId'),
+  );
+  const [returnPath] = useState<string | null>(() =>
+    sanitizeReturnPath(deepLinkParams.get('return')),
+  );
+  const deepLinkOpened = useRef(false);
+  const deepLinkConsumed = useRef(false);
+  useEffect(() => {
+    if (deepLinkConsumed.current) return;
+    if (!deepLinkParams.has('associateId') && !deepLinkParams.has('return')) return;
+    deepLinkConsumed.current = true;
+    const params = new URLSearchParams(deepLinkParams);
+    params.delete('associateId');
+    params.delete('return');
+    setDeepLinkParams(params, { replace: true });
+  }, [deepLinkParams, setDeepLinkParams]);
   const [tests, setTests] = useState<DrugTest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showInitiate, setShowInitiate] = useState(false);
   const [showBulkOrder, setShowBulkOrder] = useState(false);
   const [drawerTarget, setDrawerTarget] = useState<DrugTest | null>(null);
-  const [query, setQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  // Search / status / client survive revisits (same idiom as EVerifyTab) —
+  // this ledger is worked in passes and losing the slice on every tab
+  // switch meant rebuilding it by hand.
+  const [query, setQuery] = usePersistentState<string>(
+    'alto:list.drugtests.query.v1',
+    '',
+    (v): v is string => typeof v === 'string',
+  );
+  const [storedStatusFilter, setStoredStatusFilter] = usePersistentState<StatusFilter>(
+    'alto:list.drugtests.status.v1',
+    'all',
+    (v): v is StatusFilter => STATUS_FILTER_VALUES.some((s) => s === v),
+  );
+  // A deep link lands on the ALL view for this visit only — the linked
+  // person must be present whatever their state, but a saved filter the
+  // user deliberately chose must not be overwritten (same idiom as I9Tab).
+  const [statusOverride, setStatusOverride] = useState<StatusFilter | null>(
+    deepLinkAssociateId ? 'all' : null,
+  );
+  const statusFilter = statusOverride ?? storedStatusFilter;
+  const setStatusFilter = (f: StatusFilter) => {
+    setStatusOverride(null);
+    setStoredStatusFilter(f);
+  };
   const [orderedFilter, setOrderedFilter] = useState<OrderedFilter>('any');
   // '' = all clients; 'none' = rows with no client attribution.
-  const [clientFilter, setClientFilter] = useState('');
+  const [clientFilter, setClientFilter] = usePersistentState<string>(
+    'alto:list.drugtests.client.v1',
+    '',
+    (v): v is string => typeof v === 'string',
+  );
+  // Global Topbar store scope drives the default client filter (same wiring
+  // as EVerifyTab): adopt it on arrival when one is chosen, follow later
+  // Topbar switches, and push page-level changes back so other modules stay
+  // in step. Deep links skip the initial adoption so the scope can't hide
+  // the linked row.
+  const storeScope = useStoreScope();
+  const scopeClientId = storeScope.enabled ? storeScope.clientId : null;
+  const scopeSyncedRef = useRef(false);
+  useEffect(() => {
+    if (scopeClientId === null) return;
+    if (!scopeSyncedRef.current) {
+      scopeSyncedRef.current = true;
+      if (!scopeClientId || deepLinkAssociateId) return;
+    }
+    setClientFilter((prev) => (prev === scopeClientId ? prev : scopeClientId));
+  }, [scopeClientId, deepLinkAssociateId, setClientFilter]);
+  const changeClientFilter = (id: string) => {
+    setClientFilter(id);
+    // 'none' is a page-local synthetic bucket, not a store the scope knows.
+    if (id !== 'none') storeScope.setClientId(id);
+  };
   // Results for the open drawer — fetched on open (each read is an audited
   // disclosure server-side), null while loading.
   const [detail, setDetail] = useState<DrugTestDetail | null>(null);
@@ -191,6 +276,20 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
     setDetail(null);
     void loadDetail(t.id);
   };
+
+  // Deep link: open the linked person's test as soon as the ledger row
+  // arrives. Matched against the FULL list, not the filtered view, so a
+  // saved filter can never turn the link into a silent no-op.
+  useEffect(() => {
+    if (!deepLinkAssociateId || deepLinkOpened.current || !tests) return;
+    const match = tests.find((t) => t.associateId === deepLinkAssociateId);
+    if (match) {
+      deepLinkOpened.current = true;
+      setDrawerTarget(match);
+      setDetail(null);
+      void loadDetail(match.id);
+    }
+  }, [tests, deepLinkAssociateId, loadDetail]);
 
   const updateStatus = async (id: string, status: DrugTestStatus) => {
     setPendingId(id);
@@ -346,7 +445,7 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
           </Select>
           <Select
             value={clientFilter}
-            onChange={(e) => setClientFilter(e.target.value)}
+            onChange={(e) => changeClientFilter(e.target.value)}
             size="sm"
             className="w-auto"
             aria-label="Filter by client"
@@ -524,6 +623,7 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
           <DrugTestDetailPanel
             test={drawerTarget}
             reports={detail ? detail.reports : null}
+            returnPath={returnPath}
             canManage={canManage}
             pending={pendingId === drawerTarget.id}
             onTransition={(status) => updateStatus(drawerTarget.id, status)}
@@ -541,6 +641,7 @@ export function DrugTestTab({ canManage }: { canManage: boolean }) {
 function DrugTestDetailPanel({
   test,
   reports,
+  returnPath = null,
   canManage,
   pending,
   onTransition,
@@ -549,6 +650,8 @@ function DrugTestDetailPanel({
   test: DrugTest;
   /** null while the audited detail fetch is in flight. */
   reports: DrugTestDetail['reports'] | null;
+  /** Surface the reviewer deep-linked from (null = none). */
+  returnPath?: string | null;
   canManage: boolean;
   pending: boolean;
   onTransition: (status: DrugTestStatus) => void;
@@ -565,6 +668,15 @@ function DrugTestDetailPanel({
             <DrawerTitle className="truncate">{test.associateName}</DrawerTitle>
             <DrawerDescription>{test.provider}</DrawerDescription>
           </div>
+          {returnPath && (
+            <Link
+              to={returnPath}
+              className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"
+            >
+              <ArrowLeft className="h-3 w-3" />
+              Back
+            </Link>
+          )}
           <Link
             to={`/people?associateId=${test.associateId}`}
             className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"

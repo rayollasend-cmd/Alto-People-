@@ -76,9 +76,15 @@ export function VtoHome() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  const refresh = () => {
+  // `soft` refetches WITHOUT nulling the current rows or clearing the
+  // selection — used after mutations so the queue doesn't collapse to a
+  // skeleton and lose scroll/selection; fresh rows reconcile in place
+  // (selection pruned to rows that still exist). Hard refresh (initial
+  // load, tab/filter change, Retry) keeps the skeleton.
+  const refresh = (opts?: { soft?: boolean }) => {
+    const soft = opts?.soft === true;
     if (tab === 'mine') {
-      setMine(null);
+      if (!soft) setMine(null);
       setMineError(null);
       listMyVolunteer()
         .then(setMine)
@@ -90,11 +96,19 @@ export function VtoHome() {
           ),
         );
     } else {
-      setQueue(null);
+      if (!soft) {
+        setQueue(null);
+        setSelected(new Set());
+      }
       setQueueError(null);
-      setSelected(new Set());
       listVolunteerQueue(statusFilter === 'ALL' ? undefined : statusFilter)
-        .then((r) => setQueue(r.entries))
+        .then((r) => {
+          setQueue(r.entries);
+          setSelected((prev) => {
+            const ids = new Set(r.entries.map((e) => e.id));
+            return new Set(Array.from(prev).filter((id) => ids.has(id)));
+          });
+        })
         .catch((err) =>
           setQueueError(
             err instanceof ApiError
@@ -171,14 +185,17 @@ export function VtoHome() {
     setBulkBusy(true);
     try {
       const results = await Promise.allSettled(ids.map((id) => run(id)));
-      const failed = results.filter((r) => r.status === 'rejected').length;
-      const ok = results.length - failed;
-      if (failed === 0) toast.success(`${ok} ${verb}.`);
-      else toast.error(`${ok} ${verb}, ${failed} failed.`);
+      const okIds = ids.filter((_, i) => results[i].status === 'fulfilled');
+      const failed = results.length - okIds.length;
+      if (failed === 0) toast.success(`${okIds.length} ${verb}.`);
+      else toast.error(`${okIds.length} ${verb}, ${failed} failed.`);
+      // Only acted rows leave the selection — failed ones stay selected
+      // so the reviewer can retry exactly those.
+      const drop = new Set(okIds);
+      setSelected((prev) => new Set(Array.from(prev).filter((id) => !drop.has(id))));
     } finally {
       setBulkBusy(false);
-      setSelected(new Set());
-      refresh();
+      refresh({ soft: true });
       if (canManage) refreshSummary();
     }
   };
@@ -413,7 +430,7 @@ export function VtoHome() {
                 <div className="p-6">
                   <ErrorBanner
                     action={
-                      <Button size="sm" variant="secondary" onClick={refresh}>
+                      <Button size="sm" variant="secondary" onClick={() => refresh()}>
                         Retry
                       </Button>
                     }
@@ -491,7 +508,7 @@ export function VtoHome() {
                 <div className="p-6">
                   <ErrorBanner
                     action={
-                      <Button size="sm" variant="secondary" onClick={refresh}>
+                      <Button size="sm" variant="secondary" onClick={() => refresh()}>
                         Retry
                       </Button>
                     }
@@ -609,7 +626,7 @@ export function VtoHome() {
           onClose={() => setShowNew(false)}
           onSaved={() => {
             setShowNew(false);
-            refresh();
+            refresh({ soft: true });
             if (canManage) refreshSummary();
           }}
         />
@@ -623,7 +640,9 @@ export function VtoHome() {
           onClose={() => setOpenQueueId(null)}
           onSaved={() => {
             setOpenQueueId(null);
-            refresh();
+            // Soft — the queue stays rendered (scroll + remaining
+            // selection intact) while the decided row reconciles.
+            refresh({ soft: true });
             if (canManage) refreshSummary();
           }}
         />
@@ -678,8 +697,17 @@ function NewEntryDrawer({
     }
   };
 
+  const dirty =
+    hours.trim() !== '' ||
+    organization.trim() !== '' ||
+    cause.trim() !== '' ||
+    description.trim() !== '' ||
+    evidenceUrl.trim() !== '' ||
+    matchRequested ||
+    activityDate !== today;
+
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} confirmDiscard={() => dirty}>
       <DrawerHeader>
         <DrawerTitle>Log volunteer hours</DrawerTitle>
       </DrawerHeader>

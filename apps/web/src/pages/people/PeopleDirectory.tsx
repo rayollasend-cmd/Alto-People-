@@ -8,6 +8,7 @@ import {
 } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
+  ArrowLeft,
   ArrowLeftRight,
   Briefcase,
   Building2,
@@ -31,6 +32,7 @@ import {
   Pencil,
   Phone,
   Plus,
+  RefreshCw,
   Send,
   ShieldAlert,
   Upload,
@@ -68,6 +70,7 @@ import {
   downloadDocumentUrl,
   getDocumentVault,
   rejectDocument,
+  requestDocumentReupload,
   uploadAdminDocument,
   verifyDocument,
 } from '@/lib/documentsApi';
@@ -191,6 +194,38 @@ const SEEDABLE_STATUSES = new Set<DirectoryStatus>([
   'INACTIVE',
 ]);
 
+// `?return=` handed over by AssociateLink — the page the person's name was
+// clicked on, so the profile drawer can offer a way back. Same-origin app
+// paths only (same rule as the compliance Section 2 verifier's return
+// param): anything not starting with a single '/' — absolute URLs,
+// protocol-relative '//host' — is dropped so it can't become an open
+// redirect.
+function sanitizeReturnPath(raw: string | null): string | null {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return null;
+  return raw;
+}
+
+// Friendly names for the "← Back to …" chip. Matched on the path prefix;
+// anything unrecognized still gets a working chip, just a generic label.
+const RETURN_PATH_LABELS: ReadonlyArray<readonly [string, string]> = [
+  ['/compliance', 'Compliance'],
+  ['/time-attendance', 'Time & attendance'],
+  ['/payroll', 'Payroll'],
+  ['/scheduling', 'Scheduling'],
+  ['/approvals', 'Approvals'],
+  ['/expirations', 'Expirations'],
+];
+
+function returnPathLabel(path: string): string {
+  const hit = RETURN_PATH_LABELS.find(
+    ([prefix]) =>
+      path === prefix ||
+      path.startsWith(`${prefix}/`) ||
+      path.startsWith(`${prefix}?`),
+  );
+  return hit ? hit[1] : 'previous page';
+}
+
 // Validators for the persisted filters — a stored value from a removed
 // option falls back to the default instead of silently hiding rows.
 const isStatusFilter = (v: unknown): v is DirectoryStatus | '' =>
@@ -282,16 +317,27 @@ export function PeopleDirectory() {
       setEmploymentType(rawType as EmploymentTypeFilter);
     }
   }
+  // Session-only deep-link override (mirrors the compliance I-9 tab's
+  // filterOverride): while active, the directory QUERY drops every
+  // narrowing filter so a deep-linked person hidden by the saved filters
+  // can be fetched — without ever writing to the persisted filter state.
+  // `name` fills in once the person is found, for the dismissible note.
+  const [deepLinkOverride, setDeepLinkOverride] = useState<{
+    name: string | null;
+  } | null>(null);
   const filters = useMemo<DirectoryFilters>(
-    () => ({
-      ...(q ? { q } : {}),
-      ...(status ? { status } : {}),
-      ...(clientId ? { clientId } : {}),
-      ...(locationId ? { locationId } : {}),
-      ...(departmentId ? { departmentId } : {}),
-      ...(employmentType ? { employmentType } : {}),
-    }),
-    [q, status, clientId, locationId, departmentId, employmentType],
+    () =>
+      deepLinkOverride
+        ? {}
+        : {
+            ...(q ? { q } : {}),
+            ...(status ? { status } : {}),
+            ...(clientId ? { clientId } : {}),
+            ...(locationId ? { locationId } : {}),
+            ...(departmentId ? { departmentId } : {}),
+            ...(employmentType ? { employmentType } : {}),
+          },
+    [q, status, clientId, locationId, departmentId, employmentType, deepLinkOverride],
   );
   const [search, setSearch] = useState(
     () => new URLSearchParams(window.location.search).get('q') ?? '',
@@ -309,6 +355,24 @@ export function PeopleDirectory() {
   // (drop it on first match) so back-navigating doesn't re-open.
   const [searchParams, setSearchParams] = useSearchParams();
   const deepLinkAssociateId = searchParams.get('associateId');
+  // ?return= rides along with ?associateId= (AssociateLink appends it) —
+  // the page the click came from. Captured into state once so it survives
+  // the URL cleanup below, then the drawer offers a "← Back to …" chip.
+  const [returnTo, setReturnTo] = useState<string | null>(() =>
+    sanitizeReturnPath(
+      new URLSearchParams(window.location.search).get('return'),
+    ),
+  );
+  // Consume the param — same replace pattern as associateId below, so
+  // refresh / back-forward don't re-arm a stale return leg. Value-guarded
+  // (not ref-guarded) so it converges even if another replace briefly
+  // restores it.
+  useEffect(() => {
+    if (!searchParams.has('return')) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('return');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   // Debounce the deferred search input. We search server-side to keep
   // the row math (status derivation, comp lookup) honest with paging in
@@ -400,9 +464,11 @@ export function PeopleDirectory() {
   //
   // When no loaded row matches (persisted status/workplace filters can
   // hide the person), there's no single-associate getter in the
-  // directory API to fall back on — so we clear those filters once and
-  // let the refetch surface them. If they're still absent after the
-  // widened fetch, the id is stale: drop the param instead of looping.
+  // directory API to fall back on — so we relax the filters IN THE QUERY
+  // ONLY (session override above; the user's persisted filters are never
+  // written) and let the refetch surface them, with a dismissible note.
+  // If they're still absent after the widened fetch, the id is stale:
+  // drop the param and the override instead of looping.
   const deepLinkRetried = useRef(false);
   useEffect(() => {
     if (!deepLinkAssociateId || !rows || rowsFetching) return;
@@ -414,26 +480,32 @@ export function PeopleDirectory() {
     const match = rows.find((r) => r.id === deepLinkAssociateId);
     if (match) {
       setTarget(match);
+      // Fill the note's name in — the override was armed before we knew
+      // who the id resolved to.
+      setDeepLinkOverride((o) =>
+        o ? { name: `${match.firstName} ${match.lastName}`.trim() } : o,
+      );
       dropParam();
       return;
     }
     if (
       !deepLinkRetried.current &&
+      !deepLinkOverride &&
       (status || clientId || locationId || departmentId || employmentType || q)
     ) {
       deepLinkRetried.current = true;
-      // Clear EVERY narrowing filter — a persisted employmentType (or a
-      // live search/department filter) hid deep-link targets just as
-      // effectively as the three this used to reset, e.g. any 1099
-      // contractor while the saved filter was W-2.
-      clearAllFilters();
-      toast('Cleared filters to show this person.');
+      // EVERY narrowing filter can hide a deep-link target — a persisted
+      // employmentType (or a live search/department filter) just as
+      // effectively as status/workplace. Relax them all, query-side only.
+      setDeepLinkOverride({ name: null });
       return;
     }
     toast.error("Couldn't find that person in the directory.");
+    setDeepLinkOverride(null);
     dropParam();
   }, [
     deepLinkAssociateId,
+    deepLinkOverride,
     rows,
     rowsFetching,
     searchParams,
@@ -444,9 +516,19 @@ export function PeopleDirectory() {
     departmentId,
     employmentType,
     q,
-    setStatus,
-    setClientId,
   ]);
+
+  // A deliberate filter change while the override note is up means the
+  // user is driving again — drop the override so their click actually
+  // takes effect (the override was masking every narrowing filter).
+  const filterKey = JSON.stringify([q, status, clientId, locationId, departmentId, employmentType]);
+  const prevFilterKey = useRef(filterKey);
+  useEffect(() => {
+    if (prevFilterKey.current !== filterKey) {
+      prevFilterKey.current = filterKey;
+      setDeepLinkOverride((o) => (o ? null : o));
+    }
+  }, [filterKey]);
   const error = rowsError
     ? rowsError instanceof ApiError
       ? rowsError.message
@@ -476,6 +558,22 @@ export function PeopleDirectory() {
     setLocationId('');
     setDepartmentId('');
     setEmploymentType('');
+  };
+
+  // Set when an in-drawer deactivation flips someone INACTIVE while the
+  // list is filtered to ACTIVE — the refetch removes them from the list
+  // under the open drawer. The drawer keeps showing the patched person;
+  // this explains the "gap" once it closes instead of leaving it silent.
+  const inactiveNoteOnClose = useRef(false);
+  const closeDrawer = () => {
+    setTarget(null);
+    // The return chip belongs to the deep-linked open only — a later,
+    // manually opened profile shouldn't inherit someone else's way back.
+    setReturnTo(null);
+    if (inactiveNoteOnClose.current) {
+      inactiveNoteOnClose.current = false;
+      toast('Now inactive — switch the status filter to see them.');
+    }
   };
 
   // Serializes the ENTIRE filtered directory, not just the pages the
@@ -691,6 +789,26 @@ export function PeopleDirectory() {
         )}
       </FilterBar>
 
+      {/* Deep-link session override — the saved filters were NOT changed,
+          the query is just temporarily unfiltered so the linked person can
+          render. Dismissing snaps straight back to the saved filters. */}
+      {deepLinkOverride && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-gold/40 bg-gold/[0.07] px-3 py-2 text-sm text-silver">
+          <span>
+            Showing {deepLinkOverride.name ?? 'this person'} outside your
+            current filters — they stay saved.
+          </span>
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => setDeepLinkOverride(null)}
+          >
+            <X className="h-3.5 w-3.5" />
+            Back to my filters
+          </Button>
+        </div>
+      )}
+
       {error && <ErrorBanner className="mb-4">{error}</ErrorBanner>}
 
       {!rows && !error && <SkeletonRows count={8} rowHeight="h-14" />}
@@ -763,14 +881,22 @@ export function PeopleDirectory() {
 
       <Drawer
         open={target !== null}
-        onOpenChange={(o) => !o && setTarget(null)}
+        onOpenChange={(o) => !o && closeDrawer()}
         width="max-w-2xl"
       >
         {target && (
           <DirectoryDrawer
             associate={target}
-            onClose={() => setTarget(null)}
+            returnTo={returnTo}
+            onClose={closeDrawer}
             onAssociateChange={(patch) => {
+              // Deactivated out of an ACTIVE-filtered list — remember to
+              // explain on close (reactivation cancels the note).
+              if (patch.status === 'INACTIVE' && status === 'ACTIVE') {
+                inactiveNoteOnClose.current = true;
+              } else if (patch.status === 'ACTIVE') {
+                inactiveNoteOnClose.current = false;
+              }
               const updated = { ...target, ...patch };
               setTarget(updated);
               // This key holds useInfiniteQuery's InfiniteData ({pages,
@@ -1130,10 +1256,13 @@ const DirectoryPhoneCard = memo(function DirectoryPhoneCard({
 
 function DirectoryDrawer({
   associate: a,
+  returnTo,
   onClose,
   onAssociateChange,
 }: {
   associate: DirectoryEntry;
+  /** Validated ?return= path from the AssociateLink deep link, if any. */
+  returnTo: string | null;
   onClose: () => void;
   onAssociateChange: (patch: Partial<DirectoryEntry>) => void;
 }) {
@@ -1153,6 +1282,19 @@ function DirectoryDrawer({
   return (
     <>
       <DrawerHeader>
+        {/* The return leg of the People round trip: the page whose
+            AssociateLink brought us here, one click away again. */}
+        {returnTo && (
+          <div className="mb-2">
+            <Link
+              to={returnTo}
+              className="inline-flex items-center gap-1.5 rounded-full border border-navy-secondary bg-navy-secondary/40 px-2.5 py-1 text-xs text-silver transition-colors hover:border-gold/60 hover:text-white"
+            >
+              <ArrowLeft className="h-3 w-3" />
+              Back to {returnPathLabel(returnTo)}
+            </Link>
+          </div>
+        )}
         <div className="flex items-center gap-3">
           <Avatar src={a.photoUrl} name={`${a.firstName} ${a.lastName}`} email={a.email} size="md" />
           <div className="min-w-0">
@@ -1177,7 +1319,11 @@ function DirectoryDrawer({
           </TabsList>
 
           <TabsContent value="profile">
-            <ProfileTab associate={a} onAssociateChange={onAssociateChange} />
+            <ProfileTab
+              associate={a}
+              onAssociateChange={onAssociateChange}
+              onClose={onClose}
+            />
           </TabsContent>
           <TabsContent value="compensation">
             <CompensationTab associate={a} />
@@ -1225,9 +1371,12 @@ function DirectoryDrawer({
 function ProfileTab({
   associate: a,
   onAssociateChange,
+  onClose,
 }: {
   associate: DirectoryEntry;
   onAssociateChange: (patch: Partial<DirectoryEntry>) => void;
+  /** Closes the profile drawer (used after erasure — see DangerZone). */
+  onClose: () => void;
 }) {
   const [transferOpen, setTransferOpen] = useState(false);
   const canTransfer = Boolean(a.workplaceClientId);
@@ -1392,7 +1541,11 @@ function ProfileTab({
 
       <SsnSection associateId={a.id} />
 
-      <W4Section associateId={a.id} />
+      <W4Section
+        associateId={a.id}
+        applicationId={a.applicationId}
+        associateEmail={a.email}
+      />
 
       <Section title="On record">
         <InfoRow
@@ -1438,7 +1591,7 @@ function ProfileTab({
 
       <DeactivationSection associate={a} onAssociateChange={onAssociateChange} />
 
-      <DangerZoneSection associate={a} />
+      <DangerZoneSection associate={a} onErased={onClose} />
     </div>
   );
 }
@@ -1617,7 +1770,14 @@ function DeactivationSection({
  * guards admin user management. The dialog demands a written reason and
  * retyping the associate's last name (the server 409s on a mismatch).
  */
-function DangerZoneSection({ associate: a }: { associate: DirectoryEntry }) {
+function DangerZoneSection({
+  associate: a,
+  onErased,
+}: {
+  associate: DirectoryEntry;
+  /** Close the drawer — an erased (anonymized) profile must not keep rendering. */
+  onErased: () => void;
+}) {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -1649,6 +1809,10 @@ function DangerZoneSection({ associate: a }: { associate: DirectoryEntry }) {
       toast.success('Personal data erased. Payroll history is retained.');
       setOpen(false);
       void qc.invalidateQueries({ queryKey: ['directory'] });
+      // The drawer would keep rendering the pre-erasure identity from its
+      // local snapshot — close it instead of showing data that no longer
+      // exists.
+      onErased();
     } catch (err) {
       toast.error(
         err instanceof ApiError ? err.message : 'Erasure failed. Nothing was changed.',
@@ -3084,7 +3248,17 @@ const W4_FILING_LABEL: Record<string, string> = {
   HEAD_OF_HOUSEHOLD: 'Head of household',
 };
 
-function W4Section({ associateId }: { associateId: string }) {
+function W4Section({
+  associateId,
+  applicationId,
+  associateEmail,
+}: {
+  associateId: string;
+  /** Their onboarding application, when the directory row carries one. */
+  applicationId: string | null;
+  /** Fallback search key for the onboarding list when no application id. */
+  associateEmail: string;
+}) {
   const { user } = useAuth();
   const canSee = user ? hasCapability(user.role, 'process:payroll') : false;
   const qc = useQueryClient();
@@ -3144,7 +3318,26 @@ function W4Section({ associateId }: { associateId: string }) {
       ) : !data || !data.hasSubmission ? (
         <InfoRow
           label="W-4"
-          value={<span className="text-silver">Not on file — collected during onboarding</span>}
+          value={
+            <span className="text-silver">
+              Not on file — collected during onboarding.{' '}
+              {/* Dead end otherwise: link straight to where the W-4 task
+                  actually lives (their application checklist), or at least
+                  to the onboarding list narrowed to them. */}
+              <Link
+                to={
+                  applicationId
+                    ? `/onboarding/applications/${applicationId}`
+                    : `/onboarding?q=${encodeURIComponent(associateEmail)}`
+                }
+                className="text-gold hover:text-gold-bright"
+              >
+                {applicationId
+                  ? 'Open their application'
+                  : 'Find them in onboarding'}
+              </Link>
+            </span>
+          }
         />
       ) : editing && form ? (
         <div className="space-y-2">
@@ -4386,10 +4579,22 @@ function vaultChips(
 
 function DocumentsTab({ associateId }: { associateId: string }) {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  // Same capability that gates the admin Document vault's actions
+  // (DocumentsHome passes can('manage:documents') to AdminDocumentsView).
+  const canManageDocs = user
+    ? hasCapability(user.role, 'manage:documents')
+    : false;
   const [actingId, setActingId] = useState<string | null>(null);
   const [rejectTarget, setRejectTarget] = useState<DocumentRecord | null>(null);
   const [previewDoc, setPreviewDoc] = useState<DocumentRecord | null>(null);
   const [showUpload, setShowUpload] = useState(false);
+  // Ids we've nudged this session — the row itself doesn't change (an
+  // EXPIRED doc stays EXPIRED as evidence; the replacement arrives as a
+  // new record), so remember the send locally like AdminDocumentsView.
+  const [reuploadRequested, setReuploadRequested] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const [search, setSearch] = useState('');
 
@@ -4464,6 +4669,22 @@ function DocumentsTab({ associateId }: { associateId: string }) {
       toast.success('Document verified.');
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not verify.');
+    } finally {
+      setActingId(null);
+    }
+  }
+
+  async function handleRequestReupload(d: DocumentRecord) {
+    if (actingId) return;
+    setActingId(d.id);
+    try {
+      await requestDocumentReupload(d.id);
+      toast.success('Asked the associate to upload a current copy.');
+      setReuploadRequested((s) => new Set(s).add(d.id));
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not request a re-upload.',
+      );
     } finally {
       setActingId(null);
     }
@@ -4576,6 +4797,30 @@ function DocumentsTab({ associateId }: { associateId: string }) {
                       </Button>
                     </>
                   )}
+                  {/* Expired or file-lost documents were a dead end here —
+                      the alert text said "please re-upload" with no way to
+                      make that happen. Same renewal nudge as the admin
+                      Document vault. */}
+                  {canManageDocs &&
+                    (d.status === 'EXPIRED' || !d.fileAvailable) && (
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => void handleRequestReupload(d)}
+                        disabled={
+                          actingId === d.id || reuploadRequested.has(d.id)
+                        }
+                        aria-label={`Request re-upload of ${d.filename}`}
+                        title={
+                          reuploadRequested.has(d.id)
+                            ? 'Re-upload requested'
+                            : 'Ask the associate to upload a current copy'
+                        }
+                        className="text-gold hover:text-gold"
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                      </Button>
+                    )}
                   {d.fileAvailable ? (
                     <a
                       href={downloadDocumentUrl(d.id)}

@@ -81,7 +81,10 @@ export function QuickbooksSection({ clientId }: Props) {
   }, [refresh]);
 
   // Surface the post-OAuth "?qbo=connected" toast (or "?qbo_error=...")
-  // and clear the param so a refresh doesn't re-fire it.
+  // and clear the param so a refresh doesn't re-fire it. The OAuth return
+  // URL itself is server-built (/clients/:id?qbo=...), so we can't append
+  // ?section=quickbooks there — instead, consuming the param rewrites it
+  // to ?section=quickbooks, and ClientDetail scrolls this card into view.
   useEffect(() => {
     const flag = searchParams.get('qbo');
     const errorCode = searchParams.get('qbo_error');
@@ -96,6 +99,7 @@ export function QuickbooksSection({ clientId }: Props) {
       const next = new URLSearchParams(searchParams);
       next.delete('qbo');
       next.delete('qbo_error');
+      next.set('section', 'quickbooks');
       setSearchParams(next, { replace: true });
     }
   }, [searchParams, setSearchParams]);

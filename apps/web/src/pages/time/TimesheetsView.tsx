@@ -12,7 +12,7 @@ import {
   Search,
   CheckCircle2,
 } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import type {
   TimesheetWeekResponse,
   TimesheetAssociateDetailResponse,
@@ -31,7 +31,7 @@ import { upsertAttestation } from '@/lib/complianceScorecardApi';
 import { useAuth } from '@/lib/auth';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtDateTime } from '@/lib/format';
+import { fmtDate, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
 import { useConfirm } from '@/lib/confirm';
 import {
   Badge,
@@ -134,7 +134,16 @@ export function TimesheetsView() {
     [user?.clientId, user?.clientName],
   );
 
-  const [weekStart, setWeekStart] = useState<Date>(() => lastCompletedWeekStart(new Date()));
+  // Round-trip state — the picked week (and client, below) live in the
+  // URL (?week=YYYY-MM-DD&client=…, replace-written) so the fix-issue →
+  // re-file loop returns to the same view: leaving for the approval queue
+  // and coming Back, or refreshing, no longer resets to the default week.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [weekStart, setWeekStart] = useState<Date>(() => {
+    const w = searchParams.get('week');
+    const parsed = w && /^\d{4}-\d{2}-\d{2}$/.test(w) ? parseYmd(w) : null;
+    return parsed ? startOfSaturdayWeek(parsed) : lastCompletedWeekStart(new Date());
+  });
   const [data, setData] = useState<TimesheetWeekResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
@@ -151,8 +160,11 @@ export function TimesheetsView() {
   const [search, setSearch] = useState('');
 
   // Per-client filter — file one Fieldglass SOW at a time. '' = all clients.
-  // Bounded viewers start (and stay) pinned to their client.
-  const [clientId, setClientId] = useState(boundedClient?.id ?? '');
+  // Bounded viewers start (and stay) pinned to their client; everyone else
+  // restores ?client= from the URL (see the round-trip note above).
+  const [clientId, setClientId] = useState(
+    () => boundedClient?.id ?? searchParams.get('client') ?? '',
+  );
   // Shared react-query cache; the fetch is skipped entirely for bounded
   // roles (a failure just leaves the dropdown at "All clients").
   const { clients: fetchedClients } = useClients({ enabled: !boundedClient });
@@ -164,6 +176,25 @@ export function TimesheetsView() {
   const clientArg = clientId || undefined;
 
   const weekEnd = useMemo(() => addDays(weekStart, 6), [weekStart]);
+
+  // Mirror week + client into the URL (replace — no history spam). Defaults
+  // write no params so a fresh visit keeps a clean /time-attendance URL.
+  useEffect(() => {
+    const weekYmd = ymdLocal(weekStart);
+    const defaultWeekYmd = ymdLocal(lastCompletedWeekStart(new Date()));
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (weekYmd === defaultWeekYmd) next.delete('week');
+        else next.set('week', weekYmd);
+        // Bounded viewers are pinned server-side — never write their pin.
+        if (!clientId || clientId === boundedClient?.id) next.delete('client');
+        else next.set('client', clientId);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [weekStart, clientId, boundedClient?.id, setSearchParams]);
 
   // No-show (scheduled but zero worked) or a delta of 2h+ either way.
   const scheduleFlags = useMemo(

@@ -287,6 +287,11 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
   const submitEnabled =
     reasonValid && correctionEntries.length > 0 && !submitting;
 
+  // Real dirty check for the Dialog's discard guard: a typed reason or any
+  // correction row in progress. Up to 15 fields × associates plus the
+  // mandatory reason used to vanish on a stray Esc / outside click.
+  const isDirty = () => reason.trim().length > 0 || correctionEntries.length > 0;
+
   const onSubmit = async () => {
     if (!submitEnabled) return;
     const corrections: CorrectionPayload[] = [];
@@ -317,7 +322,11 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
   };
 
   return (
-    <Dialog open={open} onOpenChange={handleOpen}>
+    // confirmDiscard: user dismissals (Esc / overlay / X / drag-down) get a
+    // "Discard your changes?" confirm while dirty; only a confirmed discard
+    // reaches handleOpen(false) and resets. Programmatic closes (successful
+    // submit) are never intercepted.
+    <Dialog open={open} onOpenChange={handleOpen} confirmDiscard={isDirty}>
       <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">

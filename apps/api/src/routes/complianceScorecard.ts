@@ -1110,7 +1110,7 @@ async function buildActionsTile(): Promise<ScorecardActionsResponse> {
         title: `${subject.associateName ?? 'Associate'} — missing ${sig.label.toLowerCase()}`,
         contractClause: sig.contractClause,
         subject,
-        link: subject.associateId ? `/people?associate=${subject.associateId}` : null,
+        link: onboardingFixLink(sig.key, subject.associateId),
       });
     }
   }
@@ -1123,7 +1123,7 @@ async function buildActionsTile(): Promise<ScorecardActionsResponse> {
       title: `${item.subject.associateName ?? 'Item'} — ${item.label} expires in ${item.daysUntil}d`,
       contractClause: getExpirationClause(item.kind),
       subject: item.subject,
-      link: item.subject.associateId ? `/people?associate=${item.subject.associateId}` : null,
+      link: expirationFixLink(item.kind, item.subject.associateId),
     });
   }
   for (const item of expirations.buckets.amber) {
@@ -1133,7 +1133,7 @@ async function buildActionsTile(): Promise<ScorecardActionsResponse> {
       title: `${item.subject.associateName ?? 'Item'} — ${item.label} expires in ${item.daysUntil}d`,
       contractClause: getExpirationClause(item.kind),
       subject: item.subject,
-      link: item.subject.associateId ? `/people?associate=${item.subject.associateId}` : null,
+      link: expirationFixLink(item.kind, item.subject.associateId),
     });
   }
 
@@ -1180,7 +1180,9 @@ async function buildActionsTile(): Promise<ScorecardActionsResponse> {
         title: `${subject.associateName ?? 'Associate'} — missing ${sig.label.toLowerCase()}`,
         contractClause: sig.contractClause,
         subject,
-        link: subject.associateId ? `/people?associate=${subject.associateId}` : null,
+        // Training gaps are fixed on the person record (enrollments live
+        // there) — and the People page reads ?associateId=, not ?associate=.
+        link: subject.associateId ? `/people?associateId=${subject.associateId}` : null,
       });
     }
   }
@@ -1200,6 +1202,58 @@ async function buildActionsTile(): Promise<ScorecardActionsResponse> {
     warnCount,
     generatedAt: new Date().toISOString(),
   });
+}
+
+/* ------------------------------------------------------------------------- *
+ * Fix-link routing. Every action deep-links the surface that actually FIXES
+ * it: the compliance directorate tab that owns the signal (those tabs consume
+ * ?associateId= and auto-open the person), falling back to the person record
+ * for genuinely person-level gaps. NOTE: the People page reads ?associateId=,
+ * never ?associate= — the old param landed every click on the unfiltered
+ * directory. ?return= sends the fixer back to the scorecard when done.
+ * ------------------------------------------------------------------------- */
+
+const SCORECARD_RETURN = `&return=${encodeURIComponent('/compliance?tab=scorecard')}`;
+
+function onboardingFixLink(
+  key: ScorecardOnboardingSignal['key'],
+  associateId: string | null,
+): string | null {
+  if (!associateId) return null;
+  switch (key) {
+    case 'I9_BOTH_SECTIONS':
+      return `/compliance?tab=i9&associateId=${associateId}${SCORECARD_RETURN}`;
+    case 'E_VERIFY':
+      return `/compliance?tab=everify&associateId=${associateId}${SCORECARD_RETURN}`;
+    case 'BACKGROUND_CHECK':
+      return `/compliance?tab=background&associateId=${associateId}`;
+    case 'DRUG_TEST_60D':
+      return `/compliance?tab=drugtests&associateId=${associateId}`;
+    // Age, W-4, offer letter, policy ack — person-record-level gaps.
+    default:
+      return `/people?associateId=${associateId}`;
+  }
+}
+
+function expirationFixLink(
+  kind: ScorecardExpiringItem['kind'],
+  associateId: string | null,
+): string | null {
+  if (!associateId) return null;
+  switch (kind) {
+    case 'I9_WORK_AUTH':
+      return `/compliance?tab=i9&associateId=${associateId}${SCORECARD_RETURN}`;
+    case 'DRUG_TEST':
+      return `/compliance?tab=drugtests&associateId=${associateId}`;
+    case 'J1_DS2019':
+      return `/compliance?tab=j1&associateId=${associateId}`;
+    // Insurance rows carry no associate (link stays null upstream);
+    // training certs are renewed from the person record.
+    case 'WORKERS_COMP':
+    case 'GENERAL_LIABILITY':
+    case 'TRAINING_CERT':
+      return `/people?associateId=${associateId}`;
+  }
 }
 
 function getExpirationClause(kind: ScorecardExpiringItem['kind']): string {

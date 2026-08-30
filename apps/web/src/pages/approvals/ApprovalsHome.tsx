@@ -230,19 +230,30 @@ function useDeepLinkFlash(
 /** Deep-link flash ring — appended to the target row's classes for ~2s. */
 const FLASH_ROW_CLASS = 'ring-2 ring-gold bg-gold/10';
 
-/** Loop a single-approve endpoint over the selection; report both halves. */
+/**
+ * Loop a single-approve endpoint over the selection; report both halves,
+ * naming each failure. Returns the FAILED ids so the caller can keep just
+ * those selected — a partial failure must not wipe the selection and make
+ * the manager re-hunt the rows that still need a retry.
+ */
 async function approveAllSettled(
-  ids: string[],
+  rows: Array<{ id: string; name: string }>,
   fn: (id: string) => Promise<unknown>,
   noun: string,
-): Promise<void> {
-  const results = await Promise.allSettled(ids.map((id) => fn(id)));
-  const ok = results.filter((r) => r.status === 'fulfilled').length;
-  const failed = results.length - ok;
+): Promise<string[]> {
+  const results = await Promise.allSettled(rows.map((r) => fn(r.id)));
+  const failedIds: string[] = [];
+  results.forEach((res, i) => {
+    if (res.status === 'fulfilled') return;
+    failedIds.push(rows[i].id);
+    toast.error(`Could not approve ${rows[i].name}.`, {
+      description:
+        res.reason instanceof ApiError ? res.reason.message : undefined,
+    });
+  });
+  const ok = rows.length - failedIds.length;
   if (ok > 0) toast.success(`Approved ${ok} ${noun}${ok === 1 ? '' : 's'}.`);
-  if (failed > 0) {
-    toast.error(`${failed} ${noun}${failed === 1 ? '' : 's'} could not be approved.`);
-  }
+  return failedIds;
 }
 
 /* --------------------------------------------- walk-in clock-ins panel */
@@ -292,7 +303,7 @@ function WalkInClockInsPanel() {
   // Memoized: a fresh array identity on every render defeats memoization
   // inside useSelection, and this panel refetches itself every minute.
   const itemIds = useMemo(() => items?.map((r) => r.id) ?? [], [items]);
-  const { selected, toggle, clear, allSelected, someSelected, toggleAll } =
+  const { selected, toggle, clear, selectAll, allSelected, someSelected, toggleAll } =
     useSelection(itemIds);
   const flashId = useDeepLinkFlash('walkin', items === null ? null : itemIds);
 
@@ -320,12 +331,18 @@ function WalkInClockInsPanel() {
 
   // No bulk endpoint for clock-in requests — loop the single-approve calls
   // and settle them all, then report both halves (same as swaps/pickups).
+  // Partial failure keeps ONLY the failed rows selected for a retry.
   const bulkApprove = async () => {
-    const ids = [...selected];
-    if (ids.length === 0) return;
+    const rows = (items ?? []).filter((r) => selected.has(r.id));
+    if (rows.length === 0) return;
     setBulkBusy('approve');
-    await approveAllSettled(ids, (id) => approveClockInRequest(id), 'clock-in');
-    clear();
+    const failedIds = await approveAllSettled(
+      rows.map((r) => ({ id: r.id, name: r.associateName })),
+      (id) => approveClockInRequest(id),
+      'clock-in',
+    );
+    if (failedIds.length > 0) selectAll(failedIds);
+    else clear();
     setBulkBusy(null);
     queryClient.invalidateQueries({ queryKey: CLOCK_INS_KEY });
   };
@@ -342,11 +359,13 @@ function WalkInClockInsPanel() {
       rows.map((r) => denyClockInRequest(r.id, reason)),
     );
     let ok = 0;
+    const failedIds: string[] = [];
     results.forEach((res, i) => {
       if (res.status === 'fulfilled') {
         ok += 1;
         return;
       }
+      failedIds.push(rows[i].id);
       toast.error(`Could not deny ${rows[i].associateName}.`, {
         description:
           res.reason instanceof ApiError ? res.reason.message : undefined,
@@ -356,7 +375,9 @@ function WalkInClockInsPanel() {
       hapticConfirm();
       toast.success(`Denied ${ok} clock-in${ok === 1 ? '' : 's'}.`);
     }
-    clear();
+    // Partial failure: keep only the failed rows selected for a retry.
+    if (failedIds.length > 0) selectAll(failedIds);
+    else clear();
     setBulkBusy(null);
     queryClient.invalidateQueries({ queryKey: CLOCK_INS_KEY });
   };
@@ -595,7 +616,7 @@ function PendingTimeOffPanel({
   // Memoized: a fresh array identity on every render defeats memoization
   // inside useSelection, and this page refetches itself every minute.
   const itemIds = useMemo(() => items?.map((r) => r.id) ?? [], [items]);
-  const { selected, toggle, clear, allSelected, someSelected, toggleAll } =
+  const { selected, toggle, clear, selectAll, allSelected, someSelected, toggleAll } =
     useSelection(itemIds);
   const [bulkBusy, setBulkBusy] = useState(false);
   const flashId = useDeepLinkFlash('request', items === null ? null : itemIds);
@@ -663,7 +684,8 @@ function PendingTimeOffPanel({
   };
 
   // Bulk approvals go through the server's bulk endpoint — one round-trip,
-  // per-id failure reporting.
+  // per-id failure reporting. Partial failure keeps ONLY the failed rows
+  // selected (named per-row) so a retry doesn't start from scratch.
   const bulkApprove = async () => {
     const ids = [...selected];
     if (ids.length === 0) return;
@@ -676,13 +698,20 @@ function PendingTimeOffPanel({
         );
       }
       if (res.failed.length > 0) {
-        toast.error(
-          `${res.failed.length} request${res.failed.length === 1 ? '' : 's'} could not be approved.`,
-          { description: res.failed[0]?.error },
+        const nameById = new Map(
+          (items ?? []).map((r) => [r.id, r.associateName ?? 'request']),
         );
+        for (const f of res.failed) {
+          toast.error(`Could not approve ${nameById.get(f.id) ?? 'request'}.`, {
+            description: f.error,
+          });
+        }
+        selectAll(res.failed.map((f) => f.id));
+      } else {
+        clear();
       }
-      clear();
     } catch (err) {
+      // Whole call failed — nothing was decided; keep the selection intact.
       toast.error('Could not approve selected.', {
         description: err instanceof Error ? err.message : 'Something went wrong.',
       });
@@ -798,7 +827,7 @@ function PendingTimeOffPanel({
 
       <DenyDialog
         target={denyTarget}
-        onSubmit={(target, note) => denyMutation.mutate({ target, note })}
+        onSubmit={(target, note) => denyMutation.mutateAsync({ target, note })}
         onClose={() => setDenyTarget(null)}
       />
     </Card>
@@ -811,31 +840,49 @@ function DenyDialog({
   onClose,
 }: {
   target: TimeOffRequest | null;
-  onSubmit: (target: TimeOffRequest, note: string) => void;
+  /** Must reject on server failure (mutateAsync) — the dialog only closes
+   *  itself on success so a failed deny keeps the typed note in place. */
+  onSubmit: (target: TimeOffRequest, note: string) => Promise<unknown>;
   onClose: () => void;
 }) {
   const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
   const open = target !== null;
 
   useEffect(() => {
-    if (open) setNote('');
+    if (open) {
+      setNote('');
+      setBusy(false);
+    }
   }, [open]);
 
-  const submit = () => {
-    if (!target) return;
+  const submit = async () => {
+    if (!target || busy) return;
     const trimmed = note.trim();
     if (trimmed.length === 0) {
       toast.error('A note is required when denying.');
       return;
     }
-    // Optimistic: the row disappears the moment the deny is submitted;
-    // the mutation rolls it back (with a toast) if the server rejects.
-    onSubmit(target, trimmed);
-    onClose();
+    setBusy(true);
+    try {
+      // Optimistic: the row disappears the moment the deny is submitted;
+      // the mutation rolls it back (with a toast) if the server rejects.
+      await onSubmit(target, trimmed);
+      onClose(); // success only — on failure the dialog stays open with the note
+    } catch {
+      // The mutation's onError already toasted; keep the dialog (and the
+      // typed note) so the manager can retry without retyping.
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => !v && !busy && onClose()}
+      confirmDiscard={() => note.trim().length > 0}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Deny request</DialogTitle>
@@ -856,10 +903,10 @@ function DenyDialog({
           )}
         </Field>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => onClose()}>
+          <Button variant="ghost" onClick={() => onClose()} disabled={busy}>
             Cancel
           </Button>
-          <Button onClick={submit} variant="destructive">
+          <Button onClick={() => void submit()} variant="destructive" loading={busy} disabled={busy}>
             Deny
           </Button>
         </DialogFooter>
@@ -881,7 +928,7 @@ function SwapsPanel() {
   });
   const items = swapsQuery.data?.requests ?? null;
   const itemIds = useMemo(() => items?.map((s) => s.id) ?? [], [items]);
-  const { selected, toggle, clear, allSelected, someSelected, toggleAll } =
+  const { selected, toggle, clear, selectAll, allSelected, someSelected, toggleAll } =
     useSelection(itemIds);
   const error = swapsQuery.isError
     ? swapsQuery.error instanceof ApiError
@@ -907,13 +954,19 @@ function SwapsPanel() {
   };
 
   // No bulk endpoint for swaps — loop the single-approve calls and settle
-  // them all, then report both halves.
+  // them all, then report both halves. Partial failure keeps ONLY the
+  // failed rows selected for a retry.
   const bulkApprove = async () => {
-    const ids = [...selected];
-    if (ids.length === 0) return;
+    const rows = (items ?? []).filter((s) => selected.has(s.id));
+    if (rows.length === 0) return;
     setBulkBusy(true);
-    await approveAllSettled(ids, (id) => managerApproveSwap(id), 'swap');
-    clear();
+    const failedIds = await approveAllSettled(
+      rows.map((s) => ({ id: s.id, name: `${s.requesterName} → ${s.counterpartyName}` })),
+      (id) => managerApproveSwap(id),
+      'swap',
+    );
+    if (failedIds.length > 0) selectAll(failedIds);
+    else clear();
     setBulkBusy(false);
     queryClient.invalidateQueries({ queryKey: SWAPS_KEY });
   };
@@ -1045,7 +1098,7 @@ function PickupsPanel() {
   });
   const items = pickupsQuery.data?.claims ?? null;
   const itemIds = useMemo(() => items?.map((c) => c.id) ?? [], [items]);
-  const { selected, toggle, clear, allSelected, someSelected, toggleAll } =
+  const { selected, toggle, clear, selectAll, allSelected, someSelected, toggleAll } =
     useSelection(itemIds);
   const error = pickupsQuery.isError
     ? pickupsQuery.error instanceof ApiError
@@ -1070,12 +1123,18 @@ function PickupsPanel() {
     }
   };
 
+  // Partial failure keeps ONLY the failed rows selected for a retry.
   const bulkApprove = async () => {
-    const ids = [...selected];
-    if (ids.length === 0) return;
+    const rows = (items ?? []).filter((c) => selected.has(c.id));
+    if (rows.length === 0) return;
     setBulkBusy(true);
-    await approveAllSettled(ids, (id) => approveOpenShiftClaim(id), 'pickup');
-    clear();
+    const failedIds = await approveAllSettled(
+      rows.map((c) => ({ id: c.id, name: c.associateName })),
+      (id) => approveOpenShiftClaim(id),
+      'pickup',
+    );
+    if (failedIds.length > 0) selectAll(failedIds);
+    else clear();
     setBulkBusy(false);
     queryClient.invalidateQueries({ queryKey: PICKUPS_KEY });
   };

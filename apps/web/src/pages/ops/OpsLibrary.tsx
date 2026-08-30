@@ -98,6 +98,20 @@ export function OpsLibrary() {
   }, []);
   useEffect(() => load(), [load]);
 
+  // After "New SOP": once the reloaded library contains the fresh
+  // template (already added to `expanded`), scroll it into view so "add
+  // its tasks" points somewhere instead of a collapsed row far below.
+  const [pendingFocusId, setPendingFocusId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!pendingFocusId || !library?.templates.some((t) => t.id === pendingFocusId)) {
+      return;
+    }
+    document
+      .getElementById(`ops-template-${pendingFocusId}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setPendingFocusId(null);
+  }, [pendingFocusId, library]);
+
   const stats = useMemo(() => {
     if (!library) return null;
     const tasks = library.templates.flatMap((t) => t.tasks);
@@ -270,8 +284,9 @@ export function OpsLibrary() {
                   return (
                     <div
                       key={tpl.id}
+                      id={`ops-template-${tpl.id}`}
                       className={cn(
-                        'rounded-lg border transition-colors',
+                        'scroll-mt-16 rounded-lg border transition-colors',
                         isOpen
                           ? 'border-gold/40 bg-navy-secondary/10'
                           : 'border-navy-secondary hover:border-gold/25',
@@ -384,7 +399,12 @@ export function OpsLibrary() {
         open={newOpen}
         onOpenChange={setNewOpen}
         departments={library.departments}
-        onCreated={load}
+        onCreated={(id) => {
+          // Expand the newborn and walk the editor to it.
+          setExpanded((prev) => new Set(prev).add(id));
+          setPendingFocusId(id);
+          load();
+        }}
       />
     </div>
   );
@@ -892,7 +912,7 @@ function NewTemplateDialog({
   open: boolean;
   onOpenChange: (o: boolean) => void;
   departments: string[];
-  onCreated: () => void;
+  onCreated: (templateId: string) => void;
 }) {
   const [name, setName] = useState('');
   const [department, setDepartment] = useState(departments[0] ?? '');
@@ -953,10 +973,14 @@ function NewTemplateDialog({
             onClick={async () => {
               setBusy(true);
               try {
-                await createOpsTemplate({ name: name.trim(), department, period });
+                const created = await createOpsTemplate({
+                  name: name.trim(),
+                  department,
+                  period,
+                });
                 toast.success('SOP created — add its tasks.');
                 onOpenChange(false);
-                onCreated();
+                onCreated(created.id);
               } catch (err) {
                 toast.error(err instanceof ApiError ? err.message : 'Could not create.');
               } finally {

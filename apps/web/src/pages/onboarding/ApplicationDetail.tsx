@@ -1265,13 +1265,19 @@ function taskDestination(
         label: 'Open I-9 in Compliance',
       };
     case 'BACKGROUND_CHECK':
+      // Same ?return= round-trip the I-9 verifier gets — the receiving
+      // tab's drawer offers a way back to this application.
       return {
-        to: `/compliance?tab=background&associateId=${associateId}`,
+        to: `/compliance?tab=background&associateId=${associateId}${
+          returnTo ? `&return=${encodeURIComponent(returnTo)}` : ''
+        }`,
         label: 'Open background checks',
       };
     case 'J1_DOCS':
       return {
-        to: `/compliance?tab=j1&associateId=${associateId}`,
+        to: `/compliance?tab=j1&associateId=${associateId}${
+          returnTo ? `&return=${encodeURIComponent(returnTo)}` : ''
+        }`,
         label: 'Open J-1 program',
       };
     default:

@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -29,9 +30,21 @@ export function OpsHome() {
       ].filter((t): t is { key: string; label: string } => t !== null),
     [canRun, canBoard, canLibrary],
   );
-  const [tab, setTab] = useState<string>(() =>
-    canRun ? 'shift' : canBoard ? 'board' : 'library',
-  );
+  // The active tab lives in ?tab= so views are linkable ("open the ops
+  // board") and a tablet reload/wake doesn't dump the supervisor on the
+  // role default. Invalid or unauthorized values fall back to that
+  // default; replace-writes keep tab hops out of Back history. Other
+  // params (?shift=, ?record=) are preserved across switches so live
+  // context survives a detour through another tab.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const roleDefault = canRun ? 'shift' : canBoard ? 'board' : 'library';
+  const tabParam = searchParams.get('tab');
+  const tab = tabs.some((t) => t.key === tabParam) ? (tabParam as string) : roleDefault;
+  const setTab = (next: string) => {
+    const params = new URLSearchParams(searchParams);
+    params.set('tab', next);
+    setSearchParams(params, { replace: true });
+  };
 
   return (
     <div>

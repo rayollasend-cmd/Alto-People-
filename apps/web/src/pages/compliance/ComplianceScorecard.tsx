@@ -107,6 +107,35 @@ function useTileData<T>(
   return { data, error, stale };
 }
 
+/**
+ * Mirrors the server's fix-link routing (buildActionsTile): a missing-signal
+ * row opens the compliance tab that OWNS the signal — the receiving tab
+ * consumes ?associateId= and auto-opens the person. Same-tab navigation is
+ * fine here (we're already on /compliance); ?return= gives the I-9/E-Verify
+ * surfaces a way back to the scorecard. Person-level gaps (age, W-4, offer,
+ * policy ack) still open the person record — with the param the People page
+ * actually reads.
+ */
+const SCORECARD_RETURN = `&return=${encodeURIComponent('/compliance?tab=scorecard')}`;
+
+function onboardingFixLink(
+  key: ScorecardOnboardingSignal['key'],
+  associateId: string,
+): string {
+  switch (key) {
+    case 'I9_BOTH_SECTIONS':
+      return `/compliance?tab=i9&associateId=${associateId}${SCORECARD_RETURN}`;
+    case 'E_VERIFY':
+      return `/compliance?tab=everify&associateId=${associateId}${SCORECARD_RETURN}`;
+    case 'BACKGROUND_CHECK':
+      return `/compliance?tab=background&associateId=${associateId}`;
+    case 'DRUG_TEST_60D':
+      return `/compliance?tab=drugtests&associateId=${associateId}`;
+    default:
+      return `/people?associateId=${associateId}`;
+  }
+}
+
 const SEVERITY_BADGE: Record<ScorecardSeverity, { variant: 'success' | 'pending' | 'destructive'; label: string }> = {
   ok: { variant: 'success', label: 'OK' },
   warn: { variant: 'pending', label: 'Warn' },
@@ -369,25 +398,26 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
                 </div>
               ) : (
                 <ul className="space-y-1">
-                  {drawerSignal?.missing.map((m) => (
-                    <li
-                      key={`${m.associateId}-${m.clientId}`}
-                      className="flex items-center justify-between gap-2 px-2 py-1.5 rounded border border-navy-secondary"
-                    >
-                      <div>
-                        <div className="text-sm text-white">{m.associateName ?? '—'}</div>
-                        <div className="text-2xs text-silver">{m.clientName ?? '—'}</div>
-                      </div>
-                      {m.associateId && (
-                        <Link
-                          to={`/people?associateId=${m.associateId}`}
-                          className="text-xs text-gold hover:underline flex items-center gap-1"
-                        >
-                          Open <ExternalLink className="h-3 w-3" />
-                        </Link>
-                      )}
-                    </li>
-                  ))}
+                  {drawerSignal &&
+                    drawerSignal.missing.map((m) => (
+                      <li
+                        key={`${m.associateId}-${m.clientId}`}
+                        className="flex items-center justify-between gap-2 px-2 py-1.5 rounded border border-navy-secondary"
+                      >
+                        <div>
+                          <div className="text-sm text-white">{m.associateName ?? '—'}</div>
+                          <div className="text-2xs text-silver">{m.clientName ?? '—'}</div>
+                        </div>
+                        {m.associateId && (
+                          <Link
+                            to={onboardingFixLink(drawerSignal.key, m.associateId)}
+                            className="text-xs text-gold hover:underline flex items-center gap-1"
+                          >
+                            Open <ExternalLink className="h-3 w-3" />
+                          </Link>
+                        )}
+                      </li>
+                    ))}
                   {drawerSignal && drawerSignal.missingCount > drawerSignal.missing.length && (
                     <li className="text-xs2 text-silver/80 px-2 pt-1">
                       Showing {drawerSignal.missing.length} of {drawerSignal.missingCount}.
@@ -857,6 +887,10 @@ function AttestationDrawer({
         // organization/client-scoped — they carry no associate subject.
         evidenceDocumentId: signal.current?.evidenceDocumentId ?? null,
       });
+      // Same confirmation the quick-attest path gives — the drawer closes
+      // on save, so without a toast success was indistinguishable from a
+      // silent dismissal.
+      toast.success(`${signal.label} attested.`);
       onSaved(r.signal);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Save failed.');

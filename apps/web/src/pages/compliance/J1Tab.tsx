@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { ExternalLink, Globe, Plane, Plus } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, ExternalLink, Globe, Plane, Plus } from 'lucide-react';
 import { DirectorateHeader, Kpi, KpiStrip, TableShell } from './DirectorateShell';
+import { sanitizeReturnPath } from './section2Verification';
 import type { J1Profile } from '@alto-people/shared';
 import { listJ1Profiles, upsertJ1 } from '@/lib/complianceApi';
 import { ApiError } from '@/lib/api';
@@ -61,10 +62,46 @@ const EMPTY_SEED: UpsertSeed = {
 };
 
 export function J1Tab({ canManage }: { canManage: boolean }) {
+  // ?associateId= deep-links one participant (the scorecard's Fix links and
+  // the application checklist send it) — auto-open their drawer once the
+  // list arrives. ?return= is the surface the reviewer came from; the
+  // drawer offers a way back. Both are captured into state once, then
+  // consumed (replace: true): ComplianceHome tab switches copy the current
+  // search params, so lingering params would re-arm on every tab visit.
+  const [deepLinkParams, setDeepLinkParams] = useSearchParams();
+  const [deepLinkAssociateId] = useState<string | null>(() =>
+    deepLinkParams.get('associateId'),
+  );
+  const [returnPath] = useState<string | null>(() =>
+    sanitizeReturnPath(deepLinkParams.get('return')),
+  );
+  const deepLinkOpened = useRef(false);
+  const deepLinkConsumed = useRef(false);
+  useEffect(() => {
+    if (deepLinkConsumed.current) return;
+    if (!deepLinkParams.has('associateId') && !deepLinkParams.has('return')) return;
+    deepLinkConsumed.current = true;
+    const params = new URLSearchParams(deepLinkParams);
+    params.delete('associateId');
+    params.delete('return');
+    setDeepLinkParams(params, { replace: true });
+  }, [deepLinkParams, setDeepLinkParams]);
   const [profiles, setProfiles] = useState<J1Profile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drawerTarget, setDrawerTarget] = useState<J1Profile | null>(null);
   const [upsertSeed, setUpsertSeed] = useState<UpsertSeed | null>(null);
+
+  // Deep link: open the linked participant's drawer as soon as their row
+  // arrives. No profile yet is a plain landing on the tab — the Add button
+  // is right there.
+  useEffect(() => {
+    if (!deepLinkAssociateId || deepLinkOpened.current || !profiles) return;
+    const match = profiles.find((p) => p.associateId === deepLinkAssociateId);
+    if (match) {
+      deepLinkOpened.current = true;
+      setDrawerTarget(match);
+    }
+  }, [profiles, deepLinkAssociateId]);
 
   const refresh = useCallback(async () => {
     try {
@@ -237,6 +274,7 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
         {drawerTarget && (
           <J1DetailPanel
             profile={drawerTarget}
+            returnPath={returnPath}
             canManage={canManage}
             onEdit={openEditFromDrawer}
           />
@@ -258,10 +296,13 @@ export function J1Tab({ canManage }: { canManage: boolean }) {
 
 function J1DetailPanel({
   profile,
+  returnPath = null,
   canManage,
   onEdit,
 }: {
   profile: J1Profile;
+  /** Surface the reviewer deep-linked from (null = none). */
+  returnPath?: string | null;
   canManage: boolean;
   onEdit: () => void;
 }) {
@@ -280,6 +321,15 @@ function J1DetailPanel({
               {profile.associateEmail}
             </DrawerDescription>
           </div>
+          {returnPath && (
+            <Link
+              to={returnPath}
+              className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"
+            >
+              <ArrowLeft className="h-3 w-3" />
+              Back
+            </Link>
+          )}
           <Link
             to={`/people?associateId=${profile.associateId}`}
             className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"

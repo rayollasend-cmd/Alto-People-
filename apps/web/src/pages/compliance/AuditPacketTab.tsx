@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { FileArchive, ShieldAlert } from 'lucide-react';
+import { Download, FileArchive, FileCheck2, ShieldAlert } from 'lucide-react';
 import { useClients } from '@/lib/useClients';
-import { ymdLocal } from '@/lib/format';
+import { fmtSize, fmtTime, ymdLocal } from '@/lib/format';
 import { usePersistentState } from '@/lib/usePersistentState';
 import {
   AssociatePicker,
@@ -69,6 +69,23 @@ const isYmd = (v: unknown): v is string =>
   typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
 /**
+ * Blob download using the pattern lib/csv.ts documents: the anchor is
+ * attached before click (a detached anchor's click() is unreliable in
+ * Firefox) and the object URL is revoked on the next tick (a synchronous
+ * revoke can abort the download in Safari).
+ */
+function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/**
  * One-click client-audit response packet (built to Walmart's vendor-audit
  * scope letter): pick the client and audit period, state the reason (it
  * lands in the critical audit log), download a ZIP whose numbered folders
@@ -112,6 +129,15 @@ export function AuditPacketTab() {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Last successful packet, held in memory until the next generation
+  // replaces it: success stays visible (a background download is easy to
+  // miss), and "Download again" re-saves the SAME bytes without re-running
+  // the audited PII export.
+  const [result, setResult] = useState<{
+    blob: Blob;
+    filename: string;
+    generatedAt: Date;
+  } | null>(null);
 
   // Calendar-period presets, computed with plain date math (no toLocale*).
   const presets = (() => {
@@ -194,13 +220,11 @@ export function AuditPacketTab() {
       const blob = await res.blob();
       const disposition = res.headers.get('Content-Disposition') ?? '';
       const match = /filename="([^"]+)"/.exec(disposition);
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download =
+      const filename =
         match?.[1] ??
         `audit-${scope === 'COUNSEL_PDF' ? 'response' : 'packet'}-${periodStart}-to-${periodEnd}.${scope === 'COUNSEL_PDF' ? 'pdf' : 'zip'}`;
-      a.click();
-      URL.revokeObjectURL(a.href);
+      saveBlob(blob, filename);
+      setResult({ blob, filename, generatedAt: new Date() });
     } catch (err) {
       // A TypeError from fetch/blob() means the connection died mid-
       // generation — the server aborts the stream when a section fails,
@@ -391,6 +415,30 @@ export function AuditPacketTab() {
               {busy ? 'Assembling packet…' : 'Generate & download packet'}
             </Button>
           </div>
+
+          {result && (
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-success/40 bg-success/[0.07] p-3 text-xs">
+              <FileCheck2 className="h-4 w-4 shrink-0 text-success" />
+              <div className="min-w-0 flex-1">
+                <div className="text-white">
+                  Packet ready · {fmtSize(result.blob.size)} · generated{' '}
+                  {fmtTime(result.generatedAt)}
+                </div>
+                <div className="truncate text-2xs text-silver/70">
+                  {result.filename} — if the download didn&rsquo;t start,
+                  use Download again.
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => saveBlob(result.blob, result.filename)}
+              >
+                <Download className="mr-1.5 h-3.5 w-3.5" />
+                Download again
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 

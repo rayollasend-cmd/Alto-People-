@@ -246,9 +246,14 @@ function RosterRow({
       </TableCell>
       <TableCell>
         {row.applicationId ? (
+          // New tab — a same-tab hop wiped the bulk-email checkbox
+          // selection; the roster (and its picks) stays put behind it.
           <Link
             to={`/onboarding/applications/${row.applicationId}`}
+            target="_blank"
+            rel="noreferrer"
             className="text-white hover:text-gold-bright"
+            title="Open the onboarding application in a new tab"
           >
             {name}
           </Link>
@@ -278,13 +283,21 @@ function RosterRow({
       <TableCell className="hidden lg:table-cell text-silver">{fmtDate(row.w4SubmittedAt)}</TableCell>
       <TableCell>
         {row.hasSsnDocument ? (
-          <Badge
-            variant="accent"
-            title="An SSN card or I-9 document image is on file — open Documents to view it and re-key the number without waiting on the associate."
+          // The badge IS the shortcut now — straight to the profile's
+          // Documents tab (new tab, so the bulk-email selection survives)
+          // where the card image lives.
+          <Link
+            to={`/people?associateId=${row.associateId}&tab=documents`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+            title="An SSN card or I-9 document image is on file — opens this associate's Documents tab in a new tab so you can view it and re-key the number without waiting on the associate."
           >
-            <ShieldAlert className="h-3 w-3 mr-1" aria-hidden="true" />
-            Card on file
-          </Badge>
+            <Badge variant="accent">
+              <ShieldAlert className="h-3 w-3 mr-1" aria-hidden="true" />
+              Card on file
+            </Badge>
+          </Link>
         ) : (
           <span className="text-silver text-xs">—</span>
         )}

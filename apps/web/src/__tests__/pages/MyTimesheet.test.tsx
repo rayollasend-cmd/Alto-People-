@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { TimeEntry } from '@alto-people/shared';
 
@@ -49,7 +50,11 @@ function renderSheet() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MyTimesheet />
+      {/* Router context — the dispute toast's "View in My cases" action
+          navigates via useNavigate. */}
+      <MemoryRouter>
+        <MyTimesheet />
+      </MemoryRouter>
     </QueryClientProvider>
   );
 }

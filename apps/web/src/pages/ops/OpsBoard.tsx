@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Activity,
   AlertTriangle,
@@ -132,6 +133,19 @@ export function OpsBoard() {
   const [error, setError] = useState<string | null>(null);
   // The record drill-in: which shift's full evidence is open.
   const [recordId, setRecordId] = useState<string | null>(null);
+
+  // Deep link: /ops?tab=board&record=<id> opens the shift record once,
+  // then drops the param (replace) so closing the dialog — or a later
+  // reload — doesn't reopen it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const linked = searchParams.get('record');
+    if (!linked) return;
+    setRecordId(linked);
+    const params = new URLSearchParams(searchParams);
+    params.delete('record');
+    setSearchParams(params, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     let cancelled = false;

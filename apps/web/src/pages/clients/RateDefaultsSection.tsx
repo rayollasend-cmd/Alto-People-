@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DollarSign, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { ShiftPosition, ShiftRateDefault } from '@alto-people/shared';
@@ -40,6 +40,11 @@ export function RateDefaultsSection({ clientId }: { clientId: string }) {
   const [catalogRows, setCatalogRows] = useState<ShiftPosition[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [newPosition, setNewPosition] = useState('');
+  // Ad-hoc rows added client-side before any rate is saved for them. Held
+  // apart from the server-fed `positions` list so refresh() can't drop
+  // them; once the server knows the position (catalog or saved default)
+  // the merged row list dedupes it away naturally.
+  const [customPositions, setCustomPositions] = useState<string[]>([]);
   const canManage = can('manage:scheduling');
   const canFlagLead = can('manage:org');
 
@@ -66,15 +71,20 @@ export function RateDefaultsSection({ clientId }: { clientId: string }) {
   }, [refresh, canManage]);
 
   // One row per catalog position, then any saved defaults whose position
-  // fell out of the catalog (renamed/removed) so they stay editable.
+  // fell out of the catalog (renamed/removed) so they stay editable, then
+  // ad-hoc client-side rows the server doesn't know about yet.
   const rows = useMemo(() => {
     const byPosition = new Map((defaults ?? []).map((d) => [d.position, d]));
     const catalog = positions.map((p) => ({ position: p, saved: byPosition.get(p) }));
     const orphaned = (defaults ?? [])
       .filter((d) => !positions.includes(d.position))
       .map((d) => ({ position: d.position, saved: d as ShiftRateDefault | undefined }));
-    return [...catalog, ...orphaned];
-  }, [defaults, positions]);
+    const known = new Set([...positions, ...orphaned.map((o) => o.position)]);
+    const adHoc = customPositions
+      .filter((p) => !known.has(p))
+      .map((p) => ({ position: p, saved: undefined as ShiftRateDefault | undefined }));
+    return [...catalog, ...orphaned, ...adHoc];
+  }, [defaults, positions, customPositions]);
 
   if (!canManage) return null;
 
@@ -85,12 +95,13 @@ export function RateDefaultsSection({ clientId }: { clientId: string }) {
       toast.error('That position already has a row.');
       return;
     }
-    setPositions((prev) => [...prev, p]);
+    setCustomPositions((prev) => [...prev, p]);
     setNewPosition('');
   };
 
+  // No outer margin — ClientDetail's space-y-6 wrapper owns the spacing.
   return (
-    <Card className="mt-6">
+    <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <DollarSign className="h-4 w-4 text-gold" aria-hidden="true" />
@@ -185,15 +196,26 @@ function RateRow({
     }
   };
 
-  // Re-sync when a refresh lands new server truth for this row.
+  // Value-level dirty: any save/toggle rebuilds every row, so `saved`
+  // changes identity even when its numbers didn't. Comparing parsed
+  // numbers (not strings) also keeps "15.00" vs a saved 15 clean.
+  const parseOrNull = (s: string): number | null =>
+    s.trim() === '' ? null : Number(s);
+  const dirty =
+    parseOrNull(pay) !== (saved?.payRate ?? null) ||
+    parseOrNull(bill) !== (saved?.billRate ?? null);
+
+  // Re-sync when a refresh lands new server truth for this row — but
+  // NEVER while the row holds unsaved typing. Before this guard, saving
+  // (or lead-toggling) ANY row refreshed the whole table and silently
+  // wiped every other row's typed rates.
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
   useEffect(() => {
+    if (dirtyRef.current) return;
     setPay(saved ? String(saved.payRate) : '');
     setBill(saved?.billRate != null ? String(saved.billRate) : '');
   }, [saved]);
-
-  const dirty =
-    pay !== (saved ? String(saved.payRate) : '') ||
-    bill !== (saved?.billRate != null ? String(saved.billRate) : '');
 
   const save = async () => {
     const payNum = Number(pay);
@@ -236,6 +258,10 @@ function RateRow({
     setBusy(true);
     try {
       await deleteRateDefault(saved.id);
+      // Explicit local reset — the dirty guard above would otherwise keep
+      // the just-cleared numbers on screen as "unsaved" typing.
+      setPay('');
+      setBill('');
       toast.success(`Default rate cleared for ${position}.`);
       await onChanged();
     } catch (err) {

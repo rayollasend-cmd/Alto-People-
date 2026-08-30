@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Flag, History } from 'lucide-react';
 import { toast } from 'sonner';
@@ -476,6 +477,7 @@ function DisputeDialog({
   onClose: () => void;
 }) {
   const { t } = useI18n();
+  const navigate = useNavigate();
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const open = target !== null;
@@ -500,7 +502,14 @@ function DisputeDialog({
         // drawer open) instead of a manual search from the prose id.
         description: `${message.trim()}\n\n— Entry details (auto-attached) —\nDate: ${day}\nPunches: ${range}\nStatus: ${target.status}\nEntry id: ${target.id}\nOpen the entry: /time-attendance?entry=${target.id}`,
       });
-      toast.success(t('time.reportSent'));
+      // The dispute lives on as an HR case — hand the associate a direct
+      // path to it so the filing isn't a fire-and-forget black hole.
+      toast.success(t('time.reportSent'), {
+        action: {
+          label: 'View in My cases',
+          onClick: () => navigate('/hr-cases'),
+        },
+      });
       setMessage('');
       onClose();
     } catch (err) {

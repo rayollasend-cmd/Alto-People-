@@ -30,6 +30,12 @@ import {
   Button,
   Card,
   CardContent,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   Drawer,
   DrawerBody,
   DrawerFooter,
@@ -115,9 +121,15 @@ export function HrCasesHome() {
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  const refresh = () => {
+  // `soft` refetches WITHOUT nulling the current rows — used after
+  // mutations (drawer close, new case) so the list doesn't collapse to a
+  // skeleton and throw away the reader's scroll position; the fresh rows
+  // reconcile in place when they land. Hard refresh (initial load, tab or
+  // filter changes, Retry) still shows the skeleton.
+  const refresh = (opts?: { soft?: boolean }) => {
+    const soft = opts?.soft === true;
     if (tab === 'mine') {
-      setMine(null);
+      if (!soft) setMine(null);
       setMineError(null);
       listMyCases()
         .then((r) => setMine(r.cases))
@@ -127,7 +139,7 @@ export function HrCasesHome() {
           ),
         );
     } else {
-      setQueue(null);
+      if (!soft) setQueue(null);
       setQueueError(null);
       listCaseQueue({
         status: statusFilter === 'ALL' ? undefined : statusFilter,
@@ -305,7 +317,7 @@ export function HrCasesHome() {
               <div className="p-6">
                 <ErrorBanner
                   action={
-                    <Button size="sm" variant="secondary" onClick={refresh}>
+                    <Button size="sm" variant="secondary" onClick={() => refresh()}>
                       Retry
                     </Button>
                   }
@@ -363,7 +375,7 @@ export function HrCasesHome() {
               <div className="p-6">
                 <ErrorBanner
                   action={
-                    <Button size="sm" variant="secondary" onClick={refresh}>
+                    <Button size="sm" variant="secondary" onClick={() => refresh()}>
                       Retry
                     </Button>
                   }
@@ -454,7 +466,7 @@ export function HrCasesHome() {
           onSaved={(id) => {
             setShowNew(false);
             setOpenId(id);
-            refresh();
+            refresh({ soft: true });
             if (canManage) refreshSummary();
           }}
         />
@@ -465,7 +477,9 @@ export function HrCasesHome() {
           canManage={canManage}
           onClose={() => {
             setOpenId(null);
-            refresh();
+            // Soft — keep the list rendered (no skeleton, no scroll loss)
+            // while the post-triage truth refetches behind it.
+            refresh({ soft: true });
             if (canManage) refreshSummary();
           }}
         />
@@ -510,7 +524,13 @@ function NewCaseDrawer({
   };
 
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer
+      open={true}
+      onOpenChange={(o) => !o && onClose()}
+      // A grievance narrative is slow to retype — guard Esc/overlay/swipe
+      // dismissals once anything has been typed.
+      confirmDiscard={() => subject.trim().length > 0 || description.trim().length > 0}
+    >
       <DrawerHeader>
         <DrawerTitle>New HR case</DrawerTitle>
       </DrawerHeader>
@@ -622,8 +642,10 @@ function CaseDetailDrawer({
   const [internal, setInternal] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // Keeps the current case rendered while refetching — refresh fires after
+  // every reply/triage action, and blanking to a skeleton each time lost
+  // the reader's place (and flashed the whole drawer).
   const refresh = () => {
-    setData(null);
     setLoadError(null);
     getCase(caseId)
       .then(setData)
@@ -634,23 +656,32 @@ function CaseDetailDrawer({
       );
   };
   useEffect(() => {
+    setData(null);
     refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caseId]);
 
-  const sendReply = async () => {
-    if (!reply.trim()) return;
-    setBusy(true);
+  // Posts the typed reply without refreshing — shared by the Reply button
+  // and TriageBlock's "Send & close" path (which triages before refetching).
+  const postReply = async (): Promise<boolean> => {
+    if (!reply.trim()) return true;
     try {
       await addComment(caseId, reply.trim(), internal);
       toast.success(internal ? 'Internal note added.' : 'Reply sent.');
       setReply('');
       setInternal(false);
-      refresh();
+      return true;
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not send the reply.');
-    } finally {
-      setBusy(false);
+      return false;
     }
+  };
+
+  const sendReply = async () => {
+    if (!reply.trim()) return;
+    setBusy(true);
+    if (await postReply()) refresh();
+    setBusy(false);
   };
 
   return (
@@ -662,7 +693,7 @@ function CaseDetailDrawer({
         {loadError ? (
           <ErrorBanner
             action={
-              <Button size="sm" variant="secondary" onClick={refresh}>
+              <Button size="sm" variant="secondary" onClick={() => refresh()}>
                 Retry
               </Button>
             }
@@ -695,7 +726,12 @@ function CaseDetailDrawer({
             </div>
 
             {canManage && (
-              <TriageBlock detail={data} onChange={refresh} />
+              <TriageBlock
+                detail={data}
+                onChange={refresh}
+                hasDraftReply={reply.trim().length > 0}
+                sendDraftReply={postReply}
+              />
             )}
 
             <div className="space-y-2">
@@ -734,33 +770,42 @@ function CaseDetailDrawer({
               )}
             </div>
 
-            {data.status !== 'CLOSED' && (
-              <div className="space-y-2 pt-2 border-t border-navy-secondary">
-                <Label>Reply</Label>
-                <Textarea
-                  className="h-24"
-                  value={reply}
-                  onChange={(e) => setReply(e.target.value)}
-                />
-                <div className="flex items-center justify-between">
-                  {canManage ? (
-                    <label className="flex items-center gap-2 text-xs text-silver">
-                      <input
-                        type="checkbox"
-                        checked={internal}
-                        onChange={(e) => setInternal(e.target.checked)}
-                      />
-                      Internal note (hidden from associate)
-                    </label>
-                  ) : (
-                    <span />
-                  )}
-                  <Button onClick={sendReply} disabled={busy || !reply.trim()}>
-                    {busy ? 'Sending…' : 'Reply'}
-                  </Button>
-                </div>
+            {/* Always rendered — unmounting the composer on CLOSED silently
+                threw away any typed reply. Closed cases keep it disabled
+                with the text intact. */}
+            <div className="space-y-2 pt-2 border-t border-navy-secondary">
+              <Label>Reply</Label>
+              <Textarea
+                className="h-24"
+                value={reply}
+                onChange={(e) => setReply(e.target.value)}
+                disabled={data.status === 'CLOSED'}
+              />
+              <div className="flex items-center justify-between">
+                {data.status === 'CLOSED' ? (
+                  <span className="text-xs text-silver">
+                    Case is closed — reopen it to reply.
+                  </span>
+                ) : canManage ? (
+                  <label className="flex items-center gap-2 text-xs text-silver">
+                    <input
+                      type="checkbox"
+                      checked={internal}
+                      onChange={(e) => setInternal(e.target.checked)}
+                    />
+                    Internal note (hidden from associate)
+                  </label>
+                ) : (
+                  <span />
+                )}
+                <Button
+                  onClick={sendReply}
+                  disabled={data.status === 'CLOSED' || busy || !reply.trim()}
+                >
+                  {busy ? 'Sending…' : 'Reply'}
+                </Button>
               </div>
-            )}
+            </div>
           </>
         )}
       </DrawerBody>
@@ -774,15 +819,54 @@ function CaseDetailDrawer({
 function TriageBlock({
   detail,
   onChange,
+  hasDraftReply,
+  sendDraftReply,
 }: {
   detail: CaseDetail;
   onChange: () => void;
+  /** The parent composer holds unsent reply text. */
+  hasDraftReply: boolean;
+  /** Posts the parent composer's draft; resolves false on failure. */
+  sendDraftReply: () => Promise<boolean>;
 }) {
   const { user } = useAuth();
   const [resolution, setResolution] = useState(detail.resolution ?? '');
   const [claiming, setClaiming] = useState(false);
+  // Closing with an unsent reply typed below — intercepted behind a
+  // three-way choice instead of stranding the text in a disabled composer.
+  const [closeIntent, setCloseIntent] = useState(false);
+  const [closeBusy, setCloseBusy] = useState(false);
   const assignedToMe =
     user !== null && detail.assignedToEmail === user.email;
+
+  // Debounced autosave for the resolution summary — it used to save only
+  // on blur, so any triage action's refresh could unmount the field and
+  // drop the text. Fires without onChange(): the local field stays the
+  // source of truth and the next refresh picks the value up.
+  useEffect(() => {
+    const next = resolution.trim() || null;
+    if (detail.status !== 'RESOLVED' || next === (detail.resolution ?? null)) return;
+    const t = setTimeout(() => {
+      triageCase(detail.id, { resolution: next }).catch(() => {
+        // Silent — the blur handler below retries with a visible error.
+      });
+    }, 600);
+    return () => clearTimeout(t);
+  }, [resolution, detail.id, detail.resolution, detail.status]);
+
+  const finishClose = async (sendFirst: boolean) => {
+    setCloseBusy(true);
+    try {
+      if (sendFirst && !(await sendDraftReply())) return; // keep the dialog up
+      await triageCase(detail.id, { status: 'CLOSED' });
+      setCloseIntent(false);
+      onChange();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not close the case.');
+    } finally {
+      setCloseBusy(false);
+    }
+  };
 
   const claim = async () => {
     if (!user) return;
@@ -818,10 +902,17 @@ function TriageBlock({
           size="sm"
           value={detail.status}
           onChange={async (e) => {
+            const nextStatus = e.target.value as CaseStatus;
+            if (nextStatus === 'CLOSED' && hasDraftReply) {
+              // The controlled Select snaps back to detail.status on the
+              // next render, so cancelling costs nothing.
+              setCloseIntent(true);
+              return;
+            }
             try {
               await triageCase(detail.id, {
-                status: e.target.value as CaseStatus,
-                ...(e.target.value === 'RESOLVED'
+                status: nextStatus,
+                ...(nextStatus === 'RESOLVED'
                   ? { resolution: resolution.trim() || null }
                   : {}),
               });
@@ -881,6 +972,41 @@ function TriageBlock({
           }}
         />
       )}
+      <Dialog
+        open={closeIntent}
+        onOpenChange={(o) => {
+          if (!o && !closeBusy) setCloseIntent(false);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send your reply first?</DialogTitle>
+            <DialogDescription>
+              There's an unsent reply typed below. Closing the case disables
+              the composer, so decide what happens to it.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setCloseIntent(false)}
+              disabled={closeBusy}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => void finishClose(false)}
+              disabled={closeBusy}
+            >
+              Close without sending
+            </Button>
+            <Button onClick={() => void finishClose(true)} disabled={closeBusy}>
+              Send &amp; close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

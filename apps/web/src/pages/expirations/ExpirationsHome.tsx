@@ -369,11 +369,33 @@ export function ExpirationsHome() {
 
       {renewTarget && (
         <RenewDrawer
+          // Remount per item — "Renew & next" swaps the target without
+          // closing, and the date/evidence state must reset each time.
+          key={renewTarget.id}
           item={renewTarget}
           onClose={() => setRenewTarget(null)}
-          onSaved={() => {
-            setRenewTarget(null);
+          onSaved={(goNext) => {
             refresh();
+            if (!goNext) {
+              setRenewTarget(null);
+              return;
+            }
+            // Chain to the next item in the same (visible) bucket,
+            // wrapping past the end; the just-renewed one is excluded —
+            // it's leaving the bucket.
+            const bucket = [expired, dueSoon, dueLater].find((b) =>
+              b.some((i) => i.id === renewTarget.id),
+            );
+            const rest = bucket
+              ? bucket.filter((i) => i.id !== renewTarget.id)
+              : [];
+            if (rest.length === 0) {
+              setRenewTarget(null);
+              toast('That was the last one in this bucket.');
+              return;
+            }
+            const idx = bucket!.findIndex((i) => i.id === renewTarget.id);
+            setRenewTarget(rest[idx] ?? rest[0]);
           }}
         />
       )}
@@ -544,7 +566,8 @@ function RenewDrawer({
 }: {
   item: ExpirationItem;
   onClose: () => void;
-  onSaved: () => void;
+  /** goNext: advance to the next item in the bucket instead of closing. */
+  onSaved: (goNext: boolean) => void;
 }) {
   // Local-timezone defaults — toISOString() is UTC and pre-fills tomorrow's
   // date for evening users west of UTC.
@@ -560,7 +583,12 @@ function RenewDrawer({
   const [evidenceKey, setEvidenceKey] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const submit = async () => {
+  // Edited away from the defaults → guard dismissals behind the shared
+  // "Discard your changes?" confirm.
+  const dirty =
+    acquiredAt !== today || expiresAt !== oneYearOut || evidenceKey.trim() !== '';
+
+  const submit = async (goNext: boolean) => {
     if (!expiresAt) {
       toast.error('New expiration date is required.');
       return;
@@ -578,7 +606,7 @@ function RenewDrawer({
         evidenceKey: evidenceKey.trim() || null,
       });
       toast.success('Renewed.');
-      onSaved();
+      onSaved(goNext);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     } finally {
@@ -587,7 +615,11 @@ function RenewDrawer({
   };
 
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer
+      open={true}
+      onOpenChange={(o) => !o && onClose()}
+      confirmDiscard={() => dirty}
+    >
       <DrawerHeader>
         <DrawerTitle>Renew {item.qualificationName}</DrawerTitle>
       </DrawerHeader>
@@ -595,7 +627,11 @@ function RenewDrawer({
         <div className="text-sm">
           <div className="text-silver">For</div>
           <div className="font-medium text-white">
-            <AssociateLink associateId={item.associateId}>{item.associateName}</AssociateLink>
+            {/* New tab — a same-tab hop would throw away the dates and
+                evidence reference mid-renewal. */}
+            <AssociateLink associateId={item.associateId} newTab>
+              {item.associateName}
+            </AssociateLink>
           </div>
           <div className="text-xs text-silver">{item.associateEmail}</div>
         </div>
@@ -648,8 +684,17 @@ function RenewDrawer({
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={submit} disabled={busy}>
+        <Button
+          variant="secondary"
+          onClick={() => void submit(false)}
+          disabled={busy}
+        >
           {busy ? 'Marking…' : 'Mark renewed'}
+        </Button>
+        {/* Chain through the bucket without reopening the drawer for
+            every row — renewal season is dozens of these in a sitting. */}
+        <Button onClick={() => void submit(true)} disabled={busy}>
+          Renew &amp; next
         </Button>
       </DrawerFooter>
     </Drawer>

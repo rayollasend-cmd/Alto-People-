@@ -23,6 +23,7 @@ import {
   updateShift,
 } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
+import { fmtTimeTz, fmtWeekdayTz } from '@/lib/format';
 import { toast } from '@/components/ui/Toaster';
 import { useConfirm } from '@/lib/confirm';
 
@@ -57,10 +58,20 @@ function withTimeIso(iso: string, hhmm: string): string {
 interface Props {
   selected: Shift[];
   onClear: () => void;
+  /** Replace the selection with exactly these shift ids — used to keep the
+   *  FAILED shifts of a partial batch selected (successes are dropped) so
+   *  the admin can immediately retry or fix them from this same toolbar. */
+  onSelectOnly: (ids: string[]) => void;
   onAfterAction: () => Promise<void> | void;
 }
 
-export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
+/** "Adolfo Sat 6:00 AM" — how a shift is named in failure summaries. */
+function shiftFailureLabel(s: Shift): string {
+  const who = s.assignedAssociateName?.split(' ')[0] ?? s.position;
+  return `${who} ${fmtWeekdayTz(s.startsAt, s.timezone)} ${fmtTimeTz(s.startsAt, s.timezone)}`;
+}
+
+export function SelectionToolbar({ selected, onClear, onSelectOnly, onAfterAction }: Props) {
   const confirm = useConfirm();
   const [busy, setBusy] = useState<
     | null
@@ -95,8 +106,7 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
     label: string,
   ): Promise<void> => {
     let ok = 0;
-    let fail = 0;
-    const failures: string[] = [];
+    const failures: Array<{ shift: Shift; message: string }> = [];
     // Bounded-concurrency runner: up to 6 requests in flight so a 50-shift
     // publish isn't 50 sequential round-trips. Each item keeps
     // Promise.allSettled semantics — one failure never tanks the batch, it
@@ -113,10 +123,10 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
           await action(s);
           ok += 1;
         } catch (err) {
-          fail += 1;
-          if (failures.length < 3) {
-            failures.push(err instanceof ApiError ? err.message : 'Unknown error');
-          }
+          failures.push({
+            shift: s,
+            message: err instanceof ApiError ? err.message : 'Unknown error',
+          });
         }
       }
     };
@@ -126,16 +136,33 @@ export function SelectionToolbar({ selected, onClear, onAfterAction }: Props) {
         () => worker(),
       ),
     );
-    if (ok > 0 && fail === 0) {
+    const fail = failures.length;
+    // Name the casualties: up to 5 "who + when — why" lines so the admin
+    // knows exactly which shifts to fix instead of hunting for them.
+    const description =
+      fail > 0
+        ? [
+            ...failures
+              .slice(0, 5)
+              .map((f) => `${shiftFailureLabel(f.shift)} — ${f.message}`),
+            ...(fail > 5 ? [`+ ${fail - 5} more`] : []),
+          ].join(' · ')
+        : undefined;
+    if (fail === 0) {
       toast.success(`${label} ${ok} shift${ok === 1 ? '' : 's'}.`);
-    } else if (ok > 0 && fail > 0) {
+      onClear();
+    } else if (ok > 0) {
+      // Partial failure: drop the successes from the selection and KEEP the
+      // failed shifts selected, so the fix/retry is one toolbar action away.
       toast.error(
-        `${label} ${ok} succeeded, ${fail} failed${failures.length > 0 ? ` — ${failures[0]}` : ''}.`,
+        `${label} ${ok} succeeded, ${fail} failed — the failed shift${fail === 1 ? ' stays' : 's stay'} selected.`,
+        { description },
       );
+      onSelectOnly(failures.map((f) => f.shift.id));
     } else {
-      toast.error(`${label} failed${failures.length > 0 ? ` — ${failures[0]}` : ''}.`);
+      // Everything failed — the selection already IS the failed set; keep it.
+      toast.error(`${label} failed.`, { description });
     }
-    onClear();
     await onAfterAction();
   };
 

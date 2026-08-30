@@ -310,7 +310,7 @@ function OpsPulseCard() {
           </p>
         )}
         <Link
-          to="/ops"
+          to="/ops?tab=board"
           className="mt-3 inline-flex items-center gap-1 text-xs text-gold hover:underline"
         >
           Open the ops board →

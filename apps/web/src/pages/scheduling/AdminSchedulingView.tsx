@@ -30,8 +30,11 @@ import type {
   AssociateLite,
   StaffingTargetLocation,
   AutoFillCandidate,
+  AutoScheduleSkip,
+  AutoScheduleWeekResponse,
   ClientSummary,
   LocationSummary,
+  PublishWeekSkip,
   Shift,
   ShiftConflictsResponse,
   ShiftStatus,
@@ -76,7 +79,7 @@ import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useStoreScope } from '@/lib/storeScope';
 import { hasCapability } from '@/lib/roles';
-import { useConfirm, usePrompt, type ConfirmOptions } from '@/lib/confirm';
+import { useConfirm, type ConfirmOptions } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
@@ -88,6 +91,8 @@ import {
   fmtMoneyCompact,
   fmtMonthYearTz,
   fmtTime,
+  fmtTimeTz,
+  fmtWeekdayTz,
   browserTimeZone,
   tzAbbrev,
   zonedWallTimeToUtc,
@@ -197,25 +202,39 @@ function PositionSelect({
   // Preserve a current value that isn't in the catalog (legacy / renamed).
   const merged = value && !list.includes(value) ? [value, ...list] : list;
   return (
-    <Select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      disabled={disabled || loading}
-      {...fieldProps}
-    >
-      <option value="">
-        {loading
-          ? 'Loading…'
-          : merged.length === 0
-            ? 'No positions — add them in Org → Shift positions'
-            : 'Select a position'}
-      </option>
-      {merged.map((name) => (
-        <option key={name} value={name}>
-          {name}
+    <>
+      <Select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled || loading}
+        {...fieldProps}
+      >
+        <option value="">
+          {loading
+            ? 'Loading…'
+            : merged.length === 0
+              ? 'No positions — add them in Org → Shift positions'
+              : 'Select a position'}
         </option>
-      ))}
-    </Select>
+        {merged.map((name) => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+      </Select>
+      {/* Empty catalog + a required field = a dead end without this link.
+          New tab so the half-filled dialog isn't destroyed by navigating. */}
+      {!loading && !disabled && list.length === 0 && (
+        <a
+          href="/org?tab=shift-positions"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-1 inline-block text-xs2 text-gold hover:text-gold-bright underline underline-offset-2"
+        >
+          Add positions in Org → Shift positions (opens in a new tab)
+        </a>
+      )}
+    </>
   );
 }
 
@@ -533,7 +552,6 @@ function parseView(raw: string | null): ViewMode {
 
 export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const confirm = useConfirm();
-  const promptReason = usePrompt();
   const { user } = useAuth();
   // Client-scoped roles (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Pin every client control to their one bound client
@@ -858,6 +876,30 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const [copyingWeek, setCopyingWeek] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [autoScheduling, setAutoScheduling] = useState(false);
+  // Publish-week outcome when shifts were skipped — drives the actionable
+  // skip-list dialog instead of an opaque "Skipped N" toast.
+  const [publishResult, setPublishResult] = useState<{
+    published: number;
+    skipped: PublishWeekSkip[];
+  } | null>(null);
+  // Auto-schedule outcome. `candidateIds` = the unassigned shifts loaded
+  // BEFORE the run; the review list is "candidate that is now assigned",
+  // resolved against the refreshed `shifts` so each row self-updates (an
+  // Unassign makes its row disappear after the refetch).
+  const [autoResult, setAutoResult] = useState<{
+    res: AutoScheduleWeekResponse;
+    candidateIds: string[];
+  } | null>(null);
+  // Publish-week late-notice reason typed on a run that then FAILED — held
+  // so the retry's prompt reopens prefilled instead of losing the text.
+  const heldPublishReasonRef = useRef('');
+  const [reasonPrompt, setReasonPrompt] = useState<{
+    title: string;
+    description: string;
+    reasonLabel: string;
+    initial: string;
+    resolve: (value: string | null) => void;
+  } | null>(null);
   // Bulk selection: shift/cmd/ctrl-click chips to add them. Stored as a
   // Set so adds and toggles are O(1); rebuilt on every selection change.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -1684,14 +1726,16 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     // the old behavior (they're skipped). Without any, the plain confirm.
     let lateNoticeReason: string | undefined;
     if (noticeWindowDrafts > 0) {
-      const reason = await promptReason({
-        title: `Publish ${draftsInWeek} draft shift${draftsInWeek === 1 ? '' : 's'}?`,
-        description: `Assigned associates will be notified. ${noticeWindowDrafts} draft${noticeWindowDrafts === 1 ? ' is' : 's are'} inside a fair-workweek state's 14-day notice window: give one reason below to publish ${noticeWindowDrafts === 1 ? 'it' : 'them'} too, or leave it blank to skip ${noticeWindowDrafts === 1 ? 'it' : 'them'} (add reasons individually via Edit).${truncatedWarning}${health}`,
-        confirmLabel: 'Publish week',
-        reasonLabel: `Reason for short notice (applies to all ${noticeWindowDrafts} shift${noticeWindowDrafts === 1 ? '' : 's'})`,
-        reasonPlaceholder: 'e.g. Volume spike — client added coverage after the posting deadline',
-        reasonMaxLength: 500,
-        required: false,
+      // Local prefillable prompt (not lib/confirm's, which always opens
+      // blank): a reason typed on a run that failed is re-offered on retry.
+      const reason = await new Promise<string | null>((resolve) => {
+        setReasonPrompt({
+          title: `Publish ${draftsInWeek} draft shift${draftsInWeek === 1 ? '' : 's'}?`,
+          description: `Assigned associates will be notified. ${noticeWindowDrafts} draft${noticeWindowDrafts === 1 ? ' is' : 's are'} inside a fair-workweek state's 14-day notice window: give one reason below to publish ${noticeWindowDrafts === 1 ? 'it' : 'them'} too, or leave it blank to skip ${noticeWindowDrafts === 1 ? 'it' : 'them'} (add reasons individually via Edit).${truncatedWarning}${health}`,
+          reasonLabel: `Reason for short notice (applies to all ${noticeWindowDrafts} shift${noticeWindowDrafts === 1 ? '' : 's'})`,
+          initial: heldPublishReasonRef.current,
+          resolve,
+        });
       });
       if (reason === null) return; // cancelled
       if (reason) lateNoticeReason = reason;
@@ -1711,25 +1755,33 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         ...(clientFilter ? { clientId: clientFilter } : {}),
         ...(lateNoticeReason ? { lateNoticeReason } : {}),
       });
+      // The run went through — the held retry reason has served its purpose.
+      heldPublishReasonRef.current = '';
       if (res.truncated) {
         toast.warning(
           'This week has more drafts than one publish run covers — run Publish again for the rest.',
         );
       }
-      if (res.published > 0) {
+      if (res.skipped.length > 0) {
+        // Skips get the actionable dialog (each shift named, with Edit /
+        // Reassign / select-all) — a bare count left the admin hunting.
+        setPublishResult({ published: res.published, skipped: res.skipped });
+      } else if (res.published > 0) {
         toast.success(
-          `Published ${res.published} shift${res.published === 1 ? '' : 's'}.${res.skipped.length > 0 ? ` Skipped ${res.skipped.length} (predictive-schedule reason needed).` : ''}`
-        );
-      } else if (res.skipped.length > 0) {
-        toast.error(
-          `All ${res.skipped.length} draft${res.skipped.length === 1 ? '' : 's'} skipped — they need a late-notice reason in a fair-workweek state.`
+          `Published ${res.published} shift${res.published === 1 ? '' : 's'}.`
         );
       } else {
         toast.success('Nothing to publish.');
       }
       await refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Publish failed.');
+      // Keep the typed late-notice reason for the retry's prompt.
+      if (lateNoticeReason) heldPublishReasonRef.current = lateNoticeReason;
+      toast.error(err instanceof ApiError ? err.message : 'Publish failed.', {
+        ...(lateNoticeReason
+          ? { description: 'Your late-notice reason was kept and will be prefilled on retry.' }
+          : {}),
+      });
     } finally {
       setPublishing(false);
     }
@@ -1777,34 +1829,31 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
     });
     if (!ok) return;
     setAutoScheduling(true);
+    // The response only carries counts + a per-associate rollup, so the
+    // per-shift review list is a before/after diff: unassigned shifts in
+    // the loaded window now vs. then.
+    const candidateIds = (shifts ?? [])
+      .filter(
+        (s) =>
+          s.assignedAssociateId === null &&
+          s.status !== 'CANCELLED' &&
+          s.status !== 'COMPLETED',
+      )
+      .map((s) => s.id);
     try {
       const res = await autoScheduleWeek({
         weekStart: publishWindow.from.toISOString(),
         weekEnd: publishWindow.to.toISOString(),
         ...(clientFilter ? { clientId: clientFilter } : {}),
       });
-      if (res.assigned > 0) {
-        const top = res.byAssociate[0];
-        const topNote = top
-          ? ` Top: ${top.associateName} (${top.shiftsAssigned}).`
-          : '';
-        toast.success(
-          `Assigned ${res.assigned} shift${res.assigned === 1 ? '' : 's'}.${
-            res.skipped.length > 0
-              ? ` Skipped ${res.skipped.length} (no eligible candidate).`
-              : ''
-          }${topNote}`,
-        );
-      } else if (res.skipped.length > 0) {
-        toast.error(
-          `All ${res.skipped.length} open shift${
-            res.skipped.length === 1 ? '' : 's'
-          } skipped — no eligible associates without conflicts or overtime.`,
-        );
+      await refresh();
+      if (res.assigned > 0 || res.skipped.length > 0) {
+        // Review dialog: every assignment made (with per-row Unassign) and
+        // every skip with the reason — not just counts.
+        setAutoResult({ res, candidateIds });
       } else {
         toast.success('Nothing to auto-schedule.');
       }
-      await refresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Auto-schedule failed.');
     } finally {
@@ -3319,6 +3368,17 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
           refresh();
           setAssignTarget(next);
         }}
+        onViewShift={(shiftId) => {
+          const s = (shifts ?? []).find((x) => x.id === shiftId);
+          setAssignTarget(null);
+          setAssignPreselectId(null);
+          if (s) setEditTarget(s);
+          else {
+            toast.error(
+              'That shift isn’t in the loaded range — clear filters or change the week to find it.',
+            );
+          }
+        }}
       />
 
       {/* Mobile action sheet — every desktop quick action, one tap away. */}
@@ -3591,8 +3651,69 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       <SelectionToolbar
         selected={selectedShifts}
         onClear={clearSelection}
+        onSelectOnly={(ids) => setSelectedIds(new Set(ids))}
         onAfterAction={refresh}
       />
+
+      {/* Publish-week outcome with skips — each skipped shift named and
+          actionable (Edit / Reassign / select-all → bulk toolbar). */}
+      <PublishSkipsDialog
+        result={publishResult}
+        shifts={shifts}
+        onClose={() => setPublishResult(null)}
+        onEdit={(s) => {
+          setPublishResult(null);
+          setEditTarget(s);
+        }}
+        onReassign={(s) => {
+          setPublishResult(null);
+          setAssignTarget(s);
+        }}
+        onSelectSkipped={(ids) => {
+          setPublishResult(null);
+          setSelectedIds(new Set(ids));
+        }}
+      />
+
+      {/* Auto-schedule review — every assignment made (per-row Unassign)
+          plus its skip list, instead of a count-only toast. */}
+      <AutoScheduleReviewDialog
+        result={autoResult}
+        shifts={shifts}
+        onClose={() => setAutoResult(null)}
+        onRefresh={refresh}
+        onEdit={(s) => {
+          setAutoResult(null);
+          setEditTarget(s);
+        }}
+        onReassign={(s) => {
+          setAutoResult(null);
+          setAssignTarget(s);
+        }}
+        onSelectSkipped={(ids) => {
+          setAutoResult(null);
+          setSelectedIds(new Set(ids));
+        }}
+      />
+
+      {/* Publish-week late-notice reason prompt — local (not lib/confirm)
+          so a retry after a failed run reopens with the reason prefilled. */}
+      {reasonPrompt && (
+        <LateNoticeReasonDialog
+          title={reasonPrompt.title}
+          description={reasonPrompt.description}
+          reasonLabel={reasonPrompt.reasonLabel}
+          initial={reasonPrompt.initial}
+          onCancel={() => {
+            reasonPrompt.resolve(null);
+            setReasonPrompt(null);
+          }}
+          onSubmit={(reason) => {
+            reasonPrompt.resolve(reason);
+            setReasonPrompt(null);
+          }}
+        />
+      )}
 
       {/* Templates rail — fixed right-side panel; only relevant on the
           schedule-editing views (not list/month). Drop a template on a
@@ -3684,8 +3805,18 @@ function Kpi({
 
 /* ===== Assign dialog ====================================================== */
 
-type ConflictRow = { position: string; client: string | null; startsAt: string };
-type TimeOffRow = { category: string; startDate: string; endDate: string };
+type ConflictRow = {
+  shiftId: string;
+  position: string;
+  client: string | null;
+  startsAt: string;
+};
+type TimeOffRow = {
+  requestId: string;
+  category: string;
+  startDate: string;
+  endDate: string;
+};
 
 function AssignDialog({
   target,
@@ -3695,6 +3826,7 @@ function AssignDialog({
   onClose,
   onAssigned,
   onAssignedNext,
+  onViewShift,
 }: {
   target: Shift | null;
   associates: AssociateLite[];
@@ -3707,6 +3839,9 @@ function AssignDialog({
   onAssigned: () => void;
   /** Assigned successfully AND another open shift remains — advance to it. */
   onAssignedNext: (next: Shift) => void;
+  /** "View" on an overlapping-shift conflict row — the caller closes this
+   *  dialog and opens that shift (its edit dialog). */
+  onViewShift?: (shiftId: string) => void;
 }) {
   const [picked, setPicked] = useState<AssociateLite | null>(null);
   const [query, setQuery] = useState('');
@@ -3798,6 +3933,7 @@ function AssignDialog({
         setCheckError(null);
         setConflicts(
           c.conflicts.map((cf) => ({
+            shiftId: cf.conflictingShiftId,
             position: cf.conflictingPosition,
             client: cf.conflictingClientName,
             startsAt: cf.conflictingStartsAt,
@@ -3805,6 +3941,7 @@ function AssignDialog({
         );
         setTimeOff(
           c.timeOffConflicts.map((t) => ({
+            requestId: t.requestId,
             category: t.category,
             startDate: t.startDate,
             endDate: t.endDate,
@@ -4116,13 +4253,21 @@ function AssignDialog({
                   Approved time off covers this shift
                 </div>
                 <ul className="mt-2 space-y-1 text-silver">
-                  {timeOff!.map((t, i) => (
-                    <li key={i} className="text-xs">
+                  {timeOff!.map((t) => (
+                    <li key={t.requestId} className="text-xs">
                       • {fmtCategory(t.category)} ·{' '}
                       <span className="tabular-nums">
                         {t.startDate}
                         {t.startDate !== t.endDate ? ` → ${t.endDate}` : ''}
-                      </span>
+                      </span>{' '}
+                      <a
+                        href={`/approvals?request=${t.requestId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-gold hover:text-gold-bright underline underline-offset-2"
+                      >
+                        View request
+                      </a>
                     </li>
                   ))}
                 </ul>
@@ -4139,10 +4284,22 @@ function AssignDialog({
                   {conflicts!.length === 1 ? '' : 's'}:
                 </div>
                 <ul className="mt-2 space-y-1 text-silver">
-                  {conflicts!.map((c, i) => (
-                    <li key={i} className="text-xs">
+                  {conflicts!.map((c) => (
+                    <li key={c.shiftId} className="text-xs">
                       • {c.position} @ {c.client ?? '—'} ·{' '}
                       <span className="tabular-nums">{fmt(c.startsAt)}</span>
+                      {onViewShift && (
+                        <>
+                          {' '}
+                          <button
+                            type="button"
+                            onClick={() => onViewShift(c.shiftId)}
+                            className="text-gold hover:text-gold-bright underline underline-offset-2"
+                          >
+                            View
+                          </button>
+                        </>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -4962,10 +5119,48 @@ function CreateShiftDialog({
     };
   }, [open, clientId, associates, team, rosterRetry]);
 
+  // Seeded-values fingerprint for the discard guard: any field differing
+  // from what this reset effect stamped means real typed input worth a
+  // "Discard your changes?" confirm. locationId / empSearch / showAdvanced
+  // are excluded — auto-picked or purely cosmetic.
+  const seedRef = useRef('');
+  const fieldsSnapshot = (v: {
+    clientId: string;
+    position: string;
+    dateStr: string;
+    startTime: string;
+    endTime: string;
+    location: string;
+    hourlyRate: string;
+    payRate: string;
+    notes: string;
+    lateNoticeReason: string;
+    publishImmediately: boolean;
+    assignIds: Set<string>;
+    openSlots: string;
+    extraDays: Set<string>;
+  }): string =>
+    JSON.stringify([
+      v.clientId,
+      v.position,
+      v.dateStr,
+      v.startTime,
+      v.endTime,
+      v.location,
+      v.hourlyRate,
+      v.payRate,
+      v.notes,
+      v.lateNoticeReason,
+      v.publishImmediately,
+      [...v.assignIds].sort(),
+      v.openSlots,
+      [...v.extraDays].sort(),
+    ]);
+
   useEffect(() => {
     if (open) {
-      setClientId(initialClientId || clients[0]?.id || '');
-      setPosition(initialPosition ?? '');
+      const seededClientId = initialClientId || clients[0]?.id || '';
+      const seededPosition = initialPosition ?? '';
       // Pre-fill times: the selected shift team's defaults win (that's the
       // shift being scheduled), else 9–5 — the most common shape for hourly
       // workforce. A calendar-cell open pins the clicked day (and clicked
@@ -4977,8 +5172,11 @@ function CreateShiftDialog({
         team?.startMinute != null ? minuteToTime(team.startMinute) : '09:00';
       const defEnd =
         team?.endMinute != null ? minuteToTime(team.endMinute) : '17:00';
+      let seededDate: string;
+      let seededStart: string;
+      let seededEnd: string;
       if (initialDate) {
-        setDateStr(ymd(initialDate));
+        seededDate = ymd(initialDate);
         // initialDate may include a clicked time-of-day (TimeGridWeekView
         // passes the snapped hour); honor it when set, else use the defaults.
         const initHasTime =
@@ -4991,17 +5189,27 @@ function CreateShiftDialog({
             ? new Date(initialEnd)
             : new Date(initialDate);
           if (!initialEnd) end.setHours(end.getHours() + 4);
-          setStartTime(toLocalTimeInput(start));
-          setEndTime(toLocalTimeInput(end));
+          seededStart = toLocalTimeInput(start);
+          seededEnd = toLocalTimeInput(end);
         } else {
-          setStartTime(defStart);
-          setEndTime(defEnd);
+          seededStart = defStart;
+          seededEnd = defEnd;
         }
       } else {
-        setDateStr(ymd(new Date()));
-        setStartTime(defStart);
-        setEndTime(defEnd);
+        seededDate = ymd(new Date());
+        seededStart = defStart;
+        seededEnd = defEnd;
       }
+      // Pre-select the employee whose cell was clicked, if any.
+      const seededAssignIds: Set<string> = initialAssociateId
+        ? new Set([initialAssociateId])
+        : new Set();
+      const seededOpenSlots = String(initialOpenSlots > 0 ? initialOpenSlots : 0);
+      setClientId(seededClientId);
+      setPosition(seededPosition);
+      setDateStr(seededDate);
+      setStartTime(seededStart);
+      setEndTime(seededEnd);
       setLocation('');
       setHourlyRate('');
       setPayRate('');
@@ -5010,11 +5218,26 @@ function CreateShiftDialog({
       setShowAdvanced(false);
       setPublishImmediately(false);
       setSubmitting(false);
-      // Pre-select the employee whose cell was clicked, if any.
-      setAssignIds(initialAssociateId ? new Set([initialAssociateId]) : new Set());
-      setOpenSlots(String(initialOpenSlots > 0 ? initialOpenSlots : 0));
+      setAssignIds(seededAssignIds);
+      setOpenSlots(seededOpenSlots);
       setEmpSearch('');
       setExtraDays(new Set());
+      seedRef.current = fieldsSnapshot({
+        clientId: seededClientId,
+        position: seededPosition,
+        dateStr: seededDate,
+        startTime: seededStart,
+        endTime: seededEnd,
+        location: '',
+        hourlyRate: '',
+        payRate: '',
+        notes: '',
+        lateNoticeReason: '',
+        publishImmediately: false,
+        assignIds: seededAssignIds,
+        openSlots: seededOpenSlots,
+        extraDays: new Set(),
+      });
     }
   }, [open, clients, initialDate, initialEnd, initialAssociateId, initialClientId, initialPosition, initialOpenSlots, team]);
 
@@ -5127,8 +5350,22 @@ function CreateShiftDialog({
         const across =
           extras.length > 0 ? ` across ${extras.length + 1} days` : '';
         if (res.skipped.length > 0) {
-          toast.success(
-            `Created ${made}${across} · skipped ${res.skipped.length} already scheduled then`,
+          // Name who was skipped and why — a bare count left the manager
+          // diffing the grid to work out whose copy never landed.
+          const skipLines = [
+            ...res.skipped.slice(0, 5).map(
+              (k) =>
+                `${k.associateName}${
+                  k.startsAt ? ` ${fmtWeekdayTz(k.startsAt, siteTz)}` : ''
+                } — ${k.reason}`,
+            ),
+            ...(res.skipped.length > 5
+              ? [`+ ${res.skipped.length - 5} more`]
+              : []),
+          ];
+          toast.warning(
+            `Created ${made}${across} · ${res.skipped.length} skipped`,
+            { description: skipLines.join(' · ') },
           );
         } else {
           toast.success(`Created ${made}${across}.`);
@@ -5156,7 +5393,30 @@ function CreateShiftDialog({
       : undefined;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      confirmDiscard={() =>
+        open &&
+        seedRef.current !== '' &&
+        fieldsSnapshot({
+          clientId,
+          position,
+          dateStr,
+          startTime,
+          endTime,
+          location,
+          hourlyRate,
+          payRate,
+          notes,
+          lateNoticeReason,
+          publishImmediately,
+          assignIds,
+          openSlots,
+          extraDays,
+        }) !== seedRef.current
+      }
+    >
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>New shift</DialogTitle>
@@ -6289,5 +6549,342 @@ function AutoScheduleRibbon({
         Auto-schedule week
       </Button>
     </div>
+  );
+}
+
+/* ===== Publish / auto-schedule result dialogs ============================= */
+
+/** "Friday, Jun 13 · 6:00 AM–2:00 PM · Stocker" — store-local, like the grid. */
+function shiftRowLabel(s: Shift): string {
+  return `${fmtDayHeaderTz(s.startsAt, s.timezone)} · ${fmtTimeTz(s.startsAt, s.timezone)}–${fmtTimeTz(s.endsAt, s.timezone)} · ${s.position}`;
+}
+
+/** Reason-specific "what to do about it" line for a skipped shift. */
+function skipReasonCopy(reason: PublishWeekSkip['reason'] | AutoScheduleSkip['reason']): string {
+  switch (reason) {
+    case 'predictive_schedule_violation':
+      return 'Late notice — add a late-notice reason via Edit, then publish again.';
+    case 'double_booking':
+      return 'Double-booked — overlaps another assigned shift. Change the times or reassign.';
+    case 'no_eligible_candidate':
+      return 'No eligible associate — everyone had a conflict, was on PTO, or was unscored. Assign manually.';
+    case 'all_candidates_overtime':
+      return 'Every candidate would go over 40h — assign manually if the overtime is intended.';
+    default:
+      return reason;
+  }
+}
+
+/** One skipped shift per row, resolved against the loaded week, with the
+ *  reason-branched instruction and Edit / Reassign shortcuts. Shared by the
+ *  publish-week and auto-schedule result dialogs. */
+function SkipRows({
+  skipped,
+  shifts,
+  onEdit,
+  onReassign,
+}: {
+  skipped: Array<{ shiftId: string; reason: PublishWeekSkip['reason'] | AutoScheduleSkip['reason']; detail: string | null }>;
+  shifts: Shift[] | null;
+  onEdit: (s: Shift) => void;
+  onReassign: (s: Shift) => void;
+}) {
+  const byId = new Map((shifts ?? []).map((s) => [s.id, s]));
+  return (
+    <ul className="max-h-64 overflow-y-auto rounded-md border border-navy-secondary divide-y divide-navy-secondary/50">
+      {skipped.map((k) => {
+        const s = byId.get(k.shiftId);
+        return (
+          <li key={k.shiftId} className="flex items-start gap-2 px-3 py-2">
+            <AlertTriangle className="h-3.5 w-3.5 text-warning mt-0.5 shrink-0" />
+            <div className="min-w-0 flex-1">
+              {s ? (
+                <>
+                  <div className="text-sm text-white truncate">
+                    {shiftRowLabel(s)} ·{' '}
+                    {s.assignedAssociateName ?? 'Open'}
+                  </div>
+                  <div className="text-xs2 text-silver/80">
+                    {skipReasonCopy(k.reason)}
+                    {k.detail ? ` (${k.detail})` : ''}
+                  </div>
+                </>
+              ) : (
+                // Skipped shift outside the loaded window (filters/truncated
+                // list) — name what we know instead of dropping the row.
+                <div className="text-xs2 text-silver/80">
+                  A shift not in the loaded view was skipped —{' '}
+                  {skipReasonCopy(k.reason)}
+                  {k.detail ? ` (${k.detail})` : ''}
+                </div>
+              )}
+            </div>
+            {s && (
+              <div className="flex shrink-0 items-center gap-1">
+                <Button size="xs" variant="ghost" onClick={() => onEdit(s)}>
+                  <Pencil className="h-3 w-3" />
+                  Edit
+                </Button>
+                <Button size="xs" variant="ghost" onClick={() => onReassign(s)}>
+                  <UserPlus className="h-3 w-3" />
+                  Reassign
+                </Button>
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function PublishSkipsDialog({
+  result,
+  shifts,
+  onClose,
+  onEdit,
+  onReassign,
+  onSelectSkipped,
+}: {
+  result: { published: number; skipped: PublishWeekSkip[] } | null;
+  shifts: Shift[] | null;
+  onClose: () => void;
+  onEdit: (s: Shift) => void;
+  onReassign: (s: Shift) => void;
+  /** Feed the skipped shifts into the bulk selection (→ SelectionToolbar). */
+  onSelectSkipped: (ids: string[]) => void;
+}) {
+  const byId = new Map((shifts ?? []).map((s) => [s.id, s]));
+  const selectableIds =
+    result?.skipped.map((k) => k.shiftId).filter((id) => byId.has(id)) ?? [];
+  return (
+    <Dialog open={result !== null} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Publish results</DialogTitle>
+          <DialogDescription>
+            {result && (
+              <>
+                Published {result.published} shift
+                {result.published === 1 ? '' : 's'} — {result.skipped.length}{' '}
+                skipped and still draft. Fix each below, then publish again.
+              </>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        {result && (
+          <SkipRows
+            skipped={result.skipped}
+            shifts={shifts}
+            onEdit={onEdit}
+            onReassign={onReassign}
+          />
+        )}
+        <DialogFooter>
+          {selectableIds.length > 1 && (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onSelectSkipped(selectableIds)}
+              title="Select every skipped shift so the bulk toolbar can fix them together"
+            >
+              Select all skipped
+            </Button>
+          )}
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Done
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AutoScheduleReviewDialog({
+  result,
+  shifts,
+  onClose,
+  onRefresh,
+  onEdit,
+  onReassign,
+  onSelectSkipped,
+}: {
+  result: { res: AutoScheduleWeekResponse; candidateIds: string[] } | null;
+  shifts: Shift[] | null;
+  onClose: () => void;
+  onRefresh: () => Promise<void> | void;
+  onEdit: (s: Shift) => void;
+  onReassign: (s: Shift) => void;
+  onSelectSkipped: (ids: string[]) => void;
+}) {
+  const [unassigningId, setUnassigningId] = useState<string | null>(null);
+  // Assignments = "was unassigned before the run, is assigned now" —
+  // recomputed from the live shift list, so a per-row Unassign removes its
+  // row after the refetch.
+  const candidateSet = new Set(result?.candidateIds ?? []);
+  const assignedRows = (shifts ?? []).filter(
+    (s) => candidateSet.has(s.id) && s.assignedAssociateId !== null,
+  );
+  const byId = new Map((shifts ?? []).map((s) => [s.id, s]));
+  const selectableSkipIds =
+    result?.res.skipped.map((k) => k.shiftId).filter((id) => byId.has(id)) ?? [];
+  const undo = async (s: Shift) => {
+    if (unassigningId) return;
+    setUnassigningId(s.id);
+    try {
+      await unassignShift(s.id);
+      toast.success(
+        `Unassigned ${s.assignedAssociateName ?? 'associate'} from ${s.position}.`,
+      );
+      await onRefresh();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Unassign failed.');
+    } finally {
+      setUnassigningId(null);
+    }
+  };
+  return (
+    <Dialog open={result !== null} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Auto-schedule review</DialogTitle>
+          <DialogDescription>
+            {result && (
+              <>
+                Assigned {result.res.assigned} shift
+                {result.res.assigned === 1 ? '' : 's'}
+                {result.res.skipped.length > 0
+                  ? ` — ${result.res.skipped.length} skipped`
+                  : ''}
+                . Review the picks below and undo any bad one with Unassign.
+              </>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        {assignedRows.length > 0 && (
+          <div>
+            <div className="mb-1 text-2xs uppercase tracking-widest text-silver">
+              Assignments made
+            </div>
+            <ul className="max-h-56 overflow-y-auto rounded-md border border-navy-secondary divide-y divide-navy-secondary/50">
+              {assignedRows.map((s) => (
+                <li key={s.id} className="flex items-center gap-2 px-3 py-2">
+                  <CheckCircle2 className="h-3.5 w-3.5 text-success shrink-0" />
+                  <div className="min-w-0 flex-1 text-sm text-white truncate">
+                    {shiftRowLabel(s)}{' '}
+                    <span className="text-gold">
+                      → {s.assignedAssociateName ?? '—'}
+                    </span>
+                  </div>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => undo(s)}
+                    loading={unassigningId === s.id}
+                    disabled={unassigningId !== null}
+                    title="Undo this assignment — the shift goes back to unassigned"
+                  >
+                    Unassign
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {result && result.res.skipped.length > 0 && (
+          <div>
+            <div className="mb-1 text-2xs uppercase tracking-widest text-silver">
+              Skipped — needs a manual decision
+            </div>
+            <SkipRows
+              skipped={result.res.skipped}
+              shifts={shifts}
+              onEdit={onEdit}
+              onReassign={onReassign}
+            />
+          </div>
+        )}
+        <DialogFooter>
+          {selectableSkipIds.length > 1 && (
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onSelectSkipped(selectableSkipIds)}
+              title="Select every skipped shift so the bulk toolbar can fix them together"
+            >
+              Select all skipped
+            </Button>
+          )}
+          <Button type="button" variant="secondary" onClick={onClose}>
+            Done
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Publish-week late-notice prompt. Local twin of lib/confirm's optional-
+ *  reason prompt with ONE difference: `initial` prefills the textarea, so a
+ *  reason typed on a run that then failed isn't retyped on retry. */
+function LateNoticeReasonDialog({
+  title,
+  description,
+  reasonLabel,
+  initial,
+  onCancel,
+  onSubmit,
+}: {
+  title: string;
+  description: string;
+  reasonLabel: string;
+  initial: string;
+  onCancel: () => void;
+  /** Trimmed reason; empty string = publish while skipping notice-window drafts. */
+  onSubmit: (reason: string) => void;
+}) {
+  const [reason, setReason] = useState(initial);
+  return (
+    <Dialog open onOpenChange={(o) => !o && onCancel()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit(reason.trim());
+          }}
+          className="grid gap-3"
+        >
+          <div className="grid gap-1">
+            <label
+              htmlFor="publish-late-notice-reason"
+              className="text-xs2 uppercase tracking-wider text-silver"
+            >
+              {reasonLabel}
+            </label>
+            <Textarea
+              id="publish-late-notice-reason"
+              autoFocus
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. Volume spike — client added coverage after the posting deadline"
+              maxLength={500}
+              rows={4}
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary">
+              Publish week
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

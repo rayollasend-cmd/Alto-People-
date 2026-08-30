@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
+  ArrowLeft,
   Check,
   ChevronDown,
   ChevronRight,
@@ -11,6 +12,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { DirectorateHeader, Kpi, KpiStrip } from './DirectorateShell';
+import { sanitizeReturnPath } from './section2Verification';
 import type {
   DocumentKind,
   EVerifyBlocker,
@@ -101,6 +103,40 @@ const BLOCKER_LABEL: Record<EVerifyBlocker, string> = {
   NO_HIRE_DATE: 'No hire date',
 };
 
+/**
+ * Where each blocker gets FIXED. I-9 sections (and the citizenship status
+ * they carry) are I-9-tab work — same-tab deep link with the person open
+ * and a ?return= back to this E-Verify case, so verifying Section 2 drops
+ * the reviewer straight back here. Person-record gaps (SSN card, DOB, hire
+ * date) open the person in a NEW tab so this drawer isn't destroyed
+ * mid-review.
+ */
+function blockerFixLink(
+  blocker: EVerifyBlocker,
+  associateId: string,
+): { to: string; newTab: boolean } {
+  switch (blocker) {
+    case 'NO_I9':
+    case 'SECTION1_INCOMPLETE':
+    case 'SECTION2_INCOMPLETE':
+    case 'NO_CITIZENSHIP':
+      return {
+        to: `/compliance?tab=i9&associateId=${associateId}&return=${encodeURIComponent(
+          `/compliance?tab=everify&associateId=${associateId}`,
+        )}`,
+        newTab: false,
+      };
+    case 'NO_SSN':
+      return {
+        to: `/people?associateId=${associateId}&tab=documents`,
+        newTab: true,
+      };
+    case 'NO_DOB':
+    case 'NO_HIRE_DATE':
+      return { to: `/people?associateId=${associateId}`, newTab: true };
+  }
+}
+
 const CITIZENSHIP_LABEL: Record<string, string> = {
   US_CITIZEN: 'A citizen of the United States',
   NON_CITIZEN_NATIONAL: 'A noncitizen national of the United States',
@@ -146,6 +182,31 @@ function matchesHiredFilter(hireDate: string | null, f: HiredFilter): boolean {
 }
 
 export function EVerifyTab({ canManage }: { canManage: boolean }) {
+  // ?associateId= deep-links one person's case (the scorecard's Fix links,
+  // the profile document vault, and application checklists all send it) —
+  // auto-open their drawer once the roster arrives. ?return= is the surface
+  // the reviewer came from; the drawer offers a way back. Both are captured
+  // into state once, then consumed (replace: true): ComplianceHome tab
+  // switches copy the current search params, so lingering params would
+  // re-arm on every tab visit and refresh.
+  const [deepLinkParams, setDeepLinkParams] = useSearchParams();
+  const [deepLinkAssociateId] = useState<string | null>(() =>
+    deepLinkParams.get('associateId'),
+  );
+  const [returnPath] = useState<string | null>(() =>
+    sanitizeReturnPath(deepLinkParams.get('return')),
+  );
+  const deepLinkOpened = useRef(false);
+  const deepLinkConsumed = useRef(false);
+  useEffect(() => {
+    if (deepLinkConsumed.current) return;
+    if (!deepLinkParams.has('associateId') && !deepLinkParams.has('return')) return;
+    deepLinkConsumed.current = true;
+    const params = new URLSearchParams(deepLinkParams);
+    params.delete('associateId');
+    params.delete('return');
+    setDeepLinkParams(params, { replace: true });
+  }, [deepLinkParams, setDeepLinkParams]);
   const [rows, setRows] = useState<EVerifyRosterRow[] | null>(null);
   const [counts, setCounts] = useState<{
     total: number;
@@ -159,16 +220,35 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = usePersistentState<StatusFilter>(
+  const [storedFilter, setStoredFilter] = usePersistentState<StatusFilter>(
     'alto:list.everify.status.v1',
     'all',
     (v): v is StatusFilter => STATUS_FILTER_VALUES.some((s) => s === v),
   );
-  const [hired, setHired] = usePersistentState<HiredFilter>(
+  // A deep link lands on the widest view for this visit only — the linked
+  // person must be present whatever their state, but a saved filter the
+  // user deliberately chose must not be overwritten (same idiom as I9Tab).
+  const [filterOverride, setFilterOverride] = useState<StatusFilter | null>(
+    deepLinkAssociateId ? 'all' : null,
+  );
+  const filter = filterOverride ?? storedFilter;
+  const setFilter = (f: StatusFilter) => {
+    setFilterOverride(null);
+    setStoredFilter(f);
+  };
+  const [storedHired, setStoredHired] = usePersistentState<HiredFilter>(
     'alto:list.everify.hired.v1',
     'any',
     (v): v is HiredFilter => HIRED_FILTER_VALUES.some((s) => s === v),
   );
+  const [hiredOverride, setHiredOverride] = useState<HiredFilter | null>(
+    deepLinkAssociateId ? 'any' : null,
+  );
+  const hired = hiredOverride ?? storedHired;
+  const setHired = (f: HiredFilter) => {
+    setHiredOverride(null);
+    setStoredHired(f);
+  };
   const [sort, setSort] = usePersistentState<SortMode>(
     'alto:list.everify.sort.v1',
     'name',
@@ -183,7 +263,8 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   // Global Topbar store scope drives the default client filter (same wiring
   // as AdminTimeView): adopt it on arrival when one is chosen, follow later
   // Topbar switches, and push page-level changes back so other modules stay
-  // in step.
+  // in step. Deep links skip the initial adoption so the scope can't hide
+  // the linked row.
   const storeScope = useStoreScope();
   const scopeClientId = storeScope.enabled ? storeScope.clientId : null;
   const scopeSyncedRef = useRef(false);
@@ -191,10 +272,10 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
     if (scopeClientId === null) return;
     if (!scopeSyncedRef.current) {
       scopeSyncedRef.current = true;
-      if (!scopeClientId) return;
+      if (!scopeClientId || deepLinkAssociateId) return;
     }
     setClientFilter((prev) => (prev === scopeClientId ? prev : scopeClientId));
-  }, [scopeClientId, setClientFilter]);
+  }, [scopeClientId, deepLinkAssociateId, setClientFilter]);
   const changeClientFilter = (id: string) => {
     setClientFilter(id);
     // 'none' is a page-local synthetic bucket, not a store the scope knows.
@@ -220,6 +301,18 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Deep link: open the linked person's case as soon as their roster row
+  // arrives. Gated on canOpenCase — the case detail API is manage-only and
+  // a view-only role would auto-open into a guaranteed 403.
+  useEffect(() => {
+    if (!deepLinkAssociateId || deepLinkOpened.current || !rows || !canOpenCase) return;
+    const match = rows.find((r) => r.associateId === deepLinkAssociateId);
+    if (match) {
+      deepLinkOpened.current = true;
+      setOpenFor(match.associateId);
+    }
+  }, [rows, deepLinkAssociateId, canOpenCase]);
 
   const visible = useMemo(() => {
     if (!rows) return [];
@@ -467,6 +560,7 @@ export function EVerifyTab({ canManage }: { canManage: boolean }) {
         <CaseDrawer
           associateId={openFor}
           canManage={canManage}
+          returnPath={returnPath}
           onClose={() => setOpenFor(null)}
           onSaved={() => void refresh()}
           // Hiring-wave assembly line: hop straight to the next person in
@@ -611,12 +705,15 @@ function CopyField({
 function CaseDrawer({
   associateId,
   canManage,
+  returnPath = null,
   onClose,
   onSaved,
   onNextPending = null,
 }: {
   associateId: string;
   canManage: boolean;
+  /** Surface the reviewer deep-linked from (null = none). */
+  returnPath?: string | null;
   onClose: () => void;
   onSaved: () => void;
   /** Jump to the next person in view with no case yet. Null = none left. */
@@ -645,6 +742,15 @@ function CaseDrawer({
           <DrawerTitle className="min-w-0 truncate">
             {detail ? `${detail.firstName} ${detail.lastName}` : 'E-Verify case'}
           </DrawerTitle>
+          {returnPath && (
+            <Link
+              to={returnPath}
+              className="ml-auto inline-flex shrink-0 items-center gap-1 text-xs text-gold hover:underline"
+            >
+              <ArrowLeft className="h-3 w-3" />
+              Back
+            </Link>
+          )}
           {detail && (
             <Link
               to={`/people?associateId=${detail.associateId}`}
@@ -679,8 +785,24 @@ function CaseDrawer({
                   <div className="font-medium text-white">
                     Not ready to run in E-Verify
                   </div>
-                  <div className="mt-0.5 text-silver">
-                    {detail.blockers.map((b) => BLOCKER_LABEL[b]).join(' · ')}
+                  {/* Each blocker links the surface that fixes it — dead
+                      text here meant hunting the gap down by hand. */}
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                    {detail.blockers.map((b) => {
+                      const fix = blockerFixLink(b, detail.associateId);
+                      return (
+                        <Link
+                          key={b}
+                          to={fix.to}
+                          target={fix.newTab ? '_blank' : undefined}
+                          rel={fix.newTab ? 'noreferrer' : undefined}
+                          className="inline-flex items-center gap-1 text-gold hover:underline"
+                        >
+                          {BLOCKER_LABEL[b]}
+                          <ExternalLink className="h-3 w-3" />
+                        </Link>
+                      );
+                    })}
                   </div>
                   {/* The warning used to read as a lock — users assumed the
                       case/packet sections below were disabled. They aren't:

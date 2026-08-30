@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import type { PayrollItem, PayrollItemEarning } from '@alto-people/shared';
 import {
@@ -886,6 +886,7 @@ function AskPaycheckDialog({
   onClose: () => void;
 }) {
   const { t } = useI18n();
+  const navigate = useNavigate();
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const open = item !== null;
@@ -908,9 +909,20 @@ function AskPaycheckDialog({
           `Net pay: ${fmtMoney(item.netPay)}\n` +
           `Disbursed: ${when}\n` +
           (item.failureReason ? `Failure reason: ${item.failureReason}\n` : '') +
-          `Payroll item id: ${item.id}`,
+          `Payroll item id: ${item.id}\n` +
+          // App-internal path the HR-cases page linkifies — lands the
+          // reviewer on the run drawer (/payroll?run=… is AdminPayrollView's
+          // deep link) instead of a manual search from the prose id.
+          `Open the item: /payroll?run=${item.payrollRunId}`,
       });
-      toast.success(t('pay.askSentToast'));
+      // Same paper-trail affordance as MyTimesheet's dispute: the case is
+      // where the answer arrives, so link straight to it.
+      toast.success(t('pay.askSentToast'), {
+        action: {
+          label: 'View in My cases',
+          onClick: () => navigate('/hr-cases'),
+        },
+      });
       setMessage('');
       onClose();
     } catch (err) {

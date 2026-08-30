@@ -503,8 +503,15 @@ function EditKitDrawer({
     }
   };
 
+  // Long interview-question textareas are painful to retype — guard user
+  // dismissals (Esc/overlay/X/swipe) behind a confirm while edited.
+  const dirty =
+    name !== kit.name ||
+    description !== (kit.description ?? '') ||
+    questionsText !== kit.questions.map((q) => q.prompt).join('\n');
+
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} confirmDiscard={() => dirty}>
       <DrawerHeader>
         <DrawerTitle>Edit kit</DrawerTitle>
       </DrawerHeader>
@@ -573,8 +580,10 @@ function NewKitDrawer({ onClose, onSaved }: { onClose: () => void; onSaved: () =
       setSaving(false);
     }
   };
+  const dirty =
+    name.trim() !== '' || description.trim() !== '' || questionsText.trim() !== '';
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} confirmDiscard={() => dirty}>
       <DrawerHeader>
         <DrawerTitle>New interview kit</DrawerTitle>
       </DrawerHeader>
@@ -919,8 +928,23 @@ function NewOfferDrawer({
       setSaving(false);
     }
   };
+  // clientId is deliberately excluded — it's remembered from the last
+  // offer, not typed for this one.
+  const dirty =
+    candidate !== null ||
+    jobTitle.trim() !== '' ||
+    startDate !== '' ||
+    salary !== '' ||
+    hourlyRate !== '' ||
+    letterBody.trim() !== '';
+
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-2xl">
+    <Drawer
+      open={true}
+      onOpenChange={(o) => !o && onClose()}
+      width="max-w-2xl"
+      confirmDiscard={() => dirty}
+    >
       <DrawerHeader>
         <DrawerTitle>New offer</DrawerTitle>
       </DrawerHeader>
@@ -1231,8 +1255,15 @@ function NewReferralDrawer({
       setSaving(false);
     }
   };
+  const dirty =
+    candidateName.trim() !== '' ||
+    candidateEmail.trim() !== '' ||
+    candidatePhone.trim() !== '' ||
+    position.trim() !== '' ||
+    bonusAmount !== '' ||
+    notes.trim() !== '';
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} confirmDiscard={() => dirty}>
       <DrawerHeader>
         <DrawerTitle>Refer someone</DrawerTitle>
       </DrawerHeader>
@@ -1517,8 +1548,22 @@ function NewPostingDrawer({
     }
   };
 
+  const dirty =
+    title.trim() !== '' ||
+    slug.trim() !== '' ||
+    clientId !== '' ||
+    description.trim() !== '' ||
+    location.trim() !== '' ||
+    minSalary !== '' ||
+    maxSalary !== '';
+
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()} width="max-w-2xl">
+    <Drawer
+      open={true}
+      onOpenChange={(o) => !o && onClose()}
+      width="max-w-2xl"
+      confirmDiscard={() => dirty}
+    >
       <DrawerHeader>
         <DrawerTitle>New job posting</DrawerTitle>
       </DrawerHeader>

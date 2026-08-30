@@ -109,11 +109,20 @@ export function SeparationHome() {
       .catch(() => setShowNew(true));
   }, [searchParams, setSearchParams, canManage]);
 
+  // Keeps the previous rows on screen while the refetch is in flight —
+  // nulling them here used to blank the entire list (and skeleton-flash)
+  // every time a drawer action refreshed it.
   const refresh = () => {
-    setRows(null);
     setLoadError(null);
     listSeparations({ status: filter === 'ALL' ? undefined : filter })
-      .then((r) => setRows(r.separations))
+      .then((r) => {
+        setRows(r.separations);
+        // Sync the open drawer to server truth when its row is in the
+        // refreshed list; otherwise keep the locally patched copy.
+        setOpenRow((prev) =>
+          prev ? r.separations.find((s) => s.id === prev.id) ?? prev : prev,
+        );
+      })
       .catch((err) =>
         setLoadError(
           err instanceof ApiError
@@ -131,6 +140,17 @@ export function SeparationHome() {
   useEffect(() => {
     refresh();
   }, [filter]);
+
+  // In-place update of one row (list + open drawer) after a drawer
+  // action — no full reload, no drawer close.
+  const patchRow = (id: string, patch: Partial<SeparationRow>) => {
+    setRows((prev) =>
+      prev ? prev.map((r) => (r.id === id ? { ...r, ...patch } : r)) : prev,
+    );
+    setOpenRow((prev) =>
+      prev && prev.id === id ? { ...prev, ...patch } : prev,
+    );
+  };
 
   const exportCsv = () => {
     if (!rows) return;
@@ -354,9 +374,20 @@ export function SeparationHome() {
           row={openRow}
           canManage={canManage}
           onClose={() => setOpenRow(null)}
-          onChanged={() => {
-            setOpenRow(null);
-            refresh();
+          onChanged={(patch) => {
+            // Keep the drawer OPEN and patch the row in place — closing
+            // it after every advance/save ejected HR mid-offboarding.
+            patchRow(openRow.id, patch);
+            if (patch.status && filter !== 'ALL' && patch.status !== filter) {
+              // The record just left the current chip — follow it so the
+              // list still shows it. setFilter triggers the refetch.
+              setFilter(patch.status);
+              toast(
+                `Showing ${STATUS_LABELS[patch.status]} — this separation moved there.`,
+              );
+            } else {
+              refresh();
+            }
           }}
         />
       )}
@@ -516,7 +547,8 @@ function DetailDrawer({
   row: SeparationRow;
   canManage: boolean;
   onClose: () => void;
-  onChanged: () => void;
+  /** Reports what changed; the parent patches the row and keeps us open. */
+  onChanged: (patch: Partial<SeparationRow>) => void;
 }) {
   const [rating, setRating] = useState<string>(
     row.rating !== null ? String(row.rating) : '',
@@ -532,6 +564,18 @@ function DetailDrawer({
   );
   const [busy, setBusy] = useState(false);
   const confirm = useConfirm();
+
+  // Unsaved exit-interview edits, against the last saved row. Gates the
+  // drawer's discard confirm; naturally resets when a save patches `row`.
+  const dirty =
+    rating !== (row.rating !== null ? String(row.rating) : '') ||
+    reasonNotes !== (row.reasonNotes ?? '') ||
+    positive !== (row.feedbackPositive ?? '') ||
+    improvement !== (row.feedbackImprovement ?? '') ||
+    wouldRecommend !==
+      (row.wouldRecommend === null ? '' : row.wouldRecommend ? 'yes' : 'no') ||
+    wouldReturn !==
+      (row.wouldReturn === null ? '' : row.wouldReturn ? 'yes' : 'no');
 
   const advance = async () => {
     const next = row.status === 'PLANNED' ? 'IN_PROGRESS' : 'COMPLETE';
@@ -552,7 +596,12 @@ function DetailDrawer({
     try {
       const r = await advanceSeparation(row.id);
       toast.success(`Advanced to ${STATUS_LABELS[r.status]}.`);
-      onChanged();
+      onChanged({
+        status: r.status,
+        ...(r.status === 'COMPLETE'
+          ? { completedAt: new Date().toISOString() }
+          : {}),
+      });
     } catch (err) {
       toast.error(
         err instanceof ApiError
@@ -565,10 +614,16 @@ function DetailDrawer({
   };
 
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer
+      open={true}
+      onOpenChange={(o) => !o && onClose()}
+      confirmDiscard={() => dirty}
+    >
       <DrawerHeader>
         <DrawerTitle>
-          <AssociateLink associateId={row.associateId}>
+          {/* New tab: a same-tab hop to the profile mid-interview would
+              destroy everything typed below. */}
+          <AssociateLink associateId={row.associateId} newTab>
             {row.associateName}
           </AssociateLink>
         </DrawerTitle>
@@ -670,7 +725,7 @@ function DetailDrawer({
               onClick={async () => {
                 setBusy(true);
                 try {
-                  await submitExitInterview(row.id, {
+                  const payload = {
                     rating: rating ? parseInt(rating, 10) : null,
                     reasonNotes: reasonNotes.trim() || null,
                     feedbackPositive: positive.trim() || null,
@@ -679,9 +734,16 @@ function DetailDrawer({
                       wouldRecommend === '' ? null : wouldRecommend === 'yes',
                     wouldReturn:
                       wouldReturn === '' ? null : wouldReturn === 'yes',
-                  });
+                  };
+                  await submitExitInterview(row.id, payload);
                   toast.success('Exit interview saved.');
-                  onChanged();
+                  // Local patch (there's no single-separation getter);
+                  // the parent's background refetch confirms it.
+                  onChanged({
+                    ...payload,
+                    exitInterviewCompletedAt:
+                      row.exitInterviewCompletedAt ?? new Date().toISOString(),
+                  });
                 } catch (err) {
                   toast.error(
                     err instanceof ApiError
