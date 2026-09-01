@@ -508,3 +508,80 @@ describe('POST /kiosk/punch — selfie storage requires recorded consent', () =>
     expect(punch!.selfie).not.toBeNull();
   });
 });
+
+describe('kiosk PIN client re-homing + attributed rejects', () => {
+  it('re-issuing from another client re-points the PIN row (transferred associate)', async () => {
+    const { associate } = await setupKiosk();
+    const newClient = await createClient('Pier Park');
+    // Issuing requires an approved application.
+    await prisma.application.create({
+      data: {
+        associateId: associate.id,
+        clientId: newClient.id,
+        onboardingTrack: 'STANDARD',
+        status: 'APPROVED',
+      },
+    });
+    const cookie = await adminCookie();
+
+    const res = await request(app())
+      .post('/kiosk-pins')
+      .set('Cookie', cookie)
+      .send({ associateId: associate.id, clientId: newClient.id });
+    expect(res.status).toBe(201);
+
+    // One row per associate — and it moved to the new client.
+    const rows = await prisma.kioskPin.findMany({
+      where: { associateId: associate.id },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.clientId).toBe(newClient.id);
+  });
+
+  it('a wrong-site punch reject is attributed and filterable by rejectGroup', async () => {
+    const { pin, associate } = await setupKiosk();
+    // A second client with its own paired device — the PIN belongs to the
+    // first client, so punching here must bounce as pin_wrong_client.
+    const otherClient = await createClient('Other Corp');
+    const otherLoc = await prisma.location.findFirstOrThrow({
+      where: { clientId: otherClient.id },
+    });
+    const { plaintext, prefix } = generateDeviceToken();
+    await prisma.kioskDevice.create({
+      data: {
+        clientId: otherClient.id,
+        locationId: otherLoc.id,
+        name: 'Other kiosk',
+        tokenHash: hashDeviceToken(plaintext),
+        tokenPrefix: prefix,
+        tokenExpiresAt: new Date(Date.now() + 90 * 24 * 3600 * 1000),
+      },
+    });
+
+    const res = await request(app())
+      .post('/kiosk/punch')
+      .send({ deviceToken: plaintext, pin, selfie: null });
+    expect(res.status).toBe(401);
+
+    // The reject row names WHO tried (the PIN matched someone) so the
+    // punch log can surface it instead of an anonymous dash.
+    const reject = await prisma.kioskPunch.findFirst({
+      where: { action: 'REJECTED' },
+    });
+    expect(reject?.rejectReason).toBe('pin_wrong_client');
+    expect(reject?.associateId).toBe(associate.id);
+
+    // And the log API can filter straight to it.
+    const cookie = await adminCookie();
+    const log = await request(app())
+      .get('/kiosk-punches?rejectGroup=wrong_client')
+      .set('Cookie', cookie);
+    expect(log.status).toBe(200);
+    expect(log.body.punches).toHaveLength(1);
+    expect(log.body.punches[0].associateName).toContain(associate.firstName);
+    const empty = await request(app())
+      .get('/kiosk-punches?rejectGroup=inactive')
+      .set('Cookie', cookie);
+    expect(empty.body.punches).toHaveLength(0);
+  });
+});

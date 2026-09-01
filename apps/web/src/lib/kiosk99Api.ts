@@ -40,6 +40,13 @@ export interface KioskPin {
   locationName: string | null;
   /** 4-digit number, decrypted server-side. Null on legacy pre-encryption rows. */
   employeeNumber: string | null;
+  /** The number decrypts but its stored hash no longer matches the current
+   *  PIN secret — it fails at every kiosk. Fix = rotate (re-issue). */
+  wontClockIn: boolean;
+  /** False when the associate is separated / deactivated / erased. The PIN
+   *  row survives on purpose (history attribution); this drives the
+   *  Inactive badge and keeps ex-employees out of "Email all". */
+  active: boolean;
   /** Face-verification consent: null = the kiosk hasn't asked yet. */
   faceConsentStatus: FaceConsentStatus | null;
   createdAt: string;
@@ -206,6 +213,17 @@ export const listKioskPins = (clientId?: string) =>
     clientId ? `/kiosk-pins?clientId=${clientId}` : '/kiosk-pins',
   );
 
+/** One associate's employee number (or none) regardless of which client
+ *  the row is filed under — the People-drawer lookup. */
+export const getAssociateKioskPin = async (
+  associateId: string,
+): Promise<KioskPin | null> => {
+  const r = await apiFetch<{ pins: KioskPin[] }>(
+    `/kiosk-pins?associateId=${associateId}`,
+  );
+  return r.pins[0] ?? null;
+};
+
 export interface KioskPinHealth {
   total: number;
   healthy: number;
@@ -302,11 +320,16 @@ export const diagnoseKioskPin = (params: {
   );
 };
 
+export type KioskRejectGroup = 'wrong_client' | 'not_recognized' | 'inactive';
+
 export const listKioskPunches = (params?: {
   associateId?: string;
   deviceId?: string;
   reviewStatus?: KioskPunchReviewStatus;
   action?: KioskPunchSummary['action'];
+  /** Filter REJECTED punches by why they bounced (covers the preflight
+   *  and punch-time variants of each reason). */
+  rejectGroup?: KioskRejectGroup;
   anomaliesOnly?: boolean;
   /** ISO timestamps bounding createdAt. */
   from?: string;
@@ -321,6 +344,7 @@ export const listKioskPunches = (params?: {
   if (params?.deviceId) q.set('deviceId', params.deviceId);
   if (params?.reviewStatus) q.set('reviewStatus', params.reviewStatus);
   if (params?.action) q.set('action', params.action);
+  if (params?.rejectGroup) q.set('rejectGroup', params.rejectGroup);
   if (params?.anomaliesOnly) q.set('anomaliesOnly', 'true');
   if (params?.from) q.set('from', params.from);
   if (params?.to) q.set('to', params.to);

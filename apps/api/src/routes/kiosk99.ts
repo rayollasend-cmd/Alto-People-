@@ -306,12 +306,20 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
   // all-clients view groups by client then name so the flat list stays
   // scannable.
   const requested = z.string().uuid().optional().parse(req.query.clientId);
+  // associateId — the People-directory drawer's "does this person have a
+  // number?" lookup. Ignores the client scoping (a transferred associate's
+  // row may still be filed under another client — that's exactly what the
+  // drawer needs to reveal), but the bounded-role clamp below still applies.
+  const associateId = z.string().uuid().optional().parse(req.query.associateId);
   // Decrypted PINs + employee numbers are tenant-sensitive: bounded roles
   // are clamped to their own client no matter what they request.
   const clientId = kioskClientClamp(req.user!, requested);
   const rows = await prisma.kioskPin.findMany({
     take: 1000,
-    where: { ...(clientId ? { clientId } : {}) },
+    where: {
+      ...(associateId ? { associateId } : clientId ? { clientId } : {}),
+      ...(associateId && clientId ? { clientId } : {}),
+    },
     include: {
       associate: {
         select: {
@@ -319,6 +327,9 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
           lastName: true,
           email: true,
           faceConsentStatus: true,
+          separatedAt: true,
+          deactivatedAt: true,
+          deletedAt: true,
         },
       },
       client: { select: { name: true } },
@@ -352,6 +363,21 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
   res.json({
     pins: rows.map((p) => {
       const loc = locByAssoc.get(p.associateId) ?? null;
+      const employeeNumber = safeDecrypt(p.pinEncrypted);
+      // Per-row echo of the /kiosk-pins/health check: a number that
+      // decrypts but no longer matches its stored HMAC (KIOSK_PIN_SECRET
+      // drifted) looks perfectly healthy in the list yet fails at every
+      // kiosk. The flag lets the UI badge those rows and include them in
+      // "Rotate all" — the aggregate banner alone pointed HR at a bulk
+      // button that never rendered.
+      let wontClockIn = false;
+      if (employeeNumber !== null) {
+        try {
+          wontClockIn = !hmacPin(employeeNumber).equals(p.pinHmac);
+        } catch {
+          wontClockIn = true;
+        }
+      }
       return {
         id: p.id,
         associateId: p.associateId,
@@ -365,7 +391,17 @@ kiosk99Router.get('/kiosk-pins', MANAGE, async (req, res) => {
         // or any row that fails to decrypt, return null — HR rotates to
         // recover the plaintext. safeDecrypt guarantees one bad row can't
         // sink the whole list.
-        employeeNumber: safeDecrypt(p.pinEncrypted),
+        employeeNumber,
+        wontClockIn,
+        // PINs deliberately survive separation/deactivation (history stays
+        // attributable; kiosk clock-INs are gated at punch time). Surface
+        // the employment state so the list doesn't present ex-employees as
+        // live — and so "Email all" can leave them out.
+        active: !(
+          p.associate.separatedAt ||
+          p.associate.deactivatedAt ||
+          p.associate.deletedAt
+        ),
         // Face-verification consent — surfaced so admins can answer
         // "who declined?" and manage the re-ask flow the kiosk's consent
         // screen promises ("change this later through your manager").
@@ -520,7 +556,13 @@ kiosk99Router.post('/kiosk-pins', MANAGE, async (req, res) => {
     try {
       const created = await prisma.kioskPin.upsert({
         where: { associateId: input.associateId },
-        update: { pinHmac, pinEncrypted, createdById: req.user!.id },
+        // clientId moves with the re-issue: one PIN row per associate
+        // (@@unique), so issuing from a different client's tab is the
+        // sanctioned way to re-home a transferred associate's number.
+        // Without this the row stayed filed under the OLD client — the
+        // kiosk kept rejecting it (punch requires pin.clientId ===
+        // device.clientId) while the admin toast claimed success.
+        update: { clientId: input.clientId, pinHmac, pinEncrypted, createdById: req.user!.id },
         create: {
           clientId: input.clientId,
           associateId: input.associateId,
@@ -926,7 +968,7 @@ kiosk99Router.get('/kiosk-pins/diagnose', MANAGE, async (req, res) => {
     diagnosis =
       'PIN exists but the associate has no open AssociateAssignment. Onboarding may be incomplete, or they were offboarded.';
   } else if (!clientsMatch) {
-    diagnosis = `MISMATCH: PIN is under client "${pinClient?.name ?? pin.clientId}" but the associate is currently assigned to client "${openAssignment.location.client.name}" (${assignmentClientId}). /kiosk/punch rejects PINs whose clientId differs from the device's clientId, so any tablet registered to the current-assignment client refuses this PIN. Fix: rotate the PIN from the admin (Employee numbers tab → switch to the new client → issue), which creates a new KioskPin row under the right client.`;
+    diagnosis = `MISMATCH: PIN is under client "${pinClient?.name ?? pin.clientId}" but the associate is currently assigned to client "${openAssignment.location.client.name}" (${assignmentClientId}). /kiosk/punch rejects PINs whose clientId differs from the device's clientId, so any tablet registered to the current-assignment client refuses this PIN. Fix: re-issue the number from the admin (Employee numbers tab → switch to "${openAssignment.location.client.name}" → Issue for this associate) — re-issuing moves their PIN under that client. They get a NEW number; email it to them after.`;
   } else {
     diagnosis =
       'PIN and current assignment match. If clock-in is still failing, check that the kiosk device is registered to the same client (Devices tab) and that the device token has not expired.';
@@ -990,6 +1032,19 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
   // Anomalies-only — any punch the system flagged (face mismatch or
   // impossible travel), regardless of where it sits in the review flow.
   const anomaliesOnly = req.query.anomaliesOnly === 'true';
+  // Reject-reason group — lets HR triage WHY punches are bouncing
+  // (wrong-site PINs vs unknown numbers vs inactive associates) instead
+  // of eyeballing raw reason strings. Groups cover both the preflight
+  // and punch-time variants of each reason.
+  const rejectGroup = z
+    .enum(['wrong_client', 'not_recognized', 'inactive'])
+    .optional()
+    .parse(req.query.rejectGroup);
+  const rejectReasonsFor: Record<string, string[]> = {
+    wrong_client: ['pin_wrong_client', 'pin_wrong_client_preflight'],
+    not_recognized: ['pin_not_recognized', 'pin_not_recognized_preflight'],
+    inactive: ['associate_inactive', 'associate_inactive_preflight'],
+  };
   const from = z
     .string()
     .datetime({ offset: true })
@@ -1029,6 +1084,9 @@ kiosk99Router.get('/kiosk-punches', MANAGE, async (req, res) => {
     ...(deviceId ? { kioskDeviceId: deviceId } : {}),
     ...(reviewStatus ? { reviewStatus } : {}),
     ...(action ? { action } : {}),
+    ...(rejectGroup
+      ? { rejectReason: { in: rejectReasonsFor[rejectGroup] } }
+      : {}),
     ...(anomaliesOnly ? { anomalyKind: { not: null } } : {}),
     ...(from || to
       ? {
@@ -1836,6 +1894,13 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
         rejectReason: wrongSite
           ? 'pin_wrong_client_preflight'
           : 'pin_not_recognized_preflight',
+        // When the PIN matched someone (wrong-site case), attribute the
+        // reject — the punch log's Associate column and its per-associate
+        // filter are how HR discovers a stranded PIN, and an unattributed
+        // reject is invisible to both.
+        ...(wrongSite && pinRow
+          ? { associateId: pinRow.associate.id, kioskPinId: pinRow.id }
+          : {}),
         clientPunchedAt: new Date(),
       },
     });
@@ -1892,6 +1957,9 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
         kioskDeviceId: device.id,
         action: 'REJECTED',
         rejectReason: 'associate_inactive_preflight',
+        // Attributed: the PIN matched — HR needs to see WHO tried.
+        associateId: pinRow.associateId,
+        kioskPinId: pinRow.id,
         clientPunchedAt: new Date(),
       },
     });
@@ -2216,6 +2284,12 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
         kioskDeviceId: device.id,
         action: 'REJECTED',
         rejectReason: wrongSite ? 'pin_wrong_client' : 'pin_not_recognized',
+        // Wrong-site rejects are attributable (the PIN matched someone) —
+        // stamp the associate so the punch log can name them and the
+        // per-associate filter can find the pattern.
+        ...(wrongSite && pinRow
+          ? { associateId: pinRow.associate.id, kioskPinId: pinRow.id }
+          : {}),
         selfie,
         punchLat,
         punchLng,
@@ -2260,6 +2334,9 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
           kioskDeviceId: device.id,
           action: 'REJECTED',
           rejectReason: 'associate_inactive',
+          // Attributed: the PIN matched — HR needs to see WHO tried.
+          associateId: pinRow.associateId,
+          kioskPinId: pinRow.id,
           selfie,
           punchLat,
           punchLng,

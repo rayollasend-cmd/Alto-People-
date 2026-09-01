@@ -24,6 +24,7 @@ import {
   Fingerprint,
   FlaskConical,
   FolderOpen,
+  Key,
   Landmark,
   Plane,
   ShieldCheck,
@@ -112,6 +113,8 @@ import {
   type SsnReveal,
 } from '@/lib/orgApi';
 import { listClientLocations } from '@/lib/clientsApi';
+import { emailKioskPin, getAssociateKioskPin } from '@/lib/kiosk99Api';
+import { useConfirm } from '@/lib/confirm';
 import type { LocationSummary } from '@alto-people/shared';
 import {
   Avatar,
@@ -1381,6 +1384,7 @@ function ProfileTab({
 }) {
   const [transferOpen, setTransferOpen] = useState(false);
   const canTransfer = Boolean(a.workplaceClientId);
+  const qc = useQueryClient();
   return (
     <div className="space-y-4">
       <PersonalInfoSection associate={a} />
@@ -1487,12 +1491,20 @@ function ProfileTab({
         )}
       </Section>
 
+      <KioskPinSection associate={a} />
+
       {canTransfer && (
         <TransferDialog
           open={transferOpen}
           onOpenChange={setTransferOpen}
           associate={a}
           onSaved={(r) => {
+            // A cross-client transfer re-points the kiosk PIN server-side;
+            // drop the drawer's cached copy so the section shows the new
+            // filing instead of a stale mismatch warning.
+            if (r.crossClient) {
+              void qc.invalidateQueries({ queryKey: ['kiosk-pin', a.id] });
+            }
             onAssociateChange({
               currentLocationId: r.locationId,
               currentLocationName: r.locationName,
@@ -2527,6 +2539,115 @@ function CompensationTab({ associate: a }: { associate: DirectoryEntry }) {
         }}
       />
     </div>
+  );
+}
+
+// Kiosk clock-in on the profile — the employee number surfaced where HR
+// already is (the KioskPin schema comment always promised "HR can show it
+// again in the directory"). Answers "can they clock in, and where is
+// their number filed?" without a trip to the Kiosk module; issue and
+// re-issue deep-link into Kiosk admin with the drawer pre-opened.
+function KioskPinSection({ associate: a }: { associate: DirectoryEntry }) {
+  const { user } = useAuth();
+  const confirm = useConfirm();
+  // manage:time is the capability the kiosk endpoints enforce — hide the
+  // section entirely from roles that would just get a 403.
+  const canSee = user ? hasCapability(user.role, 'manage:time') : false;
+  const { data: pin, isLoading } = useQuery({
+    queryKey: ['kiosk-pin', a.id],
+    queryFn: () => getAssociateKioskPin(a.id),
+    enabled: canSee,
+  });
+  if (!canSee) return null;
+
+  const mismatch = Boolean(
+    pin && a.workplaceClientId && pin.clientId !== a.workplaceClientId,
+  );
+  // The issue/re-issue deep link opens Kiosk admin's drawer preselected on
+  // this associate at their CURRENT client — for a mismatch that one
+  // re-issue also re-homes the PIN under the right client.
+  const issueLink = `/time-attendance/kiosk?tab=pins&issue=${a.id}${
+    a.workplaceClientId ? `&client=${a.workplaceClientId}` : ''
+  }`;
+
+  return (
+    <Section title="Kiosk clock-in">
+      <InfoRow
+        icon={<Key className="h-3.5 w-3.5" />}
+        label="Employee #"
+        value={
+          isLoading ? (
+            '…'
+          ) : !pin ? (
+            'None issued'
+          ) : pin.employeeNumber ? (
+            <span className="font-mono tracking-widest">{pin.employeeNumber}</span>
+          ) : (
+            'On file, but unreadable — re-issue to recover it'
+          )
+        }
+      />
+      {(mismatch || pin?.wontClockIn) && (
+        <div className="flex gap-2 items-start rounded-md border border-warning/40 bg-warning/10 p-2.5 text-warning text-xs">
+          <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+          <div>
+            {mismatch ? (
+              <>
+                Their number is filed under <strong>{pin!.clientName}</strong>,
+                not {a.workplaceClientName ?? 'their current client'} — kiosks
+                at the current client reject it. Re-issuing below fixes it.
+              </>
+            ) : (
+              <>
+                This number won&rsquo;t clock in (the PIN secret changed since
+                it was issued) — re-issue it below.
+              </>
+            )}
+          </div>
+        </div>
+      )}
+      <div className="pt-2 flex items-center gap-3">
+        {pin?.employeeNumber && !mismatch && !pin.wontClockIn && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={async () => {
+              if (
+                !(await confirm({
+                  title: `Email ${a.firstName} their clock-in number?`,
+                  description: `It will be sent to ${a.email}.`,
+                }))
+              )
+                return;
+              try {
+                await emailKioskPin(pin.id);
+                toast.success(`Emailed ${a.email}.`);
+              } catch (err) {
+                toast.error(
+                  err instanceof ApiError ? err.message : 'Failed to email.',
+                );
+              }
+            }}
+          >
+            <Mail className="mr-2 h-3.5 w-3.5" /> Email number
+          </Button>
+        )}
+        <Link
+          to={
+            !pin || mismatch || pin.wontClockIn || !pin.employeeNumber
+              ? issueLink
+              : '/time-attendance/kiosk?tab=pins'
+          }
+          className="text-xs text-gold hover:text-gold-bright"
+        >
+          {!pin
+            ? 'Issue a number in Kiosk admin'
+            : mismatch || pin.wontClockIn || !pin.employeeNumber
+              ? 'Re-issue in Kiosk admin'
+              : 'Open Kiosk admin'}
+        </Link>
+      </div>
+    </Section>
   );
 }
 

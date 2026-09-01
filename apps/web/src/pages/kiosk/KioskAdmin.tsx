@@ -45,6 +45,7 @@ import {
   type KioskPinDiagnosis,
   type KioskPinHealth,
   type KioskPunchSummary,
+  type KioskRejectGroup,
 } from '@/lib/kiosk99Api';
 import { listDirectory } from '@/lib/directoryApi';
 import { listClientLocations } from '@/lib/clientsApi';
@@ -147,7 +148,7 @@ export function KioskAdmin() {
         subtitle="Register tablets, issue 4-digit employee numbers, and review the punch log."
         breadcrumbs={[{ label: 'Time' }, { label: 'Kiosk' }]}
       />
-      {canManage && <PinHealthBanner onTab={() => setTab('pins')} />}
+      {canManage && <PinHealthBanner onTab={() => setTab('pins')} bump={badgeBump} />}
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
           <TabsTrigger value="devices">
@@ -177,7 +178,7 @@ export function KioskAdmin() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="devices"><DevicesTab canManage={canManage} onChanged={bumpBadges} /></TabsContent>
-        <TabsContent value="pins"><PinsTab canManage={canManage} /></TabsContent>
+        <TabsContent value="pins"><PinsTab canManage={canManage} onChanged={bumpBadges} /></TabsContent>
         <TabsContent value="review"><ReviewTab canManage={canManage} onChanged={bumpBadges} /></TabsContent>
         <TabsContent value="log"><LogTab /></TabsContent>
         <TabsContent value="faces"><FacesTab canManage={canManage} /></TabsContent>
@@ -189,8 +190,11 @@ export function KioskAdmin() {
 // Early-warning banner: flags codes that won't clock in (PIN secret drifted)
 // or can't be displayed (encryption key drifted), before associates hit it at
 // the kiosk. Silent when everything's healthy.
-function PinHealthBanner({ onTab }: { onTab: () => void }) {
+function PinHealthBanner({ onTab, bump }: { onTab: () => void; bump: number }) {
   const [health, setHealth] = useState<KioskPinHealth | null>(null);
+  // `bump` re-runs the check after any tab reports a change, so fixing the
+  // affected codes (Rotate all) actually clears the banner instead of it
+  // staying red until a full page reload.
   useEffect(() => {
     let cancelled = false;
     kioskPinsHealth()
@@ -199,7 +203,7 @@ function PinHealthBanner({ onTab }: { onTab: () => void }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [bump]);
 
   if (!health) return null;
   const { wontClockIn, unreadable, legacy, healthy, total } = health;
@@ -727,7 +731,11 @@ function NewDeviceDrawer({
     }
   };
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer
+      open={true}
+      onOpenChange={(o) => !o && onClose()}
+      confirmDiscard={() => name.trim().length > 0}
+    >
       <DrawerHeader>
         <DrawerTitle>Register kiosk</DrawerTitle>
       </DrawerHeader>
@@ -808,7 +816,11 @@ function NewDeviceDrawer({
 
 function TokenRevealDrawer({ token, onClose }: { token: string; onClose: () => void }) {
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    // confirmDiscard: the token is shown ONCE — a stray Esc or backdrop
+    // click here used to lose it permanently (recovery = rotate and
+    // re-pair the tablet). The explicit "I've paired it" button still
+    // closes without the guard.
+    <Drawer open={true} onOpenChange={(o) => !o && onClose()} confirmDiscard>
       <DrawerHeader>
         <DrawerTitle>Pair the kiosk</DrawerTitle>
       </DrawerHeader>
@@ -983,7 +995,13 @@ function FaceConsentCell({
   );
 }
 
-function PinsTab({ canManage }: { canManage: boolean }) {
+function PinsTab({
+  canManage,
+  onChanged,
+}: {
+  canManage: boolean;
+  onChanged?: () => void;
+}) {
   const confirm = useConfirm();
   const { user } = useAuth();
   // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
@@ -1066,6 +1084,25 @@ function PinsTab({ canManage }: { canManage: boolean }) {
   const [locationFilter, setLocationFilter] = useState('');
   // When issuing from a "missing" row, preselect that associate in the drawer.
   const [issueFor, setIssueFor] = useState<string | null>(null);
+
+  // Deep link from the People drawer: ?tab=pins&issue=<associateId>
+  // (&client=<clientId>) opens the issue drawer preselected on that
+  // associate. Params are consumed with a replace-write so refresh/Back
+  // don't re-open the drawer — the house deep-link convention.
+  const [deepParams, setDeepParams] = useSearchParams();
+  useEffect(() => {
+    const issue = deepParams.get('issue');
+    if (!issue) return;
+    const deepClient = deepParams.get('client');
+    if (deepClient && !boundedClient) setClientId(deepClient);
+    setIssueFor(issue);
+    setShowNew(true);
+    const next = new URLSearchParams(deepParams);
+    next.delete('issue');
+    next.delete('client');
+    setDeepParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepParams]);
 
   // Default to the first client so HR doesn't land on an empty state; a
   // stale persisted/scoped id (client since removed) falls back the same
@@ -1177,16 +1214,22 @@ function PinsTab({ canManage }: { canManage: boolean }) {
         p.clientName.toLowerCase().includes(term),
     );
   }, [rows, deferredQ, locationFilter]);
-  // Rows we can actually email — a recoverable (non-legacy) number. Drives
-  // the "Email all" bulk action over whatever's currently in view.
+  // Rows we can actually email — a recoverable (non-legacy) number AND a
+  // still-employed associate. Separated/deactivated folks keep their PIN
+  // row for history, but mailing clock-in credentials to ex-employees is
+  // never what "Email all" means.
   const emailableRows = useMemo(
-    () => filteredRows.filter((p) => p.employeeNumber),
+    () => filteredRows.filter((p) => p.employeeNumber && p.active),
     [filteredRows],
   );
-  // Rows whose number can't be displayed (legacy / un-decryptable). The
-  // only fix is to re-issue; drives the "Rotate all" bulk action.
-  const unreadableRows = useMemo(
-    () => filteredRows.filter((p) => !p.employeeNumber),
+  // Rows whose number is broken: can't be displayed (legacy /
+  // un-decryptable) OR displays fine but won't clock in (PIN secret
+  // drifted — the health banner's wontClockIn count). Either way the only
+  // fix is re-issuing; both drive the "Rotate all" bulk action. Inactive
+  // associates are left alone — nothing to fix for someone who can't
+  // clock in anyway.
+  const brokenRows = useMemo(
+    () => filteredRows.filter((p) => p.active && (!p.employeeNumber || p.wontClockIn)),
     [filteredRows],
   );
   const [rotatingAll, setRotatingAll] = useState(false);
@@ -1283,17 +1326,17 @@ function PinsTab({ canManage }: { canManage: boolean }) {
             <Mail className="mr-2 h-4 w-4" /> Email all ({emailableRows.length})
           </Button>
         )}
-        {canManage && effectiveView === 'with' && unreadableRows.length > 0 && (
+        {canManage && effectiveView === 'with' && brokenRows.length > 0 && (
           <Button
             variant="ghost"
             disabled={rotatingAll}
             onClick={async () => {
-              const n = unreadableRows.length;
+              const n = brokenRows.length;
               if (
                 !(await confirm({
-                  title: `Re-issue ${n} unreadable number${n === 1 ? '' : 's'}?`,
+                  title: `Re-issue ${n} broken number${n === 1 ? '' : 's'}?`,
                   description:
-                    `These codes can't be displayed (encrypted under a key prod no longer has), so they can only be fixed by re-issuing. ` +
+                    `These codes are broken — either they can't be displayed (encryption key drifted) or they display fine but won't clock in (PIN secret drifted). Re-issuing is the only fix. ` +
                     `Each associate gets a NEW number and their current one stops working immediately. ` +
                     `You'll be offered to email everyone their new number right after.`,
                   destructive: true,
@@ -1302,11 +1345,11 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                 return;
               setRotatingAll(true);
               let ok = 0;
-              let fail = 0;
+              const failedNames: string[] = [];
               // Collect the fresh pin row ids so the chained email step
               // below targets exactly the numbers we just issued.
               const newIds: string[] = [];
-              for (const p of unreadableRows) {
+              for (const p of brokenRows) {
                 try {
                   const r = await assignKioskPin({
                     clientId: p.clientId,
@@ -1315,16 +1358,24 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                   newIds.push(r.id);
                   ok++;
                 } catch {
-                  fail++;
+                  failedNames.push(p.associateName);
                 }
               }
               setRotatingAll(false);
-              toast.success(
-                `Re-issued ${ok} number${ok === 1 ? '' : 's'} — now visible in the list.${
-                  fail ? ` ${fail} failed (check onboarding status).` : ''
-                }`,
-              );
+              if (ok > 0) {
+                toast.success(
+                  `Re-issued ${ok} number${ok === 1 ? '' : 's'} — now visible in the list.`,
+                );
+              }
+              if (failedNames.length > 0) {
+                toast.error(
+                  `${failedNames.length} failed (check onboarding status): ${failedNames
+                    .slice(0, 5)
+                    .join(', ')}${failedNames.length > 5 ? '…' : ''}`,
+                );
+              }
               refresh();
+              onChanged?.();
               // Chain the delivery step — a rotated number nobody knows
               // about is tomorrow's "wrong PIN" support call.
               if (
@@ -1351,7 +1402,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
             }}
           >
             <RotateCw className="mr-2 h-4 w-4" />
-            {rotatingAll ? 'Re-issuing…' : `Rotate all — (${unreadableRows.length})`}
+            {rotatingAll ? 'Re-issuing…' : `Rotate all — (${brokenRows.length})`}
           </Button>
         )}
         {canManage && effectiveView === 'missing' && missing.length > 0 && (
@@ -1368,29 +1419,64 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                   description:
                     `Generates a fresh 4-digit clock-in number for every eligible associate ` +
                     `${loc ? `at ${loc} ` : ''}who doesn't have one yet. ` +
-                    `The new numbers appear in the "With codes" list — share them with each associate.`,
+                    `You'll be offered to email everyone their number right after.`,
                 }))
               )
                 return;
               setAssigningAll(true);
               let ok = 0;
-              let fail = 0;
+              const failedNames: string[] = [];
+              // Fresh pin row ids for the chained email step — a number
+              // nobody was told about is tomorrow's "wrong PIN" call.
+              const newIds: string[] = [];
               for (const a of missing) {
                 try {
-                  await assignKioskPin({ clientId, associateId: a.id });
+                  const r = await assignKioskPin({ clientId, associateId: a.id });
+                  newIds.push(r.id);
                   ok++;
                 } catch {
-                  fail++;
+                  failedNames.push(a.name);
                 }
               }
               setAssigningAll(false);
-              toast.success(
-                `Issued ${ok} number${ok === 1 ? '' : 's'} — now in the With codes list.${
-                  fail ? ` ${fail} failed (check onboarding status).` : ''
-                }`,
-              );
+              if (ok > 0) {
+                toast.success(
+                  `Issued ${ok} number${ok === 1 ? '' : 's'} — now in the With codes list.`,
+                );
+              }
+              if (failedNames.length > 0) {
+                toast.error(
+                  `${failedNames.length} failed (check onboarding status): ${failedNames
+                    .slice(0, 5)
+                    .join(', ')}${failedNames.length > 5 ? '…' : ''}`,
+                );
+              }
               setView('with');
               refresh();
+              onChanged?.();
+              // Same delivery chain as Rotate all — issuing into the void
+              // was the gap: the numbers existed but nobody had them.
+              if (
+                newIds.length > 0 &&
+                (await confirm({
+                  title: `Email the ${newIds.length} new number${newIds.length === 1 ? '' : 's'} now?`,
+                  description:
+                    'Each associate receives their own 4-digit number at the email on file.',
+                }))
+              ) {
+                try {
+                  const r = await emailKioskPinsBulk(newIds);
+                  toast.success(
+                    `Queued ${r.queued} email${r.queued === 1 ? '' : 's'}${
+                      r.skipped ? ` · ${r.skipped} skipped (no address)` : ''
+                    }.`,
+                  );
+                } catch (err) {
+                  toast.error(
+                    err instanceof ApiError ? err.message : 'Emails failed — use Email all.',
+                  );
+                }
+              }
             }}
           >
             <Plus className="mr-2 h-4 w-4" />
@@ -1554,10 +1640,20 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                   <TableRow key={p.id} className="group">
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
-                        <div className="truncate">
-                          <AssociateLink associateId={p.associateId}>
-                            {p.associateName}
-                          </AssociateLink>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="truncate">
+                            <AssociateLink associateId={p.associateId}>
+                              {p.associateName}
+                            </AssociateLink>
+                          </span>
+                          {!p.active && (
+                            <Badge
+                              variant="outline"
+                              title="Separated or deactivated — their number stays on file for history but can't open a new shift, and Email all skips them."
+                            >
+                              Inactive
+                            </Badge>
+                          )}
                         </div>
                         <div className="lg:hidden text-xs2 text-silver/70 truncate font-normal">
                           {p.clientName}
@@ -1573,7 +1669,17 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                     </TableCell>
                     <TableCell className="text-silver hidden lg:table-cell">{p.associateEmail}</TableCell>
                     <TableCell>
-                      <EmployeeNumberCell value={p.employeeNumber} />
+                      <div className="flex items-center gap-2">
+                        <EmployeeNumberCell value={p.employeeNumber} />
+                        {p.wontClockIn && (
+                          <Badge
+                            variant="destructive"
+                            title="The stored hash no longer matches the current PIN secret — this number fails at every kiosk. Rotate to fix."
+                          >
+                            won&rsquo;t clock in
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
                       <FaceConsentCell pin={p} canManage={canManage} onChanged={refresh} />
@@ -1643,6 +1749,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                                     );
                                 }
                                 refresh();
+                                onChanged?.();
                               } catch (err) {
                                 toast.error(
                                   err instanceof ApiError ? err.message : 'Rotate failed.',
@@ -1664,6 +1771,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
                                 await deleteKioskPin(p.id);
                                 toast.success('Code revoked.');
                                 refresh();
+                                onChanged?.();
                               } catch (err) {
                                 toast.error(err instanceof ApiError ? err.message : 'Failed.');
                               }
@@ -1701,6 +1809,7 @@ function PinsTab({ canManage }: { canManage: boolean }) {
             setIssueFor(null);
             setShowPin({ associateName, employeeNumber });
             refresh();
+            onChanged?.();
           }}
         />
       )}
@@ -1738,13 +1847,38 @@ function PinsTab({ canManage }: { canManage: boolean }) {
   );
 }
 
-function DiagnoseDrawer({ onClose }: { onClose: () => void }) {
-  const [mode, setMode] = useState<'number' | 'name'>('number');
+function DiagnoseDrawer({
+  onClose,
+  initialAssociate,
+}: {
+  onClose: () => void;
+  /** Prefill name-mode with this query and run it immediately — the punch
+   *  log's per-row "Diagnose" jump for attributed rejects. */
+  initialAssociate?: string;
+}) {
+  const [mode, setMode] = useState<'number' | 'name'>(
+    initialAssociate ? 'name' : 'number',
+  );
   const [number, setNumber] = useState('');
-  const [name, setName] = useState('');
+  const [name, setName] = useState(initialAssociate ?? '');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<KioskPinDiagnosis | null>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  // Auto-run the prefilled lookup once so "Diagnose" on a rejected punch
+  // is one click, not click → retype → click.
+  const autoRanRef = useRef(false);
+  useEffect(() => {
+    if (!initialAssociate || autoRanRef.current) return;
+    autoRanRef.current = true;
+    setLoading(true);
+    diagnoseKioskPin({ associate: initialAssociate })
+      .then(setResult)
+      .catch((e) =>
+        setErr(e instanceof ApiError ? e.message : 'Diagnosis failed.'),
+      )
+      .finally(() => setLoading(false));
+  }, [initialAssociate]);
 
   const submitDisabled =
     loading ||
@@ -1777,7 +1911,13 @@ function DiagnoseDrawer({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer
+      open={true}
+      onOpenChange={(o) => !o && onClose()}
+      confirmDiscard={() =>
+        result === null && (number.length > 0 || name.trim().length > 0)
+      }
+    >
       <DrawerHeader>
         <DrawerTitle>Diagnose a kiosk PIN</DrawerTitle>
       </DrawerHeader>
@@ -2040,7 +2180,11 @@ function NewPinDrawer({
     }
   };
   return (
-    <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
+    <Drawer
+      open={true}
+      onOpenChange={(o) => !o && onClose()}
+      confirmDiscard={() => pin.length > 0}
+    >
       <DrawerHeader>
         <DrawerTitle>Issue or rotate employee number</DrawerTitle>
       </DrawerHeader>
@@ -2135,10 +2279,33 @@ type ActionFilter =
   | 'BREAK_END'
   | 'REJECTED';
 
+// Reject reasons are stored as machine strings ('pin_wrong_client_preflight');
+// the log shows what they mean. Preflight/punch variants collapse — the
+// distinction matters for engineers, not for HR triage.
+function humanRejectReason(reason: string | null): string | null {
+  if (!reason) return null;
+  switch (reason.replace(/_preflight$/, '')) {
+    case 'pin_wrong_client':
+      return 'Wrong site — PIN is under another client';
+    case 'pin_not_recognized':
+      return 'Unrecognized PIN';
+    case 'associate_inactive':
+      return 'Inactive associate';
+    default:
+      return reason;
+  }
+}
+
 // One punch-log row, memoized: "Load more" appends to an accumulating
 // list, and without this every already-rendered row re-renders on each
 // page (and on every unrelated state change in the tab).
-const PunchLogRow = memo(function PunchLogRow({ p }: { p: KioskPunchSummary }) {
+const PunchLogRow = memo(function PunchLogRow({
+  p,
+  onDiagnose,
+}: {
+  p: KioskPunchSummary;
+  onDiagnose: (associateName: string) => void;
+}) {
   return (
     <TableRow>
       <TableCell>
@@ -2150,7 +2317,15 @@ const PunchLogRow = memo(function PunchLogRow({ p }: { p: KioskPunchSummary }) {
         </div>
       </TableCell>
       <TableCell className="font-mono text-xs hidden md:table-cell">{p.deviceName}</TableCell>
-      <TableCell>{p.associateName ?? '—'}</TableCell>
+      <TableCell>
+        {p.associateId && p.associateName ? (
+          <AssociateLink associateId={p.associateId}>
+            {p.associateName}
+          </AssociateLink>
+        ) : (
+          p.associateName ?? '—'
+        )}
+      </TableCell>
       <TableCell>
         <Badge
           variant={
@@ -2196,8 +2371,27 @@ const PunchLogRow = memo(function PunchLogRow({ p }: { p: KioskPunchSummary }) {
           '—'
         )}
       </TableCell>
-      <TableCell className="text-xs text-silver hidden lg:table-cell">
-        {p.rejectReason ?? ''}
+      <TableCell className="text-xs text-silver hidden md:table-cell">
+        {p.action === 'REJECTED' ? (
+          <div className="flex items-center gap-2">
+            <span className={p.rejectReason ? 'text-warning' : ''}>
+              {humanRejectReason(p.rejectReason) ?? '—'}
+            </span>
+            {p.associateName && (
+              <Button
+                variant="ghost"
+                size="xs"
+                className="gap-1 text-silver hover:text-white"
+                onClick={() => onDiagnose(p.associateName!)}
+                title="Look up this associate's PIN and where it's filed"
+              >
+                <Stethoscope className="h-3 w-3" /> Diagnose
+              </Button>
+            )}
+          </div>
+        ) : (
+          (p.rejectReason ?? '')
+        )}
       </TableCell>
     </TableRow>
   );
@@ -2216,23 +2410,73 @@ function LogTab() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [devices, setDevices] = useState<Array<{ id: string; name: string }>>([]);
+  // "Diagnose" jump from an attributed rejected row — opens the same
+  // drawer as the Pins tab, prefilled and auto-run.
+  const [diagnoseFor, setDiagnoseFor] = useState<string | null>(null);
 
   // All filters are server-side, so they search ALL history through cursor
   // pagination — not just one loaded page. (Earlier this filtered a single
   // 500-row page client-side, which silently missed anything older.)
+  //
+  // They also live in the URL (seeded below, replace-written on change) so
+  // a triage state is linkable — "look at the wrong-site rejects on this
+  // device" pastes as one link, and the fleet email can deep-link straight
+  // into a filtered log. Same convention as AdminTimeView's ?from=&to=.
+  const [urlParams, setUrlParams] = useSearchParams();
   const [associate, setAssociate] = useState<{ id: string; name: string } | null>(
-    null,
+    () => {
+      const id = urlParams.get('associateId');
+      return id ? { id, name: urlParams.get('associateName') ?? 'Associate' } : null;
+    },
   );
-  const [deviceId, setDeviceId] = useState('');
-  const [action, setAction] = useState<ActionFilter>('ALL');
-  const [range, setRange] = useState<'all' | 'today' | '7d' | '30d'>('all');
-  const [anomaliesOnly, setAnomaliesOnly] = useState(false);
+  const [deviceId, setDeviceId] = useState(urlParams.get('device') ?? '');
+  const [action, setAction] = useState<ActionFilter>(() => {
+    const a = urlParams.get('action');
+    return a === 'CLOCK_IN' || a === 'CLOCK_OUT' || a === 'BREAK_START' ||
+      a === 'BREAK_END' || a === 'REJECTED'
+      ? a
+      : 'ALL';
+  });
+  const [range, setRange] = useState<'all' | 'today' | '7d' | '30d'>(() => {
+    const r = urlParams.get('range');
+    return r === 'today' || r === '7d' || r === '30d' ? r : 'all';
+  });
+  const [anomaliesOnly, setAnomaliesOnly] = useState(
+    urlParams.get('anomalies') === '1',
+  );
+  const [rejectGroup, setRejectGroup] = useState<'' | KioskRejectGroup>(() => {
+    const g = urlParams.get('reason');
+    return g === 'wrong_client' || g === 'not_recognized' || g === 'inactive'
+      ? g
+      : '';
+  });
+
+  // State → URL. Replace-writes (no history stacking), preserving ?tab=.
+  useEffect(() => {
+    const next = new URLSearchParams(urlParams);
+    const setOrDel = (k: string, v: string) => {
+      if (v) next.set(k, v);
+      else next.delete(k);
+    };
+    setOrDel('associateId', associate?.id ?? '');
+    setOrDel('associateName', associate?.name ?? '');
+    setOrDel('device', deviceId);
+    setOrDel('action', action === 'ALL' ? '' : action);
+    setOrDel('range', range === 'all' ? '' : range);
+    setOrDel('anomalies', anomaliesOnly ? '1' : '');
+    setOrDel('reason', rejectGroup);
+    if (next.toString() !== urlParams.toString()) {
+      setUrlParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [associate, deviceId, action, range, anomaliesOnly, rejectGroup]);
 
   const PAGE = 100;
   const queryParams = (cursor?: string) => ({
     associateId: associate?.id,
     deviceId: deviceId || undefined,
     action: action === 'ALL' ? undefined : action,
+    rejectGroup: rejectGroup || undefined,
     anomaliesOnly: anomaliesOnly || undefined,
     from: rangeFrom(range),
     cursor,
@@ -2262,7 +2506,7 @@ function LogTab() {
         setNextCursor(null);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [associate?.id, deviceId, action, range, anomaliesOnly, reloadKey]);
+  }, [associate?.id, deviceId, action, range, anomaliesOnly, rejectGroup, reloadKey]);
 
   // Device dropdown options.
   useEffect(() => {
@@ -2405,7 +2649,8 @@ function LogTab() {
     !!deviceId ||
     action !== 'ALL' ||
     range !== 'all' ||
-    anomaliesOnly;
+    anomaliesOnly ||
+    rejectGroup !== '';
 
   return (
     <div className="space-y-3">
@@ -2446,6 +2691,18 @@ function LogTab() {
         <Select
           size="sm"
           className="h-9 w-auto"
+          value={rejectGroup}
+          onChange={(e) => setRejectGroup(e.target.value as '' | KioskRejectGroup)}
+          aria-label="Filter by reject reason"
+        >
+          <option value="">Any reject reason</option>
+          <option value="wrong_client">Wrong site (PIN under another client)</option>
+          <option value="not_recognized">Unrecognized PIN</option>
+          <option value="inactive">Inactive associate</option>
+        </Select>
+        <Select
+          size="sm"
+          className="h-9 w-auto"
           value={range}
           onChange={(e) => setRange(e.target.value as typeof range)}
         >
@@ -2475,6 +2732,7 @@ function LogTab() {
               setAction('ALL');
               setRange('all');
               setAnomaliesOnly(false);
+              setRejectGroup('');
             }}
             // h-9 keeps it flush with the h-9 filter selects beside it.
             className="h-9 px-2 text-sm"
@@ -2539,18 +2797,24 @@ function LogTab() {
                   <TableHead className="hidden lg:table-cell">Distance</TableHead>
                   <TableHead className="hidden md:table-cell">Face</TableHead>
                   <TableHead className="hidden lg:table-cell">Selfie</TableHead>
-                  <TableHead className="hidden lg:table-cell">Notes</TableHead>
+                  <TableHead className="hidden md:table-cell">Reason</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((p) => (
-                  <PunchLogRow key={p.id} p={p} />
+                  <PunchLogRow key={p.id} p={p} onDiagnose={setDiagnoseFor} />
                 ))}
               </TableBody>
             </Table>
           )}
         </CardContent>
       </Card>
+      {diagnoseFor && (
+        <DiagnoseDrawer
+          initialAssociate={diagnoseFor}
+          onClose={() => setDiagnoseFor(null)}
+        />
+      )}
       {nextCursor && rows && rows.length > 0 && (
         atCap ? (
           <div className="text-center text-xs text-silver">
@@ -2905,7 +3169,15 @@ function ReviewTab({
                     <TableCell>{renderPendingBadge(p.createdAt)}</TableCell>
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
-                        <div className="truncate">{p.associateName ?? '—'}</div>
+                        <div className="truncate">
+                          {p.associateId && p.associateName ? (
+                            <AssociateLink associateId={p.associateId}>
+                              {p.associateName}
+                            </AssociateLink>
+                          ) : (
+                            p.associateName ?? '—'
+                          )}
+                        </div>
                         <div className="md:hidden text-xs2 text-silver/70 truncate font-normal">
                           {fmtDateTime(p.createdAt)}
                           <span className="sm:hidden">{` · ${p.action}`}</span>
