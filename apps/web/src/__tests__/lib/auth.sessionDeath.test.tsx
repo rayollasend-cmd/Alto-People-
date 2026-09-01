@@ -146,7 +146,10 @@ describe('AuthProvider session death', () => {
     expect(
       await screen.findByTestId('login', undefined, { timeout: 5_000 }),
     ).toHaveTextContent('next=/payroll');
-  });
+    // The 15s third arg raises the per-test budget: the inner 5s findBy
+    // equalled vitest's default 5s test timeout, so on a loaded CI runner
+    // the OUTER timeout always fired first and failed the build.
+  }, 15_000);
 
   it('shows the session-ended toast exactly once, not once per failed request', async () => {
     meScript = [
@@ -167,7 +170,8 @@ describe('AuthProvider session death', () => {
     expect(vi.mocked(toast.error).mock.calls[0][0]).toMatch(
       /session ended/i,
     );
-  });
+    // Same inner-5s-vs-outer-5s trap as the redirect test above.
+  }, 15_000);
 
   it('keeps the session when the re-probe succeeds (one-off 401)', async () => {
     meScript = [
