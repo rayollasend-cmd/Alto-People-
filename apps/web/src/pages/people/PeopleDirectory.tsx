@@ -1375,7 +1375,7 @@ function ProfilePhoto({
             </DialogHeader>
             <img
               src={a.photoUrl}
-              alt={`${name}'s profile photo`}
+              alt={name}
               className="mx-auto max-h-[60vh] max-w-full rounded-md border border-navy-secondary object-contain"
             />
             <DialogFooter>
