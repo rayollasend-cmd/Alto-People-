@@ -14,13 +14,17 @@ import { cn } from '@/lib/cn';
  * gold-accented to match Alto's tokens; white text reads on every entry.
  */
 
-export type AvatarSize = 'xs' | 'sm' | 'md' | 'lg';
+export type AvatarSize = 'xs' | 'sm' | 'md' | 'lg' | 'xl' | '2xl';
 
 const SIZE_CLASS: Record<AvatarSize, string> = {
   xs: 'h-6 w-6 text-3xs',
   sm: 'h-8 w-8 text-xs',
   md: 'h-10 w-10 text-sm',
   lg: 'h-12 w-12 text-base',
+  // Profile-scale sizes — a headshot the eye can actually read. xl leads
+  // the People drawer header; 2xl is for photo-first cards/dialogs.
+  xl: 'h-16 w-16 text-lg',
+  '2xl': 'h-24 w-24 text-2xl',
 };
 
 // Six dim-saturated tints that all sit on AA-contrast white text.

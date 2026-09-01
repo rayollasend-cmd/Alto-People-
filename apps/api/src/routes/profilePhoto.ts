@@ -5,10 +5,16 @@ import { randomUUID } from 'node:crypto';
 import { extname } from 'node:path';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { invalidateUserCache, requireAuth } from '../middleware/auth.js';
+import {
+  invalidateUserCache,
+  requireAuth,
+  requireCapability,
+} from '../middleware/auth.js';
 import { PROFILE_PHOTO_DIR } from '../lib/storage.js';
 import { getBlobStore } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
+import { enqueueAudit } from '../lib/audit.js';
+import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 
 /**
  * Profile photos.
@@ -51,6 +57,57 @@ const upload = multer({
   },
 });
 
+/**
+ * Store an uploaded photo blob and point the associate at it — shared by
+ * the self-service route and the HR-side route so validation, key layout,
+ * and prior-blob cleanup can never drift apart. Returns the fresh
+ * cache-busted URL.
+ */
+async function savePhoto(
+  associateId: string,
+  file: Express.Multer.File,
+): Promise<string> {
+  const magicError = verifyFileMagic(file.buffer, file.mimetype);
+  if (magicError) {
+    throw new HttpError(400, 'invalid_file_contents', magicError);
+  }
+  const cleanName = sanitizeUploadFilename(file.originalname);
+  const ext =
+    EXT_BY_MIME[file.mimetype] ?? (extname(cleanName).toLowerCase() || '.bin');
+  const relativeKey = `${PROFILE_PHOTO_DIR}/${associateId}-${randomUUID()}${ext}`;
+  await getBlobStore().put(relativeKey, file.buffer, file.mimetype);
+
+  const prior = await prisma.associate.findUnique({
+    where: { id: associateId },
+    select: { photoS3Key: true },
+  });
+  const updated = await prisma.associate.update({
+    where: { id: associateId },
+    data: { photoS3Key: relativeKey, photoUpdatedAt: new Date() },
+    select: { id: true, photoS3Key: true, photoUpdatedAt: true },
+  });
+  if (prior?.photoS3Key && prior.photoS3Key !== relativeKey) {
+    // Best-effort cleanup of the previous blob. Failure here is fine —
+    // it's an orphan blob, not a correctness problem.
+    try {
+      await getBlobStore().delete(prior.photoS3Key);
+    } catch {
+      /* swallow */
+    }
+  }
+  return profilePhotoUrlFor(updated)!;
+}
+
+/** Flush the session cache of any login linked to this associate — their
+ *  chrome (Topbar avatar) carries photoUrl in the cached SessionUser. */
+async function invalidateAssociateUsers(associateId: string): Promise<void> {
+  const users = await prisma.user.findMany({
+    where: { associateId, deletedAt: null },
+    select: { id: true },
+  });
+  for (const u of users) invalidateUserCache(u.id);
+}
+
 profilePhotoRouter.post(
   '/me/profile-photo',
   requireAuth,
@@ -67,42 +124,87 @@ profilePhotoRouter.post(
     if (!req.file) {
       throw new HttpError(400, 'no_file', 'A "file" multipart field is required.');
     }
-    const magicError = verifyFileMagic(req.file.buffer, req.file.mimetype);
-    if (magicError) {
-      throw new HttpError(400, 'invalid_file_contents', magicError);
-    }
-
-    const cleanName = sanitizeUploadFilename(req.file.originalname);
-    const ext =
-      EXT_BY_MIME[req.file.mimetype] ??
-      (extname(cleanName).toLowerCase() || '.bin');
-    const relativeKey = `${PROFILE_PHOTO_DIR}/${associateId}-${randomUUID()}${ext}`;
-    await getBlobStore().put(relativeKey, req.file.buffer, req.file.mimetype);
-
-    const prior = await prisma.associate.findUnique({
-      where: { id: associateId },
-      select: { photoS3Key: true },
-    });
-    await prisma.associate.update({
-      where: { id: associateId },
-      data: { photoS3Key: relativeKey, photoUpdatedAt: new Date() },
-    });
-    if (prior?.photoS3Key && prior.photoS3Key !== relativeKey) {
-      // Best-effort cleanup of the previous blob. Failure here is fine —
-      // it's an orphan blob, not a correctness problem.
-      try {
-        await getBlobStore().delete(prior.photoS3Key);
-      } catch {
-        /* swallow */
-      }
-    }
+    const photoUrl = await savePhoto(associateId, req.file);
 
     // photoUrl is part of the cached SessionUser; bumping photoUpdatedAt
     // changes the cache-bust query, so flush the cache so chrome reflects
     // the new photo on the next request.
     invalidateUserCache(req.user!.id);
 
-    res.status(201).json({ ok: true });
+    res.status(201).json({ ok: true, photoUrl });
+  },
+);
+
+// ----- HR-side photo management ------------------------------------------
+// A bad or missing photo shouldn't have to wait for the associate to log
+// in: HR can set or remove one straight from the People profile. Same
+// validation and storage as self-service; audited, since it's someone
+// changing another person's likeness.
+profilePhotoRouter.post(
+  '/associates/:id/photo',
+  requireCapability('manage:org'),
+  upload.single('file'),
+  async (req, res) => {
+    const associate = await prisma.associate.findFirst({
+      where: { id: req.params.id, deletedAt: null },
+      select: { id: true },
+    });
+    if (!associate) {
+      throw new HttpError(404, 'not_found', 'Associate not found.');
+    }
+    if (!req.file) {
+      throw new HttpError(400, 'no_file', 'A "file" multipart field is required.');
+    }
+    const photoUrl = await savePhoto(associate.id, req.file);
+    await invalidateAssociateUsers(associate.id);
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'associate.photo_set_by_admin',
+        entityType: 'Associate',
+        entityId: associate.id,
+        metadata: { bytes: req.file.size, mime: req.file.mimetype },
+      },
+      'associate.photo_set_by_admin',
+    );
+    res.status(201).json({ ok: true, photoUrl });
+  },
+);
+
+profilePhotoRouter.delete(
+  '/associates/:id/photo',
+  requireCapability('manage:org'),
+  async (req, res) => {
+    const associate = await prisma.associate.findFirst({
+      where: { id: req.params.id, deletedAt: null },
+      select: { id: true, photoS3Key: true },
+    });
+    if (!associate) {
+      throw new HttpError(404, 'not_found', 'Associate not found.');
+    }
+    await prisma.associate.update({
+      where: { id: associate.id },
+      data: { photoS3Key: null, photoUpdatedAt: new Date() },
+    });
+    if (associate.photoS3Key) {
+      try {
+        await getBlobStore().delete(associate.photoS3Key);
+      } catch {
+        /* swallow */
+      }
+    }
+    await invalidateAssociateUsers(associate.id);
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'associate.photo_removed_by_admin',
+        entityType: 'Associate',
+        entityId: associate.id,
+        metadata: {},
+      },
+      'associate.photo_removed_by_admin',
+    );
+    res.status(204).end();
   },
 );
 

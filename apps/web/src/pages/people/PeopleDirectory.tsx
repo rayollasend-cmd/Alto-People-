@@ -13,6 +13,7 @@ import {
   Briefcase,
   Building2,
   CalendarDays,
+  Camera,
   Check,
   Clock,
   Download,
@@ -92,8 +93,10 @@ import type {
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { nudgeApplicant } from '@/lib/onboardingApi';
+import { PhotoCropDialog } from '@/components/PhotoCropDialog';
 import {
   assignOrgFields,
+  deleteAssociatePhoto,
   eraseAssociatePersonalData,
   getAssociatePayoutMethod,
   getAssociatePersonalInfo,
@@ -108,6 +111,7 @@ import {
   setAssociateBankName,
   transferAssociate,
   updateAssociateW4,
+  uploadAssociatePhoto,
   type AssociateW4,
   type PayoutMethodReveal,
   type SsnReveal,
@@ -1258,6 +1262,158 @@ const DirectoryPhoneCard = memo(function DirectoryPhoneCard({
   );
 });
 
+// The drawer's headshot — photo-first instead of a 40px chip. Click opens
+// the full-size photo (rescues existing off-center uploads the round crop
+// mangles); HR (manage:org) can set, replace, or remove the photo right
+// here through the same crop step associates get, so a bad picture doesn't
+// wait for the associate to log in.
+function ProfilePhoto({
+  associate: a,
+  onAssociateChange,
+}: {
+  associate: DirectoryEntry;
+  onAssociateChange: (patch: Partial<DirectoryEntry>) => void;
+}) {
+  const { user } = useAuth();
+  const confirm = useConfirm();
+  const canManage = user ? hasCapability(user.role, 'manage:org') : false;
+  const [viewOpen, setViewOpen] = useState(false);
+  const [cropFile, setCropFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const name = `${a.firstName} ${a.lastName}`;
+
+  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error('Photo must be 15MB or smaller.');
+      return;
+    }
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      toast.error('Photo must be PNG, JPEG, or WebP.');
+      return;
+    }
+    setCropFile(file);
+  };
+
+  const onCropped = async (blob: Blob) => {
+    setCropFile(null);
+    setBusy(true);
+    try {
+      const r = await uploadAssociatePhoto(a.id, blob);
+      onAssociateChange({ photoUrl: r.photoUrl });
+      toast.success('Photo updated.');
+      setViewOpen(false);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to upload.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onRemove = async () => {
+    if (
+      !(await confirm({
+        title: `Remove ${a.firstName}'s photo?`,
+        description: 'Their initials will show across the app instead.',
+        destructive: true,
+      }))
+    )
+      return;
+    setBusy(true);
+    try {
+      await deleteAssociatePhoto(a.id);
+      onAssociateChange({ photoUrl: null });
+      toast.success('Photo removed.');
+      setViewOpen(false);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to remove.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        className="group relative shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+        onClick={() => {
+          if (a.photoUrl) setViewOpen(true);
+          else if (canManage) fileRef.current?.click();
+        }}
+        title={
+          a.photoUrl
+            ? 'View photo'
+            : canManage
+              ? 'Add a photo'
+              : undefined
+        }
+        aria-label={a.photoUrl ? `View ${name}'s photo` : `Add a photo for ${name}`}
+      >
+        <Avatar src={a.photoUrl} name={name} email={a.email} size="xl" ringed />
+        {canManage && (
+          <span className="absolute -bottom-0.5 -right-0.5 flex h-6 w-6 items-center justify-center rounded-full border border-navy-secondary bg-navy text-silver opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+            <Camera className="h-3.5 w-3.5" />
+          </span>
+        )}
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        onChange={onFile}
+        className="hidden"
+      />
+      {viewOpen && a.photoUrl && (
+        <Dialog open={true} onOpenChange={(o) => !o && setViewOpen(false)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{name}</DialogTitle>
+            </DialogHeader>
+            <img
+              src={a.photoUrl}
+              alt={`${name}'s profile photo`}
+              className="mx-auto max-h-[60vh] max-w-full rounded-md border border-navy-secondary object-contain"
+            />
+            <DialogFooter>
+              {canManage && (
+                <>
+                  <Button
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={onRemove}
+                    className="hover:text-alert"
+                  >
+                    Remove
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    disabled={busy}
+                    onClick={() => fileRef.current?.click()}
+                  >
+                    <Camera className="mr-2 h-4 w-4" /> Replace
+                  </Button>
+                </>
+              )}
+              <Button onClick={() => setViewOpen(false)}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+      {cropFile && (
+        <PhotoCropDialog
+          file={cropFile}
+          onCancel={() => setCropFile(null)}
+          onCropped={(blob) => void onCropped(blob)}
+        />
+      )}
+    </>
+  );
+}
+
 function DirectoryDrawer({
   associate: a,
   returnTo,
@@ -1299,8 +1455,8 @@ function DirectoryDrawer({
             </Link>
           </div>
         )}
-        <div className="flex items-center gap-3">
-          <Avatar src={a.photoUrl} name={`${a.firstName} ${a.lastName}`} email={a.email} size="md" />
+        <div className="flex items-center gap-4">
+          <ProfilePhoto associate={a} onAssociateChange={onAssociateChange} />
           <div className="min-w-0">
             <DrawerTitle className="truncate">
               {a.firstName} {a.lastName}

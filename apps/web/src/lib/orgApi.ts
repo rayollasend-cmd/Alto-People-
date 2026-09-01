@@ -18,7 +18,7 @@ import type {
   ShiftPositionInput,
   ShiftPositionListResponse,
 } from '@alto-people/shared';
-import { apiFetch } from './api';
+import { apiFetch, ApiError, NetworkError } from './api';
 
 export function patchAssociateProfile(
   associateId: string,
@@ -47,6 +47,43 @@ export function reactivateAssociate(associateId: string): Promise<{ ok: true }> 
     method: 'POST',
   });
 }
+
+// HR-side profile photo. Multipart, so it can't go through apiFetch's
+// JSON body encoding — same raw-fetch pattern as selfApi.uploadProfilePhoto.
+export async function uploadAssociatePhoto(
+  associateId: string,
+  file: Blob,
+): Promise<{ photoUrl: string }> {
+  const fd = new FormData();
+  fd.append('file', file, 'photo.jpg');
+  let res: Response;
+  try {
+    res = await fetch(`/api/associates/${associateId}/photo`, {
+      method: 'POST',
+      credentials: 'include',
+      body: fd,
+    });
+  } catch (err) {
+    throw new NetworkError(err);
+  }
+  if (!res.ok) {
+    let parsed: { error?: { code?: string; message?: string } } | null = null;
+    try {
+      parsed = await res.json();
+    } catch {
+      /* empty body */
+    }
+    throw new ApiError(
+      res.status,
+      parsed?.error?.code ?? `http_${res.status}`,
+      parsed?.error?.message ?? 'Failed to upload photo.',
+    );
+  }
+  return (await res.json()) as { photoUrl: string };
+}
+
+export const deleteAssociatePhoto = (associateId: string) =>
+  apiFetch<void>(`/associates/${associateId}/photo`, { method: 'DELETE' });
 
 export function transferAssociate(
   associateId: string,

@@ -24,6 +24,7 @@ import {
   type LoginEvent,
 } from '@/lib/settingsApi';
 import { deleteProfilePhoto, uploadProfilePhoto } from '@/lib/selfApi';
+import { PhotoCropDialog } from '@/components/PhotoCropDialog';
 import { getPushStatus, subscribeToPush, unsubscribeFromPush } from '@/lib/push';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import {
@@ -1246,25 +1247,35 @@ function ProfilePhotoCard() {
   const { user, refreshUser } = useAuth();
   const confirm = useConfirm();
   const [busy, setBusy] = useState<'upload' | 'remove' | null>(null);
+  // Picked file awaiting the crop step — the upload happens on the
+  // cropped result, never the raw file (see PhotoCropDialog).
+  const [cropFile, setCropFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const onPick = () => fileRef.current?.click();
 
-  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('Photo must be 5MB or smaller.');
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error('Photo must be 15MB or smaller.');
       return;
     }
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
       toast.error('Photo must be PNG, JPEG, or WebP.');
       return;
     }
+    setCropFile(file);
+  };
+
+  const onCropped = async (blob: Blob) => {
+    setCropFile(null);
     setBusy('upload');
     try {
-      await uploadProfilePhoto(file);
+      await uploadProfilePhoto(
+        new File([blob], 'photo.jpg', { type: 'image/jpeg' }),
+      );
       toast.success('Photo updated.');
       await refreshUser();
     } catch (err) {
@@ -1297,7 +1308,7 @@ function ProfilePhotoCard() {
         </CardTitle>
         <CardDescription>
           Shown on the directory and next to your name across the app. PNG,
-          JPEG, or WebP up to 5MB.
+          JPEG, or WebP — you&rsquo;ll position and zoom it before it saves.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -1310,7 +1321,7 @@ function ProfilePhotoCard() {
                 : user?.email ?? ''
             }
             email={user?.email ?? ''}
-            size="lg"
+            size="2xl"
             ringed
           />
           <div className="flex items-center gap-2">
@@ -1337,6 +1348,13 @@ function ProfilePhotoCard() {
           </div>
         </div>
       </CardContent>
+      {cropFile && (
+        <PhotoCropDialog
+          file={cropFile}
+          onCancel={() => setCropFile(null)}
+          onCropped={(blob) => void onCropped(blob)}
+        />
+      )}
     </Card>
   );
 }
