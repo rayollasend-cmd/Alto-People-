@@ -53,6 +53,8 @@ export const TaskKindSchema = z.enum([
   'POLICY_ACK',
   'J1_DOCS',
   'I9_VERIFICATION',
+  // Live headshot taken during onboarding (camera-only in the associate flow).
+  'PROFILE_PHOTO',
 ]);
 export type TaskKind = z.infer<typeof TaskKindSchema>;
 

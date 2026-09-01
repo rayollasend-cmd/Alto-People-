@@ -98,6 +98,9 @@ enum TaskKind {
   POLICY_ACK
   J1_DOCS
   I9_VERIFICATION
+  // Live headshot taken in the onboarding flow (camera-only for the
+  // associate; HR can set one from the People drawer as the escape hatch).
+  PROFILE_PHOTO
 }
 
 enum TaskStatus {

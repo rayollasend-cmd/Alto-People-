@@ -501,6 +501,15 @@ export function finishDocumentUpload(
   );
 }
 
+/** Completes the PROFILE_PHOTO task — the photo itself must already be on
+ *  file (uploadProfilePhoto), or this 400s with no_photo. */
+export function finishProfilePhoto(applicationId: string): Promise<{ ok: true }> {
+  return apiFetch<{ ok: true }>(
+    `/onboarding/applications/${applicationId}/profile-photo`,
+    { method: 'POST', body: {} }
+  );
+}
+
 export function authorizeBackgroundCheck(
   applicationId: string,
   body: BackgroundCheckAuthorizeInput

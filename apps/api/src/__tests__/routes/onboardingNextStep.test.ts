@@ -34,6 +34,7 @@ import { hashPassword } from '../../lib/passwords.js';
 // if the two drift out of sync.
 const REAL_KINDS = new Set([
   'PROFILE_INFO',
+  'PROFILE_PHOTO',
   'W4',
   'DIRECT_DEPOSIT',
   'POLICY_ACK',
@@ -44,7 +45,7 @@ const REAL_KINDS = new Set([
   'E_SIGN',
 ]);
 
-// 7-task template matching apps/api/prisma/seed.ts:115-168 production shape.
+// 8-task template matching the apps/api/prisma/seed.ts production shape.
 async function createProdShapeTemplate() {
   return prisma.onboardingTemplate.create({
     data: {
@@ -54,12 +55,13 @@ async function createProdShapeTemplate() {
       tasks: {
         create: [
           { kind: 'PROFILE_INFO',    title: 'Complete profile information',         description: 'Personal details, address, emergency contact.', order: 1 },
-          { kind: 'DOCUMENT_UPLOAD', title: 'Upload identity documents',            description: 'Government ID and Social Security card.',       order: 2 },
-          { kind: 'I9_VERIFICATION', title: 'I-9 employment eligibility',           description: 'Section 1 self-attestation.',                   order: 3 },
-          { kind: 'W4',              title: 'W-4 tax withholding',                  description: 'Filing status, dependents.',                    order: 4 },
-          { kind: 'DIRECT_DEPOSIT',  title: 'Set up direct deposit or Branch card', description: 'Add a payout method.',                          order: 5 },
-          { kind: 'POLICY_ACK',      title: 'Acknowledge company policies',         description: 'Read each policy and acknowledge.',             order: 6 },
-          { kind: 'E_SIGN',          title: 'Sign Associate Employment Agreement',  description: 'E-sign the agreement.',                         order: 7 },
+          { kind: 'PROFILE_PHOTO',   title: 'Take your profile photo',              description: 'Live headshot from your camera.',               order: 2 },
+          { kind: 'DOCUMENT_UPLOAD', title: 'Upload identity documents',            description: 'Government ID and Social Security card.',       order: 3 },
+          { kind: 'I9_VERIFICATION', title: 'I-9 employment eligibility',           description: 'Section 1 self-attestation.',                   order: 4 },
+          { kind: 'W4',              title: 'W-4 tax withholding',                  description: 'Filing status, dependents.',                    order: 5 },
+          { kind: 'DIRECT_DEPOSIT',  title: 'Set up direct deposit or Branch card', description: 'Add a payout method.',                          order: 6 },
+          { kind: 'POLICY_ACK',      title: 'Acknowledge company policies',         description: 'Read each policy and acknowledge.',             order: 7 },
+          { kind: 'E_SIGN',          title: 'Sign Associate Employment Agreement',  description: 'E-sign the agreement.',                         order: 8 },
         ],
       },
     },
@@ -108,7 +110,7 @@ describe('E2E: associate next-step after Profile info', () => {
     expect(createRes.status).toBe(201);
     const applicationId = createRes.body.id;
 
-    // 3. Confirm checklist has all 7 tasks in correct order BEFORE associate
+    // 3. Confirm checklist has all 8 tasks in correct order BEFORE associate
     // does anything.
     const initial = await prisma.onboardingTask.findMany({
       where: { checklist: { applicationId } },
@@ -117,6 +119,7 @@ describe('E2E: associate next-step after Profile info', () => {
     });
     expect(initial.map((t) => t.kind)).toEqual([
       'PROFILE_INFO',
+      'PROFILE_PHOTO',
       'DOCUMENT_UPLOAD',
       'I9_VERIFICATION',
       'W4',
@@ -147,7 +150,7 @@ describe('E2E: associate next-step after Profile info', () => {
     const assocAgent = await loginAs(associateUser.email);
     const before = await assocAgent.get(`/onboarding/applications/${applicationId}`);
     expect(before.status).toBe(200);
-    expect(before.body.tasks.length).toBe(7);
+    expect(before.body.tasks.length).toBe(8);
     expect(before.body.percentComplete).toBe(0);
 
     // 6. Associate submits Profile info.
@@ -166,7 +169,7 @@ describe('E2E: associate next-step after Profile info', () => {
     const after = await assocAgent.get(`/onboarding/applications/${applicationId}`);
     expect(after.status).toBe(200);
     const tasks: Array<{ id: string; kind: string; status: string; order: number }> = after.body.tasks;
-    expect(tasks).toHaveLength(7);
+    expect(tasks).toHaveLength(8);
 
     const profileTask = tasks.find((t) => t.kind === 'PROFILE_INFO')!;
     expect(profileTask.status).toBe('DONE');
@@ -178,7 +181,7 @@ describe('E2E: associate next-step after Profile info', () => {
       (t) => t.status !== 'DONE' && t.status !== 'SKIPPED' && REAL_KINDS.has(t.kind),
     );
     expect(nextTask, 'nextTask is the source of the gold "Continue with X" button').toBeDefined();
-    expect(nextTask!.kind).toBe('DOCUMENT_UPLOAD');
+    expect(nextTask!.kind).toBe('PROFILE_PHOTO');
 
     // 9. Every other pending task should also be in REAL_KINDS, i.e. each row
     // would render an outlined "Start" button rather than a "Coming soon"
@@ -193,11 +196,11 @@ describe('E2E: associate next-step after Profile info', () => {
     // 10. Confirm the URL the UI would navigate to actually exists in routes
     // (kind is lowercased in the path — see AssociateChecklist.tsx:142).
     const expectedHref = `/onboarding/me/${applicationId}/tasks/${nextTask!.kind.toLowerCase()}`;
-    expect(expectedHref).toBe(`/onboarding/me/${applicationId}/tasks/document_upload`);
+    expect(expectedHref).toBe(`/onboarding/me/${applicationId}/tasks/profile_photo`);
 
-    // 11. Progress reflects 1/7 ≈ 14% (matching what HR sees in prod).
-    expect(after.body.percentComplete).toBeGreaterThanOrEqual(14);
-    expect(after.body.percentComplete).toBeLessThanOrEqual(15);
+    // 11. Progress reflects 1/8 ≈ 13% (matching what HR sees in prod).
+    expect(after.body.percentComplete).toBeGreaterThanOrEqual(12);
+    expect(after.body.percentComplete).toBeLessThanOrEqual(13);
   });
 
   it('regression guard: every TaskKind seeded in production must be in REAL_KINDS', async () => {

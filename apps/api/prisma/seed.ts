@@ -126,41 +126,48 @@ async function main() {
               order: 1,
             },
             {
+              kind: 'PROFILE_PHOTO',
+              title: 'Take your profile photo',
+              description:
+                'A quick headshot taken with your camera — shown next to your name across the app.',
+              order: 2,
+            },
+            {
               kind: 'DOCUMENT_UPLOAD',
               title: 'Upload identity documents',
               description: 'Government ID and Social Security card.',
-              order: 2,
+              order: 3,
             },
             {
               kind: 'I9_VERIFICATION',
               title: 'I-9 employment eligibility',
               description: 'Section 1 self-attestation; HR completes Section 2.',
-              order: 3,
+              order: 4,
             },
             {
               kind: 'W4',
               title: 'W-4 tax withholding',
               description: 'Filing status, dependents, additional withholding.',
-              order: 4,
+              order: 5,
             },
             {
               kind: 'DIRECT_DEPOSIT',
               title: 'Set up direct deposit or Branch card',
               description: 'Add a payout method so payroll can land on payday.',
-              order: 5,
+              order: 6,
             },
             {
               kind: 'POLICY_ACK',
               title: 'Acknowledge company policies',
               description: 'Read each Alto HR policy and click Acknowledge.',
-              order: 6,
+              order: 7,
             },
             {
               kind: 'E_SIGN',
               title: 'Sign Associate Employment Agreement',
               description:
                 'Read and e-sign the Alto HR Associate Employment Agreement (Version 2.0).',
-              order: 7,
+              order: 8,
             },
           ],
         },
@@ -181,6 +188,29 @@ async function main() {
         description:
           'Read and e-sign the Alto HR Associate Employment Agreement (Version 2.0).',
         order: 7,
+      },
+    });
+  }
+
+  // Upgrade older templates that predate the live profile-photo task.
+  // Appended (max order + 1) rather than wedged in at slot 2 so we never
+  // collide with an existing order value; checklist order is cosmetic.
+  const existingPhotoTask = await prisma.onboardingTemplateTask.findFirst({
+    where: { templateId: standardTemplate.id, kind: 'PROFILE_PHOTO' },
+  });
+  if (!existingPhotoTask) {
+    const maxOrder = await prisma.onboardingTemplateTask.aggregate({
+      where: { templateId: standardTemplate.id },
+      _max: { order: true },
+    });
+    await prisma.onboardingTemplateTask.create({
+      data: {
+        templateId: standardTemplate.id,
+        kind: 'PROFILE_PHOTO',
+        title: 'Take your profile photo',
+        description:
+          'A quick headshot taken with your camera — shown next to your name across the app.',
+        order: (maxOrder._max.order ?? 0) + 1,
       },
     });
   }

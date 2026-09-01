@@ -315,6 +315,7 @@ export function ProfileInfoTask() {
 // REAL_KINDS set. Chaining must never land on the StubTask placeholder.
 const CHAINABLE_KINDS = new Set([
   'PROFILE_INFO',
+  'PROFILE_PHOTO',
   'W4',
   'DIRECT_DEPOSIT',
   'POLICY_ACK',
@@ -328,6 +329,7 @@ const CHAINABLE_KINDS = new Set([
 // Short names for the "Save & continue → …" button suffix.
 const TASK_SHORT_LABEL: Record<string, string> = {
   PROFILE_INFO: 'Profile',
+  PROFILE_PHOTO: 'Photo',
   DOCUMENT_UPLOAD: 'Documents',
   E_SIGN: 'E-sign',
   BACKGROUND_CHECK: 'Background check',

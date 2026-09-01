@@ -44,6 +44,7 @@ const TRACK_OPTIONS: Array<{ value: OnboardingTrack; label: string }> = [
 
 const TASK_KIND_OPTIONS: Array<{ value: TaskKind; label: string }> = [
   { value: 'PROFILE_INFO', label: 'Profile information' },
+  { value: 'PROFILE_PHOTO', label: 'Profile photo (live camera)' },
   { value: 'DOCUMENT_UPLOAD', label: 'Document upload' },
   { value: 'E_SIGN', label: 'E-signature' },
   { value: 'BACKGROUND_CHECK', label: 'Background check' },

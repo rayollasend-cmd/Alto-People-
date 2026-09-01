@@ -82,6 +82,7 @@ const ID_KINDS: Array<{ value: DocumentKind; label: string }> = [
 
 const TASK_LABEL: Record<string, string> = {
   PROFILE_INFO: 'Profile info',
+  PROFILE_PHOTO: 'Profile photo',
   DOCUMENT_UPLOAD: 'ID documents',
   W4: 'W-4 tax form',
   DIRECT_DEPOSIT: 'Direct deposit',

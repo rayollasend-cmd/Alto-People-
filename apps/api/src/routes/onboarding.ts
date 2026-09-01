@@ -2441,6 +2441,55 @@ onboardingRouter.post(
   }
 );
 
+// PROFILE_PHOTO --------------------------------------------------------- */
+// Completes the live-headshot task. The photo itself lands via
+// POST /me/profile-photo (associate self-service, camera capture in the
+// task UI) or the HR-side POST /associates/:id/photo — this route only
+// verifies one is actually on file and flips the checklist task, so the
+// task can never read DONE while the Avatar still shows initials.
+onboardingRouter.post(
+  '/applications/:id/profile-photo',
+  async (req, res, next) => {
+    try {
+      const app = await assertCanModifyApplication(prisma, req.user!, req.params.id, { write: true });
+
+      const associate = await prisma.associate.findUnique({
+        where: { id: app.associateId },
+        select: { photoS3Key: true },
+      });
+      if (!associate?.photoS3Key) {
+        throw new HttpError(
+          400,
+          'no_photo',
+          'Take your photo first — it has to be on file before this step can complete.',
+        );
+      }
+
+      const checklist = await prisma.onboardingChecklist.findUnique({
+        where: { applicationId: app.id },
+      });
+      if (checklist) {
+        await markTaskDoneByKind(prisma, checklist.id, 'PROFILE_PHOTO');
+      }
+
+      await flagPostSubmissionEdit(app, req.user!, 'updated profile photo');
+
+      await recordOnboardingEvent({
+        actorUserId: req.user!.id,
+        action: 'onboarding.profile_photo_submitted',
+        applicationId: app.id,
+        clientId: app.clientId,
+        req,
+      });
+
+      void notifyHrOnApplicationComplete(app.id);
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // BACKGROUND_CHECK ----------------------------------------------------- */
 // Stub provider for now — associate types their full legal name (acts as
 // a consent signature) and the BackgroundCheck row flips straight to

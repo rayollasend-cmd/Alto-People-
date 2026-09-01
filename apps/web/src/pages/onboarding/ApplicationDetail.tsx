@@ -113,6 +113,7 @@ const TRACK_LABEL: Record<string, string> = {
 
 const TASK_LABEL: Record<string, string> = {
   PROFILE_INFO: 'Profile information',
+  PROFILE_PHOTO: 'Profile photo',
   DOCUMENT_UPLOAD: 'Identity documents',
   E_SIGN: 'Document e-signatures',
   BACKGROUND_CHECK: 'Background check',
@@ -1250,6 +1251,9 @@ function taskDestination(
   switch (kind) {
     case 'PROFILE_INFO':
     case 'DIRECT_DEPOSIT':
+    // The photo itself shows in the profile drawer header, where HR can
+    // also replace it.
+    case 'PROFILE_PHOTO':
       return { to: `/people?associateId=${associateId}`, label: 'Open profile' };
     case 'DOCUMENT_UPLOAD':
     case 'W4':

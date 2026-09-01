@@ -69,6 +69,7 @@ const DocumentUploadTask = lazyNamed(() => import('@/pages/onboarding/tasks/Docu
 const BackgroundCheckTask = lazyNamed(() => import('@/pages/onboarding/tasks/BackgroundCheckTask'), 'BackgroundCheckTask');
 const J1DocsTask = lazyNamed(() => import('@/pages/onboarding/tasks/J1DocsTask'), 'J1DocsTask');
 const EsignTask = lazyNamed(() => import('@/pages/onboarding/tasks/EsignTask'), 'EsignTask');
+const ProfilePhotoTask = lazyNamed(() => import('@/pages/onboarding/tasks/ProfilePhotoTask'), 'ProfilePhotoTask');
 const StubTask = lazyNamed(() => import('@/pages/onboarding/tasks/StubTask'), 'StubTask');
 
 // Time / scheduling / payroll
@@ -318,6 +319,10 @@ const ONBOARDING_ROUTES = [
   {
     path: 'onboarding/me/:applicationId/tasks/e_sign',
     element: <EsignTask />,
+  },
+  {
+    path: 'onboarding/me/:applicationId/tasks/profile_photo',
+    element: <ProfilePhotoTask />,
   },
   // Catch-all for any kind we still haven't wired.
   {

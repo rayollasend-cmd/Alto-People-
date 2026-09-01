@@ -64,6 +64,7 @@ const STATUS_BANNER: Record<
 
 const TASK_LABEL: Record<string, string> = {
   PROFILE_INFO: 'Profile information',
+  PROFILE_PHOTO: 'Profile photo',
   DOCUMENT_UPLOAD: 'Identity documents',
   E_SIGN: 'Document e-signatures',
   BACKGROUND_CHECK: 'Background check',
@@ -88,6 +89,8 @@ const REAL_KINDS = new Set([
   'J1_DOCS',
   // E-sign (Alto HR Employment Agreement + any HR-drafted addenda).
   'E_SIGN',
+  // Live headshot (camera capture).
+  'PROFILE_PHOTO',
 ]);
 
 // Which checklist row a rejected document belongs to. The checklist task
