@@ -4735,8 +4735,10 @@ export const DirectoryEntrySchema = z.object({
   employmentType: z.string(),
   j1Status: z.boolean(),
   status: DirectoryStatusSchema,
-  // Workplace = client of the most-recent ACTIVE application; falls back
-  // to the most-recent application overall when nothing is active.
+  // Workplace = the open AssociateAssignment's client when one exists
+  // (Phase 131 — a transfer moves the live workplace immediately);
+  // otherwise the client of the most-recent ACTIVE application, falling
+  // back to the most-recent application overall.
   workplaceClientId: UuidSchema.nullable(),
   workplaceClientName: z.string().nullable(),
   position: z.string().nullable(),
@@ -5644,15 +5646,24 @@ export const LocationUpdateInputSchema = z.object({
 });
 export type LocationUpdateInput = z.infer<typeof LocationUpdateInputSchema>;
 
-/** Body for POST /org/associates/:id/transfer. The new locationId must
- *  belong to the associate's current client (intra-client transfer only
- *  in v1). startedAt is ISO YYYY-MM-DD; the API closes the open
- *  assignment with endedAt = startedAt and opens a new one. */
+/** Body for POST /org/associates/:id/transfer. startedAt is ISO
+ *  YYYY-MM-DD; the API closes the open assignment with endedAt =
+ *  startedAt and opens a new one at locationId. The target location may
+ *  belong to a DIFFERENT client — Alto is the employer of record for
+ *  every client, so a cross-client move is a plain transfer, not a
+ *  rehire. It has side effects though (shifts released, org fields
+ *  cleared, kiosk PIN re-pointed), so it must be acknowledged with
+ *  confirmCrossClient — otherwise a mis-picked location would quietly
+ *  move someone to another client. */
 export const AssociateTransferInputSchema = z.object({
   locationId: UuidSchema,
   startedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Expected YYYY-MM-DD'),
   reason: z.string().max(200).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
+  /** Must be true when locationId belongs to a different client than the
+   *  associate's current one; the API 400s (cross_client_confirmation_required)
+   *  without it. Ignored on intra-client transfers. */
+  confirmCrossClient: z.boolean().optional(),
 });
 export type AssociateTransferInput = z.infer<typeof AssociateTransferInputSchema>;
 
@@ -5662,6 +5673,15 @@ export const AssociateTransferResponseSchema = z.object({
   locationId: UuidSchema,
   locationName: z.string(),
   startedAt: z.string(),
+  clientId: UuidSchema,
+  clientName: z.string(),
+  crossClient: z.boolean(),
+  /** Cross-client cleanup tallies — all zero/false on intra-client moves. */
+  releasedShifts: z.number().int(),
+  expiredClaims: z.number().int(),
+  removedTeamMemberships: z.number().int(),
+  vacatedPositions: z.number().int(),
+  kioskPinMoved: z.boolean(),
 });
 export type AssociateTransferResponse = z.infer<typeof AssociateTransferResponseSchema>;
 

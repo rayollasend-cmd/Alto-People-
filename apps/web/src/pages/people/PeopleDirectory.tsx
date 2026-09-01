@@ -83,6 +83,7 @@ import {
   uploadPaymentEvidence,
 } from '@/lib/externalPaymentsApi';
 import type {
+  AssociateTransferResponse,
   ExternalPayment,
   ExternalPaymentInput,
   ExternalPaymentMethod,
@@ -1491,10 +1492,25 @@ function ProfileTab({
           open={transferOpen}
           onOpenChange={setTransferOpen}
           associate={a}
-          onSaved={(locationId, locationName) => {
+          onSaved={(r) => {
             onAssociateChange({
-              currentLocationId: locationId,
-              currentLocationName: locationName,
+              currentLocationId: r.locationId,
+              currentLocationName: r.locationName,
+              workplaceClientId: r.clientId,
+              workplaceClientName: r.clientName,
+              // A cross-client move clears the old client's org tree on
+              // the server — mirror it so the drawer doesn't show stale
+              // manager/department until the next refetch.
+              ...(r.crossClient
+                ? {
+                    managerId: null,
+                    managerName: null,
+                    departmentId: null,
+                    departmentName: null,
+                    jobProfileId: null,
+                    jobProfileTitle: null,
+                  }
+                : {}),
             });
             setTransferOpen(false);
           }}
@@ -2523,20 +2539,40 @@ function TransferDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   associate: DirectoryEntry;
-  onSaved: (locationId: string, locationName: string) => void;
+  onSaved: (result: AssociateTransferResponse) => void;
 }) {
   const today = useMemo(() => ymdLocal(), []);
+  const homeClientId = a.workplaceClientId;
+  const [clientId, setClientId] = useState<string>(homeClientId ?? '');
   const [locationId, setLocationId] = useState<string>(a.currentLocationId ?? '');
   const [startedAt, setStartedAt] = useState(today);
   const [reason, setReason] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const clientId = a.workplaceClientId;
+  // Cross-client is allowed (Alto is the employer of record everywhere),
+  // but it's a bigger move — the picker starts on the current client and
+  // switching shows the consequences panel below.
+  const { clients, isLoading: clientsLoading } = useClients({ enabled: open });
+  // useClients() returns ACTIVE clients; keep the associate's own client
+  // pickable even if it has since gone inactive so the Select's value
+  // always matches an option.
+  const clientOptions = useMemo(() => {
+    if (!homeClientId || clients.some((c) => c.id === homeClientId)) {
+      return clients;
+    }
+    return [
+      { id: homeClientId, name: a.workplaceClientName ?? 'Current client' },
+      ...clients,
+    ];
+  }, [clients, homeClientId, a.workplaceClientName]);
+  const crossClient = Boolean(homeClientId) && clientId !== homeClientId;
+  const targetClientName =
+    clientOptions.find((c) => c.id === clientId)?.name ?? '';
 
   const { data: locationsData, isLoading: locationsLoading } = useQuery({
     queryKey: ['client-locations', clientId],
-    queryFn: () => listClientLocations(clientId!),
+    queryFn: () => listClientLocations(clientId),
     enabled: open && Boolean(clientId),
   });
   const locations: LocationSummary[] = locationsData?.locations ?? [];
@@ -2544,32 +2580,49 @@ function TransferDialog({
   // Reset when the dialog opens for a different associate.
   useEffect(() => {
     if (!open) return;
+    setClientId(a.workplaceClientId ?? '');
     setLocationId(a.currentLocationId ?? '');
     setStartedAt(today);
     setReason('');
     setNotes('');
     setSubmitting(false);
-  }, [open, a.id, a.currentLocationId, today]);
+  }, [open, a.id, a.workplaceClientId, a.currentLocationId, today]);
 
   const targetLocation = locations.find((l) => l.id === locationId) ?? null;
   const valid =
+    clientId.length > 0 &&
     locationId.length > 0 &&
     startedAt.length === 10 &&
-    locationId !== a.currentLocationId;
+    (crossClient || locationId !== a.currentLocationId);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!valid || submitting || !targetLocation) return;
     setSubmitting(true);
     try {
-      await transferAssociate(a.id, {
+      const result = await transferAssociate(a.id, {
         locationId,
         startedAt,
         reason: reason.trim() || null,
         notes: notes.trim() || null,
+        ...(crossClient ? { confirmCrossClient: true } : {}),
       });
-      toast.success(`Transferred to ${targetLocation.name}.`);
-      onSaved(targetLocation.id, targetLocation.name);
+      if (result.crossClient) {
+        const extras: string[] = [];
+        if (result.releasedShifts > 0) {
+          extras.push(
+            `${result.releasedShifts} upcoming shift${result.releasedShifts === 1 ? '' : 's'} released`,
+          );
+        }
+        if (result.kioskPinMoved) extras.push('kiosk PIN moved');
+        toast.success(
+          `Transferred to ${result.clientName} — ${result.locationName}.` +
+            (extras.length > 0 ? ` (${extras.join(', ')}.)` : ''),
+        );
+      } else {
+        toast.success(`Transferred to ${result.locationName}.`);
+      }
+      onSaved(result);
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Could not transfer.';
       toast.error(msg);
@@ -2590,6 +2643,37 @@ function TransferDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="grid gap-4">
+          <Field label="Client">
+            {(p) => (
+              <Select
+                value={clientId}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setClientId(next);
+                  // The old pick can't survive a client switch — locations
+                  // belong to one client.
+                  setLocationId(
+                    next === homeClientId ? (a.currentLocationId ?? '') : '',
+                  );
+                }}
+                disabled={clientsLoading || clientOptions.length === 0}
+                {...p}
+              >
+                {clientOptions.length === 0 && (
+                  <option value="">
+                    {clientsLoading ? 'Loading…' : 'No clients available'}
+                  </option>
+                )}
+                {clientOptions.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                    {c.id === homeClientId ? ' (current)' : ''}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+
           <Field label="New location">
             {(p) => (
               <Select
@@ -2606,7 +2690,11 @@ function TransferDialog({
                       : 'Select a location'}
                 </option>
                 {locations.map((l) => (
-                  <option key={l.id} value={l.id} disabled={l.id === a.currentLocationId}>
+                  <option
+                    key={l.id}
+                    value={l.id}
+                    disabled={!crossClient && l.id === a.currentLocationId}
+                  >
                     {l.name}
                     {l.id === a.currentLocationId ? ' (current)' : ''}
                   </option>
@@ -2614,6 +2702,23 @@ function TransferDialog({
               </Select>
             )}
           </Field>
+
+          {crossClient && (
+            <div className="flex gap-2 items-start rounded-md border border-warning/40 bg-warning/10 p-3 text-warning text-xs">
+              <ShieldAlert className="h-4 w-4 mt-0.5 shrink-0" aria-hidden />
+              <div>
+                Moving {a.firstName} to{' '}
+                <strong>{targetClientName || 'another client'}</strong>: their
+                upcoming shifts at {a.workplaceClientName ?? 'the current client'}{' '}
+                are released back to open and pending shift claims expire; their
+                manager, department, cost center, job profile, and pay schedule
+                are cleared for you to re-assign; they leave old shift teams; and
+                their kiosk employee number moves to the new client&apos;s
+                kiosks. Same login, same pay and tax history — Alto stays the
+                employer of record.
+              </div>
+            </div>
+          )}
 
           <Field label="Effective date">
             {(p) => (
@@ -2661,7 +2766,11 @@ function TransferDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!valid || submitting}>
-              {submitting ? 'Saving…' : 'Confirm transfer'}
+              {submitting
+                ? 'Saving…'
+                : crossClient && targetClientName
+                  ? `Transfer to ${targetClientName}`
+                  : 'Confirm transfer'}
             </Button>
           </DialogFooter>
         </form>

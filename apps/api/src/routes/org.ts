@@ -32,7 +32,7 @@ import { asOf, recordChange } from '../lib/associateHistory.js';
 import { eraseAssociate } from '../lib/erasure.js';
 import { executeDeactivation } from '../lib/deactivation.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
-import { notifyAssociate, notifyManager } from '../lib/notify.js';
+import { notifyAssociate, notifyManager, notifyUser } from '../lib/notify.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { decryptString } from '../lib/crypto.js';
 import { maskRoutingNumber, readRoutingNumber } from '../lib/payoutMethod.js';
@@ -1745,11 +1745,30 @@ orgRouter.post(
 // requested startedAt) and opens a new one at the target Location.
 // First-time placement (no open row yet) just opens a row.
 //
-// v1 enforces intra-client transfers only: the target Location must
-// belong to the associate's current client. Current client = the
-// client of the open assignment's Location, falling back to the
-// client of the most-recent APPROVED Application. Cross-client moves
-// require a new Application (different feature).
+// The target may belong to a DIFFERENT client. Alto is the employer of
+// record for every client, so a cross-client move (e.g. Walmart Front
+// Beach → Pier Park) is a plain transfer — same W-2, same I-9, same
+// login, same employee number. But the derived "current client" flips
+// the instant the new open assignment lands (lib/associateClients.ts:
+// open assignment wins over the application-derived client), so the
+// same transaction has to sever what would otherwise dangle at the old
+// client:
+//   - future ASSIGNED shifts at the old client go back to OPEN, and
+//     pending open-shift claims there expire (same reasoning as
+//     deactivation: the no-show engine must not score someone who is no
+//     longer supposed to show up, and supervisors can re-cover slots),
+//   - the org-tree fields (manager / department / cost center / job
+//     profile / payroll schedule) are cleared — each points into a
+//     per-client catalog; payroll treats a NULL schedule as the
+//     biweekly default until HR re-assigns at the new client,
+//   - any old-client Position the associate filled is vacated,
+//   - old-client shift-team memberships are removed,
+//   - the kiosk PIN's clientId is re-pointed so the (globally unique)
+//     employee number starts working at the new client's kiosks —
+//     kiosk punch rejects a PIN whose client differs from the device's.
+// Because of those teeth, a cross-client move must be acknowledged with
+// confirmCrossClient: a mis-picked location must never quietly move
+// someone to another client.
 orgRouter.post(
   '/associates/:id/transfer',
   MANAGE,
@@ -1762,7 +1781,14 @@ orgRouter.post(
     }
     const target = await prisma.location.findUnique({
       where: { id: input.locationId },
-      select: { id: true, clientId: true, name: true, deletedAt: true, isActive: true },
+      select: {
+        id: true,
+        clientId: true,
+        name: true,
+        deletedAt: true,
+        isActive: true,
+        client: { select: { name: true } },
+      },
     });
     if (!target || target.deletedAt || !target.isActive) {
       throw new HttpError(404, 'location_not_found', 'Target location not found.');
@@ -1771,26 +1797,38 @@ orgRouter.post(
       where: { associateId: id, endedAt: null },
       select: { id: true, location: { select: { clientId: true } } },
     });
-    let expectedClientId = open?.location.clientId ?? null;
-    if (expectedClientId === null) {
+    let currentClientId = open?.location.clientId ?? null;
+    if (currentClientId === null) {
       const latestApproved = await prisma.application.findFirst({
         where: { associateId: id, status: 'APPROVED', deletedAt: null },
         orderBy: { invitedAt: 'desc' },
         select: { clientId: true },
       });
-      expectedClientId = latestApproved?.clientId ?? null;
+      currentClientId = latestApproved?.clientId ?? null;
     }
-    if (expectedClientId !== null && expectedClientId !== target.clientId) {
+    const crossClient =
+      currentClientId !== null && currentClientId !== target.clientId;
+    if (crossClient && input.confirmCrossClient !== true) {
       throw new HttpError(
         400,
-        'cross_client_transfer',
-        'Target location belongs to a different client. Cross-client transfers require a new application.',
+        'cross_client_confirmation_required',
+        `${target.name} belongs to a different client (${target.client.name}). Re-submit with confirmCrossClient to move them anyway.`,
       );
     }
     const startedAt = new Date(input.startedAt + 'T00:00:00Z');
     if (Number.isNaN(startedAt.getTime())) {
       throw new HttpError(400, 'invalid_started_at', 'Invalid startedAt date.');
     }
+    const now = new Date();
+    // Shifts before the effective date are still theirs to work (the old
+    // client keeps them through their last day); anything already started
+    // can't be released either way.
+    const releaseFrom = startedAt > now ? startedAt : now;
+    let releasedShifts = 0;
+    let expiredClaims = 0;
+    let removedTeamMemberships = 0;
+    let vacatedPositions = 0;
+    let kioskPinMoved = false;
     const created = await prisma.$transaction(async (tx) => {
       if (open) {
         await tx.associateAssignment.update({
@@ -1798,7 +1836,7 @@ orgRouter.post(
           data: { endedAt: startedAt },
         });
       }
-      return tx.associateAssignment.create({
+      const row = await tx.associateAssignment.create({
         data: {
           associateId: id,
           locationId: target.id,
@@ -1809,30 +1847,132 @@ orgRouter.post(
         },
         select: { id: true, associateId: true, locationId: true, startedAt: true },
       });
+      if (crossClient && currentClientId) {
+        await tx.associate.update({
+          where: { id },
+          data: {
+            managerId: null,
+            departmentId: null,
+            costCenterId: null,
+            jobProfileId: null,
+            payrollScheduleId: null,
+          },
+        });
+        const released = await tx.shift.updateMany({
+          where: {
+            assignedAssociateId: id,
+            clientId: currentClientId,
+            status: 'ASSIGNED',
+            startsAt: { gte: releaseFrom },
+          },
+          data: { status: 'OPEN', assignedAssociateId: null },
+        });
+        releasedShifts = released.count;
+        const expired = await tx.openShiftClaim.updateMany({
+          where: {
+            associateId: id,
+            status: 'PENDING',
+            shift: { clientId: currentClientId, startsAt: { gte: releaseFrom } },
+          },
+          data: {
+            status: 'EXPIRED',
+            decisionNote: 'Associate transferred to another client.',
+          },
+        });
+        expiredClaims = expired.count;
+        const removed = await tx.shiftTeamMember.deleteMany({
+          where: { associateId: id, team: { clientId: currentClientId } },
+        });
+        removedTeamMemberships = removed.count;
+        // Same shape as POST /positions/:id/vacate.
+        const vacated = await tx.position.updateMany({
+          where: {
+            filledByAssociateId: id,
+            clientId: currentClientId,
+            deletedAt: null,
+          },
+          data: { filledByAssociateId: null, filledAt: null, status: 'OPEN' },
+        });
+        vacatedPositions = vacated.count;
+        const pinMoved = await tx.kioskPin.updateMany({
+          where: { associateId: id },
+          data: { clientId: target.clientId },
+        });
+        kioskPinMoved = pinMoved.count > 0;
+      }
+      return row;
     });
+    if (crossClient) {
+      // The org-tree fields just changed — snapshot into the
+      // effective-dated history so as-of reads stay truthful.
+      await recordChange(prisma, {
+        associateId: id,
+        managerId: null,
+        departmentId: null,
+        costCenterId: null,
+        jobProfileId: null,
+        state: associate.state,
+        hourlyRate: null,
+        reason: 'cross_client_transfer',
+        actorUserId: req.user!.id,
+      });
+    }
     audit(req, 'associate.transfer', 'Associate', id, {
       fromAssignmentId: open?.id ?? null,
       toLocationId: target.id,
       startedAt: input.startedAt,
+      crossClient,
+      fromClientId: currentClientId,
+      toClientId: target.clientId,
+      releasedShifts,
+      expiredClaims,
+      removedTeamMemberships,
+      vacatedPositions,
+      kioskPinMoved,
     });
     // Fire-and-forget, after the transaction has committed.
+    const destination = crossClient
+      ? `${target.name} (${target.client.name})`
+      : target.name;
     void notifyAssociate(id, {
       subject: 'Your assignment was updated',
-      body: `You were ${open ? 'transferred' : 'assigned'} to ${target.name}, starting ${input.startedAt}.`,
+      body: `You were ${open ? 'transferred' : 'assigned'} to ${destination}, starting ${input.startedAt}.`,
       category: 'org',
       linkUrl: '/me',
     });
-    void notifyManager(id, {
+    const managerNote = {
       subject: 'Team member location change',
-      body: `${associate.firstName} ${associate.lastName} moves to ${target.name} on ${input.startedAt}.`,
-      category: 'org',
-    });
+      body: `${associate.firstName} ${associate.lastName} moves to ${destination} on ${input.startedAt}.`,
+      category: 'org' as const,
+    };
+    const oldManagerId = associate.managerId;
+    if (crossClient && oldManagerId) {
+      // The transaction just nulled managerId, so notifyManager would
+      // resolve nobody — tell the manager they HAD when the move landed.
+      void (async () => {
+        const managerUser = await prisma.user.findFirst({
+          where: { associateId: oldManagerId, status: 'ACTIVE' },
+          select: { id: true },
+        });
+        if (managerUser) await notifyUser(managerUser.id, managerNote);
+      })().catch(() => {});
+    } else {
+      void notifyManager(id, managerNote);
+    }
     const response: AssociateTransferResponse = {
       id: created.id,
       associateId: created.associateId,
       locationId: created.locationId,
       locationName: target.name,
       startedAt: created.startedAt.toISOString().slice(0, 10),
+      clientId: target.clientId,
+      clientName: target.client.name,
+      crossClient,
+      releasedShifts,
+      expiredClaims,
+      removedTeamMemberships,
+      vacatedPositions,
+      kioskPinMoved,
     };
     res.status(201).json(response);
   },
