@@ -34,6 +34,7 @@ import {
   type TaxDoc,
 } from '@/lib/selfApi';
 import { useConfirm } from '@/lib/confirm';
+import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
 import {
   Badge,
   Button,
@@ -106,15 +107,8 @@ type BeneficiaryDraft = {
   dependentId: string | null;
 };
 
-const RELATION_LABEL: Record<string, string> = {
-  SPOUSE: 'Spouse',
-  PARENT: 'Parent',
-  CHILD: 'Child',
-  SIBLING: 'Sibling',
-  FRIEND: 'Friend',
-  DOMESTIC_PARTNER: 'Domestic partner',
-  OTHER: 'Other',
-};
+const relLabel = (t: Translate, r: string): string =>
+  t(('me.rel.' + r) as MessageKey);
 
 const LIFE_EVENT_KINDS = [
   'MARRIAGE',
@@ -127,31 +121,12 @@ const LIFE_EVENT_KINDS = [
   'OTHER',
 ] as const;
 
-// Indexed by the server's raw `kind`, which is typed as a bare string —
-// hence the wide index signature. `satisfies` still forces every known
-// kind to carry a label, so adding one to LIFE_EVENT_KINDS breaks here.
-const LIFE_EVENT_LABEL: Record<string, string> = {
-  MARRIAGE: 'Marriage',
-  DIVORCE: 'Divorce',
-  BIRTH: 'Birth',
-  ADOPTION: 'Adoption',
-  DEATH_OF_DEPENDENT: 'Death of a dependent',
-  ADDRESS_CHANGE: 'Address change',
-  NAME_CHANGE: 'Name change',
-  OTHER: 'Other',
-} satisfies Record<(typeof LIFE_EVENT_KINDS)[number], string>;
-
-const LIFE_EVENT_STATUS_LABELS: Record<string, string> = {
-  PENDING: 'Pending',
-  IN_REVIEW: 'In review',
-  APPROVED: 'Approved',
-  REJECTED: 'Rejected',
-};
-
-const BENEFICIARY_KIND_LABEL: Record<string, string> = {
-  PRIMARY: 'Primary',
-  CONTINGENT: 'Contingent',
-};
+const evkLabel = (t: Translate, k: string): string =>
+  t(('me.evk.' + k) as MessageKey);
+const evsLabel = (t: Translate, st: string): string =>
+  t(('me.evs.' + st) as MessageKey);
+const benkLabel = (t: Translate, k: string): string =>
+  t(('me.benk.' + k) as MessageKey);
 
 const TAX_DOC_LABEL: Record<TaxDoc['kind'], string> = {
   W2: 'Form W-2',
@@ -178,14 +153,15 @@ const NO_SECTION_ERRORS: SectionErrors = {
   taxDocs: null,
 };
 
-function settledError(r: PromiseSettledResult<unknown>): string | null {
+function settledError(t: Translate, r: PromiseSettledResult<unknown>): string | null {
   if (r.status === 'fulfilled') return null;
   return r.reason instanceof ApiError
     ? r.reason.message
-    : 'Failed to load this section.';
+    : t('me.sectionFailed');
 }
 
 export function MeHome() {
+  const { t } = useI18n();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
   const tab: Tab = (TAB_VALUES as readonly string[]).includes(tabParam ?? '')
@@ -223,7 +199,7 @@ export function MeHome() {
       listLifeEvents(),
       listTaxDocs(),
     ] as const);
-    const [p, n, c, d, b, e, t] = results;
+    const [p, n, c, d, b, e, taxRes] = results;
     if (p.status === 'fulfilled') setProfile(p.value as SelfProfile);
     if (n.status === 'fulfilled')
       setEmployeeNumberState(n.value as EmployeeNumber);
@@ -237,22 +213,22 @@ export function MeHome() {
       );
     if (e.status === 'fulfilled')
       setEvents((e.value as { events: LifeEvent[] }).events);
-    if (t.status === 'fulfilled')
-      setTaxDocs((t.value as { documents: TaxDoc[] }).documents);
+    if (taxRes.status === 'fulfilled')
+      setTaxDocs((taxRes.value as { documents: TaxDoc[] }).documents);
     setSectionErrors({
-      profile: settledError(p) ?? settledError(n),
-      contacts: settledError(c),
-      dependents: settledError(d),
-      beneficiaries: settledError(b),
-      events: settledError(e),
-      taxDocs: settledError(t),
+      profile: settledError(t, p) ?? settledError(t, n),
+      contacts: settledError(t, c),
+      dependents: settledError(t, d),
+      beneficiaries: settledError(t, b),
+      events: settledError(t, e),
+      taxDocs: settledError(t, taxRes),
     });
     if (results.every((r) => r.status === 'rejected')) {
       const first = results[0];
       setError(
         first.status === 'rejected' && first.reason instanceof ApiError
           ? first.reason.message
-          : 'Failed to load self-service data.',
+          : t('me.loadFailed'),
       );
     }
   };
@@ -267,14 +243,14 @@ export function MeHome() {
     <div className="space-y-5">
       <PullToRefreshIndicator state={pullState} />
       <PageHeader
-        title="My profile"
-        subtitle="Personal info, emergency contacts, dependents, beneficiaries, and life events you can manage yourself."
+        title={t('me.title')}
+        subtitle={t('me.subtitle')}
         // No "Workforce" breadcrumb — that's internal HR taxonomy, and it
         // wasn't clickable anyway. This page is simply theirs.
-        breadcrumbs={[{ label: 'My profile' }]}
+        breadcrumbs={[{ label: t('me.title') }]}
         secondaryActions={
           <Button asChild variant="outline" size="sm">
-            <Link to="/settings">Photo, password &amp; security</Link>
+            <Link to="/settings">{t('me.settingsLink')}</Link>
           </Button>
         }
       />
@@ -283,7 +259,7 @@ export function MeHome() {
         <ErrorBanner
           action={
             <Button size="sm" variant="secondary" onClick={refresh}>
-              Retry
+              {t('common.retry')}
             </Button>
           }
         >
@@ -293,12 +269,12 @@ export function MeHome() {
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
-          <TabsTrigger value="profile">Profile</TabsTrigger>
-          <TabsTrigger value="emergency">Emergency contacts</TabsTrigger>
-          <TabsTrigger value="dependents">Dependents</TabsTrigger>
-          <TabsTrigger value="beneficiaries">Beneficiaries</TabsTrigger>
-          <TabsTrigger value="life-events">Life events</TabsTrigger>
-          <TabsTrigger value="tax-docs">Tax documents</TabsTrigger>
+          <TabsTrigger value="profile">{t('me.tab.profile')}</TabsTrigger>
+          <TabsTrigger value="emergency">{t('me.tab.emergency')}</TabsTrigger>
+          <TabsTrigger value="dependents">{t('me.tab.dependents')}</TabsTrigger>
+          <TabsTrigger value="beneficiaries">{t('me.tab.beneficiaries')}</TabsTrigger>
+          <TabsTrigger value="life-events">{t('me.tab.lifeEvents')}</TabsTrigger>
+          <TabsTrigger value="tax-docs">{t('me.tab.taxDocs')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile">
@@ -368,12 +344,13 @@ function SectionError({
   message: string;
   onRetry: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className="p-6">
       <ErrorBanner
         action={
           <Button size="sm" variant="secondary" onClick={onRetry}>
-            Retry
+            {t('common.retry')}
           </Button>
         }
       >
@@ -398,6 +375,7 @@ function ProfilePanel({
   onRetry: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
   const [phone, setPhone] = useState('');
   const [addressLine1, setAddressLine1] = useState('');
   const [addressLine2, setAddressLine2] = useState('');
@@ -446,10 +424,10 @@ function ProfilePanel({
         state: stateCode.trim() ? stateCode.trim().toUpperCase() : null,
         zip: zip.trim() || null,
       });
-      toast.success('Profile updated.');
+      toast.success(t('me.profileUpdated'));
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Save failed.');
+      toast.error(err instanceof ApiError ? err.message : t('me.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -462,25 +440,25 @@ function ProfilePanel({
         <FaceConsentRow />
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <ReadonlyField label="Name" value={`${profile.firstName} ${profile.lastName}`} />
-          <ReadonlyField label="Work email" value={profile.email} />
+          <ReadonlyField label={t('me.fld.name')} value={`${profile.firstName} ${profile.lastName}`} />
+          <ReadonlyField label={t('me.fld.workEmail')} value={profile.email} />
           <ReadonlyField
-            label="Department"
+            label={t('me.fld.department')}
             value={profile.department?.name ?? '—'}
           />
-          <ReadonlyField label="Manager" value={profile.managerName ?? '—'} />
+          <ReadonlyField label={t('me.fld.manager')} value={profile.managerName ?? '—'} />
           <ReadonlyField
-            label="Job profile"
+            label={t('me.fld.jobProfile')}
             value={profile.jobProfile?.title ?? '—'}
           />
-          <ReadonlyField label="Employment type" value={profile.employmentType} />
+          <ReadonlyField label={t('me.fld.employmentType')} value={profile.employmentType} />
         </div>
 
         <div className="border-t border-navy-secondary pt-5 space-y-4">
-          <div className="text-sm font-medium text-white">Editable</div>
+          <div className="text-sm font-medium text-white">{t('me.fld.editable')}</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <FieldInput
-              label="Phone"
+              label={t('me.fld.phone')}
               value={phone}
               onChange={setPhone}
               placeholder="+1 555 555 5555"
@@ -488,36 +466,35 @@ function ProfilePanel({
               inputMode="tel"
             />
             <FieldInput
-              label="Address line 1"
+              label={t('me.fld.addr1')}
               value={addressLine1}
               onChange={setAddressLine1}
             />
             <FieldInput
-              label="Address line 2"
+              label={t('me.fld.addr2')}
               value={addressLine2}
               onChange={setAddressLine2}
             />
-            <FieldInput label="City" value={city} onChange={setCity} />
+            <FieldInput label={t('me.fld.city')} value={city} onChange={setCity} />
             <FieldInput
-              label="State"
+              label={t('me.fld.state')}
               value={stateCode}
               onChange={(v) => setStateCode(v.toUpperCase().slice(0, 2))}
               placeholder="CA"
             />
             <FieldInput
-              label="ZIP"
+              label={t('me.fld.zip')}
               value={zip}
               onChange={setZip}
               placeholder="94110"
             />
           </div>
           <div className="text-xs text-silver">
-            Changing your work state opens a record on your associate history so
-            HR can re-check tax setup.
+            {t('me.stateChangeNote')}
           </div>
           <div className="flex justify-end">
             <Button onClick={onSave} disabled={saving}>
-              {saving ? 'Saving…' : 'Save changes'}
+              {saving ? t('me.saving') : t('me.saveChanges')}
             </Button>
           </div>
         </div>
@@ -533,6 +510,7 @@ function ProfilePanel({
 // affirmative consent. This closes the loop the kiosk copy promises —
 // without making anyone go through their manager.
 function FaceConsentRow() {
+  const { t } = useI18n();
   const confirm = useConfirm();
   const [consent, setConsent] = useState<FaceConsent | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -552,7 +530,7 @@ function FaceConsentRow() {
         setLoadError(
           err instanceof ApiError
             ? err.message
-            : 'Couldn’t load your face-verification setting.',
+            : t('me.face.loadFailed'),
         );
       });
     return () => {
@@ -564,14 +542,12 @@ function FaceConsentRow() {
     const ok = await confirm(
       next
         ? {
-            title: 'Turn on face verification?',
-            description:
-              'The kiosk will take a quick photo at each punch to confirm it’s really you. Photos are deleted after 90 days; a numeric face template is kept while you actively punch and deleted if you turn this off.',
+            title: t('me.face.onTitle'),
+            description: t('me.face.onDesc'),
           }
         : {
-            title: 'Turn off face verification?',
-            description:
-              'Your stored punch photos and face template are deleted immediately. You’ll clock in with just your number from now on.',
+            title: t('me.face.offTitle'),
+            description: t('me.face.offDesc'),
             destructive: true,
           },
     );
@@ -581,15 +557,13 @@ function FaceConsentRow() {
       const r = await setFaceConsent(next);
       setConsent({ status: r.status, at: new Date().toISOString() });
       toast.success(
-        next
-          ? 'Face verification is on.'
-          : 'Face verification is off — stored photos and template deleted.',
+        next ? t('me.face.onToast') : t('me.face.offToast'),
       );
     } catch (err) {
       toast.error(
         err instanceof ApiError
           ? err.message
-          : 'Could not change your face-verification setting.',
+          : t('me.face.changeFailed'),
       );
     } finally {
       setBusy(false);
@@ -599,7 +573,7 @@ function FaceConsentRow() {
   return (
     <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-4">
       <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-        Kiosk face verification
+        {t('me.face.title')}
       </div>
       {loadError ? (
         <ErrorBanner
@@ -610,7 +584,7 @@ function FaceConsentRow() {
               variant="secondary"
               onClick={() => setAttempt((a) => a + 1)}
             >
-              Retry
+              {t('common.retry')}
             </Button>
           }
         >
@@ -621,27 +595,27 @@ function FaceConsentRow() {
       ) : (
         <div className="mt-2 flex flex-wrap items-center gap-3">
           {consent.status === 'GRANTED' ? (
-            <Badge variant="success">On</Badge>
+            <Badge variant="success">{t('me.face.on')}</Badge>
           ) : consent.status === 'DECLINED' ? (
-            <Badge variant="outline">Off — number only</Badge>
+            <Badge variant="outline">{t('me.face.offBadge')}</Badge>
           ) : (
-            <Badge variant="pending">Not set</Badge>
+            <Badge variant="pending">{t('me.face.notSet')}</Badge>
           )}
           <span className="text-xs text-silver">
             {consent.status === 'GRANTED'
-              ? 'The kiosk takes a quick photo at each punch to confirm it’s you.'
+              ? t('me.face.onHint')
               : consent.status === 'DECLINED'
-                ? 'You clock in with just your number — no photo is taken or stored.'
-                : 'The kiosk will ask you once at your next punch. You can also decide here.'}
+                ? t('me.face.offHint')
+                : t('me.face.askHint')}
           </span>
           {consent.status !== 'GRANTED' && (
             <Button size="sm" variant="ghost" disabled={busy} onClick={() => change(true)}>
-              Turn on
+              {t('me.face.turnOn')}
             </Button>
           )}
           {consent.status !== 'DECLINED' && (
             <Button size="sm" variant="ghost" disabled={busy} onClick={() => change(false)}>
-              Turn off
+              {t('me.face.turnOff')}
             </Button>
           )}
         </div>
@@ -655,10 +629,11 @@ function EmployeeNumberRow({
 }: {
   employeeNumber: EmployeeNumber | null;
 }) {
+  const { t } = useI18n();
   return (
     <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-4">
       <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-        Employee number
+        {t('me.num.title')}
       </div>
       {employeeNumber === null ? (
         <Skeleton className="mt-1 h-9 w-56" />
@@ -668,15 +643,12 @@ function EmployeeNumberRow({
             {employeeNumber.employeeNumber}
           </div>
           <div className="mt-1 text-xs text-silver">
-            Use this number to clock in and out at the kiosk. Issued{' '}
-            {fmtDate(employeeNumber.issuedAt)}
-            .
+            {t('me.num.hint', { date: fmtDate(employeeNumber.issuedAt) })}
           </div>
         </>
       ) : (
         <div className="mt-1 text-sm text-silver">
-          Not yet issued. HR will assign you a 4-digit number after your
-          onboarding is approved.
+          {t('me.num.none')}
         </div>
       )}
     </div>
@@ -735,6 +707,7 @@ function EmergencyPanel({
   onRetry: () => void;
   onChange: () => void;
 }) {
+  const { t } = useI18n();
   const confirm = useConfirm();
   const [draft, setDraft] = useState<ContactDraft | null>(null);
 
@@ -748,13 +721,13 @@ function EmergencyPanel({
     });
 
   const onDelete = async (id: string) => {
-    if (!(await confirm({ title: 'Remove this emergency contact?', destructive: true }))) return;
+    if (!(await confirm({ title: t('me.em.removeTitle'), destructive: true }))) return;
     try {
       await deleteEmergency(id);
-      toast.success('Contact removed.');
+      toast.success(t('me.em.removed'));
       onChange();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to remove.');
+      toast.error(err instanceof ApiError ? err.message : t('me.removeFailed'));
     }
   };
 
@@ -762,7 +735,7 @@ function EmergencyPanel({
     <div className="space-y-4">
       <div className="flex justify-end">
         <Button onClick={openAdd}>
-          <Plus className="mr-2 h-4 w-4" /> Add contact
+          <Plus className="mr-2 h-4 w-4" /> {t('me.em.add')}
         </Button>
       </div>
       <Card>
@@ -775,11 +748,11 @@ function EmergencyPanel({
             )
           ) : rows.length === 0 ? (
             <EmptyState
-              title="No emergency contacts"
-              description="Add at least one person we can reach in case of an emergency."
+              title={t('me.em.emptyTitle')}
+              description={t('me.em.emptyDesc')}
               action={
                 <Button onClick={openAdd}>
-                  <Plus className="mr-2 h-4 w-4" /> Add contact
+                  <Plus className="mr-2 h-4 w-4" /> {t('me.em.add')}
                 </Button>
               }
             />
@@ -787,12 +760,12 @@ function EmergencyPanel({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Relation</TableHead>
-                  <TableHead>Phone</TableHead>
-                  <TableHead className="hidden md:table-cell">Email</TableHead>
-                  <TableHead className="hidden md:table-cell">Primary</TableHead>
-                  <TableHead className="w-32 text-right">Actions</TableHead>
+                  <TableHead>{t('me.th.name')}</TableHead>
+                  <TableHead>{t('me.th.relation')}</TableHead>
+                  <TableHead>{t('me.th.phone')}</TableHead>
+                  <TableHead className="hidden md:table-cell">{t('me.th.email')}</TableHead>
+                  <TableHead className="hidden md:table-cell">{t('me.th.primary')}</TableHead>
+                  <TableHead className="w-32 text-right">{t('me.th.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -815,20 +788,20 @@ function EmergencyPanel({
                       <div className="min-w-0">
                         <div className="truncate">{row.name}</div>
                         <div className="md:hidden text-xs2 text-silver/70 truncate">
-                          {row.email ?? '—'}{row.isPrimary ? ' · Primary' : ''}
+                          {row.email ?? '—'}{row.isPrimary ? ` · ${t('me.primary')}` : ''}
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell>{RELATION_LABEL[row.relation] ?? row.relation}</TableCell>
+                    <TableCell>{relLabel(t, row.relation)}</TableCell>
                     <TableCell>{row.phone}</TableCell>
                     <TableCell className="hidden md:table-cell">{row.email ?? '—'}</TableCell>
                     <TableCell className="hidden md:table-cell">
-                      {row.isPrimary ? <Badge variant="accent">Primary</Badge> : '—'}
+                      {row.isPrimary ? <Badge variant="accent">{t('me.primary')}</Badge> : '—'}
                     </TableCell>
                     <TableCell className="text-right">
                       <button
                         data-no-row-click
-                        aria-label="Delete"
+                        aria-label={t('me.deleteAria')}
                         onClick={(e) => {
                           e.stopPropagation();
                           onDelete(row.id);
@@ -873,10 +846,11 @@ function ContactDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
   const [saving, setSaving] = useState(false);
   const onSubmit = async () => {
     if (!draft.name.trim() || !draft.phone.trim()) {
-      toast.error('Name and phone are required.');
+      toast.error(t('me.em.required'));
       return;
     }
     setSaving(true);
@@ -890,10 +864,10 @@ function ContactDrawer({
       };
       if (draft.id) await updateEmergency(draft.id, body);
       else await createEmergency(body);
-      toast.success(draft.id ? 'Contact updated.' : 'Contact added.');
+      toast.success(draft.id ? t('me.em.updated') : t('me.em.added'));
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Save failed.');
+      toast.error(err instanceof ApiError ? err.message : t('me.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -901,11 +875,11 @@ function ContactDrawer({
   return (
     <>
       <DrawerHeader>
-        <DrawerTitle>{draft.id ? 'Edit contact' : 'Add contact'}</DrawerTitle>
+        <DrawerTitle>{draft.id ? t('me.em.editTitle') : t('me.em.addTitle')}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Name</Label>
+          <Label>{t('me.th.name')}</Label>
           <Input
             className="mt-1"
             value={draft.name}
@@ -913,7 +887,7 @@ function ContactDrawer({
           />
         </div>
         <div>
-          <Label>Relation</Label>
+          <Label>{t('me.th.relation')}</Label>
           <Select
             className="mt-1"
             value={draft.relation}
@@ -923,13 +897,13 @@ function ContactDrawer({
           >
             {(['SPOUSE', 'PARENT', 'CHILD', 'SIBLING', 'FRIEND', 'OTHER'] as const).map((r) => (
               <option key={r} value={r}>
-                {RELATION_LABEL[r]}
+                {relLabel(t, r)}
               </option>
             ))}
           </Select>
         </div>
         <div>
-          <Label>Phone</Label>
+          <Label>{t('me.th.phone')}</Label>
           <Input
             className="mt-1"
             type="tel"
@@ -939,7 +913,7 @@ function ContactDrawer({
           />
         </div>
         <div>
-          <Label>Email</Label>
+          <Label>{t('me.th.email')}</Label>
           <Input
             className="mt-1"
             type="email"
@@ -953,15 +927,15 @@ function ContactDrawer({
             checked={draft.isPrimary}
             onChange={(e) => setDraft({ ...draft, isPrimary: e.target.checked })}
           />
-          Primary contact
+          {t('me.em.primaryCheckbox')}
         </label>
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
-          Cancel
+          {t('me.cancel')}
         </Button>
         <Button onClick={onSubmit} disabled={saving}>
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('me.saving') : t('me.save')}
         </Button>
       </DrawerFooter>
     </>
@@ -981,6 +955,7 @@ function DependentsPanel({
   onRetry: () => void;
   onChange: () => void;
 }) {
+  const { t } = useI18n();
   const confirm = useConfirm();
   const [draft, setDraft] = useState<DependentDraft | null>(null);
 
@@ -995,13 +970,13 @@ function DependentsPanel({
     });
 
   const onDelete = async (id: string) => {
-    if (!(await confirm({ title: 'Remove this dependent?', destructive: true }))) return;
+    if (!(await confirm({ title: t('me.dep.removeTitle'), destructive: true }))) return;
     try {
       await deleteDependent(id);
-      toast.success('Dependent removed.');
+      toast.success(t('me.dep.removed'));
       onChange();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to remove.');
+      toast.error(err instanceof ApiError ? err.message : t('me.removeFailed'));
     }
   };
 
@@ -1009,7 +984,7 @@ function DependentsPanel({
     <div className="space-y-4">
       <div className="flex justify-end">
         <Button onClick={openAdd}>
-          <Plus className="mr-2 h-4 w-4" /> Add dependent
+          <Plus className="mr-2 h-4 w-4" /> {t('me.dep.add')}
         </Button>
       </div>
       <Card>
@@ -1022,11 +997,11 @@ function DependentsPanel({
             )
           ) : rows.length === 0 ? (
             <EmptyState
-              title="No dependents"
-              description="Add a spouse, child, or domestic partner to enroll them in benefits."
+              title={t('me.dep.emptyTitle')}
+              description={t('me.dep.emptyDesc')}
               action={
                 <Button onClick={openAdd}>
-                  <Plus className="mr-2 h-4 w-4" /> Add dependent
+                  <Plus className="mr-2 h-4 w-4" /> {t('me.dep.add')}
                 </Button>
               }
             />
@@ -1034,12 +1009,12 @@ function DependentsPanel({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Relation</TableHead>
-                  <TableHead className="hidden md:table-cell">DOB</TableHead>
-                  <TableHead className="hidden lg:table-cell">SSN (last 4)</TableHead>
-                  <TableHead>Covered</TableHead>
-                  <TableHead className="w-32 text-right">Actions</TableHead>
+                  <TableHead>{t('me.th.name')}</TableHead>
+                  <TableHead>{t('me.th.relation')}</TableHead>
+                  <TableHead className="hidden md:table-cell">{t('me.th.dob')}</TableHead>
+                  <TableHead className="hidden lg:table-cell">{t('me.th.ssn4')}</TableHead>
+                  <TableHead>{t('me.th.covered')}</TableHead>
+                  <TableHead className="w-32 text-right">{t('me.th.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1065,21 +1040,21 @@ function DependentsPanel({
                           {row.firstName} {row.lastName}
                         </div>
                         <div className="md:hidden text-xs2 text-silver/70 truncate">
-                          {row.dob ? `DOB ${fmtDate(parseYmd(row.dob))}` : '—'}
+                          {row.dob ? t('me.dobPrefix', { date: fmtDate(parseYmd(row.dob)) }) : '—'}
                           {row.ssnLast4 ? ` · •••-••-${row.ssnLast4}` : ''}
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell>{RELATION_LABEL[row.relation] ?? row.relation}</TableCell>
+                    <TableCell>{relLabel(t, row.relation)}</TableCell>
                     <TableCell className="hidden md:table-cell">{fmtDate(parseYmd(row.dob))}</TableCell>
                     <TableCell className="hidden lg:table-cell">{row.ssnLast4 ? `•••-••-${row.ssnLast4}` : '—'}</TableCell>
                     <TableCell>
-                      {row.isCovered ? <Badge variant="accent">Yes</Badge> : 'No'}
+                      {row.isCovered ? <Badge variant="accent">{t('me.yes')}</Badge> : t('me.no')}
                     </TableCell>
                     <TableCell className="text-right">
                       <button
                         data-no-row-click
-                        aria-label="Delete"
+                        aria-label={t('me.deleteAria')}
                         onClick={(e) => {
                           e.stopPropagation();
                           onDelete(row.id);
@@ -1124,14 +1099,15 @@ function DependentDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
   const [saving, setSaving] = useState(false);
   const onSubmit = async () => {
     if (!draft.firstName.trim() || !draft.lastName.trim()) {
-      toast.error('First and last name are required.');
+      toast.error(t('me.dep.namesRequired'));
       return;
     }
     if (draft.ssnLast4 && !/^\d{4}$/.test(draft.ssnLast4)) {
-      toast.error('SSN last 4 must be exactly 4 digits.');
+      toast.error(t('me.dep.ssn4Invalid'));
       return;
     }
     setSaving(true);
@@ -1146,10 +1122,10 @@ function DependentDrawer({
       };
       if (draft.id) await updateDependent(draft.id, body);
       else await createDependent(body);
-      toast.success(draft.id ? 'Dependent updated.' : 'Dependent added.');
+      toast.success(draft.id ? t('me.dep.updated') : t('me.dep.added'));
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Save failed.');
+      toast.error(err instanceof ApiError ? err.message : t('me.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -1157,12 +1133,12 @@ function DependentDrawer({
   return (
     <>
       <DrawerHeader>
-        <DrawerTitle>{draft.id ? 'Edit dependent' : 'Add dependent'}</DrawerTitle>
+        <DrawerTitle>{draft.id ? t('me.dep.editTitle') : t('me.dep.addTitle')}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label>First name</Label>
+            <Label>{t('me.fld.firstName')}</Label>
             <Input
               className="mt-1"
               value={draft.firstName}
@@ -1170,7 +1146,7 @@ function DependentDrawer({
             />
           </div>
           <div>
-            <Label>Last name</Label>
+            <Label>{t('me.fld.lastName')}</Label>
             <Input
               className="mt-1"
               value={draft.lastName}
@@ -1179,7 +1155,7 @@ function DependentDrawer({
           </div>
         </div>
         <div>
-          <Label>Relation</Label>
+          <Label>{t('me.th.relation')}</Label>
           <Select
             className="mt-1"
             value={draft.relation}
@@ -1189,13 +1165,13 @@ function DependentDrawer({
           >
             {(['SPOUSE', 'CHILD', 'DOMESTIC_PARTNER', 'OTHER'] as const).map((r) => (
               <option key={r} value={r}>
-                {RELATION_LABEL[r]}
+                {relLabel(t, r)}
               </option>
             ))}
           </Select>
         </div>
         <div>
-          <Label>Date of birth</Label>
+          <Label>{t('me.fld.dob')}</Label>
           <Input
             className="mt-1"
             type="date"
@@ -1205,7 +1181,7 @@ function DependentDrawer({
           />
         </div>
         <div>
-          <Label>SSN last 4</Label>
+          <Label>{t('me.fld.ssn4')}</Label>
           <Input
             className="mt-1"
             value={draft.ssnLast4}
@@ -1222,15 +1198,15 @@ function DependentDrawer({
             checked={draft.isCovered}
             onChange={(e) => setDraft({ ...draft, isCovered: e.target.checked })}
           />
-          Covered on benefits
+          {t('me.dep.coveredCheckbox')}
         </label>
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
-          Cancel
+          {t('me.cancel')}
         </Button>
         <Button onClick={onSubmit} disabled={saving}>
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('me.saving') : t('me.save')}
         </Button>
       </DrawerFooter>
     </>
@@ -1252,6 +1228,7 @@ function BeneficiariesPanel({
   onRetry: () => void;
   onChange: () => void;
 }) {
+  const { t } = useI18n();
   const confirm = useConfirm();
   const [draft, setDraft] = useState<BeneficiaryDraft | null>(null);
 
@@ -1272,13 +1249,13 @@ function BeneficiariesPanel({
     });
 
   const onDelete = async (id: string) => {
-    if (!(await confirm({ title: 'Remove this beneficiary?', destructive: true }))) return;
+    if (!(await confirm({ title: t('me.ben.removeTitle'), destructive: true }))) return;
     try {
       await deleteBeneficiary(id);
-      toast.success('Beneficiary removed.');
+      toast.success(t('me.ben.removed'));
       onChange();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to remove.');
+      toast.error(err instanceof ApiError ? err.message : t('me.removeFailed'));
     }
   };
 
@@ -1287,7 +1264,7 @@ function BeneficiariesPanel({
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="text-sm text-silver space-x-4">
           <span>
-            Primary:{' '}
+            {t('me.ben.primaryLabel')}{' '}
             <span
               className={
                 primaryTotal === 100
@@ -1299,10 +1276,10 @@ function BeneficiariesPanel({
             >
               {primaryTotal}%
             </span>
-            {primaryTotal !== 100 && primaryTotal > 0 && ' — must total 100%'}
+            {primaryTotal !== 100 && primaryTotal > 0 && t('me.ben.mustTotal')}
           </span>
           <span>
-            Contingent:{' '}
+            {t('me.ben.contingentLabel')}{' '}
             <span
               className={
                 contingentTotal === 100
@@ -1316,11 +1293,11 @@ function BeneficiariesPanel({
             </span>
             {contingentTotal !== 100 &&
               contingentTotal > 0 &&
-              ' — must total 100%'}
+              t('me.ben.mustTotal')}
           </span>
         </div>
         <Button onClick={openAdd}>
-          <Plus className="mr-2 h-4 w-4" /> Add beneficiary
+          <Plus className="mr-2 h-4 w-4" /> {t('me.ben.add')}
         </Button>
       </div>
       <Card>
@@ -1333,11 +1310,11 @@ function BeneficiariesPanel({
             )
           ) : rows.length === 0 ? (
             <EmptyState
-              title="No beneficiaries"
-              description="Designate who receives life-insurance and 401(k) proceeds."
+              title={t('me.ben.emptyTitle')}
+              description={t('me.ben.emptyDesc')}
               action={
                 <Button onClick={openAdd}>
-                  <Plus className="mr-2 h-4 w-4" /> Add beneficiary
+                  <Plus className="mr-2 h-4 w-4" /> {t('me.ben.add')}
                 </Button>
               }
             />
@@ -1345,11 +1322,11 @@ function BeneficiariesPanel({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead className="hidden md:table-cell">Relation</TableHead>
-                  <TableHead>Kind</TableHead>
-                  <TableHead className="text-right">Percentage</TableHead>
-                  <TableHead className="w-32 text-right">Actions</TableHead>
+                  <TableHead>{t('me.th.name')}</TableHead>
+                  <TableHead className="hidden md:table-cell">{t('me.th.relation')}</TableHead>
+                  <TableHead>{t('me.th.kind')}</TableHead>
+                  <TableHead className="text-right">{t('me.th.percentage')}</TableHead>
+                  <TableHead className="w-32 text-right">{t('me.th.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1372,14 +1349,14 @@ function BeneficiariesPanel({
                       <div className="min-w-0">
                         <div className="truncate">{row.name}</div>
                         <div className="md:hidden text-xs2 text-silver/70 truncate">
-                          {RELATION_LABEL[row.relation] ?? row.relation}
+                          {relLabel(t, row.relation)}
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell">{RELATION_LABEL[row.relation] ?? row.relation}</TableCell>
+                    <TableCell className="hidden md:table-cell">{relLabel(t, row.relation)}</TableCell>
                     <TableCell>
                       <Badge variant={row.kind === 'PRIMARY' ? 'accent' : 'default'}>
-                        {BENEFICIARY_KIND_LABEL[row.kind] ?? row.kind}
+                        {benkLabel(t, row.kind)}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
@@ -1388,7 +1365,7 @@ function BeneficiariesPanel({
                     <TableCell className="text-right">
                       <button
                         data-no-row-click
-                        aria-label="Delete"
+                        aria-label={t('me.deleteAria')}
                         onClick={(e) => {
                           e.stopPropagation();
                           onDelete(row.id);
@@ -1439,6 +1416,7 @@ function BeneficiaryDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
   const [saving, setSaving] = useState(false);
   const [tierError, setTierError] = useState<string | null>(null);
 
@@ -1451,11 +1429,11 @@ function BeneficiaryDrawer({
 
   const onSubmit = async () => {
     if (!draft.name.trim()) {
-      toast.error('Name required.');
+      toast.error(t('me.ben.nameRequired'));
       return;
     }
     if (draft.percentage < 0 || draft.percentage > 100) {
-      toast.error('Percentage must be between 0 and 100.');
+      toast.error(t('me.ben.pctRange'));
       return;
     }
     // Hard-block only over-allocation: requiring exactly 100% on every
@@ -1464,7 +1442,7 @@ function BeneficiaryDrawer({
     // flagging the tier until it totals 100%.
     if (tierTotalAfter > 100) {
       setTierError(
-        `${draft.kind} allocations would total ${tierTotalAfter}% — a tier cannot exceed 100%.`,
+        t('me.ben.tierExceed', { kind: benkLabel(t, draft.kind), pct: String(tierTotalAfter) }),
       );
       return;
     }
@@ -1480,10 +1458,10 @@ function BeneficiaryDrawer({
       };
       if (draft.id) await updateBeneficiary(draft.id, body);
       else await createBeneficiary(body);
-      toast.success(draft.id ? 'Beneficiary updated.' : 'Beneficiary added.');
+      toast.success(draft.id ? t('me.ben.updated') : t('me.ben.added'));
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Save failed.');
+      toast.error(err instanceof ApiError ? err.message : t('me.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -1491,12 +1469,12 @@ function BeneficiaryDrawer({
   return (
     <>
       <DrawerHeader>
-        <DrawerTitle>{draft.id ? 'Edit beneficiary' : 'Add beneficiary'}</DrawerTitle>
+        <DrawerTitle>{draft.id ? t('me.ben.editTitle') : t('me.ben.addTitle')}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         {dependents.length > 0 && (
           <div>
-            <Label>Copy from dependent</Label>
+            <Label>{t('me.ben.copyFrom')}</Label>
             <Select
               className="mt-1"
               value={draft.dependentId ?? ''}
@@ -1514,18 +1492,18 @@ function BeneficiaryDrawer({
                 });
               }}
             >
-              <option value="">— none —</option>
+              <option value="">{t('me.ben.noneOption')}</option>
               {dependents.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.firstName} {d.lastName} (
-                  {RELATION_LABEL[d.relation] ?? d.relation})
+                  {relLabel(t, d.relation)})
                 </option>
               ))}
             </Select>
           </div>
         )}
         <div>
-          <Label>Name</Label>
+          <Label>{t('me.th.name')}</Label>
           <Input
             className="mt-1"
             value={draft.name}
@@ -1533,7 +1511,7 @@ function BeneficiaryDrawer({
           />
         </div>
         <div>
-          <Label>Relation</Label>
+          <Label>{t('me.th.relation')}</Label>
           <Select
             className="mt-1"
             value={draft.relation}
@@ -1543,13 +1521,13 @@ function BeneficiaryDrawer({
           >
             {(['SPOUSE', 'CHILD', 'DOMESTIC_PARTNER', 'OTHER'] as const).map((r) => (
               <option key={r} value={r}>
-                {RELATION_LABEL[r]}
+                {relLabel(t, r)}
               </option>
             ))}
           </Select>
         </div>
         <div>
-          <Label>Kind</Label>
+          <Label>{t('me.th.kind')}</Label>
           <Select
             className="mt-1"
             value={draft.kind}
@@ -1558,12 +1536,12 @@ function BeneficiaryDrawer({
               setDraft({ ...draft, kind: e.target.value as BeneficiaryDraft['kind'] });
             }}
           >
-            <option value="PRIMARY">Primary</option>
-            <option value="CONTINGENT">Contingent</option>
+            <option value="PRIMARY">{t('me.benk.PRIMARY')}</option>
+            <option value="CONTINGENT">{t('me.benk.CONTINGENT')}</option>
           </Select>
         </div>
         <div>
-          <Label>Percentage</Label>
+          <Label>{t('me.fld.percentage')}</Label>
           <Input
             className="mt-1"
             type="number"
@@ -1580,9 +1558,8 @@ function BeneficiaryDrawer({
               tierTotalAfter === 100 ? 'text-success' : 'text-silver'
             }`}
           >
-            {BENEFICIARY_KIND_LABEL[draft.kind] ?? draft.kind} tier will total{' '}
-            {tierTotalAfter}% after saving
-            {tierTotalAfter !== 100 && ' (must reach exactly 100%)'}.
+            {t('me.ben.tierTotal', { kind: benkLabel(t, draft.kind), pct: String(tierTotalAfter) })}
+            {tierTotalAfter !== 100 && t('me.ben.mustReach')}.
           </p>
         </div>
         {tierError && (
@@ -1593,10 +1570,10 @@ function BeneficiaryDrawer({
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
-          Cancel
+          {t('me.cancel')}
         </Button>
         <Button onClick={onSubmit} disabled={saving}>
-          {saving ? 'Saving…' : 'Save'}
+          {saving ? t('me.saving') : t('me.save')}
         </Button>
       </DrawerFooter>
     </>
@@ -1616,6 +1593,7 @@ function LifeEventsPanel({
   onRetry: () => void;
   onChange: () => void;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<typeof LIFE_EVENT_KINDS[number]>('MARRIAGE');
   const [eventDate, setEventDate] = useState(ymdLocal());
@@ -1624,7 +1602,7 @@ function LifeEventsPanel({
 
   const onSubmit = async () => {
     if (!eventDate) {
-      toast.error('Event date is required.');
+      toast.error(t('me.ev.dateRequired'));
       return;
     }
     setSaving(true);
@@ -1634,13 +1612,13 @@ function LifeEventsPanel({
         eventDate,
         notes: notes.trim() || null,
       });
-      toast.success('Life event submitted for review.');
+      toast.success(t('me.ev.submitted'));
       setOpen(false);
       setEventDate(ymdLocal());
       setNotes('');
       onChange();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to submit.');
+      toast.error(err instanceof ApiError ? err.message : t('me.ev.submitFailed'));
     } finally {
       setSaving(false);
     }
@@ -1650,7 +1628,7 @@ function LifeEventsPanel({
     <div className="space-y-4">
       <div className="flex justify-end">
         <Button onClick={() => setOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Report event
+          <Plus className="mr-2 h-4 w-4" /> {t('me.ev.report')}
         </Button>
       </div>
       <Card>
@@ -1663,11 +1641,11 @@ function LifeEventsPanel({
             )
           ) : rows.length === 0 ? (
             <EmptyState
-              title="No life events"
-              description="Marriage, birth, address changes — report them here so HR can update benefits and tax setup."
+              title={t('me.ev.emptyTitle')}
+              description={t('me.ev.emptyDesc')}
               action={
                 <Button onClick={() => setOpen(true)}>
-                  <Plus className="mr-2 h-4 w-4" /> Report event
+                  <Plus className="mr-2 h-4 w-4" /> {t('me.ev.report')}
                 </Button>
               }
             />
@@ -1675,11 +1653,11 @@ function LifeEventsPanel({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Event</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden md:table-cell">Submitted</TableHead>
-                  <TableHead className="hidden lg:table-cell">Notes</TableHead>
+                  <TableHead>{t('me.th.event')}</TableHead>
+                  <TableHead>{t('me.th.date')}</TableHead>
+                  <TableHead>{t('me.th.status')}</TableHead>
+                  <TableHead className="hidden md:table-cell">{t('me.th.submitted')}</TableHead>
+                  <TableHead className="hidden lg:table-cell">{t('me.th.notes')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1688,11 +1666,10 @@ function LifeEventsPanel({
                     <TableCell className="font-medium text-white">
                       <div className="min-w-0">
                         <div className="truncate">
-                          {LIFE_EVENT_LABEL[row.kind] ??
-                            row.kind.replace(/_/g, ' ')}
+                          {evkLabel(t, row.kind)}
                         </div>
                         <div className="md:hidden text-xs2 text-silver/70 truncate">
-                          Submitted {fmtDate(row.createdAt)}
+                          {t('me.submittedPrefix', { date: fmtDate(row.createdAt) })}
                           {row.notes ? ` · ${row.notes}` : ''}
                         </div>
                       </div>
@@ -1708,8 +1685,7 @@ function LifeEventsPanel({
                               : 'pending'
                         }
                       >
-                        {LIFE_EVENT_STATUS_LABELS[row.status] ??
-                          row.status.replace(/_/g, ' ')}
+                        {evsLabel(t, row.status)}
                       </Badge>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{fmtDate(row.createdAt)}</TableCell>
@@ -1723,11 +1699,11 @@ function LifeEventsPanel({
       </Card>
       <Drawer open={open} onOpenChange={setOpen}>
         <DrawerHeader>
-          <DrawerTitle>Report a life event</DrawerTitle>
+          <DrawerTitle>{t('me.ev.drawerTitle')}</DrawerTitle>
         </DrawerHeader>
         <DrawerBody className="space-y-4">
           <div>
-            <Label>Event</Label>
+            <Label>{t('me.fld.event')}</Label>
             <Select
               className="mt-1"
               value={kind}
@@ -1735,13 +1711,13 @@ function LifeEventsPanel({
             >
               {LIFE_EVENT_KINDS.map((k) => (
                 <option key={k} value={k}>
-                  {LIFE_EVENT_LABEL[k]}
+                  {evkLabel(t, k)}
                 </option>
               ))}
             </Select>
           </div>
           <div>
-            <Label>Event date</Label>
+            <Label>{t('me.fld.eventDate')}</Label>
             <Input
               className="mt-1"
               type="date"
@@ -1751,7 +1727,7 @@ function LifeEventsPanel({
             />
           </div>
           <div>
-            <Label>Notes</Label>
+            <Label>{t('me.fld.notes')}</Label>
             <Textarea
               className="mt-1"
               value={notes}
@@ -1759,15 +1735,15 @@ function LifeEventsPanel({
             />
           </div>
           <p className="text-xs text-silver">
-            HR reviews these within 3 business days.
+            {t('me.ev.review')}
           </p>
         </DrawerBody>
         <DrawerFooter>
           <Button variant="ghost" onClick={() => setOpen(false)}>
-            Cancel
+            {t('me.cancel')}
           </Button>
           <Button onClick={onSubmit} disabled={saving}>
-            {saving ? 'Submitting…' : 'Submit for review'}
+            {saving ? t('me.ev.submitting') : t('me.ev.submit')}
           </Button>
         </DrawerFooter>
       </Drawer>
@@ -1786,6 +1762,7 @@ function TaxDocsPanel({
   error: string | null;
   onRetry: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <Card>
       <CardContent className="p-0">
@@ -1797,20 +1774,20 @@ function TaxDocsPanel({
           )
         ) : rows.length === 0 ? (
           <EmptyState
-            title="No tax documents yet"
-            description="W-2 / 1099 forms will appear here after your first tax year on payroll."
+            title={t('me.tax.emptyTitle')}
+            description={t('me.tax.emptyDesc')}
           />
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Form</TableHead>
-                <TableHead className="text-right">Tax year</TableHead>
-                <TableHead className="hidden md:table-cell">Issued</TableHead>
+                <TableHead>{t('me.th.form')}</TableHead>
+                <TableHead className="text-right">{t('me.th.taxYear')}</TableHead>
+                <TableHead className="hidden md:table-cell">{t('me.th.issued')}</TableHead>
                 <TableHead className="hidden md:table-cell text-right">
-                  Size
+                  {t('me.th.size')}
                 </TableHead>
-                <TableHead className="w-32 text-right">Action</TableHead>
+                <TableHead className="w-32 text-right">{t('me.th.action')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1822,7 +1799,7 @@ function TaxDocsPanel({
                         {TAX_DOC_LABEL[row.kind] ?? row.kind}
                       </div>
                       <div className="md:hidden text-xs2 text-silver/70 truncate">
-                        Issued {fmtDate(row.issuedAt)}
+                        {t('me.issuedPrefix', { date: fmtDate(row.issuedAt) })}
                         {row.fileSize ? ` · ${Math.round(row.fileSize / 1024)} KB` : ''}
                       </div>
                     </div>
@@ -1838,7 +1815,7 @@ function TaxDocsPanel({
                     {row.downloadUrl ? (
                       <Button asChild variant="ghost" size="sm">
                         <a href={row.downloadUrl} download>
-                          Download
+                          {t('me.tax.download')}
                         </a>
                       </Button>
                     ) : (
@@ -1846,9 +1823,9 @@ function TaxDocsPanel({
                         variant="ghost"
                         size="sm"
                         disabled
-                        title="Legacy document — contact HR for a copy"
+                        title={t('me.tax.legacyHint')}
                       >
-                        Download
+                        {t('me.tax.download')}
                       </Button>
                     )}
                   </TableCell>
