@@ -2,10 +2,6 @@ import type {
   ManualAttestationCreateInput,
   ManualAttestationListResponse,
   ManualAttestationSignal,
-  SafetyIncident,
-  SafetyIncidentCreateInput,
-  SafetyIncidentListResponse,
-  SafetyIncidentUpdateInput,
   ScorecardActionState,
   ScorecardActionStateInput,
   ScorecardActionsResponse,
@@ -73,37 +69,10 @@ export function scorecardReportUrl(clientId?: string): string {
   return `/api${scoped('/report.pdf', clientId)}`;
 }
 
+/** The tile reads the Phase 88 OSHA injury log — incident CRUD lives in
+ *  oshaWcEeoApi.ts (/osha/incidents), managed on /compliance/osha. */
 export function getScorecardSafety(clientId?: string): Promise<ScorecardSafetyResponse> {
   return apiFetch<ScorecardSafetyResponse>(scoped('/safety', clientId));
-}
-
-export function listSafetyIncidents(
-  clientId?: string,
-  status?: 'OPEN' | 'CLOSED',
-): Promise<SafetyIncidentListResponse> {
-  const base = scoped('/safety-incidents', clientId);
-  return apiFetch<SafetyIncidentListResponse>(
-    status ? `${base}${base.includes('?') ? '&' : '?'}status=${status}` : base,
-  );
-}
-
-export function createSafetyIncident(
-  body: SafetyIncidentCreateInput,
-): Promise<{ incident: SafetyIncident }> {
-  return apiFetch<{ incident: SafetyIncident }>(`${ROOT}/safety-incidents`, {
-    method: 'POST',
-    body,
-  });
-}
-
-export function updateSafetyIncident(
-  id: string,
-  body: SafetyIncidentUpdateInput,
-): Promise<{ incident: SafetyIncident }> {
-  return apiFetch<{ incident: SafetyIncident }>(`${ROOT}/safety-incidents/${id}`, {
-    method: 'PATCH',
-    body,
-  });
 }
 
 export function listAttestationSignals(): Promise<ManualAttestationListResponse> {

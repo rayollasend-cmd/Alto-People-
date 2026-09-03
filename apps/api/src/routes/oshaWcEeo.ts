@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
+import { notifyAllAdmins } from '../lib/notify.js';
 
 /**
  * Phase 88 — OSHA + WC class codes + EEO-1.
@@ -106,7 +107,27 @@ oshaWcEeoRouter.post('/osha/incidents', MANAGE_COMP, async (req, res) => {
       isRecordable: input.isRecordable ?? input.severity !== 'FIRST_AID',
       reportedById: req.user!.id,
     },
+    include: { associate: { select: { firstName: true, lastName: true } } },
   });
+
+  // A recordable is org news — every admin hears about it once, loudly.
+  // First-aid-only cases stay in the log without a broadcast.
+  if (created.isRecordable) {
+    const who = created.associate
+      ? `${created.associate.firstName} ${created.associate.lastName}`
+      : 'Unnamed worker';
+    void notifyAllAdmins({
+      subject: `Recordable safety incident — ${who}`,
+      body:
+        `${created.severity.replace(/_/g, ' ').toLowerCase()} on ${created.occurredAt.toISOString().slice(0, 10)}` +
+        `${created.location ? ` at ${created.location}` : ''}. ` +
+        `${created.description.slice(0, 200)}${created.description.length > 200 ? '…' : ''}\n\n` +
+        'Review it in the OSHA injury log; the compliance scorecard safety tile tracks it until resolved.',
+      category: 'compliance',
+      linkUrl: '/compliance/osha',
+    });
+  }
+
   res.status(201).json({ id: created.id });
 });
 

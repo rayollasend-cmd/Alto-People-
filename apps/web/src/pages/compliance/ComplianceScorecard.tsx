@@ -19,7 +19,6 @@ import {
   Sparkles,
   TrendingUp,
   WifiOff,
-  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 // Recharts (~290 KB) lives behind a lazy boundary — see ComplianceDonut below.
@@ -43,9 +42,7 @@ import {
 import { FilterChip } from '@/components/ui/FilterBar';
 import { downloadCsv } from '@/lib/csv';
 import type {
-  DirectoryEntry,
-  SafetyIncident,
-  SafetyIncidentOutcome,
+  OshaIncidentSeverity,
   ScorecardActionState,
   ScorecardExpiringItem,
   ScorecardHistoryPoint,
@@ -56,12 +53,10 @@ import type {
 import {
   OSHA_DART_TARGET,
   OSHA_TRIR_TARGET,
-  isRecordableOutcome,
   scorecardGrade,
   scorecardSeverityFromFailPct,
 } from '@alto-people/shared';
 import {
-  createSafetyIncident,
   getScorecardActions,
   getScorecardBilling,
   getScorecardExpirations,
@@ -72,16 +67,14 @@ import {
   getScorecardTraining,
   scorecardReportUrl,
   setScorecardActionState,
-  updateSafetyIncident,
   upsertAttestation,
 } from '@/lib/complianceScorecardApi';
-import { listDirectory } from '@/lib/directoryApi';
 import { useClients } from '@/lib/useClients';
 import type {
   ManualAttestationOutcome,
   ManualAttestationSignal,
 } from '@alto-people/shared';
-import { Input, Textarea, Label, Select } from '@/components/ui';
+import { Input, Textarea, Label } from '@/components/ui';
 import { downloadDocumentUrl } from '@/lib/documentsApi';
 import { fmtDate, fmtRelativeDate, parseYmd, ymdLocal } from '@/lib/format';
 import { useAuth } from '@/lib/auth';
@@ -1363,41 +1356,27 @@ function TrainingTile({ refreshEpoch, clientId }: { refreshEpoch: number; client
 }
 
 /* ----------------------------- TILE 7 ----------------------------- */
+// Reads the Phase 88 OSHA injury log (OshaIncident). Incidents are logged
+// and resolved on /compliance/osha — this tile adds the rates (TRIR/DART
+// vs real hours), the days-since sign, and the 300A posting attestation.
 
-const OUTCOME_LABEL: Record<SafetyIncidentOutcome, string> = {
-  NEAR_MISS: 'Near miss',
-  FIRST_AID_ONLY: 'First aid only',
+const SEVERITY_LABEL: Record<OshaIncidentSeverity, string> = {
+  FIRST_AID: 'First aid',
   MEDICAL_TREATMENT: 'Medical treatment',
   RESTRICTED_DUTY: 'Restricted duty',
   DAYS_AWAY: 'Days away from work',
-  LOSS_OF_CONSCIOUSNESS: 'Loss of consciousness',
-  FATALITY: 'Fatality',
+  FATAL: 'Fatality',
 };
-const OUTCOME_ORDER: SafetyIncidentOutcome[] = [
-  'NEAR_MISS',
-  'FIRST_AID_ONLY',
-  'MEDICAL_TREATMENT',
-  'RESTRICTED_DUTY',
-  'DAYS_AWAY',
-  'LOSS_OF_CONSCIOUSNESS',
-  'FATALITY',
-];
 
 function SafetyTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId: string }) {
-  // Local bump so logging/closing an incident refreshes THIS tile without
-  // waiting on the page-wide 15-minute epoch.
-  const [bump, setBump] = useState(0);
   const fetcher = useCallback(
     () => getScorecardSafety(clientId || undefined),
     [clientId],
   );
-  const { data, error, stale } = useTileData(fetcher, refreshEpoch + bump);
-  const refetch = useCallback(() => setBump((b) => b + 1), []);
+  const { data, error, stale } = useTileData(fetcher, refreshEpoch);
 
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
-  const [logOpen, setLogOpen] = useState(false);
-  const [closing, setClosing] = useState<SafetyIncident | null>(null);
 
   // 300A attestation — same optimistic-signal pattern as the other tiles.
   const [attSignal, setAttSignal] = useState<ManualAttestationSignal | null>(null);
@@ -1487,9 +1466,11 @@ function SafetyTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId
                   />
                 </div>
                 {canManage && (
-                  <Button size="sm" variant="outline" onClick={() => setLogOpen(true)}>
-                    <Plus className="h-3.5 w-3.5" />
-                    Log incident
+                  <Button size="sm" variant="outline" asChild>
+                    <Link to="/compliance/osha">
+                      <Plus className="h-3.5 w-3.5" />
+                      Log incident
+                    </Link>
                   </Button>
                 )}
               </div>
@@ -1499,50 +1480,56 @@ function SafetyTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId
                 </p>
               )}
 
-              <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1">
-                Open incidents
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-2xs uppercase tracking-widest text-silver/80">
+                  Unresolved incidents
+                </span>
+                <Link
+                  to="/compliance/osha"
+                  className="text-2xs text-gold hover:underline"
+                >
+                  Full injury log (OSHA · WC · EEO-1) →
+                </Link>
               </div>
               {data.openIncidents.length === 0 ? (
                 <div className="text-xs text-success flex items-center gap-2 py-1">
                   <CheckCircle2 className="h-3.5 w-3.5" />
-                  No open incidents.
+                  No unresolved incidents.
                 </div>
               ) : (
                 <ul className="space-y-1">
                   {data.openIncidents.map((inc) => (
-                    <li
-                      key={inc.id}
-                      className={cn(
-                        'flex items-center justify-between gap-2 px-2 py-1.5 rounded border',
-                        inc.recordable ? 'border-alert/50 bg-alert/5' : 'border-navy-secondary',
-                      )}
-                    >
-                      <div className="min-w-0">
-                        <div className="text-xs text-white truncate">
-                          {inc.associateName ?? '—'}
-                          <span className="text-silver/80"> · {OUTCOME_LABEL[inc.outcome]}</span>
-                          {inc.recordable && (
-                            <span className="ml-1.5 inline-flex rounded bg-alert/15 px-1 py-px text-2xs font-semibold text-alert align-middle">
-                              Recordable
+                    <li key={inc.id}>
+                      <Link
+                        to="/compliance/osha"
+                        className={cn(
+                          'flex items-center justify-between gap-2 px-2 py-1.5 rounded border hover:bg-navy-secondary/40',
+                          inc.isRecordable ? 'border-alert/50 bg-alert/5' : 'border-navy-secondary',
+                        )}
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs text-white truncate">
+                            {inc.associateName ?? '—'}
+                            <span className="text-silver/80"> · {SEVERITY_LABEL[inc.severity]}</span>
+                            {inc.isRecordable && (
+                              <span className="ml-1.5 inline-flex rounded bg-alert/15 px-1 py-px text-2xs font-semibold text-alert align-middle">
+                                Recordable
+                              </span>
+                            )}
+                            <span className="ml-1.5 inline-flex rounded bg-navy-secondary px-1 py-px text-2xs text-silver align-middle">
+                              {inc.status.toLowerCase()}
                             </span>
-                          )}
+                          </div>
+                          <div className="text-2xs text-silver/80 truncate">
+                            {fmtDate(inc.occurredAt)}
+                            {inc.location ? ` · ${inc.location}` : ''}
+                            {inc.clientName ? ` · ${inc.clientName}` : ''}
+                          </div>
                         </div>
-                        <div className="text-2xs text-silver/80 truncate">
-                          {fmtDate(inc.occurredAt)}
-                          {inc.location ? ` · ${inc.location}` : ''}
-                          {inc.clientName ? ` · ${inc.clientName}` : ''}
-                        </div>
-                      </div>
-                      {canManage && (
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          className="shrink-0 text-silver hover:text-success"
-                          onClick={() => setClosing(inc)}
-                        >
-                          Close
-                        </Button>
-                      )}
+                        <span className="text-xs2 text-gold flex items-center gap-1 shrink-0">
+                          Manage <ExternalLink className="h-3 w-3" />
+                        </span>
+                      </Link>
                     </li>
                   ))}
                 </ul>
@@ -1583,25 +1570,6 @@ function SafetyTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId
               setAttSignal(null);
             }}
           />
-          {logOpen && (
-            <LogIncidentDrawer
-              onClose={() => setLogOpen(false)}
-              onSaved={() => {
-                setLogOpen(false);
-                refetch();
-              }}
-            />
-          )}
-          {closing && (
-            <CloseIncidentDrawer
-              incident={closing}
-              onClose={() => setClosing(null)}
-              onSaved={() => {
-                setClosing(null);
-                refetch();
-              }}
-            />
-          )}
         </>
       )}
     </TileShell>
@@ -1614,318 +1582,6 @@ function SafetyStat({ label, value, tone }: { label: string; value: string; tone
       <div className={cn('text-lg font-bold tabular-nums leading-tight', tone)}>{value}</div>
       <div className="text-2xs text-silver/80">{label}</div>
     </div>
-  );
-}
-
-/** Typeahead over the people directory — small, debounced, keyboardable. */
-function AssociatePicker({
-  value,
-  onSelect,
-}: {
-  value: { id: string; name: string } | null;
-  onSelect: (v: { id: string; name: string } | null) => void;
-}) {
-  const [q, setQ] = useState('');
-  const [results, setResults] = useState<DirectoryEntry[]>([]);
-  const [searching, setSearching] = useState(false);
-
-  useEffect(() => {
-    const term = q.trim();
-    if (term.length < 2) {
-      setResults([]);
-      return;
-    }
-    setSearching(true);
-    const t = setTimeout(() => {
-      listDirectory({ q: term, status: 'ACTIVE', limit: 8 })
-        .then((r) => setResults(r.associates))
-        .catch(() => setResults([]))
-        .finally(() => setSearching(false));
-    }, 250);
-    return () => clearTimeout(t);
-  }, [q]);
-
-  if (value) {
-    return (
-      <div className="mt-1 inline-flex items-center gap-2 rounded border border-navy-secondary bg-navy-secondary/30 px-2.5 py-1.5 text-sm text-white">
-        {value.name}
-        <button
-          type="button"
-          onClick={() => onSelect(null)}
-          className="text-silver hover:text-white"
-          aria-label="Clear associate"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="mt-1">
-      <Input
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder="Search by name or email…"
-        aria-label="Search associates"
-      />
-      {q.trim().length >= 2 && (
-        <div className="mt-1 rounded border border-navy-secondary divide-y divide-navy-secondary overflow-hidden">
-          {results.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              onClick={() => onSelect({ id: r.id, name: `${r.firstName} ${r.lastName}` })}
-              className="w-full text-left px-2.5 py-1.5 text-xs hover:bg-navy-secondary/40"
-            >
-              <span className="text-white">
-                {r.firstName} {r.lastName}
-              </span>
-              {r.workplaceClientName && (
-                <span className="text-silver/80"> · {r.workplaceClientName}</span>
-              )}
-            </button>
-          ))}
-          {!searching && results.length === 0 && (
-            <div className="px-2.5 py-1.5 text-xs text-silver/80">No active associates match.</div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LogIncidentDrawer({
-  onClose,
-  onSaved,
-}: {
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [associate, setAssociate] = useState<{ id: string; name: string } | null>(null);
-  // datetime-local wants "YYYY-MM-DDTHH:mm" in the viewer's zone.
-  const [occurredAt, setOccurredAt] = useState(() => {
-    const d = new Date();
-    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-    return d.toISOString().slice(0, 16);
-  });
-  const [outcome, setOutcome] = useState<SafetyIncidentOutcome>('FIRST_AID_ONLY');
-  const [daysAway, setDaysAway] = useState('0');
-  const [daysRestricted, setDaysRestricted] = useState('0');
-  const [location, setLocation] = useState('');
-  const [description, setDescription] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async () => {
-    if (!associate) {
-      setError('Pick the associate involved.');
-      return;
-    }
-    if (description.trim().length < 10) {
-      setError('Describe what happened (at least 10 characters).');
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      await createSafetyIncident({
-        associateId: associate.id,
-        occurredAt: new Date(occurredAt).toISOString(),
-        location: location.trim() || null,
-        description: description.trim(),
-        outcome,
-        daysAway: outcome === 'DAYS_AWAY' ? Number(daysAway) || 0 : 0,
-        daysRestricted: outcome === 'RESTRICTED_DUTY' ? Number(daysRestricted) || 0 : 0,
-      });
-      toast.success('Incident logged.');
-      onSaved();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Save failed.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Drawer open onOpenChange={(o) => !o && onClose()}>
-      <DrawerHeader>
-        <DrawerTitle>Log safety incident</DrawerTitle>
-        <DrawerDescription>
-          OSHA Form 300 entry. Recordability is derived from the outcome — everything from
-          medical treatment up is recordable; near-misses and first aid are logged for
-          prevention only.
-        </DrawerDescription>
-      </DrawerHeader>
-      <DrawerBody>
-        <div className="space-y-3">
-          <div>
-            <Label>Associate involved</Label>
-            <AssociatePicker value={associate} onSelect={setAssociate} />
-          </div>
-          <div>
-            <Label htmlFor="incidentOccurredAt">When it happened</Label>
-            <Input
-              id="incidentOccurredAt"
-              type="datetime-local"
-              value={occurredAt}
-              onChange={(e) => setOccurredAt(e.target.value)}
-              className="mt-1"
-            />
-          </div>
-          <div>
-            <Label htmlFor="incidentOutcome">Outcome</Label>
-            <div className="mt-1">
-              <Select
-                id="incidentOutcome"
-                value={outcome}
-                onChange={(e) => setOutcome(e.target.value as SafetyIncidentOutcome)}
-              >
-                {OUTCOME_ORDER.map((o) => (
-                  <option key={o} value={o}>
-                    {OUTCOME_LABEL[o]}
-                    {isRecordableOutcome(o) ? ' (recordable)' : ''}
-                  </option>
-                ))}
-              </Select>
-            </div>
-          </div>
-          {outcome === 'DAYS_AWAY' && (
-            <div>
-              <Label htmlFor="incidentDaysAway">Calendar days away (OSHA caps at 180)</Label>
-              <Input
-                id="incidentDaysAway"
-                type="number"
-                min={0}
-                max={180}
-                value={daysAway}
-                onChange={(e) => setDaysAway(e.target.value)}
-                className="mt-1"
-              />
-            </div>
-          )}
-          {outcome === 'RESTRICTED_DUTY' && (
-            <div>
-              <Label htmlFor="incidentDaysRestricted">
-                Days of restricted duty (OSHA caps at 180)
-              </Label>
-              <Input
-                id="incidentDaysRestricted"
-                type="number"
-                min={0}
-                max={180}
-                value={daysRestricted}
-                onChange={(e) => setDaysRestricted(e.target.value)}
-                className="mt-1"
-              />
-            </div>
-          )}
-          <div>
-            <Label htmlFor="incidentLocation">Location (optional)</Label>
-            <Input
-              id="incidentLocation"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="e.g. Frontback receiving dock"
-              className="mt-1"
-            />
-          </div>
-          <div>
-            <Label htmlFor="incidentDescription">What happened</Label>
-            <Textarea
-              id="incidentDescription"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={4}
-              placeholder="What was the associate doing, what object/substance was involved, what was the injury or illness?"
-              className="mt-1"
-            />
-          </div>
-        </div>
-        {error && (
-          <p role="alert" className="text-xs text-alert mt-3">
-            {error}
-          </p>
-        )}
-      </DrawerBody>
-      <div className="border-t border-navy-secondary p-4 flex justify-end gap-2">
-        <Button variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button onClick={submit} loading={saving}>
-          Log incident
-        </Button>
-      </div>
-    </Drawer>
-  );
-}
-
-function CloseIncidentDrawer({
-  incident,
-  onClose,
-  onSaved,
-}: {
-  incident: SafetyIncident;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [notes, setNotes] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async () => {
-    setSaving(true);
-    setError(null);
-    try {
-      await updateSafetyIncident(incident.id, {
-        status: 'CLOSED',
-        closureNotes: notes.trim() || null,
-      });
-      toast.success('Incident closed.');
-      onSaved();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Close failed.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Drawer open onOpenChange={(o) => !o && onClose()}>
-      <DrawerHeader>
-        <DrawerTitle>Close incident</DrawerTitle>
-        <DrawerDescription>
-          {incident.associateName ?? '—'} · {OUTCOME_LABEL[incident.outcome]} ·{' '}
-          {fmtDate(incident.occurredAt)}
-        </DrawerDescription>
-      </DrawerHeader>
-      <DrawerBody>
-        <div>
-          <Label htmlFor="closureNotes">Resolution notes (optional)</Label>
-          <Textarea
-            id="closureNotes"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={3}
-            placeholder="e.g. returned to full duty 9/10, guard rail installed on the dock"
-            className="mt-1"
-          />
-        </div>
-        {error && (
-          <p role="alert" className="text-xs text-alert mt-3">
-            {error}
-          </p>
-        )}
-      </DrawerBody>
-      <div className="border-t border-navy-secondary p-4 flex justify-end gap-2">
-        <Button variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button onClick={submit} loading={saving}>
-          Close incident
-        </Button>
-      </div>
-    </Drawer>
   );
 }
 

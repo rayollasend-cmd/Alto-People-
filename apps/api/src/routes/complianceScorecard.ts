@@ -26,22 +26,18 @@ import {
   ScorecardHistoryResponseSchema,
   scorecardSeverityFromFailPct,
   scorecardGrade,
-  SafetyIncidentCreateInputSchema,
-  SafetyIncidentUpdateInputSchema,
-  SafetyIncidentListResponseSchema,
   ScorecardSafetyResponseSchema,
-  isRecordableOutcome,
-  isDartOutcome,
+  isDartSeverity,
   OSHA_TRIR_TARGET,
-  type SafetyIncident,
-  type SafetyIncidentOutcome,
+  type OshaIncidentSeverity,
+  type ScorecardSafetyIncident,
   type ScorecardSafetyResponse,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { addBusinessDays } from '../lib/everifyReadiness.js';
-import { notifyUser, notifyAllAdmins } from '../lib/notify.js';
+import { notifyUser } from '../lib/notify.js';
 import { getShiftMetrics, isConfigured as asnNexusConfigured, type AsnNexusMetric } from '../lib/asnNexus.js';
 import {
   ATTESTATION_CONFIGS,
@@ -1313,48 +1309,47 @@ export async function buildTrainingTile(
 }
 
 /* ============================================================ TILE 7 ===== *
- * OSHA safety — incident log (Form 300 shape) + TRIR/DART normalized
- * against real hours worked from TimeEntry. Recordability is derived from
- * the outcome per 1904.7 at write time, never re-decided at read time.
+ * OSHA safety — READS the Phase 88 injury log (OshaIncident, managed at
+ * /compliance/osha with its own /osha/incidents CRUD + /osha/300a summary).
+ * This tile adds what the log page doesn't have: TRIR/DART normalized
+ * against real hours worked from TimeEntry, days-since-last-recordable,
+ * and the 300A posting attestation. One log, one truth — the tile never
+ * writes incidents.
  * ========================================================================= */
 
-const SAFETY_OUTCOME_LABEL: Record<SafetyIncidentOutcome, string> = {
-  NEAR_MISS: 'near miss',
-  FIRST_AID_ONLY: 'first aid only',
+const SAFETY_SEVERITY_LABEL: Record<OshaIncidentSeverity, string> = {
+  FIRST_AID: 'first aid',
   MEDICAL_TREATMENT: 'medical treatment',
   RESTRICTED_DUTY: 'restricted duty',
   DAYS_AWAY: 'days away from work',
-  LOSS_OF_CONSCIOUSNESS: 'loss of consciousness',
-  FATALITY: 'fatality',
+  FATAL: 'fatality',
 };
 
 const incidentInclude = {
   associate: { select: { firstName: true, lastName: true } },
   client: { select: { name: true } },
-  reportedBy: { select: { email: true } },
 } as const;
 
-type IncidentRow = Prisma.SafetyIncidentGetPayload<{ include: typeof incidentInclude }>;
+type IncidentRow = Prisma.OshaIncidentGetPayload<{ include: typeof incidentInclude }>;
 
-function serializeIncident(r: IncidentRow): SafetyIncident {
+function serializeIncident(r: IncidentRow): ScorecardSafetyIncident {
   return {
     id: r.id,
     associateId: r.associateId,
-    associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+    associateName: r.associate
+      ? `${r.associate.firstName} ${r.associate.lastName}`
+      : null,
     clientId: r.clientId,
     clientName: r.client?.name ?? null,
     occurredAt: r.occurredAt.toISOString(),
     location: r.location,
     description: r.description,
-    outcome: r.outcome,
-    recordable: r.recordable,
+    bodyPart: r.bodyPart,
+    severity: r.severity,
+    isRecordable: r.isRecordable,
     daysAway: r.daysAway,
     daysRestricted: r.daysRestricted,
     status: r.status,
-    closedAt: r.closedAt?.toISOString() ?? null,
-    closureNotes: r.closureNotes,
-    reportedByEmail: r.reportedBy?.email ?? null,
-    createdAt: r.createdAt.toISOString(),
   };
 }
 
@@ -1391,18 +1386,18 @@ export async function buildSafetyTile(
   const scope = clientId ? { clientId } : {};
 
   const [ytdRecordables, lastRecordable, openRows, hours] = await Promise.all([
-    prisma.safetyIncident.findMany({
+    prisma.oshaIncident.findMany({
       take: 10_000,
-      where: { recordable: true, occurredAt: { gte: ytdStart }, ...scope },
-      select: { outcome: true },
+      where: { isRecordable: true, occurredAt: { gte: ytdStart }, ...scope },
+      select: { severity: true },
     }),
-    prisma.safetyIncident.findFirst({
-      where: { recordable: true, ...scope },
+    prisma.oshaIncident.findFirst({
+      where: { isRecordable: true, ...scope },
       orderBy: { occurredAt: 'desc' },
       select: { occurredAt: true },
     }),
-    prisma.safetyIncident.findMany({
-      where: { status: 'OPEN', ...scope },
+    prisma.oshaIncident.findMany({
+      where: { status: { in: ['REPORTED', 'INVESTIGATING', 'ESCALATED'] }, ...scope },
       orderBy: { occurredAt: 'desc' },
       take: 50,
       include: incidentInclude,
@@ -1411,7 +1406,7 @@ export async function buildSafetyTile(
   ]);
 
   const recordableCountYtd = ytdRecordables.length;
-  const dartCountYtd = ytdRecordables.filter((r) => isDartOutcome(r.outcome)).length;
+  const dartCountYtd = ytdRecordables.filter((r) => isDartSeverity(r.severity)).length;
   const hoursWorkedYtd = Math.round(hours * 10) / 10;
   // OSHA normalization: incidents × 200,000 ÷ hours (100 FTE-years).
   const trir =
@@ -1433,11 +1428,11 @@ export async function buildSafetyTile(
   const overdueAtt = attestations.filter((a) => a.status === 'overdue').length;
   const dueSoonAtt = attestations.filter((a) => a.status === 'due_soon').length;
 
-  // Severity: a fatality or days-away case still open, or an overdue 300A
-  // posting, is critical. Any other open incident, a TRIR above target, or
-  // a 300A coming due is warn.
+  // Severity: a fatality or days-away case still unresolved, or an overdue
+  // 300A posting, is critical. Any other unresolved incident, a TRIR above
+  // target, or a 300A coming due is warn.
   const openSevere = openRows.some(
-    (r) => r.outcome === 'FATALITY' || r.outcome === 'DAYS_AWAY',
+    (r) => r.severity === 'FATAL' || r.severity === 'DAYS_AWAY',
   );
   const severity: ScorecardSeverity =
     openSevere || overdueAtt > 0
@@ -1459,159 +1454,6 @@ export async function buildSafetyTile(
     generatedAt: new Date().toISOString(),
   });
 }
-
-/* ----- Incident log CRUD -------------------------------------------------- */
-
-complianceScorecardRouter.get('/safety-incidents', VIEW, async (req, res, next) => {
-  try {
-    const clientId = clientScope(req);
-    const status =
-      req.query.status === 'OPEN' || req.query.status === 'CLOSED'
-        ? req.query.status
-        : undefined;
-    const rows = await prisma.safetyIncident.findMany({
-      where: {
-        ...(clientId ? { clientId } : {}),
-        ...(status ? { status } : {}),
-      },
-      orderBy: { occurredAt: 'desc' },
-      take: 200,
-      include: incidentInclude,
-    });
-    res.json(
-      SafetyIncidentListResponseSchema.parse({
-        incidents: rows.map(serializeIncident),
-      }),
-    );
-  } catch (err) {
-    next(err);
-  }
-});
-
-complianceScorecardRouter.post('/safety-incidents', MANAGE_COMPLIANCE, async (req, res, next) => {
-  try {
-    const input = SafetyIncidentCreateInputSchema.parse(req.body);
-    const occurredAt = new Date(input.occurredAt);
-    if (occurredAt.getTime() > Date.now() + 60_000) {
-      throw new HttpError(400, 'future_incident', 'An incident cannot occur in the future.');
-    }
-    // Client attribution snapshots the associate's active placement at
-    // report time so a later transfer doesn't rewrite this client's TRIR.
-    const app = await prisma.application.findFirst({
-      where: { associateId: input.associateId, status: 'APPROVED', deletedAt: null },
-      orderBy: { createdAt: 'desc' },
-      select: { clientId: true },
-    });
-    const recordable = isRecordableOutcome(input.outcome);
-
-    const row = await prisma.safetyIncident.create({
-      data: {
-        associateId: input.associateId,
-        clientId: app?.clientId ?? null,
-        occurredAt,
-        location: input.location ?? null,
-        description: input.description,
-        outcome: input.outcome,
-        recordable,
-        daysAway: input.daysAway ?? 0,
-        daysRestricted: input.daysRestricted ?? 0,
-        reportedById: req.user!.id,
-      },
-      include: incidentInclude,
-    });
-
-    enqueueAudit(
-      {
-        actorUserId: req.user!.id,
-        action: 'compliance.safety_incident.created',
-        entityType: 'SafetyIncident',
-        entityId: row.id,
-        metadata: {
-          associateId: input.associateId,
-          outcome: input.outcome,
-          recordable,
-        },
-      },
-      'safety incident created',
-    );
-
-    // A recordable is org news — every admin hears about it once, loudly.
-    // Near-misses and first-aid stay in the log without a broadcast.
-    if (recordable) {
-      void notifyAllAdmins({
-        subject: `Recordable safety incident — ${row.associate.firstName} ${row.associate.lastName}`,
-        body:
-          `${SAFETY_OUTCOME_LABEL[row.outcome]} on ${occurredAt.toISOString().slice(0, 10)}` +
-          `${row.location ? ` at ${row.location}` : ''}. ` +
-          `${input.description.slice(0, 200)}${input.description.length > 200 ? '…' : ''}\n\n` +
-          'Review it on the compliance scorecard (Safety tile).',
-        category: 'compliance',
-        linkUrl: '/compliance?tab=scorecard',
-      });
-    }
-
-    res.status(201).json({ incident: serializeIncident(row) });
-  } catch (err) {
-    if (err instanceof z.ZodError) {
-      next(new HttpError(400, 'invalid_body', 'Invalid incident', err.flatten()));
-      return;
-    }
-    next(err);
-  }
-});
-
-complianceScorecardRouter.patch('/safety-incidents/:id', MANAGE_COMPLIANCE, async (req, res, next) => {
-  try {
-    const id = z.string().uuid().parse(req.params.id);
-    const input = SafetyIncidentUpdateInputSchema.parse(req.body);
-    const existing = await prisma.safetyIncident.findUnique({
-      where: { id },
-      select: { status: true },
-    });
-    if (!existing) throw new HttpError(404, 'not_found', 'Incident not found.');
-
-    const data: Prisma.SafetyIncidentUpdateInput = {
-      ...(input.outcome !== undefined
-        ? { outcome: input.outcome, recordable: isRecordableOutcome(input.outcome) }
-        : {}),
-      ...(input.daysAway !== undefined ? { daysAway: input.daysAway } : {}),
-      ...(input.daysRestricted !== undefined ? { daysRestricted: input.daysRestricted } : {}),
-      ...(input.closureNotes !== undefined ? { closureNotes: input.closureNotes } : {}),
-    };
-    if (input.status !== undefined && input.status !== existing.status) {
-      data.status = input.status;
-      data.closedAt = input.status === 'CLOSED' ? new Date() : null;
-    }
-
-    const row = await prisma.safetyIncident.update({
-      where: { id },
-      data,
-      include: incidentInclude,
-    });
-
-    enqueueAudit(
-      {
-        actorUserId: req.user!.id,
-        action: 'compliance.safety_incident.updated',
-        entityType: 'SafetyIncident',
-        entityId: id,
-        metadata: {
-          status: input.status ?? null,
-          outcome: input.outcome ?? null,
-        },
-      },
-      'safety incident updated',
-    );
-
-    res.json({ incident: serializeIncident(row) });
-  } catch (err) {
-    if (err instanceof z.ZodError) {
-      next(new HttpError(400, 'invalid_body', 'Invalid incident update', err.flatten()));
-      return;
-    }
-    next(err);
-  }
-});
 
 /* ============================================================ TILE 6 ===== *
  * Open actions — server-side rollup so the page renders without 5 tiles
@@ -1699,10 +1541,10 @@ export function computeWeightedScore(bundle: ScorecardBundle): number {
     score += SHIFTS_WEIGHT;
   }
 
-  // Each OPEN recordable incident costs a quarter of the safety weight.
-  // TRIR/DART stay informational — the score punishes unresolved incidents,
-  // not the historical rate the org can no longer change.
-  const openRecordables = safety.openIncidents.filter((i) => i.recordable).length;
+  // Each unresolved recordable incident costs a quarter of the safety
+  // weight. TRIR/DART stay informational — the score punishes unresolved
+  // incidents, not the historical rate the org can no longer change.
+  const openRecordables = safety.openIncidents.filter((i) => i.isRecordable).length;
   score += SAFETY_WEIGHT * Math.max(0, 1 - openRecordables / 4);
 
   const anyStatutoryOverdue = onboarding.signals.some((s) => (s.overdueCount ?? 0) > 0);
@@ -1813,14 +1655,14 @@ export async function buildActionsTile(
     }
   }
 
-  // Tile 7 — every open safety incident is an action until a human closes
-  // it. Fatality / days-away cases are critical; the rest warn.
+  // Tile 7 — every unresolved OSHA incident is an action until someone
+  // resolves it in the injury log. Fatality / days-away cases are critical.
   for (const inc of safety.openIncidents) {
     actions.push({
       id: `saf:${inc.id}`,
       severity:
-        inc.outcome === 'FATALITY' || inc.outcome === 'DAYS_AWAY' ? 'critical' : 'warn',
-      title: `${inc.associateName ?? 'Associate'} — open safety incident (${SAFETY_OUTCOME_LABEL[inc.outcome]}, ${inc.occurredAt.slice(0, 10)})`,
+        inc.severity === 'FATAL' || inc.severity === 'DAYS_AWAY' ? 'critical' : 'warn',
+      title: `${inc.associateName ?? 'Associate'} — unresolved safety incident (${SAFETY_SEVERITY_LABEL[inc.severity]}, ${inc.occurredAt.slice(0, 10)})`,
       contractClause: CLAUSE.OSHA_LOG,
       subject: {
         associateId: inc.associateId,
@@ -1828,8 +1670,8 @@ export async function buildActionsTile(
         clientId: inc.clientId,
         clientName: inc.clientName,
       },
-      // The incident is closed on the safety tile itself, same page.
-      link: null,
+      // Incidents are investigated/resolved on the OSHA · WC · EEO-1 page.
+      link: '/compliance/osha',
     });
   }
 

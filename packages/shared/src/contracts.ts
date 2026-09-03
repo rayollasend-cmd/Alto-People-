@@ -5508,33 +5508,30 @@ export const ScorecardHistoryResponseSchema = z.object({
 export type ScorecardHistoryResponse = z.infer<typeof ScorecardHistoryResponseSchema>;
 
 // ----- Tile 7 — OSHA safety ------------------------------------------------
+// The tile READS the pre-existing OSHA injury log (Phase 88 — OshaIncident,
+// managed at /compliance/osha). These schemas mirror that model's enums;
+// they do not define a second incident system.
 
-export const SafetyIncidentOutcomeSchema = z.enum([
-  'NEAR_MISS',
-  'FIRST_AID_ONLY',
+export const OshaIncidentSeveritySchema = z.enum([
+  'FIRST_AID',
   'MEDICAL_TREATMENT',
   'RESTRICTED_DUTY',
   'DAYS_AWAY',
-  'LOSS_OF_CONSCIOUSNESS',
-  'FATALITY',
+  'FATAL',
 ]);
-export type SafetyIncidentOutcome = z.infer<typeof SafetyIncidentOutcomeSchema>;
+export type OshaIncidentSeverity = z.infer<typeof OshaIncidentSeveritySchema>;
 
-export const SafetyIncidentStatusSchema = z.enum(['OPEN', 'CLOSED']);
-export type SafetyIncidentStatus = z.infer<typeof SafetyIncidentStatusSchema>;
-
-/** OSHA 1904.7 general recording criteria — the single source of truth for
- *  what counts as an OSHA 300 recordable. Server derives the stored flag
- *  from this; the UI uses it to hint the form. */
-export const SAFETY_RECORDABLE_OUTCOMES: ReadonlySet<SafetyIncidentOutcome> =
-  new Set(['MEDICAL_TREATMENT', 'RESTRICTED_DUTY', 'DAYS_AWAY', 'LOSS_OF_CONSCIOUSNESS', 'FATALITY']);
-export function isRecordableOutcome(outcome: SafetyIncidentOutcome): boolean {
-  return SAFETY_RECORDABLE_OUTCOMES.has(outcome);
-}
+export const OshaIncidentStatusSchema = z.enum([
+  'REPORTED',
+  'INVESTIGATING',
+  'RESOLVED',
+  'ESCALATED',
+]);
+export type OshaIncidentStatus = z.infer<typeof OshaIncidentStatusSchema>;
 
 /** DART = the recordables that involved days away or restricted duty. */
-export function isDartOutcome(outcome: SafetyIncidentOutcome): boolean {
-  return outcome === 'DAYS_AWAY' || outcome === 'RESTRICTED_DUTY';
+export function isDartSeverity(severity: OshaIncidentSeverity): boolean {
+  return severity === 'DAYS_AWAY' || severity === 'RESTRICTED_DUTY';
 }
 
 /** Incident-rate targets: incidents × 200,000 ÷ hours worked (the OSHA
@@ -5543,52 +5540,24 @@ export function isDartOutcome(outcome: SafetyIncidentOutcome): boolean {
 export const OSHA_TRIR_TARGET = 3.0;
 export const OSHA_DART_TARGET = 2.0;
 
-export const SafetyIncidentSchema = z.object({
+/** One OshaIncident as the scorecard tile surfaces it. */
+export const ScorecardSafetyIncidentSchema = z.object({
   id: UuidSchema,
-  associateId: UuidSchema,
+  associateId: UuidSchema.nullable(),
   associateName: z.string().nullable(),
-  clientId: UuidSchema.nullable(),
+  clientId: UuidSchema,
   clientName: z.string().nullable(),
   occurredAt: z.string().datetime(),
   location: z.string().nullable(),
   description: z.string(),
-  outcome: SafetyIncidentOutcomeSchema,
-  recordable: z.boolean(),
+  bodyPart: z.string().nullable(),
+  severity: OshaIncidentSeveritySchema,
+  isRecordable: z.boolean(),
   daysAway: z.number().int().nonnegative(),
   daysRestricted: z.number().int().nonnegative(),
-  status: SafetyIncidentStatusSchema,
-  closedAt: z.string().datetime().nullable(),
-  closureNotes: z.string().nullable(),
-  reportedByEmail: z.string().nullable(),
-  createdAt: z.string().datetime(),
+  status: OshaIncidentStatusSchema,
 });
-export type SafetyIncident = z.infer<typeof SafetyIncidentSchema>;
-
-export const SafetyIncidentCreateInputSchema = z.object({
-  associateId: UuidSchema,
-  occurredAt: z.string().datetime(),
-  location: z.string().trim().max(200).nullable().optional(),
-  description: z.string().trim().min(10).max(4000),
-  outcome: SafetyIncidentOutcomeSchema,
-  // OSHA caps both counts at 180 calendar days.
-  daysAway: z.number().int().min(0).max(180).optional(),
-  daysRestricted: z.number().int().min(0).max(180).optional(),
-});
-export type SafetyIncidentCreateInput = z.infer<typeof SafetyIncidentCreateInputSchema>;
-
-export const SafetyIncidentUpdateInputSchema = z.object({
-  outcome: SafetyIncidentOutcomeSchema.optional(),
-  daysAway: z.number().int().min(0).max(180).optional(),
-  daysRestricted: z.number().int().min(0).max(180).optional(),
-  status: SafetyIncidentStatusSchema.optional(),
-  closureNotes: z.string().trim().max(4000).nullable().optional(),
-});
-export type SafetyIncidentUpdateInput = z.infer<typeof SafetyIncidentUpdateInputSchema>;
-
-export const SafetyIncidentListResponseSchema = z.object({
-  incidents: z.array(SafetyIncidentSchema),
-});
-export type SafetyIncidentListResponse = z.infer<typeof SafetyIncidentListResponseSchema>;
+export type ScorecardSafetyIncident = z.infer<typeof ScorecardSafetyIncidentSchema>;
 
 export const ScorecardSafetyResponseSchema = z.object({
   /** Whole days since the most recent recordable, all-time. Null = none ever
@@ -5601,7 +5570,8 @@ export const ScorecardSafetyResponseSchema = z.object({
   /** Null when there are no hours yet to normalize against. */
   trir: z.number().nonnegative().nullable(),
   dart: z.number().nonnegative().nullable(),
-  openIncidents: z.array(SafetyIncidentSchema),
+  /** Unresolved incidents (REPORTED / INVESTIGATING / ESCALATED). */
+  openIncidents: z.array(ScorecardSafetyIncidentSchema),
   attestations: z.array(ManualAttestationSignalSchema),
   severity: ScorecardSeveritySchema,
   generatedAt: z.string().datetime(),

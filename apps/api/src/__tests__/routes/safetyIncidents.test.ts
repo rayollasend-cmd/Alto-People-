@@ -12,11 +12,12 @@ import {
 } from '../../../test/db.js';
 
 /**
- * OSHA safety tile (scorecard tile 7):
- *   - recordability derived from outcome per 1904.7 (never client-supplied)
+ * Scorecard safety tile (tile 7) — reads the Phase 88 OSHA injury log
+ * (OshaIncident via /osha/incidents), it does NOT own a second incident
+ * store. Covers:
  *   - TRIR/DART normalized against real TimeEntry hours
  *   - days-since-last-recordable
- *   - close flow + open-incident actions
+ *   - unresolved incidents driving tile severity + the actions rollup
  *   - client scoping and the executive read-only boundary
  */
 
@@ -55,94 +56,30 @@ async function activeAssociate(clientId: string) {
   return associate;
 }
 
-function incidentBody(associateId: string, overrides: Record<string, unknown> = {}) {
+function incidentBody(
+  clientId: string,
+  associateId: string,
+  overrides: Record<string, unknown> = {},
+) {
   return {
+    clientId,
     associateId,
     occurredAt: new Date(Date.now() - 2 * DAY).toISOString(),
     description: 'Slipped on a wet floor in receiving while unloading pallets.',
-    outcome: 'MEDICAL_TREATMENT',
+    severity: 'MEDICAL_TREATMENT',
     ...overrides,
   };
 }
 
-describe('incident CRUD', () => {
-  it('derives recordable from the outcome — never trusts the client', async () => {
-    const client = await createClient();
-    const assoc = await activeAssociate(client.id);
-    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
-    const a = await loginAs(hr.email);
-
-    const medical = await a
-      .post('/compliance-scorecard/safety-incidents')
-      .send(incidentBody(assoc.id));
-    expect(medical.status).toBe(201);
-    expect(medical.body.incident.recordable).toBe(true);
-    // Client attribution snapshots the active placement.
-    expect(medical.body.incident.clientId).toBe(client.id);
-
-    const nearMiss = await a
-      .post('/compliance-scorecard/safety-incidents')
-      .send(incidentBody(assoc.id, { outcome: 'NEAR_MISS' }));
-    expect(nearMiss.status).toBe(201);
-    expect(nearMiss.body.incident.recordable).toBe(false);
-
-    const future = await a
-      .post('/compliance-scorecard/safety-incidents')
-      .send(incidentBody(assoc.id, { occurredAt: new Date(Date.now() + DAY).toISOString() }));
-    expect(future.status).toBe(400);
-  });
-
-  it('closing sets closedAt and re-outcoming re-derives recordable', async () => {
-    const client = await createClient();
-    const assoc = await activeAssociate(client.id);
-    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
-    const a = await loginAs(hr.email);
-
-    const created = await a
-      .post('/compliance-scorecard/safety-incidents')
-      .send(incidentBody(assoc.id, { outcome: 'FIRST_AID_ONLY' }));
-    const id = created.body.incident.id;
-
-    const upgraded = await a
-      .patch(`/compliance-scorecard/safety-incidents/${id}`)
-      .send({ outcome: 'RESTRICTED_DUTY', daysRestricted: 5 });
-    expect(upgraded.status).toBe(200);
-    expect(upgraded.body.incident.recordable).toBe(true);
-    expect(upgraded.body.incident.daysRestricted).toBe(5);
-
-    const closed = await a
-      .patch(`/compliance-scorecard/safety-incidents/${id}`)
-      .send({ status: 'CLOSED', closureNotes: 'Returned to full duty; mats installed.' });
-    expect(closed.status).toBe(200);
-    expect(closed.body.incident.closedAt).not.toBeNull();
-    expect(closed.body.incident.closureNotes).toContain('mats');
-  });
-
-  it('executive chairman can read the tile but cannot write incidents', async () => {
-    const client = await createClient();
-    const assoc = await activeAssociate(client.id);
-    const { user: exec } = await createUser({ role: 'EXECUTIVE_CHAIRMAN' });
-    const a = await loginAs(exec.email);
-
-    const read = await a.get('/compliance-scorecard/safety');
-    expect(read.status).toBe(200);
-
-    const write = await a
-      .post('/compliance-scorecard/safety-incidents')
-      .send(incidentBody(assoc.id));
-    expect(write.status).toBe(403);
-  });
-});
-
-describe('safety tile math', () => {
+describe('safety tile reads the existing OSHA injury log', () => {
   it('computes TRIR/DART from real time-entry hours and counts YTD recordables', async () => {
     const client = await createClient();
     const assoc = await activeAssociate(client.id);
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
 
-    // 100 hours worked this year → 1 recordable = TRIR 2000, DART 2000 for
-    // a DAYS_AWAY case.
+    // 100 hours worked this year → 1 recordable = TRIR 2000; DAYS_AWAY
+    // also counts toward DART.
     const clockInAt = new Date(Date.now() - 10 * DAY);
     await prisma.timeEntry.create({
       data: {
@@ -154,9 +91,10 @@ describe('safety tile math', () => {
       },
     });
 
-    await a
-      .post('/compliance-scorecard/safety-incidents')
-      .send(incidentBody(assoc.id, { outcome: 'DAYS_AWAY', daysAway: 3 }));
+    const created = await a
+      .post('/osha/incidents')
+      .send(incidentBody(client.id, assoc.id, { severity: 'DAYS_AWAY', daysAway: 3 }));
+    expect(created.status).toBe(201);
 
     const res = await a.get('/compliance-scorecard/safety');
     expect(res.status).toBe(200);
@@ -166,18 +104,22 @@ describe('safety tile math', () => {
     expect(res.body.trir).toBeCloseTo(2000, 0);
     expect(res.body.dart).toBeCloseTo(2000, 0);
     expect(res.body.daysSinceLastRecordable).toBe(2);
-    // Open days-away case = critical tile.
+    // Unresolved days-away case = critical tile.
     expect(res.body.severity).toBe('critical');
+    // The tile surfaces the log's row, same id — one source of truth.
+    expect(res.body.openIncidents.map((i: { id: string }) => i.id)).toContain(
+      created.body.id,
+    );
   });
 
-  it('closing the incident clears it from openIncidents and relaxes severity', async () => {
+  it('first-aid cases are not recordable and resolving clears the open list', async () => {
     const client = await createClient();
     const assoc = await activeAssociate(client.id);
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
 
-    // Attest the annual 300A posting so the only thing driving severity is
-    // the incident itself (past Feb 1 the unattested posting is overdue by
+    // Attest the annual 300A posting so the only severity driver left is
+    // the incident state (past Feb 1 an unattested posting is overdue by
     // design, same as the insurance attestations).
     const jan1 = `${new Date().getUTCFullYear()}-01-01`;
     const att = await a.post('/compliance-scorecard/attestations').send({
@@ -190,17 +132,23 @@ describe('safety tile math', () => {
     });
     expect(att.status).toBe(201);
 
-    const created = await a
-      .post('/compliance-scorecard/safety-incidents')
-      .send(incidentBody(assoc.id, { outcome: 'DAYS_AWAY' }));
-    await a
-      .patch(`/compliance-scorecard/safety-incidents/${created.body.incident.id}`)
-      .send({ status: 'CLOSED' });
+    const firstAid = await a
+      .post('/osha/incidents')
+      .send(incidentBody(client.id, assoc.id, { severity: 'FIRST_AID' }));
+    expect(firstAid.status).toBe(201);
 
-    const res = await a.get('/compliance-scorecard/safety');
+    let res = await a.get('/compliance-scorecard/safety');
+    expect(res.body.recordableCountYtd).toBe(0);
+    // Unresolved (but non-recordable) incident = warn, not critical.
+    expect(res.body.severity).toBe('warn');
+
+    const resolve = await a
+      .put(`/osha/incidents/${firstAid.body.id}`)
+      .send({ status: 'RESOLVED', resolutionNote: 'Bandaged on site; mats installed.' });
+    expect(resolve.status).toBe(200);
+
+    res = await a.get('/compliance-scorecard/safety');
     expect(res.body.openIncidents).toHaveLength(0);
-    // A recordable exists YTD but nothing is open, nothing overdue, and
-    // there are no hours yet to push TRIR over target: clean tile.
     expect(res.body.severity).toBe('ok');
   });
 
@@ -212,7 +160,7 @@ describe('safety tile math', () => {
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
 
-    await a.post('/compliance-scorecard/safety-incidents').send(incidentBody(assocA.id));
+    await a.post('/osha/incidents').send(incidentBody(clientA.id, assocA.id));
 
     const scopedA = await a.get(`/compliance-scorecard/safety?clientId=${clientA.id}`);
     expect(scopedA.body.recordableCountYtd).toBe(1);
@@ -221,25 +169,39 @@ describe('safety tile math', () => {
     expect(scopedB.body.recordableCountYtd).toBe(0);
     expect(scopedB.body.daysSinceLastRecordable).toBeNull();
   });
+
+  it('executive chairman can read the tile but cannot write to the injury log', async () => {
+    const client = await createClient();
+    const assoc = await activeAssociate(client.id);
+    const { user: exec } = await createUser({ role: 'EXECUTIVE_CHAIRMAN' });
+    const a = await loginAs(exec.email);
+
+    const read = await a.get('/compliance-scorecard/safety');
+    expect(read.status).toBe(200);
+
+    const write = await a.post('/osha/incidents').send(incidentBody(client.id, assoc.id));
+    expect(write.status).toBe(403);
+  });
 });
 
 describe('actions integration', () => {
-  it('an open days-away incident lands in the actions rollup as critical', async () => {
+  it('an unresolved days-away incident lands in the actions rollup as critical with a fix link', async () => {
     const client = await createClient();
     const assoc = await activeAssociate(client.id);
     const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
     const a = await loginAs(hr.email);
 
     const created = await a
-      .post('/compliance-scorecard/safety-incidents')
-      .send(incidentBody(assoc.id, { outcome: 'DAYS_AWAY' }));
+      .post('/osha/incidents')
+      .send(incidentBody(client.id, assoc.id, { severity: 'DAYS_AWAY' }));
 
     const res = await a.get('/compliance-scorecard/actions');
     const saf = res.body.actions.find(
-      (x: { id: string }) => x.id === `saf:${created.body.incident.id}`,
+      (x: { id: string }) => x.id === `saf:${created.body.id}`,
     );
     expect(saf).toBeTruthy();
     expect(saf.severity).toBe('critical');
+    expect(saf.link).toBe('/compliance/osha');
     expect(res.body.score).toBeGreaterThanOrEqual(0);
     expect(res.body.score).toBeLessThanOrEqual(100);
   });
