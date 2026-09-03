@@ -21,6 +21,7 @@ import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { DocumentPreview } from '@/components/DocumentPreview';
+import { DocumentCropDialog, shapeForDocument } from '@/components/DocumentCropDialog';
 
 const KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
   { value: 'ID', label: 'Government ID' },
@@ -124,11 +125,19 @@ export function AssociateDocumentsView() {
     };
   }, []);
 
+  // Image uploads pause at the standardization crop (fixed ratio, rotate,
+  // scan enhancement); PDFs skip it — they're already documents.
+  const [cropPending, setCropPending] = useState<File | null>(null);
+
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     const file = fileRef.current?.files?.[0];
     if (!file) {
       setError('Choose a file first.');
+      return;
+    }
+    if (file.type.startsWith('image/') && file.size <= MAX_UPLOAD_BYTES) {
+      setCropPending(file);
       return;
     }
     if (file.size > MAX_UPLOAD_BYTES) {
@@ -138,6 +147,10 @@ export function AssociateDocumentsView() {
       );
       return;
     }
+    await performUpload(file);
+  };
+
+  const performUpload = async (file: File) => {
     setBusy(true);
     setError(null);
     try {
@@ -389,6 +402,17 @@ export function AssociateDocumentsView() {
         busy={deleting}
         onConfirm={confirmDelete}
       />
+      {cropPending && (
+        <DocumentCropDialog
+          file={cropPending}
+          initialShape={shapeForDocument({ kind })}
+          onCancel={() => setCropPending(null)}
+          onCropped={(standardized) => {
+            setCropPending(null);
+            void performUpload(standardized);
+          }}
+        />
+      )}
 
       <DocumentPreview
         doc={previewDoc}

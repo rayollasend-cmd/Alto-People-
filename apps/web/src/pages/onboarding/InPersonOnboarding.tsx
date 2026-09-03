@@ -53,6 +53,7 @@ import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Badge } from '@/components/ui/Badge';
 import { DocumentCapture } from '@/components/DocumentCapture';
+import { DocumentCropDialog, shapeForDocument } from '@/components/DocumentCropDialog';
 import { cn } from '@/lib/cn';
 
 /**
@@ -151,15 +152,23 @@ export function InPersonOnboarding() {
     }
   };
 
-  const onCameraCapture = async (file: File) => {
+  // Camera shots and image picks pause at the standardization crop
+  // (fixed ratio, rotate, scan look); PDFs upload directly.
+  const [cropPending, setCropPending] = useState<File | null>(null);
+
+  const onCameraCapture = (file: File) => {
     setShowCamera(false);
-    await handleUploadFile(file, docKind);
+    setCropPending(file);
   };
 
   const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // allow same-file re-selection
     if (!file) return;
+    if (file.type.startsWith('image/')) {
+      setCropPending(file);
+      return;
+    }
     void handleUploadFile(file, docKind);
   };
 
@@ -533,11 +542,24 @@ export function InPersonOnboarding() {
           <DocumentCapture
             filenameBase={docKind.toLowerCase()}
             facingMode="environment"
+            frame={shapeForDocument({ kind: docKind })}
             onCapture={onCameraCapture}
             onCancel={() => setShowCamera(false)}
           />
         </DialogContent>
       </Dialog>
+
+      {cropPending && (
+        <DocumentCropDialog
+          file={cropPending}
+          initialShape={shapeForDocument({ kind: docKind })}
+          onCancel={() => setCropPending(null)}
+          onCropped={(standardized) => {
+            setCropPending(null);
+            void handleUploadFile(standardized, docKind);
+          }}
+        />
+      )}
 
       <ApproveDialog
         open={approveOpen}

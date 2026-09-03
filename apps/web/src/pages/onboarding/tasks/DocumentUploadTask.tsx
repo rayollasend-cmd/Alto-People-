@@ -20,6 +20,11 @@ import { statusTone } from '@/lib/status';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import {
+  DocumentCropDialog,
+  shapeForDocument,
+  type DocShape,
+} from '@/components/DocumentCropDialog';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 
@@ -161,6 +166,15 @@ export function DocumentUploadTask() {
     }
   };
 
+  // Image picks/captures pause at the standardization step (fixed-ratio
+  // crop + rotate + scan enhancement) before uploading; PDFs go straight
+  // through — a PDF is already a document.
+  const [cropPending, setCropPending] = useState<{
+    file: File;
+    target: DocumentRecord | null;
+    shape: DocShape;
+  } | null>(null);
+
   const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // allow same-file re-selection
@@ -169,6 +183,21 @@ export function DocumentUploadTask() {
     if (!file) return;
     if (file.size > MAX_BYTES) {
       setError(`File too large (max ${fmtSize(MAX_BYTES)}).`);
+      return;
+    }
+    if (file.type.startsWith('image/')) {
+      const entry = target?.i9DocTitle
+        ? i9CatalogEntry(target.i9DocTitle)
+        : selectedEntry;
+      setCropPending({
+        file,
+        target,
+        shape: shapeForDocument({
+          card: entry?.card,
+          title: entry?.title ?? target?.i9DocTitle ?? docTitle,
+          kind: target?.kind ?? entry?.kind ?? null,
+        }),
+      });
       return;
     }
     await doUpload(file, target);
@@ -512,6 +541,18 @@ export function DocumentUploadTask() {
         busy={deleting}
         onConfirm={confirmDelete}
       />
+      {cropPending && (
+        <DocumentCropDialog
+          file={cropPending.file}
+          initialShape={cropPending.shape}
+          onCancel={() => setCropPending(null)}
+          onCropped={(standardized) => {
+            const target = cropPending.target;
+            setCropPending(null);
+            void doUpload(standardized, target);
+          }}
+        />
+      )}
     </TaskShell>
   );
 }

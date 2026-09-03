@@ -24,6 +24,15 @@ import { cn } from '@/lib/cn';
  *   - `onCancel()` — user backs out.
  */
 
+/** Aspect ratio (w/h) of the alignment frame per document shape —
+ *  mirrors DocumentCropDialog's SHAPES so what the operator lines up is
+ *  what the crop step expects. */
+const FRAME_RATIO: Record<'card' | 'passport' | 'letter', number> = {
+  card: 85.6 / 53.98,
+  passport: 125 / 88,
+  letter: 8.5 / 11,
+};
+
 interface DocumentCaptureProps {
   /** Filename stem (will get `-<timestamp>.jpg` appended). */
   filenameBase?: string;
@@ -31,6 +40,10 @@ interface DocumentCaptureProps {
   facingMode?: 'environment' | 'user';
   /** Mirror the preview horizontally. Off by default for documents. */
   mirror?: boolean;
+  /** When set, a dimmed overlay with a bright document-shaped frame is
+   *  drawn over the live preview ("fill the frame edge to edge") so
+   *  captures arrive pre-aligned for the standardization crop. */
+  frame?: 'card' | 'passport' | 'letter';
   onCapture: (file: File) => void;
   onCancel?: () => void;
 }
@@ -39,6 +52,7 @@ export function DocumentCapture({
   filenameBase = 'scan',
   facingMode = 'environment',
   mirror = false,
+  frame,
   onCapture,
   onCancel,
 }: DocumentCaptureProps) {
@@ -48,6 +62,60 @@ export function DocumentCapture({
   const [error, setError] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<string | null>(null);
   const [starting, setStarting] = useState(true);
+
+  // Live edge detection — the CamScanner glow. The OpenCV wasm chunk
+  // loads lazily in the background; until it's ready (or when nothing is
+  // found) the static alignment frame does the guiding alone. Detection
+  // runs on downscaled frames a couple of times a second, never on the
+  // render path.
+  const overlayRef = useRef<SVGPolygonElement | null>(null);
+  useEffect(() => {
+    if (!frame) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    (async () => {
+      try {
+        const scan = await import('@/lib/docScan');
+        await scan.cvReady();
+        const tick = async () => {
+          if (cancelled) return;
+          const v = videoRef.current;
+          const poly = overlayRef.current;
+          if (v && poly && v.videoWidth && !streamRef.current?.getTracks().every((t) => t.readyState === 'ended')) {
+            try {
+              const quad = await scan.detectDocumentQuad(v);
+              if (cancelled || !overlayRef.current) return;
+              if (quad) {
+                // Video renders object-cover; map source coords → element
+                // coords through the cover transform.
+                const box = v.getBoundingClientRect();
+                const s = Math.max(box.width / v.videoWidth, box.height / v.videoHeight);
+                const dx = (box.width - v.videoWidth * s) / 2;
+                const dy = (box.height - v.videoHeight * s) / 2;
+                overlayRef.current.setAttribute(
+                  'points',
+                  quad.map((p) => `${p.x * s + dx},${p.y * s + dy}`).join(' '),
+                );
+                overlayRef.current.setAttribute('opacity', '1');
+              } else {
+                overlayRef.current.setAttribute('opacity', '0');
+              }
+            } catch {
+              /* per-frame detection errors are ignorable */
+            }
+          }
+          timer = window.setTimeout(() => void tick(), 400);
+        };
+        void tick();
+      } catch {
+        /* wasm unavailable — static guide only */
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [frame]);
 
   // Open the camera on mount. Falls back from 'environment' (rear) to
   // 'user' (front / webcam) if the rear camera isn't available — most
@@ -165,6 +233,39 @@ export function DocumentCapture({
               alt="Captured document preview"
               className="absolute inset-0 w-full h-full object-cover"
             />
+          )}
+          {/* Alignment guide — a bright document-shaped frame over a
+              dimmed surround. The guide occupies ~86% of the preview
+              width (or whatever height allows), matching the crop step's
+              ratio, so "fill the frame" and "fits the crop" are the same
+              action. Overlay only, not baked into the capture. */}
+          {frame && !snapshot && !starting && (
+            <div className="pointer-events-none absolute inset-0 grid place-items-center">
+              <div
+                className="rounded-md border-2 border-gold shadow-[0_0_0_9999px_rgba(6,10,25,0.55)]"
+                style={{
+                  aspectRatio: String(FRAME_RATIO[frame]),
+                  ...(FRAME_RATIO[frame] >= 1
+                    ? { width: '86%' }
+                    : { height: '86%' }),
+                }}
+              />
+              {/* Live-detected document outline (OpenCV, when loaded). */}
+              <svg className="absolute inset-0 h-full w-full">
+                <polygon
+                  ref={overlayRef}
+                  points=""
+                  opacity="0"
+                  fill="rgba(212,175,55,0.12)"
+                  stroke="rgb(120, 220, 150)"
+                  strokeWidth="3"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <div className="absolute bottom-2 inset-x-0 text-center text-xs text-white/90">
+                Fill the frame edge to edge
+              </div>
+            </div>
           )}
           {starting && (
             <div className="absolute inset-0 grid place-items-center text-silver text-sm">
