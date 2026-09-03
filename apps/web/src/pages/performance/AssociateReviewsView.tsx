@@ -11,20 +11,14 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 
 function ratingStars(n: number): string {
   return '★'.repeat(n) + '☆'.repeat(Math.max(0, 5 - n));
 }
 
-/** Associate-facing wording for review states — "SUBMITTED" is manager
- *  jargon; from this side it just means the review reached you. */
-const STATUS_LABEL: Record<PerformanceReview['status'], string> = {
-  DRAFT: 'Draft',
-  SUBMITTED: 'Shared with you',
-  ACKNOWLEDGED: 'Acknowledged',
-};
-
 export function AssociateReviewsView() {
+  const { t } = useI18n();
   const confirm = useConfirm();
   const [reviews, setReviews] = useState<PerformanceReview[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +30,7 @@ export function AssociateReviewsView() {
       const res = await listMyReviews();
       setReviews(res.reviews);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load your reviews.');
+      setError(err instanceof ApiError ? err.message : t('reviews.loadFailed'));
     }
   }, []);
 
@@ -47,10 +41,9 @@ export function AssociateReviewsView() {
   const onAck = async (id: string) => {
     if (
       !(await confirm({
-        title: 'Acknowledge this review?',
-        description:
-          "Acknowledging confirms you've read this review — it doesn't mean you agree with it.",
-        confirmLabel: 'Acknowledge',
+        title: t('reviews.ackTitle'),
+        description: t('reviews.ackDesc'),
+        confirmLabel: t('reviews.ack'),
       }))
     )
       return;
@@ -60,7 +53,7 @@ export function AssociateReviewsView() {
       await refresh();
     } catch (err) {
       setError(
-        err instanceof ApiError ? err.message : 'Could not record your acknowledgment.',
+        err instanceof ApiError ? err.message : t('reviews.ackFailed'),
       );
     } finally {
       setPendingId(null);
@@ -70,8 +63,8 @@ export function AssociateReviewsView() {
   return (
     <div className="mx-auto">
       <PageHeader
-        title="My reviews"
-        subtitle="Performance reviews from your manager."
+        title={t('reviews.title')}
+        subtitle={t('reviews.subtitle')}
       />
 
       {error && (
@@ -79,7 +72,7 @@ export function AssociateReviewsView() {
           className="mb-3"
           action={
             <Button size="sm" variant="secondary" onClick={() => void refresh()}>
-              Retry
+              {t('common.retry')}
             </Button>
           }
         >
@@ -90,8 +83,8 @@ export function AssociateReviewsView() {
       {reviews && reviews.length === 0 && (
         <EmptyState
           icon={ClipboardCheck}
-          title="No reviews yet"
-          description="When your manager submits a performance review, it'll appear here for you to read and acknowledge."
+          title={t('reviews.emptyTitle')}
+          description={t('reviews.emptyDesc')}
         />
       )}
       {reviews && reviews.length > 0 && (
@@ -120,17 +113,17 @@ export function AssociateReviewsView() {
                         : 'default'
                   }
                 >
-                  {STATUS_LABEL[r.status]}
+                  {t(('reviews.status.' + r.status) as MessageKey)}
                 </Badge>
               </div>
               <div className="text-white whitespace-pre-line mb-3">{r.summary}</div>
               {r.strengths && (
-                <Section label="Strengths" body={r.strengths} />
+                <Section label={t('reviews.strengths')} body={r.strengths} />
               )}
               {r.improvements && (
-                <Section label="Areas for improvement" body={r.improvements} />
+                <Section label={t('reviews.improvements')} body={r.improvements} />
               )}
-              {r.goals && <Section label="Goals" body={r.goals} />}
+              {r.goals && <Section label={t('reviews.goals')} body={r.goals} />}
               {r.status === 'SUBMITTED' && (
                 <div className="mt-4 pt-3 border-t border-navy-secondary">
                   <Button
@@ -140,13 +133,13 @@ export function AssociateReviewsView() {
                     loading={pendingId === r.id}
                     disabled={pendingId === r.id}
                   >
-                    {pendingId === r.id ? 'Saving…' : 'Acknowledge'}
+                    {pendingId === r.id ? t('reviews.ackSaving') : t('reviews.ack')}
                   </Button>
                 </div>
               )}
               {r.reviewerEmail && (
                 <div className="text-2xs uppercase tracking-widest text-silver/70 mt-3">
-                  Reviewed by {r.reviewerEmail}
+                  {t('reviews.reviewedBy', { email: r.reviewerEmail })}
                 </div>
               )}
             </li>

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import type { Shift } from '@alto-people/shared';
 import { Button } from '@/components/ui/Button';
 import { fmtDateTz, zonedDayKey } from '@/lib/format';
+import { useI18n } from '@/lib/i18n';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { ShiftCard, paidShiftMinutes } from './ShiftCard';
 
@@ -49,11 +50,27 @@ interface CalendarProps {
 }
 
 const DAY_MS = 86_400_000;
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
+
+/** Locale-derived weekday/month names — the calendar was the one surface
+ *  still hardcoding English day names on an otherwise-Spanish page.
+ *  2021-08-01 (a Sunday) anchors the weekday sequence; UTC rendering keeps
+ *  the anchor date from shifting in western zones. */
+function calendarNames(lang: string): { weekdays: string[]; months: string[] } {
+  const locale = lang === 'es' ? 'es-US' : 'en-US';
+  const weekdays = Array.from({ length: 7 }, (_, i) =>
+    new Date(Date.UTC(2021, 7, 1 + i)).toLocaleDateString(locale, {
+      weekday: 'short',
+      timeZone: 'UTC',
+    }),
+  );
+  const months = Array.from({ length: 12 }, (_, i) =>
+    new Date(Date.UTC(2021, i, 1)).toLocaleDateString(locale, {
+      month: 'long',
+      timeZone: 'UTC',
+    }),
+  );
+  return { weekdays, months };
+}
 
 /** Browser-local YYYY-MM-DD for a Date (zonedDayKey with no zone). */
 const localKey = (d: Date) => zonedDayKey(d);
@@ -137,6 +154,8 @@ export function ScheduleWeekView({
 }: CalendarProps) {
   const [offset, setOffset] = useState(0);
   const byDay = useMemo(() => bucketByDay(shifts), [shifts]);
+  const { lang } = useI18n();
+  const { weekdays: WEEKDAYS } = useMemo(() => calendarNames(lang), [lang]);
 
   // Calendar-day arithmetic (setDate), NOT raw ms offsets — adding
   // 86.4M-ms increments drifts an hour across a DST transition and can
@@ -257,6 +276,11 @@ export function ScheduleMonthView({
 }: CalendarProps) {
   const [offset, setOffset] = useState(0);
   const byDay = useMemo(() => bucketByDay(shifts), [shifts]);
+  const { lang } = useI18n();
+  const { weekdays: WEEKDAYS, months: MONTHS } = useMemo(
+    () => calendarNames(lang),
+    [lang],
+  );
 
   const base = new Date(now);
   const monthStart = new Date(base.getFullYear(), base.getMonth() + offset, 1);

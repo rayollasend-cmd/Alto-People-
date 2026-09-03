@@ -23,23 +23,31 @@ export function dayKey(iso: string): string {
   return localDateKey(new Date(iso));
 }
 
+/** The app language via <html lang> — same non-React channel
+ *  lib/format.ts uses, so this helper localizes without a lang param. */
+function appLocale(): string {
+  return typeof document !== 'undefined' && document.documentElement.lang === 'es'
+    ? 'es-US'
+    : 'en-US';
+}
+
 /** Friendly label: "Today" / "Yesterday" / "Friday, May 2" / "Friday, May 2, 2025". */
 export function dayHeading(key: string): string {
+  const es = appLocale() === 'es-US';
   const today = new Date();
   const todayKey = localDateKey(today);
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayKey = localDateKey(yesterday);
-  if (key === todayKey) return 'Today';
-  if (key === yesterdayKey) return 'Yesterday';
+  if (key === todayKey) return es ? 'Hoy' : 'Today';
+  if (key === yesterdayKey) return es ? 'Ayer' : 'Yesterday';
   // Parse the local key back to a Date; use noon to dodge any DST fence.
   const [y, m, d] = key.split('-').map(Number);
   const date = new Date(y, m - 1, d, 12, 0, 0);
   const sameYear = y === today.getFullYear();
-  // 'en-US' pinned to match lib/format.ts — `undefined` used the browser
-  // locale, so on a non-US browser these day headings rendered in another
-  // language beside en-US dates elsewhere on the same page.
-  return date.toLocaleDateString('en-US', {
+  // Pinned to the APP locale (not the browser's) so headings match the
+  // rest of the page in either language.
+  return date.toLocaleDateString(appLocale(), {
     weekday: 'long',
     month: 'short',
     day: 'numeric',

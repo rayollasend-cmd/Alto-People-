@@ -6,6 +6,7 @@ import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { dayHeading, fmtTimeOnly, groupByDay } from '@/lib/dayGroup';
 import { fmtDateTime } from '@/lib/format';
+import { useI18n } from '@/lib/i18n';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -43,6 +44,7 @@ export function AssociateInboxView() {
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [q, setQ] = useState('');
   const [markingAll, setMarkingAll] = useState(false);
+  const { t } = useI18n();
 
   const refresh = useCallback(async () => {
     try {
@@ -83,7 +85,7 @@ export function AssociateInboxView() {
       );
       setItems(merged);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load inbox.');
+      setError(err instanceof ApiError ? err.message : t('inbox.loadFailed'));
     }
   }, []);
 
@@ -101,7 +103,7 @@ export function AssociateInboxView() {
       }
       await refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not mark the message as read.');
+      setError(err instanceof ApiError ? err.message : t('inbox.markFailed'));
     }
   };
 
@@ -159,15 +161,15 @@ export function AssociateInboxView() {
       <PageHeader
         title={
           <>
-            Inbox{' '}
+            {t('inbox.title')}{' '}
             {unreadCount > 0 && (
               <span className="text-base text-gold align-middle ml-2">
-                ({unreadCount} unread)
+                {t('inbox.unreadSuffix', { count: unreadCount })}
               </span>
             )}
           </>
         }
-        subtitle="Messages from HR, system notifications, and company broadcasts."
+        subtitle={t('inbox.subtitle')}
       />
 
       {error && (
@@ -175,7 +177,7 @@ export function AssociateInboxView() {
           className="mb-3"
           action={
             <Button size="sm" variant="secondary" onClick={() => void refresh()}>
-              Retry
+              {t('common.retry')}
             </Button>
           }
         >
@@ -187,8 +189,8 @@ export function AssociateInboxView() {
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <div className="flex-1 min-w-48">
             <SearchInput
-              aria-label="Search messages"
-              placeholder="Search subject, body, or sender…"
+              aria-label={t('inbox.searchAria')}
+              placeholder={t('inbox.searchPlaceholder')}
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
@@ -199,7 +201,7 @@ export function AssociateInboxView() {
             aria-pressed={unreadOnly}
             onClick={() => setUnreadOnly((v) => !v)}
           >
-            Unread only
+            {t('inbox.unreadOnly')}
           </Button>
           <Button
             size="sm"
@@ -208,7 +210,7 @@ export function AssociateInboxView() {
             onClick={() => void markAllRead()}
           >
             <CheckCheck className="mr-1.5 h-3.5 w-3.5" />
-            {markingAll ? 'Marking…' : 'Mark all read'}
+            {markingAll ? t('inbox.marking') : t('inbox.markAll')}
           </Button>
         </div>
       )}
@@ -217,18 +219,18 @@ export function AssociateInboxView() {
       {items && items.length === 0 && (
         <EmptyState
           icon={Inbox}
-          title="Inbox zero"
-          description="Messages from HR, system notifications, and broadcasts will land here."
+          title={t('inbox.zeroTitle')}
+          description={t('inbox.zeroDesc')}
         />
       )}
       {visible && items && items.length > 0 && visible.length === 0 && (
         <EmptyState
           icon={Inbox}
-          title="No matches"
+          title={t('inbox.noMatches')}
           description={
             unreadOnly
-              ? 'Nothing unread matches. Clear the filters to see everything.'
-              : 'Nothing matches your search.'
+              ? t('inbox.noMatchesUnread')
+              : t('inbox.noMatchesSearch')
           }
         />
       )}
@@ -250,10 +252,9 @@ export function AssociateInboxView() {
                     {dayHeading(group.key)}
                   </span>
                   <span className="ml-auto text-silver/70">
-                    {group.entries.length} message
-                    {group.entries.length === 1 ? '' : 's'}
+                    {t(group.entries.length === 1 ? 'inbox.message' : 'inbox.messages', { count: group.entries.length })}
                     {unreadInGroup > 0 && (
-                      <span className="ml-1 text-gold">· {unreadInGroup} unread</span>
+                      <span className="ml-1 text-gold">{t('inbox.unreadInGroup', { count: unreadInGroup })}</span>
                     )}
                   </span>
                 </summary>
@@ -280,12 +281,12 @@ export function AssociateInboxView() {
                             <div className="text-white flex items-center gap-2 min-w-0">
                               {n.kind === 'broadcast' && (
                                 <Badge variant="accent" className="shrink-0 gap-1">
-                                  <Megaphone className="h-3 w-3" /> Broadcast
+                                  <Megaphone className="h-3 w-3" /> {t('inbox.broadcast')}
                                 </Badge>
                               )}
                               <span className="truncate">
                                 {n.subject ?? (
-                                  <span className="text-silver italic">(no subject)</span>
+                                  <span className="text-silver italic">{t('inbox.noSubject')}</span>
                                 )}
                               </span>
                             </div>
@@ -306,7 +307,7 @@ export function AssociateInboxView() {
                             >
                               {/* A person's message, not a raw address —
                                   the email survives on hover. */}
-                              From the Alto People team
+                              {t('inbox.fromTeam')}
                             </div>
                           )}
                         </button>
@@ -318,7 +319,7 @@ export function AssociateInboxView() {
                               className="coarse:min-h-11"
                               onClick={() => openLink(n)}
                             >
-                              Open
+                              {t('inbox.open')}
                               <ArrowUpRight className="h-3.5 w-3.5" />
                             </Button>
                           </div>

@@ -3,7 +3,6 @@ import { Link, useParams } from 'react-router-dom';
 import { ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import {
-  KIND_LABELS,
   acknowledgeDisciplinaryAction,
   listMyDisciplinaryActions,
   type MyDisciplinaryAction,
@@ -22,6 +21,7 @@ import {
   SkeletonRows,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 
 /**
  * The associate's own disciplinary record — the page the "please
@@ -31,6 +31,7 @@ import { Label } from '@/components/ui/Label';
  * legally asked to sign.
  */
 export function MyDiscipline() {
+  const { t } = useI18n();
   const { actionId } = useParams<{ actionId?: string }>();
   const [actions, setActions] = useState<MyDisciplinaryAction[] | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -59,9 +60,9 @@ export function MyDiscipline() {
   return (
     <div className="mx-auto max-w-2xl">
       <PageHeader
-        title="My record"
-        subtitle="Formal notices addressed to you. Acknowledging confirms you received and read a notice — it does not mean you agree with it."
-        breadcrumbs={[{ label: 'My profile', to: '/me' }, { label: 'Record' }]}
+        title={t('record.title')}
+        subtitle={t('record.subtitle')}
+        breadcrumbs={[{ label: t('record.title') }]}
       />
       {loadError && (
         <ErrorBanner
@@ -71,19 +72,19 @@ export function MyDiscipline() {
               onClick={() => void refresh()}
               className="underline underline-offset-2 hover:text-white"
             >
-              Retry
+              {t('common.retry')}
             </button>
           }
         >
-          Couldn&rsquo;t load your record.
+          {t('record.loadFailed')}
         </ErrorBanner>
       )}
       {actions === null && !loadError && <SkeletonRows count={2} />}
       {actions !== null && actions.length === 0 && (
         <EmptyState
           icon={ShieldAlert}
-          title="Nothing on file"
-          description="You have no disciplinary notices. Keep it that way — we're glad to have you."
+          title={t('record.emptyTitle')}
+          description={t('record.emptyDesc')}
         />
       )}
       <div className="space-y-4">
@@ -98,7 +99,7 @@ export function MyDiscipline() {
       </div>
       <div className="mt-6">
         <Link to="/me" className="text-sm text-silver hover:text-gold">
-          ← Back to my profile
+          {t('record.back')}
         </Link>
       </div>
     </div>
@@ -114,6 +115,7 @@ function ActionCard({
   highlighted: boolean;
   onChanged: () => void;
 }) {
+  const { t } = useI18n();
   const [signature, setSignature] = useState('');
   const [busy, setBusy] = useState(false);
   const signatureMatches =
@@ -127,7 +129,7 @@ function ActionCard({
     >
       <CardContent className="space-y-3 pt-5">
         <div className="flex items-center justify-between gap-3">
-          <div className="text-white font-medium">{KIND_LABELS[a.kind]}</div>
+          <div className="text-white font-medium">{t(('record.kind.' + a.kind) as MessageKey)}</div>
           <Badge
             variant={
               a.status === 'RESCINDED'
@@ -138,41 +140,45 @@ function ActionCard({
             }
           >
             {a.status === 'ACTIVE'
-              ? 'Needs your acknowledgment'
+              ? t('record.needsAck')
               : a.status === 'ACKNOWLEDGED'
-                ? 'Acknowledged'
-                : 'Rescinded'}
+                ? t('record.acked')
+                : t('record.rescinded')}
           </Badge>
         </div>
         <div className="text-xs text-silver tabular-nums">
-          Incident {fmtDate(parseYmd(a.incidentDate) ?? a.incidentDate)} ·
-          Effective {fmtDate(parseYmd(a.effectiveDate) ?? a.effectiveDate)}
-          {a.suspensionDays ? ` · ${a.suspensionDays}-day suspension` : ''}
+          {t('record.dates', {
+            incident: fmtDate(parseYmd(a.incidentDate) ?? a.incidentDate),
+            effective: fmtDate(parseYmd(a.effectiveDate) ?? a.effectiveDate),
+          })}
+          {a.suspensionDays
+            ? t('record.suspensionDays', { days: String(a.suspensionDays) })
+            : ''}
         </div>
         <p className="text-sm text-silver whitespace-pre-wrap">{a.description}</p>
         {a.expectedAction && (
           <div className="text-sm">
-            <span className="text-silver/70">What we need from you: </span>
+            <span className="text-silver/70">{t('record.expected')}</span>
             <span className="text-white">{a.expectedAction}</span>
           </div>
         )}
         {a.rescindedAt && (
           <div className="text-xs text-silver border-t border-navy-secondary pt-2">
-            Rescinded {fmtDateTime(a.rescindedAt)}
+            {t('record.rescindedAt', { when: fmtDateTime(a.rescindedAt) })}
             {a.rescindedReason ? ` — ${a.rescindedReason}` : ''}
           </div>
         )}
         {a.acknowledgedAt && (
           <div className="text-xs text-silver border-t border-navy-secondary pt-2">
-            You acknowledged this {fmtDateTime(a.acknowledgedAt)} —{' '}
+            {t('record.ackedAt', { when: fmtDateTime(a.acknowledgedAt) })}
             <span className="italic">{a.acknowledgedSig}</span>
           </div>
         )}
         {a.status === 'ACTIVE' && (
           <div className="space-y-2 border-t border-navy-secondary pt-3">
-            <Label>Acknowledge with your signature</Label>
+            <Label>{t('record.signLabel')}</Label>
             <p className="text-xs text-silver">
-              Type your full name exactly as it appears:{' '}
+              {t('record.signHint')}
               <span className="text-white">{a.associateName}</span>
             </p>
             <Input
@@ -184,7 +190,7 @@ function ActionCard({
             />
             {signature.trim().length > 0 && !signatureMatches && (
               <p role="alert" className="text-xs text-alert">
-                Signature must match your name on file.
+                {t('record.signMismatch')}
               </p>
             )}
             <Button
@@ -195,20 +201,20 @@ function ActionCard({
                 setBusy(true);
                 try {
                   await acknowledgeDisciplinaryAction(a.id, signature.trim());
-                  toast.success('Acknowledged — thank you.');
+                  toast.success(t('record.ackThanks'));
                   onChanged();
                 } catch (err) {
                   toast.error(
                     err instanceof ApiError
                       ? err.message
-                      : 'Could not record the acknowledgment.',
+                      : t('record.ackFailed'),
                   );
                 } finally {
                   setBusy(false);
                 }
               }}
             >
-              I acknowledge
+              {t('record.ackButton')}
             </Button>
           </div>
         )}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Eye, FileText, RotateCw } from 'lucide-react';
+import { Eye, FileText, RotateCw, ScanLine } from 'lucide-react';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { toast } from 'sonner';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
@@ -22,31 +22,33 @@ import { SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { DocumentPreview } from '@/components/DocumentPreview';
 import { DocumentCropDialog, shapeForDocument } from '@/components/DocumentCropDialog';
+import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
+import { usePersistentState } from '@/lib/usePersistentState';
 
-const KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
-  { value: 'ID', label: 'Government ID' },
-  { value: 'SSN_CARD', label: 'SSN card' },
-  { value: 'I9_SUPPORTING', label: 'I-9 supporting document' },
-  { value: 'OFFER_LETTER', label: 'Offer letter' },
-  { value: 'HOUSING_AGREEMENT', label: 'Housing agreement' },
-  { value: 'TRANSPORT_AGREEMENT', label: 'Transport agreement' },
-  { value: 'J1_DS2019', label: 'J-1 DS-2019' },
-  { value: 'J1_VISA', label: 'J-1 visa' },
-  { value: 'OTHER', label: 'Other' },
+const KIND_VALUES: DocumentKind[] = [
+  'ID',
+  'SSN_CARD',
+  'I9_SUPPORTING',
+  'OFFER_LETTER',
+  'HOUSING_AGREEMENT',
+  'TRANSPORT_AGREEMENT',
+  'J1_DS2019',
+  'J1_VISA',
+  'OTHER',
 ];
 
-const STATUS_BADGE: Record<
+const STATUS_VARIANT: Record<
   DocumentRecord['status'],
-  { label: string; variant: 'pending' | 'success' | 'destructive' }
+  'pending' | 'success' | 'destructive'
 > = {
-  UPLOADED: { label: 'Awaiting review', variant: 'pending' },
-  VERIFIED: { label: 'Verified', variant: 'success' },
-  REJECTED: { label: 'Rejected', variant: 'destructive' },
-  EXPIRED: { label: 'Expired', variant: 'destructive' },
+  UPLOADED: 'pending',
+  VERIFIED: 'success',
+  REJECTED: 'destructive',
+  EXPIRED: 'destructive',
 };
 
-const kindLabel = (k: DocumentKind): string =>
-  KIND_OPTIONS.find((o) => o.value === k)?.label ?? k.replace(/_/g, ' ');
+const kindLabel = (t: Translate, k: DocumentKind): string =>
+  t(('docs.kind.' + k) as MessageKey);
 
 
 // Mirrors the server's upload cap so an oversized file fails instantly
@@ -54,6 +56,14 @@ const kindLabel = (k: DocumentKind): string =>
 const MAX_UPLOAD_BYTES = UPLOAD_MAX_BYTES;
 
 export function AssociateDocumentsView() {
+  const { t } = useI18n();
+  // Legacy re-scan nudge: one-time dismissible banner announcing scan
+  // standardization (documents uploaded before it keep their old look
+  // until re-uploaded). Persisted per browser.
+  const [rescanSeen, setRescanSeen] = usePersistentState<boolean>(
+    'docs.rescanNudgeSeen',
+    false,
+  );
   const [docs, setDocs] = useState<DocumentRecord[] | null>(null);
   const [kind, setKind] = useState<DocumentKind>('ID');
   const [busy, setBusy] = useState(false);
@@ -73,7 +83,7 @@ export function AssociateDocumentsView() {
       const res = await listMyDocuments();
       setDocs(res.documents);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      setError(err instanceof ApiError ? err.message : t('docs.loadFailed'));
     }
   }, []);
 
@@ -133,7 +143,7 @@ export function AssociateDocumentsView() {
     e.preventDefault();
     const file = fileRef.current?.files?.[0];
     if (!file) {
-      setError('Choose a file first.');
+      setError(t('docs.chooseFirst'));
       return;
     }
     if (file.type.startsWith('image/') && file.size <= MAX_UPLOAD_BYTES) {
@@ -141,10 +151,7 @@ export function AssociateDocumentsView() {
       return;
     }
     if (file.size > MAX_UPLOAD_BYTES) {
-      setError(
-        `"${file.name}" is ${fmtSize(file.size)} — over the 10 MB limit. ` +
-          'Try a smaller scan or a compressed PDF.'
-      );
+      setError(t('docs.tooBig', { name: file.name, size: fmtSize(file.size) }));
       return;
     }
     await performUpload(file);
@@ -159,7 +166,7 @@ export function AssociateDocumentsView() {
       setRenewTarget(null);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed.');
+      setError(err instanceof Error ? err.message : t('docs.uploadFailed'));
     } finally {
       setBusy(false);
     }
@@ -173,7 +180,7 @@ export function AssociateDocumentsView() {
       setDeleteTarget(null);
       await refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Delete failed.');
+      setError(err instanceof ApiError ? err.message : t('docs.deleteFailed'));
     } finally {
       setDeleting(false);
     }
@@ -201,24 +208,39 @@ export function AssociateDocumentsView() {
     <div className="mx-auto">
       <PullToRefreshIndicator state={pullState} />
       <PageHeader
-        title="My documents"
-        subtitle="Upload identity, tax, and onboarding documents. HR will verify."
+        title={t('docs.title')}
+        subtitle={t('docs.subtitle')}
       />
+
+      {!rescanSeen && docs !== null && docs.length > 0 && (
+        <div className="mb-4 flex items-start gap-3 rounded-lg border border-gold/40 bg-gold/10 px-4 py-3">
+          <ScanLine className="mt-0.5 h-4 w-4 shrink-0 text-gold" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-white">
+              {t('docs.rescanTitle')}
+            </div>
+            <div className="text-xs text-silver mt-0.5">{t('docs.rescanBody')}</div>
+          </div>
+          <Button size="sm" variant="ghost" onClick={() => setRescanSeen(true)}>
+            {t('docs.rescanDismiss')}
+          </Button>
+        </div>
+      )}
 
       <form
         ref={formRef}
         onSubmit={handleUpload}
         className="bg-navy border border-navy-secondary rounded-lg p-5 mb-6 space-y-3"
       >
-        <h2 className="text-2xl text-white">Upload</h2>
+        <h2 className="text-2xl text-white">{t('docs.upload')}</h2>
         {renewTarget && (
           <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-gold/40 bg-gold/10 px-3 py-1 text-xs text-gold">
             <RotateCw className="h-3 w-3 shrink-0" />
-            <span className="truncate">Replacing: {renewTarget.filename}</span>
+            <span className="truncate">{t('docs.replacing', { name: renewTarget.filename })}</span>
             <button
               type="button"
               onClick={() => setRenewTarget(null)}
-              aria-label={`Cancel replacing ${renewTarget.filename}`}
+              aria-label={t('docs.cancelReplacing', { name: renewTarget.filename })}
               className="shrink-0 text-gold hover:text-white"
             >
               ✕
@@ -228,22 +250,22 @@ export function AssociateDocumentsView() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <label className="block">
             <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-              Kind
+              {t('docs.kindLabel')}
             </span>
             <Select
               value={kind}
               onChange={(e) => setKind(e.target.value as DocumentKind)}
             >
-              {KIND_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
+              {KIND_VALUES.map((v) => (
+                <option key={v} value={v}>
+                  {kindLabel(t, v)}
                 </option>
               ))}
             </Select>
           </label>
           <label className="block">
             <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-              File (PDF / PNG / JPG / WEBP, max 10 MB)
+              {t('docs.fileLabel')}
             </span>
             <input
               ref={fileRef}
@@ -253,32 +275,31 @@ export function AssociateDocumentsView() {
               className={cn(inputCls, 'file:text-silver file:bg-navy-secondary file:border-0 file:px-2 file:py-1 file:mr-3 file:rounded')}
             />
             <span className="block text-xs text-silver/70 mt-1">
-              Word documents aren't supported — export to PDF first.
+              {t('docs.noWord')}
             </span>
           </label>
         </div>
         {error && <ErrorBanner>{error}</ErrorBanner>}
         <Button type="submit" loading={busy} disabled={busy}>
-          {busy ? 'Uploading…' : 'Upload'}
+          {busy ? t('docs.uploading') : t('docs.upload')}
         </Button>
       </form>
 
-      <h2 className="text-2xl text-white mb-3">Your documents</h2>
+      <h2 className="text-2xl text-white mb-3">{t('docs.yourDocs')}</h2>
       {!docs && !error && <SkeletonRows count={4} rowHeight="h-14" />}
       {docs && docs.length === 0 && (
         <EmptyState
           icon={FileText}
-          title="No documents uploaded"
-          description="Use the form above to share IDs, tax forms, or onboarding paperwork. HR will review each upload."
+          title={t('docs.emptyTitle')}
+          description={t('docs.emptyDesc')}
         />
       )}
       {docs && docs.length > 0 && (
         <ul className="space-y-2">
           {docs.map((d) => {
-            const badge = STATUS_BADGE[d.status];
             const badgeEl = (
-              <Badge variant={badge.variant} className="shrink-0">
-                {badge.label}
+              <Badge variant={STATUS_VARIANT[d.status]} className="shrink-0">
+                {t(('docs.status.' + d.status) as MessageKey)}
               </Badge>
             );
             return (
@@ -289,27 +310,27 @@ export function AssociateDocumentsView() {
                 {/* md+: packed single-line row (mouse precision). */}
                 <div className="hidden md:flex md:items-center md:gap-3">
                   <div className="flex-1 min-w-0">
-                    <DocInfo d={d} />
+                    <DocInfo d={d} t={t} />
                   </div>
                   {d.status === 'EXPIRED' && (
                     <button
                       type="button"
                       onClick={() => startRenewal(d)}
                       className="text-xs text-gold hover:text-gold-bright inline-flex items-center gap-1"
-                      title="Re-upload to replace this document"
+                      title={t('docs.renewHint')}
                     >
                       <RotateCw className="h-3.5 w-3.5" />
-                      Renew
+                      {t('docs.renew')}
                     </button>
                   )}
                   <button
                     type="button"
                     onClick={() => setPreviewDoc(d)}
                     className="text-xs text-silver hover:text-gold inline-flex items-center gap-1"
-                    title={d.fileAvailable ? 'View document' : 'File missing on server — open for details'}
+                    title={d.fileAvailable ? t('docs.viewHint') : t('docs.viewMissingHint')}
                   >
                     <Eye className="h-3.5 w-3.5" />
-                    View
+                    {t('docs.view')}
                   </button>
                   {badgeEl}
                   {d.status !== 'VERIFIED' && (
@@ -317,7 +338,7 @@ export function AssociateDocumentsView() {
                       type="button"
                       onClick={() => setDeleteTarget(d)}
                       className="text-xs text-silver/70 hover:text-alert"
-                      aria-label={`Delete ${d.filename}`}
+                      aria-label={t('docs.deleteAria', { name: d.filename })}
                     >
                       ✕
                     </button>
@@ -328,7 +349,7 @@ export function AssociateDocumentsView() {
                     full-width thumb-sized (≥44px) action buttons. */}
                 <div className="md:hidden space-y-3">
                   <div className="flex items-start justify-between gap-2">
-                    <DocInfo d={d} />
+                    <DocInfo d={d} t={t} />
                     {badgeEl}
                   </div>
                   <div className="space-y-2">
@@ -339,7 +360,7 @@ export function AssociateDocumentsView() {
                         className="w-full min-h-11"
                       >
                         <RotateCw className="h-4 w-4" />
-                        Renew
+                        {t('docs.renew')}
                       </Button>
                     )}
                     <Button
@@ -349,7 +370,7 @@ export function AssociateDocumentsView() {
                       className="w-full min-h-11"
                     >
                       <Eye className="h-4 w-4" />
-                      View
+                      {t('docs.view')}
                     </Button>
                     {d.status !== 'VERIFIED' && (
                       <Button
@@ -358,7 +379,7 @@ export function AssociateDocumentsView() {
                         onClick={() => setDeleteTarget(d)}
                         className="w-full min-h-11 hover:border-alert hover:text-alert"
                       >
-                        Delete
+                        {t('docs.delete')}
                       </Button>
                     )}
                   </div>
@@ -367,10 +388,10 @@ export function AssociateDocumentsView() {
                 {d.status === 'REJECTED' && (
                   <div className="mt-3 flex flex-col gap-2 rounded-md border border-alert/40 bg-alert/10 p-3 md:flex-row md:items-center md:gap-3">
                     <p role="alert" className="flex-1 text-xs text-alert">
-                      Rejected
+                      {t('docs.rejected')}
                       {d.rejectionReason
                         ? `: ${d.rejectionReason}`
-                        : ' — no reason given. Ask HR if you’re unsure what to fix.'}
+                        : t('docs.rejectedNoReason')}
                     </p>
                     <Button
                       type="button"
@@ -378,7 +399,7 @@ export function AssociateDocumentsView() {
                       onClick={() => startRenewal(d)}
                       className="w-full min-h-11 md:w-auto md:min-h-0"
                     >
-                      Upload a replacement
+                      {t('docs.uploadReplacement')}
                     </Button>
                   </div>
                 )}
@@ -393,11 +414,11 @@ export function AssociateDocumentsView() {
         onOpenChange={(o) => !o && setDeleteTarget(null)}
         title={
           deleteTarget
-            ? `Delete "${deleteTarget.filename}"?`
-            : 'Delete document'
+            ? t('docs.deleteTitle', { name: deleteTarget.filename })
+            : t('docs.deleteFallbackTitle')
         }
-        description="The document will be removed from your record. If HR hasn't reviewed it yet, you can re-upload."
-        confirmLabel="Delete"
+        description={t('docs.deleteDesc')}
+        confirmLabel={t('docs.delete')}
         destructive
         busy={deleting}
         onConfirm={confirmDelete}
@@ -425,7 +446,7 @@ export function AssociateDocumentsView() {
 /** Filename + size + kind/expiry meta — shared between the md+ row layout
  *  and the mobile stacked card. Rejection reasons render in the dedicated
  *  callout instead of here. */
-function DocInfo({ d }: { d: DocumentRecord }) {
+function DocInfo({ d, t }: { d: DocumentRecord; t: Translate }) {
   return (
     <div className="min-w-0">
       <div className="text-white truncate">
@@ -433,21 +454,22 @@ function DocInfo({ d }: { d: DocumentRecord }) {
         <span className="text-xs text-silver/70">· {fmtSize(d.size)}</span>
       </div>
       <div className="text-xs text-silver">
-        {kindLabel(d.kind)}
+        {kindLabel(t, d.kind)}
         {d.status === 'EXPIRED' && (
           <span className="text-alert ml-2">
-            · expired{d.expiresAt ? ` ${fmtDate(d.expiresAt)}` : ''} —
-            please upload a fresh copy
+            {t('docs.expiredMeta', {
+              date: d.expiresAt ? ` ${fmtDate(d.expiresAt)}` : '',
+            })}
           </span>
         )}
         {d.status !== 'EXPIRED' && d.expiresAt && (
           <span className="text-silver/70 ml-2">
-            · expires {fmtDate(d.expiresAt)}
+            {t('docs.expiresMeta', { date: fmtDate(d.expiresAt) })}
           </span>
         )}
         {!d.fileAvailable && (
           <span className="text-alert ml-2">
-            · file missing — please re-upload
+            {t('docs.fileMissingMeta')}
           </span>
         )}
       </div>

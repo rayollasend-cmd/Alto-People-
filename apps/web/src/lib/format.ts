@@ -19,6 +19,24 @@ import { isDateOnly, parseDateOnly } from '@alto-people/shared';
 const EN_US = 'en-US';
 const DASH = '—';
 
+/**
+ * Locale for DISPLAY formatters (dates, weekday/month names, money
+ * grouping). Reads <html lang>, which I18nProvider keeps current — the
+ * same non-React channel fmtRelativeDayTz already used for Hoy/Mañana —
+ * so every fmt* call site in the app localizes without threading a lang
+ * parameter through hundreds of components. es-US (not es-ES) keeps
+ * US-style currency and 12-hour clocks for a US workforce.
+ *
+ * MACHINE-facing helpers (zonedDayKey, zonedWallTimeToUtc, the
+ * datetime-input converters) stay pinned to en-US: their output is
+ * parsed back as numbers, never shown to a person.
+ */
+function displayLocale(): string {
+  return typeof document !== 'undefined' && document.documentElement.lang === 'es'
+    ? 'es-US'
+    : EN_US;
+}
+
 export function fmtMoney(
   value: number | string | null | undefined,
   opts: { currency?: string; precise?: boolean } = {},
@@ -26,7 +44,7 @@ export function fmtMoney(
   if (value === null || value === undefined || value === '') return DASH;
   const n = typeof value === 'string' ? Number(value) : value;
   if (!Number.isFinite(n)) return DASH;
-  return n.toLocaleString(EN_US, {
+  return n.toLocaleString(displayLocale(), {
     style: 'currency',
     currency: opts.currency ?? 'USD',
     minimumFractionDigits: 2,
@@ -60,7 +78,7 @@ export function fmtMoneyCompact(
   // $1k–$10k keeps one decimal ($1.2k).
   if (abs >= 10_000) return `${sign}$${Math.round(abs / 1000)}k`;
   if (abs >= 1_000) return `${sign}$${(abs / 1000).toFixed(1)}k`;
-  return `${sign}$${Math.round(abs).toLocaleString(EN_US)}`;
+  return `${sign}$${Math.round(abs).toLocaleString(displayLocale())}`;
 }
 
 /** "/hr" or "/yr" suffix tacked on for pay rates. */
@@ -111,7 +129,7 @@ export function fmtDate(value: string | Date | null | undefined): string {
       ? (parseDateOnly(value) ?? new Date(value))
       : new Date(value as string | number | Date);
   if (Number.isNaN(d.getTime())) return DASH;
-  return d.toLocaleDateString(EN_US, {
+  return d.toLocaleDateString(displayLocale(), {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -125,7 +143,7 @@ export function fmtDateTime(
   if (!value) return DASH;
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return DASH;
-  return d.toLocaleString(EN_US, {
+  return d.toLocaleString(displayLocale(), {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -139,7 +157,7 @@ export function fmtTime(value: string | Date | null | undefined): string {
   if (!value) return DASH;
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return DASH;
-  return d.toLocaleTimeString(EN_US, {
+  return d.toLocaleTimeString(displayLocale(), {
     hour: 'numeric',
     minute: '2-digit',
   });
@@ -160,7 +178,7 @@ export function fmtTimeTz(
   if (!value) return DASH;
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return DASH;
-  return d.toLocaleTimeString(EN_US, {
+  return d.toLocaleTimeString(displayLocale(), {
     hour: 'numeric',
     minute: '2-digit',
     ...(timeZone ? { timeZone } : {}),
@@ -175,7 +193,7 @@ export function fmtDateTz(
   if (!value) return DASH;
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return DASH;
-  return d.toLocaleDateString(EN_US, {
+  return d.toLocaleDateString(displayLocale(), {
     month: 'short',
     day: 'numeric',
     ...(timeZone ? { timeZone } : {}),
@@ -191,7 +209,7 @@ export function fmtWeekdayTz(
   if (!value) return DASH;
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return DASH;
-  return d.toLocaleDateString(EN_US, {
+  return d.toLocaleDateString(displayLocale(), {
     weekday: 'short',
     ...(timeZone ? { timeZone } : {}),
   });
@@ -217,7 +235,7 @@ export function fmtDayHeaderTz(
   if (!value) return DASH;
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return DASH;
-  return d.toLocaleDateString(EN_US, {
+  return d.toLocaleDateString(displayLocale(), {
     weekday: 'long',
     month: 'short',
     day: 'numeric',
@@ -234,7 +252,7 @@ export function fmtMonthYearTz(
   if (!value) return DASH;
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return DASH;
-  return d.toLocaleDateString(EN_US, {
+  return d.toLocaleDateString(displayLocale(), {
     month: 'long',
     year: 'numeric',
     ...(timeZone ? { timeZone } : {}),
@@ -256,7 +274,7 @@ export function tzAbbrev(
   at: string | Date = new Date(),
 ): string {
   const d = at instanceof Date ? at : new Date(at);
-  const parts = new Intl.DateTimeFormat(EN_US, {
+  const parts = new Intl.DateTimeFormat(displayLocale(), {
     timeZone,
     timeZoneName: 'short',
   }).formatToParts(d);
