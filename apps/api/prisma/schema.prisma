@@ -539,6 +539,7 @@ model User {
   manualAttestationsAttested        ManualComplianceAttestation[] @relation("AttestationAttester")
   complianceActionsAssigned         ComplianceActionState[]       @relation("ComplianceActionAssignee")
   complianceActionsUpdated          ComplianceActionState[]       @relation("ComplianceActionUpdater")
+  safetyIncidentsReported           SafetyIncident[]              @relation("SafetyIncidentReporter")
   // Phase 131 — assignment-row authorship (audit of who moved an
   // associate to which location, and why).
   associateAssignmentsNoted         AssociateAssignment[]         @relation("AssociateAssignmentNoter")
@@ -676,6 +677,7 @@ model Client {
   kioskDevices           KioskDevice[]
   kioskPins              KioskPin[]
   complianceSnapshots    ComplianceScoreSnapshot[]
+  safetyIncidents        SafetyIncident[]
   // Phase 109 — pulse surveys scoped to this client.
   pulseSurveys           PulseSurvey[]
   // Phase 114 — learning paths scoped to this client.
@@ -1314,6 +1316,9 @@ model Associate {
   vaccinationRecords       VaccinationRecord[]
   // Phase 122 — per-associate legal agreements (NDA, non-compete, etc.).
   agreements               Agreement[]
+  // OSHA safety-incident log (scorecard tile 7). Restrict: a legal log
+  // entry outlives everything; erasure anonymizes the associate in place.
+  safetyIncidents          SafetyIncident[]
   // Phase 123 — HR cases filed by this associate + comments authored.
   hrCasesFiled             HrCase[]
   hrCaseCommentsAuthored   HrCaseComment[]           @relation("HrCaseCommentAssociateAuthor")
@@ -6846,6 +6851,61 @@ model ComplianceActionState {
 
   @@index([assigneeUserId])
   @@index([status])
+}
+
+// OSHA 1904 outcome ladder for a workplace incident. Everything from
+// MEDICAL_TREATMENT down is a "recordable" (OSHA 300 log entry);
+// NEAR_MISS and FIRST_AID_ONLY are tracked for prevention but not
+// recordable. The `recordable` column is derived from this at write
+// time so tile math and exports never re-implement 1904.7.
+enum SafetyIncidentOutcome {
+  NEAR_MISS
+  FIRST_AID_ONLY
+  MEDICAL_TREATMENT
+  RESTRICTED_DUTY
+  DAYS_AWAY
+  LOSS_OF_CONSCIOUSNESS
+  FATALITY
+}
+
+enum SafetyIncidentStatus {
+  OPEN
+  CLOSED
+}
+
+/// OSHA 300-style safety incident log — the compliance scorecard's safety
+/// tile reads this (days since last recordable, TRIR/DART vs hours worked
+/// from TimeEntry). A legal log: rows are never hard-deleted (Restrict on
+/// the associate; erasure anonymizes the person in place).
+model SafetyIncident {
+  id             String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  associateId    String                @db.Uuid
+  // Denormalized from the associate's active application at report time so
+  // per-client TRIR survives later transfers.
+  clientId       String?               @db.Uuid
+  occurredAt     DateTime              @db.Timestamptz(6)
+  location       String?
+  description    String
+  outcome        SafetyIncidentOutcome
+  recordable     Boolean
+  // OSHA 300 columns K/L — calendar days, capped at 180 by the standard.
+  daysAway       Int                   @default(0)
+  daysRestricted Int                   @default(0)
+  status         SafetyIncidentStatus  @default(OPEN)
+  closedAt       DateTime?             @db.Timestamptz(6)
+  closureNotes   String?
+  reportedById   String?               @db.Uuid
+  createdAt      DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime              @updatedAt @db.Timestamptz(6)
+
+  associate  Associate @relation(fields: [associateId], references: [id], onDelete: Restrict)
+  client     Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  reportedBy User?     @relation("SafetyIncidentReporter", fields: [reportedById], references: [id], onDelete: SetNull)
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([clientId, occurredAt(sort: Desc)])
+  @@index([status])
+  @@index([associateId])
 }
 
 /// A recorded Fieldglass filing for one Sat→Fri week (optionally one client).

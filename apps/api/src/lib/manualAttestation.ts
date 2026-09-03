@@ -21,7 +21,7 @@ export type AttestationCadence = 'WEEKLY' | 'MONTHLY' | 'ANNUAL';
  * model + endpoints; this just routes display. Reminder cron iterates all
  * tiles uniformly.
  */
-export type AttestationTile = 'BILLING' | 'EXPIRATIONS';
+export type AttestationTile = 'BILLING' | 'EXPIRATIONS' | 'SAFETY';
 
 export interface AttestationConfig {
   /** Stable identifier; mirrored 1:1 with ManualComplianceAttestation.key. */
@@ -88,6 +88,16 @@ export const ATTESTATION_CONFIGS: ReadonlyArray<AttestationConfig> = [
     tile: 'EXPIRATIONS',
     dueOffsetDays: 30, // by Jan 31
     reminderLeadDays: 30, // start nudging Jan 1
+  },
+  {
+    key: 'OSHA_300A_POSTING',
+    label: 'OSHA 300A summary posted (Feb 1 – Apr 30)',
+    description:
+      'OSHA 1904.32 — certify the prior year’s Form 300A summary and post it at each establishment from February 1 through April 30. Confirm here once posted; attach the signed 300A as evidence if available.',
+    cadence: 'ANNUAL',
+    tile: 'SAFETY',
+    dueOffsetDays: 31, // by Feb 1
+    reminderLeadDays: 21, // start nudging mid-January
   },
   {
     key: 'GENERAL_LIABILITY',

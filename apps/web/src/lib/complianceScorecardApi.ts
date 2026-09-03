@@ -2,6 +2,10 @@ import type {
   ManualAttestationCreateInput,
   ManualAttestationListResponse,
   ManualAttestationSignal,
+  SafetyIncident,
+  SafetyIncidentCreateInput,
+  SafetyIncidentListResponse,
+  SafetyIncidentUpdateInput,
   ScorecardActionState,
   ScorecardActionStateInput,
   ScorecardActionsResponse,
@@ -9,6 +13,7 @@ import type {
   ScorecardExpirationsResponse,
   ScorecardHistoryResponse,
   ScorecardOnboardingResponse,
+  ScorecardSafetyResponse,
   ScorecardShiftsResponse,
   ScorecardTrainingResponse,
 } from '@alto-people/shared';
@@ -66,6 +71,39 @@ export function setScorecardActionState(
 /** URL for the board one-pager PDF (opened via window.open / anchor). */
 export function scorecardReportUrl(clientId?: string): string {
   return `/api${scoped('/report.pdf', clientId)}`;
+}
+
+export function getScorecardSafety(clientId?: string): Promise<ScorecardSafetyResponse> {
+  return apiFetch<ScorecardSafetyResponse>(scoped('/safety', clientId));
+}
+
+export function listSafetyIncidents(
+  clientId?: string,
+  status?: 'OPEN' | 'CLOSED',
+): Promise<SafetyIncidentListResponse> {
+  const base = scoped('/safety-incidents', clientId);
+  return apiFetch<SafetyIncidentListResponse>(
+    status ? `${base}${base.includes('?') ? '&' : '?'}status=${status}` : base,
+  );
+}
+
+export function createSafetyIncident(
+  body: SafetyIncidentCreateInput,
+): Promise<{ incident: SafetyIncident }> {
+  return apiFetch<{ incident: SafetyIncident }>(`${ROOT}/safety-incidents`, {
+    method: 'POST',
+    body,
+  });
+}
+
+export function updateSafetyIncident(
+  id: string,
+  body: SafetyIncidentUpdateInput,
+): Promise<{ incident: SafetyIncident }> {
+  return apiFetch<{ incident: SafetyIncident }>(`${ROOT}/safety-incidents/${id}`, {
+    method: 'PATCH',
+    body,
+  });
 }
 
 export function listAttestationSignals(): Promise<ManualAttestationListResponse> {

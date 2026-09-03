@@ -67,6 +67,7 @@ export async function runComplianceSnapshot(
           shifts: bundle.shifts.severity,
           billing: bundle.billing.severity,
           training: bundle.training.severity,
+          safety: bundle.safety.severity,
         },
       },
     });

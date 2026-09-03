@@ -26,12 +26,22 @@ import {
   ScorecardHistoryResponseSchema,
   scorecardSeverityFromFailPct,
   scorecardGrade,
+  SafetyIncidentCreateInputSchema,
+  SafetyIncidentUpdateInputSchema,
+  SafetyIncidentListResponseSchema,
+  ScorecardSafetyResponseSchema,
+  isRecordableOutcome,
+  isDartOutcome,
+  OSHA_TRIR_TARGET,
+  type SafetyIncident,
+  type SafetyIncidentOutcome,
+  type ScorecardSafetyResponse,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { addBusinessDays } from '../lib/everifyReadiness.js';
-import { notifyUser } from '../lib/notify.js';
+import { notifyUser, notifyAllAdmins } from '../lib/notify.js';
 import { getShiftMetrics, isConfigured as asnNexusConfigured, type AsnNexusMetric } from '../lib/asnNexus.js';
 import {
   ATTESTATION_CONFIGS,
@@ -90,6 +100,7 @@ const CLAUSE = {
   CADE: 'Walmart MTSA Exhibit D — CADE system training',
   FOOD_HANDLER: 'Local food code — food handler certification',
   BILL_RATE: 'Walmart SOW — bill rates $21.21 / $24.24',
+  OSHA_LOG: 'OSHA 1904 — injury & illness recordkeeping (Form 300)',
 } as const;
 
 // Returns the union of associate ids whose most-recent active Application is
@@ -1086,7 +1097,7 @@ complianceScorecardRouter.post(
 );
 
 async function loadAttestationSignals(
-  tile?: 'BILLING' | 'EXPIRATIONS',
+  tile?: 'BILLING' | 'EXPIRATIONS' | 'SAFETY',
 ): Promise<ManualAttestationSignal[]> {
   const now = new Date();
   const signals: ManualAttestationSignal[] = [];
@@ -1296,6 +1307,307 @@ export async function buildTrainingTile(
   });
 }
 
+/* ============================================================ TILE 7 ===== *
+ * OSHA safety — incident log (Form 300 shape) + TRIR/DART normalized
+ * against real hours worked from TimeEntry. Recordability is derived from
+ * the outcome per 1904.7 at write time, never re-decided at read time.
+ * ========================================================================= */
+
+const SAFETY_OUTCOME_LABEL: Record<SafetyIncidentOutcome, string> = {
+  NEAR_MISS: 'near miss',
+  FIRST_AID_ONLY: 'first aid only',
+  MEDICAL_TREATMENT: 'medical treatment',
+  RESTRICTED_DUTY: 'restricted duty',
+  DAYS_AWAY: 'days away from work',
+  LOSS_OF_CONSCIOUSNESS: 'loss of consciousness',
+  FATALITY: 'fatality',
+};
+
+const incidentInclude = {
+  associate: { select: { firstName: true, lastName: true } },
+  client: { select: { name: true } },
+  reportedBy: { select: { email: true } },
+} as const;
+
+type IncidentRow = Prisma.SafetyIncidentGetPayload<{ include: typeof incidentInclude }>;
+
+function serializeIncident(r: IncidentRow): SafetyIncident {
+  return {
+    id: r.id,
+    associateId: r.associateId,
+    associateName: `${r.associate.firstName} ${r.associate.lastName}`,
+    clientId: r.clientId,
+    clientName: r.client?.name ?? null,
+    occurredAt: r.occurredAt.toISOString(),
+    location: r.location,
+    description: r.description,
+    outcome: r.outcome,
+    recordable: r.recordable,
+    daysAway: r.daysAway,
+    daysRestricted: r.daysRestricted,
+    status: r.status,
+    closedAt: r.closedAt?.toISOString() ?? null,
+    closureNotes: r.closureNotes,
+    reportedByEmail: r.reportedBy?.email ?? null,
+    createdAt: r.createdAt.toISOString(),
+  };
+}
+
+/** TRIR/DART denominator: hours actually worked (closed, non-rejected time
+ *  entries) since `since`. Summed in SQL — a year of punches is far too many
+ *  rows to pull into JS just to subtract timestamps. */
+async function hoursWorkedSince(since: Date, clientId?: string | null): Promise<number> {
+  const rows = clientId
+    ? await prisma.$queryRaw<Array<{ hours: unknown }>>`
+        SELECT COALESCE(SUM(EXTRACT(EPOCH FROM ("clockOutAt" - "clockInAt"))) / 3600, 0) AS hours
+        FROM "TimeEntry"
+        WHERE "clockOutAt" IS NOT NULL
+          AND "status"::text IN ('COMPLETED', 'APPROVED')
+          AND "clockInAt" >= ${since}
+          AND "clientId" = ${clientId}::uuid`
+    : await prisma.$queryRaw<Array<{ hours: unknown }>>`
+        SELECT COALESCE(SUM(EXTRACT(EPOCH FROM ("clockOutAt" - "clockInAt"))) / 3600, 0) AS hours
+        FROM "TimeEntry"
+        WHERE "clockOutAt" IS NOT NULL
+          AND "status"::text IN ('COMPLETED', 'APPROVED')
+          AND "clockInAt" >= ${since}`;
+  return Number(rows[0]?.hours ?? 0);
+}
+
+complianceScorecardRouter.get('/safety', VIEW, async (req, res) => {
+  res.json(await buildSafetyTile(clientScope(req)));
+});
+
+export async function buildSafetyTile(
+  clientId?: string | null,
+): Promise<ScorecardSafetyResponse> {
+  const now = new Date();
+  const ytdStart = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+  const scope = clientId ? { clientId } : {};
+
+  const [ytdRecordables, lastRecordable, openRows, hours] = await Promise.all([
+    prisma.safetyIncident.findMany({
+      take: 10_000,
+      where: { recordable: true, occurredAt: { gte: ytdStart }, ...scope },
+      select: { outcome: true },
+    }),
+    prisma.safetyIncident.findFirst({
+      where: { recordable: true, ...scope },
+      orderBy: { occurredAt: 'desc' },
+      select: { occurredAt: true },
+    }),
+    prisma.safetyIncident.findMany({
+      where: { status: 'OPEN', ...scope },
+      orderBy: { occurredAt: 'desc' },
+      take: 50,
+      include: incidentInclude,
+    }),
+    hoursWorkedSince(ytdStart, clientId),
+  ]);
+
+  const recordableCountYtd = ytdRecordables.length;
+  const dartCountYtd = ytdRecordables.filter((r) => isDartOutcome(r.outcome)).length;
+  const hoursWorkedYtd = Math.round(hours * 10) / 10;
+  // OSHA normalization: incidents × 200,000 ÷ hours (100 FTE-years).
+  const trir =
+    hoursWorkedYtd > 0
+      ? Number(((recordableCountYtd * 200_000) / hoursWorkedYtd).toFixed(2))
+      : null;
+  const dart =
+    hoursWorkedYtd > 0
+      ? Number(((dartCountYtd * 200_000) / hoursWorkedYtd).toFixed(2))
+      : null;
+  const daysSinceLastRecordable = lastRecordable
+    ? Math.max(
+        0,
+        Math.floor((now.getTime() - lastRecordable.occurredAt.getTime()) / 86_400_000),
+      )
+    : null;
+
+  const attestations = await loadAttestationSignals('SAFETY');
+  const overdueAtt = attestations.filter((a) => a.status === 'overdue').length;
+  const dueSoonAtt = attestations.filter((a) => a.status === 'due_soon').length;
+
+  // Severity: a fatality or days-away case still open, or an overdue 300A
+  // posting, is critical. Any other open incident, a TRIR above target, or
+  // a 300A coming due is warn.
+  const openSevere = openRows.some(
+    (r) => r.outcome === 'FATALITY' || r.outcome === 'DAYS_AWAY',
+  );
+  const severity: ScorecardSeverity =
+    openSevere || overdueAtt > 0
+      ? 'critical'
+      : openRows.length > 0 || dueSoonAtt > 0 || (trir !== null && trir > OSHA_TRIR_TARGET)
+        ? 'warn'
+        : 'ok';
+
+  return ScorecardSafetyResponseSchema.parse({
+    daysSinceLastRecordable,
+    recordableCountYtd,
+    dartCountYtd,
+    hoursWorkedYtd,
+    trir,
+    dart,
+    openIncidents: openRows.map(serializeIncident),
+    attestations,
+    severity,
+    generatedAt: new Date().toISOString(),
+  });
+}
+
+/* ----- Incident log CRUD -------------------------------------------------- */
+
+complianceScorecardRouter.get('/safety-incidents', VIEW, async (req, res, next) => {
+  try {
+    const clientId = clientScope(req);
+    const status =
+      req.query.status === 'OPEN' || req.query.status === 'CLOSED'
+        ? req.query.status
+        : undefined;
+    const rows = await prisma.safetyIncident.findMany({
+      where: {
+        ...(clientId ? { clientId } : {}),
+        ...(status ? { status } : {}),
+      },
+      orderBy: { occurredAt: 'desc' },
+      take: 200,
+      include: incidentInclude,
+    });
+    res.json(
+      SafetyIncidentListResponseSchema.parse({
+        incidents: rows.map(serializeIncident),
+      }),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+complianceScorecardRouter.post('/safety-incidents', MANAGE_COMPLIANCE, async (req, res, next) => {
+  try {
+    const input = SafetyIncidentCreateInputSchema.parse(req.body);
+    const occurredAt = new Date(input.occurredAt);
+    if (occurredAt.getTime() > Date.now() + 60_000) {
+      throw new HttpError(400, 'future_incident', 'An incident cannot occur in the future.');
+    }
+    // Client attribution snapshots the associate's active placement at
+    // report time so a later transfer doesn't rewrite this client's TRIR.
+    const app = await prisma.application.findFirst({
+      where: { associateId: input.associateId, status: 'APPROVED', deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+      select: { clientId: true },
+    });
+    const recordable = isRecordableOutcome(input.outcome);
+
+    const row = await prisma.safetyIncident.create({
+      data: {
+        associateId: input.associateId,
+        clientId: app?.clientId ?? null,
+        occurredAt,
+        location: input.location ?? null,
+        description: input.description,
+        outcome: input.outcome,
+        recordable,
+        daysAway: input.daysAway ?? 0,
+        daysRestricted: input.daysRestricted ?? 0,
+        reportedById: req.user!.id,
+      },
+      include: incidentInclude,
+    });
+
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'compliance.safety_incident.created',
+        entityType: 'SafetyIncident',
+        entityId: row.id,
+        metadata: {
+          associateId: input.associateId,
+          outcome: input.outcome,
+          recordable,
+        },
+      },
+      'safety incident created',
+    );
+
+    // A recordable is org news — every admin hears about it once, loudly.
+    // Near-misses and first-aid stay in the log without a broadcast.
+    if (recordable) {
+      void notifyAllAdmins({
+        subject: `Recordable safety incident — ${row.associate.firstName} ${row.associate.lastName}`,
+        body:
+          `${SAFETY_OUTCOME_LABEL[row.outcome]} on ${occurredAt.toISOString().slice(0, 10)}` +
+          `${row.location ? ` at ${row.location}` : ''}. ` +
+          `${input.description.slice(0, 200)}${input.description.length > 200 ? '…' : ''}\n\n` +
+          'Review it on the compliance scorecard (Safety tile).',
+        category: 'compliance',
+        linkUrl: '/compliance?tab=scorecard',
+      });
+    }
+
+    res.status(201).json({ incident: serializeIncident(row) });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      next(new HttpError(400, 'invalid_body', 'Invalid incident', err.flatten()));
+      return;
+    }
+    next(err);
+  }
+});
+
+complianceScorecardRouter.patch('/safety-incidents/:id', MANAGE_COMPLIANCE, async (req, res, next) => {
+  try {
+    const id = z.string().uuid().parse(req.params.id);
+    const input = SafetyIncidentUpdateInputSchema.parse(req.body);
+    const existing = await prisma.safetyIncident.findUnique({
+      where: { id },
+      select: { status: true },
+    });
+    if (!existing) throw new HttpError(404, 'not_found', 'Incident not found.');
+
+    const data: Prisma.SafetyIncidentUpdateInput = {
+      ...(input.outcome !== undefined
+        ? { outcome: input.outcome, recordable: isRecordableOutcome(input.outcome) }
+        : {}),
+      ...(input.daysAway !== undefined ? { daysAway: input.daysAway } : {}),
+      ...(input.daysRestricted !== undefined ? { daysRestricted: input.daysRestricted } : {}),
+      ...(input.closureNotes !== undefined ? { closureNotes: input.closureNotes } : {}),
+    };
+    if (input.status !== undefined && input.status !== existing.status) {
+      data.status = input.status;
+      data.closedAt = input.status === 'CLOSED' ? new Date() : null;
+    }
+
+    const row = await prisma.safetyIncident.update({
+      where: { id },
+      data,
+      include: incidentInclude,
+    });
+
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'compliance.safety_incident.updated',
+        entityType: 'SafetyIncident',
+        entityId: id,
+        metadata: {
+          status: input.status ?? null,
+          outcome: input.outcome ?? null,
+        },
+      },
+      'safety incident updated',
+    );
+
+    res.json({ incident: serializeIncident(row) });
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      next(new HttpError(400, 'invalid_body', 'Invalid incident update', err.flatten()));
+      return;
+    }
+    next(err);
+  }
+});
+
 /* ============================================================ TILE 6 ===== *
  * Open actions — server-side rollup so the page renders without 5 tiles
  * each fetching twice.
@@ -1309,14 +1621,15 @@ complianceScorecardRouter.get('/actions', VIEW, async (req, res) => {
 /** All five live tiles, built once. Shared by the actions rollup, the daily
  *  snapshot cron and the board PDF so none of them triple-query the tiles. */
 export async function buildScorecardBundle(clientId?: string | null) {
-  const [onboarding, expirations, shifts, billing, training] = await Promise.all([
+  const [onboarding, expirations, shifts, billing, training, safety] = await Promise.all([
     buildOnboardingTile(clientId),
     buildExpirationsTile(clientId),
     buildShiftsTile(clientId),
     buildBillingTile(clientId),
     buildTrainingTile(clientId),
+    buildSafetyTile(clientId),
   ]);
-  return { onboarding, expirations, shifts, billing, training };
+  return { onboarding, expirations, shifts, billing, training, safety };
 }
 export type ScorecardBundle = Awaited<ReturnType<typeof buildScorecardBundle>>;
 
@@ -1326,9 +1639,10 @@ export type ScorecardBundle = Awaited<ReturnType<typeof buildScorecardBundle>>;
  * deadline blown past costs a flat 10 points on top of its weighted share.
  *   Onboarding signals ......... 60 pts (I9 12, E-Verify 10, background 10,
  *                                 drug 8, age 6, W-4 6, offer 4, policy 4)
- *   Training tags .............. 16 pts (4 × 4)
- *   Expirations (red bucket) ... 12 pts (scaled by red ÷ active headcount)
- *   Shift fill rate ............ 12 pts (scaled by shortfall vs target)
+ *   Training tags .............. 12 pts (4 × 3)
+ *   Expirations (red bucket) ... 10 pts (scaled by red ÷ active headcount)
+ *   Shift fill rate ............ 10 pts (scaled by shortfall vs target)
+ *   Safety ..................... 8 pts (each OPEN recordable costs 2)
  *   Statutory-overdue penalty .. −10 flat
  * ------------------------------------------------------------------------- */
 const ONBOARDING_WEIGHTS: Record<ScorecardOnboardingSignal['key'], number> = {
@@ -1341,13 +1655,14 @@ const ONBOARDING_WEIGHTS: Record<ScorecardOnboardingSignal['key'], number> = {
   OFFER_LETTER_SIGNED: 4,
   POLICY_ACK_SIGNED: 4,
 };
-const TRAINING_WEIGHT_PER_TAG = 4;
-const EXPIRATIONS_WEIGHT = 12;
-const SHIFTS_WEIGHT = 12;
+const TRAINING_WEIGHT_PER_TAG = 3;
+const EXPIRATIONS_WEIGHT = 10;
+const SHIFTS_WEIGHT = 10;
+const SAFETY_WEIGHT = 8;
 const STATUTORY_OVERDUE_PENALTY = 10;
 
 export function computeWeightedScore(bundle: ScorecardBundle): number {
-  const { onboarding, expirations, shifts, training } = bundle;
+  const { onboarding, expirations, shifts, training, safety } = bundle;
   const total = onboarding.activeAssociateCount;
 
   // Empty org = nothing out of compliance. 100, not NaN.
@@ -1379,6 +1694,12 @@ export function computeWeightedScore(bundle: ScorecardBundle): number {
     score += SHIFTS_WEIGHT;
   }
 
+  // Each OPEN recordable incident costs a quarter of the safety weight.
+  // TRIR/DART stay informational — the score punishes unresolved incidents,
+  // not the historical rate the org can no longer change.
+  const openRecordables = safety.openIncidents.filter((i) => i.recordable).length;
+  score += SAFETY_WEIGHT * Math.max(0, 1 - openRecordables / 4);
+
   const anyStatutoryOverdue = onboarding.signals.some((s) => (s.overdueCount ?? 0) > 0);
   if (anyStatutoryOverdue) score -= STATUTORY_OVERDUE_PENALTY;
 
@@ -1391,7 +1712,7 @@ export async function buildActionsTile(
 ): Promise<ScorecardActionsResponse> {
   // Run the live tiles in parallel and synthesize an action per failure.
   const bundle = prebuilt ?? (await buildScorecardBundle(clientId));
-  const { onboarding, expirations, shifts, billing, training } = bundle;
+  const { onboarding, expirations, shifts, billing, training, safety } = bundle;
 
   const actions: ScorecardAction[] = [];
 
@@ -1485,6 +1806,26 @@ export async function buildActionsTile(
         link: subject.associateId ? `/people?associateId=${subject.associateId}` : null,
       });
     }
+  }
+
+  // Tile 7 — every open safety incident is an action until a human closes
+  // it. Fatality / days-away cases are critical; the rest warn.
+  for (const inc of safety.openIncidents) {
+    actions.push({
+      id: `saf:${inc.id}`,
+      severity:
+        inc.outcome === 'FATALITY' || inc.outcome === 'DAYS_AWAY' ? 'critical' : 'warn',
+      title: `${inc.associateName ?? 'Associate'} — open safety incident (${SAFETY_OUTCOME_LABEL[inc.outcome]}, ${inc.occurredAt.slice(0, 10)})`,
+      contractClause: CLAUSE.OSHA_LOG,
+      subject: {
+        associateId: inc.associateId,
+        associateName: inc.associateName,
+        clientId: inc.clientId,
+        clientName: inc.clientName,
+      },
+      // The incident is closed on the safety tile itself, same page.
+      link: null,
+    });
   }
 
   // Attach persisted remediation state. The table only ever holds TOUCHED
@@ -1711,7 +2052,7 @@ complianceScorecardRouter.get('/report.pdf', VIEW, async (req, res, next) => {
         ? prisma.client.findUnique({ where: { id: clientId }, select: { name: true } })
         : Promise.resolve(null),
     ]);
-    const { onboarding, expirations, shifts, billing, training } = bundle;
+    const { onboarding, expirations, shifts, billing, training, safety } = bundle;
     const score = computeWeightedScore(bundle);
     const grade = scorecardGrade(score);
     const scopeLabel = client?.name ?? 'All clients';
@@ -1749,6 +2090,7 @@ complianceScorecardRouter.get('/report.pdf', VIEW, async (req, res, next) => {
       { label: 'Shift compliance', value: tileLine(shifts.severity) },
       { label: 'Billing', value: tileLine(billing.severity) },
       { label: 'Training', value: tileLine(training.severity) },
+      { label: 'Safety (OSHA)', value: tileLine(safety.severity) },
     ]);
 
     const overdueStatutory = onboarding.signals
@@ -1795,6 +2137,33 @@ complianceScorecardRouter.get('/report.pdf', VIEW, async (req, res, next) => {
         pdf.para(`…and ${expirations.buckets.red.length - 25} more — see the live scorecard.`, { muted: true });
       }
     }
+
+    pdf.heading('Safety (OSHA)');
+    pdf.kv([
+      {
+        label: 'Days since last recordable',
+        value:
+          safety.daysSinceLastRecordable === null
+            ? 'No recordable incident on file'
+            : `${safety.daysSinceLastRecordable} days`,
+      },
+      {
+        label: 'TRIR (YTD)',
+        value:
+          safety.trir === null
+            ? '— (no hours yet)'
+            : `${safety.trir} (target ≤ ${OSHA_TRIR_TARGET})`,
+      },
+      {
+        label: 'DART (YTD)',
+        value: safety.dart === null ? '— (no hours yet)' : String(safety.dart),
+      },
+      {
+        label: 'Recordables YTD',
+        value: `${safety.recordableCountYtd} across ${Math.round(safety.hoursWorkedYtd).toLocaleString('en-US')} hours worked`,
+      },
+      { label: 'Open incidents', value: String(safety.openIncidents.length) },
+    ]);
 
     if (snaps.length >= 2) {
       pdf.heading('Score trend (last 5 weeks)');

@@ -5507,6 +5507,107 @@ export const ScorecardHistoryResponseSchema = z.object({
 });
 export type ScorecardHistoryResponse = z.infer<typeof ScorecardHistoryResponseSchema>;
 
+// ----- Tile 7 — OSHA safety ------------------------------------------------
+
+export const SafetyIncidentOutcomeSchema = z.enum([
+  'NEAR_MISS',
+  'FIRST_AID_ONLY',
+  'MEDICAL_TREATMENT',
+  'RESTRICTED_DUTY',
+  'DAYS_AWAY',
+  'LOSS_OF_CONSCIOUSNESS',
+  'FATALITY',
+]);
+export type SafetyIncidentOutcome = z.infer<typeof SafetyIncidentOutcomeSchema>;
+
+export const SafetyIncidentStatusSchema = z.enum(['OPEN', 'CLOSED']);
+export type SafetyIncidentStatus = z.infer<typeof SafetyIncidentStatusSchema>;
+
+/** OSHA 1904.7 general recording criteria — the single source of truth for
+ *  what counts as an OSHA 300 recordable. Server derives the stored flag
+ *  from this; the UI uses it to hint the form. */
+export const SAFETY_RECORDABLE_OUTCOMES: ReadonlySet<SafetyIncidentOutcome> =
+  new Set(['MEDICAL_TREATMENT', 'RESTRICTED_DUTY', 'DAYS_AWAY', 'LOSS_OF_CONSCIOUSNESS', 'FATALITY']);
+export function isRecordableOutcome(outcome: SafetyIncidentOutcome): boolean {
+  return SAFETY_RECORDABLE_OUTCOMES.has(outcome);
+}
+
+/** DART = the recordables that involved days away or restricted duty. */
+export function isDartOutcome(outcome: SafetyIncidentOutcome): boolean {
+  return outcome === 'DAYS_AWAY' || outcome === 'RESTRICTED_DUTY';
+}
+
+/** Incident-rate targets: incidents × 200,000 ÷ hours worked (the OSHA
+ *  normalization — 100 FTEs × 40h × 50wk). BLS staffing/warehousing runs
+ *  ~4.5; these targets are the bar we hold ourselves to, not the average. */
+export const OSHA_TRIR_TARGET = 3.0;
+export const OSHA_DART_TARGET = 2.0;
+
+export const SafetyIncidentSchema = z.object({
+  id: UuidSchema,
+  associateId: UuidSchema,
+  associateName: z.string().nullable(),
+  clientId: UuidSchema.nullable(),
+  clientName: z.string().nullable(),
+  occurredAt: z.string().datetime(),
+  location: z.string().nullable(),
+  description: z.string(),
+  outcome: SafetyIncidentOutcomeSchema,
+  recordable: z.boolean(),
+  daysAway: z.number().int().nonnegative(),
+  daysRestricted: z.number().int().nonnegative(),
+  status: SafetyIncidentStatusSchema,
+  closedAt: z.string().datetime().nullable(),
+  closureNotes: z.string().nullable(),
+  reportedByEmail: z.string().nullable(),
+  createdAt: z.string().datetime(),
+});
+export type SafetyIncident = z.infer<typeof SafetyIncidentSchema>;
+
+export const SafetyIncidentCreateInputSchema = z.object({
+  associateId: UuidSchema,
+  occurredAt: z.string().datetime(),
+  location: z.string().trim().max(200).nullable().optional(),
+  description: z.string().trim().min(10).max(4000),
+  outcome: SafetyIncidentOutcomeSchema,
+  // OSHA caps both counts at 180 calendar days.
+  daysAway: z.number().int().min(0).max(180).optional(),
+  daysRestricted: z.number().int().min(0).max(180).optional(),
+});
+export type SafetyIncidentCreateInput = z.infer<typeof SafetyIncidentCreateInputSchema>;
+
+export const SafetyIncidentUpdateInputSchema = z.object({
+  outcome: SafetyIncidentOutcomeSchema.optional(),
+  daysAway: z.number().int().min(0).max(180).optional(),
+  daysRestricted: z.number().int().min(0).max(180).optional(),
+  status: SafetyIncidentStatusSchema.optional(),
+  closureNotes: z.string().trim().max(4000).nullable().optional(),
+});
+export type SafetyIncidentUpdateInput = z.infer<typeof SafetyIncidentUpdateInputSchema>;
+
+export const SafetyIncidentListResponseSchema = z.object({
+  incidents: z.array(SafetyIncidentSchema),
+});
+export type SafetyIncidentListResponse = z.infer<typeof SafetyIncidentListResponseSchema>;
+
+export const ScorecardSafetyResponseSchema = z.object({
+  /** Whole days since the most recent recordable, all-time. Null = none ever
+   *  (the factory sign reads "—", which is the best possible number). */
+  daysSinceLastRecordable: z.number().int().nonnegative().nullable(),
+  recordableCountYtd: z.number().int().nonnegative(),
+  dartCountYtd: z.number().int().nonnegative(),
+  /** Hours worked YTD (completed/approved time entries) — the TRIR denominator. */
+  hoursWorkedYtd: z.number().nonnegative(),
+  /** Null when there are no hours yet to normalize against. */
+  trir: z.number().nonnegative().nullable(),
+  dart: z.number().nonnegative().nullable(),
+  openIncidents: z.array(SafetyIncidentSchema),
+  attestations: z.array(ManualAttestationSignalSchema),
+  severity: ScorecardSeveritySchema,
+  generatedAt: z.string().datetime(),
+});
+export type ScorecardSafetyResponse = z.infer<typeof ScorecardSafetyResponseSchema>;
+
 // =============================================================================
 // Org branding (settings audit row #8)
 // =============================================================================
