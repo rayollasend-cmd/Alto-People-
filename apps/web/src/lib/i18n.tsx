@@ -55,6 +55,16 @@ const en = {
   // Associate dashboard
   'dash.greeting': 'Hey {name} 👋',
   'dash.subtitle': "Here's what's on for today.",
+  'dash.myNumber': 'My clock-in number',
+  'dash.showNumber': 'Show my clock-in number',
+  'dash.hideNumber': 'Hide my clock-in number',
+  'dash.happyBirthday': 'Happy birthday, {name}! 🎂',
+  'whatsnew.photoCrop':
+    'Set your profile photo with a proper position-and-zoom step — Settings → Profile photo.',
+  'whatsnew.confirmTap': 'Confirm a shift with one tap, right from the schedule list.',
+  'whatsnew.clockNumber': 'Your clock-in number now lives on your Home screen — tap to reveal.',
+  'dash.happyAnniversary': '{years} years at Alto today, {name} — thank you! 🎉',
+  'dash.celebrationSub': 'From all of us at Alto People — have a great one.',
   // Earnings motivation card
   'earn.title': 'My earnings this week',
   'earn.readyToday': 'Ready to earn ~{amount} today? 💪',
@@ -177,6 +187,7 @@ const en = {
   // Shift card
   'shift.next': 'Next',
   'shift.confirmed': 'Confirmed',
+  'shift.confirmNeeded': 'Confirm needed',
   'shift.open': 'Open',
   'shift.worked': 'Worked',
   'shift.draft': 'Draft',
@@ -533,6 +544,16 @@ const es: Record<MessageKey, string> = {
 
   'dash.greeting': 'Hola {name} 👋',
   'dash.subtitle': 'Esto es lo que hay para hoy.',
+  'dash.myNumber': 'Mi número para marcar',
+  'dash.showNumber': 'Mostrar mi número para marcar',
+  'dash.hideNumber': 'Ocultar mi número para marcar',
+  'dash.happyBirthday': '¡Feliz cumpleaños, {name}! 🎂',
+  'whatsnew.photoCrop':
+    'Configura tu foto de perfil con ajuste de posición y zoom — Ajustes → Foto de perfil.',
+  'whatsnew.confirmTap': 'Confirma un turno con un toque, directo desde tu horario.',
+  'whatsnew.clockNumber': 'Tu número para marcar ahora está en tu pantalla de inicio — tócalo para verlo.',
+  'dash.happyAnniversary': '¡{years} años en Alto hoy, {name} — gracias! 🎉',
+  'dash.celebrationSub': 'De parte de todos en Alto People — que tengas un gran día.',
   'earn.title': 'Mis ganancias esta semana',
   'earn.readyToday': '¿Listo para ganar ~{amount} hoy? 💪',
   'earn.finishToday': 'Termina hoy y suma ~{amount} más.',
@@ -655,6 +676,7 @@ const es: Record<MessageKey, string> = {
 
   'shift.next': 'Próximo',
   'shift.confirmed': 'Confirmado',
+  'shift.confirmNeeded': 'Por confirmar',
   'shift.open': 'Abierto',
   'shift.worked': 'Trabajado',
   'shift.draft': 'Borrador',

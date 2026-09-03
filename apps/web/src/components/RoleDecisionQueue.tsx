@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { usePrompt } from '@/lib/confirm';
 import { fmtMoney, ymdLocal } from '@/lib/format';
 import { DecisionRoom } from '@/components/DecisionRoom';
 import { PLAN_CHANGED_EVENT } from '@/components/MyPlanCard';
@@ -155,8 +156,16 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
     }
   };
 
-  const escalate = (item: RoleDecision) => {
-    const typed = window.prompt('Add a note for the admins (optional):', '');
+  // Styled prompt dialog — window.prompt() rendered as a raw OS dialog,
+  // jarringly off-brand (and unstylable) on phones.
+  const promptDialog = usePrompt();
+  const escalate = async (item: RoleDecision) => {
+    const typed = await promptDialog({
+      title: 'Escalate to admins',
+      reasonLabel: 'Note for the admins (optional)',
+      confirmLabel: 'Escalate',
+      required: false,
+    });
     if (typed === null) return;
     void act(item.key, 'escalate', { note: typed.trim() || undefined });
   };
@@ -468,7 +477,7 @@ export function RoleDecisionQueue({ title = 'Needs your decision' }: { title?: s
                     variant="ghost"
                     loading={busyKey === `${roomItem.key}:escalate`}
                     disabled={busyKey !== null}
-                    onClick={() => escalate(roomItem)}
+                    onClick={() => void escalate(roomItem)}
                   >
                     Escalate
                   </Button>

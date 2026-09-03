@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, LogOut, Menu, Search, User, WifiOff } from 'lucide-react';
+import { ChevronRight, IdCard, LogOut, Menu, Search, User, WifiOff } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { shortStoreName, useStoreScope } from '@/lib/storeScope';
@@ -265,6 +265,18 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
                 <div className="text-xs text-silver truncate">{user.email}</div>
               </div>
               <DropdownMenuSeparator />
+              {/* Profile first — the page with the employee number,
+                  emergency contacts, and tax docs was only reachable by
+                  spelunking the More drawer. */}
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  navigate('/me');
+                }}
+              >
+                <IdCard className="h-4 w-4" />
+                My profile
+              </DropdownMenuItem>
               <DropdownMenuItem
                 onSelect={(e) => {
                   e.preventDefault();

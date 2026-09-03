@@ -52,6 +52,28 @@ export const listDisciplinaryActions = (params: {
 export const getLadder = (associateId: string) =>
   apiFetch<LadderRollup>(`/disciplinary-actions/ladder/${associateId}`);
 
+/** The subject's own actions — the self-scoped route that makes the
+ *  acknowledgment flow reachable without view:hr-admin. */
+export interface MyDisciplinaryAction {
+  id: string;
+  associateName: string;
+  kind: DisciplineKind;
+  status: DisciplineStatus;
+  incidentDate: string;
+  effectiveDate: string;
+  suspensionDays: number | null;
+  description: string;
+  expectedAction: string | null;
+  issuedByEmail: string | null;
+  acknowledgedAt: string | null;
+  acknowledgedSig: string | null;
+  rescindedAt: string | null;
+  rescindedReason: string | null;
+}
+
+export const listMyDisciplinaryActions = () =>
+  apiFetch<{ actions: MyDisciplinaryAction[] }>('/disciplinary-actions/me');
+
 export const issueDisciplinaryAction = (input: {
   associateId: string;
   kind: DisciplineKind;

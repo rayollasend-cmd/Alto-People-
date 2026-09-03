@@ -27,6 +27,7 @@ import { fmtDate, fmtMoney, parseYmd } from '@/lib/format';
 import { statusTone } from '@/lib/status';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { dayHeading, groupByDayBy } from '@/lib/dayGroup';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
@@ -124,8 +125,13 @@ export function AssociatePayrollView() {
     });
   };
 
+  // Same phone gesture as Home/Schedule/Documents — two of the four
+  // bottom tabs used to silently ignore it.
+  const pullState = usePullToRefresh(() => payQuery.refetch());
+
   return (
     <div className="mx-auto">
+      <PullToRefreshIndicator state={pullState} />
       <PageHeader
         title={t('pay.title')}
         subtitle={t('pay.subtitle')}

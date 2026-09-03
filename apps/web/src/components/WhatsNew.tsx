@@ -39,6 +39,18 @@ interface ChangelogEntry {
 
 const CHANGELOG: ChangelogEntry[] = [
   {
+    id: '2026-09-03',
+    bullets: [
+      { key: 'whatsnew.photoCrop' },
+      { key: 'whatsnew.confirmTap' },
+      { key: 'whatsnew.clockNumber' },
+      {
+        text: 'Cross-client transfers, kiosk PIN tools on the People profile, tiered admin email, and a bell that clears when you open it.',
+        adminOnly: true,
+      },
+    ],
+  },
+  {
     id: '2026-07-02',
     bullets: [
       {

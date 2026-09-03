@@ -29,9 +29,19 @@ import { useI18n, type Translate } from '@/lib/i18n';
 export function statusBadge(
   status: Shift['status'],
   t?: Translate,
+  /** For ASSIGNED shifts: has the associate tapped "I'll be there"?
+   *  The badge used to say "Confirmed" for every assigned shift while
+   *  the dashboard simultaneously nagged "1 shift to confirm". */
+  acknowledged?: boolean,
 ): { label: string; variant: 'accent' | 'default' | 'success' | 'destructive' } {
   switch (status) {
     case 'ASSIGNED':
+      if (acknowledged === false) {
+        return {
+          label: t ? t('shift.confirmNeeded') : 'Confirm needed',
+          variant: 'default',
+        };
+      }
       return { label: t ? t('shift.confirmed') : 'Confirmed', variant: 'accent' };
     case 'OPEN':
       return { label: t ? t('shift.open') : 'Open', variant: 'default' };
@@ -83,6 +93,31 @@ export function ShiftCard({
   const [expanded, setExpanded] = useState(false);
   const [teammates, setTeammates] = useState<ShiftTeammate[] | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  // Ack state lives HERE (not in ShiftDetail) so the collapsed badge and
+  // the inline confirm strip stay in sync with the detail panel's button.
+  const [ackAt, setAckAt] = useState(shift.acknowledgedAt);
+  const [acking, setAcking] = useState(false);
+  const needsConfirm =
+    !muted &&
+    shift.status === 'ASSIGNED' &&
+    !ackAt &&
+    new Date(shift.startsAt).getTime() > Date.now();
+
+  const acknowledge = async () => {
+    setAcking(true);
+    try {
+      const updated = await acknowledgeMyShift(shift.id);
+      setAckAt(updated.acknowledgedAt ?? new Date().toISOString());
+      hapticConfirm();
+      toast.success(t('shift.confirmedToast'));
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : t('shift.confirmFailed'),
+      );
+    } finally {
+      setAcking(false);
+    }
+  };
 
   const loadDetail = async () => {
     try {
@@ -102,7 +137,11 @@ export function ShiftCard({
     if (next && teammates === null) loadDetail();
   };
 
-  const badge = statusBadge(shift.status, t);
+  const badge = statusBadge(
+    shift.status,
+    t,
+    shift.status === 'ASSIGNED' && !muted ? Boolean(ackAt) : undefined,
+  );
   const detailId = `shift-detail-${shift.id}`;
   return (
     <li
@@ -167,9 +206,34 @@ export function ShiftCard({
         </div>
       </button>
 
+      {/* Inline confirm on the COLLAPSED card — confirming used to cost an
+          expand + a hunt into the detail panel for every shift past the
+          first. Sibling of the toggle button (never nested inside it). */}
+      {!expanded && needsConfirm && (
+        <div className="border-t border-navy-secondary px-4 py-2.5">
+          <Button
+            size="sm"
+            onClick={acknowledge}
+            loading={acking}
+            disabled={acking}
+            className="w-full sm:w-auto"
+          >
+            <Check className="h-3.5 w-3.5" />
+            {t('shift.illBeThere')}
+          </Button>
+        </div>
+      )}
+
       {expanded && (
         <div id={detailId} className="border-t border-navy-secondary px-4 py-3">
-          <ShiftDetail shift={shift} muted={muted} onSwapCreated={onSwapCreated} />
+          <ShiftDetail
+            shift={shift}
+            muted={muted}
+            onSwapCreated={onSwapCreated}
+            ackAt={ackAt}
+            acking={acking}
+            onAcknowledge={acknowledge}
+          />
           <div className="mt-3">
             <div className="text-xs2 uppercase tracking-wider text-silver/80 mb-1.5 flex items-center gap-1.5">
               <Users className="h-3.5 w-3.5" aria-hidden="true" />
@@ -230,40 +294,30 @@ export function ShiftCard({
   );
 }
 
-/** The facts row of the expanded card: date, hours, site, manager note. */
+/** The facts row of the expanded card: date, hours, site, manager note.
+ *  Ack state + handler are owned by ShiftCard so the collapsed badge,
+ *  the inline confirm strip, and this panel can never disagree. */
 function ShiftDetail({
   shift,
   muted,
   onSwapCreated,
+  ackAt,
+  acking,
+  onAcknowledge,
 }: {
   shift: Shift;
   muted: boolean;
   onSwapCreated?: () => void;
+  ackAt: string | null;
+  acking: boolean;
+  onAcknowledge: () => void;
 }) {
   const { t } = useI18n();
-  const [ackAt, setAckAt] = useState(shift.acknowledgedAt);
-  const [acking, setAcking] = useState(false);
   const site = [shift.locationName, shift.location].filter(Boolean).join(' · ');
   const upcoming =
     !muted &&
     shift.status === 'ASSIGNED' &&
     new Date(shift.startsAt).getTime() > Date.now();
-
-  const acknowledge = async () => {
-    setAcking(true);
-    try {
-      const updated = await acknowledgeMyShift(shift.id);
-      setAckAt(updated.acknowledgedAt ?? new Date().toISOString());
-      hapticConfirm();
-      toast.success(t('shift.confirmedToast'));
-    } catch (err) {
-      toast.error(
-        err instanceof ApiError ? err.message : t('shift.confirmFailed'),
-      );
-    } finally {
-      setAcking(false);
-    }
-  };
 
   return (
     <div className="space-y-2">
@@ -295,7 +349,7 @@ function ShiftDetail({
               {t('shift.youConfirmed')}
             </span>
           ) : (
-            <Button size="sm" onClick={acknowledge} loading={acking} disabled={acking}>
+            <Button size="sm" onClick={onAcknowledge} loading={acking} disabled={acking}>
               <Check className="h-3.5 w-3.5" />
               {t('shift.illBeThere')}
             </Button>

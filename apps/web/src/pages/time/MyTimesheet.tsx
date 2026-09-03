@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Flag, History } from 'lucide-react';
 import { toast } from 'sonner';
@@ -38,6 +38,7 @@ import { statusTone } from '@/lib/status';
 import { TIME_ENTRY_STATUS_TONES } from '@/lib/timeLabels';
 import { Input, Textarea } from '@/components/ui/Input';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { cn } from '@/lib/cn';
@@ -132,6 +133,14 @@ export function MyTimesheet() {
     }
   };
 
+  // ?entry=<id> deep link — five time notifications ("rejected",
+  // "approved hours adjusted"…) land here; without the highlight they
+  // dropped the associate on an anonymous 14-day list.
+  const [searchParams] = useSearchParams();
+  const highlightId = searchParams.get('entry');
+  const highlightRef = useRef<HTMLLIElement | null>(null);
+  const scrolledRef = useRef(false);
+
   const query = useQuery({
     queryKey: ['me', 'timeEntries', fromYmd, toYmd],
     queryFn: async () => {
@@ -149,6 +158,18 @@ export function MyTimesheet() {
   });
 
   const entries = query.data?.entries ?? null;
+
+  // Same phone gesture as Home/Schedule — the timesheet used to ignore it.
+  const pullState = usePullToRefresh(() => query.refetch());
+
+  // Scroll the deep-linked entry into view once, after the list lands.
+  useEffect(() => {
+    if (!highlightId || scrolledRef.current || !entries) return;
+    if (highlightRef.current) {
+      scrolledRef.current = true;
+      highlightRef.current.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }, [entries, highlightId]);
 
   const { weeks, approvedMin, pendingMin, grossEstimate } = useMemo(() => {
     const list = entries ?? [];
@@ -200,6 +221,7 @@ export function MyTimesheet() {
 
   return (
     <Card className="mt-6">
+      <PullToRefreshIndicator state={pullState} />
       <CardHeader>
         <CardTitle>{t('time.myTimesheet')}</CardTitle>
         <CardDescription>{t('time.myTimesheetDesc')}</CardDescription>
@@ -343,11 +365,14 @@ export function MyTimesheet() {
                       return (
                         <li
                           key={e.id}
+                          ref={e.id === highlightId ? highlightRef : undefined}
                           className={cn(
                             'py-3 pl-3 -ml-3 rounded-md',
                             live && 'bg-success/5',
                             e.status === 'REJECTED' &&
                               'border-l-2 border-l-alert pl-2.5',
+                            e.id === highlightId &&
+                              'ring-1 ring-gold/60 bg-gold/5',
                           )}
                         >
                           <div className="flex items-start justify-between gap-3">

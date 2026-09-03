@@ -200,6 +200,50 @@ discipline118Router.post(
   },
 );
 
+// ----- My actions (associate self-serve) ------------------------------------
+// The subject's own view. The org-wide list above is HR-gated
+// (view:hr-admin), which associates don't hold — so without this route the
+// warning an associate is asked to formally acknowledge was UNREACHABLE in
+// the product: notifications deep-linked to a page whose data 403'd.
+discipline118Router.get(
+  '/disciplinary-actions/me',
+  requireAuth,
+  async (req, res) => {
+    const associateId = req.user!.associateId;
+    if (!associateId) {
+      res.json({ actions: [] });
+      return;
+    }
+    const rows = await prisma.disciplinaryAction.findMany({
+      take: 50,
+      where: { associateId },
+      include: {
+        associate: { select: { firstName: true, lastName: true } },
+        issuedBy: { select: { email: true } },
+      },
+      orderBy: { effectiveDate: 'desc' },
+    });
+    res.json({
+      actions: rows.map((a) => ({
+        id: a.id,
+        associateName: `${a.associate.firstName} ${a.associate.lastName}`,
+        kind: a.kind,
+        status: a.status,
+        incidentDate: a.incidentDate.toISOString().slice(0, 10),
+        effectiveDate: a.effectiveDate.toISOString().slice(0, 10),
+        suspensionDays: a.suspensionDays,
+        description: a.description,
+        expectedAction: a.expectedAction,
+        issuedByEmail: a.issuedBy?.email ?? null,
+        acknowledgedAt: a.acknowledgedAt?.toISOString() ?? null,
+        acknowledgedSig: a.acknowledgedSig,
+        rescindedAt: a.rescindedAt?.toISOString() ?? null,
+        rescindedReason: a.rescindedReason,
+      })),
+    });
+  },
+);
+
 // ----- Acknowledge (associate self-serve) ----------------------------------
 
 const AckInputSchema = z.object({

@@ -33,6 +33,7 @@ import { listMyInbox } from '@/lib/communicationsApi';
 import { fmtDate, fmtMoney, fmtRelativeDayTz, fmtShiftRangeTz, fmtTime } from '@/lib/format';
 import { listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
+import { getEmployeeNumber } from '@/lib/selfApi';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -45,8 +46,7 @@ import { getPushStatus, subscribeToPush } from '@/lib/push';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { OnboardingBanner } from '@/components/OnboardingBanner';
 import { cn } from '@/lib/cn';
-import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
-import { MyPlanCard } from '@/components/MyPlanCard';
+import { CelebrationRibbon } from '@/components/CelebrationRibbon';
 import { EarningsCard } from '@/components/EarningsCard';
 
 /**
@@ -146,11 +146,15 @@ export function AssociateDashboard() {
         topbarTitle={t('tabs.home')}
       />
 
+      {/* A birthday/anniversary greeting beats a triage console. The old
+          layout stacked the admin Decision Console ("2 critical · $ at
+          stake", "Open room") and a knowledge-worker plan card here — for
+          an associate those only ever restated what OnboardingBanner and
+          ActionNeededCard below already say, in ops jargon. */}
+      <CelebrationRibbon />
       <OnboardingBanner />
       <div className="mb-4 space-y-4">
         <EarningsCard />
-        <RoleDecisionQueue title="Your to-dos" />
-        <MyPlanCard />
       </div>
       <EnablePushCard />
       <ActionNeededCard
@@ -302,8 +306,15 @@ function ActionNeededCard({ shifts }: { shifts: Shift[] | null | undefined }) {
   const pendingAgreements = (agreementsQuery.data?.agreements ?? []).filter(
     (a) => a.status === 'PENDING_SIGNATURE'
   ).length;
+  // Expiring-soon rides along with expired/rejected — this used to be the
+  // one nudge only the (now-removed) decision console surfaced.
+  const expiringSoonCutoff = Date.now() + 60 * 86_400_000;
   const docsNeedingAttention = (documentsQuery.data?.documents ?? []).filter(
-    (d) => d.status === 'EXPIRED' || d.status === 'REJECTED'
+    (d) =>
+      d.status === 'EXPIRED' ||
+      d.status === 'REJECTED' ||
+      (d.expiresAt !== null &&
+        new Date(d.expiresAt).getTime() <= expiringSoonCutoff)
   ).length;
   const now = Date.now();
   const unconfirmedShifts = (shifts ?? []).filter(
@@ -531,8 +542,39 @@ function ClockCard({ active, isClockedIn }: ClockCardProps) {
         ) : (
           <p className="text-xs text-silver/70 mt-1">{t('dash.kioskHint')}</p>
         )}
+        <EmployeeNumberLine />
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * The kiosk clock-in number, on the card that talks about clocking in.
+ * It used to live only at More → My profile → scroll — three-plus taps
+ * for the credential every shift starts with. Masked until tapped so a
+ * glance over a shoulder in the break room doesn't leak it.
+ */
+function EmployeeNumberLine() {
+  const { t } = useI18n();
+  const [revealed, setRevealed] = useState(false);
+  const { data } = useQuery({
+    queryKey: ['me', 'employeeNumber'],
+    queryFn: () => getEmployeeNumber().catch(() => null),
+    staleTime: 5 * 60_000,
+  });
+  if (!data?.employeeNumber) return null;
+  return (
+    <div className="mt-3 flex items-center justify-between gap-2 border-t border-navy-secondary pt-2.5">
+      <span className="text-xs text-silver/70">{t('dash.myNumber')}</span>
+      <button
+        type="button"
+        onClick={() => setRevealed((v) => !v)}
+        className="font-mono text-sm tracking-[0.3em] text-white rounded px-1 coarse:min-h-9 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        aria-label={revealed ? t('dash.hideNumber') : t('dash.showNumber')}
+      >
+        {revealed ? data.employeeNumber : '••••'}
+      </button>
+    </div>
   );
 }
 

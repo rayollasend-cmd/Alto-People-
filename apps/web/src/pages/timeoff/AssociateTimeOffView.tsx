@@ -19,6 +19,7 @@ import { listHolidays } from '@/lib/holiday117Api';
 import { ApiError } from '@/lib/api';
 import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import { performWithUndo } from '@/lib/undoToast';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -174,6 +175,14 @@ export function AssociateTimeOffView() {
     queryClient.invalidateQueries({ queryKey: REQUESTS_KEY });
   };
 
+  // Same phone gesture as Home/Schedule — this tab used to ignore it.
+  const pullState = usePullToRefresh(() =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: BALANCE_KEY }),
+      queryClient.invalidateQueries({ queryKey: REQUESTS_KEY }),
+    ]),
+  );
+
   const filteredRequests = useMemo(() => {
     if (!requests) return null;
     if (statusFilter === 'ALL') return requests;
@@ -215,6 +224,7 @@ export function AssociateTimeOffView() {
 
   return (
     <div className="space-y-6">
+      <PullToRefreshIndicator state={pullState} />
       <PageHeader
         title={t('timeoff.title')}
         subtitle={t('timeoff.subtitle')}

@@ -132,6 +132,31 @@ const FLOOR_SUPERVISOR_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>(
   'time-attendance',
 ]);
 
+/**
+ * The associate's curated nav: the daily loop plus genuinely
+ * self-service surfaces, in worker language. The uncurated capability
+ * slice produced 25 entries of HR taxonomy (career ladders, pulse,
+ * equity, holidays config…) that read like a back-office console, not
+ * an employee app. Everything trimmed here stays reachable by URL and
+ * by deep links from notifications — it's out of the NAV, not the app.
+ */
+export const ASSOCIATE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
+  'me',
+  'scheduling',
+  'marketplace', // open shifts to pick up
+  'time-attendance', // my timesheet + kiosk explainer
+  'time-off',
+  'payroll',
+  'documents',
+  'communications', // inbox
+  'reimbursements',
+  'learning',
+  'internal-jobs',
+  'agreements', // pending e-signatures land here from the to-do card
+  'hr-cases', // "talk to HR" — the escape valve stays one tap away
+  'help-center',
+]);
+
 /** Capability-filtered module list, with per-role curation applied. */
 export function visibleModules(
   role: string | undefined,
@@ -143,6 +168,9 @@ export function visibleModules(
   if (role === 'EXECUTIVE_CHAIRMAN') return base.filter((m) => EXEC_MODULE_KEYS.has(m.key));
   if (role === 'FLOOR_SUPERVISOR') {
     return base.filter((m) => FLOOR_SUPERVISOR_MODULE_KEYS.has(m.key));
+  }
+  if (role === 'ASSOCIATE') {
+    return base.filter((m) => ASSOCIATE_MODULE_KEYS.has(m.key));
   }
   return base;
 }
@@ -552,7 +580,10 @@ export const MODULES: ModuleNav[] = [
     label: 'Tax forms',
     description:
       'Garnishment orders, quarterly 941/940 builders, W-2 / 1099 generation and e-file exports, and the employer submitter profile.',
-    requires: 'view:payroll',
+    // Employer-side tax operations with company-wide garnishment PII —
+    // process:payroll, never the view:payroll every associate holds for
+    // their own paystubs. (An associate's own W-2s live at /me?tab=tax-docs.)
+    requires: 'process:payroll',
     group: 'time-and-pay',
   },
   {
@@ -579,10 +610,11 @@ export const MODULES: ModuleNav[] = [
     label: 'Pay rules',
     description:
       'Project codes, premium-pay differentials (overtime, night, holiday), and tip pools.',
-    // Pay rules are payroll configuration, not day-of-shift scheduling —
-    // gated on view:payroll so client-scoped schedulers (SHIFT_SUPERVISOR
-    // holds manage:scheduling) don't get a nav item that dead-ends.
-    requires: 'view:payroll',
+    // Pay rules are payroll CONFIGURATION. view:payroll is what every
+    // associate holds for their own paystubs, so gating on it put this
+    // page in every hourly worker's nav. process:payroll = the payroll
+    // operators (HR, Finance, the admin roles).
+    requires: 'process:payroll',
     group: 'time-and-pay',
   },
   {

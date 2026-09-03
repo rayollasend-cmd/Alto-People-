@@ -25,6 +25,7 @@ import {
 } from '@/lib/settingsApi';
 import { deleteProfilePhoto, uploadProfilePhoto } from '@/lib/selfApi';
 import { PhotoCropDialog } from '@/components/PhotoCropDialog';
+import { Link } from 'react-router-dom';
 import { getPushStatus, subscribeToPush, unsubscribeFromPush } from '@/lib/push';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import {
@@ -89,6 +90,13 @@ export function Settings() {
           { label: 'Home', to: '/' },
           { label: 'Settings' },
         ]}
+        secondaryActions={
+          user?.associateId ? (
+            <Button asChild variant="outline" size="sm">
+              <Link to="/me">My profile &amp; documents</Link>
+            </Button>
+          ) : undefined
+        }
       />
 
       {/* Two-column layout at xl+. The profile/identity column on the

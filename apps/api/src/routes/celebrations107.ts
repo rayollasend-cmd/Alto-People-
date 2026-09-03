@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
 
 /**
@@ -127,6 +127,47 @@ celebrationsRouter.get('/celebrations/upcoming', VIEW, async (req, res) => {
 
   items.sort((a, b) => a.date.localeCompare(b.date));
   res.json({ items });
+});
+
+// ----- My own celebration (associate self-serve) ---------------------------
+// The upcoming list above is view:org (managers planning shout-outs). This
+// is the associate's own moment: is TODAY my birthday or work anniversary?
+// Drives the dashboard ribbon — the app should be the first to say it.
+celebrationsRouter.get('/celebrations/me', requireAuth, async (req, res) => {
+  const associateId = req.user?.associateId;
+  if (!associateId) {
+    res.json({ birthday: false, anniversaryYears: null, firstName: null });
+    return;
+  }
+  const a = await prisma.associate.findFirst({
+    where: { id: associateId, deletedAt: null },
+    select: {
+      firstName: true,
+      dob: true,
+      applications: {
+        where: { deletedAt: null, startDate: { not: null } },
+        select: { startDate: true },
+        orderBy: { startDate: 'asc' },
+        take: 1,
+      },
+    },
+  });
+  if (!a) {
+    res.json({ birthday: false, anniversaryYears: null, firstName: null });
+    return;
+  }
+  const now = new Date();
+  const isToday = (d: Date) =>
+    d.getUTCMonth() === now.getUTCMonth() && d.getUTCDate() === now.getUTCDate();
+  const birthday = Boolean(a.dob && isToday(new Date(a.dob)));
+  let anniversaryYears: number | null = null;
+  const hire = a.applications[0]?.startDate;
+  if (hire) {
+    const h = new Date(hire);
+    const years = now.getUTCFullYear() - h.getUTCFullYear();
+    if (isToday(h) && years >= 1) anniversaryYears = years;
+  }
+  res.json({ birthday, anniversaryYears, firstName: a.firstName });
 });
 
 // High-five — fire-and-forget congratulations message via the

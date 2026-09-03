@@ -167,6 +167,7 @@ const BillingHome = lazyNamed(() => import('@/pages/admin/BillingHome'), 'Billin
 const AuditHome = lazyNamed(() => import('@/pages/audit/AuditHome'), 'AuditHome');
 const AnalyticsHome = lazyNamed(() => import('@/pages/analytics/AnalyticsHome'), 'AnalyticsHome');
 const MeHome = lazyNamed(() => import('@/pages/me/MeHome'), 'MeHome');
+const MyDiscipline = lazyNamed(() => import('@/pages/me/MyDiscipline'), 'MyDiscipline');
 const CelebrationsHome = lazyNamed(() => import('@/pages/celebrations/CelebrationsHome'), 'CelebrationsHome');
 const AssetsHome = lazyNamed(() => import('@/pages/assets/AssetsHome'), 'AssetsHome');
 const PulseHome = lazyNamed(() => import('@/pages/pulse/PulseHome'), 'PulseHome');
@@ -403,15 +404,19 @@ const LAYOUT_ROUTES = [
   { path: 'team', element: <TeamHome /> },
   { path: 'workflows', element: <WorkflowsHome /> },
   { path: 'me', element: <MeHome /> },
+  // The associate's own disciplinary record — the page the "please
+  // acknowledge" notification links to. Both bare and :id forms resolve.
+  { path: 'me/discipline', element: <MyDiscipline /> },
+  { path: 'me/discipline/:actionId', element: <MyDiscipline /> },
   { path: 'compensation', element: <CompensationHome /> },
   { path: 'performance/extras', element: <RequireCapability cap="view:performance"><PerformanceExtras /></RequireCapability> },
   { path: 'marketplace', element: <MarketplaceHome /> },
-  { path: 'payrules', element: <PayRulesHome /> },
+  { path: 'payrules', element: <RequireCapability cap="process:payroll"><PayRulesHome /></RequireCapability> },
   { path: 'directory', element: <RequireCapability cap="view:org"><DirCommsHome /></RequireCapability> },
   { path: 'compliance/osha', element: <RequireCapability cap="view:compliance"><OshaWcEeoHome /></RequireCapability> },
   { path: 'templates', element: <RequireCapability cap="view:hr-admin"><TemplatesHome /></RequireCapability> },
   { path: 'recruiting/extras', element: <RequireCapability cap="view:recruiting"><RecruitingExtras /></RequireCapability> },
-  { path: 'payroll/tax', element: <RequireCapability cap="view:payroll"><PayrollTaxHome /></RequireCapability> },
+  { path: 'payroll/tax', element: <RequireCapability cap="process:payroll"><PayrollTaxHome /></RequireCapability> },
   { path: 'payroll/config', element: <RequireCapability cap="process:payroll"><PayrollConfigView /></RequireCapability> },
   { path: 'payroll/compliance', element: <RequireCapability cap="process:payroll"><PayrollCompliance /></RequireCapability> },
   { path: 'payroll/readiness', element: <RequireCapability cap="process:payroll"><PayrollReadiness /></RequireCapability> },

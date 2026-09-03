@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { Plus, Trash2 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
@@ -269,7 +269,14 @@ export function MeHome() {
       <PageHeader
         title="My profile"
         subtitle="Personal info, emergency contacts, dependents, beneficiaries, and life events you can manage yourself."
-        breadcrumbs={[{ label: 'Workforce' }, { label: 'My profile' }]}
+        // No "Workforce" breadcrumb — that's internal HR taxonomy, and it
+        // wasn't clickable anyway. This page is simply theirs.
+        breadcrumbs={[{ label: 'My profile' }]}
+        secondaryActions={
+          <Button asChild variant="outline" size="sm">
+            <Link to="/settings">Photo, password &amp; security</Link>
+          </Button>
+        }
       />
 
       {error && (

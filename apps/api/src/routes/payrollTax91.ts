@@ -66,7 +66,11 @@ import { send } from '../lib/notifications.js';
 
 export const payrollTax91Router = Router();
 
-const VIEW = requireCapability('view:payroll');
+// process:payroll, NOT view:payroll — view:payroll is what every ASSOCIATE
+// holds for their own paystubs, and this router serves employer-side tax
+// operations including the company-wide garnishment list (names + orders).
+// With the old gate any hourly worker could GET /garnishments.
+const VIEW = requireCapability('process:payroll');
 const MANAGE = requireCapability('process:payroll');
 
 // ----- Garnishments ------------------------------------------------------

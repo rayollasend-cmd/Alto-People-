@@ -34,7 +34,10 @@ export const projectsAndPayRouter = Router();
 
 const VIEW_TIME = requireCapability('view:time');
 const MANAGE_TIME = requireCapability('manage:time');
-const VIEW_PAY = requireCapability('view:payroll');
+// process:payroll, not view:payroll — same reasoning as payrollTax91: the
+// associate-held view:payroll must never open payroll CONFIGURATION
+// (premium rules, tip pools, project rates).
+const VIEW_PAY = requireCapability('process:payroll');
 const PROCESS_PAY = requireCapability('process:payroll');
 
 // ----- Projects ----------------------------------------------------------

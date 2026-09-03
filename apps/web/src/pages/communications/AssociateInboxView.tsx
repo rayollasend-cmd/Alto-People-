@@ -6,6 +6,7 @@ import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { dayHeading, fmtTimeOnly, groupByDay } from '@/lib/dayGroup';
 import { fmtDateTime } from '@/lib/format';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -135,6 +136,9 @@ export function AssociateInboxView() {
 
   const unreadCount = items?.filter((n) => !n.readAt).length ?? 0;
 
+  // Same phone gesture as Home/Schedule — the inbox used to ignore it.
+  const pullState = usePullToRefresh(refresh);
+
   const visible = useMemo(() => {
     if (!items) return null;
     const term = q.trim().toLowerCase();
@@ -151,6 +155,7 @@ export function AssociateInboxView() {
 
   return (
     <div className="mx-auto">
+      <PullToRefreshIndicator state={pullState} />
       <PageHeader
         title={
           <>
@@ -239,8 +244,11 @@ export function AssociateInboxView() {
               >
                 <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs hover:bg-navy-secondary/40">
                   <ChevronRight className="chev h-4 w-4 text-silver/70 transition-transform" />
-                  <span className="font-medium text-white">{dayHeading(group.key)}</span>
-                  <span className="text-silver/70">· {group.key}</span>
+                  {/* Friendly heading only — the raw ISO day key next to
+                      "Today" read like debug output. Hover keeps the date. */}
+                  <span className="font-medium text-white" title={group.key}>
+                    {dayHeading(group.key)}
+                  </span>
                   <span className="ml-auto text-silver/70">
                     {group.entries.length} message
                     {group.entries.length === 1 ? '' : 's'}
@@ -292,8 +300,13 @@ export function AssociateInboxView() {
                             {n.body}
                           </div>
                           {n.senderEmail && (
-                            <div className="text-2xs uppercase tracking-widest text-silver/70 mt-2">
-                              From {n.senderEmail}
+                            <div
+                              className="text-2xs uppercase tracking-widest text-silver/70 mt-2"
+                              title={n.senderEmail}
+                            >
+                              {/* A person's message, not a raw address —
+                                  the email survives on hover. */}
+                              From the Alto People team
                             </div>
                           )}
                         </button>

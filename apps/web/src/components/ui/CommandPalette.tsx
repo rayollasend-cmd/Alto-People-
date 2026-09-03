@@ -16,7 +16,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
-import { DASHBOARD_NAV, MODULES } from '@/lib/modules';
+import { DASHBOARD_NAV, visibleModules } from '@/lib/modules';
 import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useClients } from '@/lib/useClients';
 import { usePeopleSearch } from '@/lib/usePaletteSearch';
@@ -158,7 +158,10 @@ export function CommandPalette({
         close();
       },
     },
-    ...MODULES.filter((m) => can(m.requires)).map<PaletteItem>((m) => ({
+    // visibleModules, not a raw capability slice — the palette must offer
+    // the same curated nav the sidebar shows (an associate was getting all
+    // 25 HR modules here while their sidebar showed 14).
+    ...visibleModules(user?.role, can).map<PaletteItem>((m) => ({
       id: `nav-${m.key}`,
       label: m.label,
       hint: m.description,
