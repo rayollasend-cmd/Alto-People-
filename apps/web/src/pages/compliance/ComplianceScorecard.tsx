@@ -40,19 +40,27 @@ import {
 import { FilterChip } from '@/components/ui/FilterBar';
 import { downloadCsv } from '@/lib/csv';
 import type {
+  ScorecardActionState,
+  ScorecardExpiringItem,
+  ScorecardHistoryPoint,
   ScorecardOnboardingSignal,
   ScorecardSeverity,
   ScorecardTrainingSignal,
 } from '@alto-people/shared';
+import { scorecardGrade, scorecardSeverityFromFailPct } from '@alto-people/shared';
 import {
   getScorecardActions,
   getScorecardBilling,
   getScorecardExpirations,
+  getScorecardHistory,
   getScorecardOnboarding,
   getScorecardShifts,
   getScorecardTraining,
+  scorecardReportUrl,
+  setScorecardActionState,
   upsertAttestation,
 } from '@/lib/complianceScorecardApi';
+import { useClients } from '@/lib/useClients';
 import type {
   ManualAttestationOutcome,
   ManualAttestationSignal,
@@ -81,8 +89,20 @@ function useTileData<T>(
   const [error, setError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
 
+  // The fetcher identity IS the scope (client filter): callers memo it with
+  // useCallback([clientId]). A new fetcher means a different dataset, so we
+  // drop back to the skeleton rather than showing the old scope's numbers
+  // under the new filter.
+  const lastFetcher = useRef(fetcher);
+
   useEffect(() => {
-    const isFirst = data === null;
+    const scopeChanged = lastFetcher.current !== fetcher;
+    lastFetcher.current = fetcher;
+    if (scopeChanged) {
+      setData(null);
+      setStale(false);
+    }
+    const isFirst = scopeChanged || data === null;
     if (isFirst) setError(null);
     let cancelled = false;
     fetcher()
@@ -102,7 +122,7 @@ function useTileData<T>(
       });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshEpoch]);
+  }, [refreshEpoch, fetcher]);
 
   return { data, error, stale };
 }
@@ -152,13 +172,14 @@ export function ComplianceScorecard() {
   // A single epoch ticks every 15 min (or when the user clicks Refresh) and
   // every tile re-fetches off it. Beats wiring 6 separate timers.
   const [refreshEpoch, setRefreshEpoch] = useState(0);
-  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
   const [refreshing, setRefreshing] = useState(false);
+  // '' = org-wide. Every tile endpoint takes the same ?clientId= scope.
+  const [clientId, setClientId] = useState('');
+  const { clients } = useClients();
 
   useEffect(() => {
     const id = setInterval(() => {
       setRefreshEpoch((n) => n + 1);
-      setLastRefreshedAt(new Date());
     }, REFRESH_INTERVAL_MS);
     return () => clearInterval(id);
   }, []);
@@ -166,7 +187,6 @@ export function ComplianceScorecard() {
   const refresh = useCallback(() => {
     setRefreshing(true);
     setRefreshEpoch((n) => n + 1);
-    setLastRefreshedAt(new Date());
     // Spinner is purely visual; the tiles each manage their own loading.
     // 600ms is enough to register the click without leaving the icon
     // spinning if a tile finishes faster than the eye can catch.
@@ -178,29 +198,48 @@ export function ComplianceScorecard() {
       <div className="space-y-4">
         <HeroStrip
           refreshEpoch={refreshEpoch}
-          lastRefreshedAt={lastRefreshedAt}
           refreshing={refreshing}
           onRefresh={refresh}
+          clientId={clientId}
         />
 
+        {/* Client scope — the same filter every tile respects. Only shown
+            when there's actually more than one client to slice by. */}
+        {clients.length > 1 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <FilterChip active={clientId === ''} onClick={() => setClientId('')}>
+              All clients
+            </FilterChip>
+            {clients.map((c) => (
+              <FilterChip
+                key={c.id}
+                active={clientId === c.id}
+                onClick={() => setClientId(c.id)}
+              >
+                {c.name}
+              </FilterChip>
+            ))}
+          </div>
+        )}
+
         {/* Tile 1 — promoted to full-width hero. Most important tile per spec. */}
-        <OnboardingTile refreshEpoch={refreshEpoch} />
+        <OnboardingTile refreshEpoch={refreshEpoch} clientId={clientId} />
 
         {/* Expirations + Training: time-bound items. */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <ExpirationsTile refreshEpoch={refreshEpoch} />
-          <TrainingTile refreshEpoch={refreshEpoch} />
+          <ExpirationsTile refreshEpoch={refreshEpoch} clientId={clientId} />
+          <TrainingTile refreshEpoch={refreshEpoch} clientId={clientId} />
         </div>
 
         {/* Operational + financial. Both have heavy "coming soon" content
             until the schema catches up — pairing them keeps the visual
             weight balanced. */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <ShiftsTile refreshEpoch={refreshEpoch} />
-          <BillingTile refreshEpoch={refreshEpoch} />
+          <ShiftsTile refreshEpoch={refreshEpoch} clientId={clientId} />
+          <BillingTile refreshEpoch={refreshEpoch} clientId={clientId} />
         </div>
 
-        <ActionsTile refreshEpoch={refreshEpoch} />
+        <ActionsTile refreshEpoch={refreshEpoch} clientId={clientId} />
       </div>
     </TooltipProvider>
   );
@@ -215,19 +254,31 @@ export function ComplianceScorecard() {
 
 function HeroStrip({
   refreshEpoch,
-  lastRefreshedAt,
   refreshing,
   onRefresh,
+  clientId,
 }: {
   refreshEpoch: number;
-  lastRefreshedAt: Date;
   refreshing: boolean;
   onRefresh: () => void;
+  clientId: string;
 }) {
-  const { data } = useTileData(getScorecardActions, refreshEpoch);
+  const fetchActions = useCallback(
+    () => getScorecardActions(clientId || undefined),
+    [clientId],
+  );
+  const fetchHistory = useCallback(
+    () => getScorecardHistory(clientId || undefined),
+    [clientId],
+  );
+  const { data } = useTileData(fetchActions, refreshEpoch);
+  const { data: history } = useTileData(fetchHistory, refreshEpoch);
   const critical = data?.criticalCount ?? 0;
   const warn = data?.warnCount ?? 0;
-  const totalActions = critical + warn;
+  const totalActions = data?.totalActionCount ?? critical + warn;
+  const score = data?.score ?? null;
+  const grade = score === null ? null : scorecardGrade(score);
+  const weekDelta = history?.weekDelta ?? null;
 
   return (
     <Card className={cn('border', critical > 0 ? 'border-alert/60' : 'border-navy-secondary')}>
@@ -239,9 +290,45 @@ function HeroStrip({
               Walmart Contract Compliance Scorecard
             </h1>
             <p className="text-xs text-silver mt-0.5">
-              Live state against Walmart MSA / SOW / MTSA. Auto-refreshes every 15 minutes.
+              Live state against Walmart MSA / SOW / MTSA. Auto-refreshes every 15 minutes.{' '}
+              <Link to="/compliance?tab=audit" className="text-gold hover:underline">
+                Audit evidence →
+              </Link>
             </p>
           </div>
+
+          {/* Weighted score — the one number a board asks for. */}
+          {score !== null && (
+            <div className="flex items-center gap-3">
+              <div className="text-center">
+                <div
+                  className={cn(
+                    'text-3xl font-bold tabular-nums leading-none',
+                    score >= 85 ? 'text-success' : score >= 60 ? 'text-warning' : 'text-alert',
+                  )}
+                >
+                  {score}
+                  <span className="text-sm font-semibold text-silver/80 ml-1">/ 100</span>
+                </div>
+                <div className="text-2xs uppercase tracking-widest text-silver/80 mt-1">
+                  Score · grade {grade}
+                  {weekDelta !== null && (
+                    <span
+                      className={cn(
+                        'ml-1.5 tabular-nums font-semibold',
+                        weekDelta > 0 ? 'text-success' : weekDelta < 0 ? 'text-alert' : 'text-silver',
+                      )}
+                    >
+                      {weekDelta > 0 ? '+' : ''}{weekDelta} wk
+                    </span>
+                  )}
+                </div>
+              </div>
+              {history && history.points.length >= 2 && (
+                <ScoreSparkline points={history.points} />
+              )}
+            </div>
+          )}
 
           <div className="flex items-center gap-5">
             <KpiNumber
@@ -263,9 +350,17 @@ function HeroStrip({
           </div>
 
           <div className="flex items-center gap-3 ml-auto">
-            <span className="text-xs2 text-silver tabular-nums">
-              Updated {fmtTimeAgo(lastRefreshedAt)}
-            </span>
+            {data && (
+              <span className="text-xs2 text-silver tabular-nums">
+                Updated {fmtTimeAgo(new Date(data.generatedAt))}
+              </span>
+            )}
+            <Button size="sm" variant="outline" asChild>
+              <a href={scorecardReportUrl(clientId || undefined)} download>
+                <Download className="h-3.5 w-3.5" />
+                Board PDF
+              </a>
+            </Button>
             <Button size="sm" variant="outline" onClick={onRefresh} disabled={refreshing}>
               <RefreshCw className={cn('h-3.5 w-3.5', refreshing && 'animate-spin')} />
               {refreshing ? 'Refreshing…' : 'Refresh'}
@@ -274,6 +369,44 @@ function HeroStrip({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/** Tiny inline trend line — 90 days of snapshot scores, no chart library. */
+function ScoreSparkline({ points }: { points: ScorecardHistoryPoint[] }) {
+  const w = 96;
+  const h = 30;
+  const scores = points.map((p) => p.score);
+  const min = Math.min(...scores);
+  const max = Math.max(...scores);
+  const span = Math.max(1, max - min);
+  const coords = points
+    .map((p, i) => {
+      const x = (i / (points.length - 1)) * (w - 2) + 1;
+      const y = h - 2 - ((p.score - min) / span) * (h - 4);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  const latest = points[points.length - 1];
+  const first = points[0];
+  return (
+    <svg
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      role="img"
+      aria-label={`Compliance score trend: ${first.score} on ${first.day} to ${latest.score} on ${latest.day}`}
+      className={latest.score >= first.score ? 'text-success' : 'text-alert'}
+    >
+      <polyline
+        points={coords}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
 
@@ -301,8 +434,12 @@ function KpiNumber({
 
 /* ----------------------------- TILE 1 ----------------------------- */
 
-function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
-  const { data, error, stale } = useTileData(getScorecardOnboarding, refreshEpoch);
+function OnboardingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId: string }) {
+  const fetcher = useCallback(
+    () => getScorecardOnboarding(clientId || undefined),
+    [clientId],
+  );
+  const { data, error, stale } = useTileData(fetcher, refreshEpoch);
   const [drawerSignal, setDrawerSignal] = useState<ScorecardOnboardingSignal | null>(null);
 
   // Empty population — there's nothing to score yet.
@@ -368,6 +505,12 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
                       <span className="text-xs text-white truncate">{s.label}</span>
                     </ClauseTooltip>
                     <div className="flex items-center gap-3 shrink-0">
+                      {(s.overdueCount ?? 0) > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded bg-alert/15 px-1.5 py-0.5 text-2xs font-semibold text-alert">
+                          <AlertTriangle className="h-3 w-3" />
+                          {s.overdueCount} past deadline
+                        </span>
+                      )}
                       <span className="text-xs2 text-silver tabular-nums hidden sm:inline">
                         {s.completedCount}/{total} ({pct}%)
                       </span>
@@ -402,11 +545,26 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
                     drawerSignal.missing.map((m) => (
                       <li
                         key={`${m.associateId}-${m.clientId}`}
-                        className="flex items-center justify-between gap-2 px-2 py-1.5 rounded border border-navy-secondary"
+                        className={cn(
+                          'flex items-center justify-between gap-2 px-2 py-1.5 rounded border',
+                          (m.daysOverdue ?? 0) > 0 ? 'border-alert/50 bg-alert/5' : 'border-navy-secondary',
+                        )}
                       >
                         <div>
                           <div className="text-sm text-white">{m.associateName ?? '—'}</div>
                           <div className="text-2xs text-silver">{m.clientName ?? '—'}</div>
+                          {m.dueBy && (
+                            <div
+                              className={cn(
+                                'text-2xs tabular-nums',
+                                (m.daysOverdue ?? 0) > 0 ? 'text-alert font-semibold' : 'text-silver/80',
+                              )}
+                            >
+                              {(m.daysOverdue ?? 0) > 0
+                                ? `${m.daysOverdue} day${m.daysOverdue === 1 ? '' : 's'} past the federal deadline (was due ${fmtDate(m.dueBy)})`
+                                : `Federal deadline ${fmtDate(m.dueBy)}`}
+                            </div>
+                          )}
                         </div>
                         {m.associateId && (
                           <Link
@@ -438,8 +596,37 @@ function OnboardingTile({ refreshEpoch }: { refreshEpoch: number }) {
 
 /* ----------------------------- TILE 2 ----------------------------- */
 
-function ExpirationsTile({ refreshEpoch }: { refreshEpoch: number }) {
-  const { data, error, stale } = useTileData(getScorecardExpirations, refreshEpoch);
+/**
+ * Mirrors the server's expirationFixLink — each expiring row deep-links the
+ * surface that renews it.
+ */
+function expirationFixLink(
+  kind: ScorecardExpiringItem['kind'],
+  associateId: string | null,
+): string | null {
+  if (!associateId) return null;
+  switch (kind) {
+    case 'I9_WORK_AUTH':
+      return `/compliance?tab=i9&associateId=${associateId}${SCORECARD_RETURN}`;
+    case 'DRUG_TEST':
+      return `/compliance?tab=drugtests&associateId=${associateId}`;
+    case 'J1_DS2019':
+      return `/compliance?tab=j1&associateId=${associateId}`;
+    case 'DOCUMENT':
+      return `/people?associateId=${associateId}&tab=documents`;
+    case 'AGREEMENT':
+      return `/agreements?associateId=${associateId}`;
+    default:
+      return `/people?associateId=${associateId}`;
+  }
+}
+
+function ExpirationsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId: string }) {
+  const fetcher = useCallback(
+    () => getScorecardExpirations(clientId || undefined),
+    [clientId],
+  );
+  const { data, error, stale } = useTileData(fetcher, refreshEpoch);
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
   const [drawerSignal, setDrawerSignal] =
@@ -488,14 +675,31 @@ function ExpirationsTile({ refreshEpoch }: { refreshEpoch: number }) {
                   {bucket === 'red' ? '0–30 days' : bucket === 'amber' ? '31–60 days' : '61–90 days'}
                 </div>
                 <ul className="space-y-1">
-                  {items.slice(0, 5).map((it, i) => (
-                    <li key={i} className="flex justify-between items-center text-xs gap-2">
-                      <span className="text-white truncate">{it.subject.associateName ?? it.label}</span>
-                      <span className="text-silver tabular-nums shrink-0">
-                        {it.label} · {it.daysUntil}d
-                      </span>
-                    </li>
-                  ))}
+                  {items.slice(0, 5).map((it, i) => {
+                    const link = expirationFixLink(it.kind, it.subject.associateId);
+                    const row = (
+                      <>
+                        <span className="text-white truncate">{it.subject.associateName ?? it.label}</span>
+                        <span className="text-silver tabular-nums shrink-0">
+                          {it.label} · {it.daysUntil}d
+                        </span>
+                      </>
+                    );
+                    return (
+                      <li key={i} className="text-xs">
+                        {link ? (
+                          <Link
+                            to={link}
+                            className="flex justify-between items-center gap-2 rounded px-1 -mx-1 py-0.5 hover:bg-navy-secondary/40"
+                          >
+                            {row}
+                          </Link>
+                        ) : (
+                          <span className="flex justify-between items-center gap-2 py-0.5">{row}</span>
+                        )}
+                      </li>
+                    );
+                  })}
                   {items.length > 5 && (
                     <li className="text-2xs text-silver/80">+{items.length - 5} more</li>
                   )}
@@ -543,8 +747,12 @@ function ExpirationsTile({ refreshEpoch }: { refreshEpoch: number }) {
 
 /* ----------------------------- TILE 3 ----------------------------- */
 
-function ShiftsTile({ refreshEpoch }: { refreshEpoch: number }) {
-  const { data, error, stale } = useTileData(getScorecardShifts, refreshEpoch);
+function ShiftsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId: string }) {
+  const fetcher = useCallback(
+    () => getScorecardShifts(clientId || undefined),
+    [clientId],
+  );
+  const { data, error, stale } = useTileData(fetcher, refreshEpoch);
 
   return (
     <TileShell
@@ -591,8 +799,12 @@ function ShiftsTile({ refreshEpoch }: { refreshEpoch: number }) {
 
 /* ----------------------------- TILE 4 ----------------------------- */
 
-function BillingTile({ refreshEpoch }: { refreshEpoch: number }) {
-  const { data, error, stale } = useTileData(getScorecardBilling, refreshEpoch);
+function BillingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId: string }) {
+  const fetcher = useCallback(
+    () => getScorecardBilling(clientId || undefined),
+    [clientId],
+  );
+  const { data, error, stale } = useTileData(fetcher, refreshEpoch);
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
   const [drawerSignal, setDrawerSignal] =
@@ -1029,8 +1241,12 @@ function AttestationDrawer({
 
 /* ----------------------------- TILE 5 ----------------------------- */
 
-function TrainingTile({ refreshEpoch }: { refreshEpoch: number }) {
-  const { data, error, stale } = useTileData(getScorecardTraining, refreshEpoch);
+function TrainingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId: string }) {
+  const fetcher = useCallback(
+    () => getScorecardTraining(clientId || undefined),
+    [clientId],
+  );
+  const { data, error, stale } = useTileData(fetcher, refreshEpoch);
   const [drawerSignal, setDrawerSignal] = useState<ScorecardTrainingSignal | null>(null);
 
   return (
@@ -1131,9 +1347,47 @@ function TrainingTile({ refreshEpoch }: { refreshEpoch: number }) {
 
 type ActionFilter = 'all' | 'critical' | 'warn';
 
-function ActionsTile({ refreshEpoch }: { refreshEpoch: number }) {
-  const { data, error, stale } = useTileData(getScorecardActions, refreshEpoch);
+function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId: string }) {
+  const fetcher = useCallback(
+    () => getScorecardActions(clientId || undefined),
+    [clientId],
+  );
+  const { data, error, stale } = useTileData(fetcher, refreshEpoch);
   const [filter, setFilter] = useState<ActionFilter>('all');
+  const { user } = useAuth();
+  const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
+
+  // Optimistic per-action state overlay: mutations land here instantly and
+  // the next refresh (server truth) supersedes it. DONE/SNOOZED rows stay
+  // visible-but-dimmed until then so the click has a visible receipt.
+  const [localStates, setLocalStates] = useState<Record<string, ScorecardActionState>>({});
+  const [busyActionId, setBusyActionId] = useState<string | null>(null);
+
+  // A new dataset (scope change / refetch) resets the overlay — the server
+  // list already reflects every persisted state.
+  useEffect(() => {
+    setLocalStates({});
+  }, [data]);
+
+  const mutateState = async (
+    actionId: string,
+    patch: { status?: 'OPEN' | 'SNOOZED' | 'DONE'; assigneeUserId?: string | null; snoozedUntil?: string | null },
+    successMsg: string,
+  ) => {
+    setBusyActionId(actionId);
+    try {
+      const r = await setScorecardActionState({ actionId, ...patch });
+      setLocalStates((prev) => ({ ...prev, [actionId]: r.state }));
+      toast.success(successMsg);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Update failed.');
+    } finally {
+      setBusyActionId(null);
+    }
+  };
+
+  const stateFor = (a: { id: string; state?: ScorecardActionState | null }) =>
+    localStates[a.id] ?? a.state ?? null;
 
   const filtered = useMemo(() => {
     if (!data) return [];
@@ -1144,17 +1398,32 @@ function ActionsTile({ refreshEpoch }: { refreshEpoch: number }) {
   // Client-side CSV of the currently filtered list — no extra endpoint.
   const exportCsv = () => {
     if (filtered.length === 0) return;
-    downloadCsv(`compliance-open-actions-${ymdLocal()}.csv`, [
-      ['severity', 'title', 'contract_clause', 'associate', 'client', 'link'],
-      ...filtered.map((a) => [
-        a.severity,
-        a.title,
-        a.contractClause,
-        a.subject.associateName ?? '',
-        a.subject.clientName ?? '',
-        a.link ?? '',
-      ]),
-    ]);
+    const rows = [
+      ['severity', 'title', 'contract_clause', 'associate', 'client', 'status', 'assignee', 'link'],
+      ...filtered.map((a) => {
+        const st = stateFor(a);
+        return [
+          a.severity,
+          a.title,
+          a.contractClause,
+          a.subject.associateName ?? '',
+          a.subject.clientName ?? '',
+          st?.status ?? 'OPEN',
+          st?.assigneeEmail ?? '',
+          a.link ?? '',
+        ];
+      }),
+    ];
+    // An export that silently stops at the response cap would misrepresent
+    // the org's exposure — say so in the file itself.
+    if (data?.truncated) {
+      rows.push([
+        '',
+        `NOTE: list truncated — showing ${data.actions.length} of ${data.totalActionCount} open actions. Narrow by client or fix criticals to see the rest.`,
+        '', '', '', '', '', '',
+      ]);
+    }
+    downloadCsv(`compliance-open-actions-${ymdLocal()}.csv`, rows);
   };
 
   return (
@@ -1240,25 +1509,109 @@ function ActionsTile({ refreshEpoch }: { refreshEpoch: number }) {
         )}
         {data && filtered.length > 0 && (
           <ul className="divide-y divide-navy-secondary border border-navy-secondary rounded">
-            {filtered.map((a) => (
-              <li key={a.id} className="px-3 py-2 flex items-center justify-between gap-2">
-                <div className="flex items-start gap-2 min-w-0">
-                  <SeverityDot severity={a.severity} />
-                  <div className="min-w-0">
-                    <div className="text-xs text-white truncate">{a.title}</div>
-                    <div className="text-2xs text-silver/80 truncate">{a.contractClause}</div>
+            {filtered.map((a) => {
+              const st = stateFor(a);
+              const resolvedLocally = st && (st.status === 'DONE' || st.status === 'SNOOZED');
+              return (
+                <li
+                  key={a.id}
+                  className={cn(
+                    'px-3 py-2 flex items-center justify-between gap-2',
+                    resolvedLocally && 'opacity-50',
+                  )}
+                >
+                  <div className="flex items-start gap-2 min-w-0">
+                    <SeverityDot severity={a.severity} />
+                    <div className="min-w-0">
+                      <div className="text-xs text-white truncate">{a.title}</div>
+                      <div className="text-2xs text-silver/80 truncate">{a.contractClause}</div>
+                      {st && (st.assigneeEmail || st.status !== 'OPEN') && (
+                        <div className="text-2xs mt-0.5 flex items-center gap-1.5 flex-wrap">
+                          {st.status === 'DONE' && (
+                            <span className="inline-flex items-center gap-1 text-success">
+                              <CheckCircle2 className="h-3 w-3" /> Done
+                            </span>
+                          )}
+                          {st.status === 'SNOOZED' && st.snoozedUntil && (
+                            <span className="inline-flex items-center gap-1 text-warning">
+                              <Clock className="h-3 w-3" /> Snoozed until {fmtDate(st.snoozedUntil)}
+                            </span>
+                          )}
+                          {st.assigneeEmail && (
+                            <span className="text-silver">→ {st.assigneeEmail}</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-                {a.link && (
-                  <Link
-                    to={a.link}
-                    className="text-xs2 text-gold hover:underline flex items-center gap-1 shrink-0"
-                  >
-                    Fix <ExternalLink className="h-3 w-3" />
-                  </Link>
-                )}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {canManage && !resolvedLocally && (
+                      <>
+                        {!st?.assigneeUserId && user && (
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            className="text-silver hover:text-white"
+                            disabled={busyActionId === a.id}
+                            onClick={() =>
+                              void mutateState(a.id, { assigneeUserId: user.id }, 'Assigned to you.')
+                            }
+                            title="Assign this action to yourself"
+                          >
+                            I've got it
+                          </Button>
+                        )}
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          className="text-silver hover:text-warning"
+                          disabled={busyActionId === a.id}
+                          onClick={() =>
+                            void mutateState(
+                              a.id,
+                              {
+                                status: 'SNOOZED',
+                                snoozedUntil: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
+                              },
+                              'Snoozed for 7 days.',
+                            )
+                          }
+                          title="Hide this action for 7 days"
+                        >
+                          Snooze 7d
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          className="text-silver hover:text-success"
+                          disabled={busyActionId === a.id}
+                          onClick={() =>
+                            void mutateState(a.id, { status: 'DONE' }, 'Marked done.')
+                          }
+                          title="Mark resolved — it disappears on the next refresh"
+                        >
+                          Done
+                        </Button>
+                      </>
+                    )}
+                    {a.link && (
+                      <Link
+                        to={a.link}
+                        className="text-xs2 text-gold hover:underline flex items-center gap-1 shrink-0"
+                      >
+                        Fix <ExternalLink className="h-3 w-3" />
+                      </Link>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+            {data.truncated && (
+              <li className="px-3 py-2 text-2xs text-silver/80">
+                Showing {data.actions.length} of {data.totalActionCount} open actions — narrow by
+                client or clear criticals to see the rest.
               </li>
-            ))}
+            )}
           </ul>
         )}
       </CardContent>
@@ -1393,10 +1746,10 @@ function SeverityDot({ severity }: { severity: ScorecardSeverity }) {
   return <span className={cn('mt-1.5 h-2 w-2 rounded-full shrink-0', tone)} />;
 }
 
+// Delegates to the shared threshold so this bar can never disagree with the
+// server's tile badge (they used to: 95/80 here vs 100/90 there).
 function pctSeverity(pct: number): ScorecardSeverity {
-  if (pct >= 95) return 'ok';
-  if (pct >= 80) return 'warn';
-  return 'critical';
+  return scorecardSeverityFromFailPct(100 - pct);
 }
 
 function liveSeverity(value: number, target: number): ScorecardSeverity {

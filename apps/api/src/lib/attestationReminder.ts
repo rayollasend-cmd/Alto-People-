@@ -100,12 +100,13 @@ async function maybeRemindForSignal(
     `${config.description}\n\n` +
     `Open the Compliance scorecard → Billing & invoicing tile to record ` +
     `when you completed this and confirm the outcome.\n\n` +
-    `${env.APP_BASE_URL}/compliance/osha`;
+    `${env.APP_BASE_URL}/compliance?tab=scorecard`;
 
   await notifyAllAdmins({
     subject,
     body,
     category,
+    linkUrl: '/compliance?tab=scorecard',
   });
   return true;
 }

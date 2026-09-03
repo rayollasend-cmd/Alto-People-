@@ -22,10 +22,16 @@ import {
   type ScorecardSeverity,
   type ScorecardShiftsResponse,
   type ScorecardTrainingResponse,
+  ScorecardActionStateInputSchema,
+  ScorecardHistoryResponseSchema,
+  scorecardSeverityFromFailPct,
+  scorecardGrade,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { addBusinessDays } from '../lib/everifyReadiness.js';
+import { notifyUser } from '../lib/notify.js';
 import { getShiftMetrics, isConfigured as asnNexusConfigured, type AsnNexusMetric } from '../lib/asnNexus.js';
 import {
   ATTESTATION_CONFIGS,
@@ -36,6 +42,8 @@ import {
   type AttestationConfig,
 } from '../lib/manualAttestation.js';
 import { enqueueAudit } from '../lib/audit.js';
+import { ReportPdf } from '../lib/reportPdf.js';
+import { formatRef } from '../lib/emailTemplates.js';
 
 export const complianceScorecardRouter = Router();
 
@@ -66,6 +74,9 @@ const CLAUSE = {
   WORK_AUTH: 'IRCA — I-9 work authorization re-verification',
   J1: 'J-1 program end date',
   TRAINING_EXPIRY: 'Training certification re-validation',
+  DOC_EXPIRY: 'Document validity — expiring credential on file',
+  VAX_EXPIRY: 'Client site requirement — vaccination validity',
+  AGREEMENT_EXPIRY: 'Alto People agreement — expiring term',
   FILL_RATE: 'Walmart SOW — 97% shift fill rate target',
   NO_SHOW: 'Walmart SOW — sub-2% no-show rate target',
   SHIFT_LEAD: 'Walmart SOW — 100% Shift Lead presence',
@@ -82,48 +93,64 @@ const CLAUSE = {
 } as const;
 
 // Returns the union of associate ids whose most-recent active Application is
-// APPROVED. Reused by tiles 1 + 5. Includes Application.clientId so the
-// scorecard can show client-scoped rollups later.
+// APPROVED. Reused by tiles 1 + 5. Includes Application.clientId so every
+// tile can be scoped with ?clientId=.
 //
-// PERF: micro-cached for 5s. /compliance-scorecard/actions builds three
-// tiles in parallel that each call this — without the cache one dashboard
-// render executed the identical 500-row query three times.
-let activeAssociatesCache: {
-  at: number;
-  value: ReturnType<typeof loadActiveAssociates>;
-} | null = null;
+// PERF: micro-cached for 5s per client scope. /compliance-scorecard/actions
+// builds five tiles in parallel that each call this — without the cache one
+// dashboard render executed the identical query five times.
+//
+// POPULATION CAP: 5,000 applications, up from the old 500 — which silently
+// made associate #501 invisible to the entire scorecard. If the org ever
+// exceeds this, the loud console error below is the tripwire to paginate.
+const ACTIVE_ASSOCIATES_CAP = 5_000;
+const activeAssociatesCache = new Map<
+  string,
+  { at: number; value: ReturnType<typeof loadActiveAssociates> }
+>();
 const ACTIVE_ASSOCIATES_TTL_MS = 5_000;
 
-function getActiveAssociates() {
+function getActiveAssociates(clientId?: string | null) {
+  const key = clientId ?? '*';
   const now = Date.now();
-  if (activeAssociatesCache && now - activeAssociatesCache.at < ACTIVE_ASSOCIATES_TTL_MS) {
-    return activeAssociatesCache.value;
-  }
-  const value = loadActiveAssociates();
-  activeAssociatesCache = { at: now, value };
+  const hit = activeAssociatesCache.get(key);
+  if (hit && now - hit.at < ACTIVE_ASSOCIATES_TTL_MS) return hit.value;
+  const value = loadActiveAssociates(clientId);
+  activeAssociatesCache.set(key, { at: now, value });
   // A failed load must not get pinned for the TTL.
   value.catch(() => {
-    if (activeAssociatesCache?.value === value) activeAssociatesCache = null;
+    if (activeAssociatesCache.get(key)?.value === value) {
+      activeAssociatesCache.delete(key);
+    }
   });
   return value;
 }
 
-async function loadActiveAssociates() {
+async function loadActiveAssociates(clientId?: string | null) {
   const apps = await prisma.application.findMany({
-    take: 500,
+    take: ACTIVE_ASSOCIATES_CAP,
     where: {
       status: 'APPROVED',
       deletedAt: null,
       associate: { deletedAt: null },
+      ...(clientId ? { clientId } : {}),
     },
     select: {
       associateId: true,
       clientId: true,
-      associate: { select: { firstName: true, lastName: true, dob: true } },
+      associate: {
+        select: { firstName: true, lastName: true, dob: true, hireDate: true },
+      },
       client: { select: { name: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
+  if (apps.length === ACTIVE_ASSOCIATES_CAP) {
+    console.error(
+      `[compliance-scorecard] active-associate query hit the ${ACTIVE_ASSOCIATES_CAP}-row cap — ` +
+        'the scorecard is no longer covering the whole workforce. Paginate loadActiveAssociates.',
+    );
+  }
   // De-dup by associateId — one associate may have multiple historical
   // approved applications; we keep the most recent.
   const seen = new Set<string>();
@@ -133,6 +160,7 @@ async function loadActiveAssociates() {
     clientId: string;
     clientName: string;
     dob: Date | null;
+    hireDate: Date | null;
   }> = [];
   for (const a of apps) {
     if (seen.has(a.associateId)) continue;
@@ -143,30 +171,40 @@ async function loadActiveAssociates() {
       clientId: a.clientId,
       clientName: a.client.name,
       dob: a.associate.dob,
+      hireDate: a.associate.hireDate,
     });
   }
   return rows;
 }
 
-// Tile severity rule of thumb: any signal failing > 10% of the population is
-// critical; any failure at all is warn; all clear is ok. Tunable later.
-function severityFromPercent(failPct: number): ScorecardSeverity {
-  if (failPct > 10) return 'critical';
-  if (failPct > 0) return 'warn';
-  return 'ok';
+// Severity thresholds live in shared/contracts (scorecardSeverityFromFailPct)
+// so the UI's progress bars and these tile badges can never disagree again.
+const severityFromPercent = scorecardSeverityFromFailPct;
+
+/** Optional ?clientId= scope, validated. */
+function clientScope(req: { query: Record<string, unknown> }): string | null {
+  const raw = req.query.clientId;
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  const parsed = z.string().uuid().safeParse(raw);
+  if (!parsed.success) {
+    throw new HttpError(400, 'invalid_client_id', 'clientId must be a UUID.');
+  }
+  return parsed.data;
 }
 
 /* ============================================================ TILE 1 ===== *
  * Onboarding completeness — % of active associates with each signal.
  * ========================================================================= */
 
-complianceScorecardRouter.get('/onboarding', VIEW, async (_req, res) => {
-  const body = await buildOnboardingTile();
+complianceScorecardRouter.get('/onboarding', VIEW, async (req, res) => {
+  const body = await buildOnboardingTile(clientScope(req));
   res.json(body);
 });
 
-async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
-  const active = await getActiveAssociates();
+export async function buildOnboardingTile(
+  clientId?: string | null,
+): Promise<ScorecardOnboardingResponse> {
+  const active = await getActiveAssociates(clientId);
   const ids = active.map((a) => a.associateId);
   const total = active.length;
   const subjectByid = new Map(active.map((a) => [a.associateId, a]));
@@ -187,10 +225,17 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
   const eighteenYearsAgo = new Date();
   eighteenYearsAgo.setFullYear(eighteenYearsAgo.getFullYear() - 18);
 
+  // Every query is `distinct: ['associateId']` with `take: ids.length` —
+  // with distinct, the row count is bounded by the population, so the take
+  // is EXACT, never a truncation. The old flat `take: 500` without distinct
+  // meant ~250 associates holding two drug-test documents exhausted the
+  // window and pushed healthy associates into "missing" — a compliance
+  // dashboard reporting false criticals.
   const [drugRows, bgRows, bgDocRows, i9Rows, w4Rows, offerDocs, policyAcks] =
     await Promise.all([
       prisma.documentRecord.findMany({
-        take: 500,
+        take: ids.length,
+        distinct: ['associateId'],
         where: {
           associateId: { in: ids },
           kind: 'DRUG_TEST_RESULT',
@@ -200,12 +245,14 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
         select: { associateId: true },
       }),
       prisma.backgroundCheck.findMany({
-        take: 500,
+        take: ids.length,
+        distinct: ['associateId'],
         where: { associateId: { in: ids }, status: 'PASSED' },
         select: { associateId: true },
       }),
       prisma.documentRecord.findMany({
-        take: 500,
+        take: ids.length,
+        distinct: ['associateId'],
         where: {
           associateId: { in: ids },
           kind: 'BACKGROUND_CHECK_RESULT',
@@ -214,7 +261,8 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
         select: { associateId: true },
       }),
       prisma.i9Verification.findMany({
-        take: 500,
+        take: ids.length,
+        distinct: ['associateId'],
         where: {
           associateId: { in: ids },
           section1CompletedAt: { not: null },
@@ -226,12 +274,14 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
         },
       }),
       prisma.w4Submission.findMany({
-        take: 500,
+        take: ids.length,
+        distinct: ['associateId'],
         where: { associateId: { in: ids } },
         select: { associateId: true },
       }),
       prisma.documentRecord.findMany({
-        take: 500,
+        take: ids.length,
+        distinct: ['associateId'],
         where: {
           associateId: { in: ids },
           kind: 'OFFER_LETTER',
@@ -240,7 +290,7 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
         select: { associateId: true },
       }),
       prisma.policyAcknowledgment.findMany({
-        take: 500,
+        take: ids.length,
         where: { associateId: { in: ids } },
         select: { associateId: true },
         distinct: ['associateId'],
@@ -264,6 +314,16 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
     active.filter((a) => a.dob && a.dob <= eighteenYearsAgo).map((a) => a.associateId),
   );
 
+  // Statutory clocks: I-9 §2 and the E-Verify case both run on a federal
+  // three-business-day window from the hire date. These two signals carry
+  // actual fine exposure, so their gaps get a deadline + overdue math and
+  // any overdue forces the signal critical regardless of population size.
+  const STATUTORY_KEYS = new Set<ScorecardOnboardingSignal['key']>([
+    'I9_BOTH_SECTIONS',
+    'E_VERIFY',
+  ]);
+  const now = new Date();
+
   function buildSignal(
     key: ScorecardOnboardingSignal['key'],
     label: string,
@@ -271,23 +331,47 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
     completed: Set<string>,
   ): ScorecardOnboardingSignal {
     const missingIds = ids.filter((id) => !completed.has(id));
+    const statutory = STATUTORY_KEYS.has(key);
+    let overdueCount = 0;
+    if (statutory) {
+      for (const id of missingIds) {
+        const hire = subjectByid.get(id)?.hireDate;
+        if (hire && addBusinessDays(hire, 3) < now) overdueCount++;
+      }
+    }
     return {
       key,
       label,
       contractClause,
       completedCount: completed.size,
       missingCount: missingIds.length,
+      ...(statutory ? { overdueCount } : {}),
       // Cap the missing list at 100 per signal so a deluge doesn't blow up
-      // the response. The drawer in the UI shows count + first N.
-      missing: missingIds.slice(0, 100).map((id) => {
-        const s = subjectByid.get(id)!;
-        return {
-          associateId: s.associateId,
-          associateName: s.associateName,
-          clientId: s.clientId,
-          clientName: s.clientName,
-        };
-      }),
+      // the response. The drawer in the UI shows count + first N. Overdue
+      // subjects sort first so the cap never hides a federal deadline.
+      missing: missingIds
+        .map((id) => {
+          const s = subjectByid.get(id)!;
+          const dueBy =
+            statutory && s.hireDate ? addBusinessDays(s.hireDate, 3) : null;
+          const daysOverdue = dueBy
+            ? Math.floor((now.getTime() - dueBy.getTime()) / 86_400_000)
+            : null;
+          return {
+            associateId: s.associateId,
+            associateName: s.associateName,
+            clientId: s.clientId,
+            clientName: s.clientName,
+            ...(dueBy
+              ? {
+                  dueBy: dueBy.toISOString().slice(0, 10),
+                  daysOverdue,
+                }
+              : {}),
+          };
+        })
+        .sort((a, b) => (b.daysOverdue ?? -1e9) - (a.daysOverdue ?? -1e9))
+        .slice(0, 100),
     };
   }
 
@@ -302,7 +386,11 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
     buildSignal('POLICY_ACK_SIGNED', 'Policy acknowledged', CLAUSE.POLICY, policySet),
   ];
 
-  // Tile severity = worst per-signal failure.
+  // Tile severity = worst per-signal failure — with a hard override: any
+  // gap past a statutory deadline is critical no matter how small a slice
+  // of the population it is. One overdue I-9 is a federal exposure; 0.4%
+  // is not a comfort.
+  const anyStatutoryOverdue = signals.some((s) => (s.overdueCount ?? 0) > 0);
   const worst = signals.reduce((worstPct, s) => {
     const pct = total === 0 ? 0 : (s.missingCount / total) * 100;
     return Math.max(worstPct, pct);
@@ -321,7 +409,7 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
     activeAssociateCount: total,
     fullyCompliantCount,
     signals,
-    severity: severityFromPercent(worst),
+    severity: anyStatutoryOverdue ? 'critical' : severityFromPercent(worst),
     generatedAt: new Date().toISOString(),
   });
 }
@@ -330,16 +418,18 @@ async function buildOnboardingTile(): Promise<ScorecardOnboardingResponse> {
  * Expiring documents — 30/60/90 day rollup.
  * ========================================================================= */
 
-complianceScorecardRouter.get('/expirations', VIEW, async (_req, res) => {
-  const body = await buildExpirationsTile();
+complianceScorecardRouter.get('/expirations', VIEW, async (req, res) => {
+  const body = await buildExpirationsTile(clientScope(req));
   res.json(body);
 });
 
-export async function buildExpirationsTile(): Promise<ScorecardExpirationsResponse> {
+export async function buildExpirationsTile(
+  clientId?: string | null,
+): Promise<ScorecardExpirationsResponse> {
   const now = new Date();
   const ninetyDaysOut = new Date(now.getTime() + 90 * 24 * 3600 * 1000);
 
-  const active = await getActiveAssociates();
+  const active = await getActiveAssociates(clientId);
   const activeIds = active.map((a) => a.associateId);
   const subjectById = new Map(active.map((a) => [a.associateId, a]));
 
@@ -348,60 +438,116 @@ export async function buildExpirationsTile(): Promise<ScorecardExpirationsRespon
   // out from now (test created today expires 60 days from now).
   const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 3600 * 1000);
 
-  const [drugDocs, i9Rows, j1Rows, certRows] = await Promise.all([
-    prisma.documentRecord.findMany({
-      take: 500,
-      where: {
-        kind: 'DRUG_TEST_RESULT',
-        deletedAt: null,
-        createdAt: { gte: ninetyDaysAgo },
-        associateId: { in: activeIds },
-      },
-      select: {
-        associateId: true,
-        createdAt: true,
-        associate: { select: { firstName: true, lastName: true } },
-      },
-    }),
-    prisma.i9Verification.findMany({
-      take: 500,
-      where: {
-        workAuthExpiresAt: { gte: now, lte: ninetyDaysOut },
-        associateId: { in: activeIds },
-      },
-      select: {
-        associateId: true,
-        workAuthExpiresAt: true,
-        associate: { select: { firstName: true, lastName: true } },
-      },
-    }),
-    prisma.j1Profile.findMany({
-      take: 500,
-      where: {
-        programEndDate: { gte: now, lte: ninetyDaysOut },
-        associateId: { in: activeIds },
-      },
-      select: {
-        associateId: true,
-        programEndDate: true,
-        associate: { select: { firstName: true, lastName: true } },
-      },
-    }),
-    prisma.courseEnrollment.findMany({
-      take: 500,
-      where: {
-        expiresAt: { gte: now, lte: ninetyDaysOut },
-        associateId: { in: activeIds },
-        status: 'COMPLETED',
-      },
-      select: {
-        associateId: true,
-        expiresAt: true,
-        course: { select: { title: true } },
-        associate: { select: { firstName: true, lastName: true } },
-      },
-    }),
-  ]);
+  const [drugDocs, i9Rows, j1Rows, certRows, expiringDocs, vaxRows, agreementRows] =
+    await Promise.all([
+      // LATEST drug test per associate — the old query pushed one item per
+      // document, so a retested associate showed a stale duplicate expiry.
+      prisma.documentRecord.findMany({
+        take: activeIds.length,
+        distinct: ['associateId'],
+        orderBy: { createdAt: 'desc' },
+        where: {
+          kind: 'DRUG_TEST_RESULT',
+          deletedAt: null,
+          createdAt: { gte: ninetyDaysAgo },
+          associateId: { in: activeIds },
+        },
+        select: {
+          associateId: true,
+          createdAt: true,
+          associate: { select: { firstName: true, lastName: true } },
+        },
+      }),
+      prisma.i9Verification.findMany({
+        take: 2000,
+        where: {
+          workAuthExpiresAt: { gte: now, lte: ninetyDaysOut },
+          associateId: { in: activeIds },
+        },
+        select: {
+          associateId: true,
+          workAuthExpiresAt: true,
+          associate: { select: { firstName: true, lastName: true } },
+        },
+      }),
+      prisma.j1Profile.findMany({
+        take: 2000,
+        where: {
+          programEndDate: { gte: now, lte: ninetyDaysOut },
+          associateId: { in: activeIds },
+        },
+        select: {
+          associateId: true,
+          programEndDate: true,
+          associate: { select: { firstName: true, lastName: true } },
+        },
+      }),
+      prisma.courseEnrollment.findMany({
+        take: 2000,
+        where: {
+          expiresAt: { gte: now, lte: ninetyDaysOut },
+          associateId: { in: activeIds },
+          status: 'COMPLETED',
+        },
+        select: {
+          associateId: true,
+          expiresAt: true,
+          course: { select: { title: true } },
+          associate: { select: { firstName: true, lastName: true } },
+        },
+      }),
+      // DocumentRecord.expiresAt is a real, indexed expiry column the tile
+      // never queried — it computed drug-test expiry from createdAt instead
+      // and ignored everything else that carries a date.
+      prisma.documentRecord.findMany({
+        take: 2000,
+        where: {
+          expiresAt: { gte: now, lte: ninetyDaysOut },
+          deletedAt: null,
+          status: { notIn: ['REJECTED'] },
+          associateId: { in: activeIds },
+          // Drug tests are handled by the computed-window entry above.
+          kind: { not: 'DRUG_TEST_RESULT' },
+        },
+        select: {
+          associateId: true,
+          expiresAt: true,
+          kind: true,
+          filename: true,
+          associate: { select: { firstName: true, lastName: true } },
+        },
+      }),
+      prisma.vaccinationRecord.findMany({
+        take: 2000,
+        where: {
+          expiresOn: { gte: now, lte: ninetyDaysOut },
+          associateId: { in: activeIds },
+        },
+        select: {
+          associateId: true,
+          expiresOn: true,
+          kind: true,
+          customLabel: true,
+          associate: { select: { firstName: true, lastName: true } },
+        },
+      }),
+      prisma.agreement.findMany({
+        take: 2000,
+        where: {
+          expiresOn: { gte: now, lte: ninetyDaysOut },
+          associateId: { in: activeIds },
+          deletedAt: null,
+          status: { in: ['PENDING_SIGNATURE', 'SIGNED'] },
+        },
+        select: {
+          associateId: true,
+          expiresOn: true,
+          kind: true,
+          customLabel: true,
+          associate: { select: { firstName: true, lastName: true } },
+        },
+      }),
+    ]);
 
   const items: ScorecardExpiringItem[] = [];
 
@@ -469,6 +615,65 @@ export async function buildExpirationsTile(): Promise<ScorecardExpirationsRespon
       },
     });
   }
+  const humanizeEnum = (v: string) =>
+    v
+      .toLowerCase()
+      .replace(/_/g, ' ')
+      .replace(/^\w/, (c) => c.toUpperCase());
+  for (const d of expiringDocs) {
+    if (!d.expiresAt) continue;
+    const subj = subjectById.get(d.associateId);
+    items.push({
+      kind: 'DOCUMENT',
+      label: `${humanizeEnum(d.kind)} — ${d.filename}`,
+      expiresAt: d.expiresAt.toISOString(),
+      daysUntil: Math.round((d.expiresAt.getTime() - now.getTime()) / 86_400_000),
+      subject: {
+        associateId: d.associateId,
+        associateName: `${d.associate.firstName} ${d.associate.lastName}`,
+        clientId: subj?.clientId ?? null,
+        clientName: subj?.clientName ?? null,
+      },
+    });
+  }
+  for (const v of vaxRows) {
+    if (!v.expiresOn) continue;
+    const subj = subjectById.get(v.associateId);
+    items.push({
+      kind: 'VACCINATION',
+      label:
+        v.kind === 'OTHER' && v.customLabel
+          ? `Vaccination — ${v.customLabel}`
+          : `Vaccination — ${humanizeEnum(v.kind)}`,
+      expiresAt: v.expiresOn.toISOString(),
+      daysUntil: Math.round((v.expiresOn.getTime() - now.getTime()) / 86_400_000),
+      subject: {
+        associateId: v.associateId,
+        associateName: `${v.associate.firstName} ${v.associate.lastName}`,
+        clientId: subj?.clientId ?? null,
+        clientName: subj?.clientName ?? null,
+      },
+    });
+  }
+  for (const a of agreementRows) {
+    if (!a.expiresOn) continue;
+    const subj = subjectById.get(a.associateId);
+    items.push({
+      kind: 'AGREEMENT',
+      label:
+        a.kind === 'OTHER' && a.customLabel
+          ? `Agreement — ${a.customLabel}`
+          : `Agreement — ${humanizeEnum(a.kind)}`,
+      expiresAt: a.expiresOn.toISOString(),
+      daysUntil: Math.round((a.expiresOn.getTime() - now.getTime()) / 86_400_000),
+      subject: {
+        associateId: a.associateId,
+        associateName: `${a.associate.firstName} ${a.associate.lastName}`,
+        clientId: subj?.clientId ?? null,
+        clientName: subj?.clientName ?? null,
+      },
+    });
+  }
 
   const red = items.filter((i) => i.daysUntil >= 0 && i.daysUntil <= 30);
   const amber = items.filter((i) => i.daysUntil > 30 && i.daysUntil <= 60);
@@ -504,8 +709,8 @@ export async function buildExpirationsTile(): Promise<ScorecardExpirationsRespon
  * Shift compliance — fill rate is real; everything else is "coming soon".
  * ========================================================================= */
 
-complianceScorecardRouter.get('/shifts', VIEW, async (_req, res) => {
-  const body = await buildShiftsTile();
+complianceScorecardRouter.get('/shifts', VIEW, async (req, res) => {
+  const body = await buildShiftsTile(clientScope(req));
   res.json(body);
 });
 
@@ -569,7 +774,9 @@ complianceScorecardRouter.get('/asn-nexus/diagnostic', VIEW, async (_req, res) =
   res.json(out);
 });
 
-async function buildShiftsTile(): Promise<ScorecardShiftsResponse> {
+export async function buildShiftsTile(
+  clientId?: string | null,
+): Promise<ScorecardShiftsResponse> {
   const windowDays = 30;
 
   // ASN Nexus is the source of truth for shift events. If the integration
@@ -580,8 +787,12 @@ async function buildShiftsTile(): Promise<ScorecardShiftsResponse> {
   // If the integration isn't configured OR the call fails, fall back to
   // our built-in fill-rate query against the local Shift table — keeps
   // dev environments and emergency outages working with a degraded view.
+  //
+  // CLIENT SCOPE: ASN Nexus metrics are org-wide — when a client filter is
+  // active we always use the local per-client query so the number actually
+  // reflects the selected client instead of quietly ignoring the filter.
   let asn: Awaited<ReturnType<typeof getShiftMetrics>> = null;
-  if (asnNexusConfigured()) {
+  if (!clientId && asnNexusConfigured()) {
     try {
       asn = await getShiftMetrics({ windowDays });
     } catch (err) {
@@ -619,6 +830,7 @@ async function buildShiftsTile(): Promise<ScorecardShiftsResponse> {
     where: {
       startsAt: { gte: since },
       status: { in: ['OPEN', 'ASSIGNED', 'COMPLETED', 'CANCELLED'] },
+      ...(clientId ? { clientId } : {}),
     },
   });
   const byStatus = new Map(counts.map((c) => [c.status, c._count._all]));
@@ -708,17 +920,23 @@ function shiftsSeverity(signals: ScorecardShiftsResponse['signals']): ScorecardS
  * Billing & invoicing — bill-rate match is real; the rest are "coming soon".
  * ========================================================================= */
 
-complianceScorecardRouter.get('/billing', VIEW, async (_req, res) => {
-  const body = await buildBillingTile();
+complianceScorecardRouter.get('/billing', VIEW, async (req, res) => {
+  const body = await buildBillingTile(clientScope(req));
   res.json(body);
 });
 
-async function buildBillingTile(): Promise<ScorecardBillingResponse> {
+export async function buildBillingTile(
+  clientId?: string | null,
+): Promise<ScorecardBillingResponse> {
   // Pull every active job with a bill rate set; map to expected Walmart SOW
   // rate by name pattern. Mismatches feed the open-actions tile.
   const jobs = await prisma.job.findMany({
     take: 1000,
-    where: { isActive: true, billRate: { not: null } },
+    where: {
+      isActive: true,
+      billRate: { not: null },
+      ...(clientId ? { clientId } : {}),
+    },
     select: {
       id: true,
       name: true,
@@ -969,13 +1187,15 @@ function parseDateOnly(s: string): Date {
  * a COMPLETED enrollment in any course tagged that way.
  * ========================================================================= */
 
-complianceScorecardRouter.get('/training', VIEW, async (_req, res) => {
-  const body = await buildTrainingTile();
+complianceScorecardRouter.get('/training', VIEW, async (req, res) => {
+  const body = await buildTrainingTile(clientScope(req));
   res.json(body);
 });
 
-async function buildTrainingTile(): Promise<ScorecardTrainingResponse> {
-  const active = await getActiveAssociates();
+export async function buildTrainingTile(
+  clientId?: string | null,
+): Promise<ScorecardTrainingResponse> {
+  const active = await getActiveAssociates(clientId);
   const activeIds = active.map((a) => a.associateId);
   const subjectById = new Map(active.map((a) => [a.associateId, a]));
   const total = active.length;
@@ -1008,7 +1228,10 @@ async function buildTrainingTile(): Promise<ScorecardTrainingResponse> {
   const enrollments = allCourseIds.length === 0 || activeIds.length === 0
     ? []
     : await prisma.courseEnrollment.findMany({
-        take: 500,
+        // Exact bound + distinct: the old take:500 silently marked associate
+        // #501's completed training as missing once enrollments grew.
+        take: allCourseIds.length * activeIds.length,
+        distinct: ['courseId', 'associateId'],
         where: {
           courseId: { in: allCourseIds },
           associateId: { in: activeIds },
@@ -1078,20 +1301,97 @@ async function buildTrainingTile(): Promise<ScorecardTrainingResponse> {
  * each fetching twice.
  * ========================================================================= */
 
-complianceScorecardRouter.get('/actions', VIEW, async (_req, res) => {
-  const body = await buildActionsTile();
+complianceScorecardRouter.get('/actions', VIEW, async (req, res) => {
+  const body = await buildActionsTile(clientScope(req));
   res.json(body);
 });
 
-async function buildActionsTile(): Promise<ScorecardActionsResponse> {
-  // Run the live tiles in parallel and synthesize an action per failure.
+/** All five live tiles, built once. Shared by the actions rollup, the daily
+ *  snapshot cron and the board PDF so none of them triple-query the tiles. */
+export async function buildScorecardBundle(clientId?: string | null) {
   const [onboarding, expirations, shifts, billing, training] = await Promise.all([
-    buildOnboardingTile(),
-    buildExpirationsTile(),
-    buildShiftsTile(),
-    buildBillingTile(),
-    buildTrainingTile(),
+    buildOnboardingTile(clientId),
+    buildExpirationsTile(clientId),
+    buildShiftsTile(clientId),
+    buildBillingTile(clientId),
+    buildTrainingTile(clientId),
   ]);
+  return { onboarding, expirations, shifts, billing, training };
+}
+export type ScorecardBundle = Awaited<ReturnType<typeof buildScorecardBundle>>;
+
+/* ------------------------------------------------------------------------- *
+ * Weighted 0–100 compliance score. Weights encode legal exposure, not tile
+ * symmetry: statutory items (I-9, E-Verify) dominate; a single statutory
+ * deadline blown past costs a flat 10 points on top of its weighted share.
+ *   Onboarding signals ......... 60 pts (I9 12, E-Verify 10, background 10,
+ *                                 drug 8, age 6, W-4 6, offer 4, policy 4)
+ *   Training tags .............. 16 pts (4 × 4)
+ *   Expirations (red bucket) ... 12 pts (scaled by red ÷ active headcount)
+ *   Shift fill rate ............ 12 pts (scaled by shortfall vs target)
+ *   Statutory-overdue penalty .. −10 flat
+ * ------------------------------------------------------------------------- */
+const ONBOARDING_WEIGHTS: Record<ScorecardOnboardingSignal['key'], number> = {
+  I9_BOTH_SECTIONS: 12,
+  E_VERIFY: 10,
+  BACKGROUND_CHECK: 10,
+  DRUG_TEST_60D: 8,
+  AGE_18_PLUS: 6,
+  W4_ON_FILE: 6,
+  OFFER_LETTER_SIGNED: 4,
+  POLICY_ACK_SIGNED: 4,
+};
+const TRAINING_WEIGHT_PER_TAG = 4;
+const EXPIRATIONS_WEIGHT = 12;
+const SHIFTS_WEIGHT = 12;
+const STATUTORY_OVERDUE_PENALTY = 10;
+
+export function computeWeightedScore(bundle: ScorecardBundle): number {
+  const { onboarding, expirations, shifts, training } = bundle;
+  const total = onboarding.activeAssociateCount;
+
+  // Empty org = nothing out of compliance. 100, not NaN.
+  if (total === 0) return 100;
+
+  let score = 0;
+
+  for (const sig of onboarding.signals) {
+    const weight = ONBOARDING_WEIGHTS[sig.key] ?? 0;
+    score += weight * Math.max(0, 1 - sig.missingCount / total);
+  }
+
+  for (const sig of training.signals) {
+    // no_course = we can't measure it; award full credit rather than
+    // punishing the org for a course catalog gap the tile already flags.
+    if (sig.status !== 'live' || sig.totalAssociates === 0) {
+      score += TRAINING_WEIGHT_PER_TAG;
+      continue;
+    }
+    score += TRAINING_WEIGHT_PER_TAG * (sig.completedCount / sig.totalAssociates);
+  }
+
+  score += EXPIRATIONS_WEIGHT * Math.max(0, 1 - expirations.buckets.red.length / total);
+
+  const fill = shifts.signals.find((s) => s.key === 'FILL_RATE');
+  if (fill && fill.status === 'live' && fill.value !== null && fill.target) {
+    score += SHIFTS_WEIGHT * Math.max(0, Math.min(1, fill.value / fill.target));
+  } else {
+    score += SHIFTS_WEIGHT;
+  }
+
+  const anyStatutoryOverdue = onboarding.signals.some((s) => (s.overdueCount ?? 0) > 0);
+  if (anyStatutoryOverdue) score -= STATUTORY_OVERDUE_PENALTY;
+
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+export async function buildActionsTile(
+  clientId?: string | null,
+  prebuilt?: ScorecardBundle,
+): Promise<ScorecardActionsResponse> {
+  // Run the live tiles in parallel and synthesize an action per failure.
+  const bundle = prebuilt ?? (await buildScorecardBundle(clientId));
+  const { onboarding, expirations, shifts, billing, training } = bundle;
 
   const actions: ScorecardAction[] = [];
 
@@ -1187,21 +1487,350 @@ async function buildActionsTile(): Promise<ScorecardActionsResponse> {
     }
   }
 
+  // Attach persisted remediation state. The table only ever holds TOUCHED
+  // rows (assigned/snoozed/done) so fetching them all is a handful of rows,
+  // not a scan of the derived action space.
+  const stateRows = await prisma.complianceActionState.findMany({
+    where: { OR: [{ status: { not: 'OPEN' } }, { assigneeUserId: { not: null } }] },
+    select: {
+      actionKey: true,
+      status: true,
+      assigneeUserId: true,
+      snoozedUntil: true,
+      updatedAt: true,
+      assignee: { select: { email: true } },
+    },
+  });
+  const stateByKey = new Map(stateRows.map((s) => [s.actionKey, s]));
+  const now = Date.now();
+
+  const withState = actions
+    .map((a) => {
+      const s = stateByKey.get(a.id);
+      if (!s) return a;
+      return {
+        ...a,
+        state: {
+          status: s.status as 'OPEN' | 'SNOOZED' | 'DONE',
+          assigneeUserId: s.assigneeUserId,
+          assigneeEmail: s.assignee?.email ?? null,
+          snoozedUntil: s.snoozedUntil?.toISOString() ?? null,
+          updatedAt: s.updatedAt.toISOString(),
+        },
+      };
+    })
+    .filter((a) => {
+      const s = a.state;
+      if (!s) return true;
+      // DONE = resolved by a human; if the underlying gap re-opens the
+      // derived id survives, so stale DONEs are the operator's own record.
+      if (s.status === 'DONE') return false;
+      // SNOOZED hides the row until the snooze lapses.
+      if (s.status === 'SNOOZED' && s.snoozedUntil && Date.parse(s.snoozedUntil) > now) {
+        return false;
+      }
+      return true;
+    });
+
   // Critical first, then warn, then ok. Stable within group.
   const order: Record<ScorecardSeverity, number> = { critical: 0, warn: 1, ok: 2 };
-  actions.sort((a, b) => order[a.severity] - order[b.severity]);
+  withState.sort((a, b) => order[a.severity] - order[b.severity]);
 
-  const criticalCount = actions.filter((a) => a.severity === 'critical').length;
-  const warnCount = actions.filter((a) => a.severity === 'warn').length;
+  const criticalCount = withState.filter((a) => a.severity === 'critical').length;
+  const warnCount = withState.filter((a) => a.severity === 'warn').length;
 
   return ScorecardActionsResponseSchema.parse({
     // Cap total list at 200 to keep the response bounded; the page is a
-    // dashboard, not an issue tracker.
-    actions: actions.slice(0, 200),
+    // dashboard, not an issue tracker. truncated + totalActionCount let the
+    // UI and CSV say so instead of passing a page off as the world.
+    actions: withState.slice(0, 200),
     criticalCount,
     warnCount,
+    score: computeWeightedScore(bundle),
+    truncated: withState.length > 200,
+    totalActionCount: withState.length,
     generatedAt: new Date().toISOString(),
   });
+}
+
+/* ----- Action remediation state (assign / snooze / done) ----------------- */
+
+complianceScorecardRouter.post(
+  '/actions/state',
+  MANAGE_COMPLIANCE,
+  async (req, res, next) => {
+    try {
+      const input = ScorecardActionStateInputSchema.parse(req.body);
+      if (input.status === 'SNOOZED' && !input.snoozedUntil) {
+        throw new HttpError(400, 'missing_snooze_until', 'snoozedUntil is required when snoozing.');
+      }
+
+      const patch: {
+        status?: string;
+        assigneeUserId?: string | null;
+        snoozedUntil?: Date | null;
+      } = {};
+      if (input.status !== undefined) {
+        patch.status = input.status;
+        // Leaving SNOOZED clears the timer; the stale date must not re-hide
+        // the row if someone snoozes again later without a new date.
+        if (input.status !== 'SNOOZED') patch.snoozedUntil = null;
+      }
+      if (input.assigneeUserId !== undefined) patch.assigneeUserId = input.assigneeUserId;
+      if (input.snoozedUntil !== undefined) {
+        patch.snoozedUntil = input.snoozedUntil ? new Date(input.snoozedUntil) : null;
+      }
+
+      const row = await prisma.complianceActionState.upsert({
+        where: { actionKey: input.actionId },
+        create: {
+          actionKey: input.actionId,
+          status: input.status ?? 'OPEN',
+          assigneeUserId: input.assigneeUserId ?? null,
+          snoozedUntil: input.snoozedUntil ? new Date(input.snoozedUntil) : null,
+          updatedById: req.user!.id,
+        },
+        update: { ...patch, updatedById: req.user!.id },
+        select: {
+          status: true,
+          assigneeUserId: true,
+          snoozedUntil: true,
+          updatedAt: true,
+          assignee: { select: { email: true } },
+        },
+      });
+
+      enqueueAudit(
+        {
+          actorUserId: req.user!.id,
+          action: 'compliance.action_state.upsert',
+          entityType: 'ComplianceActionState',
+          entityId: input.actionId,
+          metadata: {
+            status: input.status ?? null,
+            assigneeUserId: input.assigneeUserId ?? null,
+            snoozedUntil: input.snoozedUntil ?? null,
+          },
+        },
+        'compliance action state',
+      );
+
+      // Tell the assignee — bell-only (quiet): assignment is workflow
+      // plumbing, not an emergency, and the email-overload work taught us
+      // not to burn a send on it. Self-assignment skips even the bell.
+      if (
+        input.assigneeUserId &&
+        input.assigneeUserId !== req.user!.id &&
+        row.assigneeUserId === input.assigneeUserId
+      ) {
+        await notifyUser(input.assigneeUserId, {
+          subject: 'Compliance action assigned to you',
+          body: `You were assigned a compliance scorecard action (${input.actionId}).`,
+          category: 'compliance',
+          linkUrl: '/compliance?tab=scorecard',
+          quiet: true,
+        });
+      }
+
+      res.json({
+        state: {
+          status: row.status as 'OPEN' | 'SNOOZED' | 'DONE',
+          assigneeUserId: row.assigneeUserId,
+          assigneeEmail: row.assignee?.email ?? null,
+          snoozedUntil: row.snoozedUntil?.toISOString() ?? null,
+          updatedAt: row.updatedAt.toISOString(),
+        },
+      });
+    } catch (err) {
+      if (err instanceof z.ZodError) {
+        next(new HttpError(400, 'invalid_body', 'Invalid action state', err.flatten()));
+        return;
+      }
+      next(err);
+    }
+  },
+);
+
+/* ----- Score history (daily snapshots) ----------------------------------- */
+
+complianceScorecardRouter.get('/history', VIEW, async (req, res, next) => {
+  try {
+    const clientId = clientScope(req);
+    const days = Math.min(365, Math.max(7, Number(req.query.days) || 90));
+    const since = new Date(Date.now() - days * 24 * 3600 * 1000);
+
+    const rows = await prisma.complianceScoreSnapshot.findMany({
+      where: { clientId: clientId ?? null, day: { gte: since } },
+      orderBy: { day: 'asc' },
+      take: 400,
+      select: {
+        day: true,
+        score: true,
+        criticalCount: true,
+        warnCount: true,
+        activeAssociateCount: true,
+        fullyCompliantCount: true,
+      },
+    });
+
+    const points = rows.map((r) => ({
+      day: r.day.toISOString().slice(0, 10),
+      score: r.score,
+      criticalCount: r.criticalCount,
+      warnCount: r.warnCount,
+      activeAssociateCount: r.activeAssociateCount,
+      fullyCompliantCount: r.fullyCompliantCount,
+    }));
+
+    // Week delta = latest score minus the closest snapshot ≥6 days older
+    // than the latest (tolerates missed cron days).
+    let weekDelta: number | null = null;
+    if (points.length >= 2) {
+      const latest = points[points.length - 1];
+      const latestMs = Date.parse(latest.day);
+      const anchor = [...points]
+        .reverse()
+        .find((p) => latestMs - Date.parse(p.day) >= 6 * 24 * 3600 * 1000);
+      if (anchor) weekDelta = latest.score - anchor.score;
+    }
+
+    res.json(ScorecardHistoryResponseSchema.parse({ points, weekDelta }));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ----- Board one-pager PDF ------------------------------------------------ */
+
+complianceScorecardRouter.get('/report.pdf', VIEW, async (req, res, next) => {
+  try {
+    const clientId = clientScope(req);
+    const [bundle, client] = await Promise.all([
+      buildScorecardBundle(clientId),
+      clientId
+        ? prisma.client.findUnique({ where: { id: clientId }, select: { name: true } })
+        : Promise.resolve(null),
+    ]);
+    const { onboarding, expirations, shifts, billing, training } = bundle;
+    const score = computeWeightedScore(bundle);
+    const grade = scorecardGrade(score);
+    const scopeLabel = client?.name ?? 'All clients';
+
+    // Trend context from snapshots (best-effort — a fresh install has none).
+    const since = new Date(Date.now() - 35 * 24 * 3600 * 1000);
+    const snaps = await prisma.complianceScoreSnapshot.findMany({
+      where: { clientId: clientId ?? null, day: { gte: since } },
+      orderBy: { day: 'asc' },
+      select: { day: true, score: true },
+    });
+    const weekAgo = [...snaps]
+      .reverse()
+      .find((s) => Date.now() - s.day.getTime() >= 6 * 24 * 3600 * 1000);
+
+    const pdf = new ReportPdf({
+      title: 'Compliance Scorecard — Executive Summary',
+      subtitle: `Scope: ${scopeLabel} · Generated ${new Date().toISOString().slice(0, 10)}`,
+      reference: formatRef(),
+      facts: [
+        { label: 'Score', value: `${score} / 100 (${grade})` },
+        ...(weekAgo
+          ? [{ label: 'vs last week', value: `${score - weekAgo.score >= 0 ? '+' : ''}${score - weekAgo.score} pts` }]
+          : []),
+        { label: 'Active associates', value: String(onboarding.activeAssociateCount) },
+        { label: 'Fully compliant', value: String(onboarding.fullyCompliantCount) },
+      ],
+    });
+
+    pdf.heading('Posture at a glance');
+    pdf.kv([
+      { label: 'Weighted score', value: `${score} / 100 — grade ${grade}` },
+      { label: 'Onboarding', value: tileLine(onboarding.severity) },
+      { label: 'Expirations', value: `${tileLine(expirations.severity)} · ${expirations.buckets.red.length} inside 30 days` },
+      { label: 'Shift compliance', value: tileLine(shifts.severity) },
+      { label: 'Billing', value: tileLine(billing.severity) },
+      { label: 'Training', value: tileLine(training.severity) },
+    ]);
+
+    const overdueStatutory = onboarding.signals
+      .filter((s) => (s.overdueCount ?? 0) > 0)
+      .map((s) => `${s.label}: ${s.overdueCount} past the statutory deadline`);
+    if (overdueStatutory.length > 0) {
+      pdf.callout(
+        `STATUTORY EXPOSURE — ${overdueStatutory.join('; ')}. ` +
+          'Federal timing rules (I-9 §2 / E-Verify: three business days from hire) are already blown for these associates.',
+      );
+    }
+
+    pdf.heading('Onboarding signals');
+    pdf.table(
+      [
+        { label: 'Signal' },
+        { label: 'Compliant', width: 80, align: 'right' },
+        { label: 'Missing', width: 70, align: 'right' },
+        { label: 'Overdue', width: 70, align: 'right' },
+      ],
+      onboarding.signals.map((s) => [
+        s.label,
+        onboarding.activeAssociateCount - s.missingCount,
+        s.missingCount,
+        s.overdueCount ?? 0,
+      ]),
+    );
+
+    pdf.heading('Expiring in the next 30 days');
+    if (expirations.buckets.red.length === 0) {
+      pdf.para('Nothing expires in the next 30 days.', { muted: true });
+    } else {
+      pdf.table(
+        [
+          { label: 'Associate', width: 150 },
+          { label: 'Item' },
+          { label: 'Days', width: 50, align: 'right' },
+        ],
+        expirations.buckets.red
+          .slice(0, 25)
+          .map((i) => [i.subject.associateName ?? '—', i.label, i.daysUntil]),
+      );
+      if (expirations.buckets.red.length > 25) {
+        pdf.para(`…and ${expirations.buckets.red.length - 25} more — see the live scorecard.`, { muted: true });
+      }
+    }
+
+    if (snaps.length >= 2) {
+      pdf.heading('Score trend (last 5 weeks)');
+      pdf.table(
+        [
+          { label: 'Day', width: 110 },
+          { label: 'Score', width: 60, align: 'right' },
+        ],
+        snaps.slice(-10).map((s) => [s.day.toISOString().slice(0, 10), s.score]),
+      );
+    }
+
+    const buffer = await pdf.render();
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'compliance.scorecard.report',
+        entityType: 'ComplianceScoreSnapshot',
+        entityId: clientId ?? 'org',
+        metadata: { score, scope: scopeLabel },
+      },
+      'scorecard board report',
+    );
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="alto-compliance-scorecard-${new Date().toISOString().slice(0, 10)}.pdf"`,
+    );
+    res.send(buffer);
+  } catch (err) {
+    next(err);
+  }
+});
+
+function tileLine(sev: ScorecardSeverity): string {
+  return sev === 'critical' ? 'CRITICAL' : sev === 'warn' ? 'Needs attention' : 'On track';
 }
 
 /* ------------------------------------------------------------------------- *
@@ -1249,9 +1878,14 @@ function expirationFixLink(
       return `/compliance?tab=j1&associateId=${associateId}`;
     // Insurance rows carry no associate (link stays null upstream);
     // training certs are renewed from the person record.
+    case 'DOCUMENT':
+      return `/people?associateId=${associateId}&tab=documents`;
+    case 'AGREEMENT':
+      return `/agreements?associateId=${associateId}`;
     case 'WORKERS_COMP':
     case 'GENERAL_LIABILITY':
     case 'TRAINING_CERT':
+    case 'VACCINATION':
       return `/people?associateId=${associateId}`;
   }
 }
@@ -1264,6 +1898,9 @@ function getExpirationClause(kind: ScorecardExpiringItem['kind']): string {
     case 'I9_WORK_AUTH': return CLAUSE.WORK_AUTH;
     case 'J1_DS2019': return CLAUSE.J1;
     case 'TRAINING_CERT': return CLAUSE.TRAINING_EXPIRY;
+    case 'DOCUMENT': return CLAUSE.DOC_EXPIRY;
+    case 'VACCINATION': return CLAUSE.VAX_EXPIRY;
+    case 'AGREEMENT': return CLAUSE.AGREEMENT_EXPIRY;
   }
 }
 

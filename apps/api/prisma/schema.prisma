@@ -537,6 +537,8 @@ model User {
   equityGrantsIssued                EquityGrant[]                 @relation("EquityGrantedBy")
   volunteerEntriesReviewed          VolunteerEntry[]              @relation("VolunteerReviewer")
   manualAttestationsAttested        ManualComplianceAttestation[] @relation("AttestationAttester")
+  complianceActionsAssigned         ComplianceActionState[]       @relation("ComplianceActionAssignee")
+  complianceActionsUpdated          ComplianceActionState[]       @relation("ComplianceActionUpdater")
   // Phase 131 — assignment-row authorship (audit of who moved an
   // associate to which location, and why).
   associateAssignmentsNoted         AssociateAssignment[]         @relation("AssociateAssignmentNoter")
@@ -673,6 +675,7 @@ model Client {
   // Phase 99 — kiosk devices + PINs registered at this client.
   kioskDevices           KioskDevice[]
   kioskPins              KioskPin[]
+  complianceSnapshots    ComplianceScoreSnapshot[]
   // Phase 109 — pulse surveys scoped to this client.
   pulseSurveys           PulseSurvey[]
   // Phase 114 — learning paths scoped to this client.
@@ -6796,6 +6799,53 @@ model ManualComplianceAttestation {
 
   @@unique([key, periodStart])
   @@index([key, periodEnd])
+}
+
+// Daily posture snapshot — the scorecard's memory. One row per day
+// org-wide (clientId NULL) plus one per client, written by the
+// complianceSnapshot cron. Never updated in place after the day closes:
+// the history doubles as audit evidence of past compliance posture.
+model ComplianceScoreSnapshot {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  day                  DateTime @db.Date
+  // NULL = org-wide rollup. Non-null = that client's slice.
+  clientId             String?  @db.Uuid
+  score                Int
+  criticalCount        Int
+  warnCount            Int
+  activeAssociateCount Int
+  fullyCompliantCount  Int
+  // Per-tile severities at snapshot time, e.g. {"onboarding":"warn",...}.
+  tileSeverities       Json
+  createdAt            DateTime @default(now()) @db.Timestamptz(6)
+
+  client Client? @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([day, clientId])
+  @@index([clientId, day(sort: Desc)])
+}
+
+// Remediation state for a scorecard action. The action rows themselves
+// are DERIVED (regenerated from live data every load) with stable ids —
+// this table pins human workflow onto those ids: who owns it, snoozed
+// until when, done. Rows for gaps that self-heal (the underlying data
+// gets fixed) simply stop matching any generated action.
+model ComplianceActionState {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // The derived ScorecardAction.id (e.g. "onb:I9_BOTH_SECTIONS:<uuid>").
+  actionKey      String    @unique @db.VarChar(300)
+  status         String    @default("OPEN") @db.VarChar(16) // OPEN | SNOOZED | DONE
+  assigneeUserId String?   @db.Uuid
+  snoozedUntil   DateTime? @db.Timestamptz(6)
+  updatedById    String?   @db.Uuid
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(6)
+
+  assignee  User? @relation("ComplianceActionAssignee", fields: [assigneeUserId], references: [id], onDelete: SetNull)
+  updatedBy User? @relation("ComplianceActionUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([assigneeUserId])
+  @@index([status])
 }
 
 /// A recorded Fieldglass filing for one Sat→Fri week (optionally one client).

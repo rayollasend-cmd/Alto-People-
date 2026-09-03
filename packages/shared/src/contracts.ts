@@ -5178,12 +5178,41 @@ export type EVerifyIdentityInput = z.infer<typeof EVerifyIdentityInputSchema>;
 export const ScorecardSeveritySchema = z.enum(['ok', 'warn', 'critical']);
 export type ScorecardSeverity = z.infer<typeof ScorecardSeveritySchema>;
 
+/**
+ * THE severity thresholds — one table, shared by the API's tile builders
+ * and the web page's progress bars. They used to disagree (server said
+ * critical above 10% failing; the UI colored bars on a 95/80 completion
+ * scale), so a signal could render a warning-yellow bar under a Critical
+ * tile badge.
+ */
+export const SCORECARD_CRITICAL_FAIL_PCT = 10;
+export function scorecardSeverityFromFailPct(failPct: number): ScorecardSeverity {
+  if (failPct > SCORECARD_CRITICAL_FAIL_PCT) return 'critical';
+  if (failPct > 0) return 'warn';
+  return 'ok';
+}
+
+/** Letter grade for the weighted 0–100 compliance score. */
+export function scorecardGrade(score: number): 'A' | 'B' | 'C' | 'D' | 'F' {
+  if (score >= 95) return 'A';
+  if (score >= 85) return 'B';
+  if (score >= 75) return 'C';
+  if (score >= 60) return 'D';
+  return 'F';
+}
+
 const ScorecardSubjectSchema = z.object({
   associateId: UuidSchema.nullable(),
   associateName: z.string().nullable(),
   clientId: UuidSchema.nullable(),
   clientName: z.string().nullable(),
+  /** Statutory deadline (ISO date) for this gap, when one exists —
+   *  I-9 §2 / E-Verify three-business-day windows. */
+  dueBy: z.string().nullable().optional(),
+  /** Days PAST dueBy (positive = overdue). Null/absent = not applicable. */
+  daysOverdue: z.number().int().nullable().optional(),
 });
+export type ScorecardSubject = z.infer<typeof ScorecardSubjectSchema>;
 
 // Tile 1 — onboarding completeness
 export const ScorecardOnboardingSignalSchema = z.object({
@@ -5202,6 +5231,10 @@ export const ScorecardOnboardingSignalSchema = z.object({
   completedCount: z.number().int().nonnegative(),
   missingCount: z.number().int().nonnegative(),
   missing: z.array(ScorecardSubjectSchema),
+  /** How many of the missing are PAST a statutory deadline (I-9 §2 /
+   *  E-Verify 3-business-day windows). Any overdue forces the signal —
+   *  and its tile — critical regardless of population percentage. */
+  overdueCount: z.number().int().nonnegative().optional(),
 });
 export type ScorecardOnboardingSignal = z.infer<typeof ScorecardOnboardingSignalSchema>;
 
@@ -5305,6 +5338,10 @@ export const ScorecardExpirationKindSchema = z.enum([
   'I9_WORK_AUTH',
   'J1_DS2019',
   'TRAINING_CERT',
+  // Real expiry columns that were indexed but never queried by the tile:
+  'DOCUMENT', // DocumentRecord.expiresAt (any kind carrying a date)
+  'VACCINATION', // VaccinationRecord.expiresOn
+  'AGREEMENT', // Agreement.expiresOn
 ]);
 export type ScorecardExpirationKind = z.infer<typeof ScorecardExpirationKindSchema>;
 
@@ -5407,6 +5444,15 @@ export const ScorecardTrainingResponseSchema = z.object({
 export type ScorecardTrainingResponse = z.infer<typeof ScorecardTrainingResponseSchema>;
 
 // Tile 6 — open actions (rolled up from the other tiles server-side)
+export const ScorecardActionStateSchema = z.object({
+  status: z.enum(['OPEN', 'SNOOZED', 'DONE']),
+  assigneeUserId: UuidSchema.nullable(),
+  assigneeEmail: z.string().nullable(),
+  snoozedUntil: z.string().datetime().nullable(),
+  updatedAt: z.string().datetime(),
+});
+export type ScorecardActionState = z.infer<typeof ScorecardActionStateSchema>;
+
 export const ScorecardActionSchema = z.object({
   id: z.string(),
   severity: ScorecardSeveritySchema,
@@ -5414,6 +5460,8 @@ export const ScorecardActionSchema = z.object({
   contractClause: z.string(),
   subject: ScorecardSubjectSchema,
   link: z.string().nullable(),  // SPA path, e.g. "/people?associate=..."
+  /** Persisted remediation state (assignment/snooze). Absent = untouched. */
+  state: ScorecardActionStateSchema.nullable().optional(),
 });
 export type ScorecardAction = z.infer<typeof ScorecardActionSchema>;
 
@@ -5421,9 +5469,43 @@ export const ScorecardActionsResponseSchema = z.object({
   actions: z.array(ScorecardActionSchema),
   criticalCount: z.number().int().nonnegative(),
   warnCount: z.number().int().nonnegative(),
+  /** Weighted 0–100 org compliance score (see scorecardGrade). */
+  score: z.number().int().min(0).max(100),
+  /** True when the action list hit the response cap — the CSV export and
+   *  the drawer both surface this so nobody mistakes a page for the world. */
+  truncated: z.boolean(),
+  totalActionCount: z.number().int().nonnegative(),
   generatedAt: z.string().datetime(),
 });
 export type ScorecardActionsResponse = z.infer<typeof ScorecardActionsResponseSchema>;
+
+export const ScorecardActionStateInputSchema = z.object({
+  /** The derived action id (stable across regenerations). */
+  actionId: z.string().min(1).max(300),
+  status: z.enum(['OPEN', 'SNOOZED', 'DONE']).optional(),
+  /** Assign to a user (null clears). Omit to leave unchanged. */
+  assigneeUserId: UuidSchema.nullable().optional(),
+  /** Required when status=SNOOZED. */
+  snoozedUntil: z.string().datetime().nullable().optional(),
+});
+export type ScorecardActionStateInput = z.infer<typeof ScorecardActionStateInputSchema>;
+
+export const ScorecardHistoryPointSchema = z.object({
+  day: z.string(), // YYYY-MM-DD
+  score: z.number().int().min(0).max(100),
+  criticalCount: z.number().int().nonnegative(),
+  warnCount: z.number().int().nonnegative(),
+  activeAssociateCount: z.number().int().nonnegative(),
+  fullyCompliantCount: z.number().int().nonnegative(),
+});
+export type ScorecardHistoryPoint = z.infer<typeof ScorecardHistoryPointSchema>;
+
+export const ScorecardHistoryResponseSchema = z.object({
+  points: z.array(ScorecardHistoryPointSchema),
+  /** Score delta vs ~7 days ago (null when no snapshot exists that far back). */
+  weekDelta: z.number().int().nullable(),
+});
+export type ScorecardHistoryResponse = z.infer<typeof ScorecardHistoryResponseSchema>;
 
 // =============================================================================
 // Org branding (settings audit row #8)

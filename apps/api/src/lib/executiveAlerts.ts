@@ -9,12 +9,17 @@
 //      published shifts so a quiet week can't false-alarm).
 //   4. Margin — last complete week's est. margin below 80% of the weekly
 //      pace implied by the quarter's margin target (only when set).
+//   5. Statutory compliance — any associate past the I-9/E-Verify federal
+//      three-business-day window (this is the one a client audit finds).
+//   6. Compliance trend — weighted score dropped more than 5 points vs the
+//      snapshot ~a week ago (needs two snapshots; silent until then).
 
 import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { notifyUser } from './notify.js';
 import { startOfWeekUTC } from './timeAnomalies.js';
 import { computeExecutiveSummary } from './executiveSummary.js';
+import { buildOnboardingTile } from '../routes/complianceScorecard.js';
 
 const ALERT_CATEGORY = 'executive_alert';
 const SWEEP_SECONDS = 60 * 60;
@@ -117,6 +122,38 @@ export async function collectExecutiveAlerts(
         subject: 'Margin alert',
         body: `Last week's est. margin ($${summary.lastWeek.estMargin.toFixed(2)}) ran below 80% of the pace the quarter's target implies ($${weeklyPace.toFixed(2)}/week). See the league table for where it leaked.`,
         linkUrl: '/',
+      });
+    }
+  }
+
+  // 5 — statutory compliance overdue (I-9 §2 / E-Verify three business days).
+  const onboarding = await buildOnboardingTile();
+  const statutory = onboarding.signals.filter((s) => (s.overdueCount ?? 0) > 0);
+  if (statutory.length > 0) {
+    const parts = statutory.map((s) => `${s.overdueCount} past the ${s.label} deadline`);
+    alerts.push({
+      subject: 'Statutory compliance alert',
+      body: `${parts.join('; ')}. Federal timing (three business days from hire) is already blown — this is the finding a client audit writes up. The scorecard lists every name.`,
+      linkUrl: '/compliance?tab=scorecard',
+    });
+  }
+
+  // 6 — compliance score dropped >5 points vs ~a week ago.
+  const snaps = await prisma.complianceScoreSnapshot.findMany({
+    where: { clientId: null, day: { gte: new Date(now.getTime() - 14 * DAY_MS) } },
+    orderBy: { day: 'asc' },
+    select: { day: true, score: true },
+  });
+  if (snaps.length >= 2) {
+    const latest = snaps[snaps.length - 1];
+    const anchor = [...snaps]
+      .reverse()
+      .find((s) => latest.day.getTime() - s.day.getTime() >= 6 * DAY_MS);
+    if (anchor && anchor.score - latest.score > 5) {
+      alerts.push({
+        subject: 'Compliance trend alert',
+        body: `The org compliance score fell ${anchor.score - latest.score} points this week (${anchor.score} → ${latest.score}). Something structural changed — a hiring wave outrunning onboarding, or a batch of expirations landing at once.`,
+        linkUrl: '/compliance?tab=scorecard',
       });
     }
   }

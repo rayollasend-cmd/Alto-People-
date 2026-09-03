@@ -155,6 +155,10 @@ const EnvSchema = z.object({
   // Notification retention sweep (read bell rows >90d, delivery-audit
   // rows >365d). 0 disables. Daily is plenty — the windows are month-scale.
   NOTIFICATION_RETENTION_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
+  // Daily compliance-score snapshot (org + per-client). The interval is only
+  // how often we CHECK for today's row — one row/day/scope regardless. 0
+  // disables (and with it the scorecard trend + week-delta features).
+  COMPLIANCE_SNAPSHOT_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
   // Day-before shift reminder cron. 0 (default) disables; production should
   // set 1800-3600. Each assigned+published shift starting within the next
   // 24h is reminded exactly once — Shift.reminderSentAt is claimed with a
