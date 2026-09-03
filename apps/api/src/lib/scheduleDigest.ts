@@ -28,6 +28,7 @@ import {
   zonedMinutes,
 } from './timezone.js';
 import { emailUserForCategory } from './notify.js';
+import { emitLiveEvent } from './liveEvents.js';
 
 const DIGEST_CATEGORY = 'schedule_digest';
 // Bell/email bodies stay readable; past this the digest defers to the page.
@@ -223,6 +224,8 @@ export async function runScheduleDigestSweep(
   if (!claimed) {
     return { sent: false, recipients: 0, shifts: shifts.length, skipped: 'already_sent' };
   }
+  // Live nudge after the claim transaction committed.
+  for (const u of recipients) emitLiveEvent(u.id, 'notification');
 
   // Email + push after commit — mute-aware ("scheduling" bucket), fire-and-
   // forget, never fails the sweep.

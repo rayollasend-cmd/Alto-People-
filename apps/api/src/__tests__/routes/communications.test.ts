@@ -209,3 +209,76 @@ describe('CLIENT_PORTAL access', () => {
     expect(inbox.status).toBe(403);
   });
 });
+
+describe('seen vs read (badge vs highlight)', () => {
+  async function seedInbox(n: number) {
+    const { user } = await createUser({ role: 'ASSOCIATE' });
+    await prisma.notification.createMany({
+      data: Array.from({ length: n }, (_, i) => ({
+        channel: 'IN_APP' as const,
+        status: 'SENT' as const,
+        recipientUserId: user.id,
+        subject: `Note ${i}`,
+        body: `Body ${i}`,
+        sentAt: new Date(),
+      })),
+    });
+    return user;
+  }
+
+  it('POST /me/inbox/seen stamps seenAt on everything, leaves readAt alone', async () => {
+    const user = await seedInbox(3);
+    const a = await loginAs(user.email);
+
+    const r = await a.post('/communications/me/inbox/seen');
+    expect(r.status).toBe(200);
+    expect(r.body.updated).toBe(3);
+
+    const rows = await prisma.notification.findMany({
+      where: { recipientUserId: user.id },
+    });
+    expect(rows.every((n) => n.seenAt !== null)).toBe(true);
+    expect(rows.every((n) => n.readAt === null)).toBe(true);
+
+    // Idempotent — a second open stamps nothing new.
+    const r2 = await a.post('/communications/me/inbox/seen');
+    expect(r2.body.updated).toBe(0);
+  });
+
+  it('POST /me/inbox/read-all reads everything in one request', async () => {
+    const user = await seedInbox(4);
+    const a = await loginAs(user.email);
+
+    const r = await a.post('/communications/me/inbox/read-all');
+    expect(r.status).toBe(200);
+    expect(r.body.updated).toBe(4);
+
+    const rows = await prisma.notification.findMany({
+      where: { recipientUserId: user.id },
+    });
+    expect(rows.every((n) => n.readAt !== null && n.seenAt !== null)).toBe(true);
+    expect(rows.every((n) => n.status === 'READ')).toBe(true);
+  });
+
+  it('single read backfills seenAt (a row cannot be read-but-unseen)', async () => {
+    const user = await seedInbox(1);
+    const a = await loginAs(user.email);
+    const row = await prisma.notification.findFirstOrThrow({
+      where: { recipientUserId: user.id },
+    });
+    const r = await a.post(`/communications/me/inbox/${row.id}/read`);
+    expect(r.status).toBe(200);
+    expect(r.body.readAt).not.toBeNull();
+    expect(r.body.seenAt).not.toBeNull();
+  });
+
+  it('FINANCE_ACCOUNTANT can read their inbox (payment-failure alerts)', async () => {
+    // Regression: the role had no view:communications, so the inbox API
+    // 403'd and payroll payment-failure alerts written to finance were
+    // silently invisible in the bell.
+    const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const a = await loginAs(user.email);
+    const r = await a.get('/communications/me/inbox');
+    expect(r.status).toBe(200);
+  });
+});

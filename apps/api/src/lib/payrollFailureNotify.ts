@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@prisma/client';
 import { describeBranchFailure } from './achReturnCodes.js';
+import { emitLiveEvent } from './liveEvents.js';
 
 /**
  * Fan-out an in-app notification to every active HR-admin-equivalent user
@@ -70,6 +71,9 @@ export async function notifyHrOfPaymentFailure(
       sentAt: new Date(),
     })),
   });
+  // Live nudge — a failed payment is the last alert that should wait out
+  // the bell's 30s poll.
+  for (const u of recipients) emitLiveEvent(u.id, 'notification');
 
   return { notified: recipients.length };
 }

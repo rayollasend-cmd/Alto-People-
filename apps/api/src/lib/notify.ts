@@ -40,6 +40,7 @@
 import type { PrismaClient } from '@prisma/client';
 import {
   NOTIFICATION_CATEGORIES,
+  bucketForCategory,
   rolesWithCapability,
   type NotificationCategory,
 } from '@alto-people/shared';
@@ -62,81 +63,10 @@ const MANDATORY_CATEGORIES = new Set<NotificationCategory>(
   NOTIFICATION_CATEGORIES.filter((c) => c.mandatory).map((c) => c.key),
 );
 
-/**
- * Map the route-level category strings (e.g. 'onboarding.invite_reminder',
- * 'swap_peer_request') down to the user-facing bucket keys exposed in
- * /settings. Anything we don't recognise falls through to null, which the
- * opt-out check treats as "always send" (defensive — better to over-deliver
- * a known event than silently drop one because the bucket map drifted).
- *
- * Adding a new bucket: extend NOTIFICATION_CATEGORIES in shared/contracts
- * AND add the matching prefix here.
- */
-function bucketForRawCategory(raw: string | undefined): NotificationCategory | null {
-  if (!raw) return null;
-  if (raw === 'broadcast') return 'broadcast';
-  if (raw === 'discipline') return 'discipline';
-  if (raw === 'probation') return 'probation';
-  if (raw === 'documents' || raw.startsWith('documents.')) return 'documents';
-  if (raw === 'time-off' || raw === 'vto') return 'time_off';
-  if (
-    raw === 'scheduling' ||
-    raw === 'schedule_digest' ||
-    raw === 'week_ahead' ||
-    raw.startsWith('shift_')
-  )
-    return 'scheduling';
-  if (raw.startsWith('swap_')) return 'shift_swaps';
-  if (raw.startsWith('onboarding')) return 'onboarding';
-  // The three buckets below exist because ~60% of call-site categories
-  // used to fall through to null — "always send, no off switch" — which
-  // is how users ended up drowning in email they couldn't mute. Every
-  // category in use MUST land in a bucket; null stays reserved for
-  // genuinely unknown strings (defensive over-delivery).
-  if (
-    raw === 'time_entry' ||
-    raw === 'attendance' ||
-    raw === 'earnings' ||
-    raw === 'run' ||
-    raw === 'reimbursements' ||
-    raw === 'compensation' ||
-    raw === 'equity' ||
-    raw === 'benefits' ||
-    raw === 'ot_radar' ||
-    raw.startsWith('payroll')
-  )
-    return 'time_pay';
-  if (
-    raw === 'develop' ||
-    raw === 'learning' ||
-    raw === 'mentorship' ||
-    raw === 'ramp' ||
-    raw === 'performance' ||
-    raw === 'tuition' ||
-    raw === 'internal-jobs' ||
-    raw === 'move' ||
-    raw === 'marketplace' ||
-    raw === 'pulse'
-  )
-    return 'growth';
-  if (
-    raw === 'org' ||
-    raw === 'team' ||
-    raw === 'asc' ||
-    raw === 'assets' ||
-    raw === 'agreements' ||
-    raw === 'separation' ||
-    raw === 'hr-cases' ||
-    raw === 'dormancy' ||
-    raw === 'executive_delegation' ||
-    raw.startsWith('ops.') ||
-    raw.startsWith('decision_') ||
-    raw.startsWith('compliance') ||
-    raw.startsWith('reports')
-  )
-    return 'workplace';
-  return null;
-}
+// Raw-category → settings-bucket mapping lives in shared/contracts
+// (bucketForCategory) so the web bell and this email-mute check can
+// never drift apart.
+const bucketForRawCategory = bucketForCategory;
 
 /**
  * True iff the user has explicitly muted the bucket this raw category

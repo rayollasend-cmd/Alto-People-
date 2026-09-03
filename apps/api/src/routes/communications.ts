@@ -21,6 +21,7 @@ import { requireCapability } from '../middleware/auth.js';
 import { EmailSuppressedError, sendStubbed } from '../lib/notifications.js';
 import { pushConfigured } from '../lib/webPush.js';
 import { enqueueAudit } from '../lib/audit.js';
+import { emitLiveEvent } from '../lib/liveEvents.js';
 
 export const communicationsRouter = Router();
 
@@ -46,6 +47,7 @@ function toNotif(row: RawNotif): Notification {
     failureReason: row.failureReason,
     sentAt: row.sentAt ? row.sentAt.toISOString() : null,
     readAt: row.readAt ? row.readAt.toISOString() : null,
+    seenAt: row.seenAt ? row.seenAt.toISOString() : null,
     senderUserId: row.senderUserId,
     senderEmail: row.senderUser?.email ?? null,
     linkUrl: row.linkUrl ?? null,
@@ -150,6 +152,37 @@ communicationsRouter.get('/me/inbox', async (req, res, next) => {
   }
 });
 
+// Opening the bell panel = "I have seen what's here". Stamps seenAt on
+// every unseen IN_APP row so the badge clears, while readAt (the row
+// highlight) survives until each item is actually clicked. Idempotent.
+communicationsRouter.post('/me/inbox/seen', async (req, res, next) => {
+  try {
+    const r = await prisma.notification.updateMany({
+      where: { recipientUserId: req.user!.id, channel: 'IN_APP', seenAt: null },
+      data: { seenAt: new Date() },
+    });
+    res.json({ updated: r.count });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// One request instead of the bell's old Promise.allSettled storm of up to
+// 100 individual /read calls. Also stamps seenAt — a row can't be read
+// but unseen.
+communicationsRouter.post('/me/inbox/read-all', async (req, res, next) => {
+  try {
+    const now = new Date();
+    const r = await prisma.notification.updateMany({
+      where: { recipientUserId: req.user!.id, channel: 'IN_APP', readAt: null },
+      data: { status: 'READ', readAt: now, seenAt: now },
+    });
+    res.json({ updated: r.count });
+  } catch (err) {
+    next(err);
+  }
+});
+
 communicationsRouter.post('/me/inbox/:id/read', async (req, res, next) => {
   try {
     const user = req.user!;
@@ -167,7 +200,9 @@ communicationsRouter.post('/me/inbox/:id/read', async (req, res, next) => {
     }
     const updated = await prisma.notification.update({
       where: { id: row.id },
-      data: { status: 'READ', readAt: new Date() },
+      // A row can't be read-but-unseen; backfill seenAt if the panel-open
+      // stamp somehow never landed.
+      data: { status: 'READ', readAt: new Date(), seenAt: row.seenAt ?? new Date() },
       include: NOTIF_INCLUDE,
     });
     res.json(toNotif(updated));
@@ -242,6 +277,12 @@ communicationsRouter.post('/admin/send', MANAGE, idempotent, async (req, res, ne
         data: { status: 'SENT', sentAt: new Date(), externalRef },
         include: NOTIF_INCLUDE,
       });
+      // Live nudge for in-app direct messages — an HR-composed message
+      // used to be the slowest thing in the bell (30s poll) while a
+      // birthday ping was instant.
+      if (sent.channel === 'IN_APP' && sent.recipientUserId) {
+        emitLiveEvent(sent.recipientUserId, 'notification');
+      }
       res.status(201).json(toNotif(sent));
     } catch (sendErr) {
       const reason = sendErr instanceof Error ? sendErr.message : 'unknown error';
@@ -372,6 +413,10 @@ communicationsRouter.post('/admin/broadcast', MANAGE, idempotent, async (req, re
       },
       data: { status: 'SENT', sentAt: new Date() },
     });
+
+    if (i.channel === 'IN_APP') {
+      for (const r of recipients) emitLiveEvent(r.id, 'notification');
+    }
 
     res.status(201).json({ count: created.count });
   } catch (err) {

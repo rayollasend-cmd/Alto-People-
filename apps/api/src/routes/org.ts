@@ -735,6 +735,7 @@ orgRouter.put(
         subject: 'Assignment updated on your team',
         body: `${existing.firstName} ${existing.lastName}: ${what} updated.`,
         category: 'org',
+        linkUrl: `/people?associateId=${id}`,
       });
     }
     res.json({
@@ -1944,6 +1945,7 @@ orgRouter.post(
       subject: 'Team member location change',
       body: `${associate.firstName} ${associate.lastName} moves to ${destination} on ${input.startedAt}.`,
       category: 'org' as const,
+      linkUrl: `/people?associateId=${id}`,
     };
     const oldManagerId = associate.managerId;
     if (crossClient && oldManagerId) {

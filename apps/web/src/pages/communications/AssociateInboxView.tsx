@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { listMyInbox, markRead } from '@/lib/communicationsApi';
+import { listMyInbox, markAllRead as markAllInboxRead, markRead } from '@/lib/communicationsApi';
 import { markBroadcastRead, myBroadcasts } from '@/lib/dirCommsApi';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -119,13 +119,14 @@ export function AssociateInboxView() {
     if (unread.length === 0) return;
     setMarkingAll(true);
     try {
-      await Promise.allSettled(
-        unread.map((i) =>
-          i.kind === 'broadcast'
-            ? markBroadcastRead(i.sourceId)
-            : markRead(i.sourceId),
-        ),
-      );
+      // Notifications go through the one bulk endpoint (previously N
+      // individual /read calls); broadcasts keep their per-row reads —
+      // they live in a different table with no bulk route yet.
+      const broadcasts = unread.filter((i) => i.kind === 'broadcast');
+      await Promise.allSettled([
+        markAllInboxRead(),
+        ...broadcasts.map((i) => markBroadcastRead(i.sourceId)),
+      ]);
       await refresh();
     } finally {
       setMarkingAll(false);

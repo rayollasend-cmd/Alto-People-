@@ -183,6 +183,7 @@ compensationRouter.post(
       subject: 'Pay rate updated on your team',
       body: `${associate.firstName} ${associate.lastName} has a new rate effective ${effectiveDate}.`,
       category: 'compensation',
+      linkUrl: `/people?associateId=${associateId}`,
     });
     res.status(201).json({ ok: true });
   },

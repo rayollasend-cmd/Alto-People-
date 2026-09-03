@@ -180,6 +180,7 @@ discipline118Router.post(
       body: assocTpl.text,
       html: assocTpl.html,
       category: 'discipline',
+      linkUrl: `/me/discipline/${created.id}`,
     });
     const mgrTpl = disciplineManagerTemplate({
       associateName: `${associate.firstName} ${associate.lastName}`,
@@ -193,6 +194,7 @@ discipline118Router.post(
       body: mgrTpl.text,
       html: mgrTpl.html,
       category: 'discipline',
+      linkUrl: `/people?associateId=${input.associateId}`,
     });
     res.status(201).json({ id: created.id });
   },

@@ -4855,6 +4855,7 @@ schedulingRouter.post('/swap-requests', async (req, res, next) => {
       body: mgrSwapTpl.text,
       html: mgrSwapTpl.html,
       category: 'scheduling',
+      linkUrl: '/scheduling',
     });
     // The site's shift supervisor approves swaps but is rarely anyone's
     // managerId — route them a copy keyed on the shift's client.

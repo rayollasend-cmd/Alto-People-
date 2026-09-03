@@ -299,6 +299,7 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
       body: tpl.text,
       html: tpl.html,
       category: 'documents',
+      linkUrl: '/documents',
       emailRoles: [],
     });
 

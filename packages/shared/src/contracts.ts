@@ -3678,6 +3678,10 @@ export const NotificationSchema = z.object({
   failureReason: z.string().nullable(),
   sentAt: z.string().datetime().nullable(),
   readAt: z.string().datetime().nullable(),
+  /** Seen ≠ read: seenAt clears the bell badge (stamped when the panel
+   *  opens); readAt clears the row highlight (stamped on click).
+   *  Optional for back-compat with rows serialized before the column. */
+  seenAt: z.string().datetime().nullable().optional(),
   senderUserId: UuidSchema.nullable(),
   senderEmail: z.string().email().nullable(),
   // Optional in-app deeplink. When set, the bell renders the row as a
@@ -4379,6 +4383,87 @@ export const NOTIFICATION_CATEGORIES = [
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number]['key'];
+
+/**
+ * Map a raw call-site category string (e.g. 'shift_published',
+ * 'payroll.payment_failed') to its user-facing NOTIFICATION_CATEGORIES
+ * bucket. Single source of truth shared by the API's email-mute check and
+ * the web bell's row labels/icons — previously two copies that drifted.
+ * Null = unknown string: the API treats it as "always send" (defensive
+ * over-delivery) and the bell renders a neutral row.
+ */
+export function bucketForCategory(
+  raw: string | null | undefined,
+): NotificationCategory | null {
+  if (!raw) return null;
+  if (raw === 'broadcast') return 'broadcast';
+  if (raw === 'discipline') return 'discipline';
+  if (raw === 'probation') return 'probation';
+  if (raw === 'security') return 'security';
+  if (raw === 'documents' || raw.startsWith('documents.')) return 'documents';
+  if (raw === 'time-off' || raw === 'vto') return 'time_off';
+  if (
+    raw === 'scheduling' ||
+    raw === 'schedule_digest' ||
+    raw === 'week_ahead' ||
+    raw.startsWith('shift_')
+  )
+    return 'scheduling';
+  if (raw.startsWith('swap_')) return 'shift_swaps';
+  if (raw.startsWith('onboarding')) return 'onboarding';
+  if (
+    raw === 'time_entry' ||
+    raw === 'attendance' ||
+    raw === 'earnings' ||
+    raw === 'run' ||
+    raw === 'reimbursements' ||
+    raw === 'compensation' ||
+    raw === 'equity' ||
+    raw === 'benefits' ||
+    raw === 'ot_radar' ||
+    raw.startsWith('payroll')
+  )
+    return 'time_pay';
+  if (
+    raw === 'develop' ||
+    raw === 'learning' ||
+    raw === 'mentorship' ||
+    raw === 'ramp' ||
+    raw === 'performance' ||
+    raw === 'tuition' ||
+    raw === 'internal-jobs' ||
+    raw === 'move' ||
+    raw === 'marketplace' ||
+    raw === 'pulse'
+  )
+    return 'growth';
+  if (
+    raw === 'org' ||
+    raw === 'team' ||
+    raw === 'asc' ||
+    raw === 'assets' ||
+    raw === 'agreements' ||
+    raw === 'separation' ||
+    raw === 'hr-cases' ||
+    raw === 'dormancy' ||
+    raw === 'executive_delegation' ||
+    raw === 'birthday' ||
+    raw === 'anniversary' ||
+    raw.startsWith('ops.') ||
+    raw.startsWith('decision_') ||
+    raw.startsWith('compliance') ||
+    raw.startsWith('reports')
+  )
+    return 'workplace';
+  return null;
+}
+
+/** Raw categories that signal something went WRONG — the bell paints these
+ *  rows in the alert tone so a failed payment never looks like a birthday. */
+export function isUrgentCategory(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  return /failed|rejected|no_show|escalation|alert|voided|expired/.test(raw);
+}
 
 const NOTIFICATION_CATEGORY_KEYS = NOTIFICATION_CATEGORIES.map((c) => c.key) as [
   NotificationCategory,

@@ -243,7 +243,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   ]),
   // Time + pay only. Runs payroll cycles, sees scheduling/time as inputs
   // and analytics for financial reports. Deliberately *not* granted any
-  // HR/onboarding/recruiting/comms surface area.
+  // HR/onboarding/recruiting surface area.
   FINANCE_ACCOUNTANT: new Set<Capability>([
     'view:dashboard',
     'view:time',
@@ -255,6 +255,12 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // Gap 10 — Finance settles approved reimbursements into the next
     // REGULAR run. Cannot approve at the manager step.
     'settle:reimbursement',
+    // Inbox READ access. payrollFailureNotify writes payment-failure
+    // alerts to this role's bell — without this capability the inbox API
+    // 403'd and the bell silently rendered empty, so the most urgent
+    // alert in the system was undeliverable. Sending/broadcast stays
+    // gated behind manage:communications, which finance does not have.
+    'view:communications',
   ]),
   INTERNAL_RECRUITER: new Set<Capability>(FULL_ADMIN),
   MANAGER: new Set<Capability>([

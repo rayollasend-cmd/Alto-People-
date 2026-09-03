@@ -3030,6 +3030,11 @@ model Notification {
   failureReason     String?
   sentAt            DateTime?           @db.Timestamptz(6)
   readAt            DateTime?           @db.Timestamptz(6)
+  // Seen ≠ read: opening the bell panel stamps seenAt (clears the badge);
+  // clicking the row stamps readAt (clears the highlight). Without the
+  // distinction the badge nagged until every row was clicked — the
+  // Slack/GitHub-standard behavior needs both.
+  seenAt            DateTime?           @db.Timestamptz(6)
   // Sender: HR user, or null for system-triggered notifications.
   senderUserId      String?             @db.Uuid
   // Optional deeplink for IN_APP notifications. The bell renders the row

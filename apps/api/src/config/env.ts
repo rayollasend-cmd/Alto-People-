@@ -152,6 +152,9 @@ const EnvSchema = z.object({
   // Daily push of the scorecard's 0–30-day expirations (work auth, drug
   // tests, J-1 program ends, training certs). Set 0 to disable.
   EXPIRATION_DIGEST_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
+  // Notification retention sweep (read bell rows >90d, delivery-audit
+  // rows >365d). 0 disables. Daily is plenty — the windows are month-scale.
+  NOTIFICATION_RETENTION_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(86400),
   // Day-before shift reminder cron. 0 (default) disables; production should
   // set 1800-3600. Each assigned+published shift starting within the next
   // 24h is reminded exactly once — Shift.reminderSentAt is claimed with a

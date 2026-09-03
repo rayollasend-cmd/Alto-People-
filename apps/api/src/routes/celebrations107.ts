@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { emitLiveEvent } from '../lib/liveEvents.js';
 
 /**
  * Phase 107 — Birthdays & work anniversaries.
@@ -172,5 +173,6 @@ celebrationsRouter.post('/celebrations/high-five', VIEW, async (req, res) => {
       senderUserId: req.user!.id,
     },
   });
+  emitLiveEvent(target.user.id, 'notification');
   res.status(201).json({ ok: true });
 });

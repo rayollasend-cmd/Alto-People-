@@ -19,6 +19,21 @@ export function markRead(id: string): Promise<Notification> {
   });
 }
 
+/** Panel-open stamp: marks everything currently unseen as seen so the
+ *  bell badge clears — read state (row highlight) is untouched. */
+export function markAllSeen(): Promise<{ updated: number }> {
+  return apiFetch<{ updated: number }>('/communications/me/inbox/seen', {
+    method: 'POST',
+  });
+}
+
+/** One request instead of N single-row /read calls. */
+export function markAllRead(): Promise<{ updated: number }> {
+  return apiFetch<{ updated: number }>('/communications/me/inbox/read-all', {
+    method: 'POST',
+  });
+}
+
 export function listAdmin(filters?: {
   channel?: NotificationChannel;
   status?: NotificationStatus;

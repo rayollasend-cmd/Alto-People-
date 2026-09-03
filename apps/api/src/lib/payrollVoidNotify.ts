@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
+import { emitLiveEvent } from './liveEvents.js';
 
 /**
  * Gap 3 — Fan-out IN_APP notifications to every associate whose paystub
@@ -62,6 +63,7 @@ export async function notifyAssociatesOfRunVoid(
       sentAt,
     })),
   });
+  for (const a of input.associates) emitLiveEvent(a.userId, 'notification');
 
   return { notified: input.associates.length };
 }

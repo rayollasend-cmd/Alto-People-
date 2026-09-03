@@ -94,6 +94,7 @@ probation116Router.post('/probations', MANAGE, async (req, res) => {
       body: assocTpl.text,
       html: assocTpl.html,
       category: 'probation',
+      linkUrl: '/me',
     });
     const mgrTpl = probationManagerTemplate({
       associateName: `${associate.firstName} ${associate.lastName}`,
@@ -106,6 +107,7 @@ probation116Router.post('/probations', MANAGE, async (req, res) => {
       body: mgrTpl.text,
       html: mgrTpl.html,
       category: 'probation',
+      linkUrl: `/people?associateId=${input.associateId}`,
     });
     res.status(201).json({ id: created.id });
   } catch (err: unknown) {

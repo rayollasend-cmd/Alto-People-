@@ -30,6 +30,7 @@ import { renderPaystubPdf } from './paystub.js';
 import { buildPaystubDataFromItem, paystubItemInclude } from './paystubData.js';
 import { env } from '../config/env.js';
 import { paystubTemplate } from './emailTemplates.js';
+import { emitLiveEvent } from './liveEvents.js';
 
 type PrismaSlice = Pick<
   PrismaClient,
@@ -212,6 +213,7 @@ export async function sendPaystubEmail(
           sentAt: new Date(),
         },
       });
+      emitLiveEvent(portalUser.id, 'notification');
     }
 
     return {

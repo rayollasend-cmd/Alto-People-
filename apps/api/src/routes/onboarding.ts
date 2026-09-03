@@ -1187,6 +1187,7 @@ async function approveOneApplication(
     body: approvedTpl.text,
     html: approvedTpl.html,
     category: 'onboarding',
+    linkUrl: '/me',
   });
   // Manager copy so the new hire's direct manager knows they're cleared
   // to start — no-op if no manager assigned.
@@ -1194,6 +1195,7 @@ async function approveOneApplication(
     subject: 'New hire approved on your team',
     body: `One of your direct reports was just approved${hireDate ? ` with a hire date of ${hireDate}` : ''}. Reach out to set up day-1 expectations.`,
     category: 'onboarding',
+    linkUrl: `/people?associateId=${app.associateId}`,
   });
 }
 
@@ -1294,6 +1296,7 @@ onboardingRouter.post(
         body: rejTpl.text,
         html: rejTpl.html,
         category: 'onboarding',
+        linkUrl: `/onboarding/me/${app.id}`,
         // Rejected candidates usually never activated an account — the
         // decline must still reach their email.
         emailFallback: true,
@@ -1303,6 +1306,7 @@ onboardingRouter.post(
         subject: 'Application declined on your team',
         body: `An application for one of your direct reports was declined. Reason: ${reason}.`,
         category: 'onboarding',
+        linkUrl: `/onboarding/applications/${app.id}`,
       });
 
       res.status(204).end();
@@ -3111,6 +3115,7 @@ onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) =>
       body: i9Tpl.text,
       html: i9Tpl.html,
       category: 'onboarding',
+      linkUrl: `/onboarding/applications/${app.id}`,
       // Section 2 verification is an HR duty — the other admin roles get
       // the bell row only.
       emailRoles: ADMIN_EMAIL_HR_ONLY,
@@ -4181,6 +4186,7 @@ onboardingRouter.post(
             body: rejTpl.text,
             html: rejTpl.html,
             category: 'onboarding',
+            linkUrl: `/onboarding/me/${app.id}`,
             emailFallback: true,
           });
           void notifyManager(app.associateId, {
