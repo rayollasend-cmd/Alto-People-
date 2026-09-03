@@ -5330,6 +5330,32 @@ export type ManualAttestationCreateInput = z.infer<
   typeof ManualAttestationCreateInputSchema
 >;
 
+/** Signals the ASSOCIATE can fix themselves — the only ones "Nudge all
+ *  missing" accepts. I-9 §2 / E-Verify / background / age are HR-side
+ *  work; nudging the associate for those would be noise. */
+export const ScorecardNudgeableSignalSchema = z.enum([
+  'DRUG_TEST_60D',
+  'W4_ON_FILE',
+  'OFFER_LETTER_SIGNED',
+  'POLICY_ACK_SIGNED',
+]);
+export type ScorecardNudgeableSignal = z.infer<typeof ScorecardNudgeableSignalSchema>;
+
+export const ScorecardNudgeInputSchema = z.object({
+  signalKey: ScorecardNudgeableSignalSchema,
+  clientId: UuidSchema.optional(),
+});
+export type ScorecardNudgeInput = z.infer<typeof ScorecardNudgeInputSchema>;
+
+export const ScorecardNudgeResponseSchema = z.object({
+  /** Associates notified this call. */
+  nudged: z.number().int().nonnegative(),
+  /** Skipped — already nudged for this signal within the last 7 days. */
+  deduped: z.number().int().nonnegative(),
+  missingCount: z.number().int().nonnegative(),
+});
+export type ScorecardNudgeResponse = z.infer<typeof ScorecardNudgeResponseSchema>;
+
 // Tile 2 — expiring documents (30/60/90)
 export const ScorecardExpirationKindSchema = z.enum([
   'WORKERS_COMP',
@@ -5412,8 +5438,29 @@ export const ScorecardBillingRateRowSchema = z.object({
 });
 export type ScorecardBillingRateRow = z.infer<typeof ScorecardBillingRateRowSchema>;
 
+/** A FINAL unpaid statement aging toward the Walmart MSA 90-day forfeiture
+ *  window. Live receivables data — the weekly INVOICE_FORFEITURE attestation
+ *  confirms the human review; this is the list that review looks at. */
+export const ScorecardAtRiskStatementSchema = z.object({
+  statementId: UuidSchema,
+  clientId: UuidSchema,
+  clientName: z.string(),
+  number: z.number().int().nullable(),
+  finalizedAt: z.string().datetime(),
+  ageDays: z.number().int().nonnegative(),
+  /** 90 − ageDays; negative = past the forfeiture window. */
+  daysToForfeit: z.number().int(),
+  /** Statement total from its snapshot; null when the snapshot predates totals. */
+  amount: z.number().nullable(),
+});
+export type ScorecardAtRiskStatement = z.infer<typeof ScorecardAtRiskStatementSchema>;
+
 export const ScorecardBillingResponseSchema = z.object({
   rateChecks: z.array(ScorecardBillingRateRowSchema),
+  /** FINAL unpaid statements ≥60 days old, oldest first. */
+  atRiskStatements: z.array(ScorecardAtRiskStatementSchema),
+  /** Total FINAL unpaid statements examined for the at-risk list. */
+  unpaidFinalCount: z.number().int().nonnegative(),
   /** Manual-attestation signals that used to be "Coming soon" placeholders. */
   attestations: z.array(ManualAttestationSignalSchema),
   severity: ScorecardSeveritySchema,
@@ -5433,6 +5480,12 @@ export const ScorecardTrainingSignalSchema = z.object({
   completedCount: z.number().int().nonnegative(),
   totalAssociates: z.number().int().nonnegative(),
   missing: z.array(ScorecardSubjectSchema),
+  /** EVERY missing associate id (missing[] above is capped for display).
+   *  Feeds the bulk-enroll action, which chunks these into the existing
+   *  POST /courses/:id/enroll (max 500/call). */
+  missingIds: z.array(UuidSchema),
+  /** PUBLISHED courses carrying this tag — the enroll targets. */
+  courses: z.array(z.object({ id: UuidSchema, title: z.string() })),
 });
 export type ScorecardTrainingSignal = z.infer<typeof ScorecardTrainingSignalSchema>;
 

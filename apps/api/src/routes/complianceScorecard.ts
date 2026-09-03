@@ -27,6 +27,8 @@ import {
   scorecardSeverityFromFailPct,
   scorecardGrade,
   ScorecardSafetyResponseSchema,
+  ScorecardNudgeInputSchema,
+  ScorecardNudgeResponseSchema,
   isDartSeverity,
   OSHA_TRIR_TARGET,
   type OshaIncidentSeverity,
@@ -37,7 +39,8 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { addBusinessDays } from '../lib/everifyReadiness.js';
-import { notifyUser } from '../lib/notify.js';
+import { notifyUser, notifyAssociate } from '../lib/notify.js';
+import { env } from '../config/env.js';
 import { getShiftMetrics, isConfigured as asnNexusConfigured, type AsnNexusMetric } from '../lib/asnNexus.js';
 import {
   ATTESTATION_CONFIGS,
@@ -54,13 +57,17 @@ import { formatRef } from '../lib/emailTemplates.js';
 export const complianceScorecardRouter = Router();
 
 const VIEW = requireCapability('view:compliance');
+const MANAGE_COMPLIANCE = requireCapability('manage:compliance');
 
-// Walmart SOW expected bill rates per the spec. Per-position; matched against
-// Job.name (case-insensitive substring). Anything not matching falls through
-// as "no expectation set" rather than a failure.
+// Walmart SOW expected bill rates. Per-position; matched against Job.name
+// (case-insensitive substring). Anything not matching falls through as "no
+// expectation set" rather than a failure. Rates come from the same env
+// knobs the labor-cost engine uses (DEFAULT_*_BILL_RATE, SOW defaults
+// $21.21 / $24.24) so a contract amendment is one env change everywhere —
+// this tile used to hardcode them and would have silently disagreed.
 const WALMART_BILL_RATES: ReadonlyArray<{ pattern: RegExp; rate: number }> = [
-  { pattern: /shift\s*lead/i, rate: 24.24 },
-  { pattern: /(associate|stocker|nexus)/i, rate: 21.21 },
+  { pattern: /shift\s*lead/i, rate: env.DEFAULT_LEAD_BILL_RATE },
+  { pattern: /(associate|stocker|nexus)/i, rate: env.DEFAULT_ASSOCIATE_BILL_RATE },
 ];
 
 // Contract-clause labels surfaced on every tooltip. Source of truth for what
@@ -95,7 +102,7 @@ const CLAUSE = {
   OSHA_TRAIN: 'Walmart MTSA Section 5b — OSHA safety training',
   CADE: 'Walmart MTSA Exhibit D — CADE system training',
   FOOD_HANDLER: 'Local food code — food handler certification',
-  BILL_RATE: 'Walmart SOW — bill rates $21.21 / $24.24',
+  BILL_RATE: `Walmart SOW — bill rates $${env.DEFAULT_ASSOCIATE_BILL_RATE.toFixed(2)} / $${env.DEFAULT_LEAD_BILL_RATE.toFixed(2)}`,
   OSHA_LOG: 'OSHA 1904 — injury & illness recordkeeping (Form 300)',
 } as const;
 
@@ -213,23 +220,15 @@ complianceScorecardRouter.get('/onboarding', VIEW, async (req, res) => {
   res.json(body);
 });
 
-export async function buildOnboardingTile(
-  clientId?: string | null,
-): Promise<ScorecardOnboardingResponse> {
+/** The onboarding tile's population + per-signal completion sets. Shared by
+ *  buildOnboardingTile and the nudge endpoint so "who is missing X" can never
+ *  have two answers. */
+async function computeOnboardingSets(clientId?: string | null) {
   const active = await getActiveAssociates(clientId);
   const ids = active.map((a) => a.associateId);
-  const total = active.length;
   const subjectByid = new Map(active.map((a) => [a.associateId, a]));
-
-  // Empty fast-path so every downstream query gets `WHERE id IN ()` skipped.
-  if (total === 0) {
-    return ScorecardOnboardingResponseSchema.parse({
-      activeAssociateCount: 0,
-      fullyCompliantCount: 0,
-      signals: [],
-      severity: 'ok',
-      generatedAt: new Date().toISOString(),
-    });
+  if (ids.length === 0) {
+    return { active, ids, subjectByid, sets: null };
   }
 
   // All signal queries fan out in parallel.
@@ -326,6 +325,40 @@ export async function buildOnboardingTile(
     active.filter((a) => a.dob && a.dob <= eighteenYearsAgo).map((a) => a.associateId),
   );
 
+  return {
+    active,
+    ids,
+    subjectByid,
+    sets: {
+      AGE_18_PLUS: ageOkSet,
+      DRUG_TEST_60D: drugSet,
+      BACKGROUND_CHECK: bgSet,
+      I9_BOTH_SECTIONS: i9Set,
+      E_VERIFY: eVerifyClearedSet,
+      W4_ON_FILE: w4Set,
+      OFFER_LETTER_SIGNED: offerSet,
+      POLICY_ACK_SIGNED: policySet,
+    } as Record<ScorecardOnboardingSignal['key'], Set<string>>,
+  };
+}
+
+export async function buildOnboardingTile(
+  clientId?: string | null,
+): Promise<ScorecardOnboardingResponse> {
+  const { ids, subjectByid, sets } = await computeOnboardingSets(clientId);
+  const total = ids.length;
+
+  // Empty fast-path so every downstream query gets `WHERE id IN ()` skipped.
+  if (total === 0 || !sets) {
+    return ScorecardOnboardingResponseSchema.parse({
+      activeAssociateCount: 0,
+      fullyCompliantCount: 0,
+      signals: [],
+      severity: 'ok',
+      generatedAt: new Date().toISOString(),
+    });
+  }
+
   // Statutory clocks: I-9 §2 and the E-Verify case both run on a federal
   // three-business-day window from the hire date. These two signals carry
   // actual fine exposure, so their gaps get a deadline + overdue math and
@@ -388,14 +421,14 @@ export async function buildOnboardingTile(
   }
 
   const signals: ScorecardOnboardingSignal[] = [
-    buildSignal('AGE_18_PLUS', 'Age verified 18+', CLAUSE.AGE_18, ageOkSet),
-    buildSignal('DRUG_TEST_60D', 'Drug test result within 60 days', CLAUSE.DRUG_TEST, drugSet),
-    buildSignal('BACKGROUND_CHECK', 'Background check on file', CLAUSE.BACKGROUND, bgSet),
-    buildSignal('I9_BOTH_SECTIONS', 'I-9 Section 1 + Section 2', CLAUSE.I9, i9Set),
-    buildSignal('E_VERIFY', 'E-Verify cleared', CLAUSE.E_VERIFY, eVerifyClearedSet),
-    buildSignal('W4_ON_FILE', 'W-4 on file', CLAUSE.W4, w4Set),
-    buildSignal('OFFER_LETTER_SIGNED', 'Offer letter on file', CLAUSE.OFFER, offerSet),
-    buildSignal('POLICY_ACK_SIGNED', 'Policy acknowledged', CLAUSE.POLICY, policySet),
+    buildSignal('AGE_18_PLUS', 'Age verified 18+', CLAUSE.AGE_18, sets.AGE_18_PLUS),
+    buildSignal('DRUG_TEST_60D', 'Drug test result within 60 days', CLAUSE.DRUG_TEST, sets.DRUG_TEST_60D),
+    buildSignal('BACKGROUND_CHECK', 'Background check on file', CLAUSE.BACKGROUND, sets.BACKGROUND_CHECK),
+    buildSignal('I9_BOTH_SECTIONS', 'I-9 Section 1 + Section 2', CLAUSE.I9, sets.I9_BOTH_SECTIONS),
+    buildSignal('E_VERIFY', 'E-Verify cleared', CLAUSE.E_VERIFY, sets.E_VERIFY),
+    buildSignal('W4_ON_FILE', 'W-4 on file', CLAUSE.W4, sets.W4_ON_FILE),
+    buildSignal('OFFER_LETTER_SIGNED', 'Offer letter on file', CLAUSE.OFFER, sets.OFFER_LETTER_SIGNED),
+    buildSignal('POLICY_ACK_SIGNED', 'Policy acknowledged', CLAUSE.POLICY, sets.POLICY_ACK_SIGNED),
   ];
 
   // Tile severity = worst per-signal failure — with a hard override: any
@@ -410,9 +443,7 @@ export async function buildOnboardingTile(
 
   // Fully compliant = passes every signal. Computed from the uncapped sets
   // because the per-signal `missing[]` payload is sliced for response size.
-  const allSignalSets: Array<Set<string>> = [
-    ageOkSet, drugSet, bgSet, i9Set, eVerifyClearedSet, w4Set, offerSet, policySet,
-  ];
+  const allSignalSets = Object.values(sets);
   const fullyCompliantCount = ids.filter((id) =>
     allSignalSets.every((s) => s.has(id)),
   ).length;
@@ -425,6 +456,114 @@ export async function buildOnboardingTile(
     generatedAt: new Date().toISOString(),
   });
 }
+
+/* ----- "Nudge all missing" — one click, no copy-paste chase --------------- */
+
+const NUDGE_COPY: Record<
+  z.infer<typeof ScorecardNudgeInputSchema>['signalKey'],
+  { subject: string; body: string }
+> = {
+  DRUG_TEST_60D: {
+    subject: 'Action needed: schedule your drug test',
+    body:
+      'Our records show no drug test result within the required 60-day window. ' +
+      'Please schedule your test as soon as possible — your placement requires a current result on file.',
+  },
+  W4_ON_FILE: {
+    subject: 'Action needed: complete your W-4',
+    body:
+      'Your W-4 tax withholding form is not on file. It is required before your ' +
+      'first paycheck — complete it from your onboarding checklist.',
+  },
+  OFFER_LETTER_SIGNED: {
+    subject: 'Action needed: sign your offer letter',
+    body:
+      'Your offer letter is still unsigned. Please review and sign it from your ' +
+      'onboarding checklist so your file is complete.',
+  },
+  POLICY_ACK_SIGNED: {
+    subject: 'Action needed: acknowledge company policies',
+    body:
+      'You have not yet acknowledged the company policies. Please review and ' +
+      'acknowledge them from your onboarding checklist.',
+  },
+};
+
+complianceScorecardRouter.post('/onboarding/nudge', MANAGE_COMPLIANCE, async (req, res, next) => {
+  try {
+    const input = ScorecardNudgeInputSchema.parse(req.body);
+    const { ids, sets } = await computeOnboardingSets(input.clientId ?? null);
+    if (!sets) {
+      res.json(ScorecardNudgeResponseSchema.parse({ nudged: 0, deduped: 0, missingCount: 0 }));
+      return;
+    }
+    const completed = sets[input.signalKey];
+    const missing = ids.filter((id) => !completed.has(id));
+    const copy = NUDGE_COPY[input.signalKey];
+
+    // 7-day dedup on the exact (recipient, subject) pair so repeated clicks
+    // — or two admins reacting to the same tile — never double-nag.
+    const users = await prisma.user.findMany({
+      where: { associateId: { in: missing }, status: 'ACTIVE' },
+      select: { id: true, associateId: true },
+    });
+    const recentlyNudged = await prisma.notification.findMany({
+      where: {
+        recipientUserId: { in: users.map((u) => u.id) },
+        subject: copy.subject,
+        createdAt: { gte: new Date(Date.now() - 7 * 24 * 3600 * 1000) },
+      },
+      select: { recipientUserId: true },
+    });
+    const nudgedUserIds = new Set(recentlyNudged.map((n) => n.recipientUserId));
+    const dedupedAssociateIds = new Set(
+      users.filter((u) => nudgedUserIds.has(u.id)).map((u) => u.associateId),
+    );
+
+    let nudged = 0;
+    for (const associateId of missing) {
+      if (dedupedAssociateIds.has(associateId)) continue;
+      void notifyAssociate(associateId, {
+        subject: copy.subject,
+        body: copy.body,
+        category: 'onboarding',
+        linkUrl: '/me',
+        emailFallback: true,
+      });
+      nudged++;
+    }
+
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        action: 'compliance.scorecard.nudge',
+        entityType: 'ScorecardSignal',
+        entityId: input.signalKey,
+        metadata: {
+          clientId: input.clientId ?? null,
+          missingCount: missing.length,
+          nudged,
+          deduped: dedupedAssociateIds.size,
+        },
+      },
+      'scorecard nudge',
+    );
+
+    res.json(
+      ScorecardNudgeResponseSchema.parse({
+        nudged,
+        deduped: dedupedAssociateIds.size,
+        missingCount: missing.length,
+      }),
+    );
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      next(new HttpError(400, 'invalid_body', 'Invalid nudge request', err.flatten()));
+      return;
+    }
+    next(err);
+  }
+});
 
 /* ============================================================ TILE 2 ===== *
  * Expiring documents — 30/60/90 day rollup.
@@ -979,22 +1118,73 @@ export async function buildBillingTile(
     (r) => r.expectedRate !== null && !r.match,
   ).length;
 
+  // LIVE forfeiture watch: the Walmart MSA forfeits invoices not submitted
+  // within 90 days. The weekly INVOICE_FORFEITURE attestation confirms a
+  // human reviewed the aging — this is the actual list that review is
+  // about, so the tile shows the money at risk, not just the checkbox.
+  const now = Date.now();
+  const sixtyDaysAgo = new Date(now - 60 * 24 * 3600 * 1000);
+  const [atRiskRows, unpaidFinalCount] = await Promise.all([
+    prisma.clientStatement.findMany({
+      take: 50,
+      where: {
+        status: 'FINAL',
+        paidAt: null,
+        finalizedAt: { lte: sixtyDaysAgo },
+        ...(clientId ? { clientId } : {}),
+      },
+      orderBy: { finalizedAt: 'asc' },
+      select: {
+        id: true,
+        number: true,
+        finalizedAt: true,
+        snapshot: true,
+        client: { select: { id: true, name: true } },
+      },
+    }),
+    prisma.clientStatement.count({
+      where: {
+        status: 'FINAL',
+        paidAt: null,
+        ...(clientId ? { clientId } : {}),
+      },
+    }),
+  ]);
+  const atRiskStatements = atRiskRows.map((s) => {
+    const ageDays = Math.floor((now - s.finalizedAt!.getTime()) / 86_400_000);
+    // Same snapshot-totals extraction the executive AR view uses.
+    const amount = (s.snapshot as { totals?: { amount?: number } } | null)?.totals?.amount;
+    return {
+      statementId: s.id,
+      clientId: s.client.id,
+      clientName: s.client.name,
+      number: s.number,
+      finalizedAt: s.finalizedAt!.toISOString(),
+      ageDays,
+      daysToForfeit: 90 - ageDays,
+      amount: typeof amount === 'number' ? amount : null,
+    };
+  });
+
   const attestations = await loadAttestationSignals('BILLING');
 
-  // Tile severity now considers both bill-rate mismatches AND attestation
-  // state. Any overdue attestation = critical; any mismatch or due_soon =
-  // warn; otherwise ok.
+  // Tile severity: overdue attestation OR a statement within 5 days of the
+  // forfeiture window (or past it) = critical; any mismatch, due_soon
+  // attestation, or 60+ day unpaid statement = warn; otherwise ok.
   const overdueCount = attestations.filter((a) => a.status === 'overdue').length;
   const dueSoonCount = attestations.filter((a) => a.status === 'due_soon').length;
+  const nearForfeit = atRiskStatements.some((s) => s.daysToForfeit <= 5);
   const severity: ScorecardSeverity =
-    overdueCount > 0
+    overdueCount > 0 || nearForfeit
       ? 'critical'
-      : mismatches > 0 || dueSoonCount > 0
+      : mismatches > 0 || dueSoonCount > 0 || atRiskStatements.length > 0
         ? 'warn'
         : 'ok';
 
   return ScorecardBillingResponseSchema.parse({
     rateChecks,
+    atRiskStatements,
+    unpaidFinalCount,
     attestations,
     severity,
     generatedAt: new Date().toISOString(),
@@ -1002,8 +1192,6 @@ export async function buildBillingTile(
 }
 
 /* ----- Manual compliance attestation endpoints --------------------------- */
-
-const MANAGE_COMPLIANCE = requireCapability('manage:compliance');
 
 complianceScorecardRouter.get('/attestations', VIEW, async (_req, res, next) => {
   try {
@@ -1226,7 +1414,7 @@ export async function buildTrainingTile(
   const courses = await prisma.course.findMany({
     take: 1000,
     where: { complianceTag: { not: null }, deletedAt: null },
-    select: { id: true, complianceTag: true },
+    select: { id: true, complianceTag: true, title: true, status: true },
   });
   const courseIdsByTag = new Map<ComplianceTag, string[]>();
   for (const c of courses) {
@@ -1234,6 +1422,16 @@ export async function buildTrainingTile(
     const arr = courseIdsByTag.get(c.complianceTag) ?? [];
     arr.push(c.id);
     courseIdsByTag.set(c.complianceTag, arr);
+  }
+  // Enroll targets: only PUBLISHED courses can accept enrollments (the
+  // /courses/:id/enroll endpoint rejects drafts). Completion above still
+  // honors any tagged course.
+  const publishedByTag = new Map<ComplianceTag, Array<{ id: string; title: string }>>();
+  for (const c of courses) {
+    if (!c.complianceTag || c.status !== 'PUBLISHED') continue;
+    const arr = publishedByTag.get(c.complianceTag) ?? [];
+    arr.push({ id: c.id, title: c.title });
+    publishedByTag.set(c.complianceTag, arr);
   }
 
   const allCourseIds = courses.map((c) => c.id);
@@ -1268,6 +1466,8 @@ export async function buildTrainingTile(
         completedCount: 0,
         totalAssociates: total,
         missing: [],
+        missingIds: [],
+        courses: [],
       };
     }
     // Completed = associates with at least one COMPLETED enrollment in any
@@ -1292,6 +1492,10 @@ export async function buildTrainingTile(
           clientName: s.clientName,
         };
       }),
+      // The uncapped ids drive "Enroll all missing" — the display list
+      // above stays capped at 100.
+      missingIds,
+      courses: publishedByTag.get(tag) ?? [],
     };
   });
 

@@ -65,10 +65,12 @@ import {
   getScorecardSafety,
   getScorecardShifts,
   getScorecardTraining,
+  nudgeScorecardSignal,
   scorecardReportUrl,
   setScorecardActionState,
   upsertAttestation,
 } from '@/lib/complianceScorecardApi';
+import { enrollAssociates } from '@/lib/lms94Api';
 import { useClients } from '@/lib/useClients';
 import type {
   ManualAttestationOutcome,
@@ -446,6 +448,13 @@ function KpiNumber({
 
 /* ----------------------------- TILE 1 ----------------------------- */
 
+const NUDGEABLE_SIGNALS = new Set<ScorecardOnboardingSignal['key']>([
+  'DRUG_TEST_60D',
+  'W4_ON_FILE',
+  'OFFER_LETTER_SIGNED',
+  'POLICY_ACK_SIGNED',
+]);
+
 function OnboardingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId: string }) {
   const fetcher = useCallback(
     () => getScorecardOnboarding(clientId || undefined),
@@ -453,6 +462,69 @@ function OnboardingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clie
   );
   const { data, error, stale } = useTileData(fetcher, refreshEpoch);
   const [drawerSignal, setDrawerSignal] = useState<ScorecardOnboardingSignal | null>(null);
+  const { user } = useAuth();
+  const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
+  const [nudging, setNudging] = useState(false);
+
+  // Week-over-week movement of the donut's number, from the daily
+  // snapshots — "are we digging out or falling behind?"
+  const historyFetcher = useCallback(
+    () => getScorecardHistory(clientId || undefined),
+    [clientId],
+  );
+  const { data: history } = useTileData(historyFetcher, refreshEpoch);
+  const fullyDelta = useMemo(() => {
+    const points = history?.points ?? [];
+    if (points.length < 2) return null;
+    const latest = points[points.length - 1];
+    const latestMs = Date.parse(latest.day);
+    const anchor = [...points]
+      .reverse()
+      .find((p) => latestMs - Date.parse(p.day) >= 6 * 24 * 3600 * 1000);
+    return anchor ? latest.fullyCompliantCount - anchor.fullyCompliantCount : null;
+  }, [history]);
+
+  const nudgeAll = async (signal: ScorecardOnboardingSignal) => {
+    if (!NUDGEABLE_SIGNALS.has(signal.key)) return;
+    setNudging(true);
+    try {
+      const r = await nudgeScorecardSignal({
+        signalKey: signal.key as Parameters<typeof nudgeScorecardSignal>[0]['signalKey'],
+        ...(clientId ? { clientId } : {}),
+      });
+      toast.success(
+        r.nudged === 0
+          ? `Everyone missing this was already reminded in the last 7 days (${r.deduped} skipped).`
+          : `Reminded ${r.nudged} associate${r.nudged === 1 ? '' : 's'}${r.deduped > 0 ? ` (${r.deduped} already reminded this week)` : ''}.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Nudge failed.');
+    } finally {
+      setNudging(false);
+    }
+  };
+
+  const exportSignalCsv = (signal: ScorecardOnboardingSignal) => {
+    const rows: Array<Array<string>> = [
+      ['associate', 'client', 'federal_deadline', 'days_overdue'],
+      ...signal.missing.map((m) => [
+        m.associateName ?? '',
+        m.clientName ?? '',
+        m.dueBy ?? '',
+        m.daysOverdue != null && m.daysOverdue > 0 ? String(m.daysOverdue) : '',
+      ]),
+    ];
+    if (signal.missingCount > signal.missing.length) {
+      rows.push([
+        `NOTE: showing ${signal.missing.length} of ${signal.missingCount} missing (display cap).`,
+        '', '', '',
+      ]);
+    }
+    downloadCsv(
+      `missing-${signal.key.toLowerCase()}-${ymdLocal()}.csv`,
+      rows,
+    );
+  };
 
   // Empty population — there's nothing to score yet.
   if (data && data.activeAssociateCount === 0) {
@@ -486,12 +558,25 @@ function OnboardingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clie
         <>
           <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-6 items-start">
             {/* Hero metric — fully compliant donut. */}
-            <Suspense fallback={<Skeleton className="h-48 w-44" />}>
-              <ComplianceDonut
-                fully={data.fullyCompliantCount}
-                total={data.activeAssociateCount}
-              />
-            </Suspense>
+            <div>
+              <Suspense fallback={<Skeleton className="h-48 w-44" />}>
+                <ComplianceDonut
+                  fully={data.fullyCompliantCount}
+                  total={data.activeAssociateCount}
+                />
+              </Suspense>
+              {fullyDelta !== null && (
+                <div
+                  className={cn(
+                    'text-2xs tabular-nums text-center mt-1',
+                    fullyDelta > 0 ? 'text-success' : fullyDelta < 0 ? 'text-alert' : 'text-silver/80',
+                  )}
+                >
+                  {fullyDelta > 0 ? '+' : ''}
+                  {fullyDelta} fully compliant vs last week
+                </div>
+              )}
+            </div>
 
             {/* Per-signal grid — wider on the right so labels breathe. */}
             <div className="space-y-1">
@@ -545,6 +630,25 @@ function OnboardingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clie
                 {drawerSignal?.contractClause ?? ''}
               </DrawerDescription>
             </DrawerHeader>
+            {drawerSignal && drawerSignal.missing.length > 0 && (
+              <div className="px-4 pb-2 flex flex-wrap items-center gap-2">
+                <Button size="xs" variant="outline" onClick={() => exportSignalCsv(drawerSignal)}>
+                  <Download className="h-3 w-3" />
+                  Export CSV
+                </Button>
+                {canManage && NUDGEABLE_SIGNALS.has(drawerSignal.key) && (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    loading={nudging}
+                    onClick={() => void nudgeAll(drawerSignal)}
+                    title="Remind every missing associate (skips anyone reminded in the last 7 days)"
+                  >
+                    Nudge all {drawerSignal.missingCount} missing
+                  </Button>
+                )}
+              </div>
+            )}
             <DrawerBody>
               {drawerSignal && drawerSignal.missing.length === 0 ? (
                 <div className="text-sm text-success flex items-center gap-2">
@@ -633,12 +737,20 @@ function expirationFixLink(
   }
 }
 
+type ExpirationBucket = 'red' | 'amber' | 'green';
+const BUCKET_LABEL: Record<ExpirationBucket, string> = {
+  red: '0–30 days',
+  amber: '31–60 days',
+  green: '61–90 days',
+};
+
 function ExpirationsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId: string }) {
   const fetcher = useCallback(
     () => getScorecardExpirations(clientId || undefined),
     [clientId],
   );
   const { data, error, stale } = useTileData(fetcher, refreshEpoch);
+  const [bucketDrawer, setBucketDrawer] = useState<ExpirationBucket | null>(null);
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
   const [drawerSignal, setDrawerSignal] =
@@ -674,9 +786,24 @@ function ExpirationsTile({ refreshEpoch, clientId }: { refreshEpoch: number; cli
       {data && (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
-            <BucketTile label="0–30 days" count={data.buckets.red.length} severity="critical" />
-            <BucketTile label="31–60 days" count={data.buckets.amber.length} severity="warn" />
-            <BucketTile label="61–90 days" count={data.buckets.green.length} severity="ok" />
+            {(['red', 'amber', 'green'] as const).map((bucket) => (
+              <button
+                key={bucket}
+                type="button"
+                onClick={() => data.buckets[bucket].length > 0 && setBucketDrawer(bucket)}
+                className={cn(
+                  'text-left rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                  data.buckets[bucket].length > 0 && 'hover:opacity-90 cursor-pointer',
+                )}
+                aria-label={`Open the full ${BUCKET_LABEL[bucket]} list`}
+              >
+                <BucketTile
+                  label={BUCKET_LABEL[bucket]}
+                  count={data.buckets[bucket].length}
+                  severity={bucket === 'red' ? 'critical' : bucket === 'amber' ? 'warn' : 'ok'}
+                />
+              </button>
+            ))}
           </div>
           {(['red', 'amber', 'green'] as const).map((bucket) => {
             const items = data.buckets[bucket];
@@ -713,12 +840,27 @@ function ExpirationsTile({ refreshEpoch, clientId }: { refreshEpoch: number; cli
                     );
                   })}
                   {items.length > 5 && (
-                    <li className="text-2xs text-silver/80">+{items.length - 5} more</li>
+                    <li>
+                      <button
+                        type="button"
+                        onClick={() => setBucketDrawer(bucket)}
+                        className="text-2xs text-gold hover:underline"
+                      >
+                        +{items.length - 5} more — view all
+                      </button>
+                    </li>
                   )}
                 </ul>
               </div>
             );
           })}
+          {bucketDrawer && (
+            <ExpirationBucketDrawer
+              bucket={bucketDrawer}
+              items={data.buckets[bucketDrawer]}
+              onClose={() => setBucketDrawer(null)}
+            />
+          )}
           {signals.length > 0 && (
             <div className="mt-3 pt-3 border-t border-navy-secondary">
               <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1.5">
@@ -754,6 +896,138 @@ function ExpirationsTile({ refreshEpoch, clientId }: { refreshEpoch: number; cli
         </>
       )}
     </TileShell>
+  );
+}
+
+/** Full bucket list: every expiring item (the tile previews 5), with a
+ *  type-to-filter box, kind chips, fix links, and a CSV export. */
+function ExpirationBucketDrawer({
+  bucket,
+  items,
+  onClose,
+}: {
+  bucket: ExpirationBucket;
+  items: ScorecardExpiringItem[];
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState('');
+  const [kindFilter, setKindFilter] = useState<string>('');
+
+  const kinds = useMemo(
+    () => [...new Set(items.map((i) => i.kind))].sort(),
+    [items],
+  );
+  const filtered = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    return items.filter((i) => {
+      if (kindFilter && i.kind !== kindFilter) return false;
+      if (!term) return true;
+      return (
+        (i.subject.associateName ?? '').toLowerCase().includes(term) ||
+        i.label.toLowerCase().includes(term) ||
+        (i.subject.clientName ?? '').toLowerCase().includes(term)
+      );
+    });
+  }, [items, q, kindFilter]);
+
+  const exportCsv = () => {
+    downloadCsv(`expiring-${BUCKET_LABEL[bucket].replace(/[^0-9a-z]+/gi, '-')}-${ymdLocal()}.csv`, [
+      ['associate', 'client', 'item', 'kind', 'expires', 'days_until'],
+      ...filtered.map((i) => [
+        i.subject.associateName ?? '',
+        i.subject.clientName ?? '',
+        i.label,
+        i.kind,
+        i.expiresAt.slice(0, 10),
+        String(i.daysUntil),
+      ]),
+    ]);
+  };
+
+  return (
+    <Drawer open onOpenChange={(o) => !o && onClose()}>
+      <DrawerHeader>
+        <DrawerTitle>Expiring in {BUCKET_LABEL[bucket]}</DrawerTitle>
+        <DrawerDescription>
+          {items.length} item{items.length === 1 ? '' : 's'} — every row deep-links the surface
+          that renews it.
+        </DrawerDescription>
+      </DrawerHeader>
+      <div className="px-4 pb-2 space-y-2">
+        <div className="flex items-center gap-2">
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Filter by name, item, or client…"
+            aria-label="Filter expiring items"
+          />
+          <Button size="xs" variant="outline" onClick={exportCsv} disabled={filtered.length === 0}>
+            <Download className="h-3 w-3" />
+            CSV
+          </Button>
+        </div>
+        {kinds.length > 1 && (
+          <div className="flex flex-wrap gap-1.5">
+            <FilterChip active={kindFilter === ''} onClick={() => setKindFilter('')}>
+              All kinds
+            </FilterChip>
+            {kinds.map((k) => (
+              <FilterChip key={k} active={kindFilter === k} onClick={() => setKindFilter(k)}>
+                {k.replace(/_/g, ' ').toLowerCase()}
+              </FilterChip>
+            ))}
+          </div>
+        )}
+      </div>
+      <DrawerBody>
+        {filtered.length === 0 ? (
+          <div className="text-xs text-silver py-3 text-center">Nothing matches this filter.</div>
+        ) : (
+          <ul className="space-y-1">
+            {filtered.map((it, i) => {
+              const link = expirationFixLink(it.kind, it.subject.associateId);
+              const row = (
+                <>
+                  <div className="min-w-0">
+                    <div className="text-sm text-white truncate">
+                      {it.subject.associateName ?? it.label}
+                    </div>
+                    <div className="text-2xs text-silver truncate">
+                      {it.label}
+                      {it.subject.clientName ? ` · ${it.subject.clientName}` : ''}
+                    </div>
+                  </div>
+                  <span
+                    className={cn(
+                      'text-xs tabular-nums shrink-0',
+                      it.daysUntil <= 7 ? 'text-alert font-semibold' : 'text-silver',
+                    )}
+                  >
+                    {fmtDate(it.expiresAt)} · {it.daysUntil}d
+                  </span>
+                </>
+              );
+              return (
+                <li key={`${it.kind}-${it.subject.associateId}-${i}`}>
+                  {link ? (
+                    <Link
+                      to={link}
+                      className="flex items-center justify-between gap-2 px-2 py-1.5 rounded border border-navy-secondary hover:bg-navy-secondary/40"
+                    >
+                      {row}
+                    </Link>
+                  ) : (
+                    <span className="flex items-center justify-between gap-2 px-2 py-1.5 rounded border border-navy-secondary">
+                      {row}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </DrawerBody>
+    </Drawer>
   );
 }
 
@@ -867,13 +1141,18 @@ function BillingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
           ) : (
             <ul className="space-y-1">
               {mismatches.slice(0, 6).map((r) => (
-                <li key={r.jobId} className="text-xs flex items-center justify-between gap-2">
-                  <span className="text-white truncate">
-                    {r.clientName} / {r.jobName}
-                  </span>
-                  <span className="tabular-nums text-alert">
-                    ${r.billRate.toFixed(2)} ≠ ${r.expectedRate?.toFixed(2)}
-                  </span>
+                <li key={r.jobId} className="text-xs">
+                  <Link
+                    to={`/clients/${r.clientId}`}
+                    className="flex items-center justify-between gap-2 rounded px-1 -mx-1 py-0.5 hover:bg-navy-secondary/40"
+                  >
+                    <span className="text-white truncate">
+                      {r.clientName} / {r.jobName}
+                    </span>
+                    <span className="tabular-nums text-alert shrink-0">
+                      ${r.billRate.toFixed(2)} ≠ ${r.expectedRate?.toFixed(2)}
+                    </span>
+                  </Link>
                 </li>
               ))}
               {mismatches.length > 6 && (
@@ -881,6 +1160,65 @@ function BillingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
               )}
             </ul>
           )}
+          {/* Honesty line: "all matched" only counts jobs a SOW pattern
+              recognizes — say how many the check actually had an opinion on. */}
+          <p className="text-2xs text-silver/70 mt-1">
+            {data.rateChecks.filter((r) => r.expectedRate !== null).length} of{' '}
+            {data.rateChecks.length} active jobs matched a SOW rate pattern
+            {data.rateChecks.some((r) => r.expectedRate === null) &&
+              ' — the rest carry no contractual expectation'}
+            .
+          </p>
+
+          <div className="mt-3 pt-3 border-t border-navy-secondary">
+            <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1.5">
+              Invoice forfeiture watch (90-day MSA window)
+            </div>
+            {data.atRiskStatements.length === 0 ? (
+              <div className="text-xs text-success flex items-center gap-2">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                No unpaid statement is older than 60 days
+                {data.unpaidFinalCount > 0 &&
+                  ` (${data.unpaidFinalCount} outstanding, all younger)`}
+                .
+              </div>
+            ) : (
+              <ul className="space-y-1">
+                {data.atRiskStatements.slice(0, 6).map((s) => (
+                  <li key={s.statementId} className="text-xs">
+                    <Link
+                      to={`/clients/${s.clientId}`}
+                      className="flex items-center justify-between gap-2 rounded px-1 -mx-1 py-0.5 hover:bg-navy-secondary/40"
+                    >
+                      <span className="text-white truncate">
+                        {s.clientName} · statement #{s.number ?? '—'}
+                        {s.amount !== null && (
+                          <span className="text-silver/80">
+                            {' '}· ${s.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </span>
+                        )}
+                      </span>
+                      <span
+                        className={cn(
+                          'tabular-nums shrink-0 font-semibold',
+                          s.daysToForfeit <= 5 ? 'text-alert' : 'text-warning',
+                        )}
+                      >
+                        {s.daysToForfeit < 0
+                          ? `${-s.daysToForfeit}d past window`
+                          : `${s.daysToForfeit}d to forfeit`}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+                {data.atRiskStatements.length > 6 && (
+                  <li className="text-2xs text-silver/80">
+                    +{data.atRiskStatements.length - 6} more
+                  </li>
+                )}
+              </ul>
+            )}
+          </div>
           {signals.length > 0 && (
             <div className="mt-3 pt-3 border-t border-navy-secondary">
               <div className="text-2xs uppercase tracking-widest text-silver/80 mb-1.5">
@@ -1254,12 +1592,61 @@ function AttestationDrawer({
 /* ----------------------------- TILE 5 ----------------------------- */
 
 function TrainingTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId: string }) {
+  // Local bump so a bulk enroll refreshes this tile without waiting on the
+  // page-wide 15-minute epoch.
+  const [bump, setBump] = useState(0);
   const fetcher = useCallback(
     () => getScorecardTraining(clientId || undefined),
     [clientId],
   );
-  const { data, error, stale } = useTileData(fetcher, refreshEpoch);
+  const { data, error, stale } = useTileData(fetcher, refreshEpoch + bump);
   const [drawerSignal, setDrawerSignal] = useState<ScorecardTrainingSignal | null>(null);
+  const { user } = useAuth();
+  const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
+  const [enrolling, setEnrolling] = useState(false);
+
+  // Enroll EVERY missing associate into the tag's published course via the
+  // existing LMS endpoint (max 500 ids per call — chunked). One enrollment
+  // system, one notification path.
+  const enrollAllMissing = async (signal: ScorecardTrainingSignal) => {
+    const course = signal.courses[0];
+    if (!course || signal.missingIds.length === 0) return;
+    setEnrolling(true);
+    try {
+      let created = 0;
+      let skipped = 0;
+      for (let i = 0; i < signal.missingIds.length; i += 500) {
+        const r = await enrollAssociates(course.id, signal.missingIds.slice(i, i + 500));
+        created += r.created;
+        skipped += r.skipped;
+      }
+      toast.success(
+        `Enrolled ${created} associate${created === 1 ? '' : 's'} in “${course.title}”` +
+          (skipped > 0 ? ` (${skipped} already enrolled)` : '') +
+          '.',
+      );
+      setDrawerSignal(null);
+      setBump((b) => b + 1);
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : 'Enrollment failed.');
+    } finally {
+      setEnrolling(false);
+    }
+  };
+
+  const exportMissingCsv = (signal: ScorecardTrainingSignal) => {
+    const rows: Array<Array<string>> = [
+      ['associate', 'client'],
+      ...signal.missing.map((m) => [m.associateName ?? '', m.clientName ?? '']),
+    ];
+    if (signal.missingIds.length > signal.missing.length) {
+      rows.push([
+        `NOTE: showing ${signal.missing.length} of ${signal.missingIds.length} missing (display cap) — "Enroll all missing" still covers everyone.`,
+        '',
+      ]);
+    }
+    downloadCsv(`missing-training-${signal.tag.toLowerCase()}-${ymdLocal()}.csv`, rows);
+  };
 
   return (
     <TileShell
@@ -1318,6 +1705,30 @@ function TrainingTile({ refreshEpoch, clientId }: { refreshEpoch: number; client
               <DrawerTitle>{drawerSignal?.label ?? ''}</DrawerTitle>
               <DrawerDescription>{drawerSignal?.contractClause ?? ''}</DrawerDescription>
             </DrawerHeader>
+            {drawerSignal && drawerSignal.missingIds.length > 0 && (
+              <div className="px-4 pb-2 flex flex-wrap items-center gap-2">
+                <Button size="xs" variant="outline" onClick={() => exportMissingCsv(drawerSignal)}>
+                  <Download className="h-3 w-3" />
+                  Export CSV
+                </Button>
+                {canManage && drawerSignal.courses.length > 0 && (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    loading={enrolling}
+                    onClick={() => void enrollAllMissing(drawerSignal)}
+                    title={`Enroll every missing associate in “${drawerSignal.courses[0].title}” — each gets the standard enrollment notification`}
+                  >
+                    Enroll all {drawerSignal.missingIds.length} missing
+                  </Button>
+                )}
+                {canManage && drawerSignal.courses.length === 0 && (
+                  <span className="text-2xs text-silver/70">
+                    Publish a course with this tag to enable one-click enrollment.
+                  </span>
+                )}
+              </div>
+            )}
             <DrawerBody>
               {drawerSignal && drawerSignal.missing.length === 0 ? (
                 <div className="text-sm text-success flex items-center gap-2">
@@ -1589,6 +2000,17 @@ function SafetyStat({ label, value, tone }: { label: string; value: string; tone
 
 type ActionFilter = 'all' | 'critical' | 'warn';
 
+/** Action ids are prefixed by the tile that generated them. */
+const ACTION_SOURCE_LABEL: Record<string, string> = {
+  onb: 'Onboarding',
+  exp: 'Expirations',
+  shf: 'Shifts',
+  bil: 'Billing',
+  trn: 'Training',
+  saf: 'Safety',
+};
+const actionSource = (id: string): string => id.split(':')[0] ?? '';
+
 function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientId: string }) {
   const fetcher = useCallback(
     () => getScorecardActions(clientId || undefined),
@@ -1596,6 +2018,8 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
   );
   const { data, error, stale } = useTileData(fetcher, refreshEpoch);
   const [filter, setFilter] = useState<ActionFilter>('all');
+  const [sourceFilter, setSourceFilter] = useState('');
+  const [mineOnly, setMineOnly] = useState(false);
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
 
@@ -1633,19 +2057,34 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
 
   const filtered = useMemo(() => {
     if (!data) return [];
-    if (filter === 'all') return data.actions;
-    return data.actions.filter((a) => a.severity === filter);
-  }, [data, filter]);
+    return data.actions.filter((a) => {
+      if (filter !== 'all' && a.severity !== filter) return false;
+      if (sourceFilter && actionSource(a.id) !== sourceFilter) return false;
+      if (mineOnly && stateFor(a)?.assigneeUserId !== user?.id) return false;
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, filter, sourceFilter, mineOnly, localStates, user]);
+
+  const sourceCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const a of data?.actions ?? []) {
+      const s = actionSource(a.id);
+      counts.set(s, (counts.get(s) ?? 0) + 1);
+    }
+    return counts;
+  }, [data]);
 
   // Client-side CSV of the currently filtered list — no extra endpoint.
   const exportCsv = () => {
     if (filtered.length === 0) return;
     const rows = [
-      ['severity', 'title', 'contract_clause', 'associate', 'client', 'status', 'assignee', 'link'],
+      ['severity', 'source', 'title', 'contract_clause', 'associate', 'client', 'status', 'assignee', 'link'],
       ...filtered.map((a) => {
         const st = stateFor(a);
         return [
           a.severity,
+          ACTION_SOURCE_LABEL[actionSource(a.id)] ?? actionSource(a.id),
           a.title,
           a.contractClause,
           a.subject.associateName ?? '',
@@ -1660,6 +2099,7 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
     // the org's exposure — say so in the file itself.
     if (data?.truncated) {
       rows.push([
+        '',
         '',
         `NOTE: list truncated — showing ${data.actions.length} of ${data.totalActionCount} open actions. Narrow by client or fix criticals to see the rest.`,
         '', '', '', '', '', '',
@@ -1733,6 +2173,33 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
             </div>
           )}
         </div>
+        {/* Second filter axis: which tile generated the action + "mine". */}
+        {data && data.actions.length > 0 && (sourceCounts.size > 1 || canManage) && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {sourceCounts.size > 1 && (
+              <>
+                <FilterChip active={sourceFilter === ''} onClick={() => setSourceFilter('')}>
+                  All sources
+                </FilterChip>
+                {[...sourceCounts.entries()].map(([src, count]) => (
+                  <FilterChip
+                    key={src}
+                    active={sourceFilter === src}
+                    onClick={() => setSourceFilter(sourceFilter === src ? '' : src)}
+                  >
+                    {ACTION_SOURCE_LABEL[src] ?? src}
+                    <span className="tabular-nums font-semibold">{count}</span>
+                  </FilterChip>
+                ))}
+              </>
+            )}
+            {canManage && (
+              <FilterChip active={mineOnly} onClick={() => setMineOnly((v) => !v)}>
+                Assigned to me
+              </FilterChip>
+            )}
+          </div>
+        )}
         {error && <ErrorBanner>{error}</ErrorBanner>}
         {!data && !error && <Skeleton className="h-32" />}
         {data && data.actions.length === 0 && (

@@ -2,6 +2,8 @@ import type {
   ManualAttestationCreateInput,
   ManualAttestationListResponse,
   ManualAttestationSignal,
+  ScorecardNudgeInput,
+  ScorecardNudgeResponse,
   ScorecardActionState,
   ScorecardActionStateInput,
   ScorecardActionsResponse,
@@ -53,6 +55,17 @@ export function getScorecardHistory(
   return apiFetch<ScorecardHistoryResponse>(
     `${base}${base.includes('?') ? '&' : '?'}days=${days}`,
   );
+}
+
+/** One-click reminder to every associate missing a self-fixable onboarding
+ *  signal. Server dedupes per (associate, signal) over 7 days. */
+export function nudgeScorecardSignal(
+  body: ScorecardNudgeInput,
+): Promise<ScorecardNudgeResponse> {
+  return apiFetch<ScorecardNudgeResponse>(`${ROOT}/onboarding/nudge`, {
+    method: 'POST',
+    body,
+  });
 }
 
 export function setScorecardActionState(
