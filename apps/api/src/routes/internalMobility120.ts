@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import {
+  ADMIN_EMAIL_HIRING,
   notifyAllAdmins,
   notifyAssociate,
   notifyManager,
@@ -171,6 +172,7 @@ internalMobility120Router.post(
         category: 'internal-jobs',
         linkUrl: '/internal-jobs',
         excludeUserId: req.user!.id,
+        emailRoles: ADMIN_EMAIL_HIRING,
       });
       void notifyManager(applicantAssociateId, {
         subject: `Internal application: ${posting.title}`,

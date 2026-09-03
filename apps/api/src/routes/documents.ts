@@ -289,7 +289,18 @@ documentsRouter.post('/me/upload', upload.single('file'), async (req, res, next)
       uploadedAt: new Date(created.createdAt).toISOString().replace('T', ' ').slice(0, 16) + ' UTC',
       documentsUrl: `${env.APP_BASE_URL}/documents`,
     });
-    void notifyAllAdmins({ subject: tpl.subject, body: tpl.text, html: tpl.html, category: 'documents' });
+    // Bell-only (emailRoles: []): every upload used to EMAIL all six admin
+    // roles — a single new hire's ID front + back + SSN card was ~24
+    // inbox hits across the admin team, per hire. The actionable email is
+    // the one "application complete — ready for review" notice; uploads
+    // just need to be visible in the bell and on the application page.
+    void notifyAllAdmins({
+      subject: tpl.subject,
+      body: tpl.text,
+      html: tpl.html,
+      category: 'documents',
+      emailRoles: [],
+    });
 
     res.status(201).json(toRecord(created));
   } catch (err) {

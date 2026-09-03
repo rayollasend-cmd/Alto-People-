@@ -113,7 +113,7 @@ async function seed(): Promise<World> {
 }
 
 describe('Notification hooks', () => {
-  it('document upload by associate → notifies every admin role (in-app + email)', async () => {
+  it('document upload by associate → bell for every admin role, email for none', async () => {
     const w = await seed();
     const a = await loginAs(w.associateUser.email);
 
@@ -134,16 +134,14 @@ describe('Notification hooks', () => {
     expect(adminInApp[0].body).toMatch(/Document type/i);
     expect(adminInApp[0].body).toMatch(/license\.png/);
 
-    // And one EMAIL row per admin.
+    // And ZERO emails — the email-saver batch made uploads bell-only
+    // (emailRoles: []): every upload used to email all six admin roles,
+    // which burned Resend credits announcing routine mid-onboarding
+    // activity. The actionable email is "application complete".
     const adminEmails = await prisma.notification.findMany({
       where: { recipientUserId: { in: w.allAdminIds }, category: 'documents', channel: 'EMAIL' },
     });
-    expect(adminEmails).toHaveLength(w.allAdminIds.length);
-    expect(adminEmails.every((n) => n.status === 'SENT')).toBe(true);
-    expect(adminEmails.every((n) => n.recipientEmail !== null)).toBe(true);
-    // Every email must include the standard signature line, regardless of template.
-    expect(adminEmails.every((n) => n.body.includes('CONFIDENTIAL'))).toBe(true);
-    expect(adminEmails.every((n) => n.body.includes('Reference: ALT-'))).toBe(true);
+    expect(adminEmails).toHaveLength(0);
   });
 
   it('document rejected → notifies the associate (not HR)', async () => {
@@ -296,6 +294,10 @@ describe('Notification hooks', () => {
     await flushPendingNotifications();
 
     const expectedFanOut = w.allAdminIds.length; // 2 HR + 1 IR + 1 MGR
+    // Emails are tiered (ADMIN_EMAIL_HIRING): the bell reaches every admin
+    // role, but the completion/edit-alert EMAILS go to HR + recruiters
+    // only — MANAGER sees the bell row without the inbox hit.
+    const expectedEmailFanOut = 3; // 2 HR + 1 IR
 
     let inApp = await prisma.notification.findMany({
       where: {
@@ -306,7 +308,7 @@ describe('Notification hooks', () => {
     });
     expect(inApp).toHaveLength(expectedFanOut);
 
-    // Each admin also gets an email — same dedupe gate applies.
+    // Hiring-tier roles also get an email — same dedupe gate applies.
     let emails = await prisma.notification.findMany({
       where: {
         recipientUserId: { in: w.allAdminIds },
@@ -314,8 +316,9 @@ describe('Notification hooks', () => {
         channel: 'EMAIL',
       },
     });
-    expect(emails).toHaveLength(expectedFanOut);
+    expect(emails).toHaveLength(expectedEmailFanOut);
     expect(emails.every((n) => n.status === 'SENT')).toBe(true);
+    expect(emails.some((n) => n.recipientUserId === w.managerUser.id)).toBe(false);
 
     // Trigger again. The COMPLETION fan-out is deduped via submittedAt —
     // but since the applicant is editing a SUBMITTED application, this
@@ -356,7 +359,7 @@ describe('Notification hooks', () => {
     expect(
       emails.filter((n) => n.subject !== UPDATED_SUBJECT),
       'submittedAt dedupe must prevent a second COMPLETION email fan-out',
-    ).toHaveLength(expectedFanOut);
+    ).toHaveLength(expectedEmailFanOut);
 
     // A THIRD edit must not re-alert: updatedAfterSubmitAt is stamped, so
     // the edit-alert dedupe holds until the next review cycle.

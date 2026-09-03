@@ -6,7 +6,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { recordReimbursementEvent } from '../lib/audit.js';
-import { notifyAllAdmins, notifyAssociate, notifyManager } from '../lib/notify.js';
+import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins, notifyAssociate, notifyManager } from '../lib/notify.js';
 
 /**
  * Gap 10 — Reimbursement two-step approval + payroll-fold integration.
@@ -344,7 +344,11 @@ reimbursements97Router.post('/reimbursements/:id/submit', SUBMIT, async (req, re
   if (assoc?.managerId) {
     void notifyManager(r.associateId, submitOpts);
   } else {
-    void notifyAllAdmins({ ...submitOpts, excludeUserId: req.user!.id });
+    void notifyAllAdmins({
+      ...submitOpts,
+      excludeUserId: req.user!.id,
+      emailRoles: ADMIN_EMAIL_HR_ONLY,
+    });
   }
   res.json({ ok: true });
 });

@@ -123,11 +123,15 @@ function notifyEntryDecision(
   // ?entry= lands viewers of the admin queue on the exact record; other
   // views of /time-attendance ignore it.
   if (decision.kind === 'approved') {
+    // quiet: an approval is the expected outcome — an email per approved
+    // entry meant a daily inbox ping saying "everything is normal".
+    // Rejections below still email: they need action.
     void notifyAssociate(entry.associateId, {
       subject: 'Hours approved',
       body: `Your ${day} time entry (${range}) was approved — ${(decision.minutes / 60).toFixed(1)}h.`,
       category: 'time_entry',
       linkUrl: `/time-attendance?entry=${entry.id}`,
+      quiet: true,
     });
   } else {
     void notifyAssociate(entry.associateId, {

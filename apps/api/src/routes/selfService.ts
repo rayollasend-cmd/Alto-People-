@@ -9,7 +9,7 @@ import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { decryptString, encryptString, tryDecryptString } from '../lib/crypto.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { send } from '../lib/notifications.js';
-import { notifyAllAdmins } from '../lib/notify.js';
+import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins } from '../lib/notify.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 
 /**
@@ -484,6 +484,7 @@ selfServiceRouter.post('/me/life-events', async (req, res) => {
     body: `${who} reported ${input.kind} effective ${input.eventDate} — review benefits eligibility.`,
     category: 'benefits',
     linkUrl: '/people',
+    emailRoles: ADMIN_EMAIL_HR_ONLY,
   });
   // Fire workflow: associate hired isn't relevant; this is informational
   // for HR. We use ASSOCIATE_HIRED-style channel? No — there's no

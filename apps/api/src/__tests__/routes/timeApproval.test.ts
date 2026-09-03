@@ -112,6 +112,18 @@ describe('decision notifications', () => {
     });
     expect(approveNotes).toHaveLength(1);
     expect(approveNotes[0].body).toContain('8.0h');
+
+    // quiet delivery: an approval is routine-positive news — bell only,
+    // no email (an email per approved entry was a daily "everything is
+    // fine" inbox ping). Rejections are not quiet and still email.
+    const approveEmails = await prisma.notification.findMany({
+      where: {
+        channel: 'EMAIL',
+        recipientUserId: assocUser.id,
+        subject: 'Hours approved',
+      },
+    });
+    expect(approveEmails).toHaveLength(0);
   });
 
   it('bulk approve sends ONE summary per associate', async () => {

@@ -2,7 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { send } from './notifications.js';
-import { notifyAllAdmins, notifyUser } from './notify.js';
+import { ADMIN_EMAIL_HIRING, notifyAllAdmins, notifyUser } from './notify.js';
 import { generateInviteToken } from './inviteToken.js';
 import { onboardingReminderTemplate, inviteTemplate } from './emailTemplates.js';
 
@@ -332,6 +332,7 @@ export async function runProgressReminderSweep(
             `Outstanding: ${open.map((t) => t.title).join(', ')}. ` +
             `Open it: ${env.APP_BASE_URL}/onboarding/applications/${app.id}`,
           category: 'onboarding',
+          emailRoles: ADMIN_EMAIL_HIRING,
         });
         escalated++;
       }

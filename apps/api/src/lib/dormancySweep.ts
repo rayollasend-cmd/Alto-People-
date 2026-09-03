@@ -2,7 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { recordCriticalAudit } from './audit.js';
-import { notifyAllAdmins } from './notify.js';
+import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins } from './notify.js';
 import { executeDeactivation } from './deactivation.js';
 
 /**
@@ -218,6 +218,7 @@ export async function runDormancySweep(
         `the clock resets.`,
       category: 'dormancy',
       linkUrl: '/people',
+      emailRoles: ADMIN_EMAIL_HR_ONLY,
     });
   }
 
@@ -234,6 +235,7 @@ export async function runDormancySweep(
         `recorded in the audit log.`,
       category: 'dormancy',
       linkUrl: '/people',
+      emailRoles: ADMIN_EMAIL_HR_ONLY,
     });
   }
 

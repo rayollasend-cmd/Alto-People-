@@ -4,7 +4,7 @@ import { env } from '../config/env.js';
 import { recordCriticalAudit } from './audit.js';
 import { getBlobStore } from './blobStore.js';
 import { logger } from './logger.js';
-import { notifyAllAdmins, notifyUser } from './notify.js';
+import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins, notifyUser } from './notify.js';
 
 /**
  * Onboarding ghost purge — the self-cleaning half of the invite pipeline.
@@ -422,6 +422,7 @@ export async function runOnboardingPurgeSweep(
         `\n\nEach removal is recorded in the audit log. A fresh invitation recreates ` +
         `anyone who comes back.`,
       category: 'onboarding',
+      emailRoles: ADMIN_EMAIL_HR_ONLY,
     });
   }
 

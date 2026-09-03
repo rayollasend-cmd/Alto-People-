@@ -86,6 +86,8 @@ import {
   type CsvImportPreviewResponse,
 } from '@alto-people/shared';
 import {
+  ADMIN_EMAIL_HIRING,
+  ADMIN_EMAIL_HR_ONLY,
   notifyAllAdmins,
   notifyAssociate,
   notifyHrOnApplicationComplete,
@@ -547,6 +549,7 @@ async function flagPostSubmissionEdit(
       category: 'onboarding',
       linkUrl: `/onboarding/applications/${app.id}`,
       excludeUserId: user.id,
+      emailRoles: ADMIN_EMAIL_HIRING,
     });
   }
 }
@@ -3108,6 +3111,9 @@ onboardingRouter.post('/applications/:id/i9/section1', async (req, res, next) =>
       body: i9Tpl.text,
       html: i9Tpl.html,
       category: 'onboarding',
+      // Section 2 verification is an HR duty — the other admin roles get
+      // the bell row only.
+      emailRoles: ADMIN_EMAIL_HR_ONLY,
     });
 
     res.status(200).json({

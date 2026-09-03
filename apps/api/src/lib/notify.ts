@@ -77,8 +77,8 @@ function bucketForRawCategory(raw: string | undefined): NotificationCategory | n
   if (raw === 'broadcast') return 'broadcast';
   if (raw === 'discipline') return 'discipline';
   if (raw === 'probation') return 'probation';
-  if (raw === 'documents') return 'documents';
-  if (raw === 'time-off') return 'time_off';
+  if (raw === 'documents' || raw.startsWith('documents.')) return 'documents';
+  if (raw === 'time-off' || raw === 'vto') return 'time_off';
   if (
     raw === 'scheduling' ||
     raw === 'schedule_digest' ||
@@ -88,6 +88,53 @@ function bucketForRawCategory(raw: string | undefined): NotificationCategory | n
     return 'scheduling';
   if (raw.startsWith('swap_')) return 'shift_swaps';
   if (raw.startsWith('onboarding')) return 'onboarding';
+  // The three buckets below exist because ~60% of call-site categories
+  // used to fall through to null — "always send, no off switch" — which
+  // is how users ended up drowning in email they couldn't mute. Every
+  // category in use MUST land in a bucket; null stays reserved for
+  // genuinely unknown strings (defensive over-delivery).
+  if (
+    raw === 'time_entry' ||
+    raw === 'attendance' ||
+    raw === 'earnings' ||
+    raw === 'run' ||
+    raw === 'reimbursements' ||
+    raw === 'compensation' ||
+    raw === 'equity' ||
+    raw === 'benefits' ||
+    raw === 'ot_radar' ||
+    raw.startsWith('payroll')
+  )
+    return 'time_pay';
+  if (
+    raw === 'develop' ||
+    raw === 'learning' ||
+    raw === 'mentorship' ||
+    raw === 'ramp' ||
+    raw === 'performance' ||
+    raw === 'tuition' ||
+    raw === 'internal-jobs' ||
+    raw === 'move' ||
+    raw === 'marketplace' ||
+    raw === 'pulse'
+  )
+    return 'growth';
+  if (
+    raw === 'org' ||
+    raw === 'team' ||
+    raw === 'asc' ||
+    raw === 'assets' ||
+    raw === 'agreements' ||
+    raw === 'separation' ||
+    raw === 'hr-cases' ||
+    raw === 'dormancy' ||
+    raw === 'executive_delegation' ||
+    raw.startsWith('ops.') ||
+    raw.startsWith('decision_') ||
+    raw.startsWith('compliance') ||
+    raw.startsWith('reports')
+  )
+    return 'workplace';
   return null;
 }
 
@@ -145,7 +192,19 @@ export interface NotifyOpts {
    * builds its own absolute link separately.
    */
   linkUrl?: string;
+  /**
+   * Bell-only delivery: skip the email AND the push. For routine-positive
+   * confirmations ("hours approved") where the event is self-evident and
+   * an inbox interruption reads as spam. Anything that requires action or
+   * changes what someone gets paid must NOT be quiet.
+   */
+  quiet?: boolean;
 }
+
+/** notifyAllAdmins email tiers — the bell row still reaches every admin
+ *  role; these narrow who ALSO gets the email. Pass via `emailRoles`. */
+export const ADMIN_EMAIL_HIRING = ['HR_ADMINISTRATOR', 'INTERNAL_RECRUITER'] as const;
+export const ADMIN_EMAIL_HR_ONLY = ['HR_ADMINISTRATOR'] as const;
 
 /**
  * Send a transactional email to one user and record the result as an
@@ -284,6 +343,8 @@ export function notifyUser(
       // Email is best-effort and fired in parallel via its own track().
       // Skip the send if the user has muted this category bucket; the
       // IN_APP row above always lands so the bell still surfaces it.
+      // quiet = the bell row above is the whole delivery.
+      if (opts.quiet) return;
       const u = await prisma.user.findUnique({
         where: { id: userId },
         select: { email: true, status: true },
@@ -316,7 +377,19 @@ export function notifyUser(
  * adding a new admin role to FULL_ADMIN auto-includes them here.
  */
 export function notifyAllAdmins(
-  opts: NotifyOpts & { excludeUserId?: string | null },
+  opts: NotifyOpts & {
+    excludeUserId?: string | null;
+    /**
+     * Which admin ROLES also get the email (the bell row reaches everyone
+     * regardless). Undefined = every admin role emails (the historical
+     * behavior — reserve it for operational alerts everyone must see).
+     * [] = bell-only. Use ADMIN_EMAIL_HIRING / ADMIN_EMAIL_HR_ONLY for
+     * informational events: six roles carry manage:onboarding, and
+     * blasting all of them for every routine event is how the org burned
+     * through its Resend credits.
+     */
+    emailRoles?: readonly string[];
+  },
 ): Promise<void> {
   return track(
     (async () => {
@@ -326,7 +399,7 @@ export function notifyAllAdmins(
           status: 'ACTIVE',
           ...(opts.excludeUserId ? { NOT: { id: opts.excludeUserId } } : {}),
         },
-        select: { id: true, email: true },
+        select: { id: true, email: true, role: true },
       });
       if (recipients.length === 0) return;
       const now = new Date();
@@ -348,6 +421,7 @@ export function notifyAllAdmins(
       // (admin role count, typically ≤10) and indexed on (userId, category).
       for (const u of recipients) {
         if (!u.email) continue;
+        if (opts.emailRoles && !opts.emailRoles.includes(u.role)) continue;
         const muted = await isEmailMutedForCategory(u.id, opts.category);
         if (!muted) void sendEmailNotification(u.id, u.email, opts);
       }
@@ -433,7 +507,7 @@ export function notifyAssociate(
         await notifyUser(user.id, opts);
         return;
       }
-      if (!opts.emailFallback) return;
+      if (!opts.emailFallback || opts.quiet) return;
       const associate = await prisma.associate.findUnique({
         where: { id: associateId },
         select: { email: true },
@@ -549,6 +623,9 @@ export function notifyHrOnApplicationComplete(applicationId: string): Promise<vo
         body: tpl.text,
         html: tpl.html,
         category: 'onboarding',
+        // Reviewing a submission is HR/recruiting work; the other four
+        // admin roles see the bell row without the inbox hit.
+        emailRoles: ADMIN_EMAIL_HIRING,
       });
     })().catch((err: unknown) => {
       console.warn(

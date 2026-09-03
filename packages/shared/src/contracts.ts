@@ -4338,6 +4338,27 @@ export const NOTIFICATION_CATEGORIES = [
     mandatory: false,
   },
   {
+    key: 'time_pay',
+    label: 'Time & pay updates',
+    description:
+      'Time entry approvals and adjustments, payroll run notices, reimbursements, and benefits updates.',
+    mandatory: false,
+  },
+  {
+    key: 'growth',
+    label: 'Career & growth',
+    description:
+      'Learning, mentorship, performance reviews, internal job postings, and development updates.',
+    mandatory: false,
+  },
+  {
+    key: 'workplace',
+    label: 'Workplace & HR updates',
+    description:
+      'Org and team changes, HR cases, asset assignments, agreements, and operational alerts.',
+    mandatory: false,
+  },
+  {
     key: 'discipline',
     label: 'Disciplinary actions',
     description: 'Always on — formal HR record required by policy.',

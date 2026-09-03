@@ -4,7 +4,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { hasCapability } from '@alto-people/shared';
-import { notifyAllAdmins, notifyAssociate } from '../lib/notify.js';
+import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins, notifyAssociate } from '../lib/notify.js';
 
 /**
  * Phase 123 — HR cases (ticketing).
@@ -75,6 +75,7 @@ hrCases123Router.post('/hr-cases', requireAuth, async (req, res) => {
     // ?case=<id> opens that case's drawer directly on the HR-cases page.
     linkUrl: `/hr-cases?case=${created.id}`,
     excludeUserId: req.user!.id,
+    emailRoles: ADMIN_EMAIL_HR_ONLY,
   });
   res.status(201).json({ id: created.id });
 });
