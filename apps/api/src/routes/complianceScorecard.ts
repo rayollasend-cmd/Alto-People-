@@ -122,6 +122,11 @@ const activeAssociatesCache = new Map<
 const ACTIVE_ASSOCIATES_TTL_MS = 5_000;
 
 function getActiveAssociates(clientId?: string | null) {
+  // The micro-cache is a per-request dedup for production dashboards. In
+  // tests it outlives truncateAll() (module state survives between tests
+  // in a worker), so sub-5s-apart tests would read each other's
+  // populations — bypass it entirely there.
+  if (process.env.NODE_ENV === 'test') return loadActiveAssociates(clientId);
   const key = clientId ?? '*';
   const now = Date.now();
   const hit = activeAssociatesCache.get(key);
