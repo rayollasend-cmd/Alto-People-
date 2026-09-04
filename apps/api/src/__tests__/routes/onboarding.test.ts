@@ -129,7 +129,11 @@ describe('POST /onboarding/applications (HR creates)', () => {
       include: { checklist: { include: { tasks: true } } },
     });
     expect(created).not.toBeNull();
-    expect(created!.checklist?.tasks.length).toBe(template.tasks.length);
+    // Template tasks + the injected PROFILE_PHOTO (product policy — see
+    // lib/checklistTasks.ts): the test template predates the photo task,
+    // exactly like production templates did.
+    expect(created!.checklist?.tasks.length).toBe(template.tasks.length + 1);
+    expect(created!.checklist?.tasks.map((t) => t.kind)).toContain('PROFILE_PHOTO');
 
     await flushPendingAudits();
     const audit = await prisma.auditLog.findFirst({
