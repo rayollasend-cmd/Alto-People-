@@ -270,6 +270,51 @@ qualificationsRouter.delete(
 // ----- Open-shift marketplace --------------------------------------------
 
 /**
+ * The marketplace eligibility rule, reusable: OPEN future shifts where every
+ * required qualification exists (unexpired) on the associate. Exported so the
+ * earnings card can price the same list this endpoint shows — the "up to ~$X
+ * in open shifts" number and the marketplace page can never disagree.
+ */
+export async function listEligibleOpenShifts(
+  associateId: string,
+  opts: { before?: Date } = {},
+) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // Fetch live (unexpired) quals once.
+  const myQuals = await prisma.associateQualification.findMany({
+    take: 500,
+    where: {
+      associateId,
+      deletedAt: null,
+      OR: [{ expiresAt: null }, { expiresAt: { gte: today } }],
+    },
+    select: { qualificationId: true },
+  });
+  const myQualIds = new Set(myQuals.map((q) => q.qualificationId));
+
+  // OPEN, future shifts at any client the associate has visibility into.
+  const openShifts = await prisma.shift.findMany({
+    where: {
+      status: 'OPEN',
+      startsAt: { gte: new Date(), ...(opts.before ? { lt: opts.before } : {}) },
+    },
+    include: {
+      qualReqs: { include: { qualification: true } },
+      client: { select: { id: true, name: true } },
+      claims: { where: { status: 'PENDING', associateId } },
+    },
+    orderBy: { startsAt: 'asc' },
+    take: 200,
+  });
+
+  return openShifts.filter((s) =>
+    s.qualReqs.every((req) => myQualIds.has(req.qualificationId)),
+  );
+}
+
+/**
  * List OPEN shifts the requesting associate is qualified to claim. Filters
  * by status=OPEN AND every required qual on the shift exists (and isn't
  * expired) on the associate.
@@ -281,40 +326,7 @@ qualificationsRouter.get(
     if (!req.user?.associateId) {
       throw new HttpError(403, 'no_associate_link', 'Open-shift list is for associates only.');
     }
-    const associateId = req.user.associateId;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    // Fetch live (unexpired) quals once.
-    const myQuals = await prisma.associateQualification.findMany({
-      take: 500,
-      where: {
-        associateId,
-        deletedAt: null,
-        OR: [{ expiresAt: null }, { expiresAt: { gte: today } }],
-      },
-      select: { qualificationId: true },
-    });
-    const myQualIds = new Set(myQuals.map((q) => q.qualificationId));
-
-    // OPEN, future shifts at any client the associate has visibility into.
-    const openShifts = await prisma.shift.findMany({
-      where: {
-        status: 'OPEN',
-        startsAt: { gte: new Date() },
-      },
-      include: {
-        qualReqs: { include: { qualification: true } },
-        client: { select: { id: true, name: true } },
-        claims: { where: { status: 'PENDING', associateId } },
-      },
-      orderBy: { startsAt: 'asc' },
-      take: 200,
-    });
-
-    const eligible = openShifts.filter((s) =>
-      s.qualReqs.every((req) => myQualIds.has(req.qualificationId)),
-    );
+    const eligible = await listEligibleOpenShifts(req.user.associateId);
 
     res.json({
       shifts: eligible.map((s) => ({

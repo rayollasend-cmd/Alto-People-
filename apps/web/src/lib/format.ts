@@ -31,7 +31,7 @@ const DASH = '—';
  * datetime-input converters) stay pinned to en-US: their output is
  * parsed back as numbers, never shown to a person.
  */
-function displayLocale(): string {
+export function displayLocale(): string {
   return typeof document !== 'undefined' && document.documentElement.lang === 'es'
     ? 'es-US'
     : EN_US;
