@@ -11,6 +11,7 @@ import {
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
+import { withMandatoryTasks } from '../lib/checklistTasks.js';
 
 export const recruitingRouter = Router();
 
@@ -227,12 +228,17 @@ recruitingRouter.post('/candidates/:id/hire', MANAGE, async (req, res, next) => 
             checklist: {
               create: {
                 tasks: {
-                  create: template.tasks.map((t) => ({
-                    kind: t.kind,
-                    title: t.title,
-                    description: t.description,
-                    order: t.order,
-                  })),
+                  // Same instantiation policy as the invite flow — the
+                  // profile-photo task rides along even if the template
+                  // predates it (lib/checklistTasks.ts).
+                  create: withMandatoryTasks(
+                    template.tasks.map((t) => ({
+                      kind: t.kind,
+                      title: t.title,
+                      description: t.description,
+                      order: t.order,
+                    })),
+                  ),
                 },
               },
             },

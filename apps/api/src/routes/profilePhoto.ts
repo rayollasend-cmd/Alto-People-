@@ -98,6 +98,33 @@ async function savePhoto(
   return profilePhotoUrlFor(updated)!;
 }
 
+/**
+ * Keep the onboarding PROFILE_PHOTO task in lockstep with reality for any
+ * in-flight application: a photo landing (self-service wizard OR the HR
+ * escape hatch) completes it; a photo being removed pre-approval re-opens
+ * it. Without this, HR uploading on the associate's behalf left the task
+ * PENDING forever — and the 100%-checklist approval gate blocked on a step
+ * that was actually done.
+ */
+async function syncPhotoTask(associateId: string, hasPhoto: boolean): Promise<void> {
+  await prisma.onboardingTask.updateMany({
+    where: {
+      kind: 'PROFILE_PHOTO',
+      status: hasPhoto ? 'PENDING' : 'DONE',
+      checklist: {
+        application: {
+          associateId,
+          status: { notIn: ['APPROVED', 'REJECTED'] },
+          deletedAt: null,
+        },
+      },
+    },
+    data: hasPhoto
+      ? { status: 'DONE', completedAt: new Date() }
+      : { status: 'PENDING', completedAt: null },
+  });
+}
+
 /** Flush the session cache of any login linked to this associate — their
  *  chrome (Topbar avatar) carries photoUrl in the cached SessionUser. */
 async function invalidateAssociateUsers(associateId: string): Promise<void> {
@@ -125,6 +152,7 @@ profilePhotoRouter.post(
       throw new HttpError(400, 'no_file', 'A "file" multipart field is required.');
     }
     const photoUrl = await savePhoto(associateId, req.file);
+    await syncPhotoTask(associateId, true);
 
     // photoUrl is part of the cached SessionUser; bumping photoUpdatedAt
     // changes the cache-bust query, so flush the cache so chrome reflects
@@ -156,6 +184,7 @@ profilePhotoRouter.post(
       throw new HttpError(400, 'no_file', 'A "file" multipart field is required.');
     }
     const photoUrl = await savePhoto(associate.id, req.file);
+    await syncPhotoTask(associate.id, true);
     await invalidateAssociateUsers(associate.id);
     enqueueAudit(
       {
@@ -193,6 +222,7 @@ profilePhotoRouter.delete(
         /* swallow */
       }
     }
+    await syncPhotoTask(associate.id, false);
     await invalidateAssociateUsers(associate.id);
     enqueueAudit(
       {
@@ -235,6 +265,7 @@ profilePhotoRouter.delete(
         /* swallow */
       }
     }
+    await syncPhotoTask(associateId, false);
     invalidateUserCache(req.user!.id);
     res.status(204).end();
   },

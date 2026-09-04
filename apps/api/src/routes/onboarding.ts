@@ -71,6 +71,7 @@ import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { decryptString, encryptString, tryDecryptString } from '../lib/crypto.js';
 import { maskRoutingNumber } from '../lib/payoutMethod.js';
 import { enqueueAudit, recordOnboardingEvent } from '../lib/audit.js';
+import { withMandatoryTasks } from '../lib/checklistTasks.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import { CsvParseError, parseCsv } from '../lib/csv.js';
 import {
@@ -404,6 +405,18 @@ async function inviteOneApplicant(
       (t) => !(isContractor && t.kind === 'W4')
     );
 
+    // withMandatoryTasks: the profile-photo task is product policy — see
+    // lib/checklistTasks.ts. Recruiting's hire flow applies the same rule.
+    const checklistTaskCreates = withMandatoryTasks(
+      tasksForChecklist.map((t) => ({
+        kind: t.kind,
+        title: t.title,
+        description: t.description,
+        order: t.order,
+        dueOffsetDays: t.dueOffsetDays ?? null,
+      })),
+    );
+
     const application = await tx.application.create({
       data: {
         associateId: associate.id,
@@ -416,13 +429,7 @@ async function inviteOneApplicant(
         checklist: {
           create: {
             tasks: {
-              create: tasksForChecklist.map((t) => ({
-                kind: t.kind,
-                title: t.title,
-                description: t.description,
-                order: t.order,
-                dueOffsetDays: t.dueOffsetDays ?? null,
-              })),
+              create: checklistTaskCreates,
             },
           },
         },
