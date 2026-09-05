@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Flame, ReceiptText, TrendingUp, Zap } from 'lucide-react';
+import { ChevronDown, Flame, ReceiptText, TrendingUp, Zap } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
-import { displayLocale, fmtMoney, fmtMoneyCompact } from '@/lib/format';
+import { displayLocale, fmtMoney } from '@/lib/format';
 import { enterStagger } from '@/lib/motion';
 import { Card, CardContent } from '@/components/ui/Card';
 import { CountUpValue } from '@/components/ui/MetricCard';
@@ -11,14 +11,18 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 
 /**
- * "My earnings this week" — the schedule as money, live. Earned so far
- * counts up on mount and TICKS every second while the associate is on
- * the clock (server truth refreshes each minute); seven day-bars show
- * the shape of the week; overtime past 40h shows at its real 1.5×; last
- * week is the pace to beat; eligible open shifts carry a dollar figure.
- * Estimates only (gross, at the associate's rate) — the disclaimer says
- * so. Vanishes quietly when the login has no associate record or the
- * fetch fails: motivation is a bonus, never an error state.
+ * "My earnings this week" — a SCOREBOARD, not a dashboard. Three zones:
+ *   1. The score: one hero number in the brand display face, ticking live
+ *      while on the clock, with a single human pace sentence under it.
+ *   2. The week: seven quiet day bars (solid = worked, ghost = scheduled),
+ *      today glowing. No labels racing the bars — amounts live in the
+ *      tooltips and behind Details.
+ *   3. One footer line + a Details unfold holding everything that used to
+ *      shout from the card face (schedule hours, last week, paychecks
+ *      link, the tax disclaimer).
+ * Estimates only (gross, at the associate's rate) — Details says so.
+ * Vanishes quietly when the login has no associate record or the fetch
+ * fails: motivation is a bonus, never an error state.
  */
 
 interface EarningsDay {
@@ -72,6 +76,7 @@ export function EarningsCard() {
   const { t } = useI18n();
   const [data, setData] = useState<Earnings | null>(null);
   const [failed, setFailed] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   // Seconds elapsed since the last server truth — drives the live ticker.
   const [tickSeconds, setTickSeconds] = useState(0);
   const fetchedAt = useRef(0);
@@ -115,35 +120,35 @@ export function EarningsCard() {
   }, []);
 
   if (failed && data === null) return null;
-  if (data === null) return <Skeleton className="h-64" />;
+  if (data === null) return <Skeleton className="h-56" />;
   // Nothing scheduled and nothing worked: stay quiet rather than show $0.
   if (data.projectedWeek <= 0 && data.earnedSoFar <= 0) return null;
 
   const liveEarned =
     data.earnedSoFar + (onClock ? (data.currentRatePerHour / 3600) * tickSeconds : 0);
-  // The projection already contains the in-progress shift; it only moves
-  // if live earnings somehow outrun it (working past the scheduled end).
   const liveProjected = Math.max(data.projectedWeek, liveEarned);
-  const pct =
-    data.projectedWeek > 0
-      ? Math.min(100, Math.round((liveEarned / data.projectedWeek) * 100))
-      : 0;
+  const earned = splitMoney(onClock ? liveEarned : data.earnedSoFar);
 
   const maxDay = Math.max(
     1,
     ...data.days.map((d) => d.workedAmount + d.scheduledAmount),
   );
   const todayIso = new Date().toISOString().slice(0, 10);
-  const behindBy = data.lastWeekEarned - data.projectedWeek;
   const daysLeft = Math.max(
     0,
     Math.ceil((new Date(data.weekEnd).getTime() - Date.now()) / 86_400_000),
   );
-  const earned = splitMoney(onClock ? liveEarned : data.earnedSoFar);
+
+  // The one human sentence under the score. Pace + last-week verdict fold
+  // into it — they used to be three separate rows of small print.
+  const moreComing = liveProjected > liveEarned + 0.005;
+  const beatsLast = data.lastWeekEarned > 0 && liveProjected >= data.lastWeekEarned;
+  const shortBy = data.lastWeekEarned - liveProjected;
 
   return (
     <Card className="border-gold/25 bg-gradient-to-br from-gold/[0.07] to-transparent">
       <CardContent className="p-4">
+        {/* ---- Zone 1: the score ---------------------------------------- */}
         <div className="flex items-center justify-between gap-2">
           <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
             <TrendingUp className="h-3.5 w-3.5" aria-hidden="true" />
@@ -169,42 +174,51 @@ export function EarningsCard() {
           )}
         </div>
 
-        <div className="mt-2 flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
-          <div>
-            <div
-              className="text-3xl font-semibold tabular-nums text-white"
-              aria-live="off"
-              aria-label={fmtMoney(onClock ? liveEarned : data.earnedSoFar)}
-            >
-              {onClock ? (
-                // Live: no mount animation fighting the ticker — the
-                // number itself is the animation.
-                <span>{earned.main}</span>
-              ) : (
-                <CountUpValue value={earned.main} />
-              )}
-              {earned.cents && (
-                <span className="text-lg font-medium text-silver/80">{earned.cents}</span>
-              )}
-            </div>
-            <div className="text-2xs text-silver/70">{t('earn.soFar')}</div>
-          </div>
-          <div className="text-right">
-            <div className="text-xl font-semibold tabular-nums text-gold">
-              {fmtMoney(liveProjected)}
-            </div>
-            <div className="text-2xs text-silver/70">
-              {t('earn.projected')}
+        <div
+          className="mt-2 font-display text-hero-lg text-white"
+          aria-live="off"
+          aria-label={fmtMoney(onClock ? liveEarned : data.earnedSoFar)}
+        >
+          {onClock ? (
+            // Live: no mount animation fighting the ticker — the number
+            // itself is the animation.
+            <span>{earned.main}</span>
+          ) : (
+            <CountUpValue value={earned.main} />
+          )}
+          {earned.cents && (
+            <span className="font-sans text-xl font-medium tabular-nums text-silver/70">
+              {earned.cents}
+            </span>
+          )}
+        </div>
+
+        <p className="mt-1 text-sm text-silver">
+          {moreComing ? (
+            <>
+              {t('earn.paceTo', { amount: fmtMoney(liveProjected) })}
               {daysLeft > 0 && (
-                <span className="text-silver/50">
+                <span className="text-silver/60">
                   {' '}· {daysLeft === 1 ? t('earn.dayLeft') : t('earn.daysLeft', { n: String(daysLeft) })}
                 </span>
               )}
-            </div>
-          </div>
-        </div>
+              {data.lastWeekEarned > 0 &&
+                (beatsLast ? (
+                  <span className="text-success">
+                    {' '}
+                    {t('earn.beatsLast')}
+                    <Flame className="ml-0.5 inline h-3.5 w-3.5" aria-hidden="true" />
+                  </span>
+                ) : (
+                  <span className="text-gold"> {t('earn.shortOfLast', { amount: fmtMoney(shortBy) })}</span>
+                ))}
+            </>
+          ) : (
+            t('earn.weekWrapped')
+          )}
+        </p>
 
-        {/* Overtime, at its real value. */}
+        {/* Overtime is the one chip allowed on the card face — it's news. */}
         {data.overtime.unlocked ? (
           <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-success/15 px-2.5 py-1 text-xs font-medium text-success">
             <Zap className="h-3.5 w-3.5" aria-hidden="true" />
@@ -219,9 +233,9 @@ export function EarningsCard() {
           )
         )}
 
-        {/* The shape of the week — worked solid, scheduled ghosted. */}
+        {/* ---- Zone 2: the week ------------------------------------------ */}
         <div
-          className="mt-3 flex items-end gap-1.5"
+          className="mt-4 flex items-end gap-1.5"
           role="img"
           aria-label={t('earn.weekBarsLabel')}
         >
@@ -235,22 +249,21 @@ export function EarningsCard() {
             return (
               <div
                 key={d.date}
-                className="flex flex-1 flex-col items-center gap-1"
+                className="flex flex-1 flex-col items-center gap-1.5"
                 title={`${d.date} · ${fmtMoney(d.workedAmount)}${
                   d.scheduledAmount > 0 ? ` + ${fmtMoney(d.scheduledAmount)}` : ''
                 }`}
               >
                 <div
                   className={cn(
-                    'flex h-12 w-full flex-col justify-end overflow-hidden rounded-sm bg-navy-secondary/50',
-                    isToday && 'ring-1 ring-gold/50',
+                    'flex h-16 w-full flex-col justify-end overflow-hidden rounded-sm bg-navy-secondary/40',
+                    isToday && 'ring-1 ring-gold/60',
                   )}
                 >
                   {/* DOM order = top→bottom: scheduled (ghost) rides on top
                       of worked (solid), so the top segment owns the radius.
                       grow-y builds each day from the baseline on mount,
-                      staggered left→right — replays are impossible because
-                      the elements are position-stable across refetches. */}
+                      staggered left→right. */}
                   {d.scheduledAmount > 0 && (
                     <div
                       className="w-full rounded-t-sm bg-gold/25 origin-bottom animate-grow-y"
@@ -270,62 +283,24 @@ export function EarningsCard() {
                 <span
                   className={cn(
                     'text-2xs leading-none',
-                    isToday ? 'font-bold text-gold' : 'text-silver/60',
+                    isToday ? 'font-bold text-gold' : total > 0 ? 'text-silver/70' : 'text-silver/40',
                   )}
                 >
                   {dayInitials(d.date)}
-                </span>
-                <span
-                  className={cn(
-                    'text-2xs leading-none tabular-nums',
-                    total > 0 ? 'text-silver/80' : 'text-silver/40',
-                  )}
-                >
-                  {total > 0 ? fmtMoneyCompact(total) : '·'}
                 </span>
               </div>
             );
           })}
         </div>
 
-        {/* The week filling up. scaleX, not width — width re-lays-out the
-            page on every tick of the live ticker; scaleX stays on the
-            compositor. */}
-        <div className="mt-3 flex items-center gap-2">
-          <div className="h-2 flex-1 overflow-hidden rounded-full bg-navy-secondary/70">
-            <div
-              className="h-full w-full origin-left bg-gold transition-transform duration-700 ease-out motion-reduce:transition-none"
-              style={{ transform: `scaleX(${pct / 100})` }}
-            />
-          </div>
-          <span className="text-2xs tabular-nums text-silver/60">{pct}%</span>
-        </div>
-        <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 text-2xs text-silver/70">
-          <span className="tabular-nums">
-            {t('earn.rateLine', {
-              worked: data.workedHours.toFixed(2),
-              remaining: data.remainingHours.toFixed(2),
+        {/* ---- Zone 3: one quiet footer + Details ------------------------ */}
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-navy-secondary/50 pt-2.5 text-xs">
+          <span className="tabular-nums text-silver/80">
+            {t('earn.hoursRate', {
+              worked: `${data.workedHours.toLocaleString(displayLocale(), { maximumFractionDigits: 2 })}h`,
               rate: fmtMoney(data.hourlyRate),
             })}
           </span>
-          {data.lastWeekEarned > 0 && (
-            <span className="tabular-nums">
-              {t('earn.lastWeek', { amount: fmtMoney(data.lastWeekEarned) })}{' '}
-              {behindBy <= 0 ? (
-                <span className="text-success">
-                  {t('earn.beatPace')}
-                  <Flame className="ml-0.5 inline h-3 w-3" aria-hidden="true" />
-                </span>
-              ) : (
-                <span className="text-gold">
-                  {t('earn.behindPace', { amount: fmtMoney(behindBy) })}
-                </span>
-              )}
-            </span>
-          )}
-        </div>
-
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-navy-secondary/50 pt-2 text-2xs">
           {data.openShifts.count > 0 && data.openShifts.estAmount > 0 ? (
             <Link to="/marketplace" className="font-medium text-gold hover:text-gold-bright">
               {t('earn.openShifts', {
@@ -338,15 +313,50 @@ export function EarningsCard() {
               {t('earn.pickup')}
             </Link>
           )}
-          <Link
-            to="/payroll"
-            className="inline-flex items-center gap-1 text-silver/70 hover:text-white"
-          >
-            <ReceiptText className="h-3 w-3" aria-hidden="true" />
-            {t('earn.paystubs')}
-          </Link>
         </div>
-        <p className="mt-1.5 text-2xs text-silver/50">{t('earn.disclaimer')}</p>
+
+        <button
+          type="button"
+          onClick={() => setDetailsOpen((v) => !v)}
+          aria-expanded={detailsOpen}
+          className="mt-1.5 inline-flex items-center gap-1 coarse:min-h-11 text-2xs text-silver/60 hover:text-silver focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+        >
+          {t('earn.details')}
+          <ChevronDown
+            className={cn('h-3 w-3 transition-transform', detailsOpen && 'rotate-180')}
+            aria-hidden="true"
+          />
+        </button>
+        {detailsOpen && (
+          <div className="grid animate-unfold">
+            <div className="overflow-hidden">
+              <div className="pt-1.5 space-y-1 text-2xs text-silver/70">
+                <p className="tabular-nums">
+                  {t('earn.rateLine', {
+                    worked: data.workedHours.toFixed(2),
+                    remaining: data.remainingHours.toFixed(2),
+                    rate: fmtMoney(data.hourlyRate),
+                  })}
+                </p>
+                {data.lastWeekEarned > 0 && (
+                  <p className="tabular-nums">
+                    {t('earn.lastWeekPlain', { amount: fmtMoney(data.lastWeekEarned) })}
+                  </p>
+                )}
+                <p>
+                  <Link
+                    to="/payroll"
+                    className="inline-flex items-center gap-1 text-silver/70 hover:text-white"
+                  >
+                    <ReceiptText className="h-3 w-3" aria-hidden="true" />
+                    {t('earn.paystubs')}
+                  </Link>
+                </p>
+                <p className="text-silver/50">{t('earn.disclaimer')}</p>
+              </div>
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
