@@ -1,5 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Eye, FileText, RotateCw, ScanLine } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  AlertTriangle,
+  Clock,
+  Eye,
+  FileText,
+  RotateCw,
+  ScanLine,
+  ShieldCheck,
+  Upload,
+} from 'lucide-react';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { toast } from 'sonner';
 import type { DocumentKind, DocumentRecord } from '@alto-people/shared';
@@ -55,6 +64,21 @@ const kindLabel = (t: Translate, k: DocumentKind): string =>
 // Mirrors the server's upload cap so an oversized file fails instantly
 // with a readable message instead of after a full (doomed) POST.
 const MAX_UPLOAD_BYTES = UPLOAD_MAX_BYTES;
+
+const DAY_MS = 86_400_000;
+/** Days until an ACTIVE document lapses (null for expired/rejected/no
+ *  expiry). Powers the proactive warning — the page used to react only
+ *  AFTER the badge turned EXPIRED. */
+function daysToExpiry(d: DocumentRecord): number | null {
+  if (!d.expiresAt || d.status === 'EXPIRED' || d.status === 'REJECTED') {
+    return null;
+  }
+  return Math.ceil((new Date(d.expiresAt).getTime() - Date.now()) / DAY_MS);
+}
+function isExpiringSoon(d: DocumentRecord): boolean {
+  const days = daysToExpiry(d);
+  return days !== null && days >= 0 && days <= 30;
+}
 
 export function AssociateDocumentsView() {
   const { t } = useI18n();
@@ -121,9 +145,9 @@ export function AssociateDocumentsView() {
         // Consume the stash — a share is one intake, never a resurface.
         for (const key of keys) await cache.delete(key);
         formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        toast.success(`"${name}" attached — pick the document kind and upload.`);
+        toast.success(t('docs.sharedAttached', { name }));
         if (keys.length > 1) {
-          toast(`Only the first of ${keys.length} shared files was attached — share the others one at a time.`);
+          toast(t('docs.sharedOnlyFirst', { count: keys.length }));
         }
         // Strip the flag so a refresh doesn't re-run the intake.
         window.history.replaceState(null, '', window.location.pathname);
@@ -205,12 +229,40 @@ export function AssociateDocumentsView() {
 
   const pullState = usePullToRefresh(refresh);
 
+  // The page's verdict — "are my papers in order?" — computed once so
+  // the hero can answer before the associate reads a single row.
+  const summary = useMemo(() => {
+    if (!docs || docs.length === 0) return null;
+    return {
+      verified: docs.filter((d) => d.status === 'VERIFIED').length,
+      pending: docs.filter((d) => d.status === 'UPLOADED').length,
+      rejected: docs.filter((d) => d.status === 'REJECTED').length,
+      expired: docs.filter((d) => d.status === 'EXPIRED').length,
+      expiring: docs.filter(isExpiringSoon).length,
+    };
+  }, [docs]);
+  const needsAction =
+    summary !== null &&
+    summary.rejected + summary.expired + summary.expiring > 0;
+  const inReview = summary !== null && !needsAction && summary.pending > 0;
+
+  const scrollToUpload = () => {
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    fileRef.current?.focus();
+  };
+
   return (
     <div className="mx-auto">
       <PullToRefreshIndicator state={pullState} />
       <PageHeader
         title={t('docs.title')}
         subtitle={t('docs.subtitle')}
+        primaryAction={
+          <Button onClick={scrollToUpload}>
+            <Upload className="h-4 w-4" />
+            {t('docs.upload')}
+          </Button>
+        }
       />
 
       {!rescanSeen && docs !== null && docs.length > 0 && (
@@ -228,65 +280,69 @@ export function AssociateDocumentsView() {
         </div>
       )}
 
-      <form
-        ref={formRef}
-        onSubmit={handleUpload}
-        className="bg-navy border border-navy-secondary rounded-lg p-5 mb-6 space-y-3"
-      >
-        <h2 className="text-2xl text-white">{t('docs.upload')}</h2>
-        {renewTarget && (
-          <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-gold/40 bg-gold/10 px-3 py-1 text-xs text-gold">
-            <RotateCw className="h-3 w-3 shrink-0" />
-            <span className="truncate">{t('docs.replacing', { name: renewTarget.filename })}</span>
-            <button
-              type="button"
-              onClick={() => setRenewTarget(null)}
-              aria-label={t('docs.cancelReplacing', { name: renewTarget.filename })}
-              className="shrink-0 text-gold hover:text-white"
-            >
-              ✕
-            </button>
+      {/* The verdict FIRST: are my papers in order? One state word, one
+          sentence of counts — the fixes live on the rows right below. */}
+      {summary && (
+        <div
+          className={cn(
+            'mb-6 rounded-lg border p-5 animate-enter',
+            needsAction
+              ? 'border-alert/40 bg-alert/5'
+              : inReview
+                ? 'border-warning/40 bg-warning/5'
+                : 'border-success/40 bg-success/5',
+          )}
+        >
+          <div className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-white">
+            {needsAction ? (
+              <AlertTriangle className="h-5 w-5 text-alert" aria-hidden="true" />
+            ) : inReview ? (
+              <Clock className="h-5 w-5 text-warning" aria-hidden="true" />
+            ) : (
+              <ShieldCheck className="h-5 w-5 text-success" aria-hidden="true" />
+            )}
+            {t(
+              needsAction
+                ? 'docs.heroActionNeeded'
+                : inReview
+                  ? 'docs.heroInReview'
+                  : 'docs.heroAllSet',
+            )}
           </div>
-        )}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="block">
-            <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-              {t('docs.kindLabel')}
-            </span>
-            <Select
-              value={kind}
-              onChange={(e) => setKind(e.target.value as DocumentKind)}
-            >
-              {KIND_VALUES.map((v) => (
-                <option key={v} value={v}>
-                  {kindLabel(t, v)}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <label className="block">
-            <span className="block text-xs uppercase tracking-widest text-silver mb-1">
-              {t('docs.fileLabel')}
-            </span>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="application/pdf,image/png,image/jpeg,image/webp"
-              capture="environment"
-              className={cn(inputCls, 'file:text-silver file:bg-navy-secondary file:border-0 file:px-2 file:py-1 file:mr-3 file:rounded')}
-            />
-            <span className="block text-xs text-silver/70 mt-1">
-              {t('docs.noWord')}
-            </span>
-          </label>
+          <p className="mt-1 text-sm text-silver tabular-nums">
+            {[
+              summary.verified > 0 &&
+                t('docs.heroVerified', { count: summary.verified }),
+              summary.pending > 0 &&
+                t('docs.heroPending', { count: summary.pending }),
+              summary.expiring > 0 &&
+                t('docs.heroExpiring', { count: summary.expiring }),
+              summary.expired > 0 &&
+                t('docs.heroExpired', { count: summary.expired }),
+              summary.rejected > 0 &&
+                t('docs.heroRejected', { count: summary.rejected }),
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </p>
         </div>
-        {error && <ErrorBanner>{error}</ErrorBanner>}
-        <Button type="submit" loading={busy} disabled={busy}>
-          {busy ? t('docs.uploading') : t('docs.upload')}
-        </Button>
-      </form>
+      )}
 
-      <h2 className="text-2xl text-white mb-3">{t('docs.yourDocs')}</h2>
+      <h2 className="text-xl text-white mb-3">{t('docs.yourDocs')}</h2>
+      {/* Load failure surfaces HERE with a retry — with the form moved to
+          the bottom, its banner would otherwise hide below the fold. */}
+      {error && !docs && (
+        <ErrorBanner
+          className="mb-4"
+          action={
+            <Button size="sm" variant="secondary" onClick={refresh}>
+              {t('common.retry')}
+            </Button>
+          }
+        >
+          {error}
+        </ErrorBanner>
+      )}
       {!docs && !error && <SkeletonRows count={4} rowHeight="h-14" />}
       {docs && docs.length === 0 && (
         <EmptyState
@@ -314,7 +370,9 @@ export function AssociateDocumentsView() {
                   <div className="flex-1 min-w-0">
                     <DocInfo d={d} t={t} />
                   </div>
-                  {d.status === 'EXPIRED' && (
+                  {/* Renew appears BEFORE the lapse too — an expiring
+                      credential is a problem today, not on expiry day. */}
+                  {(d.status === 'EXPIRED' || isExpiringSoon(d)) && (
                     <button
                       type="button"
                       onClick={() => startRenewal(d)}
@@ -342,7 +400,7 @@ export function AssociateDocumentsView() {
                       className="text-xs text-silver/70 hover:text-alert"
                       aria-label={t('docs.deleteAria', { name: d.filename })}
                     >
-                      ✕
+                      {t('docs.delete')}
                     </button>
                   )}
                 </div>
@@ -355,7 +413,7 @@ export function AssociateDocumentsView() {
                     {badgeEl}
                   </div>
                   <div className="space-y-2">
-                    {d.status === 'EXPIRED' && (
+                    {(d.status === 'EXPIRED' || isExpiringSoon(d)) && (
                       <Button
                         type="button"
                         onClick={() => startRenewal(d)}
@@ -411,6 +469,67 @@ export function AssociateDocumentsView() {
         </ul>
       )}
 
+      {/* The tool comes LAST — most visits are "check my status", not
+          "upload"; the header's Upload button and every renew/replace
+          CTA scroll down here. */}
+      <form
+        ref={formRef}
+        onSubmit={handleUpload}
+        className="bg-navy border border-navy-secondary rounded-lg p-5 mt-6 space-y-3"
+      >
+        <h2 className="text-lg font-medium text-white">{t('docs.upload')}</h2>
+        {renewTarget && (
+          <div className="inline-flex max-w-full items-center gap-2 rounded-full border border-gold/40 bg-gold/10 px-3 py-1 text-xs text-gold">
+            <RotateCw className="h-3 w-3 shrink-0" />
+            <span className="truncate">{t('docs.replacing', { name: renewTarget.filename })}</span>
+            <button
+              type="button"
+              onClick={() => setRenewTarget(null)}
+              aria-label={t('docs.cancelReplacing', { name: renewTarget.filename })}
+              className="shrink-0 text-gold hover:text-white"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="block">
+            <span className="block text-xs font-medium text-silver mb-1">
+              {t('docs.kindLabel')}
+            </span>
+            <Select
+              value={kind}
+              onChange={(e) => setKind(e.target.value as DocumentKind)}
+            >
+              {KIND_VALUES.map((v) => (
+                <option key={v} value={v}>
+                  {kindLabel(t, v)}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label className="block">
+            <span className="block text-xs font-medium text-silver mb-1">
+              {t('docs.fileLabel')}
+            </span>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="application/pdf,image/png,image/jpeg,image/webp"
+              capture="environment"
+              className={cn(inputCls, 'file:text-silver file:bg-navy-secondary file:border-0 file:px-2 file:py-1 file:mr-3 file:rounded')}
+            />
+            <span className="block text-xs text-silver/70 mt-1">
+              {t('docs.noWord')}
+            </span>
+          </label>
+        </div>
+        {error && docs && <ErrorBanner>{error}</ErrorBanner>}
+        <Button type="submit" loading={busy} disabled={busy}>
+          {busy ? t('docs.uploading') : t('docs.upload')}
+        </Button>
+      </form>
+
       <ConfirmDialog
         open={deleteTarget !== null}
         onOpenChange={(o) => !o && setDeleteTarget(null)}
@@ -464,11 +583,20 @@ function DocInfo({ d, t }: { d: DocumentRecord; t: Translate }) {
             })}
           </span>
         )}
-        {d.status !== 'EXPIRED' && d.expiresAt && (
-          <span className="text-silver/70 ml-2">
-            {t('docs.expiresMeta', { date: fmtDate(d.expiresAt) })}
-          </span>
-        )}
+        {d.status !== 'EXPIRED' &&
+          d.expiresAt &&
+          (isExpiringSoon(d) ? (
+            <span className="text-warning ml-2 tabular-nums">
+              {t('docs.expiringSoonMeta', {
+                date: fmtDate(d.expiresAt),
+                days: Math.max(0, daysToExpiry(d) ?? 0),
+              })}
+            </span>
+          ) : (
+            <span className="text-silver/70 ml-2">
+              {t('docs.expiresMeta', { date: fmtDate(d.expiresAt) })}
+            </span>
+          ))}
         {!d.fileAvailable && (
           <span className="text-alert ml-2">
             {t('docs.fileMissingMeta')}
