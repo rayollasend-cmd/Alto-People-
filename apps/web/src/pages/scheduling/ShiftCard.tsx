@@ -21,11 +21,13 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
-import { fmtDateTz, fmtMoneyEst, fmtShiftRangeTz, fmtWeekdayTz, mapsUrl } from '@/lib/format';
-import { ArrowLeftRight, Check, ChevronDown, MapPin, Users } from 'lucide-react';
+import { fmtCompactRange, fmtDateTz, fmtMoneyEst, fmtShiftRangeTz, fmtWeekdayTz, mapsUrl } from '@/lib/format';
+import { ArrowLeftRight, Check, ChevronDown, MapPin, Users, X } from 'lucide-react';
 import { hapticConfirm } from '@/lib/haptics';
 import { enterStagger } from '@/lib/motion';
 import { useI18n, type Translate } from '@/lib/i18n';
+import { colorForPosition } from '@/lib/positionColor';
+import { statusLabelClass, statusTileClass } from './shiftTile';
 
 export function statusBadge(
   status: Shift['status'],
@@ -75,6 +77,58 @@ function fmtDuration(minutes: number): string {
 }
 
 /**
+ * Status as a shape on the tile face — the admin calendar's mark language
+ * (shiftTile.tsx StatusMark), re-cut for the associate: what they owe comes
+ * first (gold disc = still needs their confirmation), and the sr labels go
+ * through the translator instead of the admin's English constants.
+ */
+function TileMark({
+  shift,
+  needsConfirm,
+  t,
+}: {
+  shift: Shift;
+  needsConfirm: boolean;
+  t: Translate;
+}) {
+  let shape: React.ReactNode;
+  let label: string;
+  if (needsConfirm) {
+    shape = <span className="h-2 w-2 rounded-full bg-gold" />;
+    label = t('shift.confirmNeeded');
+  } else {
+    switch (shift.status) {
+      case 'COMPLETED':
+        shape = <Check className="h-3 w-3 text-success" strokeWidth={3} />;
+        label = t('shift.worked');
+        break;
+      case 'CANCELLED':
+        shape = <X className="h-3 w-3 text-alert" strokeWidth={3} />;
+        label = t('shift.cancelled');
+        break;
+      case 'OPEN':
+        shape = (
+          <span className="h-2 w-2 rounded-full border-[1.5px] border-warning" />
+        );
+        label = t('shift.open');
+        break;
+      default:
+        shape = <span className="h-2 w-2 rounded-full bg-success" />;
+        label = t('shift.confirmed');
+    }
+  }
+  return (
+    <span
+      className="shrink-0 inline-flex h-3 w-3 items-center justify-center"
+      title={label}
+    >
+      {shape}
+      <span className="sr-only">{label}</span>
+    </span>
+  );
+}
+
+/**
  * The tap-to-expand shift card used by the list, week, and month views of
  * My Schedule. Expanding lazily loads the detail (teammates) and exposes
  * acknowledge + swap-offer actions for upcoming assigned shifts.
@@ -87,6 +141,7 @@ export function ShiftCard({
   appearIndex,
   estRate,
   onAcknowledged,
+  face = 'card',
 }: {
   shift: Shift;
   isNext: boolean;
@@ -101,6 +156,10 @@ export function ShiftCard({
   /** Confirming here also updates the page's copy of the shift, so the
    *  next-shift hero above never disagrees with this card. */
   onAcknowledged?: (shiftId: string, acknowledgedAt: string) => void;
+  /** 'tile' renders the admin calendar's compact tile as the collapsed
+   *  face — position-color tint + accent bar, compact time, status shape —
+   *  with the same expand/confirm/swap machinery underneath. */
+  face?: 'card' | 'tile';
 }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
@@ -163,17 +222,66 @@ export function ShiftCard({
     shift.status === 'ASSIGNED' && !muted ? Boolean(ackAt) : undefined,
   );
   const detailId = `shift-detail-${shift.id}`;
+  const tile = face === 'tile';
+  const tileColor = tile ? colorForPosition(shift.position) : null;
   return (
     <li
-      style={enterStagger(appearIndex ?? 0)}
+      style={{
+        ...enterStagger(appearIndex ?? 0),
+        ...(tileColor
+          ? { backgroundColor: tileColor.bg, borderColor: tileColor.border }
+          : {}),
+      }}
       className={[
-        'rounded-lg border animate-enter',
-        isNext
-          ? 'bg-navy border-gold/50 ring-1 ring-gold/30'
-          : 'bg-navy border-navy-secondary',
+        'border animate-enter',
+        tile
+          ? `relative rounded ${statusTileClass(shift.status)}`
+          : 'rounded-lg',
+        !tile &&
+          (isNext
+            ? 'bg-navy border-gold/50 ring-1 ring-gold/30'
+            : 'bg-navy border-navy-secondary'),
         muted ? 'opacity-80' : '',
-      ].join(' ')}
+      ]
+        .filter(Boolean)
+        .join(' ')}
     >
+      {/* Position-color accent bar — the admin calendar's coverage-heatmap
+          cue, so an associate's week reads by role at a glance too. */}
+      {tile && (
+        <div
+          aria-hidden="true"
+          className="absolute left-0 top-0 bottom-0 w-1 rounded-l"
+          style={{ backgroundColor: tileColor!.accent }}
+        />
+      )}
+      {tile ? (
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={expanded}
+          aria-controls={detailId}
+          className="w-full flex items-center gap-1.5 pl-3 pr-2.5 py-2 coarse:min-h-11 text-left rounded transition-colors active:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        >
+          <span className="text-xs2 text-silver/90 tabular-nums shrink-0">
+            {fmtCompactRange(shift.startsAt, shift.endsAt, shift.timezone)}
+          </span>
+          <span
+            className={[
+              'flex-1 min-w-0 truncate text-xs font-medium text-white',
+              statusLabelClass(shift.status),
+            ].join(' ')}
+          >
+            {shift.position}
+          </span>
+          {!muted && estRate != null && shift.status !== 'CANCELLED' && (
+            <span className="shrink-0 text-xs2 font-medium text-gold tabular-nums">
+              {fmtMoneyEst((paidShiftMinutes(shift) / 60) * estRate)}
+            </span>
+          )}
+          <TileMark shift={shift} needsConfirm={needsConfirm} t={t} />
+        </button>
+      ) : (
       <button
         type="button"
         onClick={toggle}
@@ -234,6 +342,7 @@ export function ShiftCard({
           />
         </div>
       </button>
+      )}
 
       {/* Inline confirm on the COLLAPSED card — confirming used to cost an
           expand + a hunt into the detail panel for every shift past the

@@ -20,6 +20,7 @@ import {
   fmtMoneyCompact,
   fmtTimeTz,
   fmtWeekdayTz,
+  fmtCompactRange as compactRange,
   zonedDayKey,
   zonedMinutesOfDay,
   zonedWallTimeToUtc,
@@ -67,37 +68,6 @@ const EMPTY_SHIFTS: Shift[] = [];
 
 function fmtTime(iso: string, timeZone?: string | null): string {
   return fmtTimeTz(iso, timeZone);
-}
-
-/**
- * Ultra-compact time for the dense Sling-style bars: "10p", "9:30a". Built
- * from Intl parts in the shift's timezone (so it respects the store zone).
- * Minutes are dropped when :00 so "10:00 PM" → "10p".
- */
-function compactClock(iso: string, timeZone?: string | null): string {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-    ...(timeZone ? { timeZone } : {}),
-  }).formatToParts(new Date(iso));
-  const hour = parts.find((p) => p.type === 'hour')?.value ?? '12';
-  const minute = parts.find((p) => p.type === 'minute')?.value ?? '00';
-  const period = (parts.find((p) => p.type === 'dayPeriod')?.value ?? 'AM')
-    .toLowerCase()
-    .startsWith('p')
-    ? 'p'
-    : 'a';
-  return minute === '00' ? `${hour}${period}` : `${hour}:${minute}${period}`;
-}
-
-/** "10p–7a" — compact range for the dense week bars. */
-function compactRange(
-  startIso: string,
-  endIso: string,
-  timeZone?: string | null,
-): string {
-  return `${compactClock(startIso, timeZone)}–${compactClock(endIso, timeZone)}`;
 }
 
 interface Props {

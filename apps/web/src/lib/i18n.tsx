@@ -1242,6 +1242,22 @@ const en = {
   'sched.calResetToast':
     'New link created. Re-subscribe in your calendar app — the old link no longer works.',
   'sched.calResetFailed': 'Could not reset the link.',
+  // Week/month calendar views — the last associate surface that was
+  // still hardcoded English.
+  'cal.prevWeek': 'Previous week',
+  'cal.nextWeek': 'Next week',
+  'cal.prevMonth': 'Previous month',
+  'cal.nextMonth': 'Next month',
+  'cal.today': 'Today',
+  'cal.scheduled': '{hours} scheduled',
+  'cal.unavailable': 'Unavailable',
+  'cal.dayOff': 'Day off',
+  'cal.noShifts': 'No shifts',
+  'cal.beforeHistory': "You're looking before the loaded history.",
+  'cal.beforeRecorded': "That's before your recorded shift history.",
+  'cal.pickDay': 'Pick a day to see its shifts.',
+  'cal.noShiftsDay': 'No shifts on this day.',
+  'cal.markedUnavailable': "You've marked this day as unavailable.",
 
   // Shift card
   'shift.next': 'Next',
@@ -2785,6 +2801,20 @@ const es: Record<MessageKey, string> = {
   'sched.calResetToast':
     'Nuevo enlace creado. Vuelve a suscribirte en tu app de calendario — el enlace anterior ya no funciona.',
   'sched.calResetFailed': 'No se pudo restablecer el enlace.',
+  'cal.prevWeek': 'Semana anterior',
+  'cal.nextWeek': 'Semana siguiente',
+  'cal.prevMonth': 'Mes anterior',
+  'cal.nextMonth': 'Mes siguiente',
+  'cal.today': 'Hoy',
+  'cal.scheduled': '{hours} programadas',
+  'cal.unavailable': 'No disponible',
+  'cal.dayOff': 'Día libre',
+  'cal.noShifts': 'Sin turnos',
+  'cal.beforeHistory': 'Estás viendo antes del historial cargado.',
+  'cal.beforeRecorded': 'Eso es anterior a tu historial de turnos registrado.',
+  'cal.pickDay': 'Elige un día para ver sus turnos.',
+  'cal.noShiftsDay': 'No hay turnos este día.',
+  'cal.markedUnavailable': 'Marcaste este día como no disponible.',
 
   'shift.next': 'Próximo',
   'shift.confirmed': 'Confirmado',

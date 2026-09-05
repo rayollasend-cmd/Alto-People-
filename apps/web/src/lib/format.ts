@@ -82,6 +82,38 @@ export function fmtMoneyCompact(
 }
 
 /**
+ * Ultra-compact clock for dense shift tiles: "10p", "9:30a". Built from
+ * Intl parts in the shift's timezone (so it respects the store zone).
+ * Minutes drop when :00 so "10:00 PM" → "10p". Shared by the admin week
+ * matrix and the associate weekly tiles — one dialect for tile time.
+ */
+export function fmtCompactClock(iso: string, timeZone?: string | null): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    ...(timeZone ? { timeZone } : {}),
+  }).formatToParts(new Date(iso));
+  const hour = parts.find((p) => p.type === 'hour')?.value ?? '12';
+  const minute = parts.find((p) => p.type === 'minute')?.value ?? '00';
+  const period = (parts.find((p) => p.type === 'dayPeriod')?.value ?? 'AM')
+    .toLowerCase()
+    .startsWith('p')
+    ? 'p'
+    : 'a';
+  return minute === '00' ? `${hour}${period}` : `${hour}:${minute}${period}`;
+}
+
+/** "10p–7a" — compact range for dense shift tiles. */
+export function fmtCompactRange(
+  startIso: string,
+  endIso: string,
+  timeZone?: string | null,
+): string {
+  return `${fmtCompactClock(startIso, timeZone)}–${fmtCompactClock(endIso, timeZone)}`;
+}
+
+/**
  * Whole-dollar ESTIMATE money — "~$102". The schedule's grain: a shift's
  * worth is a forecast at the associate's base rate, so cents would be
  * false precision and the "~" keeps it honest. Exact figures (paychecks,

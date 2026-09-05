@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 import type { Shift } from '@alto-people/shared';
 import { Button } from '@/components/ui/Button';
-import { fmtDateTz, zonedDayKey } from '@/lib/format';
+import { fmtDateTz, fmtHours, fmtMoneyEst, zonedDayKey } from '@/lib/format';
 import { useI18n } from '@/lib/i18n';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { ShiftCard, paidShiftMinutes } from './ShiftCard';
 
 /**
@@ -47,6 +47,12 @@ interface CalendarProps {
   hasOlder: boolean;
   loadingOlder: boolean;
   onLoadOlder: () => void;
+  /** The associate's hourly rate — prices the ~$ on tiles and totals.
+   *  Null (fetch failed) just leaves the money off. */
+  estRate: number | null;
+  /** Confirming from a calendar card must update the page's shift copy,
+   *  or the next-shift hero above keeps nagging after the tap. */
+  onAcknowledged?: (shiftId: string, acknowledgedAt: string) => void;
 }
 
 const DAY_MS = 86_400_000;
@@ -108,6 +114,16 @@ function coverageStart(shifts: Shift[], now: number): number {
   return oldest;
 }
 
+/** PAID minutes across a day/week, with CANCELLED shifts excluded — a
+ *  struck shift still renders (as history), but it must never inflate
+ *  "32h scheduled" or price into a ~$ total. */
+function countedMinutes(shifts: Shift[]): number {
+  return shifts.reduce(
+    (m, s) => (s.status === 'CANCELLED' ? m : m + paidShiftMinutes(s)),
+    0,
+  );
+}
+
 function OlderNote({
   visible,
   hasOlder,
@@ -119,12 +135,13 @@ function OlderNote({
   loadingOlder: boolean;
   onLoadOlder: () => void;
 }) {
+  const { t } = useI18n();
   if (!visible) return null;
   return (
     <p className="mt-3 text-xs text-silver/70">
       {hasOlder ? (
         <>
-          You're looking before the loaded history.{' '}
+          {t('cal.beforeHistory')}{' '}
           <Button
             variant="ghost"
             size="sm"
@@ -133,11 +150,11 @@ function OlderNote({
             disabled={loadingOlder}
             className="inline-flex"
           >
-            Load older shifts
+            {t('sched.loadOlder')}
           </Button>
         </>
       ) : (
-        "That's before your recorded shift history."
+        t('cal.beforeRecorded')
       )}
     </p>
   );
@@ -151,10 +168,12 @@ export function ScheduleWeekView({
   hasOlder,
   loadingOlder,
   onLoadOlder,
+  estRate,
+  onAcknowledged,
 }: CalendarProps) {
   const [offset, setOffset] = useState(0);
   const byDay = useMemo(() => bucketByDay(shifts), [shifts]);
-  const { lang } = useI18n();
+  const { t, lang } = useI18n();
   const { weekdays: WEEKDAYS } = useMemo(() => calendarNames(lang), [lang]);
 
   // Calendar-day arithmetic (setDate), NOT raw ms offsets — adding
@@ -169,9 +188,8 @@ export function ScheduleWeekView({
     return { date: d, key: localKey(d) };
   });
   const weekEnd = days[6]!.date;
-  const weekMinutes = days.reduce(
-    (sum, d) => sum + (byDay.get(d.key) ?? []).reduce((m, s) => m + paidShiftMinutes(s), 0),
-    0,
+  const weekMinutes = countedMinutes(
+    days.flatMap((d) => byDay.get(d.key) ?? []),
   );
   // fmtDateTz with no zone = browser-local "Jun 28" — the grid's dates are
   // the viewer's own calendar days.
@@ -179,36 +197,62 @@ export function ScheduleWeekView({
 
   return (
     <div>
-      <div className="flex items-center justify-between gap-2 mb-3">
+      <div className="flex items-center justify-between gap-2 mb-2">
         <div className="text-sm text-white font-medium tabular-nums">
           {fmtHeader(weekStart)} – {fmtHeader(weekEnd)}
           <span className="text-silver font-normal">
-            {' '}· {(weekMinutes / 60).toFixed(1)}h scheduled
+            {' '}· {t('cal.scheduled', { hours: fmtHours(weekMinutes / 60) })}
           </span>
+          {/* The week as money — same grain as the list view's ~$ tiles. */}
+          {estRate != null && weekMinutes > 0 && (
+            <span className="font-semibold text-gold">
+              {' '}· {fmtMoneyEst((weekMinutes / 60) * estRate)}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1">
           <Button
             variant="ghost"
             size="sm"
-            aria-label="Previous week"
+            aria-label={t('cal.prevWeek')}
             onClick={() => setOffset((o) => o - 1)}
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
           {offset !== 0 && (
             <Button variant="ghost" size="sm" onClick={() => setOffset(0)}>
-              Today
+              {t('cal.today')}
             </Button>
           )}
           <Button
             variant="ghost"
             size="sm"
-            aria-label="Next week"
+            aria-label={t('cal.nextWeek')}
             onClick={() => setOffset((o) => o + 1)}
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
+      </div>
+
+      {/* Key for the tile status shapes — learnable, not innately obvious. */}
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-silver/70">
+        <span className="inline-flex items-center gap-1">
+          <span className="h-1.5 w-1.5 rounded-full bg-gold" aria-hidden="true" />
+          {t('shift.confirmNeeded')}
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <span className="h-1.5 w-1.5 rounded-full bg-success/70" aria-hidden="true" />
+          {t('shift.confirmed')}
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <Check className="h-3 w-3 text-success" strokeWidth={3} aria-hidden="true" />
+          {t('shift.worked')}
+        </span>
+        <span className="inline-flex items-center gap-1">
+          <X className="h-3 w-3 text-alert" strokeWidth={3} aria-hidden="true" />
+          {t('shift.cancelled')}
+        </span>
       </div>
 
       <div className="space-y-3">
@@ -220,30 +264,37 @@ export function ScheduleWeekView({
             <section key={d.key}>
               <h3
                 className={[
-                  'text-xs2 uppercase tracking-wider mb-1.5',
-                  isToday ? 'text-gold' : 'text-silver/80',
+                  'text-sm mb-1.5',
+                  isToday
+                    ? 'font-semibold text-gold'
+                    : 'font-medium text-silver',
                 ].join(' ')}
               >
                 {WEEKDAYS[d.date.getDay()]}, {fmtHeader(d.date)}
-                {isToday && ' · Today'}
+                {isToday && ` · ${t('cal.today')}`}
                 {isBlocked && (
-                  <span className="normal-case tracking-normal text-silver/60">
-                    {' '}
-                    · Unavailable
+                  <span className="font-normal text-silver/60">
+                    {' '}· {t('cal.unavailable')}
                   </span>
                 )}
               </h3>
               {dayShifts.length === 0 ? (
-                <p className="text-xs text-silver/50 border border-dashed border-navy-secondary/60 rounded px-3 py-2">
-                  {isBlocked ? 'Day off' : 'No shifts'}
+                // A quiet line, not a dashed placeholder box — a normal
+                // 3-shift week shouldn't be mostly empty-state furniture.
+                <p className="text-xs text-silver/40 py-0.5">
+                  {isBlocked ? t('cal.dayOff') : t('cal.noShifts')}
                 </p>
               ) : (
-                <ul className="space-y-2">
-                  {dayShifts.map((s) => (
+                <ul className="space-y-1.5">
+                  {dayShifts.map((s, i) => (
                     <ShiftCard
                       key={s.id}
                       shift={s}
+                      face="tile"
                       isNext={false}
+                      appearIndex={i}
+                      estRate={estRate}
+                      onAcknowledged={onAcknowledged}
                       muted={new Date(s.endsAt).getTime() < now}
                       onSwapCreated={onSwapCreated}
                     />
@@ -273,10 +324,12 @@ export function ScheduleMonthView({
   hasOlder,
   loadingOlder,
   onLoadOlder,
+  estRate,
+  onAcknowledged,
 }: CalendarProps) {
   const [offset, setOffset] = useState(0);
   const byDay = useMemo(() => bucketByDay(shifts), [shifts]);
-  const { lang } = useI18n();
+  const { t, lang } = useI18n();
   const { weekdays: WEEKDAYS, months: MONTHS } = useMemo(
     () => calendarNames(lang),
     [lang],
@@ -315,20 +368,20 @@ export function ScheduleMonthView({
           <Button
             variant="ghost"
             size="sm"
-            aria-label="Previous month"
+            aria-label={t('cal.prevMonth')}
             onClick={() => changeMonth(-1)}
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
           {offset !== 0 && (
             <Button variant="ghost" size="sm" onClick={() => changeMonth('today')}>
-              Today
+              {t('cal.today')}
             </Button>
           )}
           <Button
             variant="ghost"
             size="sm"
-            aria-label="Next month"
+            aria-label={t('cal.nextMonth')}
             onClick={() => changeMonth(1)}
           >
             <ChevronRight className="h-4 w-4" />
@@ -358,9 +411,17 @@ export function ScheduleMonthView({
               type="button"
               onClick={() => setSelectedKey(key)}
               aria-pressed={isSelected}
-              aria-label={`${MONTHS[monthStart.getMonth()]} ${day}${
-                count > 0 ? `, ${count} shift${count === 1 ? '' : 's'}` : ''
-              }${isBlocked ? ', unavailable' : ''}`}
+              aria-label={[
+                `${MONTHS[monthStart.getMonth()]} ${day}`,
+                count > 0
+                  ? t(count === 1 ? 'sched.shiftsWord' : 'sched.shiftsWordPlural', {
+                      count,
+                    })
+                  : '',
+                isBlocked ? t('cal.unavailable') : '',
+              ]
+                .filter(Boolean)
+                .join(', ')}
               className={[
                 // py-2.5 on touch lifts the cell to ~44px tap height.
                 'rounded-md py-1.5 coarse:py-2.5 flex flex-col items-center gap-0.5 border transition-colors',
@@ -412,31 +473,29 @@ export function ScheduleMonthView({
       {/* Key for the day dots — new colour meaning needs to be learnable. */}
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-silver/70">
         <span className="inline-flex items-center gap-1">
-          <span className="h-1.5 w-1.5 rounded-full bg-gold" />
-          Needs your confirmation
+          <span className="h-1.5 w-1.5 rounded-full bg-gold" aria-hidden="true" />
+          {t('shift.confirmNeeded')}
         </span>
         <span className="inline-flex items-center gap-1">
-          <span className="h-1.5 w-1.5 rounded-full bg-success/70" />
-          Confirmed
+          <span className="h-1.5 w-1.5 rounded-full bg-success/70" aria-hidden="true" />
+          {t('shift.confirmed')}
         </span>
         <span className="inline-flex items-center gap-1">
-          <span className="h-1.5 w-1.5 rounded-full bg-warning/80" />
-          Open
+          <span className="h-1.5 w-1.5 rounded-full bg-warning/80" aria-hidden="true" />
+          {t('shift.open')}
         </span>
       </div>
 
       <div className="mt-4">
         {selectedKey !== null && (blockedDays?.has(selectedKey) ?? false) && (
           <p className="text-xs text-silver/60 mb-2">
-            You've marked this day as unavailable.
+            {t('cal.markedUnavailable')}
           </p>
         )}
         {selectedKey === null ? (
-          <p className="text-xs text-silver/70">Pick a day to see its shifts.</p>
+          <p className="text-xs text-silver/70">{t('cal.pickDay')}</p>
         ) : selectedShifts.length === 0 ? (
-          <p className="text-xs text-silver/70">
-            No shifts on this day.
-          </p>
+          <p className="text-xs text-silver/70">{t('cal.noShiftsDay')}</p>
         ) : (
           <ul className="space-y-2">
             {selectedShifts.map((s) => (
@@ -444,6 +503,8 @@ export function ScheduleMonthView({
                 key={s.id}
                 shift={s}
                 isNext={false}
+                estRate={estRate}
+                onAcknowledged={onAcknowledged}
                 muted={new Date(s.endsAt).getTime() < now}
                 onSwapCreated={onSwapCreated}
               />
@@ -452,8 +513,9 @@ export function ScheduleMonthView({
         )}
         {selectedShifts.length > 1 && (
           <p className="mt-2 text-xs text-silver/60 tabular-nums">
-            {(selectedShifts.reduce((m, s) => m + paidShiftMinutes(s), 0) / 60).toFixed(1)}h
-            scheduled this day
+            {t('cal.scheduled', {
+              hours: fmtHours(countedMinutes(selectedShifts) / 60),
+            })}
           </p>
         )}
       </div>

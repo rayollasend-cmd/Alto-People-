@@ -483,6 +483,8 @@ export function AssociateScheduleView() {
           hasOlder={hasOlder}
           loadingOlder={historyLoading}
           onLoadOlder={loadOlder}
+          estRate={estRate}
+          onAcknowledged={markAcknowledged}
         />
       )}
       {loaded && !isEmpty && view === 'month' && (
@@ -494,6 +496,8 @@ export function AssociateScheduleView() {
           hasOlder={hasOlder}
           loadingOlder={historyLoading}
           onLoadOlder={loadOlder}
+          estRate={estRate}
+          onAcknowledged={markAcknowledged}
         />
       )}
 
