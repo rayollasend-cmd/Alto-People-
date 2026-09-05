@@ -358,11 +358,35 @@ export function ScheduleMonthView({
 
   const selectedShifts = selectedKey ? byDay.get(selectedKey) ?? [] : [];
 
+  // The month's own score — what this month holds, before any day is
+  // tapped. Grid keys are browser-local (keyFor), so total through them.
+  const monthShifts = Array.from({ length: daysInMonth }, (_, i) =>
+    byDay.get(keyFor(i + 1)),
+  ).flatMap((list) => list ?? []);
+  const monthCount = monthShifts.filter((s) => s.status !== 'CANCELLED').length;
+  const monthMinutes = countedMinutes(monthShifts);
+  // The selected day, parsed at local midnight for its heading.
+  const selectedDate = selectedKey ? new Date(`${selectedKey}T00:00:00`) : null;
+
   return (
     <div>
       <div className="flex items-center justify-between gap-2 mb-3">
-        <div className="text-sm text-white font-medium">
+        <div className="text-sm text-white font-medium tabular-nums">
           {MONTHS[monthStart.getMonth()]} {monthStart.getFullYear()}
+          {monthCount > 0 && (
+            <span className="text-silver font-normal">
+              {' '}·{' '}
+              {t(monthCount === 1 ? 'sched.shiftsWord' : 'sched.shiftsWordPlural', {
+                count: monthCount,
+              })}
+              {' '}· {t('cal.scheduled', { hours: fmtHours(monthMinutes / 60) })}
+            </span>
+          )}
+          {estRate != null && monthMinutes > 0 && (
+            <span className="font-semibold text-gold">
+              {' '}· {fmtMoneyEst((monthMinutes / 60) * estRate)}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1">
           <Button
@@ -423,8 +447,9 @@ export function ScheduleMonthView({
                 .filter(Boolean)
                 .join(', ')}
               className={[
-                // py-2.5 on touch lifts the cell to ~44px tap height.
-                'rounded-md py-1.5 coarse:py-2.5 flex flex-col items-center gap-0.5 border transition-colors',
+                // Comfortable on EVERY pointer (same call as the week
+                // tiles) — ~44px cells, not a cramped desktop grid.
+                'rounded-md py-2.5 flex flex-col items-center gap-1 border transition-colors',
                 'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright active:bg-navy-secondary/50',
                 // Steel selected state, same idiom as SegmentedControl.
                 // Blocked days get a hatched-feel muted fill.
@@ -433,6 +458,10 @@ export function ScheduleMonthView({
                   : isBlocked
                     ? 'border-transparent bg-navy-secondary/40 hover:border-navy-secondary'
                     : 'border-transparent hover:border-navy-secondary',
+                // Today keeps an always-on gold ring — the calendar's most
+                // important cell used to have its weakest treatment (just
+                // a gold numeral, outshone by any selected day's border).
+                !isSelected && isToday ? 'ring-1 ring-gold/40' : '',
               ].join(' ')}
             >
               <span
@@ -454,12 +483,12 @@ export function ScheduleMonthView({
                   could tell you a day was busy but not whether anything on
                   it was still waiting on you — which is the whole reason to
                   open the month view. */}
-              <span className="h-1.5 flex items-center gap-0.5" aria-hidden="true">
+              <span className="h-2 flex items-center gap-0.5" aria-hidden="true">
                 {(byDay.get(key) ?? []).slice(0, 3).map((s) => (
                   <span
                     key={s.id}
                     className={[
-                      'h-1 w-1 rounded-full',
+                      'h-1.5 w-1.5 rounded-full',
                       dayDotTone(s, now),
                     ].join(' ')}
                   />
@@ -484,39 +513,80 @@ export function ScheduleMonthView({
           <span className="h-1.5 w-1.5 rounded-full bg-warning/80" aria-hidden="true" />
           {t('shift.open')}
         </span>
+        {/* dayDotTone paints cancelled red — an unexplained dot is exactly
+            the figure-it-out texture this legend exists to prevent. */}
+        <span className="inline-flex items-center gap-1">
+          <span className="h-1.5 w-1.5 rounded-full bg-alert/60" aria-hidden="true" />
+          {t('shift.cancelled')}
+        </span>
       </div>
 
+      {monthCount === 0 && (
+        <p className="mt-3 text-xs text-silver/40">{t('cal.noShiftsMonth')}</p>
+      )}
+
       <div className="mt-4">
-        {selectedKey !== null && (blockedDays?.has(selectedKey) ?? false) && (
-          <p className="text-xs text-silver/60 mb-2">
-            {t('cal.markedUnavailable')}
-          </p>
-        )}
         {selectedKey === null ? (
           <p className="text-xs text-silver/70">{t('cal.pickDay')}</p>
-        ) : selectedShifts.length === 0 ? (
-          <p className="text-xs text-silver/70">{t('cal.noShiftsDay')}</p>
         ) : (
-          <ul className="space-y-2">
-            {selectedShifts.map((s) => (
-              <ShiftCard
-                key={s.id}
-                shift={s}
-                isNext={false}
-                estRate={estRate}
-                onAcknowledged={onAcknowledged}
-                muted={new Date(s.endsAt).getTime() < now}
-                onSwapCreated={onSwapCreated}
-              />
-            ))}
-          </ul>
-        )}
-        {selectedShifts.length > 1 && (
-          <p className="mt-2 text-xs text-silver/60 tabular-nums">
-            {t('cal.scheduled', {
-              hours: fmtHours(countedMinutes(selectedShifts) / 60),
-            })}
-          </p>
+          <>
+            {/* The day's heading — same grammar as the week view's day
+                sections, so the two tabs read as one product. The hour
+                total lives HERE, not as a dangling footnote below. */}
+            {selectedDate && (
+              <h3
+                className={[
+                  'text-sm mb-2 flex items-baseline justify-between gap-3',
+                  selectedKey === todayKey
+                    ? 'font-semibold text-gold'
+                    : 'font-medium text-silver',
+                ].join(' ')}
+              >
+                <span>
+                  {WEEKDAYS[selectedDate.getDay()]}, {fmtDateTz(selectedDate)}
+                  {selectedKey === todayKey && ` · ${t('cal.today')}`}
+                </span>
+                {selectedShifts.length > 0 && (
+                  <span className="text-xs font-normal text-silver/60 tabular-nums">
+                    {t(
+                      selectedShifts.length === 1
+                        ? 'sched.shiftsWord'
+                        : 'sched.shiftsWordPlural',
+                      { count: selectedShifts.length },
+                    )}
+                    {' '}· {fmtHours(countedMinutes(selectedShifts) / 60)}
+                  </span>
+                )}
+              </h3>
+            )}
+            {(blockedDays?.has(selectedKey) ?? false) && (
+              <p className="text-xs text-silver/60 mb-2">
+                {t('cal.markedUnavailable')}
+              </p>
+            )}
+            {selectedShifts.length === 0 ? (
+              <p className="text-xs text-silver/70">{t('cal.noShiftsDay')}</p>
+            ) : (
+              // The same event blocks as the week tab — one dialect for
+              // the whole calendar, not full list cards on one tab and
+              // tiles on the other.
+              <ul className="space-y-2">
+                {selectedShifts.map((s, i) => (
+                  <ShiftCard
+                    key={s.id}
+                    shift={s}
+                    face="tile"
+                    isNext={false}
+                    appearIndex={i}
+                    estRate={estRate}
+                    onAcknowledged={onAcknowledged}
+                    muted={new Date(s.endsAt).getTime() < now}
+                    onSwapCreated={onSwapCreated}
+                  />
+                ))}
+              </ul>
+            )}
+          </>
         )}
       </div>
 

@@ -1256,6 +1256,7 @@ const en = {
   'cal.beforeHistory': "You're looking before the loaded history.",
   'cal.beforeRecorded': "That's before your recorded shift history.",
   'cal.pickDay': 'Pick a day to see its shifts.',
+  'cal.noShiftsMonth': 'No shifts this month.',
   'cal.noShiftsDay': 'No shifts on this day.',
   'cal.markedUnavailable': "You've marked this day as unavailable.",
 
@@ -2813,6 +2814,7 @@ const es: Record<MessageKey, string> = {
   'cal.beforeHistory': 'Estás viendo antes del historial cargado.',
   'cal.beforeRecorded': 'Eso es anterior a tu historial de turnos registrado.',
   'cal.pickDay': 'Elige un día para ver sus turnos.',
+  'cal.noShiftsMonth': 'No hay turnos este mes.',
   'cal.noShiftsDay': 'No hay turnos este día.',
   'cal.markedUnavailable': 'Marcaste este día como no disponible.',
 
