@@ -146,8 +146,18 @@ export function EarningsCard() {
   const shortBy = data.lastWeekEarned - liveProjected;
 
   return (
-    <Card className="border-gold/25 bg-gradient-to-br from-gold/[0.07] to-transparent">
-      <CardContent className="p-4">
+    <Card className="relative overflow-hidden border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent">
+      {/* Depth: one soft glow anchored behind the number — success-green
+          while money is actively printing, gold otherwise. Static blur,
+          zero runtime cost. */}
+      <div
+        aria-hidden="true"
+        className={cn(
+          'pointer-events-none absolute -top-20 -left-12 h-56 w-56 rounded-full blur-3xl',
+          onClock ? 'bg-success/15' : 'bg-gold/15',
+        )}
+      />
+      <CardContent className="relative p-5">
         {/* ---- Zone 1: the score ---------------------------------------- */}
         <div className="flex items-center justify-between gap-2">
           <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
@@ -174,8 +184,11 @@ export function EarningsCard() {
           )}
         </div>
 
+        {/* The score. Heavy tight sans, not the display serif — money at
+            hero size needs WEIGHT (the light-stroked Cormorant read as
+            heritage-bank delicate up here, exactly wrong for a scoreboard). */}
         <div
-          className="mt-2 font-display text-hero-lg text-white"
+          className="mt-2.5 text-5xl md:text-6xl font-bold tracking-tight tabular-nums text-white"
           aria-live="off"
           aria-label={fmtMoney(onClock ? liveEarned : data.earnedSoFar)}
         >
@@ -187,16 +200,18 @@ export function EarningsCard() {
             <CountUpValue value={earned.main} />
           )}
           {earned.cents && (
-            <span className="font-sans text-xl font-medium tabular-nums text-silver/70">
+            <span className="text-2xl font-semibold tabular-nums text-silver/60">
               {earned.cents}
             </span>
           )}
         </div>
 
-        <p className="mt-1 text-sm text-silver">
+        <p className="mt-1.5 text-sm text-silver">
           {moreComing ? (
             <>
-              {t('earn.paceTo', { amount: fmtMoney(liveProjected) })}
+              {t('earn.paceBefore')}
+              <span className="font-semibold text-gold">{fmtMoney(liveProjected)}</span>
+              {t('earn.paceAfter')}
               {daysLeft > 0 && (
                 <span className="text-silver/60">
                   {' '}· {daysLeft === 1 ? t('earn.dayLeft') : t('earn.daysLeft', { n: String(daysLeft) })}
@@ -254,25 +269,30 @@ export function EarningsCard() {
               >
                 <div
                   className={cn(
-                    'flex h-16 w-full flex-col justify-end overflow-hidden rounded-sm bg-navy-secondary/40',
-                    isToday && 'ring-1 ring-gold/60',
+                    'flex h-16 w-full flex-col justify-end overflow-hidden rounded-md bg-navy-secondary/30',
+                    isToday && 'ring-1 ring-gold/70 bg-gold/[0.06]',
                   )}
                 >
                   {/* DOM order = top→bottom: scheduled (ghost) rides on top
                       of worked (solid), so the top segment owns the radius.
                       grow-y builds each day from the baseline on mount,
-                      staggered left→right. */}
+                      staggered left→right. Worked money gets a vertical
+                      gold gradient — bars with light in them, not flat
+                      fills; today burns brightest. */}
                   {d.scheduledAmount > 0 && (
                     <div
-                      className="w-full rounded-t-sm bg-gold/25 origin-bottom animate-grow-y"
+                      className="w-full rounded-t-md bg-gold/25 origin-bottom animate-grow-y"
                       style={{ height: h(d.scheduledAmount), ...enterStagger(idx, 40, 6) }}
                     />
                   )}
                   {d.workedAmount > 0 && (
                     <div
                       className={cn(
-                        'w-full bg-gold origin-bottom animate-grow-y',
-                        d.scheduledAmount === 0 && 'rounded-t-sm',
+                        'w-full origin-bottom animate-grow-y bg-gradient-to-t',
+                        isToday
+                          ? 'from-gold to-gold-bright'
+                          : 'from-gold/80 to-gold',
+                        d.scheduledAmount === 0 && 'rounded-t-md',
                       )}
                       style={{ height: h(d.workedAmount), ...enterStagger(idx, 40, 6) }}
                     />
