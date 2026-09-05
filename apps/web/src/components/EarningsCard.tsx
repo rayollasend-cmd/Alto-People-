@@ -218,19 +218,17 @@ export function EarningsCard() {
           )}
         </p>
 
-        {/* Overtime is the one chip allowed on the card face — it's news. */}
-        {data.overtime.unlocked ? (
+        {/* Overtime UNLOCKED is the one chip allowed on the card face —
+            it's live news (every hour pays 1.5× right now). The projected-OT
+            forecast is NOT shown here: that money is already inside the
+            "On pace for $X" sentence, and repeating it with a (paid 1.5×)
+            parenthetical was exactly the figure-it-out noise the redesign
+            removed. The forecast lives in Details for the curious. */}
+        {data.overtime.unlocked && (
           <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-success/15 px-2.5 py-1 text-xs font-medium text-success">
             <Zap className="h-3.5 w-3.5" aria-hidden="true" />
             {t('earn.otUnlocked', { rate: fmtMoney(data.currentRatePerHour) })}
           </div>
-        ) : (
-          data.overtime.projectedOtHours > 0 && (
-            <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-gold/15 px-2.5 py-1 text-xs font-medium text-gold">
-              <Zap className="h-3.5 w-3.5" aria-hidden="true" />
-              {t('earn.otPace', { hours: data.overtime.projectedOtHours.toFixed(1) })}
-            </div>
-          )
         )}
 
         {/* ---- Zone 2: the week ------------------------------------------ */}
@@ -341,6 +339,11 @@ export function EarningsCard() {
                 {data.lastWeekEarned > 0 && (
                   <p className="tabular-nums">
                     {t('earn.lastWeekPlain', { amount: fmtMoney(data.lastWeekEarned) })}
+                  </p>
+                )}
+                {!data.overtime.unlocked && data.overtime.projectedOtHours > 0 && (
+                  <p className="tabular-nums">
+                    {t('earn.otPace', { hours: data.overtime.projectedOtHours.toFixed(1) })}
                   </p>
                 )}
                 <p>
