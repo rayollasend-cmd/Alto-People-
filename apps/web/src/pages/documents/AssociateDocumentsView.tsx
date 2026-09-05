@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Bus,
+  Camera,
   Clock,
+  CreditCard,
+  DollarSign,
   Eye,
+  FileCheck,
+  FileSignature,
   FileText,
+  Home,
+  Plane,
   RotateCw,
   ScanLine,
   ShieldCheck,
@@ -60,6 +68,29 @@ const STATUS_VARIANT: Record<
 const kindLabel = (t: Translate, k: DocumentKind): string =>
   t(('docs.kind.' + k) as MessageKey);
 
+// Every document kind gets a face — the wallet read. A driver's license
+// and a visa should be recognizable before a single word is parsed.
+const KIND_ICONS: Record<DocumentKind, typeof FileText> = {
+  ID: CreditCard,
+  SSN_CARD: ShieldCheck,
+  I9_SUPPORTING: FileCheck,
+  OFFER_LETTER: FileSignature,
+  HOUSING_AGREEMENT: Home,
+  TRANSPORT_AGREEMENT: Bus,
+  J1_DS2019: Plane,
+  J1_VISA: Plane,
+  // System-generated kinds (not in the upload picker, but they render
+  // in the list when HR or a flow files them for the associate).
+  W4_PDF: FileText,
+  POLICY: FileText,
+  SIGNED_AGREEMENT: FileSignature,
+  BACKGROUND_CHECK_RESULT: ShieldCheck,
+  DRUG_TEST_RESULT: FileCheck,
+  I9_VERIFICATION_RESULT: FileCheck,
+  PAYSTUB: DollarSign,
+  OTHER: FileText,
+};
+
 
 // Mirrors the server's upload cap so an oversized file fails instantly
 // with a readable message instead of after a full (doomed) POST.
@@ -98,6 +129,9 @@ export function AssociateDocumentsView() {
   const [deleteTarget, setDeleteTarget] = useState<DocumentRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [previewDoc, setPreviewDoc] = useState<DocumentRecord | null>(null);
+  // Name of the file sitting in the (visually hidden) picker — the tap
+  // zone displays it so "did my file attach?" is never a mystery.
+  const [fileName, setFileName] = useState<string | null>(null);
   // Document being replaced via the renew flow — drives the "Replacing:"
   // chip on the upload form so the intent stays visible.
   const [renewTarget, setRenewTarget] = useState<DocumentRecord | null>(null);
@@ -141,6 +175,9 @@ export function AssociateDocumentsView() {
           const dt = new DataTransfer();
           dt.items.add(file);
           input.files = dt.files;
+          // Programmatic assignment fires no change event — mirror the
+          // name into the tap zone by hand.
+          setFileName(name);
         }
         // Consume the stash — a share is one intake, never a resurface.
         for (const key of keys) await cache.delete(key);
@@ -188,6 +225,7 @@ export function AssociateDocumentsView() {
     try {
       await uploadMyDocument(file, kind);
       if (fileRef.current) fileRef.current.value = '';
+      setFileName(null);
       setRenewTarget(null);
       await refresh();
     } catch (err) {
@@ -221,11 +259,6 @@ export function AssociateDocumentsView() {
     formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     fileRef.current?.focus();
   };
-
-  // Touch parity with ui/Input — 44px target + 16px text on coarse
-  // pointers so iOS never zooms on focus (mirrors the onboarding inputCls).
-  const inputCls =
-    'w-full h-10 coarse:h-11 px-3 py-2 text-sm coarse:text-base rounded bg-navy-secondary/60 border border-navy-secondary focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold text-white';
 
   const pullState = usePullToRefresh(refresh);
 
@@ -280,51 +313,65 @@ export function AssociateDocumentsView() {
         </div>
       )}
 
-      {/* The verdict FIRST: are my papers in order? One state word, one
-          sentence of counts — the fixes live on the rows right below. */}
+      {/* The verdict FIRST, in the house hero grammar — gradient face,
+          inset radial glow (never an offset blur; e2e rect guard), the
+          state word big in heavy sans, one HUMAN sentence of counts. */}
       {summary && (
         <div
           className={cn(
-            'mb-6 rounded-lg border p-5 animate-enter',
+            'relative overflow-hidden mb-6 rounded-lg border p-5 animate-enter',
             needsAction
-              ? 'border-alert/40 bg-alert/5'
+              ? 'border-alert/40 bg-gradient-to-br from-alert/[0.12] via-transparent to-transparent'
               : inReview
-                ? 'border-warning/40 bg-warning/5'
-                : 'border-success/40 bg-success/5',
+                ? 'border-warning/40 bg-gradient-to-br from-warning/[0.12] via-transparent to-transparent'
+                : 'border-success/40 bg-gradient-to-br from-success/[0.12] via-transparent to-transparent',
           )}
         >
-          <div className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-white">
-            {needsAction ? (
-              <AlertTriangle className="h-5 w-5 text-alert" aria-hidden="true" />
-            ) : inReview ? (
-              <Clock className="h-5 w-5 text-warning" aria-hidden="true" />
-            ) : (
-              <ShieldCheck className="h-5 w-5 text-success" aria-hidden="true" />
-            )}
-            {t(
+          <div
+            aria-hidden="true"
+            className={cn(
+              'pointer-events-none absolute inset-0',
               needsAction
-                ? 'docs.heroActionNeeded'
+                ? 'bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-alert)/0.12),transparent_55%)]'
                 : inReview
-                  ? 'docs.heroInReview'
-                  : 'docs.heroAllSet',
+                  ? 'bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-warning)/0.12),transparent_55%)]'
+                  : 'bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-success)/0.12),transparent_55%)]',
             )}
+          />
+          <div className="relative">
+            <div className="flex items-center gap-2.5 text-3xl font-bold tracking-tight text-white">
+              {needsAction ? (
+                <AlertTriangle className="h-6 w-6 text-alert" aria-hidden="true" />
+              ) : inReview ? (
+                <Clock className="h-6 w-6 text-warning" aria-hidden="true" />
+              ) : (
+                <ShieldCheck className="h-6 w-6 text-success" aria-hidden="true" />
+              )}
+              {t(
+                needsAction
+                  ? 'docs.heroActionNeeded'
+                  : inReview
+                    ? 'docs.heroInReview'
+                    : 'docs.heroAllSet',
+              )}
+            </div>
+            <p className="mt-1.5 text-sm text-silver tabular-nums">
+              {[
+                [summary.verified, 'docs.heroVerifiedOne', 'docs.heroVerified'],
+                [summary.pending, 'docs.heroPendingOne', 'docs.heroPending'],
+                [summary.expiring, 'docs.heroExpiringOne', 'docs.heroExpiring'],
+                [summary.expired, 'docs.heroExpiredOne', 'docs.heroExpired'],
+                [summary.rejected, 'docs.heroRejectedOne', 'docs.heroRejected'],
+              ]
+                .filter(([count]) => (count as number) > 0)
+                .map(([count, one, many]) =>
+                  count === 1
+                    ? t(one as MessageKey)
+                    : t(many as MessageKey, { count: count as number }),
+                )
+                .join(' · ')}
+            </p>
           </div>
-          <p className="mt-1 text-sm text-silver tabular-nums">
-            {[
-              summary.verified > 0 &&
-                t('docs.heroVerified', { count: summary.verified }),
-              summary.pending > 0 &&
-                t('docs.heroPending', { count: summary.pending }),
-              summary.expiring > 0 &&
-                t('docs.heroExpiring', { count: summary.expiring }),
-              summary.expired > 0 &&
-                t('docs.heroExpired', { count: summary.expired }),
-              summary.rejected > 0 &&
-                t('docs.heroRejected', { count: summary.rejected }),
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          </p>
         </div>
       )}
 
@@ -367,6 +414,7 @@ export function AssociateDocumentsView() {
               >
                 {/* md+: packed single-line row (mouse precision). */}
                 <div className="hidden md:flex md:items-center md:gap-3">
+                  <KindChip d={d} />
                   <div className="flex-1 min-w-0">
                     <DocInfo d={d} t={t} />
                   </div>
@@ -408,8 +456,11 @@ export function AssociateDocumentsView() {
                 {/* Below md: stacked card — label + status on top, then
                     full-width thumb-sized (≥44px) action buttons. */}
                 <div className="md:hidden space-y-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <DocInfo d={d} t={t} />
+                  <div className="flex items-start gap-3">
+                    <KindChip d={d} />
+                    <div className="min-w-0 flex-1">
+                      <DocInfo d={d} t={t} />
+                    </div>
                     {badgeEl}
                   </div>
                   <div className="space-y-2">
@@ -508,16 +559,30 @@ export function AssociateDocumentsView() {
               ))}
             </Select>
           </label>
-          <label className="block">
+          <label className="block cursor-pointer">
             <span className="block text-xs font-medium text-silver mb-1">
               {t('docs.fileLabel')}
+            </span>
+            {/* An invitation, not a form field: a camera-led tap zone in
+                place of the native file input's browser chrome. */}
+            <span className="flex items-center justify-center gap-2.5 rounded-lg border-2 border-dashed border-navy-secondary hover:border-gold/50 transition-colors px-4 py-5 text-center">
+              <Camera className="h-5 w-5 shrink-0 text-gold" aria-hidden="true" />
+              <span
+                className={cn(
+                  'text-sm min-w-0 break-words',
+                  fileName ? 'text-white' : 'text-silver',
+                )}
+              >
+                {fileName ?? t('docs.addHint')}
+              </span>
             </span>
             <input
               ref={fileRef}
               type="file"
               accept="application/pdf,image/png,image/jpeg,image/webp"
               capture="environment"
-              className={cn(inputCls, 'file:text-silver file:bg-navy-secondary file:border-0 file:px-2 file:py-1 file:mr-3 file:rounded')}
+              onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
+              className="sr-only"
             />
             <span className="block text-xs text-silver/70 mt-1">
               {t('docs.noWord')}
@@ -564,18 +629,42 @@ export function AssociateDocumentsView() {
   );
 }
 
-/** Filename + size + kind/expiry meta — shared between the md+ row layout
- *  and the mobile stacked card. Rejection reasons render in the dedicated
- *  callout instead of here. */
+/** The wallet chip: the document kind as a recognizable face, toned by
+ *  what the document needs — green when solid, amber when waiting or
+ *  running out, red when it needs replacing. */
+function KindChip({ d }: { d: DocumentRecord }) {
+  const Icon = KIND_ICONS[d.kind] ?? FileText;
+  const tone =
+    d.status === 'REJECTED' || d.status === 'EXPIRED'
+      ? 'bg-alert/15 text-alert'
+      : d.status === 'UPLOADED' || isExpiringSoon(d)
+        ? 'bg-warning/15 text-warning'
+        : 'bg-success/15 text-success';
+  return (
+    <div
+      aria-hidden="true"
+      className={cn(
+        'grid h-10 w-10 shrink-0 place-items-center rounded-lg',
+        tone,
+      )}
+    >
+      <Icon className="h-5 w-5" />
+    </div>
+  );
+}
+
+/** KIND-led identity — "Driver's license", not "scan_final_2.jpg". The
+ *  filename is metadata and lives on the quiet second line. Rejection
+ *  reasons render in the dedicated callout instead of here. */
 function DocInfo({ d, t }: { d: DocumentRecord; t: Translate }) {
   return (
     <div className="min-w-0">
-      <div className="text-white truncate">
-        {d.filename}{' '}
-        <span className="text-xs text-silver/70">· {fmtSize(d.size)}</span>
+      <div className="text-sm font-semibold text-white truncate">
+        {kindLabel(t, d.kind)}
       </div>
       <div className="text-xs text-silver">
-        {kindLabel(t, d.kind)}
+        {d.filename}{' '}
+        <span className="text-silver/60">· {fmtSize(d.size)}</span>
         {d.status === 'EXPIRED' && (
           <span className="text-alert ml-2">
             {t('docs.expiredMeta', {
