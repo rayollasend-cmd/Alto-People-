@@ -91,11 +91,26 @@ function TileMark({
   needsConfirm: boolean;
   t: Translate;
 }) {
+  const nowMs = Date.now();
+  const inProgress =
+    shift.status === 'ASSIGNED' &&
+    new Date(shift.startsAt).getTime() <= nowMs &&
+    new Date(shift.endsAt).getTime() > nowMs;
   let shape: React.ReactNode;
   let label: string;
   if (needsConfirm) {
     shape = <span className="h-2 w-2 rounded-full bg-gold" />;
     label = t('shift.confirmNeeded');
+  } else if (inProgress) {
+    // The same live pulse as the hero and earnings card — a shift that's
+    // happening RIGHT NOW shouldn't look like any other confirmed row.
+    shape = (
+      <span className="relative flex h-2 w-2">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+      </span>
+    );
+    label = t('sched.heroNow');
   } else {
     switch (shift.status) {
       case 'COMPLETED':
@@ -261,7 +276,10 @@ export function ShiftCard({
           onClick={toggle}
           aria-expanded={expanded}
           aria-controls={detailId}
-          className="w-full flex items-center gap-1.5 pl-3 pr-2.5 py-2 coarse:min-h-11 text-left rounded transition-colors active:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          // The tooltip carries what the truncating label can't — same
+          // affordance as the admin tiles.
+          title={`${fmtShiftRangeTz(shift.startsAt, shift.endsAt, shift.timezone)} · ${shift.position}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
+          className="w-full flex items-center gap-1.5 pl-3 pr-2 py-2 coarse:min-h-11 text-left rounded transition-colors active:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         >
           <span className="text-xs2 text-silver/90 tabular-nums shrink-0">
             {fmtCompactRange(shift.startsAt, shift.endsAt, shift.timezone)}
@@ -273,6 +291,15 @@ export function ShiftCard({
             ].join(' ')}
           >
             {shift.position}
+            {/* The client matters when someone works two stores — admin
+                tiles hide it behind a hover card, but associates have no
+                hover. It shares the truncating span so narrow phones drop
+                it gracefully instead of crushing the time or the money. */}
+            {shift.clientName && (
+              <span className="text-silver/70 font-normal">
+                {' '}· {shift.clientName}
+              </span>
+            )}
           </span>
           {!muted && estRate != null && shift.status !== 'CANCELLED' && (
             <span className="shrink-0 text-xs2 font-medium text-gold tabular-nums">
@@ -280,6 +307,15 @@ export function ShiftCard({
             </span>
           )}
           <TileMark shift={shift} needsConfirm={needsConfirm} t={t} />
+          {/* The card face advertises expandability with a chevron; the
+              tile face must too, or it reads as inert decoration. */}
+          <ChevronDown
+            aria-hidden="true"
+            className={[
+              'h-3.5 w-3.5 shrink-0 text-silver/50 transition-transform',
+              expanded ? 'rotate-180' : '',
+            ].join(' ')}
+          />
         </button>
       ) : (
       <button
@@ -348,7 +384,13 @@ export function ShiftCard({
           expand + a hunt into the detail panel for every shift past the
           first. Sibling of the toggle button (never nested inside it). */}
       {!expanded && needsConfirm && (
-        <div className="border-t border-navy-secondary px-4 py-2.5">
+        <div
+          className={
+            tile
+              ? 'border-t border-navy-secondary px-3 py-2'
+              : 'border-t border-navy-secondary px-4 py-2.5'
+          }
+        >
           <Button
             size="sm"
             onClick={acknowledge}
@@ -369,7 +411,14 @@ export function ShiftCard({
         // collapsed DOM free of focusable ghosts).
         <div className="grid animate-unfold">
           <div className="overflow-hidden">
-            <div id={detailId} className="border-t border-navy-secondary px-4 py-3">
+            <div
+              id={detailId}
+              className={
+                tile
+                  ? 'border-t border-navy-secondary px-3 py-3'
+                  : 'border-t border-navy-secondary px-4 py-3'
+              }
+            >
           <ShiftDetail
             shift={shift}
             muted={muted}
