@@ -55,9 +55,19 @@ export function dayHeading(key: string): string {
   });
 }
 
+/**
+ * True when dayHeading(key) returned a RELATIVE label (Today/Yesterday in
+ * either app language). Callers that append the calendar date to relative
+ * headings must use this instead of matching English words — a
+ * /^(Today|Yesterday)$/ regex silently never matched 'Hoy'/'Ayer'.
+ */
+export function isRelativeDayHeading(heading: string): boolean {
+  return ['Today', 'Yesterday', 'Hoy', 'Ayer'].includes(heading);
+}
+
 /** Time-only formatter for use inside a day-grouped table. */
 export function fmtTimeOnly(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-US', {
+  return new Date(iso).toLocaleTimeString(appLocale(), {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',

@@ -3,6 +3,7 @@ import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Camera, CheckCircle2, Upload } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import { getW4, submitW4, type W4Status } from '@/lib/onboardingApi';
 import { uploadI9Document } from '@/lib/i9Api';
 import { ApiError } from '@/lib/api';
@@ -19,6 +20,7 @@ const CARD_MAX_BYTES = UPLOAD_MAX_BYTES;
 export function W4Task() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
+  const { t } = useI18n();
   const navigate = useNavigate();
 
   const [status, setStatus] = useState<W4Status | null>(null);
@@ -70,8 +72,8 @@ export function W4Task() {
         // null status also silently bypassed the SSN-card resubmit gate).
         setError(
           err instanceof ApiError
-            ? `Could not load what's on file: ${err.message}. Reload the page before making changes.`
-            : "Could not load what's on file. Reload the page before making changes.",
+            ? t('ob.w4.loadFailedWith', { message: err.message })
+            : t('ob.w4.loadFailed'),
         );
       });
   }, [applicationId]);
@@ -91,7 +93,7 @@ export function W4Task() {
     e.target.value = ''; // allow same-file re-selection
     if (!file || !applicationId) return;
     if (file.size > CARD_MAX_BYTES) {
-      setError('Card photo is too large (max 10 MB).');
+      setError(t('ob.w4.cardTooLarge'));
       return;
     }
     setError(null);
@@ -101,7 +103,7 @@ export function W4Task() {
       setCardOnFile(true);
       setCardFilename(file.name);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Card upload failed.');
+      setError(err instanceof ApiError ? err.message : t('ob.w4.cardUploadFailed'));
     } finally {
       setCardUploading(false);
     }
@@ -114,14 +116,12 @@ export function W4Task() {
 
     if (showSsnInput) {
       if (!ssn || !SSN_PATTERN.test(ssn)) {
-        setError('SSN is required and must be 9 digits.');
+        setError(t('ob.w4.ssnInvalid'));
         return;
       }
     }
     if (cardRequired) {
-      setError(
-        'Please upload a photo of your Social Security card before submitting.',
-      );
+      setError(t('ob.w4.cardRequiredError'));
       return;
     }
 
@@ -138,43 +138,35 @@ export function W4Task() {
       });
       navigate(next?.route ?? backTo, { replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Submission failed.');
+      setError(err instanceof ApiError ? err.message : t('ob.w4.submitFailed'));
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <TaskShell title="W-4 tax withholding" backTo={backTo}>
-      <p className="text-silver text-sm mb-5">
-        Federal W-4. Required for U.S. tax withholding on your wages. Your SSN
-        is encrypted at rest the moment you submit it.
-      </p>
+    <TaskShell title={t('ob.w4.title')} backTo={backTo}>
+      <p className="text-silver text-sm mb-5">{t('ob.w4.intro')}</p>
 
       {ssnNeedsResubmit && (
         <div
           role="alert"
           className="mb-4 px-3 py-2 rounded-md border border-warning/40 bg-warning/[0.07] text-warning text-xs"
         >
-          We need your Social Security number again. The copy you entered
-          before can no longer be read after a system encryption-key change —
-          it was never exposed, but it must be re-entered before payroll and
-          tax filings can include you.
-          {!cardOnFile &&
-            ' We also need a photo of your Social Security card on file — upload it below before submitting.'}
+          {t('ob.w4.ssnResubmitNotice')}
+          {!cardOnFile && ` ${t('ob.w4.ssnResubmitCardNote')}`}
         </div>
       )}
 
       {status?.submittedAt && (
         <div className="mb-4 flex items-center gap-2 px-3 py-2 rounded-md border border-success/30 bg-success/[0.05] text-success text-xs">
           <CheckCircle2 className="h-3.5 w-3.5" />
-          You submitted this on {fmtDateTime(status.submittedAt)}. Re-submit to
-          update.
+          {t('ob.w4.submittedOn', { date: fmtDateTime(status.submittedAt) })}
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Field label="Filing status">
+        <Field label={t('ob.w4.filingStatus')}>
           <Select
             value={filingStatus}
             onChange={(e) =>
@@ -186,9 +178,9 @@ export function W4Task() {
               )
             }
           >
-            <option value="SINGLE">Single or married filing separately</option>
-            <option value="MARRIED_FILING_JOINTLY">Married filing jointly</option>
-            <option value="HEAD_OF_HOUSEHOLD">Head of household</option>
+            <option value="SINGLE">{t('ob.w4.filingSingle')}</option>
+            <option value="MARRIED_FILING_JOINTLY">{t('ob.w4.filingJointly')}</option>
+            <option value="HEAD_OF_HOUSEHOLD">{t('ob.w4.filingHoh')}</option>
           </Select>
         </Field>
 
@@ -198,11 +190,11 @@ export function W4Task() {
             checked={multipleJobs}
             onChange={(e) => setMultipleJobs(e.target.checked)}
           />
-          I have multiple jobs or my spouse works (check Step 2 box)
+          {t('ob.w4.multipleJobs')}
         </label>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="Dependents amount ($)">
+          <Field label={t('ob.w4.dependents')}>
             <input
               type="number"
               min={0}
@@ -212,7 +204,7 @@ export function W4Task() {
               className={inputCls}
             />
           </Field>
-          <Field label="Extra withholding ($)">
+          <Field label={t('ob.w4.extraWithholding')}>
             <input
               type="number"
               min={0}
@@ -222,7 +214,7 @@ export function W4Task() {
               className={inputCls}
             />
           </Field>
-          <Field label="Other income ($)">
+          <Field label={t('ob.w4.otherIncome')}>
             <input
               type="number"
               min={0}
@@ -232,7 +224,7 @@ export function W4Task() {
               className={inputCls}
             />
           </Field>
-          <Field label="Deductions ($)">
+          <Field label={t('ob.w4.deductions')}>
             <input
               type="number"
               min={0}
@@ -246,8 +238,8 @@ export function W4Task() {
 
         {(showCardSection || (cardFilename && cardOnFile)) && (
           <Field
-            label="Social Security card photo"
-            hint="Required — a clear photo or scan, PDF, PNG, JPG, or WebP, up to 10 MB. Uploads immediately and is visible only to HR."
+            label={t('ob.w4.cardLabel')}
+            hint={t('ob.w4.cardHint')}
           >
             {/* Composite control: the label + hint bind to whichever upload
                 button is active, so screen readers land on a named action. */}
@@ -277,8 +269,8 @@ export function W4Task() {
                     <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
                     <span className="min-w-0 truncate">
                       {cardFilename
-                        ? `Uploaded ${cardFilename}`
-                        : 'A card photo is on file.'}
+                        ? t('ob.w4.cardUploaded', { name: cardFilename })
+                        : t('ob.w4.cardOnFile')}
                     </span>
                     <button
                       type="button"
@@ -287,7 +279,7 @@ export function W4Task() {
                       disabled={cardUploading}
                       className="ml-auto text-gold hover:text-gold-bright whitespace-nowrap"
                     >
-                      Take new photo
+                      {t('ob.w4.takeNewPhoto')}
                     </button>
                     <button
                       type="button"
@@ -295,7 +287,7 @@ export function W4Task() {
                       disabled={cardUploading}
                       className="text-gold hover:text-gold-bright whitespace-nowrap"
                     >
-                      Choose file
+                      {t('ob.w4.chooseFile')}
                     </button>
                   </div>
                 ) : (
@@ -313,7 +305,7 @@ export function W4Task() {
                       )}
                     >
                       <Camera className="h-4 w-4 inline-block mr-2 -mt-0.5" />
-                      {cardUploading ? 'Uploading…' : 'Take photo'}
+                      {cardUploading ? t('ob.w4.uploading') : t('ob.w4.takePhoto')}
                     </button>
                     <button
                       type="button"
@@ -327,7 +319,7 @@ export function W4Task() {
                       )}
                     >
                       <Upload className="h-4 w-4 inline-block mr-2 -mt-0.5" />
-                      {cardUploading ? 'Uploading…' : 'Choose file'}
+                      {cardUploading ? t('ob.w4.uploading') : t('ob.w4.chooseFile')}
                     </button>
                   </div>
                 )}
@@ -339,7 +331,7 @@ export function W4Task() {
         {ssnOnFile && !replaceSsn ? (
           <div className="rounded-md border border-navy-secondary bg-navy-secondary/30 p-3">
             <div className="text-xs uppercase tracking-widest text-silver mb-1">
-              SSN on file
+              {t('ob.w4.ssnOnFile')}
             </div>
             <div className="font-mono text-white tracking-widest">
               •••-••-{status?.ssnLast4 ?? '••••'}
@@ -352,22 +344,22 @@ export function W4Task() {
               }}
               className="mt-2 text-xs text-gold hover:text-gold-bright"
             >
-              Replace SSN
+              {t('ob.w4.replaceSsn')}
             </button>
           </div>
         ) : (
           <>
             <Field
-              label="Social Security number"
+              label={t('ob.w4.ssnLabel')}
               required
-              hint="9 digits — required. Encrypted at rest the moment you submit. Never logged."
+              hint={t('ob.w4.ssnHint')}
             >
               <input
                 type="text"
                 inputMode="numeric"
                 pattern="\d{3}-?\d{2}-?\d{4}"
                 required
-                placeholder="123-45-6789"
+                placeholder={t('ob.w4.ssnPlaceholder')}
                 value={ssn}
                 onChange={(e) => setSsn(e.target.value)}
                 className={inputCls}
@@ -383,7 +375,7 @@ export function W4Task() {
                 }}
                 className="-mt-2 text-xs text-silver hover:text-white"
               >
-                Cancel — keep existing SSN
+                {t('ob.w4.cancelKeepSsn')}
               </button>
             )}
           </>
@@ -395,7 +387,7 @@ export function W4Task() {
           </p>
         )}
 
-        <SubmitRow submitting={submitting} backTo={backTo} label="Submit W-4" next={next} />
+        <SubmitRow submitting={submitting} backTo={backTo} label={t('ob.w4.submit')} next={next} />
       </form>
     </TaskShell>
   );

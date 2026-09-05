@@ -22,6 +22,7 @@ import {
 } from '@/lib/reimbursements97Api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
 import { StatusBadge } from '@/lib/status';
 import {
@@ -50,7 +51,69 @@ import {
   Textarea,
 } from '@/components/ui';
 import { FormHint, Label } from '@/components/ui/Label';
+import { downloadDocumentUrl, uploadMyDocument } from '@/lib/documentsApi';
 import { toast } from 'sonner';
+
+/**
+ * Snap-or-pick a receipt straight into the associate's own document vault
+ * (kind OTHER) and hand back its in-app download path for receiptUrl —
+ * the same storage, auth, and retention the Documents page already uses.
+ * Rendered only for associate-linked accounts (the vault upload requires
+ * one); admins keep the paste-a-URL path.
+ */
+function ReceiptCapture({
+  value,
+  onCaptured,
+}: {
+  value: string;
+  onCaptured: (url: string) => void;
+}) {
+  const { t } = useI18n();
+  const { user } = useAuth();
+  const [busy, setBusy] = useState(false);
+  if (!user?.associateId) return null;
+
+  const handleFile = async (file: File | undefined) => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const doc = await uploadMyDocument(file, 'OTHER');
+      onCaptured(downloadDocumentUrl(doc.id));
+      toast.success(t('rmb.receiptAttached'));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t('rmb.failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickerProps = {
+    type: 'file' as const,
+    accept: 'image/*,application/pdf',
+    className: 'sr-only',
+    disabled: busy,
+    onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+      void handleFile(e.target.files?.[0]);
+      e.target.value = '';
+    },
+  };
+
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-2">
+      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-gold/60 px-3 py-1.5 coarse:min-h-11 text-xs font-medium text-gold hover:bg-gold/10">
+        <input {...pickerProps} capture="environment" />
+        {busy ? t('rmb.uploadingReceipt') : t('rmb.snapReceipt')}
+      </label>
+      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-navy-secondary px-3 py-1.5 coarse:min-h-11 text-xs text-silver hover:text-white hover:bg-navy-secondary/40">
+        <input {...pickerProps} />
+        {t('rmb.chooseReceiptFile')}
+      </label>
+      {value.startsWith('/api/documents/') && (
+        <span className="text-2xs text-success">{t('rmb.receiptOnFile')}</span>
+      )}
+    </div>
+  );
+}
 
 // SETTLED is domain-only: approved and queued into a payroll run but not yet
 // paid — an in-flight state (gold). All other codes use the shared vocabulary
@@ -74,8 +137,21 @@ const KIND_LABEL: Record<ExpenseLineKind, string> = {
   OTHER: 'Other',
 };
 
+// Associate-facing display labels keyed off the API enums. The CSV export
+// keeps using the static English STATUS_LABEL map.
+const reimbStatusLabel = (
+  t: ReturnType<typeof useI18n>['t'],
+  s: ReimbursementStatus,
+): string => t(('rmb.status.' + s) as MessageKey);
+
+const lineKindLabel = (
+  t: ReturnType<typeof useI18n>['t'],
+  k: ExpenseLineKind,
+): string => t(('rmb.kind.' + k) as MessageKey);
+
 export function ReimbursementsHome() {
   const { user } = useAuth();
+  const { t } = useI18n();
   const canApprove = user ? hasCapability(user.role, 'approve:reimbursement') : false;
   const canSettle = user ? hasCapability(user.role, 'settle:reimbursement') : false;
   const [rows, setRows] = useState<ReimbursementSummary[] | null>(null);
@@ -93,7 +169,7 @@ export function ReimbursementsHome() {
     setSelected(new Set());
     listReimbursements()
       .then((r) => setRows(r.reimbursements))
-      .catch(() => setLoadError('Failed to load reimbursements.'));
+      .catch(() => setLoadError(t('rmb.loadFailed')));
   };
   useEffect(() => {
     refresh();
@@ -154,15 +230,22 @@ export function ReimbursementsHome() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Reimbursements"
-        subtitle="Submit, approve, and pay associate expense reports."
+        title={t('rmb.title')}
+        subtitle={
+          // Admins keep the fuller workflow line; associates get their own voice.
+          canApprove || canSettle
+            ? 'Submit, approve, and pay associate expense reports.'
+            : t('rmb.subtitle')
+        }
         breadcrumbs={[{ label: 'Payroll' }, { label: 'Spend' }]}
       />
       <div className="flex flex-wrap items-center gap-3">
         <div className="text-sm text-silver">
-          Total pending:{' '}
+          {t('rmb.totalPending')}{' '}
           <span className="font-medium text-white">{fmtMoney(pendingTotal)}</span>{' '}
-          across {pending.length} report{pending.length === 1 ? '' : 's'}
+          {pending.length === 1
+            ? t('rmb.acrossReportOne')
+            : t('rmb.acrossReports', { count: pending.length })}
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {canApprove && (
@@ -181,7 +264,7 @@ export function ReimbursementsHome() {
             <Download className="mr-2 h-4 w-4" /> Export CSV
           </Button>
           <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New report
+            <Plus className="mr-2 h-4 w-4" /> {t('rmb.newReport')}
           </Button>
         </div>
       </div>
@@ -198,7 +281,7 @@ export function ReimbursementsHome() {
               active={statusFilter === s}
               onClick={() => setStatusFilter(s)}
             >
-              {s === 'ALL' ? 'All' : STATUS_LABEL[s]}
+              {s === 'ALL' ? t('rmb.filterAll') : reimbStatusLabel(t, s)}
             </FilterChip>
           ),
         )}
@@ -207,7 +290,7 @@ export function ReimbursementsHome() {
           className="w-56"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search associate or title…"
+          placeholder={t('rmb.searchPlaceholder')}
           aria-label="Search reimbursements"
         />
       </div>
@@ -218,7 +301,7 @@ export function ReimbursementsHome() {
               <ErrorBanner
                 action={
                   <Button size="sm" variant="secondary" onClick={refresh}>
-                    Retry
+                    {t('rmb.retry')}
                   </Button>
                 }
               >
@@ -230,24 +313,24 @@ export function ReimbursementsHome() {
           ) : rows.length === 0 ? (
             <EmptyState
               icon={Receipt}
-              title="No reimbursements"
-              description="Submit your first expense report to get started."
+              title={t('rmb.emptyTitle')}
+              description={t('rmb.emptyDesc')}
             />
           ) : visible.length === 0 ? (
             <div className="p-6 text-sm text-silver">
-              No reports match the current filters.
+              {t('rmb.noMatch')}
             </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   {canApprove && <TableHead className="w-8"></TableHead>}
-                  <TableHead>Title</TableHead>
-                  <TableHead className="hidden md:table-cell">Submitter</TableHead>
-                  <TableHead className="hidden lg:table-cell text-right">Lines</TableHead>
-                  <TableHead className="text-right">Total</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden md:table-cell">Submitted</TableHead>
+                  <TableHead>{t('rmb.colTitle')}</TableHead>
+                  <TableHead className="hidden md:table-cell">{t('rmb.colSubmitter')}</TableHead>
+                  <TableHead className="hidden lg:table-cell text-right">{t('rmb.colLines')}</TableHead>
+                  <TableHead className="text-right">{t('rmb.colTotal')}</TableHead>
+                  <TableHead>{t('rmb.colStatus')}</TableHead>
+                  <TableHead className="hidden md:table-cell">{t('rmb.colSubmitted')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -286,7 +369,7 @@ export function ReimbursementsHome() {
                       {fmtMoney(r.totalAmount, { currency: r.currency })}
                     </TableCell>
                     <TableCell>
-                      <StatusBadge status={r.status} overrides={REIMB_STATUS_TONES} label={STATUS_LABEL[r.status]} />
+                      <StatusBadge status={r.status} overrides={REIMB_STATUS_TONES} label={reimbStatusLabel(t, r.status)} />
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
                       {fmtDate(r.submittedAt)}
@@ -327,13 +410,14 @@ function NewReportDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
 
   const onSubmit = async () => {
     if (!title.trim()) {
-      toast.error('Title required.');
+      toast.error(t('rmb.titleRequired'));
       return;
     }
     setSaving(true);
@@ -342,10 +426,10 @@ function NewReportDrawer({
         title: title.trim(),
         description: description.trim() || null,
       });
-      toast.success('Draft created.');
+      toast.success(t('rmb.draftCreated'));
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('rmb.failed'));
     } finally {
       setSaving(false);
     }
@@ -353,20 +437,20 @@ function NewReportDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>New expense report</DrawerTitle>
+        <DrawerTitle>{t('rmb.newReportTitle')}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Title</Label>
+          <Label>{t('rmb.titleLabel')}</Label>
           <Input
             className="mt-1"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            placeholder="2026-04 client travel"
+            placeholder={t('rmb.titlePlaceholder')}
           />
         </div>
         <div>
-          <Label>Description</Label>
+          <Label>{t('rmb.descriptionLabel')}</Label>
           <Textarea
             className="mt-1"
             value={description}
@@ -376,10 +460,10 @@ function NewReportDrawer({
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
-          Cancel
+          {t('rmb.cancel')}
         </Button>
         <Button onClick={onSubmit} disabled={saving}>
-          {saving ? 'Saving…' : 'Create draft'}
+          {saving ? t('rmb.saving') : t('rmb.createDraft')}
         </Button>
       </DrawerFooter>
     </Drawer>
@@ -399,6 +483,7 @@ function ReimbursementDrawer({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const { t } = useI18n();
   const prompt = usePrompt();
   const confirm = useConfirm();
   const [data, setData] = useState<ReimbursementFull | null>(null);
@@ -410,7 +495,7 @@ function ReimbursementDrawer({
     setLoadError(null);
     getReimbursement(summary.id)
       .then(setData)
-      .catch(() => setLoadError('Failed to load this reimbursement.'));
+      .catch(() => setLoadError(t('rmb.loadOneFailed')));
   };
   useEffect(() => {
     refresh();
@@ -420,11 +505,11 @@ function ReimbursementDrawer({
   const onSubmit = async () => {
     try {
       await submitReimbursement(summary.id);
-      toast.success('Submitted for approval.');
+      toast.success(t('rmb.submittedToast'));
       refresh();
       onChanged();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('rmb.failed'));
     }
   };
 
@@ -466,21 +551,22 @@ function ReimbursementDrawer({
 
   const onDeleteLine = async (line: { id: string; description: string; amount: string }) => {
     const ok = await confirm({
-      title: 'Remove this expense line?',
-      description: `"${line.description}" (${fmtMoney(line.amount, {
-        currency: data?.currency,
-      })}) will be removed from the report.`,
-      confirmLabel: 'Remove line',
+      title: t('rmb.removeLineTitle'),
+      description: t('rmb.removeLineDesc', {
+        description: line.description,
+        amount: fmtMoney(line.amount, { currency: data?.currency }),
+      }),
+      confirmLabel: t('rmb.removeLineConfirm'),
       destructive: true,
     });
     if (!ok) return;
     try {
       await deleteExpenseLine(line.id);
-      toast.success('Line removed.');
+      toast.success(t('rmb.lineRemoved'));
       refresh();
       onChanged();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('rmb.failed'));
     }
   };
 
@@ -496,7 +582,7 @@ function ReimbursementDrawer({
           <ErrorBanner
             action={
               <Button size="sm" variant="secondary" onClick={refresh}>
-                Retry
+                {t('rmb.retry')}
               </Button>
             }
           >
@@ -507,60 +593,60 @@ function ReimbursementDrawer({
         ) : (
           <>
             <div className="flex items-center gap-3">
-              <StatusBadge status={data.status} overrides={REIMB_STATUS_TONES} label={STATUS_LABEL[data.status]} />
+              <StatusBadge status={data.status} overrides={REIMB_STATUS_TONES} label={reimbStatusLabel(t, data.status)} />
               <div className="text-sm text-silver">
-                Total: {fmtMoney(data.totalAmount, { currency: data.currency })}
+                {t('rmb.totalLabel')}{' '}
+                {fmtMoney(data.totalAmount, { currency: data.currency })}
               </div>
             </div>
             {data.managerNote && (
               <div className="bg-navy-secondary/40 border border-navy-secondary rounded-md p-3 text-sm">
-                <div className="font-medium text-white">Manager note:</div>
+                <div className="font-medium text-white">{t('rmb.managerNote')}</div>
                 <div className="text-silver">{data.managerNote}</div>
               </div>
             )}
             {data.settleNote && (
               <div className="bg-navy-secondary/40 border border-navy-secondary rounded-md p-3 text-sm">
-                <div className="font-medium text-white">Settlement note:</div>
+                <div className="font-medium text-white">{t('rmb.settlementNote')}</div>
                 <div className="text-silver">{data.settleNote}</div>
               </div>
             )}
             {data.status === 'SETTLED' && (
               <div className="bg-accent/10 border border-accent/40 rounded-md p-3 text-sm text-white">
-                Queued for the next regular payroll run. Will be added to net pay
-                (after taxes) when that run is created.
+                {t('rmb.settledBanner')}
               </div>
             )}
             {data.status === 'PAID' && (
               <div className="bg-success/10 border border-success/40 rounded-md p-3 text-sm text-white">
-                Paid out on payroll item {data.payrollItemId ?? '—'}.
+                {t('rmb.paidBanner', { id: data.payrollItemId ?? '—' })}
               </div>
             )}
             {data.rejectionReason && (
               <div className="bg-alert/20 border border-alert/40 rounded-md p-3 text-sm text-white">
-                <div className="font-medium">Rejection reason:</div>
+                <div className="font-medium">{t('rmb.rejectionReason')}</div>
                 <div>{data.rejectionReason}</div>
               </div>
             )}
             <Card>
               <CardContent className="p-4 space-y-3">
                 <div className="flex justify-between items-center">
-                  <div className="text-sm font-medium text-white">Line items</div>
+                  <div className="text-sm font-medium text-white">{t('rmb.lineItems')}</div>
                   {editable && (
                     <Button size="sm" onClick={() => setShowAddLine(true)}>
-                      <Plus className="mr-1 h-3 w-3" /> Add line
+                      <Plus className="mr-1 h-3 w-3" /> {t('rmb.addLine')}
                     </Button>
                   )}
                 </div>
                 {data.lines.length === 0 ? (
-                  <div className="text-sm text-silver">No lines yet.</div>
+                  <div className="text-sm text-silver">{t('rmb.noLines')}</div>
                 ) : (
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Date</TableHead>
-                        <TableHead className="hidden md:table-cell">Kind</TableHead>
-                        <TableHead>Description</TableHead>
-                        <TableHead className="text-right">Amount</TableHead>
+                        <TableHead>{t('rmb.colDate')}</TableHead>
+                        <TableHead className="hidden md:table-cell">{t('rmb.colKind')}</TableHead>
+                        <TableHead>{t('rmb.colDescription')}</TableHead>
+                        <TableHead className="text-right">{t('rmb.colAmount')}</TableHead>
                         {editable && <TableHead className="w-12"></TableHead>}
                       </TableRow>
                     </TableHeader>
@@ -568,10 +654,10 @@ function ReimbursementDrawer({
                       {data.lines.map((l) => (
                         <TableRow key={l.id}>
                           <TableCell>{fmtDate(parseYmd(l.incurredOn))}</TableCell>
-                          <TableCell className="hidden md:table-cell">{KIND_LABEL[l.kind]}</TableCell>
+                          <TableCell className="hidden md:table-cell">{lineKindLabel(t, l.kind)}</TableCell>
                           <TableCell>
                             {l.description}
-                            <div className="text-xs2 text-silver/70 md:hidden">{KIND_LABEL[l.kind]}</div>
+                            <div className="text-xs2 text-silver/70 md:hidden">{lineKindLabel(t, l.kind)}</div>
                           </TableCell>
                           <TableCell className="text-right tabular-nums">
                             {fmtMoney(l.amount, { currency: data.currency })}
@@ -596,7 +682,7 @@ function ReimbursementDrawer({
             </Card>
             <div className="flex flex-wrap gap-2 justify-end">
               {editable && data.lines.length > 0 && (
-                <Button onClick={onSubmit}>Submit for approval</Button>
+                <Button onClick={onSubmit}>{t('rmb.submitForApproval')}</Button>
               )}
               {canApprove && data.status === 'SUBMITTED' && (
                 <>
@@ -622,7 +708,7 @@ function ReimbursementDrawer({
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
-          Close
+          {t('rmb.close')}
         </Button>
       </DrawerFooter>
       {showAddLine && data && (
@@ -761,6 +847,7 @@ function AddLineDrawer({
   onClose: () => void;
   onSaved: (keepOpen?: boolean) => void;
 }) {
+  const { t } = useI18n();
   const [kind, setKind] = useState<ExpenseLineKind>('RECEIPT');
   const [description, setDescription] = useState('');
   const [incurredOn, setIncurredOn] = useState(ymdLocal());
@@ -794,15 +881,15 @@ function AddLineDrawer({
 
   const onSubmit = async (addAnother: boolean) => {
     if (!description.trim() || !incurredOn) {
-      toast.error('Description and date required.');
+      toast.error(t('rmb.lineValidation'));
       return;
     }
     if (kind === 'MILEAGE' && (!miles || !ratePerMile)) {
-      toast.error('Miles and rate required for mileage.');
+      toast.error(t('rmb.mileageValidation'));
       return;
     }
     if (kind !== 'MILEAGE' && !amount) {
-      toast.error('Amount required.');
+      toast.error(t('rmb.amountRequired'));
       return;
     }
     setSaving(true);
@@ -818,7 +905,7 @@ function AddLineDrawer({
         category: category.trim() || null,
         receiptUrl: receiptUrl.trim() || null,
       });
-      toast.success('Line added.');
+      toast.success(t('rmb.lineAdded'));
       if (addAnother) {
         // Reset the form but keep the drawer open and the date (and the
         // kind + mileage rate, which usually repeat across lines).
@@ -831,7 +918,7 @@ function AddLineDrawer({
       }
       onSaved(addAnother);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('rmb.failed'));
     } finally {
       setSaving(false);
     }
@@ -840,11 +927,11 @@ function AddLineDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>Add expense line</DrawerTitle>
+        <DrawerTitle>{t('rmb.addLineTitle')}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Kind</Label>
+          <Label>{t('rmb.kindLabel')}</Label>
           <Select
             className="mt-1"
             value={kind}
@@ -852,13 +939,13 @@ function AddLineDrawer({
           >
             {(Object.keys(KIND_LABEL) as ExpenseLineKind[]).map((k) => (
               <option key={k} value={k}>
-                {KIND_LABEL[k]}
+                {lineKindLabel(t, k)}
               </option>
             ))}
           </Select>
         </div>
         <div>
-          <Label>Description</Label>
+          <Label>{t('rmb.descriptionLabel')}</Label>
           <Input
             className="mt-1"
             value={description}
@@ -866,7 +953,7 @@ function AddLineDrawer({
           />
         </div>
         <div>
-          <Label>Incurred on</Label>
+          <Label>{t('rmb.incurredOn')}</Label>
           <Input
             type="date"
             className="mt-1"
@@ -878,7 +965,7 @@ function AddLineDrawer({
           <div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Miles</Label>
+                <Label>{t('rmb.miles')}</Label>
                 <Input
                   type="number"
                   step="0.01"
@@ -888,7 +975,7 @@ function AddLineDrawer({
                 />
               </div>
               <div>
-                <Label>Rate / mile ($)</Label>
+                <Label>{t('rmb.ratePerMile')}</Label>
                 <Input
                   type="number"
                   step="0.0001"
@@ -907,7 +994,7 @@ function AddLineDrawer({
           </div>
         ) : (
           <div>
-            <Label>Amount ($)</Label>
+            <Label>{t('rmb.amount')}</Label>
             <Input
               type="number"
               step="0.01"
@@ -919,7 +1006,7 @@ function AddLineDrawer({
         )}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label>Merchant</Label>
+            <Label>{t('rmb.merchant')}</Label>
             <Input
               className="mt-1"
               value={merchant}
@@ -927,7 +1014,7 @@ function AddLineDrawer({
             />
           </div>
           <div>
-            <Label>Category</Label>
+            <Label>{t('rmb.categoryLabel')}</Label>
             <Input
               className="mt-1"
               value={category}
@@ -943,7 +1030,14 @@ function AddLineDrawer({
           </div>
         </div>
         <div>
-          <Label htmlFor="add-line-receipt-url">Receipt link (URL)</Label>
+          <Label htmlFor="add-line-receipt-url">{t('rmb.receiptLink')}</Label>
+          {/* Phone-first path: snap the paper receipt into the associate's
+              own document vault and link it — a URL field alone fully
+              blocked anyone holding a paper receipt. */}
+          <ReceiptCapture
+            value={receiptUrl}
+            onCaptured={(url) => setReceiptUrl(url)}
+          />
           <Input
             id="add-line-receipt-url"
             className="mt-1"
@@ -953,30 +1047,37 @@ function AddLineDrawer({
             aria-describedby="add-line-receipt-url-hint"
           />
           <FormHint id="add-line-receipt-url-hint">
-            Paste a link to the receipt — a shared-drive file, scan, or photo URL.
-            Receipt lines without a link can only be settled with an HR waiver.
+            {t('rmb.receiptHint')}
           </FormHint>
         </div>
         <div className="text-xs text-silver border-t border-navy-secondary pt-2">
-          Report total: {fmtMoney(existingTotal, { currency })} across {existingLineCount}{' '}
-          line{existingLineCount === 1 ? '' : 's'}
+          {existingLineCount === 1
+            ? t('rmb.runningTotalOne', {
+                total: fmtMoney(existingTotal, { currency }),
+              })
+            : t('rmb.runningTotal', {
+                total: fmtMoney(existingTotal, { currency }),
+                count: existingLineCount,
+              })}
           {Number.isFinite(lineAmount) &&
-            ` — ${fmtMoney(existingTotal + lineAmount, { currency })} with this line`}
+            ` ${t('rmb.withThisLine', {
+              total: fmtMoney(existingTotal + lineAmount, { currency }),
+            })}`}
         </div>
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
-          Cancel
+          {t('rmb.cancel')}
         </Button>
         <Button
           variant="secondary"
           onClick={() => onSubmit(true)}
           disabled={saving}
         >
-          {saving ? 'Saving…' : 'Save & add another'}
+          {saving ? t('rmb.saving') : t('rmb.saveAddAnother')}
         </Button>
         <Button onClick={() => onSubmit(false)} disabled={saving}>
-          {saving ? 'Saving…' : 'Add'}
+          {saving ? t('rmb.saving') : t('rmb.add')}
         </Button>
       </DrawerFooter>
     </Drawer>

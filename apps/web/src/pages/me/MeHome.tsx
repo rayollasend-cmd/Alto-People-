@@ -446,7 +446,41 @@ function ProfilePanel({
             label={t('me.fld.department')}
             value={profile.department?.name ?? '—'}
           />
-          <ReadonlyField label={t('me.fld.manager')} value={profile.managerName ?? '—'} />
+          {/* The manager is a person you can REACH, not an inert string —
+              associates have no directory access, so tel:/mailto: here is
+              their only in-app route to their boss (running late, sick,
+              lost at a new site). */}
+          <div>
+            <ReadonlyField label={t('me.fld.manager')} value={profile.managerName ?? '—'} />
+            {(profile.managerPhone || profile.managerEmail) && (
+              <div className="mt-1.5 flex flex-wrap gap-2">
+                {profile.managerPhone && (
+                  <a
+                    href={`tel:${profile.managerPhone.replace(/[^\d+]/g, '')}`}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-navy-secondary px-2.5 py-1 text-xs text-gold hover:bg-navy-secondary/40 coarse:min-h-11 coarse:px-3"
+                  >
+                    {t('me.mgr.call')}
+                  </a>
+                )}
+                {profile.managerPhone && (
+                  <a
+                    href={`sms:${profile.managerPhone.replace(/[^\d+]/g, '')}`}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-navy-secondary px-2.5 py-1 text-xs text-gold hover:bg-navy-secondary/40 coarse:min-h-11 coarse:px-3"
+                  >
+                    {t('me.mgr.text')}
+                  </a>
+                )}
+                {profile.managerEmail && (
+                  <a
+                    href={`mailto:${profile.managerEmail}`}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-navy-secondary px-2.5 py-1 text-xs text-gold hover:bg-navy-secondary/40 coarse:min-h-11 coarse:px-3"
+                  >
+                    {t('me.mgr.email')}
+                  </a>
+                )}
+              </div>
+            )}
+          </div>
           <ReadonlyField
             label={t('me.fld.jobProfile')}
             value={profile.jobProfile?.title ?? '—'}

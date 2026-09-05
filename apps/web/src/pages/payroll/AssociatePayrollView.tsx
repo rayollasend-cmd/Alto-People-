@@ -23,12 +23,12 @@ import {
 } from '@/lib/payrollApi';
 import { fileCase } from '@/lib/hrCases123Api';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtMoney, parseYmd } from '@/lib/format';
+import { fmtDate, fmtHours, fmtMoney, parseYmd } from '@/lib/format';
 import { statusTone } from '@/lib/status';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
-import { dayHeading, groupByDayBy } from '@/lib/dayGroup';
+import { dayHeading, groupByDayBy, isRelativeDayHeading } from '@/lib/dayGroup';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Select } from '@/components/ui/Select';
@@ -183,7 +183,7 @@ export function AssociatePayrollView() {
               <PaystubGroup
                 key={g.key}
                 heading={
-                  /^(Today|Yesterday)$/.test(dayHeading(g.key))
+                  isRelativeDayHeading(dayHeading(g.key))
                     ? `${dayHeading(g.key)} · ${fmtDate(parseYmd(g.key))}`
                     : dayHeading(g.key)
                 }
@@ -275,15 +275,20 @@ function W4Card() {
   const [form, setForm] = useState<MyW4 | null>(null);
   const [busy, setBusy] = useState(false);
   const [missing, setMissing] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const load = () =>
     getMyW4()
       .then((r) => {
         setW4(r);
         setMissing(false);
+        setLoadFailed(false);
       })
       .catch((err) => {
+        // no_w4 = genuinely none on file. Anything else is a FAILED fetch —
+        // it used to render a silent blank card with no way out.
         if (err instanceof ApiError && err.code === 'no_w4') setMissing(true);
+        else setLoadFailed(true);
       });
   useEffect(() => {
     void load();
@@ -329,6 +334,18 @@ function W4Card() {
           </Button>
         )}
       </div>
+      {loadFailed && !editing && (
+        <p className="text-xs text-silver">
+          {t('pay.w4LoadFailed')}{' '}
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="inline-flex items-center coarse:min-h-11 text-gold hover:text-gold-bright underline underline-offset-2"
+          >
+            {t('common.retry')}
+          </button>
+        </p>
+      )}
       {missing && !editing && (
         <div className="space-y-2">
           <p className="text-xs text-silver">{t('pay.w4None')}</p>
@@ -386,11 +403,12 @@ function W4Card() {
             value={form.extraWithholding}
             onChange={(n) => setForm({ ...form, extraWithholding: n })}
           />
-          <label className="flex items-center gap-2 text-xs text-silver">
+          <label className="flex items-center gap-2 coarse:min-h-11 text-xs text-silver">
             <input
               type="checkbox"
               checked={form.multipleJobs}
               onChange={(e) => setForm({ ...form, multipleJobs: e.target.checked })}
+              className="h-4 w-4 coarse:h-5 coarse:w-5 accent-[#C9A24C]"
             />
             {t('pay.w4MultipleJobs')}
           </label>
@@ -421,10 +439,18 @@ function PayoutMethodCard() {
   const [type, setType] = useState<'CHECKING' | 'SAVINGS'>('CHECKING');
   const [busy, setBusy] = useState(false);
 
+  const [loadFailed, setLoadFailed] = useState(false);
   const load = () =>
     getMyPayoutMethod()
-      .then((r) => setMethod(r.method))
-      .catch(() => setMethod(null));
+      .then((r) => {
+        setMethod(r.method);
+        setLoadFailed(false);
+      })
+      .catch(() => {
+        // A failed fetch must NEVER render as "no direct deposit on file" —
+        // for an hourly worker that reads as "my bank account vanished".
+        setLoadFailed(true);
+      });
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -471,8 +497,20 @@ function PayoutMethodCard() {
       </div>
       {!editing && (
         <div className="text-xs text-silver">
-          {method === undefined && <Skeleton className="h-4 w-40" />}
-          {method === null && t('pay.ddNone')}
+          {loadFailed && (
+            <span>
+              {t('pay.ddLoadFailed')}{' '}
+              <button
+                type="button"
+                onClick={() => void load()}
+                className="inline-flex items-center coarse:min-h-11 text-gold hover:text-gold-bright underline underline-offset-2"
+              >
+                {t('common.retry')}
+              </button>
+            </span>
+          )}
+          {!loadFailed && method === undefined && <Skeleton className="h-4 w-40" />}
+          {!loadFailed && method === null && t('pay.ddNone')}
           {method && method.branchCard && t('pay.ddBranchCard')}
           {method && !method.branchCard && (
             <span>
@@ -669,7 +707,7 @@ function PaystubCard({
           )}
           <div className="flex-1 text-sm text-silver">
             {t('pay.hrsAtRate', {
-              hours: item.hoursWorked.toFixed(2),
+              hours: fmtHours(item.hoursWorked),
               rate: fmtMoney(item.hourlyRate),
             })}
           </div>
@@ -905,7 +943,7 @@ function AskPaycheckDialog({
     }
     setSubmitting(true);
     try {
-      const when = item.disbursedAt ? fmtDate(item.disbursedAt) : 'not yet disbursed';
+      const when = item.disbursedAt ? fmtDate(item.disbursedAt) : t('pay.notDisbursed');
       await fileCase({
         category: 'PAYROLL',
         subject: `Paycheck ${item.status.toLowerCase()} — net ${fmtMoney(item.netPay)}`,
@@ -925,15 +963,17 @@ function AskPaycheckDialog({
       // where the answer arrives, so link straight to it.
       toast.success(t('pay.askSentToast'), {
         action: {
-          label: 'View in My cases',
-          onClick: () => navigate('/hr-cases'),
+          label: t('pay.viewInCases'),
+          // ?return= gives the case page a way back to the paycheck being
+          // disputed — the house deep-link convention, previously admin-only.
+          onClick: () => navigate(`/hr-cases?return=${encodeURIComponent('/payroll')}`),
         },
       });
       setMessage('');
       onClose();
     } catch (err) {
       toast.error(t('pay.askSendFailed'), {
-        description: err instanceof Error ? err.message : 'Something went wrong.',
+        description: err instanceof Error ? err.message : t('common.wentWrong'),
       });
     } finally {
       setSubmitting(false);

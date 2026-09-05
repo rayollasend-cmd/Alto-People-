@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireCapability } from '../middleware/auth.js';
+import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { notifyAssociate } from '../lib/notify.js';
 
 /**
@@ -209,6 +209,43 @@ lms94Router.post('/courses/:id/enroll', MANAGE, async (req, res) => {
     });
   }
   res.status(201).json({ created, skipped });
+});
+
+/**
+ * Associate self-view — "my training". Every other learning route is
+ * compliance-gated, which left associates with a page whose every fetch
+ * 403'd: they could be ENROLLED in required training but had no surface
+ * that showed it. Auth-only; scoped hard to the caller's own associateId.
+ */
+lms94Router.get('/learning/me', requireAuth, async (req, res) => {
+  const associateId = req.user?.associateId;
+  if (!associateId) {
+    throw new HttpError(403, 'not_an_associate', 'My-training is for associate-linked accounts.');
+  }
+  const rows = await prisma.courseEnrollment.findMany({
+    where: { associateId },
+    include: {
+      course: {
+        select: { title: true, description: true, isRequired: true, validityDays: true },
+      },
+    },
+    orderBy: { assignedAt: 'desc' },
+    take: 200,
+  });
+  res.json({
+    enrollments: rows.map((e) => ({
+      id: e.id,
+      courseId: e.courseId,
+      courseTitle: e.course.title,
+      courseDescription: e.course.description,
+      isRequired: e.course.isRequired,
+      status: e.status,
+      assignedAt: e.assignedAt.toISOString(),
+      completedAt: e.completedAt?.toISOString() ?? null,
+      expiresAt: e.expiresAt?.toISOString() ?? null,
+      score: e.score?.toString() ?? null,
+    })),
+  });
 });
 
 lms94Router.get('/enrollments', VIEW, async (req, res) => {

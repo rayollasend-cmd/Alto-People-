@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import { getApplication, getProfile, submitProfile } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
@@ -44,6 +45,7 @@ function readDraft(key: string): ProfileDraft | null {
 export function ProfileInfoTask() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
+  const { t } = useI18n();
   const navigate = useNavigate();
 
   const draftKey = draftKeyFor(applicationId ?? '');
@@ -179,14 +181,14 @@ export function ProfileInfoTask() {
       }
       navigate(next?.route ?? backTo, { replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Submission failed.');
+      setError(err instanceof ApiError ? err.message : t('ob.profile.submitFailed'));
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <TaskShell title="Profile information" backTo={backTo}>
+    <TaskShell title={t('ob.profile.title')} backTo={backTo}>
       {/* onInput bubbles from every field (inputs and the state select) —
           one listener marks the form user-dirty for the draft gate. */}
       <form
@@ -197,7 +199,7 @@ export function ProfileInfoTask() {
         className="space-y-4"
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="First name" required>
+          <Field label={t('ob.profile.firstName')} required>
             <input
               type="text"
               required
@@ -207,7 +209,7 @@ export function ProfileInfoTask() {
               className={inputCls}
             />
           </Field>
-          <Field label="Last name" required>
+          <Field label={t('ob.profile.lastName')} required>
             <input
               type="text"
               required
@@ -217,7 +219,7 @@ export function ProfileInfoTask() {
               className={inputCls}
             />
           </Field>
-          <Field label="Date of birth">
+          <Field label={t('ob.profile.dob')}>
             <input
               type="date"
               autoComplete="bday"
@@ -226,7 +228,7 @@ export function ProfileInfoTask() {
               className={inputCls}
             />
           </Field>
-          <Field label="Phone">
+          <Field label={t('ob.profile.phone')}>
             <input
               type="tel"
               inputMode="tel"
@@ -238,7 +240,7 @@ export function ProfileInfoTask() {
           </Field>
         </div>
 
-        <Field label="Address line 1">
+        <Field label={t('ob.profile.addr1')}>
           <input
             type="text"
             autoComplete="address-line1"
@@ -247,7 +249,7 @@ export function ProfileInfoTask() {
             className={inputCls}
           />
         </Field>
-        <Field label="Address line 2">
+        <Field label={t('ob.profile.addr2')}>
           <input
             type="text"
             autoComplete="address-line2"
@@ -259,7 +261,7 @@ export function ProfileInfoTask() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="sm:col-span-2">
-            <Field label="City">
+            <Field label={t('ob.profile.city')}>
               <input
                 type="text"
                 autoComplete="address-level2"
@@ -269,7 +271,7 @@ export function ProfileInfoTask() {
               />
             </Field>
           </div>
-          <Field label="State">
+          <Field label={t('ob.profile.state')}>
             <Select
               autoComplete="address-level1"
               value={state}
@@ -283,7 +285,7 @@ export function ProfileInfoTask() {
               ))}
             </Select>
           </Field>
-          <Field label="ZIP">
+          <Field label={t('ob.profile.zip')}>
             <input
               type="text"
               inputMode="numeric"
@@ -327,18 +329,35 @@ const CHAINABLE_KINDS = new Set([
 ]);
 
 // Short names for the "Save & continue → …" button suffix.
-const TASK_SHORT_LABEL: Record<string, string> = {
-  PROFILE_INFO: 'Profile',
-  PROFILE_PHOTO: 'Photo',
-  DOCUMENT_UPLOAD: 'Documents',
-  E_SIGN: 'E-sign',
-  BACKGROUND_CHECK: 'Background check',
-  W4: 'W-4',
-  DIRECT_DEPOSIT: 'Direct deposit',
-  POLICY_ACK: 'Policies',
-  J1_DOCS: 'J-1 docs',
-  I9_VERIFICATION: 'I-9',
-};
+function taskShortLabel(
+  t: ReturnType<typeof useI18n>['t'],
+  kind: string,
+): string | null {
+  switch (kind) {
+    case 'PROFILE_INFO':
+      return t('ob.shell.task.profile');
+    case 'PROFILE_PHOTO':
+      return t('ob.shell.task.photo');
+    case 'DOCUMENT_UPLOAD':
+      return t('ob.shell.task.documents');
+    case 'E_SIGN':
+      return t('ob.shell.task.esign');
+    case 'BACKGROUND_CHECK':
+      return t('ob.shell.task.backgroundCheck');
+    case 'W4':
+      return t('ob.shell.task.w4');
+    case 'DIRECT_DEPOSIT':
+      return t('ob.shell.task.directDeposit');
+    case 'POLICY_ACK':
+      return t('ob.shell.task.policies');
+    case 'J1_DOCS':
+      return t('ob.shell.task.j1Docs');
+    case 'I9_VERIFICATION':
+      return t('ob.shell.task.i9');
+    default:
+      return null;
+  }
+}
 
 export interface NextTaskTarget {
   route: string;
@@ -355,6 +374,7 @@ export interface NextTaskTarget {
 export function useNextTask(currentKind: string): NextTaskTarget | null {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
+  const { t } = useI18n();
   const [next, setNext] = useState<NextTaskTarget | null>(null);
   const isAssociate = user?.role === 'ASSOCIATE';
 
@@ -383,7 +403,7 @@ export function useNextTask(currentKind: string): NextTaskTarget | null {
           target
             ? {
                 route: `/onboarding/me/${applicationId}/tasks/${target.kind.toLowerCase()}`,
-                label: TASK_SHORT_LABEL[target.kind] ?? target.title,
+                label: taskShortLabel(t, target.kind) ?? target.title,
               }
             : null
         );
@@ -394,7 +414,7 @@ export function useNextTask(currentKind: string): NextTaskTarget | null {
     return () => {
       cancelled = true;
     };
-  }, [applicationId, isAssociate, currentKind]);
+  }, [applicationId, isAssociate, currentKind, t]);
 
   return next;
 }
@@ -416,7 +436,7 @@ export { Field };
 export function SubmitRow({
   submitting,
   backTo,
-  label = 'Save',
+  label,
   next,
 }: {
   submitting: boolean;
@@ -425,6 +445,8 @@ export function SubmitRow({
   /** When set, the button advertises the chained jump to the next task. */
   next?: NextTaskTarget | null;
 }) {
+  const { t } = useI18n();
+  const effectiveLabel = label ?? t('ob.shell.save');
   return (
     // Sticky on phones: "Submit W-4" used to sit below ~3 screens of form,
     // so the user finished typing and then scrolled hunting for the button.
@@ -434,14 +456,14 @@ export function SubmitRow({
     // Cancel-left / submit-right, matching every dialog footer in the app.
     <div className="sticky bottom-0 z-10 -mx-5 -mb-5 mt-2 flex items-center gap-3 border-t border-navy-secondary bg-navy/95 px-5 py-3 backdrop-blur pb-[max(0.75rem,env(safe-area-inset-bottom))] md:static md:z-auto md:mx-0 md:mb-0 md:border-t-0 md:bg-transparent md:p-0 md:pt-2 md:backdrop-blur-none">
       <Link to={backTo} className="text-sm text-silver hover:text-white">
-        Cancel
+        {t('ob.shell.cancel')}
       </Link>
       <Button type="submit" loading={submitting} disabled={submitting}>
         {submitting
-          ? 'Saving…'
+          ? t('ob.shell.saving')
           : next
-            ? `${label} & continue → ${next.label}`
-            : label}
+            ? t('ob.shell.saveContinue', { label: effectiveLabel, next: next.label })
+            : effectiveLabel}
       </Button>
     </div>
   );
@@ -456,13 +478,14 @@ export function TaskShell({
   children: React.ReactNode;
   backTo: string;
 }) {
+  const { t } = useI18n();
   return (
     <div className="mx-auto">
       <Link
         to={backTo}
-        className="text-sm text-silver hover:text-gold inline-block mb-3"
+        className="text-sm text-silver hover:text-gold inline-flex items-center coarse:min-h-11 mb-3"
       >
-        ← Back to checklist
+        {t('ob.shell.backToChecklist')}
       </Link>
       <h1 className="font-display text-3xl md:text-4xl text-white mb-6">
         {title}

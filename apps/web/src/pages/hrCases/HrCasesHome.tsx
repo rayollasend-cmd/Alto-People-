@@ -23,6 +23,7 @@ import {
   type QueueCaseRow,
 } from '@/lib/hrCases123Api';
 import { useAuth } from '@/lib/auth';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
 import { statusTone } from '@/lib/status';
 import {
@@ -89,8 +90,26 @@ const PRIORITY_LABELS: Record<CasePriority, string> = {
   URGENT: 'Urgent',
 };
 
+// Associate-facing display labels keyed off the API enums. The admin queue
+// (and CSV export) keeps using the static English *_LABELS maps.
+const caseStatusLabel = (
+  t: ReturnType<typeof useI18n>['t'],
+  s: CaseStatus,
+): string => t(('hrc.status.' + s) as MessageKey);
+
+const caseCategoryLabel = (
+  t: ReturnType<typeof useI18n>['t'],
+  c: CaseCategory,
+): string => t(('hrc.category.' + c) as MessageKey);
+
+const casePriorityLabel = (
+  t: ReturnType<typeof useI18n>['t'],
+  p: CasePriority,
+): string => t(('hrc.priority.' + p) as MessageKey);
+
 export function HrCasesHome() {
   const { user } = useAuth();
+  const { t } = useI18n();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
   const [tab, setTab] = useState<'mine' | 'queue'>('mine');
   const [mine, setMine] = useState<MyCaseRow[] | null>(null);
@@ -135,7 +154,7 @@ export function HrCasesHome() {
         .then((r) => setMine(r.cases))
         .catch((err) =>
           setMineError(
-            err instanceof ApiError ? err.message : 'Failed to load your cases.',
+            err instanceof ApiError ? err.message : t('hrc.loadMineFailed'),
           ),
         );
     } else {
@@ -184,7 +203,7 @@ export function HrCasesHome() {
   // keeps the conditional out of the JSX and the generic parameter explicit
   // (inference would otherwise narrow to 'mine').
   const tabOptions: SegmentedControlOption<'mine' | 'queue'>[] = [
-    { value: 'mine', label: 'My cases' },
+    { value: 'mine', label: t('hrc.tabMine') },
   ];
   if (canManage) {
     tabOptions.push({
@@ -234,8 +253,8 @@ export function HrCasesHome() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="HR cases"
-        subtitle="Ask HR a question, dispute a paycheck, raise a concern. HR triages and replies right here."
+        title={t('hrc.title')}
+        subtitle={t('hrc.subtitle')}
         breadcrumbs={[{ label: 'Workforce' }, { label: 'HR cases' }]}
       />
 
@@ -305,7 +324,7 @@ export function HrCasesHome() {
             </>
           )}
           <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> New case
+            <Plus className="mr-2 h-4 w-4" /> {t('hrc.newCase')}
           </Button>
         </div>
       </div>
@@ -318,7 +337,7 @@ export function HrCasesHome() {
                 <ErrorBanner
                   action={
                     <Button size="sm" variant="secondary" onClick={() => refresh()}>
-                      Retry
+                      {t('hrc.retry')}
                     </Button>
                   }
                 >
@@ -332,11 +351,11 @@ export function HrCasesHome() {
             ) : mine.length === 0 ? (
               <EmptyState
                 icon={MessageCircle}
-                title="No cases yet"
-                description="Have a question or concern? File a new case — HR will reply here."
+                title={t('hrc.emptyTitle')}
+                description={t('hrc.emptyDesc')}
                 action={
                   <Button onClick={() => setShowNew(true)}>
-                    <Plus className="mr-2 h-4 w-4" /> File a case
+                    <Plus className="mr-2 h-4 w-4" /> {t('hrc.fileACase')}
                   </Button>
                 }
               />
@@ -354,13 +373,14 @@ export function HrCasesHome() {
                         {c.subject}
                       </div>
                       <div className="text-xs text-silver mt-0.5">
-                        {CATEGORY_LABELS[c.category]} ·{' '}
+                        {caseCategoryLabel(t, c.category)} ·{' '}
                         {fmtDate(c.updatedAt)}
-                        {c.commentCount > 0 && ` · ${c.commentCount} replies`}
+                        {c.commentCount > 0 &&
+                          ` · ${t('hrc.replyCount', { count: c.commentCount })}`}
                       </div>
                     </div>
                     <Badge variant={statusTone(c.status, { overrides: CASE_STATUS_TONES })}>
-                      {STATUS_LABELS[c.status]}
+                      {caseStatusLabel(t, c.status)}
                     </Badge>
                   </button>
                 ))}
@@ -495,6 +515,7 @@ function NewCaseDrawer({
   onClose: () => void;
   onSaved: (id: string) => void;
 }) {
+  const { t } = useI18n();
   const [category, setCategory] = useState<CaseCategory>('BENEFITS');
   const [subject, setSubject] = useState('');
   const [description, setDescription] = useState('');
@@ -503,7 +524,7 @@ function NewCaseDrawer({
 
   const submit = async () => {
     if (!subject.trim() || !description.trim()) {
-      toast.error('Subject and description required.');
+      toast.error(t('hrc.validationRequired'));
       return;
     }
     setSaving(true);
@@ -514,10 +535,10 @@ function NewCaseDrawer({
         description: description.trim(),
         priority,
       });
-      toast.success('Case filed.');
+      toast.success(t('hrc.caseFiled'));
       onSaved(r.id);
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not file the case.');
+      toast.error(err instanceof ApiError ? err.message : t('hrc.fileFailed'));
     } finally {
       setSaving(false);
     }
@@ -532,11 +553,11 @@ function NewCaseDrawer({
       confirmDiscard={() => subject.trim().length > 0 || description.trim().length > 0}
     >
       <DrawerHeader>
-        <DrawerTitle>New HR case</DrawerTitle>
+        <DrawerTitle>{t('hrc.newCaseTitle')}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         <div>
-          <Label>Category</Label>
+          <Label>{t('hrc.categoryLabel')}</Label>
           <Select
             className="mt-1"
             value={category}
@@ -544,49 +565,49 @@ function NewCaseDrawer({
           >
             {(Object.keys(CATEGORY_LABELS) as CaseCategory[]).map((k) => (
               <option key={k} value={k}>
-                {CATEGORY_LABELS[k]}
+                {caseCategoryLabel(t, k)}
               </option>
             ))}
           </Select>
         </div>
         <div>
-          <Label>Subject</Label>
+          <Label>{t('hrc.subjectLabel')}</Label>
           <Input
             className="mt-1"
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
-            placeholder="One-line summary"
+            placeholder={t('hrc.subjectPlaceholder')}
           />
         </div>
         <div>
-          <Label>Description</Label>
+          <Label>{t('hrc.descriptionLabel')}</Label>
           <Textarea
             className="mt-1 h-40"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="What's going on, when did it happen, what would resolution look like…"
+            placeholder={t('hrc.descriptionPlaceholder')}
           />
         </div>
         <div>
-          <Label>Priority</Label>
+          <Label>{t('hrc.priorityLabel')}</Label>
           <Select
             className="mt-1"
             value={priority}
             onChange={(e) => setPriority(e.target.value as CasePriority)}
           >
-            <option value="LOW">Low</option>
-            <option value="MEDIUM">Medium</option>
-            <option value="HIGH">High</option>
-            <option value="URGENT">Urgent</option>
+            <option value="LOW">{t('hrc.priority.LOW')}</option>
+            <option value="MEDIUM">{t('hrc.priority.MEDIUM')}</option>
+            <option value="HIGH">{t('hrc.priority.HIGH')}</option>
+            <option value="URGENT">{t('hrc.priority.URGENT')}</option>
           </Select>
         </div>
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
-          Cancel
+          {t('hrc.cancel')}
         </Button>
         <Button onClick={submit} disabled={saving}>
-          {saving ? 'Filing…' : 'File case'}
+          {saving ? t('hrc.filing') : t('hrc.fileCase')}
         </Button>
       </DrawerFooter>
     </Drawer>
@@ -636,6 +657,7 @@ function CaseDetailDrawer({
   canManage: boolean;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [data, setData] = useState<CaseDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reply, setReply] = useState('');
@@ -651,7 +673,7 @@ function CaseDetailDrawer({
       .then(setData)
       .catch((err) =>
         setLoadError(
-          err instanceof ApiError ? err.message : 'Failed to load case.',
+          err instanceof ApiError ? err.message : t('hrc.loadCaseFailed'),
         ),
       );
   };
@@ -667,12 +689,12 @@ function CaseDetailDrawer({
     if (!reply.trim()) return true;
     try {
       await addComment(caseId, reply.trim(), internal);
-      toast.success(internal ? 'Internal note added.' : 'Reply sent.');
+      toast.success(internal ? 'Internal note added.' : t('hrc.replySent'));
       setReply('');
       setInternal(false);
       return true;
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Could not send the reply.');
+      toast.error(err instanceof ApiError ? err.message : t('hrc.replyFailed'));
       return false;
     }
   };
@@ -687,14 +709,14 @@ function CaseDetailDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>{data?.subject ?? 'Case details'}</DrawerTitle>
+        <DrawerTitle>{data?.subject ?? t('hrc.caseDetails')}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         {loadError ? (
           <ErrorBanner
             action={
               <Button size="sm" variant="secondary" onClick={() => refresh()}>
-                Retry
+                {t('hrc.retry')}
               </Button>
             }
           >
@@ -706,20 +728,21 @@ function CaseDetailDrawer({
           <>
             <div className="flex items-center gap-2 flex-wrap">
               <Badge variant={statusTone(data.status, { overrides: CASE_STATUS_TONES })}>
-                {STATUS_LABELS[data.status]}
+                {caseStatusLabel(t, data.status)}
               </Badge>
               <Badge variant={PRIORITY_VARIANT[data.priority]}>
-                {PRIORITY_LABELS[data.priority]}
+                {casePriorityLabel(t, data.priority)}
               </Badge>
-              <Badge variant="outline">{CATEGORY_LABELS[data.category]}</Badge>
+              <Badge variant="outline">{caseCategoryLabel(t, data.category)}</Badge>
               {data.assignedToEmail && (
                 <span className="text-xs text-silver">
-                  Assigned to {data.assignedToEmail}
+                  {t('hrc.assignedTo', { email: data.assignedToEmail })}
                 </span>
               )}
             </div>
             <div className="text-xs text-silver">
-              Filed by {data.associateName} · {fmtDateTime(data.createdAt)}
+              {t('hrc.filedBy', { name: data.associateName })} ·{' '}
+              {fmtDateTime(data.createdAt)}
             </div>
             <div className="text-sm text-white whitespace-pre-wrap p-3 rounded border border-navy-secondary bg-midnight">
               <LinkifiedBody text={data.description} />
@@ -736,10 +759,10 @@ function CaseDetailDrawer({
 
             <div className="space-y-2">
               <div className="text-xs uppercase tracking-wider text-silver">
-                Conversation
+                {t('hrc.conversation')}
               </div>
               {data.comments.length === 0 ? (
-                <div className="text-sm text-silver">No replies yet.</div>
+                <div className="text-sm text-silver">{t('hrc.noReplies')}</div>
               ) : (
                 <div className="space-y-2">
                   {data.comments.map((c) => (
@@ -755,7 +778,7 @@ function CaseDetailDrawer({
                         {c.internalNote && (
                           <Lock className="h-3 w-3 text-warning" />
                         )}
-                        <span>{c.authorEmail ?? c.authorName ?? 'Unknown'}</span>
+                        <span>{c.authorEmail ?? c.authorName ?? t('hrc.unknownAuthor')}</span>
                         <span>· {fmtDateTime(c.createdAt)}</span>
                         {c.internalNote && (
                           <span className="text-warning">Internal</span>
@@ -774,7 +797,7 @@ function CaseDetailDrawer({
                 threw away any typed reply. Closed cases keep it disabled
                 with the text intact. */}
             <div className="space-y-2 pt-2 border-t border-navy-secondary">
-              <Label>Reply</Label>
+              <Label>{t('hrc.replyLabel')}</Label>
               <Textarea
                 className="h-24"
                 value={reply}
@@ -784,7 +807,7 @@ function CaseDetailDrawer({
               <div className="flex items-center justify-between">
                 {data.status === 'CLOSED' ? (
                   <span className="text-xs text-silver">
-                    Case is closed — reopen it to reply.
+                    {t('hrc.closedNotice')}
                   </span>
                 ) : canManage ? (
                   <label className="flex items-center gap-2 text-xs text-silver">
@@ -802,7 +825,7 @@ function CaseDetailDrawer({
                   onClick={sendReply}
                   disabled={data.status === 'CLOSED' || busy || !reply.trim()}
                 >
-                  {busy ? 'Sending…' : 'Reply'}
+                  {busy ? t('hrc.sending') : t('hrc.replyButton')}
                 </Button>
               </div>
             </div>
@@ -810,7 +833,7 @@ function CaseDetailDrawer({
         )}
       </DrawerBody>
       <DrawerFooter>
-        <Button onClick={onClose}>Close</Button>
+        <Button onClick={onClose}>{t('hrc.close')}</Button>
       </DrawerFooter>
     </Drawer>
   );

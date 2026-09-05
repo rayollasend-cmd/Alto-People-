@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import {
   getDirectDeposit,
   submitDirectDeposit,
@@ -29,6 +30,7 @@ function isValidAba(routing: string): boolean {
 export function DirectDepositTask() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
+  const { t } = useI18n();
   const navigate = useNavigate();
 
   const [status, setStatus] = useState<DirectDepositStatus | null>(null);
@@ -71,8 +73,8 @@ export function DirectDepositTask() {
         // set up and inviting a re-entry that resets verification.
         setError(
           err instanceof ApiError
-            ? `Could not load what's on file: ${err.message}. Reload the page before making changes.`
-            : "Could not load what's on file. Reload the page before making changes.",
+            ? t('ob.dd.loadFailedWith', { message: err.message })
+            : t('ob.dd.loadFailed'),
         );
       });
   }, [applicationId]);
@@ -86,9 +88,7 @@ export function DirectDepositTask() {
     setError(null);
 
     if (type === 'BANK_ACCOUNT' && !isValidAba(routingNumber)) {
-      setError(
-        'Routing number is invalid — please check the 9 digits printed on your check or shown in your bank app.'
-      );
+      setError(t('ob.dd.routingInvalid'));
       return;
     }
 
@@ -110,19 +110,15 @@ export function DirectDepositTask() {
       await submitDirectDeposit(applicationId, body);
       navigate(next?.route ?? backTo, { replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Submission failed.');
+      setError(err instanceof ApiError ? err.message : t('ob.dd.submitFailed'));
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <TaskShell title="Direct deposit" backTo={backTo}>
-      <p className="text-silver text-sm mb-5">
-        Net pay is sent to the method you choose. Account numbers are encrypted
-        at rest the moment you submit; only the last 4 digits are ever shown
-        back.
-      </p>
+    <TaskShell title={t('ob.dd.title')} backTo={backTo}>
+      <p className="text-silver text-sm mb-5">{t('ob.dd.intro')}</p>
 
       {onFile && !replaceMethod && (
         <PayoutOnFileCard
@@ -141,16 +137,16 @@ export function DirectDepositTask() {
               onClick={() => setReplaceMethod(false)}
               className="text-xs text-silver hover:text-white mb-3"
             >
-              ← Cancel — keep existing method
+              {t('ob.dd.cancelKeepMethod')}
             </button>
           )}
 
           <div role="tablist" className="flex gap-2 mb-5">
             <TabButton active={type === 'BANK_ACCOUNT'} onClick={() => setType('BANK_ACCOUNT')}>
-              Bank account
+              {t('ob.dd.bankAccount')}
             </TabButton>
             <TabButton active={type === 'BRANCH_CARD'} onClick={() => setType('BRANCH_CARD')}>
-              Branch card
+              {t('ob.dd.branchCard')}
             </TabButton>
           </div>
 
@@ -158,9 +154,9 @@ export function DirectDepositTask() {
             {type === 'BANK_ACCOUNT' ? (
               <>
                 <Field
-                  label="Routing number"
+                  label={t('ob.dd.routingLabel')}
                   required
-                  hint="9 digits, printed on your check or in your bank app. We validate the ABA checksum to catch typos."
+                  hint={t('ob.dd.routingHint')}
                 >
                   <input
                     type="text"
@@ -182,11 +178,11 @@ export function DirectDepositTask() {
                     )}
                   >
                     {isValidAba(routingNumber)
-                      ? '✓ Valid routing number format'
-                      : '✗ ABA checksum failed — please re-check'}
+                      ? t('ob.dd.routingValid')
+                      : t('ob.dd.routingChecksumFailed')}
                   </span>
                 )}
-                <Field label="Account number" required>
+                <Field label={t('ob.dd.accountNumber')} required>
                   <input
                     type="text"
                     inputMode="numeric"
@@ -199,20 +195,20 @@ export function DirectDepositTask() {
                     autoComplete="off"
                   />
                 </Field>
-                <Field label="Account type">
+                <Field label={t('ob.dd.accountType')}>
                   <Select
                     value={accountType}
                     onChange={(e) =>
                       setAccountType(e.target.value as 'CHECKING' | 'SAVINGS')
                     }
                   >
-                    <option value="CHECKING">Checking</option>
-                    <option value="SAVINGS">Savings</option>
+                    <option value="CHECKING">{t('ob.dd.checking')}</option>
+                    <option value="SAVINGS">{t('ob.dd.savings')}</option>
                   </Select>
                 </Field>
                 <Field
-                  label="Bank name"
-                  hint="The institution that holds this account — e.g. Chase, Wells Fargo. Your payroll provider needs it on file."
+                  label={t('ob.dd.bankName')}
+                  hint={t('ob.dd.bankNameHint')}
                 >
                   <input
                     type="text"
@@ -221,12 +217,12 @@ export function DirectDepositTask() {
                     className={inputCls}
                     maxLength={120}
                     autoComplete="off"
-                    placeholder="Chase"
+                    placeholder={t('ob.dd.bankNamePlaceholder')}
                   />
                 </Field>
               </>
             ) : (
-              <Field label="Branch card ID" required hint="Provided when you receive your Branch card.">
+              <Field label={t('ob.dd.branchCardId')} required hint={t('ob.dd.branchCardIdHint')}>
                 <input
                   type="text"
                   required
@@ -243,7 +239,7 @@ export function DirectDepositTask() {
               </p>
             )}
 
-            <SubmitRow submitting={submitting} backTo={backTo} label="Save payout method" next={next} />
+            <SubmitRow submitting={submitting} backTo={backTo} label={t('ob.dd.save')} next={next} />
           </form>
         </>
       )}
@@ -262,28 +258,29 @@ function PayoutOnFileCard({
   backTo: string;
   navigate: (to: string) => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className="rounded-md border border-success/30 bg-success/[0.05] p-4 mb-5">
       <div className="flex items-center gap-2 mb-2">
         <CheckCircle2 className="h-4 w-4 text-success" />
         <span className="text-sm text-success font-medium">
-          Payout method on file
+          {t('ob.dd.onFileTitle')}
         </span>
       </div>
       {status.type === 'BANK_ACCOUNT' ? (
         <div className="text-sm text-white space-y-1">
           <div>
             <span className="text-silver text-xs uppercase tracking-widest">
-              Account
+              {t('ob.dd.accountShort')}
             </span>
             <div className="font-mono">
-              {status.accountType === 'SAVINGS' ? 'Savings' : 'Checking'} ••••{' '}
+              {status.accountType === 'SAVINGS' ? t('ob.dd.savings') : t('ob.dd.checking')} ••••{' '}
               {status.accountLast4 ?? '••••'}
             </div>
           </div>
           <div>
             <span className="text-silver text-xs uppercase tracking-widest">
-              Routing
+              {t('ob.dd.routingShort')}
             </span>
             <div className="font-mono">{status.routingMasked ?? '•••••••••'}</div>
           </div>
@@ -291,27 +288,27 @@ function PayoutOnFileCard({
       ) : status.type === 'BRANCH_CARD' ? (
         <div className="text-sm text-white">
           <span className="text-silver text-xs uppercase tracking-widest">
-            Branch card
+            {t('ob.dd.branchCard')}
           </span>
-          <div className="font-mono">{status.branchCardId ?? '(on file)'}</div>
+          <div className="font-mono">{status.branchCardId ?? t('ob.dd.onFileFallback')}</div>
         </div>
       ) : (
-        <div className="text-sm text-silver">Method on file.</div>
+        <div className="text-sm text-silver">{t('ob.dd.methodOnFile')}</div>
       )}
       {status.updatedAt && (
         <div className="text-xs text-silver/70 mt-2">
-          Updated {fmtDateTime(status.updatedAt)}
+          {t('ob.dd.updated', { date: fmtDateTime(status.updatedAt) })}
           {status.verifiedAt
-            ? ' · Verified'
-            : ' · Pending verification'}
+            ? ` · ${t('ob.dd.verified')}`
+            : ` · ${t('ob.dd.pendingVerification')}`}
         </div>
       )}
       <div className="flex items-center gap-3 mt-3">
         <Button type="button" variant="outline" size="sm" onClick={onReplace}>
-          Replace method
+          {t('ob.dd.replaceMethod')}
         </Button>
         <Button type="button" size="sm" onClick={() => navigate(backTo)}>
-          Back to checklist
+          {t('ob.dd.backToChecklist')}
         </Button>
       </div>
     </div>

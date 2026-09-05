@@ -102,6 +102,23 @@ export const enrollAssociates = (courseId: string, associateIds: string[]) =>
     body: { associateIds },
   });
 
+export interface MyTrainingEnrollment {
+  id: string;
+  courseId: string;
+  courseTitle: string;
+  courseDescription: string | null;
+  isRequired: boolean;
+  status: 'ASSIGNED' | 'IN_PROGRESS' | 'COMPLETED' | 'EXPIRED' | 'WAIVED';
+  assignedAt: string;
+  completedAt: string | null;
+  expiresAt: string | null;
+  score: string | null;
+}
+
+/** Associate self-view — my own training assignments (auth-only route). */
+export const getMyTraining = () =>
+  apiFetch<{ enrollments: MyTrainingEnrollment[] }>('/learning/me');
+
 export const listEnrollments = (params?: {
   associateId?: string;
   courseId?: string;

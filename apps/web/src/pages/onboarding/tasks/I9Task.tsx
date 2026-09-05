@@ -21,6 +21,7 @@ import {
   i9SetSatisfied,
 } from '@alto-people/shared';
 import { fmtDate, fmtDateTime, fmtSize, parseYmd } from '@/lib/format';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { Field, TaskShell, inputCls, useNextTask } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
@@ -44,32 +45,33 @@ const SPECIAL_KIND: Record<string, I9DocumentKind> = {
   [J1_VISA_VALUE]: 'J1_VISA',
   [J1_DS2019_VALUE]: 'J1_DS2019',
 };
-const LIST_HEADING: Record<'A' | 'B' | 'C', string> = {
-  A: 'List A — proves identity AND right to work (one is enough)',
-  B: 'List B — proves identity only (also add one from List C)',
-  C: 'List C — proves right to work only (also add one from List B)',
+const LIST_HEADING: Record<'A' | 'B' | 'C', MessageKey> = {
+  A: 'ob.i9.listAHeading',
+  B: 'ob.i9.listBHeading',
+  C: 'ob.i9.listCHeading',
 };
 
-const KIND_LABEL: Record<string, string> = {
-  ID: 'Driver license / passport / state ID',
-  SSN_CARD: 'Social Security card',
-  I9_SUPPORTING: 'Other I-9 supporting document',
-  J1_VISA: 'J-1 visa',
-  J1_DS2019: 'J-1 DS-2019',
+const KIND_LABEL: Record<string, MessageKey> = {
+  ID: 'ob.i9.kindId',
+  SSN_CARD: 'ob.i9.kindSsnCard',
+  I9_SUPPORTING: 'ob.i9.kindSupporting',
+  J1_VISA: 'ob.i9.kindJ1Visa',
+  J1_DS2019: 'ob.i9.kindJ1Ds2019',
 };
 
 
-const CITIZENSHIP_OPTIONS: { value: CitizenshipStatus; label: string }[] = [
-  { value: 'US_CITIZEN', label: 'A citizen of the United States' },
-  { value: 'NON_CITIZEN_NATIONAL', label: 'A non-citizen national of the United States' },
-  { value: 'LAWFUL_PERMANENT_RESIDENT', label: 'A lawful permanent resident' },
-  { value: 'ALIEN_AUTHORIZED_TO_WORK', label: 'An alien authorized to work' },
+const CITIZENSHIP_OPTIONS: { value: CitizenshipStatus; labelKey: MessageKey }[] = [
+  { value: 'US_CITIZEN', labelKey: 'ob.i9.citUsCitizen' },
+  { value: 'NON_CITIZEN_NATIONAL', labelKey: 'ob.i9.citNonCitizenNational' },
+  { value: 'LAWFUL_PERMANENT_RESIDENT', labelKey: 'ob.i9.citLpr' },
+  { value: 'ALIEN_AUTHORIZED_TO_WORK', labelKey: 'ob.i9.citAlienAuthorized' },
 ];
 
 export function I9Task() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { t } = useI18n();
 
   const isAssociate = user?.role === 'ASSOCIATE';
   const backTo = isAssociate
@@ -86,7 +88,7 @@ export function I9Task() {
     try {
       setStatus(await getI9Status(applicationId));
     } catch (err) {
-      setTopError(err instanceof ApiError ? err.message : 'Failed to load I-9 status.');
+      setTopError(err instanceof ApiError ? err.message : t('ob.i9.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -99,7 +101,7 @@ export function I9Task() {
 
   if (loading) {
     return (
-      <TaskShell title="I-9 verification" backTo={backTo}>
+      <TaskShell title={t('ob.i9.title')} backTo={backTo}>
         <Skeleton className="h-4 w-3/4 mb-5" />
         <SkeletonRows count={3} rowHeight="h-24" />
       </TaskShell>
@@ -107,7 +109,7 @@ export function I9Task() {
   }
   if (topError) {
     return (
-      <TaskShell title="I-9 verification" backTo={backTo}>
+      <TaskShell title={t('ob.i9.title')} backTo={backTo}>
         <ErrorBanner>{topError}</ErrorBanner>
       </TaskShell>
     );
@@ -115,12 +117,8 @@ export function I9Task() {
   if (!applicationId || !status) return null;
 
   return (
-    <TaskShell title="I-9 verification" backTo={backTo}>
-      <p className="text-silver text-sm mb-5">
-        Federal Form I-9 verifies you can legally work in the United States.
-        Section 1 below is your self-attestation; HR will verify your documents
-        in Section 2 once you upload them.
-      </p>
+    <TaskShell title={t('ob.i9.title')} backTo={backTo}>
+      <p className="text-silver text-sm mb-5">{t('ob.i9.intro')}</p>
 
       <Section1Card
         applicationId={applicationId}
@@ -137,7 +135,7 @@ export function I9Task() {
 
       <div className="mt-6">
         <Link to={backTo} className="text-sm text-silver hover:text-white">
-          ← Back to checklist
+          {t('ob.i9.backToChecklist')}
         </Link>
       </div>
     </TaskShell>
@@ -155,6 +153,7 @@ function Section1Card({
   status: I9Status;
   onChanged: () => void;
 }) {
+  const { t } = useI18n();
   const done = status.section1 !== null;
   const [citizenshipStatus, setCitizenshipStatus] = useState<CitizenshipStatus>(
     status.section1?.citizenshipStatus ?? 'US_CITIZEN'
@@ -177,15 +176,15 @@ function Section1Card({
     if (submitting) return;
     setError(null);
     if (typedName.trim().length < 2) {
-      setError('Type your full legal name to sign.');
+      setError(t('ob.i9.signNameError'));
       return;
     }
     if (needsANumber && !aNumber.trim()) {
-      setError('Alien Registration Number (A-Number) is required for this status.');
+      setError(t('ob.i9.aNumberError'));
       return;
     }
     if (needsExpiry && !workAuthExpiresAt) {
-      setError('Work authorization expiration date is required.');
+      setError(t('ob.i9.expiryError'));
       return;
     }
     setSubmitting(true);
@@ -198,7 +197,7 @@ function Section1Card({
       });
       onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Submission failed.');
+      setError(err instanceof ApiError ? err.message : t('ob.i9.submitFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -207,28 +206,28 @@ function Section1Card({
   return (
     <section className="bg-navy border border-navy-secondary rounded-lg p-5 mb-5">
       <header className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-medium text-white">Section 1 — your attestation</h2>
+        <h2 className="text-lg font-medium text-white">{t('ob.i9.s1Heading')}</h2>
         <span
           className={cn(
             'text-xs uppercase tracking-widest',
             done ? 'text-gold' : 'text-silver/70'
           )}
         >
-          {done ? 'Signed' : 'Required'}
+          {done ? t('ob.i9.signed') : t('ob.i9.required')}
         </span>
       </header>
 
       {done && status.section1 ? (
         <div className="text-sm text-silver space-y-1">
           <div>
-            Status:{' '}
+            {t('ob.i9.statusLabel')}{' '}
             <span className="text-white">
-              {labelForCitizenship(status.section1.citizenshipStatus)}
+              {labelForCitizenship(status.section1.citizenshipStatus, t)}
             </span>
           </div>
           {status.section1.workAuthExpiresAt && (
             <div>
-              Work auth expires:{' '}
+              {t('ob.i9.workAuthExpiresLabel')}{' '}
               <span className="text-white">
                 {fmtDate(parseYmd(status.section1.workAuthExpiresAt))}
               </span>
@@ -236,44 +235,55 @@ function Section1Card({
           )}
           {status.section1.typedName && (
             <div>
-              Signed by:{' '}
+              {t('ob.i9.signedByLabel')}{' '}
               <span className="text-white italic">{status.section1.typedName}</span>
             </div>
           )}
           <div className="text-xs text-silver/70 mt-2">
-            Signed at {fmtDateTime(status.section1.completedAt)}.
+            {t('ob.i9.signedAt', { time: fmtDateTime(status.section1.completedAt) })}
           </div>
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
-          <Field label="I attest, under penalty of perjury, that I am:">
+          <Field
+            label={
+              <>
+                {t('ob.i9.attest')}
+                {document.documentElement.lang === 'es' && (
+                  <p className="text-2xs text-silver/60 italic">
+                    I attest, under penalty of perjury, that I am:
+                  </p>
+                )}
+              </>
+            }
+          >
             <Select
               value={citizenshipStatus}
               onChange={(e) => setCitizenshipStatus(e.target.value as CitizenshipStatus)}
             >
               {CITIZENSHIP_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
-                  {o.label}
+                  {t(o.labelKey)}
                 </option>
               ))}
             </Select>
           </Field>
 
           {needsANumber && (
-            <Field label="Alien Registration / USCIS Number" hint="Begins with the letter A.">
+            <Field label={t('ob.i9.aNumberLabel')} hint={t('ob.i9.aNumberHint')}>
               <input
                 className={inputCls}
                 value={aNumber}
                 onChange={(e) => setANumber(e.target.value)}
-                placeholder="A123456789"
+                placeholder={t('ob.i9.aNumberPlaceholder')}
                 autoComplete="off"
-                aria-label="Alien Registration Number"
+                aria-label={t('ob.i9.aNumberAria')}
               />
             </Field>
           )}
 
           {needsExpiry && (
-            <Field label="Work authorization expires">
+            <Field label={t('ob.i9.workAuthExpiresField')}>
               <input
                 type="date"
                 className={inputCls}
@@ -283,7 +293,7 @@ function Section1Card({
             </Field>
           )}
 
-          <Field label="Type your full legal name to sign">
+          <Field label={t('ob.i9.signLabel')}>
             <input
               className={inputCls}
               value={typedName}
@@ -296,7 +306,7 @@ function Section1Card({
 
           <div className="flex items-center gap-3 pt-1">
             <Button type="submit" loading={submitting} disabled={submitting}>
-              {submitting ? 'Signing…' : 'Sign Section 1'}
+              {submitting ? t('ob.i9.signing') : t('ob.i9.signButton')}
             </Button>
           </div>
         </form>
@@ -319,6 +329,7 @@ function DocumentsCard({
   /** Fires after submit-for-review succeeds — the task's final action. */
   onSubmitted: () => void;
 }) {
+  const { t } = useI18n();
   const [docs, setDocs] = useState<I9DocumentListItem[] | null>(null);
   // Doc count from the FIRST fetch this session — i.e. before any upload
   // made here. Non-zero means identity documents already exist in the shared
@@ -373,9 +384,9 @@ function DocumentsCard({
       setDocs(r.documents);
       setPreexistingCount((cur) => cur ?? r.documents.length);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load documents.');
+      setError(err instanceof ApiError ? err.message : t('ob.i9.loadDocsFailed'));
     }
-  }, [applicationId]);
+  }, [applicationId, t]);
 
   useEffect(() => {
     void refresh();
@@ -395,7 +406,7 @@ function DocumentsCard({
       await refresh();
       onChanged();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Upload failed.');
+      setError(err instanceof ApiError ? err.message : t('ob.i9.uploadError'));
       setFailedUpload({ file, kind, side, title });
     } finally {
       setUploading(false);
@@ -410,7 +421,10 @@ function DocumentsCard({
     // oversized phone photo hit multer's limit and surfaced as a 500.
     if (file.size > UPLOAD_MAX_BYTES) {
       setError(
-        `That file is ${fmtSize(file.size)} — the limit is ${fmtSize(UPLOAD_MAX_BYTES)}. Try a smaller photo or a compressed PDF.`,
+        t('ob.i9.fileTooLarge', {
+          size: fmtSize(file.size),
+          limit: fmtSize(UPLOAD_MAX_BYTES),
+        }),
       );
       return;
     }
@@ -430,7 +444,7 @@ function DocumentsCard({
       await submitI9ForReview(applicationId);
       onSubmitted();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Submit failed.');
+      setError(err instanceof ApiError ? err.message : t('ob.i9.submitError'));
     } finally {
       setSubmitting(false);
     }
@@ -439,7 +453,7 @@ function DocumentsCard({
   return (
     <section className="bg-navy border border-navy-secondary rounded-lg p-5 mb-5">
       <header className="flex items-center justify-between mb-3">
-        <h2 className="text-lg font-medium text-white">Identification documents</h2>
+        <h2 className="text-lg font-medium text-white">{t('ob.i9.docsHeading')}</h2>
         <span
           className={cn(
             'text-xs uppercase tracking-widest',
@@ -451,55 +465,48 @@ function DocumentsCard({
           )}
         >
           {section2Done
-            ? 'Verified by HR'
+            ? t('ob.i9.verifiedByHr')
             : submitted
-              ? 'Submitted — awaiting HR'
-              : 'Required'}
+              ? t('ob.i9.submittedAwaiting')
+              : t('ob.i9.required')}
         </span>
       </header>
-      <p className="text-sm text-silver mb-4">
-        Add your identification (driver's license, passport, Social Security
-        card, etc.) — "Take photo" opens the camera, "Choose file" picks a
-        saved scan or PDF. Pick the document type and front/back before
-        uploading so HR can verify quickly. PDF / JPG / PNG / WEBP up to
-        10 MB.
-      </p>
+      <p className="text-sm text-silver mb-4">{t('ob.i9.docsIntro')}</p>
 
       {!section2Done && !submitted && (
         <>
           {preexistingCount !== null && preexistingCount > 0 && (
             <div className="mb-4 px-3 py-2.5 rounded border border-gold/40 bg-gold/[0.06] text-sm text-silver">
-              {preexistingCount} identity document
-              {preexistingCount === 1 ? '' : 's'} already on file from your
-              Documents step — you can submit these for review or add more.
+              {preexistingCount === 1
+                ? t('ob.i9.preexistingOne', { count: preexistingCount })
+                : t('ob.i9.preexistingMany', { count: preexistingCount })}
             </div>
           )}
           <div className="mb-4 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-sm">
             <div className="mb-1.5 font-medium text-white">
-              What the I-9 form needs
+              {t('ob.i9.needsHeading')}
             </div>
             <div className={cn('flex items-center gap-2', hasA ? 'text-success' : 'text-silver')}>
               <span aria-hidden>{hasA ? '✓' : '○'}</span>
-              ONE List A document (passport, Green Card…)
+              {t('ob.i9.needA')}
             </div>
-            <div className="my-0.5 pl-5 text-xs text-silver/60">— or both of —</div>
+            <div className="my-0.5 pl-5 text-xs text-silver/60">{t('ob.i9.orBoth')}</div>
             <div className={cn('flex items-center gap-2', hasB ? 'text-success' : 'text-silver')}>
               <span aria-hidden>{hasB ? '✓' : '○'}</span>
-              One List B document (driver&apos;s license, state ID…)
+              {t('ob.i9.needB')}
             </div>
             <div className={cn('flex items-center gap-2', hasC ? 'text-success' : 'text-silver')}>
               <span aria-hidden>{hasC ? '✓' : '○'}</span>
-              One List C document (unrestricted Social Security card, birth certificate…)
+              {t('ob.i9.needC')}
             </div>
             {hasUnclassified && (
               <div className="mt-1.5 text-xs text-silver/70">
-                Some documents have no type — HR will classify them at
-                review, so you can still submit.
+                {t('ob.i9.unclassifiedNote')}
               </div>
             )}
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-            <Field label="Which document is this?">
+            <Field label={t('ob.i9.whichDoc')}>
               <Select
                 value={docTitle}
                 onChange={(e) => {
@@ -509,7 +516,7 @@ function DocumentsCard({
                 disabled={uploading}
               >
                 {(['A', 'B', 'C'] as const).map((list) => (
-                  <optgroup key={list} label={LIST_HEADING[list]}>
+                  <optgroup key={list} label={t(LIST_HEADING[list])}>
                     {I9_DOC_CATALOG.filter((c) => c.list === list).map((c) => (
                       <option key={c.title} value={c.title}>
                         {c.title}
@@ -517,36 +524,33 @@ function DocumentsCard({
                     ))}
                   </optgroup>
                 ))}
-                <optgroup label="Something else">
-                  <option value={OTHER_VALUE}>Other I-9 supporting document</option>
-                  <option value={J1_VISA_VALUE}>J-1 visa</option>
-                  <option value={J1_DS2019_VALUE}>J-1 DS-2019</option>
+                <optgroup label={t('ob.i9.somethingElse')}>
+                  <option value={OTHER_VALUE}>{t('ob.i9.kindSupporting')}</option>
+                  <option value={J1_VISA_VALUE}>{t('ob.i9.kindJ1Visa')}</option>
+                  <option value={J1_DS2019_VALUE}>{t('ob.i9.kindJ1Ds2019')}</option>
                 </optgroup>
               </Select>
             </Field>
             {selectedEntry?.card && (
               <Field
-                label="Which side of the card?"
-                hint="Leave blank if one photo shows everything."
+                label={t('ob.i9.whichSide')}
+                hint={t('ob.i9.sideHint')}
               >
                 <Select
                   value={docSide}
                   onChange={(e) => setDocSide(e.target.value as I9DocumentSide | '')}
                   disabled={uploading}
                 >
-                  <option value="">— One photo shows everything —</option>
-                  <option value="FRONT">Front</option>
-                  <option value="BACK">Back</option>
+                  <option value="">{t('ob.i9.sideNone')}</option>
+                  <option value="FRONT">{t('ob.i9.front')}</option>
+                  <option value="BACK">{t('ob.i9.back')}</option>
                 </Select>
               </Field>
             )}
           </div>
           {docTitle === 'Social Security card (unrestricted)' && (
             <p className="-mt-1 mb-3 text-xs text-warning">
-              If your card is printed with a restriction like &ldquo;VALID FOR
-              WORK ONLY WITH DHS AUTHORIZATION&rdquo;, it does NOT count as a
-              List C document — pick &ldquo;Other I-9 supporting
-              document&rdquo; instead and add a different List C document.
+              {t('ob.i9.ssnRestriction')}
             </p>
           )}
           <div className="mb-4">
@@ -577,7 +581,7 @@ function DocumentsCard({
                 onClick={() => cameraInputRef.current?.click()}
                 disabled={uploading}
               >
-                {uploading ? 'Uploading…' : 'Take photo'}
+                {uploading ? t('ob.i9.uploading') : t('ob.i9.takePhoto')}
               </Button>
               <Button
                 type="button"
@@ -585,7 +589,7 @@ function DocumentsCard({
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
               >
-                {uploading ? 'Uploading…' : 'Choose file'}
+                {uploading ? t('ob.i9.uploading') : t('ob.i9.chooseFile')}
               </Button>
             </div>
             {failedUpload && !uploading && (
@@ -596,7 +600,7 @@ function DocumentsCard({
                 <span className="min-w-0 flex-1 basis-48 truncate text-white">
                   {failedUpload.file.name}
                   <span className="block text-xs text-alert">
-                    Upload failed — your file is still here.
+                    {t('ob.i9.uploadFailedKept')}
                   </span>
                 </span>
                 <Button
@@ -612,7 +616,7 @@ function DocumentsCard({
                   }
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
-                  Retry upload
+                  {t('ob.i9.retryUpload')}
                 </Button>
                 <button
                   type="button"
@@ -623,7 +627,7 @@ function DocumentsCard({
                   }}
                   className="text-sm text-silver hover:text-white coarse:min-h-11 inline-flex items-center"
                 >
-                  Choose different file
+                  {t('ob.i9.chooseDifferent')}
                 </button>
               </div>
             )}
@@ -634,11 +638,12 @@ function DocumentsCard({
 
       {submitted && !section2Done && (
         <div className="mb-4 px-3 py-2.5 rounded border border-success/40 bg-success/[0.06] text-sm text-silver">
-          Submitted on{' '}
+          {t('ob.i9.submittedOn')}{' '}
           <span className="text-white">
             {fmtDateTime(status.documentsSubmittedAt)}
           </span>
-          . HR will verify your documents and complete Section 2. You can close this page — you'll be notified when verification is complete.
+          .{' '}
+          {t('ob.i9.submittedTail')}
         </div>
       )}
 
@@ -654,13 +659,13 @@ function DocumentsCard({
               <div className="flex-1 min-w-0">
                 <div className="text-white truncate">{d.filename}</div>
                 <div className="text-xs text-silver/70 mt-0.5">
-                  {d.i9DocTitle ?? KIND_LABEL[d.kind] ?? d.kind}
-                  {d.i9List ? ` · List ${d.i9List}` : ''}
-                  {d.side ? ` · ${d.side === 'FRONT' ? 'Front' : 'Back'}` : ''}
+                  {d.i9DocTitle ?? (KIND_LABEL[d.kind] ? t(KIND_LABEL[d.kind]) : d.kind)}
+                  {d.i9List ? ` · ${t('ob.i9.listN', { list: d.i9List })}` : ''}
+                  {d.side ? ` · ${d.side === 'FRONT' ? t('ob.i9.front') : t('ob.i9.back')}` : ''}
                   {' · '}
                   {fmtSize(d.size)}
                   {!d.fileAvailable && (
-                    <span className="text-alert"> · file missing — please re-upload</span>
+                    <span className="text-alert"> · {t('ob.i9.fileMissing')}</span>
                   )}
                 </div>
               </div>
@@ -675,17 +680,17 @@ function DocumentsCard({
                 }
               >
                 {d.status === 'VERIFIED'
-                  ? 'Verified'
+                  ? t('ob.i9.statusVerified')
                   : d.status === 'REJECTED'
-                    ? 'Rejected'
-                    : 'Awaiting review'}
+                    ? t('ob.i9.statusRejected')
+                    : t('ob.i9.statusAwaiting')}
               </Badge>
             </li>
           ))}
         </ul>
       ) : (
         <p className="text-xs text-silver/70">
-          No documents uploaded yet.
+          {t('ob.i9.noDocs')}
         </p>
       )}
 
@@ -697,16 +702,16 @@ function DocumentsCard({
             loading={submitting}
             disabled={!canSubmit || submitting}
           >
-            {submitting ? 'Submitting…' : 'Submit for HR review'}
+            {submitting ? t('ob.i9.submitting') : t('ob.i9.submitForReview')}
           </Button>
           {!canSubmit && (
             <span className="text-xs text-silver/70">
               {!section1Done
-                ? 'Sign Section 1 first.'
+                ? t('ob.i9.gateSign1')
                 : docCount === 0
-                  ? 'Upload at least one document first.'
+                  ? t('ob.i9.gateUpload')
                   : !combinationOk
-                    ? 'Add ONE List A document, or one from List B plus one from List C.'
+                    ? t('ob.i9.gateCombo')
                     : ''}
             </span>
           )}
@@ -719,45 +724,49 @@ function DocumentsCard({
 /* ===== Section 2 status (read-only on the associate side) =============== */
 
 function Section2Status({ status }: { status: I9Status }) {
+  const { t } = useI18n();
   const s2 = status.section2;
   return (
     <section className="bg-navy border border-navy-secondary rounded-lg p-5">
       <header className="flex items-center justify-between mb-2">
-        <h2 className="text-lg font-medium text-white">Section 2 — HR verification</h2>
+        <h2 className="text-lg font-medium text-white">{t('ob.i9.s2Heading')}</h2>
         <span
           className={cn(
             'text-xs uppercase tracking-widest',
             s2 ? 'text-gold' : 'text-silver/70'
           )}
         >
-          {s2 ? 'Verified' : 'Pending HR'}
+          {s2 ? t('ob.i9.statusVerified') : t('ob.i9.pendingHr')}
         </span>
       </header>
       {s2 ? (
         <div className="text-sm text-silver">
-          Verified at {fmtDateTime(s2.completedAt)}
+          {t('ob.i9.verifiedAt', { time: fmtDateTime(s2.completedAt) })}
           {s2.verifierEmail && (
             <>
-              {' '}by <span className="text-white">{s2.verifierEmail}</span>
+              {' '}{t('ob.i9.by')} <span className="text-white">{s2.verifierEmail}</span>
             </>
           )}
           .
           {s2.documentList && (
             <span className="block text-xs text-silver/70 mt-1">
-              List: {s2.documentList === 'LIST_A' ? 'List A (single document)' : 'Lists B + C'}
+              {s2.documentList === 'LIST_A' ? t('ob.i9.s2ListA') : t('ob.i9.s2ListBC')}
             </span>
           )}
         </div>
       ) : (
         <p className="text-sm text-silver">
-          HR will review your documents and complete Section 2. You can close
-          this page after Section 1 is signed and your photos are uploaded.
+          {t('ob.i9.s2Pending')}
         </p>
       )}
     </section>
   );
 }
 
-function labelForCitizenship(c: CitizenshipStatus): string {
-  return CITIZENSHIP_OPTIONS.find((o) => o.value === c)?.label ?? c;
+function labelForCitizenship(
+  c: CitizenshipStatus,
+  t: ReturnType<typeof useI18n>['t'],
+): string {
+  const key = CITIZENSHIP_OPTIONS.find((o) => o.value === c)?.labelKey;
+  return key ? t(key) : c;
 }

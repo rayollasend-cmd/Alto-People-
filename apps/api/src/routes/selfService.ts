@@ -73,7 +73,10 @@ selfServiceRouter.get('/me/profile', async (req, res) => {
       photoUpdatedAt: true,
       department: { select: { name: true } },
       jobProfile: { select: { title: true } },
-      manager: { select: { firstName: true, lastName: true } },
+      // Contact fields included so "my manager" is a person you can CALL,
+      // not an inert name — associates have no directory access, so this
+      // is their only route to reach their boss from the app.
+      manager: { select: { firstName: true, lastName: true, phone: true, email: true } },
     },
   });
   if (!a) throw new HttpError(404, 'not_found', 'Associate not found.');
@@ -83,6 +86,8 @@ selfServiceRouter.get('/me/profile', async (req, res) => {
     managerName: manager
       ? `${manager.firstName} ${manager.lastName}`.trim()
       : null,
+    managerPhone: manager?.phone ?? null,
+    managerEmail: manager?.email ?? null,
     photoUrl: profilePhotoUrlFor({ id: a.id, photoS3Key, photoUpdatedAt }),
   });
 });

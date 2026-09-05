@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { Logo } from '@/components/Logo';
 import { fmtDateTime } from '@/lib/format';
+import { useI18n } from '@/lib/i18n';
 
 /**
  * "ok" once the 12-char floor is met; "strong" when it also mixes upper +
@@ -36,11 +37,12 @@ function ShowPasswordToggle({
   shown: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <button
       type="button"
       onClick={onToggle}
-      aria-label={shown ? 'Hide password' : 'Show password'}
+      aria-label={shown ? t('ai.hidePassword') : t('ai.showPassword')}
       className="absolute right-2.5 coarse:right-1 top-1/2 -translate-y-1/2 p-1 coarse:p-2.5 rounded text-silver/70 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
     >
       {shown ? (
@@ -53,6 +55,7 @@ function ShowPasswordToggle({
 }
 
 export function AcceptInvite() {
+  const { t } = useI18n();
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
   const { signIn: _signIn } = useAuth();   // not used, but keeps the auth context warm
@@ -76,7 +79,7 @@ export function AcceptInvite() {
 
   useEffect(() => {
     if (!token) {
-      setError('Missing invitation token.');
+      setError(t('ai.missingToken'));
       setLoading(false);
       return;
     }
@@ -89,9 +92,9 @@ export function AcceptInvite() {
       } catch (err) {
         if (cancelled) return;
         if (err instanceof ApiError && err.status === 404) {
-          setError('This invitation is invalid or has expired. Ask HR to resend it.');
+          setError(t('ai.invalidOrExpired'));
         } else {
-          setError(err instanceof Error ? err.message : 'Could not load invitation.');
+          setError(err instanceof Error ? err.message : t('ai.loadFailed'));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -100,6 +103,7 @@ export function AcceptInvite() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   // No confirm field: the eye toggle lets them verify what they typed, and
@@ -146,12 +150,12 @@ export function AcceptInvite() {
       window.location.assign(safeNextPath(res?.nextPath));
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
-        setError('This account is already active. Try signing in instead.');
+        setError(t('ai.alreadyActive'));
         setAlreadyActive(true);
       } else if (err instanceof ApiError && err.status === 404) {
-        setError('Invitation expired. Ask HR to resend it.');
+        setError(t('ai.expired'));
       } else {
-        setError(err instanceof Error ? err.message : 'Could not accept invitation.');
+        setError(err instanceof Error ? err.message : t('ai.acceptFailed'));
       }
       setSubmitting(false);
     }
@@ -166,7 +170,7 @@ export function AcceptInvite() {
             Alto People
           </h1>
           <p className="text-silver text-xs md:text-sm tracking-[0.3em] uppercase">
-            Welcome aboard
+            {t('ai.tagline')}
           </p>
         </div>
 
@@ -184,22 +188,20 @@ export function AcceptInvite() {
           {!loading && error && !invite && (
             <>
               <h2 className="text-2xl md:text-3xl text-white mb-3">
-                Invitation problem
+                {t('ai.problemTitle')}
               </h2>
               <ErrorBanner className="mb-4">{error}</ErrorBanner>
 
               {renewSent ? (
                 <p className="text-silver text-sm mb-4">
-                  If that email has a pending invitation, a fresh link is on
-                  its way.
+                  {t('ai.renewSent')}
                 </p>
               ) : (
                 <form onSubmit={handleRenew} noValidate className="mb-4">
                   <p className="text-silver text-sm mb-3">
-                    Enter your email and we'll send you a fresh invitation
-                    link.
+                    {t('ai.renewIntro')}
                   </p>
-                  <Field label="Email" required className="mb-3">
+                  <Field label={t('ai.emailLabel')} required className="mb-3">
                     {(p) => (
                       <Input
                         type="email"
@@ -217,7 +219,7 @@ export function AcceptInvite() {
                     disabled={renewSubmitting || !renewEmail.trim()}
                     className="w-full"
                   >
-                    {renewSubmitting ? 'Sending…' : 'Send me a new link'}
+                    {renewSubmitting ? t('ai.sending') : t('ai.sendNewLink')}
                   </Button>
                 </form>
               )}
@@ -231,7 +233,7 @@ export function AcceptInvite() {
               <div className="flex items-center gap-3 mb-4" aria-hidden="true">
                 <div className="h-px flex-1 bg-navy-secondary" />
                 <span className="text-2xs uppercase tracking-widest text-silver/60">
-                  or
+                  {t('ai.or')}
                 </span>
                 <div className="h-px flex-1 bg-navy-secondary" />
               </div>
@@ -240,7 +242,7 @@ export function AcceptInvite() {
                 className="w-full"
                 onClick={() => navigate('/login')}
               >
-                Go to sign in
+                {t('ai.goToSignIn')}
               </Button>
             </>
           )}
@@ -248,22 +250,24 @@ export function AcceptInvite() {
           {!loading && invite && (
             <form onSubmit={handleSubmit} noValidate>
               <h2 className="text-2xl md:text-3xl text-white mb-1">
-                {invite.firstName ? `Welcome, ${invite.firstName}` : 'Welcome'}
+                {invite.firstName
+                  ? t('ai.welcomeName', { name: invite.firstName })
+                  : t('ai.welcome')}
               </h2>
               <p className="text-silver text-sm mb-1">
-                Set a password to access your onboarding tasks.
+                {t('ai.setPasswordIntro')}
               </p>
               <p className="text-silver/70 text-xs mb-6">{invite.email}</p>
 
               <Field
-                label="Password"
+                label={t('ai.passwordLabel')}
                 required
                 hint={
                   strength === 'strong'
-                    ? 'Strength: strong.'
+                    ? t('ai.strengthStrong')
                     : strength === 'ok'
-                      ? 'Strength: ok — mix upper and lower case with a number to make it strong.'
-                      : 'Minimum 12 characters.'
+                      ? t('ai.strengthOk')
+                      : t('ai.minChars')
                 }
                 className="mb-2"
               >
@@ -301,7 +305,7 @@ export function AcceptInvite() {
                   className="w-full mt-3"
                   onClick={() => navigate('/login')}
                 >
-                  Go to sign in
+                  {t('ai.goToSignIn')}
                 </Button>
               )}
 
@@ -312,10 +316,10 @@ export function AcceptInvite() {
                 disabled={!passwordOk}
                 className="w-full mt-4"
               >
-                {submitting ? 'Setting up…' : 'Set password & sign in'}
+                {submitting ? t('ai.settingUp') : t('ai.setPasswordCta')}
               </Button>
               <p className="text-2xs text-silver/70 text-center mt-4">
-                This link expires {fmtDateTime(invite.expiresAt)}.
+                {t('ai.linkExpires', { when: fmtDateTime(invite.expiresAt) })}
               </p>
             </form>
           )}

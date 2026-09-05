@@ -13,6 +13,7 @@ import {
 import { finishDocumentUpload } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import { TaskShell, Field, useNextTask } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { fmtSize } from '@/lib/format';
@@ -34,33 +35,90 @@ import { SkeletonRows } from '@/components/ui/Skeleton';
 // stays as an escape hatch (receipts, unusual documents): it uploads
 // unclassified, exactly like the pre-catalog behavior.
 const OTHER_VALUE = '__other__';
-const LIST_HEADING: Record<'A' | 'B' | 'C', string> = {
-  A: 'List A — proves identity AND right to work (one is enough)',
-  B: 'List B — proves identity only (also add one from List C)',
-  C: 'List C — proves right to work only (also add one from List B)',
-};
+
+type Translate = ReturnType<typeof useI18n>['t'];
+
+function listHeading(t: Translate, list: 'A' | 'B' | 'C'): string {
+  switch (list) {
+    case 'A':
+      return t('ob.docs.listA');
+    case 'B':
+      return t('ob.docs.listB');
+    case 'C':
+      return t('ob.docs.listC');
+  }
+}
 
 const MAX_BYTES = UPLOAD_MAX_BYTES;
 
 const ACCEPTED_MIMES = 'application/pdf,image/png,image/jpeg,image/webp';
 
 
-const STATUS_LABEL: Record<string, string> = {
-  UPLOADED: 'Awaiting review',
-  VERIFIED: 'Verified',
-  REJECTED: 'Rejected',
-  EXPIRED: 'Expired',
-};
+function statusLabel(t: Translate, status: string): string {
+  switch (status) {
+    case 'UPLOADED':
+      return t('ob.docs.status.uploaded');
+    case 'VERIFIED':
+      return t('ob.docs.status.verified');
+    case 'REJECTED':
+      return t('ob.docs.status.rejected');
+    case 'EXPIRED':
+      return t('ob.docs.status.expired');
+    default:
+      return status;
+  }
+}
 
-const KIND_LABEL: Record<string, string> = {
-  ID: 'Photo ID',
-  SSN_CARD: 'Social Security card',
-  I9_SUPPORTING: 'I-9 supporting document',
-};
+function kindLabel(t: Translate, kind: string): string | null {
+  switch (kind) {
+    case 'ID':
+      return t('ob.docs.kind.id');
+    case 'SSN_CARD':
+      return t('ob.docs.kind.ssnCard');
+    case 'I9_SUPPORTING':
+      return t('ob.docs.kind.i9Supporting');
+    default:
+      return null;
+  }
+}
+
+// Display names for the FEDERAL catalog titles. The catalog title string is
+// an API value (i9DocTitle) — it must be submitted verbatim; only the text
+// shown to the associate is translated. Unknown titles fall back to the raw
+// value so legacy/unlisted documents still render.
+function catalogTitleLabel(t: Translate, title: string): string {
+  switch (title) {
+    case 'U.S. Passport or Passport Card':
+      return t('ob.docs.cat.usPassport');
+    case 'Permanent Resident Card (Green Card, Form I-551)':
+      return t('ob.docs.cat.greenCard');
+    case 'Foreign passport with I-551 stamp or work authorization':
+      return t('ob.docs.cat.foreignPassport');
+    case 'Employment Authorization Document (Form I-766)':
+      return t('ob.docs.cat.ead');
+    case "Driver's license":
+      return t('ob.docs.cat.driversLicense');
+    case 'State ID card':
+      return t('ob.docs.cat.stateId');
+    case 'School ID card with photo':
+      return t('ob.docs.cat.schoolId');
+    case 'U.S. Military card or draft record':
+      return t('ob.docs.cat.militaryCard');
+    case 'Social Security card (unrestricted)':
+      return t('ob.docs.cat.ssnUnrestricted');
+    case 'Birth certificate (original or certified copy)':
+      return t('ob.docs.cat.birthCert');
+    case 'Native American tribal document':
+      return t('ob.docs.cat.tribalDoc');
+    default:
+      return title;
+  }
+}
 
 export function DocumentUploadTask() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
+  const { t } = useI18n();
   const navigate = useNavigate();
   // Two pickers, one handler: `capture` locks iOS to the camera, so a
   // camera-only input made a passport PDF sitting in email unselectable.
@@ -87,9 +145,9 @@ export function DocumentUploadTask() {
       const r = await listMyDocuments();
       setDocs(r.documents);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      setError(err instanceof ApiError ? err.message : t('ob.docs.loadFailed'));
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     refresh();
@@ -152,14 +210,16 @@ export function DocumentUploadTask() {
         } catch {
           /* best-effort — the new upload is what matters */
         }
-        toast.success(`Replaced ${target.filename} with ${file.name}.`);
+        toast.success(
+          t('ob.docs.replacedToast', { old: target.filename, new: file.name }),
+        );
       } else {
-        toast.success(`Uploaded ${file.name}.`);
+        toast.success(t('ob.docs.uploadedToast', { name: file.name }));
       }
       setFailedUpload(null);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed.');
+      setError(err instanceof Error ? err.message : t('ob.docs.uploadFailed'));
       setFailedUpload({ file, target });
     } finally {
       setUploading(false);
@@ -182,7 +242,7 @@ export function DocumentUploadTask() {
     setReplaceTarget(null);
     if (!file) return;
     if (file.size > MAX_BYTES) {
-      setError(`File too large (max ${fmtSize(MAX_BYTES)}).`);
+      setError(t('ob.docs.tooLarge', { max: fmtSize(MAX_BYTES) }));
       return;
     }
     if (file.type.startsWith('image/')) {
@@ -216,7 +276,7 @@ export function DocumentUploadTask() {
       setDeleteTarget(null);
       await refresh();
     } catch (err) {
-      toast.error('Could not remove the document.', {
+      toast.error(t('ob.docs.removeFailed'), {
         description: err instanceof ApiError ? err.message : undefined,
       });
     } finally {
@@ -227,35 +287,30 @@ export function DocumentUploadTask() {
   const onFinish = async () => {
     if (!applicationId || finishing) return;
     if (!hasAtLeastOne) {
-      setError('Upload at least one document before finishing.');
+      setError(t('ob.docs.needOne'));
       return;
     }
     if (!combinationOk) {
-      setError(
-        'Your documents don’t yet satisfy the I-9: add ONE List A document, or one from List B plus one from List C.',
-      );
+      setError(t('ob.docs.comboError'));
       return;
     }
     setError(null);
     setFinishing(true);
     try {
       await finishDocumentUpload(applicationId);
-      toast.success('Documents submitted — HR will review them shortly.');
+      toast.success(t('ob.docs.submittedToast'));
       navigate(next?.route ?? backTo, { replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not finish.');
+      setError(err instanceof ApiError ? err.message : t('ob.docs.finishFailed'));
     } finally {
       setFinishing(false);
     }
   };
 
   return (
-    <TaskShell title="Identity documents" backTo={backTo}>
+    <TaskShell title={t('ob.docs.title')} backTo={backTo}>
       <p className="text-silver text-sm mb-4">
-        Upload a clear photo or scan of each document. PDF, PNG, JPG, or WebP
-        only — up to {fmtSize(MAX_BYTES)} per file. Word documents aren't
-        supported; export or print to PDF first. HR will review each upload;
-        you'll see the status update on your checklist.
+        {t('ob.docs.intro', { max: fmtSize(MAX_BYTES) })}
       </p>
 
       {/* Federal requirement meter — the associate sees what's still
@@ -263,31 +318,30 @@ export function DocumentUploadTask() {
           Section 2 with the 3-day clock running. */}
       <div className="mb-4 rounded-md border border-navy-secondary bg-navy-secondary/30 p-3 text-sm">
         <div className="mb-1.5 font-medium text-white">
-          What the I-9 form needs
+          {t('ob.docs.meterTitle')}
         </div>
         <div className={cn('flex items-center gap-2', hasA ? 'text-success' : 'text-silver')}>
           <CheckCircle2 className={cn('h-3.5 w-3.5', !hasA && 'opacity-30')} />
-          ONE List A document (passport, Green Card…)
+          {t('ob.docs.meterA')}
         </div>
-        <div className="my-0.5 pl-5 text-xs text-silver/60">— or both of —</div>
+        <div className="my-0.5 pl-5 text-xs text-silver/60">{t('ob.docs.meterOr')}</div>
         <div className={cn('flex items-center gap-2', hasB ? 'text-success' : 'text-silver')}>
           <CheckCircle2 className={cn('h-3.5 w-3.5', !hasB && 'opacity-30')} />
-          One List B document (driver&apos;s license, state ID…)
+          {t('ob.docs.meterB')}
         </div>
         <div className={cn('flex items-center gap-2', hasC ? 'text-success' : 'text-silver')}>
           <CheckCircle2 className={cn('h-3.5 w-3.5', !hasC && 'opacity-30')} />
-          One List C document (unrestricted Social Security card, birth certificate…)
+          {t('ob.docs.meterC')}
         </div>
         {hasUnclassified && (
           <div className="mt-1.5 text-xs text-silver/70">
-            Some of your documents were uploaded without a type — HR will
-            classify them at review, so you can still submit.
+            {t('ob.docs.unclassifiedNote')}
           </div>
         )}
       </div>
 
       <div className="space-y-4">
-        <Field label="Which document is this?">
+        <Field label={t('ob.docs.whichDoc')}>
           <Select
             value={docTitle}
             onChange={(e) => {
@@ -297,37 +351,34 @@ export function DocumentUploadTask() {
             disabled={uploading}
           >
             {(['A', 'B', 'C'] as const).map((list) => (
-              <optgroup key={list} label={LIST_HEADING[list]}>
+              <optgroup key={list} label={listHeading(t, list)}>
                 {I9_DOC_CATALOG.filter((c) => c.list === list).map((c) => (
                   <option key={c.title} value={c.title}>
-                    {c.title}
+                    {catalogTitleLabel(t, c.title)}
                   </option>
                 ))}
               </optgroup>
             ))}
-            <optgroup label="Something else">
-              <option value={OTHER_VALUE}>Other I-9 supporting document</option>
+            <optgroup label={t('ob.docs.somethingElse')}>
+              <option value={OTHER_VALUE}>{t('ob.docs.otherOption')}</option>
             </optgroup>
           </Select>
         </Field>
         {docTitle === 'Social Security card (unrestricted)' && (
           <p className="text-xs text-warning">
-            If your card is printed with a restriction like &ldquo;VALID FOR
-            WORK ONLY WITH DHS AUTHORIZATION&rdquo;, it does NOT count as a
-            List C document — pick &ldquo;Other I-9 supporting
-            document&rdquo; instead and add a different List C document.
+            {t('ob.docs.ssnRestrictedWarning')}
           </p>
         )}
         {selectedEntry?.card && (
-          <Field label="Which side of the card? (optional)">
+          <Field label={t('ob.docs.whichSide')}>
             <Select
               value={side}
               onChange={(e) => setSide(e.target.value as '' | 'FRONT' | 'BACK')}
               disabled={uploading}
             >
-              <option value="">One photo shows everything</option>
-              <option value="FRONT">Front</option>
-              <option value="BACK">Back</option>
+              <option value="">{t('ob.docs.sideBoth')}</option>
+              <option value="FRONT">{t('ob.docs.sideFront')}</option>
+              <option value="BACK">{t('ob.docs.sideBack')}</option>
             </Select>
           </Field>
         )}
@@ -360,7 +411,7 @@ export function DocumentUploadTask() {
             )}
           >
             <Camera className="h-5 w-5 inline-block mr-2 -mt-1" />
-            {uploading ? 'Uploading…' : 'Take photo'}
+            {uploading ? t('ob.docs.uploading') : t('ob.docs.takePhoto')}
           </button>
           <button
             type="button"
@@ -374,7 +425,7 @@ export function DocumentUploadTask() {
             )}
           >
             <Upload className="h-5 w-5 inline-block mr-2 -mt-1" />
-            {uploading ? 'Uploading…' : 'Choose file'}
+            {uploading ? t('ob.docs.uploading') : t('ob.docs.chooseFile')}
           </button>
         </div>
 
@@ -386,7 +437,7 @@ export function DocumentUploadTask() {
             <span className="min-w-0 flex-1 basis-48 truncate text-white">
               {failedUpload.file.name}
               <span className="block text-xs text-alert">
-                Upload failed — your file is still here.
+                {t('ob.docs.failedStillHere')}
               </span>
             </span>
             <Button
@@ -395,7 +446,7 @@ export function DocumentUploadTask() {
               onClick={() => doUpload(failedUpload.file, failedUpload.target)}
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              Retry upload
+              {t('ob.docs.retryUpload')}
             </Button>
             <button
               type="button"
@@ -408,7 +459,7 @@ export function DocumentUploadTask() {
               }}
               className="text-sm text-silver hover:text-white coarse:min-h-11 inline-flex items-center"
             >
-              Choose different file
+              {t('ob.docs.chooseDifferent')}
             </button>
           </div>
         )}
@@ -416,7 +467,7 @@ export function DocumentUploadTask() {
         {/* Uploaded list ------------------------------------------------ */}
         <div>
           <div className="text-xs uppercase tracking-widest text-silver mb-2">
-            Your uploaded documents{' '}
+            {t('ob.docs.uploadedHeading')}{' '}
             <span className="ml-1 tabular-nums text-silver/70">
               {idDocs.length}
             </span>
@@ -425,7 +476,7 @@ export function DocumentUploadTask() {
             <SkeletonRows count={2} rowHeight="h-12" />
           ) : idDocs.length === 0 ? (
             <p className="text-silver text-sm">
-              No documents yet — pick one above to start.
+              {t('ob.docs.emptyList')}
             </p>
           ) : (
             <ul className="space-y-2">
@@ -440,15 +491,19 @@ export function DocumentUploadTask() {
                       {d.filename}
                     </div>
                     <div className="text-xs text-silver/70 tabular-nums">
-                      {d.i9DocTitle ?? KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' ')}
-                      {d.i9List ? ` · List ${d.i9List}` : ''}
-                      {d.side ? ` · ${d.side === 'FRONT' ? 'front' : 'back'}` : ''}
+                      {d.i9DocTitle
+                        ? catalogTitleLabel(t, d.i9DocTitle)
+                        : kindLabel(t, d.kind) ?? d.kind.replace(/_/g, ' ')}
+                      {d.i9List ? ` · ${t('ob.docs.listTag', { list: d.i9List })}` : ''}
+                      {d.side
+                        ? ` · ${d.side === 'FRONT' ? t('ob.docs.frontLower') : t('ob.docs.backLower')}`
+                        : ''}
                       {' · '}
                       {fmtSize(d.size)}
                     </div>
                     {d.rejectionReason && (
                       <div className="text-xs text-alert mt-1">
-                        Reason: {d.rejectionReason}
+                        {t('ob.docs.rejectionReason', { reason: d.rejectionReason })}
                       </div>
                     )}
                   </div>
@@ -457,7 +512,7 @@ export function DocumentUploadTask() {
                     variant={statusTone(d.status)}
                     data-status={d.status}
                   >
-                    {STATUS_LABEL[d.status] ?? d.status}
+                    {statusLabel(t, d.status)}
                   </Badge>
                   {d.status !== 'VERIFIED' && (
                     <button
@@ -472,8 +527,8 @@ export function DocumentUploadTask() {
                         fileInputRef.current?.click();
                       }}
                       className="text-warning hover:opacity-80"
-                      aria-label="Replace this document"
-                      title="Re-upload to replace"
+                      aria-label={t('ob.docs.replaceAria')}
+                      title={t('ob.docs.replaceTitle')}
                     >
                       <RotateCcw className="h-3.5 w-3.5" />
                     </button>
@@ -483,8 +538,8 @@ export function DocumentUploadTask() {
                       type="button"
                       onClick={() => onDelete(d)}
                       className="text-alert hover:opacity-80"
-                      aria-label="Remove document"
-                      title="Remove"
+                      aria-label={t('ob.docs.removeAria')}
+                      title={t('ob.docs.remove')}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -504,8 +559,9 @@ export function DocumentUploadTask() {
         {canSubmit && (
           <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-success/30 bg-success/[0.05] text-success text-xs">
             <CheckCircle2 className="h-3.5 w-3.5" />
-            You have {idDocs.length} document{idDocs.length === 1 ? '' : 's'} ready
-            to submit.
+            {idDocs.length === 1
+              ? t('ob.docs.readyOne')
+              : t('ob.docs.readyMany', { count: idDocs.length })}
           </div>
         )}
 
@@ -517,26 +573,30 @@ export function DocumentUploadTask() {
             disabled={!canSubmit || finishing}
           >
             {finishing
-              ? 'Submitting…'
+              ? t('ob.docs.submitting')
               : canSubmit
                 ? next
-                  ? `Submit & continue → ${next.label}`
-                  : "I'm done — submit for review"
+                  ? t('ob.docs.submitContinue', { label: next.label })
+                  : t('ob.docs.submitDone')
                 : hasAtLeastOne
-                  ? 'List A, or List B + C, still needed'
-                  : 'Upload at least one'}
+                  ? t('ob.docs.stillNeeded')
+                  : t('ob.docs.uploadAtLeastOne')}
           </Button>
           <Link to={backTo} className="text-sm text-silver hover:text-white">
-            Cancel
+            {t('ob.docs.cancel')}
           </Link>
         </div>
       </div>
       <ConfirmDialog
         open={deleteTarget !== null}
         onOpenChange={(o) => !o && setDeleteTarget(null)}
-        title={deleteTarget ? `Remove "${deleteTarget.filename}"?` : 'Remove file'}
-        description="The upload will be removed from your record. You can re-upload before submitting for review."
-        confirmLabel="Remove"
+        title={
+          deleteTarget
+            ? t('ob.docs.removeConfirmTitle', { name: deleteTarget.filename })
+            : t('ob.docs.removeFile')
+        }
+        description={t('ob.docs.removeConfirmDesc')}
+        confirmLabel={t('ob.docs.remove')}
         destructive
         busy={deleting}
         onConfirm={confirmDelete}

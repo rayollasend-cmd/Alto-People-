@@ -531,8 +531,8 @@ function DisputeDialog({
       // path to it so the filing isn't a fire-and-forget black hole.
       toast.success(t('time.reportSent'), {
         action: {
-          label: 'View in My cases',
-          onClick: () => navigate('/hr-cases'),
+          label: t('pay.viewInCases'),
+          onClick: () => navigate(`/hr-cases?return=${encodeURIComponent('/time')}`),
         },
       });
       setMessage('');

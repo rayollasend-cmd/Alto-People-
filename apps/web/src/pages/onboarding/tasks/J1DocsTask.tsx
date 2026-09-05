@@ -12,6 +12,7 @@ import {
 import { finishJ1Docs, getJ1Profile, saveJ1Profile } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import { TaskShell, inputCls, Field, useNextTask } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { fmtSize } from '@/lib/format';
@@ -22,30 +23,51 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Select } from '@/components/ui/Select';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 
-const J1_KIND_OPTIONS: Array<{ value: DocumentKind; label: string }> = [
-  { value: 'J1_DS2019', label: 'DS-2019 (Certificate of Eligibility)' },
-  { value: 'J1_VISA', label: 'J-1 visa (passport visa page)' },
-];
+type Translate = ReturnType<typeof useI18n>['t'];
+
+// Option VALUES are API document kinds — only the labels are translated.
+const J1_KINDS: readonly DocumentKind[] = ['J1_DS2019', 'J1_VISA'];
+
+function j1KindOptionLabel(t: Translate, kind: DocumentKind): string {
+  return kind === 'J1_DS2019'
+    ? t('ob.j1.optionDs2019')
+    : t('ob.j1.optionVisa');
+}
 
 const MAX_BYTES = UPLOAD_MAX_BYTES;
 const ACCEPTED_MIMES = 'application/pdf,image/png,image/jpeg,image/webp';
 
 
-const STATUS_LABEL: Record<string, string> = {
-  UPLOADED: 'Awaiting review',
-  VERIFIED: 'Verified',
-  REJECTED: 'Rejected',
-  EXPIRED: 'Expired',
-};
+function statusLabel(t: Translate, status: string): string {
+  switch (status) {
+    case 'UPLOADED':
+      return t('ob.j1.status.uploaded');
+    case 'VERIFIED':
+      return t('ob.j1.status.verified');
+    case 'REJECTED':
+      return t('ob.j1.status.rejected');
+    case 'EXPIRED':
+      return t('ob.j1.status.expired');
+    default:
+      return status;
+  }
+}
 
-const KIND_LABEL: Record<string, string> = {
-  J1_DS2019: 'DS-2019',
-  J1_VISA: 'J-1 visa',
-};
+function kindLabel(t: Translate, kind: string): string | null {
+  switch (kind) {
+    case 'J1_DS2019':
+      return t('ob.j1.kindDs2019');
+    case 'J1_VISA':
+      return t('ob.j1.kindVisa');
+    default:
+      return null;
+  }
+}
 
 export function J1DocsTask() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
+  const { t } = useI18n();
   const navigate = useNavigate();
   // Two pickers, one handler: `capture` locks iOS to the camera, while a
   // plain input reaches Files/photo library — a DS-2019 is often a PDF.
@@ -82,9 +104,9 @@ export function J1DocsTask() {
       const r = await listMyDocuments();
       setDocs(r.documents);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      setError(err instanceof ApiError ? err.message : t('ob.j1.loadFailed'));
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     refresh();
@@ -134,7 +156,7 @@ export function J1DocsTask() {
       !sponsorAgency.trim() ||
       !country.trim()
     ) {
-      setError('Fill out all required fields before saving the profile.');
+      setError(t('ob.j1.fillRequired'));
       return;
     }
     setError(null);
@@ -150,13 +172,13 @@ export function J1DocsTask() {
         sevisId: sevisId.trim() || null,
       });
       setProfileSaved(true);
-      toast.success('Program details saved.');
+      toast.success(t('ob.j1.profileSavedToast'));
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'bad_program_dates') {
-        setError('Program end date must be after the start date.');
+        setError(t('ob.j1.badDates'));
       } else {
-        setError(err instanceof ApiError ? err.message : 'Save failed.');
+        setError(err instanceof ApiError ? err.message : t('ob.j1.saveFailed'));
       }
     } finally {
       setSavingProfile(false);
@@ -168,17 +190,17 @@ export function J1DocsTask() {
     e.target.value = '';
     if (!file) return;
     if (file.size > MAX_BYTES) {
-      setError(`File too large (max ${fmtSize(MAX_BYTES)}).`);
+      setError(t('ob.j1.tooLarge', { max: fmtSize(MAX_BYTES) }));
       return;
     }
     setError(null);
     setUploading(true);
     try {
       await uploadMyDocument(file, kind);
-      toast.success(`Uploaded ${file.name}.`);
+      toast.success(t('ob.j1.uploadedToast', { name: file.name }));
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed.');
+      setError(err instanceof Error ? err.message : t('ob.j1.uploadFailed'));
     } finally {
       setUploading(false);
     }
@@ -197,7 +219,7 @@ export function J1DocsTask() {
       setDeleteTarget(null);
       await refresh();
     } catch (err) {
-      toast.error('Could not remove the document.', {
+      toast.error(t('ob.j1.removeFailed'), {
         description: err instanceof ApiError ? err.message : undefined,
       });
     } finally {
@@ -208,23 +230,23 @@ export function J1DocsTask() {
   const onFinish = async () => {
     if (!applicationId || finishing) return;
     if (!hasAtLeastOneDoc) {
-      setError('Upload at least one DS-2019 or J-1 visa scan before finishing.');
+      setError(t('ob.j1.needDoc'));
       return;
     }
     setError(null);
     setFinishing(true);
     try {
       await finishJ1Docs(applicationId);
-      toast.success('J-1 documents submitted — HR will review them shortly.');
+      toast.success(t('ob.j1.submittedToast'));
       navigate(next?.route ?? backTo, { replace: true });
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'no_profile') {
-        setError('Save your program details first.');
+        setError(t('ob.j1.noProfile'));
       } else if (code === 'no_documents') {
-        setError('Upload at least one DS-2019 or J-1 visa scan first.');
+        setError(t('ob.j1.noDocuments'));
       } else {
-        setError(err instanceof ApiError ? err.message : 'Could not finish.');
+        setError(err instanceof ApiError ? err.message : t('ob.j1.finishFailed'));
       }
     } finally {
       setFinishing(false);
@@ -232,19 +254,18 @@ export function J1DocsTask() {
   };
 
   return (
-    <TaskShell title="J-1 documents" backTo={backTo}>
+    <TaskShell title={t('ob.j1.title')} backTo={backTo}>
       <p className="text-silver text-sm mb-5">
-        Two parts: enter your program details, then upload your DS-2019 and
-        visa scans. HR will verify everything before payroll setup.
+        {t('ob.j1.intro')}
       </p>
 
       {/* ---------------------------- Step 1: profile fields */}
       <form onSubmit={onSaveProfile} className="space-y-4 mb-6">
         <div className="text-xs uppercase tracking-widest text-silver">
-          Step 1 — program details
+          {t('ob.j1.step1')}
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="Program start date">
+          <Field label={t('ob.j1.programStart')}>
             <input
               type="date"
               value={programStartDate}
@@ -253,7 +274,7 @@ export function J1DocsTask() {
               required
             />
           </Field>
-          <Field label="Program end date">
+          <Field label={t('ob.j1.programEnd')}>
             <input
               type="date"
               value={programEndDate}
@@ -262,7 +283,7 @@ export function J1DocsTask() {
               required
             />
           </Field>
-          <Field label="DS-2019 number">
+          <Field label={t('ob.j1.ds2019Number')}>
             <input
               type="text"
               value={ds2019Number}
@@ -272,18 +293,18 @@ export function J1DocsTask() {
               required
             />
           </Field>
-          <Field label="Sponsor agency">
+          <Field label={t('ob.j1.sponsorAgency')}>
             <input
               type="text"
               value={sponsorAgency}
               onChange={(e) => setSponsorAgency(e.target.value)}
               className={inputCls}
               maxLength={120}
-              placeholder="e.g. CIEE, InterExchange"
+              placeholder={t('ob.j1.sponsorPlaceholder')}
               required
             />
           </Field>
-          <Field label="Country of citizenship">
+          <Field label={t('ob.j1.country')}>
             <input
               type="text"
               value={country}
@@ -293,7 +314,7 @@ export function J1DocsTask() {
               required
             />
           </Field>
-          <Field label="SEVIS ID (optional)">
+          <Field label={t('ob.j1.sevisId')}>
             <input
               type="text"
               value={sevisId}
@@ -303,7 +324,7 @@ export function J1DocsTask() {
               placeholder="N#########"
             />
           </Field>
-          <Field label="Visa number (optional)">
+          <Field label={t('ob.j1.visaNumber')}>
             <input
               type="text"
               value={visaNumber}
@@ -327,12 +348,12 @@ export function J1DocsTask() {
           {profileSaved && !savingProfile ? (
             <>
               <CheckCircle2 className="h-4 w-4" />
-              Saved · save again
+              {t('ob.j1.savedAgain')}
             </>
           ) : (
             <>
               {!savingProfile && <Save className="h-4 w-4" />}
-              {savingProfile ? 'Saving…' : 'Save program details'}
+              {savingProfile ? t('ob.j1.saving') : t('ob.j1.saveProfile')}
             </>
           )}
         </Button>
@@ -341,18 +362,18 @@ export function J1DocsTask() {
       {/* ---------------------------- Step 2: documents */}
       <div className="space-y-4">
         <div className="text-xs uppercase tracking-widest text-silver">
-          Step 2 — upload documents
+          {t('ob.j1.step2')}
         </div>
 
-        <Field label="Document type">
+        <Field label={t('ob.j1.docType')}>
           <Select
             value={kind}
             onChange={(e) => setKind(e.target.value as DocumentKind)}
             disabled={uploading}
           >
-            {J1_KIND_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
+            {J1_KINDS.map((k) => (
+              <option key={k} value={k}>
+                {j1KindOptionLabel(t, k)}
               </option>
             ))}
           </Select>
@@ -386,7 +407,7 @@ export function J1DocsTask() {
             )}
           >
             <Camera className="h-5 w-5 inline-block mr-2 -mt-1" />
-            {uploading ? 'Uploading…' : 'Take photo'}
+            {uploading ? t('ob.j1.uploading') : t('ob.j1.takePhoto')}
           </button>
           <button
             type="button"
@@ -400,13 +421,13 @@ export function J1DocsTask() {
             )}
           >
             <Upload className="h-5 w-5 inline-block mr-2 -mt-1" />
-            {uploading ? 'Uploading…' : 'Choose file'}
+            {uploading ? t('ob.j1.uploading') : t('ob.j1.chooseFile')}
           </button>
         </div>
 
         <div>
           <div className="text-xs uppercase tracking-widest text-silver mb-2">
-            Uploaded J-1 documents{' '}
+            {t('ob.j1.uploadedHeading')}{' '}
             <span className="ml-1 tabular-nums text-silver/70">
               {j1Docs.length}
             </span>
@@ -415,7 +436,7 @@ export function J1DocsTask() {
             <SkeletonRows count={2} rowHeight="h-12" />
           ) : j1Docs.length === 0 ? (
             <p className="text-silver text-sm">
-              No J-1 documents yet — pick one above.
+              {t('ob.j1.emptyList')}
             </p>
           ) : (
             <ul className="space-y-2">
@@ -430,12 +451,12 @@ export function J1DocsTask() {
                       {d.filename}
                     </div>
                     <div className="text-xs text-silver/70 tabular-nums">
-                      {KIND_LABEL[d.kind] ?? d.kind.replace(/_/g, ' ')} ·{' '}
+                      {kindLabel(t, d.kind) ?? d.kind.replace(/_/g, ' ')} ·{' '}
                       {fmtSize(d.size)}
                     </div>
                     {d.rejectionReason && (
                       <div className="text-xs text-alert mt-1">
-                        Reason: {d.rejectionReason}
+                        {t('ob.j1.rejectionReason', { reason: d.rejectionReason })}
                       </div>
                     )}
                   </div>
@@ -444,15 +465,15 @@ export function J1DocsTask() {
                     variant={statusTone(d.status)}
                     data-status={d.status}
                   >
-                    {STATUS_LABEL[d.status] ?? d.status}
+                    {statusLabel(t, d.status)}
                   </Badge>
                   {d.status !== 'VERIFIED' && (
                     <button
                       type="button"
                       onClick={() => onDelete(d)}
                       className="text-alert hover:opacity-80"
-                      aria-label="Remove document"
-                      title="Remove"
+                      aria-label={t('ob.j1.removeAria')}
+                      title={t('ob.j1.remove')}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -477,26 +498,30 @@ export function J1DocsTask() {
             disabled={!hasAtLeastOneDoc || !profileSaved || finishing}
           >
             {finishing
-              ? 'Submitting…'
+              ? t('ob.j1.submitting')
               : !profileSaved
-                ? 'Save program details first'
+                ? t('ob.j1.saveFirst')
                 : !hasAtLeastOneDoc
-                  ? 'Upload at least one document'
+                  ? t('ob.j1.uploadFirst')
                   : next
-                    ? `Submit & continue → ${next.label}`
-                    : "I'm done — submit for review"}
+                    ? t('ob.j1.submitContinue', { label: next.label })
+                    : t('ob.j1.submitDone')}
           </Button>
           <Link to={backTo} className="text-sm text-silver hover:text-white">
-            Cancel
+            {t('ob.j1.cancel')}
           </Link>
         </div>
       </div>
       <ConfirmDialog
         open={deleteTarget !== null}
         onOpenChange={(o) => !o && setDeleteTarget(null)}
-        title={deleteTarget ? `Remove "${deleteTarget.filename}"?` : 'Remove file'}
-        description="The upload will be removed from your record. You can re-upload before submitting for review."
-        confirmLabel="Remove"
+        title={
+          deleteTarget
+            ? t('ob.j1.removeConfirmTitle', { name: deleteTarget.filename })
+            : t('ob.j1.removeFile')
+        }
+        description={t('ob.j1.removeConfirmDesc')}
+        confirmLabel={t('ob.j1.remove')}
         destructive
         busy={deleting}
         onConfirm={confirmDelete}

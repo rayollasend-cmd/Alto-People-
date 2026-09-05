@@ -30,6 +30,7 @@ import {
 } from '@/lib/kb124Api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
+import { useI18n } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
 import { statusLabel, statusTone } from '@/lib/status';
 import {
@@ -77,11 +78,12 @@ function RetryBanner({
   message: string;
   onRetry: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <ErrorBanner
       action={
         <Button size="sm" variant="secondary" onClick={onRetry}>
-          Retry
+          {t('kb.retry')}
         </Button>
       }
     >
@@ -91,6 +93,7 @@ function RetryBanner({
 }
 
 export function KbHome() {
+  const { t } = useI18n();
   const { user } = useAuth();
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
@@ -101,8 +104,8 @@ export function KbHome() {
   const [qInput, setQInput] = useState('');
   const [q, setQ] = useState('');
   useEffect(() => {
-    const t = setTimeout(() => setQ(qInput), 250);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setQ(qInput), 250);
+    return () => clearTimeout(timer);
   }, [qInput]);
 
   const [category, setCategory] = useState<string>('');
@@ -135,7 +138,7 @@ export function KbHome() {
       .then((r) => setCategories(r.categories))
       .catch((err) =>
         setCategoriesError(
-          err instanceof ApiError ? err.message : 'Could not load categories.',
+          err instanceof ApiError ? err.message : t('kb.categoriesFailed'),
         ),
       );
   };
@@ -147,7 +150,7 @@ export function KbHome() {
       .then((r) => setArticles(r.articles))
       .catch((err) =>
         setArticlesError(
-          err instanceof ApiError ? err.message : 'Could not load articles.',
+          err instanceof ApiError ? err.message : t('kb.articlesFailed'),
         ),
       );
   };
@@ -159,7 +162,7 @@ export function KbHome() {
       .then((r) => setAdminRows(r.articles))
       .catch((err) =>
         setAdminError(
-          err instanceof ApiError ? err.message : 'Could not load articles.',
+          err instanceof ApiError ? err.message : t('kb.articlesFailed'),
         ),
       );
   };
@@ -201,18 +204,18 @@ export function KbHome() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Help center"
-        subtitle="Search company policies, benefits, and how-tos. Try searching before filing an HR case."
-        breadcrumbs={[{ label: 'Workforce' }, { label: 'Help center' }]}
+        title={t('kb.title')}
+        subtitle={t('kb.subtitle')}
+        breadcrumbs={[{ label: t('kb.crumbSection') }, { label: t('kb.title') }]}
       />
 
       <div className="flex items-center justify-between">
         <SegmentedControl
-          ariaLabel="Help center view"
+          ariaLabel={t('kb.viewAria')}
           value={tab}
           onChange={(v) => setTab(v)}
           options={[
-            { value: 'browse' as const, label: 'Browse' },
+            { value: 'browse' as const, label: t('kb.tab.browse') },
             ...(canManage ? [{ value: 'admin' as const, label: 'Admin' }] : []),
           ]}
         />
@@ -226,8 +229,8 @@ export function KbHome() {
       {tab === 'browse' ? (
         <>
           <SearchInput
-            placeholder="Search articles…"
-            aria-label="Search articles"
+            placeholder={t('kb.searchPlaceholder')}
+            aria-label={t('kb.searchAria')}
             value={qInput}
             onChange={(e) => setQInput(e.target.value)}
           />
@@ -237,7 +240,7 @@ export function KbHome() {
             categories.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 <FilterChip active={category === ''} onClick={() => setCategory('')}>
-                  All
+                  {t('kb.allCategories')}
                 </FilterChip>
                 {categories.map((c) => (
                   <FilterChip
@@ -264,13 +267,13 @@ export function KbHome() {
               ) : articles.length === 0 ? (
                 <EmptyState
                   icon={BookOpen}
-                  title={q ? 'No matches' : 'No articles yet'}
+                  title={q ? t('kb.noMatches') : t('kb.noArticlesYet')}
                   description={
                     q
-                      ? 'Try different keywords or browse by category.'
+                      ? t('kb.noMatchesDesc')
                       : canManage
                         ? 'Write the first article — policies, benefits, how-tos.'
-                        : 'HR hasn’t published any articles yet.'
+                        : t('kb.noArticlesDesc')
                   }
                   action={
                     !q && canManage ? (
@@ -501,6 +504,7 @@ function ArticleDrawer({
   slug: string;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [data, setData] = useState<KbArticleDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -512,7 +516,7 @@ function ArticleDrawer({
       .then(setData)
       .catch((err) =>
         setError(
-          err instanceof ApiError ? err.message : 'Could not load the article.',
+          err instanceof ApiError ? err.message : t('kb.articleFailed'),
         ),
       );
   };
@@ -526,10 +530,10 @@ function ArticleDrawer({
     setBusy(true);
     try {
       await voteKbArticle(data.id, helpful);
-      toast.success('Thanks for the feedback.');
+      toast.success(t('kb.voteThanks'));
       refresh();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('kb.failed'));
     } finally {
       setBusy(false);
     }
@@ -538,7 +542,7 @@ function ArticleDrawer({
   return (
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
-        <DrawerTitle>{data?.title ?? 'Loading…'}</DrawerTitle>
+        <DrawerTitle>{data?.title ?? t('kb.loading')}</DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
         {error ? (
@@ -561,7 +565,7 @@ function ArticleDrawer({
             </div>
             <div className="pt-3 border-t border-navy-secondary space-y-2">
               <div className="text-xs uppercase tracking-wider text-silver">
-                Was this helpful?
+                {t('kb.wasHelpful')}
               </div>
               <div className="flex gap-2">
                 <Button
@@ -570,7 +574,7 @@ function ArticleDrawer({
                   onClick={() => vote(true)}
                   disabled={busy}
                 >
-                  <ThumbsUp className="mr-1 h-3 w-3" /> Yes ({data.helpful})
+                  <ThumbsUp className="mr-1 h-3 w-3" /> {t('kb.voteYes', { n: data.helpful })}
                 </Button>
                 <Button
                   size="sm"
@@ -578,7 +582,7 @@ function ArticleDrawer({
                   onClick={() => vote(false)}
                   disabled={busy}
                 >
-                  <ThumbsDown className="mr-1 h-3 w-3" /> No ({data.notHelpful})
+                  <ThumbsDown className="mr-1 h-3 w-3" /> {t('kb.voteNo', { n: data.notHelpful })}
                 </Button>
               </div>
             </div>
@@ -587,7 +591,7 @@ function ArticleDrawer({
       </DrawerBody>
       <DrawerFooter>
         <Button onClick={onClose}>
-          <ArrowLeft className="mr-2 h-4 w-4" /> Back to results
+          <ArrowLeft className="mr-2 h-4 w-4" /> {t('kb.backToResults')}
         </Button>
       </DrawerFooter>
     </Drawer>

@@ -16,6 +16,8 @@ export interface SelfProfile {
   department: { name: string } | null;
   jobProfile: { title: string } | null;
   managerName: string | null;
+  managerPhone: string | null;
+  managerEmail: string | null;
 }
 
 export interface EmergencyContact {

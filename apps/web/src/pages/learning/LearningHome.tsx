@@ -9,11 +9,13 @@ import {
   createCourse,
   deleteCourse,
   enrollAssociates,
+  getMyTraining,
   listCourses,
   listEnrollments,
   listExpiring,
   publishCourse,
   waiveEnrollment,
+  type MyTrainingEnrollment,
   type Course,
   type CourseStatus,
   type Enrollment,
@@ -21,7 +23,9 @@ import {
   type ExpiringEnrollment,
 } from '@/lib/lms94Api';
 import { useAuth } from '@/lib/auth';
+import { cn } from '@/lib/cn';
 import { useConfirm } from '@/lib/confirm';
+import { useI18n } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
 import { StatusBadge, statusLabel } from '@/lib/status';
 import {
@@ -64,7 +68,15 @@ type Tab = 'courses' | 'enrollments' | 'expiring';
 export function LearningHome() {
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:compliance') : false;
+  const canViewAdmin = user ? hasCapability(user.role, 'view:compliance') : false;
   const [tab, setTab] = useState<Tab>('courses');
+
+  // Associates got the compliance-admin console (associate search, CSV
+  // export, expiry windows) whose every fetch 403'd for them. They get
+  // their OWN training instead.
+  if (!canViewAdmin) {
+    return <MyTraining />;
+  }
 
   return (
     <div className="space-y-5">
@@ -89,6 +101,133 @@ export function LearningHome() {
         <TabsContent value="enrollments"><EnrollmentsTab canManage={canManage} /></TabsContent>
         <TabsContent value="expiring"><ExpiringTab /></TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+/**
+ * The associate's own training list — required chips, status, expiry.
+ * Completion is recorded by HR/your supervisor (course delivery happens
+ * on the floor or in the LMS player phase), so this view is honest about
+ * what to do rather than offering a dead button.
+ */
+function MyTraining() {
+  const { t } = useI18n();
+  const [rows, setRows] = useState<MyTrainingEnrollment[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => {
+    setError(null);
+    getMyTraining()
+      .then((r) => setRows(r.enrollments))
+      .catch((e) =>
+        setError(e instanceof ApiError ? e.message : t('lrn.loadFailed')),
+      );
+  };
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const open = (rows ?? []).filter(
+    (r) => r.status === 'ASSIGNED' || r.status === 'IN_PROGRESS' || r.status === 'EXPIRED',
+  );
+  const done = (rows ?? []).filter(
+    (r) => r.status === 'COMPLETED' || r.status === 'WAIVED',
+  );
+
+  return (
+    <div className="space-y-5">
+      <PageHeader
+        title={t('lrn.myTitle')}
+        subtitle={t('lrn.mySubtitle')}
+        breadcrumbs={[{ label: t('lrn.crumb') }]}
+      />
+      {error && (
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="outline" onClick={load}>
+              {t('common.retry')}
+            </Button>
+          }
+        >
+          {error}
+        </ErrorBanner>
+      )}
+      {!rows && !error && <SkeletonRows count={4} rowHeight="h-20" />}
+      {rows && rows.length === 0 && (
+        <EmptyState
+          icon={GraduationCap}
+          title={t('lrn.emptyTitle')}
+          description={t('lrn.emptyDesc')}
+        />
+      )}
+      {rows && open.length > 0 && (
+        <section>
+          <h2 className="text-xs2 uppercase tracking-wider text-silver/80 mb-2">
+            {t('lrn.toDo', { count: String(open.length) })}
+          </h2>
+          <ul className="space-y-2">
+            {open.map((r) => (
+              <li
+                key={r.id}
+                className={cn(
+                  'rounded-lg border p-4',
+                  r.status === 'EXPIRED'
+                    ? 'border-alert/50 bg-alert/[0.05]'
+                    : 'border-gold/40 bg-gold/[0.04]',
+                )}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-white">{r.courseTitle}</span>
+                  {r.isRequired && (
+                    <Badge variant="pending">{t('lrn.required')}</Badge>
+                  )}
+                  {r.status === 'EXPIRED' && (
+                    <Badge variant="destructive">{t('lrn.expired')}</Badge>
+                  )}
+                </div>
+                {r.courseDescription && (
+                  <p className="text-xs text-silver mt-1">{r.courseDescription}</p>
+                )}
+                <p className="text-2xs text-silver/70 mt-1.5">
+                  {t('lrn.assignedOn', { date: fmtDate(r.assignedAt) })}
+                  {' · '}
+                  {t('lrn.howToComplete')}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {rows && done.length > 0 && (
+        <section>
+          <h2 className="text-xs2 uppercase tracking-wider text-silver/80 mb-2">
+            {t('lrn.completed', { count: String(done.length) })}
+          </h2>
+          <ul className="space-y-2">
+            {done.map((r) => (
+              <li
+                key={r.id}
+                className="rounded-lg border border-success/30 bg-success/[0.03] p-4"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-white">{r.courseTitle}</span>
+                  <Badge variant="success">
+                    {r.status === 'WAIVED' ? t('lrn.waived') : t('lrn.done')}
+                  </Badge>
+                </div>
+                <p className="text-2xs text-silver/70 mt-1.5 tabular-nums">
+                  {r.completedAt && t('lrn.completedOn', { date: fmtDate(r.completedAt) })}
+                  {r.expiresAt && (
+                    <> · {t('lrn.validUntil', { date: fmtDate(r.expiresAt) })}</>
+                  )}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

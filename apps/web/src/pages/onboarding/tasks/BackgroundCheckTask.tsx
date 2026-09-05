@@ -5,24 +5,26 @@ import { toast } from 'sonner';
 import { authorizeBackgroundCheck } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import { TaskShell, inputCls, Field, useNextTask } from './ProfileInfoTask';
 import { Button } from '@/components/ui/Button';
-
-const DISCLOSURE = [
-  'As part of your onboarding, your employer will run a routine background check through a third-party consumer reporting agency. This may include a review of your criminal history, employment history, education, and identity verification.',
-  '',
-  'Under the federal Fair Credit Reporting Act (FCRA), you have the right to:',
-  ' • Receive a copy of the report.',
-  ' • Dispute the accuracy or completeness of any information in the report.',
-  ' • Withdraw your consent at any time before the report is requested.',
-  '',
-  'A "Summary of Your Rights Under the FCRA" is available on request. By typing your full legal name and clicking "Authorize", you confirm that the information you have provided is accurate and you authorize this background check to be performed.',
-].join('\n');
 
 export function BackgroundCheckTask() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
+  const { t } = useI18n();
   const navigate = useNavigate();
+
+  const disclosure = [
+    t('ob.bg.disclosureIntro'),
+    '',
+    t('ob.bg.disclosureRightsTitle'),
+    ` • ${t('ob.bg.disclosureRightCopy')}`,
+    ` • ${t('ob.bg.disclosureRightDispute')}`,
+    ` • ${t('ob.bg.disclosureRightWithdraw')}`,
+    '',
+    t('ob.bg.disclosureSummary'),
+  ].join('\n');
 
   const [typedName, setTypedName] = useState('');
   const [accepted, setAccepted] = useState(false);
@@ -39,11 +41,11 @@ export function BackgroundCheckTask() {
     e.preventDefault();
     if (!applicationId || submitting) return;
     if (!typedName.trim()) {
-      setError('Type your full legal name to authorize.');
+      setError(t('ob.bg.nameRequired'));
       return;
     }
     if (!accepted) {
-      setError('Check the box to confirm you authorize the background check.');
+      setError(t('ob.bg.checkboxRequired'));
       return;
     }
     setError(null);
@@ -53,16 +55,14 @@ export function BackgroundCheckTask() {
         typedName: typedName.trim(),
         authorize: true,
       });
-      toast.success('Background check authorized.');
+      toast.success(t('ob.bg.authorizedToast'));
       navigate(next?.route ?? backTo, { replace: true });
     } catch (err) {
       const code = err instanceof ApiError ? err.code : null;
       if (code === 'name_mismatch') {
-        setError(
-          'The name you typed does not match what we have on file. Type your name as it appears on your government ID.'
-        );
+        setError(t('ob.bg.nameMismatch'));
       } else {
-        setError(err instanceof ApiError ? err.message : 'Authorization failed.');
+        setError(err instanceof ApiError ? err.message : t('ob.bg.authFailed'));
       }
     } finally {
       setSubmitting(false);
@@ -70,10 +70,10 @@ export function BackgroundCheckTask() {
   };
 
   return (
-    <TaskShell title="Background check authorization" backTo={backTo}>
+    <TaskShell title={t('ob.bg.title')} backTo={backTo}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="rounded-md border border-navy-secondary bg-navy-secondary/40 p-4 text-sm text-silver whitespace-pre-line leading-relaxed">
-          {DISCLOSURE}
+          {disclosure}
         </div>
 
         <label className="flex items-start gap-2 text-sm text-silver">
@@ -83,20 +83,16 @@ export function BackgroundCheckTask() {
             onChange={(e) => setAccepted(e.target.checked)}
             className="mt-0.5 h-4 w-4 rounded border-navy-secondary bg-navy text-gold focus:ring-gold focus:ring-offset-0 cursor-pointer"
           />
-          <span>
-            I have read and understood the disclosure above. I authorize a
-            background check to be performed and confirm the information I
-            have provided is accurate.
-          </span>
+          <span>{t('ob.bg.consent')}</span>
         </label>
 
-        <Field label="Type your full legal name (acts as your signature)">
+        <Field label={t('ob.bg.typedNameLabel')}>
           <input
             type="text"
             value={typedName}
             onChange={(e) => setTypedName(e.target.value)}
             className={inputCls}
-            placeholder="First Last"
+            placeholder={t('ob.bg.typedNamePlaceholder')}
             autoComplete="name"
             required
           />
@@ -116,13 +112,13 @@ export function BackgroundCheckTask() {
           >
             {!submitting && <ShieldCheck className="h-4 w-4" />}
             {submitting
-              ? 'Authorizing…'
+              ? t('ob.bg.authorizing')
               : next
-                ? `Authorize & continue → ${next.label}`
-                : 'Authorize background check'}
+                ? t('ob.bg.authorizeContinue', { next: next.label })
+                : t('ob.bg.authorize')}
           </Button>
           <Link to={backTo} className="text-sm text-silver hover:text-white">
-            Cancel
+            {t('common.cancel')}
           </Link>
         </div>
       </form>

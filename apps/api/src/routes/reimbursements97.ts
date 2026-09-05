@@ -53,7 +53,15 @@ const LineInputSchema = z.object({
   amount: z.number().nonnegative(),
   miles: z.number().nonnegative().optional().nullable(),
   ratePerMile: z.number().nonnegative().optional().nullable(),
-  receiptUrl: z.string().url().optional().nullable(),
+  // Full URL (pasted link) OR an in-app document-vault path — the phone
+  // flow snaps a receipt photo into the associate's own vault and links
+  // it here, so a paper receipt no longer blocks the claim.
+  receiptUrl: z
+    .string()
+    .url()
+    .or(z.string().regex(/^\/api\/documents\/[0-9a-fA-F-]{36}\/download$/))
+    .optional()
+    .nullable(),
   merchant: z.string().max(200).optional().nullable(),
   category: z.string().max(80).optional().nullable(),
 });

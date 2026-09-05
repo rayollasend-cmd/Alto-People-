@@ -20,6 +20,7 @@ import {
 } from '@/lib/agreements122Api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
+import { useI18n } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
 import { statusTone } from '@/lib/status';
 import {
@@ -73,7 +74,55 @@ function isPastYmd(s: string): boolean {
   return d !== null && d.getTime() < Date.now();
 }
 
+/** Translated display label for an agreement kind (falls back to the
+ *  associate-visible custom label for OTHER at the call sites). */
+function kindText(
+  t: ReturnType<typeof useI18n>['t'],
+  kind: AgreementKind,
+): string {
+  switch (kind) {
+    case 'NDA':
+      return t('agr.kind.nda');
+    case 'NON_COMPETE':
+      return t('agr.kind.nonCompete');
+    case 'IP_ASSIGNMENT':
+      return t('agr.kind.ipAssignment');
+    case 'ARBITRATION':
+      return t('agr.kind.arbitration');
+    case 'EMPLOYMENT_OFFER':
+      return t('agr.kind.employmentOffer');
+    case 'SEPARATION_AGREEMENT':
+      return t('agr.kind.separationAgreement');
+    case 'EQUITY_GRANT':
+      return t('agr.kind.equityGrant');
+    case 'OTHER':
+      return t('agr.kind.other');
+    default:
+      return KIND_LABELS[kind];
+  }
+}
+
+/** Translated display label for an agreement status badge. */
+function statusText(
+  t: ReturnType<typeof useI18n>['t'],
+  status: AgreementStatus,
+): string {
+  switch (status) {
+    case 'PENDING_SIGNATURE':
+      return t('agr.status.pendingSignature');
+    case 'SIGNED':
+      return t('agr.status.signed');
+    case 'EXPIRED':
+      return t('agr.status.expired');
+    case 'SUPERSEDED':
+      return t('agr.status.superseded');
+    default:
+      return STATUS_LABELS[status];
+  }
+}
+
 export function AgreementsHome() {
+  const { t } = useI18n();
   const { user } = useAuth();
   const confirm = useConfirm();
   const canManage = user ? hasCapability(user.role, 'manage:documents') : false;
@@ -100,7 +149,7 @@ export function AgreementsHome() {
         .then((r) => setRows(r.agreements))
         .catch((err) =>
           setLoadError(
-            err instanceof ApiError ? err.message : 'Could not load agreements.',
+            err instanceof ApiError ? err.message : t('agr.loadFailed'),
           ),
         );
     } else {
@@ -109,7 +158,7 @@ export function AgreementsHome() {
         .then((r) => setMine(r.agreements))
         .catch((err) =>
           setLoadError(
-            err instanceof ApiError ? err.message : 'Could not load agreements.',
+            err instanceof ApiError ? err.message : t('agr.loadFailed'),
           ),
         );
     }
@@ -121,18 +170,18 @@ export function AgreementsHome() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Agreements"
-        subtitle="NDAs, non-competes, IP assignments, arbitration, equity grants. Per-associate one-off legal documents."
-        breadcrumbs={[{ label: 'Compliance' }, { label: 'Agreements' }]}
+        title={t('agr.title')}
+        subtitle={t('agr.subtitle')}
+        breadcrumbs={[{ label: t('agr.crumbSection') }, { label: t('agr.title') }]}
       />
 
       <div className="flex items-center justify-between">
         <SegmentedControl
-          ariaLabel="Agreements view"
+          ariaLabel={t('agr.viewAria')}
           value={tab}
           onChange={(v) => setTab(v)}
           options={[
-            { value: 'mine' as const, label: 'Mine' },
+            { value: 'mine' as const, label: t('agr.tab.mine') },
             ...(canManage ? [{ value: 'all' as const, label: 'All' }] : []),
           ]}
         />
@@ -167,7 +216,7 @@ export function AgreementsHome() {
                 <ErrorBanner
                   action={
                     <Button size="sm" variant="secondary" onClick={refresh}>
-                      Retry
+                      {t('agr.retry')}
                     </Button>
                   }
                 >
@@ -181,28 +230,32 @@ export function AgreementsHome() {
             ) : mine.length === 0 ? (
               <EmptyState
                 icon={FileSignature}
-                title="No agreements"
-                description="You haven't been issued any agreements yet."
+                title={t('agr.emptyTitle')}
+                description={t('agr.emptyDesc')}
               />
             ) : (
               <div className="divide-y divide-navy-secondary">
+                {/* flex-wrap on the row: title + badge + Read + Sign were
+                    crammed into one non-wrapping line on 360px phones —
+                    where NDAs actually get signed. */}
                 {mine.map((a) => (
-                  <div key={a.id} className="p-4 flex items-center gap-3">
+                  <div key={a.id} className="p-4 flex flex-wrap items-center gap-3">
                     <div className="flex-1">
                       <div className="text-sm font-medium text-white">
                         {a.kind === 'OTHER' && a.customLabel
                           ? a.customLabel
-                          : KIND_LABELS[a.kind]}
+                          : kindText(t, a.kind)}
                       </div>
                       <div className="text-xs text-silver">
                         {a.signedAt
-                          ? `Signed ${fmtDate(a.signedAt)}`
-                          : 'Awaiting your signature'}
-                        {a.expiresOn && ` · expires ${fmtDate(parseYmd(a.expiresOn))}`}
+                          ? t('agr.signedOn', { date: fmtDate(a.signedAt) })
+                          : t('agr.awaitingSignature')}
+                        {a.expiresOn &&
+                          ` · ${t('agr.expiresOn', { date: fmtDate(parseYmd(a.expiresOn)) })}`}
                       </div>
                     </div>
                     <Badge variant={statusTone(a.status, { overrides: AGREEMENT_STATUS_TONES })}>
-                      {STATUS_LABELS[a.status]}
+                      {statusText(t, a.status)}
                     </Badge>
                     {a.documentUrl && (
                       <Button
@@ -216,7 +269,7 @@ export function AgreementsHome() {
                           target="_blank"
                           rel="noopener noreferrer"
                         >
-                          Read ↗
+                          {t('agr.read')} ↗
                         </a>
                       </Button>
                     )}
@@ -226,7 +279,7 @@ export function AgreementsHome() {
                         onClick={() => setSignRow(a)}
                         className="coarse:min-h-11"
                       >
-                        Sign
+                        {t('agr.sign')}
                       </Button>
                     )}
                   </div>
@@ -602,6 +655,7 @@ function SignDrawer({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
   const [signature, setSignature] = useState('');
   const [saving, setSaving] = useState(false);
   // No attached document → nothing to read → nothing to legally agree to.
@@ -611,16 +665,16 @@ function SignDrawer({
   const submit = async () => {
     if (missingDoc) return;
     if (!signature.trim()) {
-      toast.error('Type your full name to sign.');
+      toast.error(t('agr.signatureRequired'));
       return;
     }
     setSaving(true);
     try {
       await signAgreement(row.id, signature.trim());
-      toast.success('Signed.');
+      toast.success(t('agr.signedToast'));
       onSaved();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('agr.failed'));
     } finally {
       setSaving(false);
     }
@@ -630,7 +684,12 @@ function SignDrawer({
     <Drawer open={true} onOpenChange={(o) => !o && onClose()}>
       <DrawerHeader>
         <DrawerTitle>
-          Sign — {row.kind === 'OTHER' && row.customLabel ? row.customLabel : KIND_LABELS[row.kind]}
+          {t('agr.signTitle', {
+            label:
+              row.kind === 'OTHER' && row.customLabel
+                ? row.customLabel
+                : kindText(t, row.kind),
+          })}
         </DrawerTitle>
       </DrawerHeader>
       <DrawerBody className="space-y-4">
@@ -641,38 +700,38 @@ function SignDrawer({
             rel="noopener noreferrer"
             className="text-sm text-gold hover:underline"
           >
-            Read the document →
+            {t('agr.readDocument')}
           </a>
         ) : (
           <div role="alert" className="text-sm text-alert">
-            The document file is missing — ask HR to attach it before signing.
+            {t('agr.missingDoc')}
           </div>
         )}
         {row.notes && (
           <div className="text-sm text-silver italic">{row.notes}</div>
         )}
         <div>
-          <Label>Type your full legal name to sign</Label>
+          <Label>{t('agr.signatureLabel')}</Label>
           <Input
             className="mt-1"
             value={signature}
             onChange={(e) => setSignature(e.target.value)}
-            placeholder="Jane Q. Smith"
+            placeholder={t('agr.signaturePlaceholder')}
             disabled={missingDoc}
           />
         </div>
         {!missingDoc && (
           <div className="text-xs text-silver">
-            By signing, you agree this is a legally binding electronic signature.
+            {t('agr.signatureLegal')}
           </div>
         )}
       </DrawerBody>
       <DrawerFooter>
         <Button variant="ghost" onClick={onClose}>
-          Cancel
+          {t('agr.cancel')}
         </Button>
         <Button onClick={submit} disabled={saving || missingDoc}>
-          {saving ? 'Signing…' : 'Sign'}
+          {saving ? t('agr.signing') : t('agr.sign')}
         </Button>
       </DrawerFooter>
     </Drawer>

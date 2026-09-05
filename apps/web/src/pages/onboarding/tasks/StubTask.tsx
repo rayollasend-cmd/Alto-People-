@@ -1,13 +1,14 @@
 import { useParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { TaskShell } from './ProfileInfoTask';
 
-const KIND_LABEL: Record<string, string> = {
-  document_upload: 'Identity documents',
-  e_sign: 'Document e-signatures',
-  background_check: 'Background check',
-  i9_verification: 'I-9 verification',
-  j1_docs: 'J-1 documents',
+const KIND_LABEL: Record<string, MessageKey> = {
+  document_upload: 'ob.stub.kindDocuments',
+  e_sign: 'ob.stub.kindESign',
+  background_check: 'ob.stub.kindBackground',
+  i9_verification: 'ob.stub.kindI9',
+  j1_docs: 'ob.stub.kindJ1',
 };
 
 export function StubTask() {
@@ -16,8 +17,10 @@ export function StubTask() {
     taskKind: string;
   }>();
   const { user } = useAuth();
+  const { t } = useI18n();
 
-  const label = (taskKind && KIND_LABEL[taskKind]) ?? 'Task';
+  const label =
+    taskKind && KIND_LABEL[taskKind] ? t(KIND_LABEL[taskKind]) : t('ob.stub.task');
   const isAssociate = user?.role === 'ASSOCIATE';
   const backTo = isAssociate
     ? `/onboarding/me/${applicationId}`
@@ -26,13 +29,9 @@ export function StubTask() {
   return (
     <TaskShell title={label} backTo={backTo}>
       <div className="inline-block px-3 py-1 rounded-full bg-gold/10 border border-gold/30 text-gold text-xs uppercase tracking-widest mb-4">
-        Coming in a future phase
+        {t('ob.stub.comingSoon')}
       </div>
-      <p className="text-silver text-sm">
-        This onboarding step requires integration work that's scheduled for a
-        later phase (S3 file storage, signature pad UX, or third-party APIs).
-        HR can mark it complete from the application detail page in the meantime.
-      </p>
+      <p className="text-silver text-sm">{t('ob.stub.body')}</p>
     </TaskShell>
   );
 }

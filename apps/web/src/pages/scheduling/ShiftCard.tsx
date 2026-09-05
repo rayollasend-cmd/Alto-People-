@@ -21,7 +21,7 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
-import { fmtDateTz, fmtShiftRangeTz, fmtWeekdayTz } from '@/lib/format';
+import { fmtDateTz, fmtShiftRangeTz, fmtWeekdayTz, mapsUrl } from '@/lib/format';
 import { ArrowLeftRight, Check, ChevronDown, MapPin, Users } from 'lucide-react';
 import { hapticConfirm } from '@/lib/haptics';
 import { useI18n, type Translate } from '@/lib/i18n';
@@ -330,9 +330,22 @@ function ShiftDetail({
         <span className="tabular-nums">{fmtDuration(shift.scheduledMinutes)}</span>
       </div>
       {site && (
-        <div className="text-xs text-silver/70 inline-flex items-center gap-1">
-          <MapPin className="h-3 w-3" aria-hidden="true" />
-          {site}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-silver/70">
+          <span className="inline-flex items-center gap-1">
+            <MapPin className="h-3 w-3" aria-hidden="true" />
+            {site}
+          </span>
+          {/* The address is a destination, not decoration — one tap opens
+              the phone's maps app with the site pre-searched. */}
+          <a
+            href={mapsUrl([shift.clientName, shift.locationName, shift.location].filter(Boolean).join(' '))}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center text-gold hover:text-gold-bright underline underline-offset-2 coarse:min-h-11"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {t('shift.directions')}
+          </a>
         </div>
       )}
       {shift.notes && (

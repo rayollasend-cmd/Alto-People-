@@ -8,6 +8,7 @@ import {
   getApplicationPolicies,
 } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { TaskShell, useNextTask } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
@@ -29,6 +30,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 export function PolicyAckTask() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
+  const { t } = useI18n();
   const navigate = useNavigate();
   const [policies, setPolicies] = useState<PolicyForApplication[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,10 +64,10 @@ export function PolicyAckTask() {
       setPolicies(res.policies);
       return res.policies;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      setError(err instanceof ApiError ? err.message : t('ob.policy.loadFailed'));
       return null;
     }
-  }, [applicationId]);
+  }, [applicationId, t]);
 
   useEffect(() => {
     refresh();
@@ -110,7 +112,7 @@ export function PolicyAckTask() {
       await acknowledgePolicy(applicationId, { policyId });
       await refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Acknowledgement failed.');
+      setError(err instanceof ApiError ? err.message : t('ob.policy.ackFailed'));
     } finally {
       setPendingId(null);
     }
@@ -129,7 +131,7 @@ export function PolicyAckTask() {
         // Stop at the first failure — everything before it is already
         // recorded, the refresh below shows exactly where it stopped.
         setError(
-          err instanceof ApiError ? err.message : 'Acknowledgement failed.'
+          err instanceof ApiError ? err.message : t('ob.policy.ackFailed')
         );
         break;
       }
@@ -157,19 +159,15 @@ export function PolicyAckTask() {
   );
 
   return (
-    <TaskShell title="Policy acknowledgments" backTo={backTo}>
+    <TaskShell title={t('ob.policy.title')} backTo={backTo}>
       <p className="text-silver text-sm mb-5">
-        All Alto HR policies you need to acknowledge are below in one
-        continuous read. Scroll through each one — you can acknowledge a
-        policy as you pass it, or acknowledge everything at the end once
-        you've read it all. Your acknowledgments are stored as part of your
-        permanent employment record.
+        {t('ob.policy.intro')}
       </p>
 
       {policies && total > 0 && (
         <p className="text-xs text-silver mb-4" aria-live="polite">
           <span className={cn(allAcked && 'text-gold')}>
-            {ackedCount} of {total} acknowledged
+            {t('ob.policy.progress', { done: ackedCount, total })}
           </span>
         </p>
       )}
@@ -179,8 +177,8 @@ export function PolicyAckTask() {
       {policies && total === 0 && (
         <EmptyState
           icon={FileText}
-          title="No policies to acknowledge"
-          description="This application's onboarding template doesn't require any policy acknowledgments."
+          title={t('ob.policy.emptyTitle')}
+          description={t('ob.policy.emptyDesc')}
         />
       )}
 
@@ -197,7 +195,7 @@ export function PolicyAckTask() {
                 <span className="text-silver text-xs">{p.version}</span>
               </span>
               <span className="text-2xs text-gold uppercase tracking-widest shrink-0">
-                Acknowledged
+                {t('ob.policy.acknowledged')}
               </span>
             </li>
           ))}
@@ -239,8 +237,8 @@ export function PolicyAckTask() {
               onClick={() => navigate(next?.route ?? backTo)}
             >
               {next
-                ? `Continue → ${next.label}`
-                : 'Done — back to checklist'}
+                ? t('ob.policy.continueNext', { label: next.label })
+                : t('ob.policy.doneBack')}
             </Button>
           ) : (
             <>
@@ -251,13 +249,16 @@ export function PolicyAckTask() {
                 disabled={!allRead || busy}
               >
                 {bulk
-                  ? `Acknowledging ${Math.min(bulk.done + 1, bulk.total)} of ${bulk.total}…`
-                  : `Acknowledge all remaining (${remainingCount})`}
+                  ? t('ob.policy.acking', {
+                      current: Math.min(bulk.done + 1, bulk.total),
+                      total: bulk.total,
+                    })
+                  : t('ob.policy.ackAll', { count: remainingCount })}
               </Button>
               <span className="text-xs text-silver">
                 {allRead
-                  ? 'You’ve read everything — one tap records the rest.'
-                  : 'Scroll through every policy above to enable.'}
+                  ? t('ob.policy.allReadHint')
+                  : t('ob.policy.scrollHint')}
               </span>
             </>
           )}
@@ -286,6 +287,7 @@ function PolicySection({
   onAck: () => void;
   sentinelRef: (node: HTMLDivElement | null) => void;
 }) {
+  const { t } = useI18n();
   return (
     <section
       className={cn(
@@ -295,7 +297,7 @@ function PolicySection({
     >
       <header className="px-4 pt-3 pb-2 border-b border-navy-secondary">
         <div className="text-2xs uppercase tracking-widest text-silver/70">
-          Policy {number} of {total}
+          {t('ob.policy.sectionNumber', { number, total })}
         </div>
         <h2 className="text-base font-medium text-white">
           {policy.title}{' '}
@@ -320,8 +322,7 @@ function PolicySection({
         </div>
       ) : (
         <p className="px-4 py-3 text-sm text-silver/70">
-          Policy text not available — contact HR if you have questions before
-          acknowledging.
+          {t('ob.policy.noBody')}
         </p>
       )}
 
@@ -333,7 +334,7 @@ function PolicySection({
         {policy.acknowledged ? (
           <span className="text-xs text-gold flex items-center gap-1.5">
             <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
-            <span>Acknowledged</span>
+            <span>{t('ob.policy.acknowledged')}</span>
           </span>
         ) : (
           <>
@@ -346,10 +347,10 @@ function PolicySection({
               {read ? (
                 <>
                   <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
-                  Read in full — you can acknowledge
+                  {t('ob.policy.readInFull')}
                 </>
               ) : (
-                'Scroll past the full text to enable Acknowledge'
+                t('ob.policy.scrollToEnable')
               )}
             </span>
             <Button
@@ -360,7 +361,7 @@ function PolicySection({
               disabled={disabled || !read}
               className="shrink-0"
             >
-              {busy ? 'Saving…' : 'Acknowledge'}
+              {busy ? t('ob.policy.saving') : t('ob.policy.ack')}
             </Button>
           </>
         )}

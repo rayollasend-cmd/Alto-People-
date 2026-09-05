@@ -81,6 +81,30 @@ export function fmtMoneyCompact(
   return `${sign}$${Math.round(abs).toLocaleString(displayLocale())}`;
 }
 
+/**
+ * Hours as a human string — ONE dialect for the whole app. Trailing zeros
+ * drop ("8h", "7.5h", "7.25h"), locale-aware separators. Before this,
+ * Schedule said `7.5h` while Pay said `7.50h` for the same quantity.
+ */
+export function fmtHours(hours: number | null | undefined): string {
+  if (hours === null || hours === undefined || !Number.isFinite(hours)) return DASH;
+  const s = hours.toLocaleString(displayLocale(), {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+  return `${s}h`;
+}
+
+/**
+ * Universal maps deep link for a free-text address/site name. Google's
+ * search URL opens the native app on both platforms (iOS hands it to
+ * Apple Maps when Google Maps isn't installed via the browser chooser),
+ * needs no API key, and degrades to the website on desktop.
+ */
+export function mapsUrl(address: string): string {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+}
+
 /** "/hr" or "/yr" suffix tacked on for pay rates. */
 export function fmtPayRate(
   amount: number | string | null | undefined,

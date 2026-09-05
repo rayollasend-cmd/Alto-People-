@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2, FileSignature } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import {
   listEsignAgreements,
   signEsignAgreement,
@@ -25,6 +26,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 export function EsignTask() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user } = useAuth();
+  const { t } = useI18n();
   const navigate = useNavigate();
   const [agreements, setAgreements] = useState<EsignAgreement[] | null>(null);
   const [topError, setTopError] = useState<string | null>(null);
@@ -42,7 +44,7 @@ export function EsignTask() {
       setAgreements(r.agreements);
       return r.agreements;
     } catch (err) {
-      setTopError(err instanceof ApiError ? err.message : 'Failed to load.');
+      setTopError(err instanceof ApiError ? err.message : t('ob.esign.loadFailed'));
       return null;
     }
   }, [applicationId]);
@@ -67,12 +69,8 @@ export function EsignTask() {
     !!agreements && agreements.length > 0 && agreements.every((a) => a.signedAt);
 
   return (
-    <TaskShell title="Document e-signatures" backTo={backTo}>
-      <p className="text-silver text-sm mb-5">
-        Read each agreement in full, then type your full legal name to sign.
-        Each signed copy is stored as a stamped PDF in your permanent
-        employment record.
-      </p>
+    <TaskShell title={t('ob.esign.title')} backTo={backTo}>
+      <p className="text-silver text-sm mb-5">{t('ob.esign.intro')}</p>
 
       {topError && (
         <p role="alert" className="text-sm text-alert mb-4">
@@ -90,8 +88,8 @@ export function EsignTask() {
       {agreements && agreements.length === 0 && (
         <EmptyState
           icon={FileSignature}
-          title="No agreements to sign"
-          description="HR hasn't drafted any agreements for this onboarding yet."
+          title={t('ob.esign.emptyTitle')}
+          description={t('ob.esign.emptyDesc')}
         />
       )}
 
@@ -111,7 +109,7 @@ export function EsignTask() {
       {allSigned && (
         <div className="mt-6 flex items-center gap-2 px-3 py-2.5 rounded border border-success/40 bg-success/[0.06] text-sm text-silver">
           <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
-          All agreements signed. You can close this page.
+          {t('ob.esign.allSigned')}
         </div>
       )}
     </TaskShell>
@@ -127,6 +125,7 @@ function AgreementCard({
   agreement: EsignAgreement;
   onSigned: () => void;
 }) {
+  const { t } = useI18n();
   const signed = agreement.signedAt !== null;
   const [typedName, setTypedName] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -164,7 +163,7 @@ function AgreementCard({
       });
       onSigned();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Signature failed.');
+      setError(err instanceof ApiError ? err.message : t('ob.esign.signFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -192,7 +191,7 @@ function AgreementCard({
             signed ? 'text-gold' : 'text-silver/70'
           )}
         >
-          {signed ? 'Signed' : 'Required'}
+          {signed ? t('ob.esign.signed') : t('ob.esign.required')}
         </span>
       </header>
 
@@ -206,7 +205,7 @@ function AgreementCard({
 
       {signed ? (
         <div className="px-5 pt-3 pb-4 text-sm text-silver">
-          Signed {fmtDateTime(agreement.signedAt)}
+          {t('ob.esign.signedOn', { date: fmtDateTime(agreement.signedAt) })}
           {' · '}
           <a
             href={`/api/onboarding/esign/signatures/${agreement.signatureId}/pdf`}
@@ -214,7 +213,7 @@ function AgreementCard({
             rel="noopener noreferrer"
             className="text-gold hover:text-gold-bright"
           >
-            Download signed PDF
+            {t('ob.esign.downloadPdf')}
           </a>
         </div>
       ) : (
@@ -228,20 +227,20 @@ function AgreementCard({
             {scrolledToEnd ? (
               <>
                 <CheckCircle2 className="h-3.5 w-3.5" />
-                Read in full — type your name below to sign
+                {t('ob.esign.readInFull')}
               </>
             ) : (
-              'Scroll to the bottom of the agreement to enable signing'
+              t('ob.esign.scrollToEnable')
             )}
           </div>
 
-          <Field label="Type your full legal name (acts as your signature)">
+          <Field label={t('ob.esign.typedNameLabel')}>
             <input
               type="text"
               value={typedName}
               onChange={(e) => setTypedName(e.target.value)}
               className={inputCls}
-              placeholder="First Last"
+              placeholder={t('ob.esign.typedNamePlaceholder')}
               autoComplete="name"
               disabled={!scrolledToEnd || submitting}
             />
@@ -260,7 +259,7 @@ function AgreementCard({
               loading={submitting}
               disabled={!canSign || submitting}
             >
-              {submitting ? 'Signing…' : 'Sign agreement'}
+              {submitting ? t('ob.esign.signing') : t('ob.esign.sign')}
             </Button>
           </div>
         </div>

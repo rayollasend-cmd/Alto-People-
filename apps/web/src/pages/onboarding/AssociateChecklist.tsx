@@ -18,6 +18,7 @@ import { getApplication } from '@/lib/onboardingApi';
 import { listMyDocuments } from '@/lib/documentsApi';
 import { ApiError } from '@/lib/api';
 import { ProgressBar } from '@/components/ProgressBar';
+import { Button } from '@/components/ui/Button';
 import {
   Card,
   CardContent,
@@ -27,53 +28,60 @@ import {
 import { Celebrate } from '@/components/ui/Celebrate';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { usePublishPageTitle } from '@/lib/pageTitle';
+import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 
 // Per-status banner copy for the associate. DRAFT is intentionally absent —
 // no banner while they're still working through the checklist.
 const STATUS_BANNER: Record<
   ApplicationDetail['status'],
-  { icon: typeof Clock; title: string; body: string; cls: string } | undefined
+  { icon: typeof Clock; title: MessageKey; body: MessageKey; cls: string } | undefined
 > = {
   DRAFT: undefined,
   SUBMITTED: {
     icon: Clock,
-    title: 'Application submitted',
-    body: 'Thanks! HR will start reviewing your information shortly. Spotted a mistake? You can still open any completed step below and fix it until HR approves.',
+    title: 'ob.check.submittedTitle',
+    body: 'ob.check.submittedBody',
     cls: 'border-gold/40 bg-gold/[0.07] text-silver',
   },
   IN_REVIEW: {
     icon: Clock,
-    title: 'In review',
-    body: 'HR is reviewing your application. You can still open any completed step below and correct it until HR approves — after that, contact HR for changes.',
+    title: 'ob.check.inReviewTitle',
+    body: 'ob.check.inReviewBody',
     cls: 'border-gold/40 bg-gold/[0.07] text-silver',
   },
   APPROVED: {
     icon: Sparkles,
-    title: "You're approved — welcome aboard!",
-    body: 'Your onboarding is complete. Your manager will be in touch about next steps and your first shift.',
+    title: 'ob.check.approvedTitle',
+    body: 'ob.check.approvedBody',
     cls: 'border-success/40 bg-success/[0.07] text-silver',
   },
   REJECTED: {
     icon: AlertTriangle,
-    title: 'Your application needs attention',
-    body: 'Please reach out to your HR contact — they can walk you through what to do next.',
+    title: 'ob.check.rejectedTitle',
+    body: 'ob.check.rejectedBody',
     cls: 'border-alert/40 bg-alert/[0.07] text-silver',
   },
 };
 
-const TASK_LABEL: Record<string, string> = {
-  PROFILE_INFO: 'Profile information',
-  PROFILE_PHOTO: 'Profile photo',
-  DOCUMENT_UPLOAD: 'Identity documents',
-  E_SIGN: 'Document e-signatures',
-  BACKGROUND_CHECK: 'Background check',
-  W4: 'W-4 tax withholding',
-  DIRECT_DEPOSIT: 'Direct deposit',
-  POLICY_ACK: 'Policy acknowledgments',
-  J1_DOCS: 'J-1 documents',
-  I9_VERIFICATION: 'I-9 verification',
+const TASK_LABEL_KEY: Record<string, MessageKey> = {
+  PROFILE_INFO: 'ob.check.task.profileInfo',
+  PROFILE_PHOTO: 'ob.check.task.profilePhoto',
+  DOCUMENT_UPLOAD: 'ob.check.task.documents',
+  E_SIGN: 'ob.check.task.esign',
+  BACKGROUND_CHECK: 'ob.check.task.background',
+  W4: 'ob.check.task.w4',
+  DIRECT_DEPOSIT: 'ob.check.task.directDeposit',
+  POLICY_ACK: 'ob.check.task.policies',
+  J1_DOCS: 'ob.check.task.j1',
+  I9_VERIFICATION: 'ob.check.task.i9',
 };
+
+function taskLabel(t: Translate, task: Pick<ChecklistTask, 'kind' | 'title'>): string {
+  const key = TASK_LABEL_KEY[task.kind];
+  return key ? t(key) : task.title;
+}
 
 // Tasks that route to a real associate-facing form. Anything not in
 // this set falls through to the StubTask "coming soon" placeholder.
@@ -111,11 +119,12 @@ const REJECTION_TASK_FOR_KIND: Record<string, string> = {
  * I-9 row for templates that collect documents there instead.
  */
 function rejectionByTask(
+  t: Translate,
   tasks: ChecklistTask[],
   docs: DocumentRecord[]
 ): Map<string, string> {
   const out = new Map<string, string>();
-  const kinds = new Set<string>(tasks.map((t) => t.kind));
+  const kinds = new Set<string>(tasks.map((task) => task.kind));
   const grouped = new Map<string, DocumentRecord[]>();
   for (const d of docs) {
     if (d.status !== 'REJECTED') continue;
@@ -135,14 +144,17 @@ function rejectionByTask(
     out.set(
       taskKind,
       list.length === 1
-        ? `${what} was rejected${first.rejectionReason ? ` — ${first.rejectionReason}` : ''}. Open this step to replace it.`
-        : `${list.length} documents were rejected. Open this step to replace them.`
+        ? first.rejectionReason
+          ? t('ob.check.rejectedOneReason', { what, reason: first.rejectionReason })
+          : t('ob.check.rejectedOne', { what })
+        : t('ob.check.rejectedMany', { count: String(list.length) })
     );
   }
   return out;
 }
 
 export function AssociateChecklist() {
+  const { t } = useI18n();
   const { applicationId } = useParams<{ applicationId: string }>();
   const [detail, setDetail] = useState<ApplicationDetail | null>(null);
   const [rejectedDocs, setRejectedDocs] = useState<DocumentRecord[]>([]);
@@ -151,6 +163,9 @@ export function AssociateChecklist() {
   // revisiting an already-complete checklist shouldn't get the party again.
   const [celebrate, setCelebrate] = useState(false);
   const prevPercent = useRef<number | null>(null);
+  // Topbar wayfinding: these 12 pages used to publish nothing, so the
+  // topbar fell back to the bare wordmark for the entire onboarding flow.
+  usePublishPageTitle(t('ob.check.pageTitle'));
 
   const refresh = useCallback(async () => {
     if (!applicationId) return;
@@ -162,7 +177,7 @@ export function AssociateChecklist() {
       prevPercent.current = next.percentComplete;
       setDetail(next);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to load.');
+      setError(err instanceof ApiError ? err.message : t('ob.check.loadFailed'));
     }
     // Rejection context is best-effort — a failed vault fetch must never
     // block the checklist itself.
@@ -172,6 +187,7 @@ export function AssociateChecklist() {
     } catch {
       // leave whatever we had
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applicationId]);
 
   useEffect(() => {
@@ -185,16 +201,14 @@ export function AssociateChecklist() {
     return (
       <div className="mx-auto space-y-4">
         <ErrorBanner>{error}</ErrorBanner>
-        <button
-          type="button"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-gold text-navy text-sm font-semibold hover:bg-gold-bright transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        <Button
           onClick={() => {
             setError(null);
             void refresh();
           }}
         >
-          Try again
-        </button>
+          {t('common.retry')}
+        </Button>
       </div>
     );
   }
@@ -214,7 +228,7 @@ export function AssociateChecklist() {
   const firstName = detail.associateName.split(' ')[0];
   const allDone = detail.percentComplete === 100;
   const nextTask = detail.tasks.find(
-    (t) => t.status !== 'DONE' && t.status !== 'SKIPPED' && REAL_KINDS.has(t.kind)
+    (task) => task.status !== 'DONE' && task.status !== 'SKIPPED' && REAL_KINDS.has(task.kind)
   );
 
   // Plain-language status banner so a non-technical hire understands where
@@ -226,10 +240,12 @@ export function AssociateChecklist() {
     <div className="mx-auto">
       <header className="mb-6">
         <h1 className="font-display text-3xl md:text-4xl text-white mb-1.5 leading-tight">
-          {allDone ? `You're all set, ${firstName}` : `Welcome, ${firstName}`}
+          {allDone
+            ? t('ob.check.allSetHeading', { name: firstName })
+            : t('ob.check.welcomeHeading', { name: firstName })}
         </h1>
         <p className="text-silver text-sm">
-          Onboarding for{' '}
+          {t('ob.check.onboardingFor')}{' '}
           <span className="text-white">{detail.clientName}</span>
           {detail.position && ` · ${detail.position}`}
         </p>
@@ -246,9 +262,9 @@ export function AssociateChecklist() {
           <statusBanner.icon className="h-5 w-5 shrink-0 mt-0.5" />
           <div className="min-w-0">
             <div className="text-sm font-medium text-white">
-              {statusBanner.title}
+              {t(statusBanner.title)}
             </div>
-            <div className="text-xs mt-0.5">{statusBanner.body}</div>
+            <div className="text-xs mt-0.5">{t(statusBanner.body)}</div>
           </div>
         </div>
       )}
@@ -258,7 +274,7 @@ export function AssociateChecklist() {
         <CardHeader className="pb-2">
           <div className="flex items-baseline justify-between gap-4">
             <CardTitle className="text-base text-silver/80 uppercase tracking-wider font-sans">
-              Your progress
+              {t('ob.check.yourProgress')}
             </CardTitle>
             <div
               className={cn(
@@ -275,30 +291,29 @@ export function AssociateChecklist() {
           {allDone ? (
             <div className="mt-3 inline-flex items-center gap-1.5 text-success text-sm">
               <Sparkles className="h-4 w-4" />
-              All tasks complete — your team will be in touch shortly.
+              {t('ob.check.allComplete')}
             </div>
           ) : nextTask ? (
-            <Link
-              to={`/onboarding/me/${detail.id}/tasks/${nextTask.kind.toLowerCase()}`}
-              className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-md bg-gold text-navy text-sm font-semibold hover:bg-gold-bright transition-colors group focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
-            >
-              Continue with {TASK_LABEL[nextTask.kind] ?? nextTask.title}
-              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-            </Link>
+            <Button asChild className="mt-4 group">
+              <Link to={`/onboarding/me/${detail.id}/tasks/${nextTask.kind.toLowerCase()}`}>
+                {t('ob.check.continueWith', { task: taskLabel(t, nextTask) })}
+                <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+              </Link>
+            </Button>
           ) : null}
         </CardContent>
       </Card>
 
       <section className="space-y-2.5">
         {(() => {
-          const attention = rejectionByTask(detail.tasks, rejectedDocs);
-          return detail.tasks.map((t) => (
+          const attention = rejectionByTask(t, detail.tasks, rejectedDocs);
+          return detail.tasks.map((task) => (
             <AssociateTaskRow
-              key={t.id}
-              task={t}
+              key={task.id}
+              task={task}
               applicationId={detail.id}
-              isNext={nextTask?.id === t.id}
-              attention={attention.get(t.kind)}
+              isNext={nextTask?.id === task.id}
+              attention={attention.get(task.kind)}
               canRevisit={
                 detail.status !== 'APPROVED' && detail.status !== 'REJECTED'
               }
@@ -317,7 +332,7 @@ const STATUS_TONE: Record<
     iconCx: string;
     border: string;
     bg: string;
-    label: string;
+    label: MessageKey;
     labelCx: string;
   }
 > = {
@@ -326,7 +341,7 @@ const STATUS_TONE: Record<
     iconCx: 'text-success',
     border: 'border-success/40',
     bg: 'bg-success/[0.04]',
-    label: 'Done',
+    label: 'ob.check.status.done',
     labelCx: 'text-success',
   },
   SKIPPED: {
@@ -334,7 +349,7 @@ const STATUS_TONE: Record<
     iconCx: 'text-silver',
     border: 'border-silver/30',
     bg: 'bg-navy',
-    label: 'Skipped',
+    label: 'ob.check.status.skipped',
     labelCx: 'text-silver',
   },
   IN_PROGRESS: {
@@ -342,7 +357,7 @@ const STATUS_TONE: Record<
     iconCx: 'text-warning',
     border: 'border-warning/40',
     bg: 'bg-warning/[0.04]',
-    label: 'In progress',
+    label: 'ob.check.status.inProgress',
     labelCx: 'text-warning',
   },
   PENDING: {
@@ -350,7 +365,7 @@ const STATUS_TONE: Record<
     iconCx: 'text-silver/70',
     border: 'border-navy-secondary',
     bg: 'bg-navy',
-    label: 'Pending',
+    label: 'ob.check.status.pending',
     labelCx: 'text-silver',
   },
   BLOCKED: {
@@ -358,7 +373,7 @@ const STATUS_TONE: Record<
     iconCx: 'text-alert',
     border: 'border-alert/40',
     bg: 'bg-alert/[0.06]',
-    label: 'Blocked',
+    label: 'ob.check.status.blocked',
     labelCx: 'text-alert',
   },
 };
@@ -374,6 +389,7 @@ interface AssociateTaskRowProps {
 }
 
 function AssociateTaskRow({ task, applicationId, isNext, attention, canRevisit }: AssociateTaskRowProps) {
+  const { t } = useI18n();
   const isComplete = task.status === 'DONE' || task.status === 'SKIPPED';
   const isReal = REAL_KINDS.has(task.kind);
   // Completed tasks stay linkable until HR settles the application — each
@@ -390,7 +406,7 @@ function AssociateTaskRow({ task, applicationId, isNext, attention, canRevisit }
       <Icon className={cn('h-5 w-5 shrink-0', tone.iconCx)} aria-hidden />
       <div className="flex-1 min-w-0">
         <div className="font-medium text-white">
-          {TASK_LABEL[task.kind] ?? task.title}
+          {taskLabel(t, task)}
         </div>
         {task.description && (
           <div className="text-xs text-silver mt-1 line-clamp-2">
@@ -415,11 +431,11 @@ function AssociateTaskRow({ task, applicationId, isNext, attention, canRevisit }
               )}
               data-status={task.status}
             >
-              {tone.label}
+              {t(tone.label)}
             </span>
             {linkable && (
-              <span className="inline-flex items-center gap-1 text-xs text-gold group-hover:text-gold-bright whitespace-nowrap">
-                Review / edit
+              <span className="inline-flex items-center gap-1 coarse:min-h-11 text-xs text-gold group-hover:text-gold-bright whitespace-nowrap">
+                {t('ob.check.reviewEdit')}
                 <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
               </span>
             )}
@@ -427,18 +443,18 @@ function AssociateTaskRow({ task, applicationId, isNext, attention, canRevisit }
         ) : linkable ? (
           <span
             className={cn(
-              'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-semibold transition-colors whitespace-nowrap',
+              'inline-flex items-center gap-1.5 px-3 py-1.5 coarse:min-h-11 rounded-md text-sm font-semibold transition-colors whitespace-nowrap',
               isNext
                 ? 'bg-gold text-navy group-hover:bg-gold-bright'
                 : 'border border-gold/60 text-gold group-hover:bg-gold/10'
             )}
           >
-            {isNext ? 'Start now' : 'Start'}
+            {isNext ? t('ob.check.startNow') : t('ob.check.start')}
             <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
           </span>
         ) : (
           <span className="text-2xs uppercase tracking-wider text-silver/70 px-1.5 py-0.5 rounded bg-silver/10">
-            Coming soon
+            {t('ob.check.comingSoon')}
           </span>
         )}
       </div>

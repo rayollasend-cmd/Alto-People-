@@ -272,25 +272,31 @@ export function AssociateTimeView() {
             <div className="text-sm text-silver mb-6">
               since {fmtTime(active.clockInAt)}
               {active.clockInLat != null && active.clockInLng != null && (
-                <span className="ml-2 text-silver/70">
-                  · {active.clockInLat.toFixed(4)}, {active.clockInLng.toFixed(4)}
-                </span>
+                // Raw decimal coordinates mean nothing to a person — turn
+                // the punch location into a tappable map pin instead.
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${active.clockInLat},${active.clockInLng}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="ml-2 text-gold hover:text-gold-bright underline underline-offset-2"
+                >
+                  clock-in location
+                </a>
               )}
             </div>
             <div className="flex flex-wrap items-center gap-3">
-              <button
+              {/* House destructive Button: real focus ring, pressed scale,
+                  and a loading spinner the hand-rolled version never had. */}
+              <Button
                 type="button"
+                variant="destructive"
+                size="lg"
                 onClick={handleClockOut}
+                loading={busy}
                 disabled={busy}
-                className={cn(
-                  'px-6 py-3 rounded font-medium text-base transition',
-                  busy
-                    ? 'bg-navy-secondary text-silver/70 cursor-not-allowed'
-                    : 'bg-alert text-white hover:opacity-90'
-                )}
               >
                 {busy ? 'Saving…' : 'Clock out'}
-              </button>
+              </Button>
               {!onBreak ? (
                 <>
                   <Button

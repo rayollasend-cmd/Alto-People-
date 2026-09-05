@@ -120,7 +120,9 @@ export const TabsTrigger = React.forwardRef<HTMLButtonElement, TabsTriggerProps>
         disabled={disabled}
         onClick={() => onValueChange(value)}
         className={cn(
-          'relative shrink-0 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
+          // coarse: 44px touch target + 16px text, same treatment as every
+          // other control in components/ui — tabs were the one holdout.
+          'relative shrink-0 px-4 py-2.5 coarse:min-h-11 coarse:text-base text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight',
           'disabled:opacity-50 disabled:pointer-events-none',
           selected

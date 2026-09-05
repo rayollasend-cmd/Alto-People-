@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useContext } from 'react';
+import { useCallback, useEffect, useMemo, useState, useContext } from 'react';
 import { AuthContext } from '@/lib/auth';
 import type {
   CalendarFeedUrlResponse,
@@ -17,7 +17,7 @@ import {
 } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { SkeletonRows } from '@/components/ui/Skeleton';
+import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Badge } from '@/components/ui/Badge';
@@ -25,7 +25,7 @@ import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { toast } from '@/components/ui/Toaster';
-import { fmtDateTime, fmtRelativeDayTz, fmtShiftRangeTz, zonedDayKey } from '@/lib/format';
+import { fmtDateTime, fmtHours, fmtRelativeDayTz, fmtShiftRangeTz, mapsUrl, zonedDayKey } from '@/lib/format';
 import {
   CalendarDays,
   Check,
@@ -350,16 +350,16 @@ export function AssociateScheduleView() {
                 <ScheduleStat
                   label={t('sched.upcoming')}
                   value={String(upcomingCount)}
-                  sub={`${upcomingHours.toFixed(1)}h`}
+                  sub={fmtHours(upcomingHours)}
                 />
                 <ScheduleStat
                   label={t('sched.thisWeek')}
-                  value={`${(thisWeekMinutes / 60).toFixed(1)}h`}
+                  value={fmtHours(thisWeekMinutes / 60)}
                   alert={thisWeekMinutes > 40 * 60}
                 />
                 <ScheduleStat
                   label={t('sched.nextWeek')}
-                  value={`${(nextWeekMinutes / 60).toFixed(1)}h`}
+                  value={fmtHours(nextWeekMinutes / 60)}
                   alert={nextWeekMinutes > 40 * 60}
                 />
               </div>
@@ -474,7 +474,7 @@ export function AssociateScheduleView() {
                     count: group.items.length,
                   })}
                   {' · '}
-                  {(group.minutes / 60).toFixed(1)}h
+                  {fmtHours(group.minutes / 60)}
                 </span>
               </h2>
               <ul className="space-y-2">
@@ -583,27 +583,43 @@ function ScheduleStat({
 function OpenShiftsSection() {
   const { t } = useI18n();
   const [items, setItems] = useState<OpenShiftsResponse['shifts'] | null>(null);
+  const [failed, setFailed] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmShift, setConfirmShift] = useState<OpenShiftsResponse['shifts'][number] | null>(
     null,
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await listMyOpenShifts();
-        if (!cancelled) setItems(res.shifts);
-      } catch {
-        // Non-essential section: fail closed to hidden rather than noisy.
-        if (!cancelled) setItems([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+  const load = useCallback(async () => {
+    setFailed(false);
+    try {
+      const res = await listMyOpenShifts();
+      setItems(res.shifts);
+    } catch {
+      // These rows are pickup MONEY — a failed fetch must say so quietly
+      // and offer a retry, never silently pretend nothing is available.
+      setFailed(true);
+    }
   }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
+  if (failed) {
+    return (
+      <section className="mt-6">
+        <p className="text-xs text-silver/70">
+          {t('sched.openLoadFailed')}{' '}
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="inline-flex items-center coarse:min-h-11 text-gold hover:text-gold-bright underline underline-offset-2"
+          >
+            {t('common.retry')}
+          </button>
+        </p>
+      </section>
+    );
+  }
   if (!items || items.length === 0) return null;
 
   const request = async (shift: OpenShiftsResponse['shifts'][number]) => {
@@ -674,8 +690,16 @@ function OpenShiftsSection() {
                 {fmtShiftRangeTz(s.startsAt, s.endsAt, s.timezone)}
               </div>
               {(s.locationName || s.location) && (
-                <div className="text-xs text-silver/70">
-                  {[s.locationName, s.location].filter(Boolean).join(' · ')}
+                <div className="flex flex-wrap items-center gap-x-2 text-xs text-silver/70">
+                  <span>{[s.locationName, s.location].filter(Boolean).join(' · ')}</span>
+                  <a
+                    href={mapsUrl([s.clientName, s.locationName, s.location].filter(Boolean).join(' '))}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center coarse:min-h-11 text-gold hover:text-gold-bright underline underline-offset-2"
+                  >
+                    {t('shift.directions')}
+                  </a>
                 </div>
               )}
             </div>
@@ -772,7 +796,7 @@ function CalendarSubscribeCard() {
   }
   if (!feed) {
     return (
-      <div className="mb-6 p-4 bg-navy border border-navy-secondary rounded-lg animate-pulse h-24" />
+      <Skeleton className="mb-6 h-24" />
     );
   }
 

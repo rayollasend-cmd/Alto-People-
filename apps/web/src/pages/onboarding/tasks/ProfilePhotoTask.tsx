@@ -6,6 +6,7 @@ import { uploadProfilePhoto } from '@/lib/selfApi';
 import { finishProfilePhoto } from '@/lib/onboardingApi';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
 import { TaskShell, useNextTask } from './ProfileInfoTask';
 import { DocumentCapture } from '@/components/DocumentCapture';
 import { PhotoCropDialog } from '@/components/PhotoCropDialog';
@@ -26,6 +27,7 @@ export function ProfilePhotoTask() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const { user, refreshUser } = useAuth();
   const navigate = useNavigate();
+  const { t } = useI18n();
 
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cropFile, setCropFile] = useState<File | null>(null);
@@ -43,7 +45,7 @@ export function ProfilePhotoTask() {
       : (user?.email ?? '');
 
   const done = () => {
-    toast.success('Profile photo saved.');
+    toast.success(t('ob.photo.saved'));
     navigate(next?.route ?? backTo, { replace: true });
   };
 
@@ -62,7 +64,7 @@ export function ProfilePhotoTask() {
       void refreshUser();
       done();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed to save photo.');
+      toast.error(err instanceof ApiError ? err.message : t('ob.photo.saveFailed'));
       setBusy(false);
     }
   };
@@ -75,13 +77,13 @@ export function ProfilePhotoTask() {
       await finishProfilePhoto(applicationId);
       done();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('ob.photo.failed'));
       setBusy(false);
     }
   };
 
   return (
-    <TaskShell title="Take your profile photo" backTo={backTo}>
+    <TaskShell title={t('ob.photo.title')} backTo={backTo}>
       {cameraOpen ? (
         <DocumentCapture
           filenameBase="profile-photo"
@@ -95,11 +97,7 @@ export function ProfilePhotoTask() {
         />
       ) : (
         <div className="space-y-5">
-          <p className="text-sm text-silver">
-            This photo appears next to your name across the app — your
-            supervisor and HR use it to recognize you. Take it now with your
-            camera: face the light, fill the circle, no hats or sunglasses.
-          </p>
+          <p className="text-sm text-silver">{t('ob.photo.intro')}</p>
 
           <div className="flex items-center gap-4">
             <Avatar
@@ -112,7 +110,7 @@ export function ProfilePhotoTask() {
             {hasPhoto && (
               <div className="flex items-center gap-1.5 text-sm text-silver">
                 <CheckCircle2 className="h-4 w-4 text-success" />
-                A photo is already on file — use it, or retake.
+                {t('ob.photo.onFile')}
               </div>
             )}
           </div>
@@ -120,21 +118,18 @@ export function ProfilePhotoTask() {
           <div className="flex flex-wrap items-center gap-3">
             <Button onClick={() => setCameraOpen(true)} disabled={busy}>
               <Camera className="mr-2 h-4 w-4" />
-              {hasPhoto ? 'Retake photo' : 'Open camera'}
+              {hasPhoto ? t('ob.photo.retake') : t('ob.photo.openCamera')}
             </Button>
             {hasPhoto && (
               <Button variant="outline" onClick={() => void useCurrent()} loading={busy}>
                 {next
-                  ? `Use this photo & continue → ${next.label}`
-                  : 'Use this photo'}
+                  ? t('ob.photo.useAndContinue', { next: next.label })
+                  : t('ob.photo.usePhoto')}
               </Button>
             )}
           </div>
 
-          <p className="text-xs text-silver">
-            Camera not working? Ask HR — they can set your photo for you, then
-            come back here and tap &ldquo;Use this photo&rdquo;.
-          </p>
+          <p className="text-xs text-silver">{t('ob.photo.cameraHelp')}</p>
         </div>
       )}
 

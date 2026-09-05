@@ -16,6 +16,7 @@ import {
 } from '@/lib/qualApi';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
+import { useI18n } from '@/lib/i18n';
 import { hasCapability } from '@/lib/roles';
 import {
   Badge,
@@ -46,12 +47,13 @@ import {
   TabsTrigger,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
-import { fmtDateTime, fmtPayRate, fmtTime, parseYmd } from '@/lib/format';
+import { fmtDateTime, fmtPayRate, fmtTime, mapsUrl, parseYmd } from '@/lib/format';
 import { toast } from 'sonner';
 
 type Tab = 'open' | 'claims' | 'catalog';
 
 export function MarketplaceHome() {
+  const { t } = useI18n();
   const { user } = useAuth();
   const canManage = user ? hasCapability(user.role, 'manage:scheduling') : false;
   // "Available" is the associate-side marketplace — it needs an associate
@@ -66,14 +68,14 @@ export function MarketplaceHome() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Open shifts"
-        subtitle="Marketplace of open shifts you're qualified to pick up. Managers approve claims."
-        breadcrumbs={[{ label: 'Time & Pay' }, { label: 'Open shifts' }]}
+        title={t('mk.title')}
+        subtitle={t('mk.subtitle')}
+        breadcrumbs={[{ label: t('mk.crumbSection') }, { label: t('mk.title') }]}
       />
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
         <TabsList>
-          {canPickUp && <TabsTrigger value="open">Available</TabsTrigger>}
+          {canPickUp && <TabsTrigger value="open">{t('mk.tab.available')}</TabsTrigger>}
           {canManage && <TabsTrigger value="claims">Pending claims</TabsTrigger>}
           {canManage && <TabsTrigger value="catalog">Qualifications</TabsTrigger>}
         </TabsList>
@@ -95,6 +97,7 @@ export function MarketplaceHome() {
 // ============ Available shifts ============
 
 function AvailableTab() {
+  const { t } = useI18n();
   const [rows, setRows] = useState<OpenShiftListItem[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [fromDate, setFromDate] = useState('');
@@ -108,7 +111,7 @@ function AvailableTab() {
       .then((r) => setRows(r.shifts))
       .catch((err) =>
         setLoadError(
-          err instanceof ApiError ? err.message : 'Failed to load open shifts.',
+          err instanceof ApiError ? err.message : t('mk.loadFailed'),
         ),
       );
   };
@@ -159,7 +162,7 @@ function AvailableTab() {
   const onClaim = async (shiftId: string) => {
     try {
       const r = await claimShift(shiftId);
-      toast.success('Claim submitted; awaiting manager approval.');
+      toast.success(t('mk.claimSubmitted'));
       // Flip the acted card to "Claim pending" in place instead of
       // collapsing the whole list to a skeleton.
       setRows((prev) =>
@@ -171,7 +174,7 @@ function AvailableTab() {
       );
       refetch();
     } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+      toast.error(err instanceof ApiError ? err.message : t('mk.failed'));
     }
   };
 
@@ -181,7 +184,7 @@ function AvailableTab() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span>{loadError}</span>
           <Button size="sm" variant="outline" onClick={refresh}>
-            Retry
+            {t('mk.retry')}
           </Button>
         </div>
       </ErrorBanner>
@@ -196,11 +199,11 @@ function AvailableTab() {
     return (
       <EmptyState
         icon={Briefcase}
-        title="No open shifts"
-        description="When new shifts get published, ones you're qualified for show up here."
+        title={t('mk.emptyTitle')}
+        description={t('mk.emptyDesc')}
         action={
           <Button variant="secondary" onClick={refresh}>
-            <RefreshCw className="mr-2 h-4 w-4" /> Refresh
+            <RefreshCw className="mr-2 h-4 w-4" /> {t('mk.refresh')}
           </Button>
         }
       />
@@ -215,7 +218,7 @@ function AvailableTab() {
         <CardContent className="p-4 space-y-3">
           <div className="flex flex-wrap items-end gap-3">
             <div>
-              <Label htmlFor="marketplace-from">From</Label>
+              <Label htmlFor="marketplace-from">{t('mk.from')}</Label>
               <Input
                 id="marketplace-from"
                 type="date"
@@ -225,7 +228,7 @@ function AvailableTab() {
               />
             </div>
             <div>
-              <Label htmlFor="marketplace-to">To</Label>
+              <Label htmlFor="marketplace-to">{t('mk.to')}</Label>
               <Input
                 id="marketplace-to"
                 type="date"
@@ -244,11 +247,13 @@ function AvailableTab() {
                   setClientFilter(new Set());
                 }}
               >
-                Clear filters
+                {t('mk.clearFilters')}
               </Button>
             )}
             <div className="ml-auto text-sm text-silver self-center">
-              {filtered.length} shift{filtered.length === 1 ? '' : 's'}
+              {filtered.length === 1
+                ? t('mk.shiftOne', { n: filtered.length })
+                : t('mk.shiftMany', { n: filtered.length })}
             </div>
           </div>
           {clients.length > 1 && (
@@ -269,8 +274,8 @@ function AvailableTab() {
       {filtered.length === 0 ? (
         <EmptyState
           icon={Briefcase}
-          title="No shifts match"
-          description="No open shift falls inside the current date range or client filter."
+          title={t('mk.noMatchTitle')}
+          description={t('mk.noMatchDesc')}
         />
       ) : (
         filtered.map((s) => (
@@ -285,7 +290,18 @@ function AvailableTab() {
                     {fmtTime(s.endsAt)}
                   </div>
                   {s.location && (
-                    <div className="text-sm text-silver mt-0.5">{s.location}</div>
+                    <div className="flex flex-wrap items-center gap-x-2 text-sm text-silver mt-0.5">
+                      <span>{s.location}</span>
+                      <a
+                        href={mapsUrl([s.clientName, s.location].filter(Boolean).join(' '))}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center coarse:min-h-11 text-xs text-gold hover:text-gold-bright underline underline-offset-2"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {t('shift.directions')}
+                      </a>
+                    </div>
                   )}
                   {s.payRate && (
                     <div className="text-sm text-success mt-0.5">
@@ -304,9 +320,9 @@ function AvailableTab() {
                 </div>
                 <div>
                   {s.myPendingClaim ? (
-                    <Badge variant="pending">Claim pending</Badge>
+                    <Badge variant="pending">{t('mk.claimPending')}</Badge>
                   ) : (
-                    <Button onClick={() => onClaim(s.id)}>Claim</Button>
+                    <Button onClick={() => onClaim(s.id)}>{t('mk.claim')}</Button>
                   )}
                 </div>
               </div>
