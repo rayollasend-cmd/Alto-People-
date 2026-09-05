@@ -301,11 +301,9 @@ export function ShiftCard({
               </span>
             )}
           </span>
-          {!muted && estRate != null && shift.status !== 'CANCELLED' && (
-            <span className="shrink-0 text-xs2 font-medium text-gold tabular-nums">
-              {fmtMoneyEst((paidShiftMinutes(shift) / 60) * estRate)}
-            </span>
-          )}
+          {/* No ~$ on the tile face (owner call): the week's worth lives
+              in the header total, and the card/detail views carry the
+              per-shift money — the tile stays time · role · status. */}
           <TileMark shift={shift} needsConfirm={needsConfirm} t={t} />
           {/* The card face advertises expandability with a chevron; the
               tile face must too, or it reads as inert decoration. */}
