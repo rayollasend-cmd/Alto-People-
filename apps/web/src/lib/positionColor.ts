@@ -78,6 +78,17 @@ function djb2(s: string): number {
   return h >>> 0;
 }
 
+/**
+ * The accent at a chosen alpha — for surfaces that want a stronger fill
+ * than the grid default `bg` (0.10). The associate week's event blocks
+ * run 0.16 so each tile reads as a filled block, not an outline; the
+ * admin matrix keeps the quieter tint. Every palette accent is a plain
+ * `hsl(H S% L%)`, so appending the alpha slash is safe.
+ */
+export function accentTint(color: PositionColor, alpha: number): string {
+  return color.accent.replace(/\)$/, ` / ${alpha})`);
+}
+
 export function colorForPosition(name: string | null | undefined): PositionColor {
   if (!name) return NEUTRAL;
   const norm = name.trim().toLowerCase();

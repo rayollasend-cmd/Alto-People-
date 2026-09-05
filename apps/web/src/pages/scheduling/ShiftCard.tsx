@@ -26,7 +26,7 @@ import { ArrowLeftRight, Check, ChevronDown, MapPin, Users, X } from 'lucide-rea
 import { hapticConfirm } from '@/lib/haptics';
 import { enterStagger } from '@/lib/motion';
 import { useI18n, type Translate } from '@/lib/i18n';
-import { colorForPosition } from '@/lib/positionColor';
+import { accentTint, colorForPosition } from '@/lib/positionColor';
 import { statusLabelClass, statusTileClass } from './shiftTile';
 
 export function statusBadge(
@@ -244,7 +244,12 @@ export function ShiftCard({
       style={{
         ...enterStagger(appearIndex ?? 0),
         ...(tileColor
-          ? { backgroundColor: tileColor.bg, borderColor: tileColor.border }
+          ? {
+              // 0.16 vs the admin grid's 0.10 — a filled block, not an
+              // outline (owner call, 2026-09-05).
+              backgroundColor: accentTint(tileColor, 0.16),
+              borderColor: tileColor.border,
+            }
           : {}),
       }}
       className={[
