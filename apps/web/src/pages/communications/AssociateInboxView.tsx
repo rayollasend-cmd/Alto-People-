@@ -6,6 +6,7 @@ import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { dayHeading, fmtTimeOnly, groupByDay } from '@/lib/dayGroup';
 import { fmtDateTime } from '@/lib/format';
+import { enterStagger } from '@/lib/motion';
 import { useI18n } from '@/lib/i18n';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { Badge } from '@/components/ui/Badge';
@@ -259,8 +260,8 @@ export function AssociateInboxView() {
                   </span>
                 </summary>
                 <ul className="space-y-2 p-3 pt-0">
-                  {group.entries.map((n) => (
-                    <li key={n.key}>
+                  {group.entries.map((n, i) => (
+                    <li key={n.key} className="animate-enter" style={enterStagger(i)}>
                       {/* Wrapper div (not one big <button>) so the "Open"
                           deeplink action can be a real button without
                           invalid button-in-button nesting. */}

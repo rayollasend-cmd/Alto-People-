@@ -124,6 +124,53 @@ export default {
           '0%': { transform: 'translateX(-100%)' },
           '100%': { transform: 'translateX(400%)' },
         },
+        // ---- State-change choreography (2026-09) ------------------------
+        // The surface system above animates things OPENING; these animate
+        // things HAPPENING: data arriving, a task completing, money moving,
+        // a notification landing. All transform/opacity/paint-only, all
+        // one-shot, all flattened by the global reduced-motion block.
+        // Data arrival — same physics as the route fade so a page and its
+        // late-arriving rows read as one motion. Pair with a capped
+        // animationDelay stagger (lib/motion.ts).
+        'enter': {
+          from: { opacity: '0', transform: 'translateY(4px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
+        // Notification badge on count increase.
+        'badge-pop': {
+          '0%': { transform: 'scale(1)' },
+          '40%': { transform: 'scale(1.25)' },
+          '100%': { transform: 'scale(1)' },
+        },
+        // One-shot bell nudge on arrival — a swing, never a loop.
+        'bell-swing': {
+          '0%, 100%': { transform: 'rotate(0deg)' },
+          '25%': { transform: 'rotate(12deg)' },
+          '55%': { transform: 'rotate(-9deg)' },
+          '80%': { transform: 'rotate(5deg)' },
+        },
+        // Checkmark spring on a freshly completed task.
+        'check-pop': {
+          '0%': { transform: 'scale(0.4)', opacity: '0' },
+          '60%': { transform: 'scale(1.18)', opacity: '1' },
+          '100%': { transform: 'scale(1)' },
+        },
+        // Success tint that decays — the visual half of hapticConfirm.
+        'flash-success': {
+          from: { backgroundColor: 'rgb(var(--color-success) / 0.16)' },
+          to: { backgroundColor: 'transparent' },
+        },
+        // Disclosure unfold (grid-rows trick: true auto-height, zero JS
+        // measuring). Close stays instant — "land softly, depart quickly".
+        'unfold': {
+          from: { gridTemplateRows: '0fr', opacity: '0.4' },
+          to: { gridTemplateRows: '1fr', opacity: '1' },
+        },
+        // Chart bars building from their baseline.
+        'grow-y': {
+          from: { transform: 'scaleY(0)' },
+          to: { transform: 'scaleY(1)' },
+        },
       },
       animation: {
         // Open / close timings harmonised so the modal, drawer, and
@@ -145,6 +192,15 @@ export default {
         'slide-down-out': 'slide-down-out 0.2s cubic-bezier(0.4,0,1,1)',
         'shimmer': 'shimmer 1.6s infinite',
         'splash-sweep': 'splash-sweep 1.4s ease-in-out infinite',
+        // State-change choreography. 'both' fill on enter/grow-y so
+        // stagger-delayed elements stay invisible until their turn.
+        'enter': 'enter 0.18s cubic-bezier(0.16,1,0.3,1) both',
+        'badge-pop': 'badge-pop 0.35s cubic-bezier(0.16,1,0.3,1)',
+        'bell-swing': 'bell-swing 0.6s cubic-bezier(0.16,1,0.3,1)',
+        'check-pop': 'check-pop 0.4s cubic-bezier(0.16,1,0.3,1)',
+        'flash-success': 'flash-success 0.9s ease-out',
+        'unfold': 'unfold 0.22s cubic-bezier(0.16,1,0.3,1)',
+        'grow-y': 'grow-y 0.4s cubic-bezier(0.16,1,0.3,1) both',
       },
     },
   },

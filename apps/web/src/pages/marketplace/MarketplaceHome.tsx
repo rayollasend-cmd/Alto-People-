@@ -48,6 +48,8 @@ import {
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
 import { fmtDateTime, fmtPayRate, fmtTime, mapsUrl, parseYmd } from '@/lib/format';
+import { cn } from '@/lib/cn';
+import { enterStagger } from '@/lib/motion';
 import { toast } from 'sonner';
 
 type Tab = 'open' | 'claims' | 'catalog';
@@ -100,6 +102,8 @@ function AvailableTab() {
   const { t } = useI18n();
   const [rows, setRows] = useState<OpenShiftListItem[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // The card that just got claimed — plays the success flash once.
+  const [flashId, setFlashId] = useState<string | null>(null);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [clientFilter, setClientFilter] = useState<Set<string>>(new Set());
@@ -162,6 +166,7 @@ function AvailableTab() {
   const onClaim = async (shiftId: string) => {
     try {
       const r = await claimShift(shiftId);
+      setFlashId(shiftId);
       toast.success(t('mk.claimSubmitted'));
       // Flip the acted card to "Claim pending" in place instead of
       // collapsing the whole list to a skeleton.
@@ -278,8 +283,16 @@ function AvailableTab() {
           description={t('mk.noMatchDesc')}
         />
       ) : (
-        filtered.map((s) => (
-          <Card key={s.id}>
+        filtered.map((s, i) => (
+          <Card
+            key={s.id}
+            style={enterStagger(i)}
+            className={cn(
+              // Rows cascade in; a just-claimed card flashes its success
+              // in step with the toast (animate-* classes can't stack).
+              flashId === s.id ? 'animate-flash-success' : 'animate-enter',
+            )}
+          >
             <CardContent className="p-4">
               <div className="flex items-start justify-between gap-4">
                 <div>

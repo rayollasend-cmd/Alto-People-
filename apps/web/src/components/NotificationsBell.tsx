@@ -105,6 +105,9 @@ export function NotificationsBell() {
   // the panel being open.
   const [announcement, setAnnouncement] = useState('');
   const prevUnseenRef = useRef(0);
+  // One-shot swing on arrival; cleared by onAnimationEnd so a later
+  // arrival can replay it.
+  const [swing, setSwing] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -165,6 +168,9 @@ export function NotificationsBell() {
       setAnnouncement(
         `${delta} new notification${delta === 1 ? '' : 's'} — ${unseenCount} unseen`,
       );
+      // Visual twin of the SR announcement: one bell swing per arrival.
+      // Never loops; flattened by the global reduced-motion block.
+      setSwing(true);
     }
     prevUnseenRef.current = unseenCount;
   }, [unseenCount]);
@@ -257,14 +263,22 @@ export function NotificationsBell() {
                   : 'Notifications'
               }
             >
-              {unseenCount > 0 ? (
-                <BellRing className="h-4 w-4" />
-              ) : (
-                <Bell className="h-4 w-4" />
-              )}
+              <span
+                className={cn('inline-flex origin-top', swing && 'animate-bell-swing')}
+                onAnimationEnd={() => setSwing(false)}
+              >
+                {unseenCount > 0 ? (
+                  <BellRing className="h-4 w-4" />
+                ) : (
+                  <Bell className="h-4 w-4" />
+                )}
+              </span>
               {unseenCount > 0 && (
+                // Keyed by count: a change remounts the span and replays
+                // the pop — the visual cue that the number moved.
                 <span
-                  className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-gold text-navy text-2xs font-semibold flex items-center justify-center tabular-nums"
+                  key={unseenCount}
+                  className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-gold text-navy text-2xs font-semibold flex items-center justify-center tabular-nums animate-badge-pop"
                   aria-hidden="true"
                 >
                   {unseenCount > 99 ? '99+' : unseenCount}

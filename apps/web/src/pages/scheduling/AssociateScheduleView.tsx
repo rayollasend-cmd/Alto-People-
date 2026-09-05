@@ -26,6 +26,8 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { toast } from '@/components/ui/Toaster';
 import { fmtDateTime, fmtHours, fmtRelativeDayTz, fmtShiftRangeTz, mapsUrl, zonedDayKey } from '@/lib/format';
+import { cn } from '@/lib/cn';
+import { enterStagger } from '@/lib/motion';
 import {
   CalendarDays,
   Check,
@@ -478,11 +480,12 @@ export function AssociateScheduleView() {
                 </span>
               </h2>
               <ul className="space-y-2">
-                {group.items.map((s) => (
+                {group.items.map((s, i) => (
                   <ShiftCard
                     key={s.id}
                     shift={s}
                     isNext={s.id === nextId}
+                    appearIndex={i}
                     onSwapCreated={() => setSwapVersion((v) => v + 1)}
                   />
                 ))}
@@ -585,6 +588,8 @@ function OpenShiftsSection() {
   const [items, setItems] = useState<OpenShiftsResponse['shifts'] | null>(null);
   const [failed, setFailed] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // The row that just got claimed — plays the success flash once.
+  const [flashId, setFlashId] = useState<string | null>(null);
   const [confirmShift, setConfirmShift] = useState<OpenShiftsResponse['shifts'][number] | null>(
     null,
   );
@@ -636,6 +641,8 @@ function OpenShiftsSection() {
       );
       setConfirmShift(null);
       hapticConfirm();
+      // Haptic + row flash + toast land as one confirmation event.
+      setFlashId(shift.id);
       toast.success(t('sched.pickupToast'));
     } catch (err) {
       toast.error(
@@ -673,10 +680,14 @@ function OpenShiftsSection() {
         {t('sched.openHeading', { count: items.length })}
       </h2>
       <ul className="space-y-2">
-        {items.map((s) => (
+        {items.map((s, i) => (
           <li
             key={s.id}
-            className="flex items-center justify-between gap-4 p-4 rounded-lg border border-dashed border-navy-secondary bg-navy/60"
+            style={enterStagger(i)}
+            className={cn(
+              'flex items-center justify-between gap-4 p-4 rounded-lg border border-dashed border-navy-secondary bg-navy/60',
+              flashId === s.id ? 'animate-flash-success' : 'animate-enter',
+            )}
           >
             <div className="min-w-0">
               <div className="text-white font-medium">

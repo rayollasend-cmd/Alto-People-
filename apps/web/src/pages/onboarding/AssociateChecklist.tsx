@@ -30,7 +30,72 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { usePublishPageTitle } from '@/lib/pageTitle';
 import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
+import { enterStagger } from '@/lib/motion';
 import { cn } from '@/lib/cn';
+
+/**
+ * Completion choreography — the page REMOUNTS when the associate returns
+ * from a task, so in-memory refs can't know what changed. A sessionStorage
+ * snapshot of {percent, task statuses} from the last render bridges the
+ * gap: on load we diff against it to find the rows that JUST flipped to
+ * DONE (green flash + check pop) and the percent the bar should travel
+ * from (700ms ride + rolling number) instead of teleporting.
+ */
+interface ChecklistSnapshot {
+  percent: number;
+  statuses: Record<string, string>;
+}
+
+function snapshotKey(applicationId: string): string {
+  return `ob-motion:${applicationId}`;
+}
+
+function readSnapshot(applicationId: string): ChecklistSnapshot | null {
+  try {
+    const raw = sessionStorage.getItem(snapshotKey(applicationId));
+    return raw ? (JSON.parse(raw) as ChecklistSnapshot) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeSnapshot(applicationId: string, snap: ChecklistSnapshot): void {
+  try {
+    sessionStorage.setItem(snapshotKey(applicationId), JSON.stringify(snap));
+  } catch {
+    /* storage unavailable — choreography quietly degrades */
+  }
+}
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
+}
+
+/** Eased integer roll from → to; renders `to` directly under reduced motion. */
+function RollingNumber({ from, to, durationMs = 700 }: { from: number; to: number; durationMs?: number }) {
+  const [value, setValue] = useState(prefersReducedMotion() ? to : from);
+  useEffect(() => {
+    if (from === to || prefersReducedMotion()) {
+      setValue(to);
+      return;
+    }
+    let raf = 0;
+    const start = performance.now();
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - start) / durationMs);
+      const eased = 1 - Math.pow(1 - p, 3);
+      setValue(Math.round(from + (to - from) * eased));
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [from, to, durationMs]);
+  return <>{value}</>;
+}
 
 // Per-status banner copy for the associate. DRAFT is intentionally absent —
 // no banner while they're still working through the checklist.
@@ -163,6 +228,10 @@ export function AssociateChecklist() {
   // revisiting an already-complete checklist shouldn't get the party again.
   const [celebrate, setCelebrate] = useState(false);
   const prevPercent = useRef<number | null>(null);
+  // Choreography state derived from the sessionStorage snapshot diff.
+  const [justDone, setJustDone] = useState<Set<string>>(new Set());
+  const [barPercent, setBarPercent] = useState<number | null>(null);
+  const [percentFrom, setPercentFrom] = useState<number | null>(null);
   // Topbar wayfinding: these 12 pages used to publish nothing, so the
   // topbar fell back to the bare wordmark for the entire onboarding flow.
   usePublishPageTitle(t('ob.check.pageTitle'));
@@ -174,6 +243,39 @@ export function AssociateChecklist() {
       if (prevPercent.current !== null && prevPercent.current < 100 && next.percentComplete === 100) {
         setCelebrate(true);
       }
+      // Diff against the last render's snapshot (survives the remount).
+      const snap = readSnapshot(applicationId);
+      if (snap) {
+        const flipped = new Set<string>();
+        for (const task of next.tasks) {
+          const prev = snap.statuses[task.id];
+          if (prev && prev !== 'DONE' && task.status === 'DONE') flipped.add(task.id);
+        }
+        if (flipped.size > 0) {
+          setJustDone(flipped);
+          // Confetti at 100% needs the cross-remount diff too — the old
+          // in-memory ref only caught same-mount transitions, so finishing
+          // the LAST task never actually threw the party.
+          if (snap.percent < 100 && next.percentComplete === 100) setCelebrate(true);
+        }
+        if (snap.percent < next.percentComplete) {
+          // Start the bar at the old percent, release to the new one on
+          // the next frames — the 700ms travel + rolling number.
+          setPercentFrom(snap.percent);
+          setBarPercent(snap.percent);
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => setBarPercent(next.percentComplete));
+          });
+        } else {
+          setBarPercent(next.percentComplete);
+        }
+      } else {
+        setBarPercent(next.percentComplete);
+      }
+      writeSnapshot(applicationId, {
+        percent: next.percentComplete,
+        statuses: Object.fromEntries(next.tasks.map((task) => [task.id, task.status])),
+      });
       prevPercent.current = next.percentComplete;
       setDetail(next);
     } catch (err) {
@@ -282,12 +384,23 @@ export function AssociateChecklist() {
                 allDone ? 'text-success' : 'text-gold'
               )}
             >
-              {detail.percentComplete}%
+              {percentFrom !== null ? (
+                <RollingNumber from={percentFrom} to={detail.percentComplete} />
+              ) : (
+                detail.percentComplete
+              )}
+              %
             </div>
           </div>
         </CardHeader>
         <CardContent className="pt-2">
-          <ProgressBar percent={detail.percentComplete} hideLabel />
+          {/* barPercent starts at the pre-task percent and releases to the
+              real one — a visible 700ms ride instead of a teleport. */}
+          <ProgressBar
+            percent={barPercent ?? detail.percentComplete}
+            hideLabel
+            travelMs={700}
+          />
           {allDone ? (
             <div className="mt-3 inline-flex items-center gap-1.5 text-success text-sm">
               <Sparkles className="h-4 w-4" />
@@ -307,13 +420,15 @@ export function AssociateChecklist() {
       <section className="space-y-2.5">
         {(() => {
           const attention = rejectionByTask(t, detail.tasks, rejectedDocs);
-          return detail.tasks.map((task) => (
+          return detail.tasks.map((task, i) => (
             <AssociateTaskRow
               key={task.id}
               task={task}
               applicationId={detail.id}
               isNext={nextTask?.id === task.id}
               attention={attention.get(task.kind)}
+              justCompleted={justDone.has(task.id)}
+              appearIndex={i}
               canRevisit={
                 detail.status !== 'APPROVED' && detail.status !== 'REJECTED'
               }
@@ -384,11 +499,15 @@ interface AssociateTaskRowProps {
   isNext: boolean;
   /** Alert line under the row: a rejected document needs replacing here. */
   attention?: string;
+  /** Flipped to DONE since the last render — plays the completion beat. */
+  justCompleted?: boolean;
+  /** Position for the entrance stagger. */
+  appearIndex?: number;
   /** True until HR approves/rejects — completed tasks re-open for edits. */
   canRevisit: boolean;
 }
 
-function AssociateTaskRow({ task, applicationId, isNext, attention, canRevisit }: AssociateTaskRowProps) {
+function AssociateTaskRow({ task, applicationId, isNext, attention, justCompleted, appearIndex, canRevisit }: AssociateTaskRowProps) {
   const { t } = useI18n();
   const isComplete = task.status === 'DONE' || task.status === 'SKIPPED';
   const isReal = REAL_KINDS.has(task.kind);
@@ -403,7 +522,15 @@ function AssociateTaskRow({ task, applicationId, isNext, attention, canRevisit }
 
   const inner = (
     <div className="flex items-center gap-3">
-      <Icon className={cn('h-5 w-5 shrink-0', tone.iconCx)} aria-hidden />
+      <Icon
+        className={cn(
+          'h-5 w-5 shrink-0',
+          tone.iconCx,
+          // The checkmark springs in on the row that just completed.
+          justCompleted && 'animate-check-pop',
+        )}
+        aria-hidden
+      />
       <div className="flex-1 min-w-0">
         <div className="font-medium text-white">
           {taskLabel(t, task)}
@@ -463,6 +590,10 @@ function AssociateTaskRow({ task, applicationId, isNext, attention, canRevisit }
 
   const baseCx = cn(
     'group block rounded-lg border p-4 transition-all',
+    // Rows cascade in with the page; the freshly-completed one flashes
+    // its success instead (animate-* utilities can't stack — each owns
+    // the full animation shorthand) and its check pops.
+    justCompleted ? 'animate-flash-success' : 'animate-enter',
     isNext && linkable
       ? 'bg-gold/[0.05] border-gold/50 ring-1 ring-gold/20 hover:border-gold/80 hover:ring-gold/40'
       : cn(tone.bg, tone.border, linkable && 'hover:border-gold/60'),
@@ -472,16 +603,18 @@ function AssociateTaskRow({ task, applicationId, isNext, attention, canRevisit }
     linkable && 'cursor-pointer',
     !linkable && !isComplete && 'opacity-80'
   );
+  const appearStyle = enterStagger(appearIndex ?? 0);
 
   if (linkable) {
     return (
       <Link
         to={linkTo}
+        style={appearStyle}
         className={cn(baseCx, 'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright')}
       >
         {inner}
       </Link>
     );
   }
-  return <div className={baseCx}>{inner}</div>;
+  return <div className={baseCx} style={appearStyle}>{inner}</div>;
 }

@@ -12,6 +12,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtSize } from '@/lib/format';
+import { enterStagger } from '@/lib/motion';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -296,7 +297,7 @@ export function AssociateDocumentsView() {
       )}
       {docs && docs.length > 0 && (
         <ul className="space-y-2">
-          {docs.map((d) => {
+          {docs.map((d, i) => {
             const badgeEl = (
               <Badge variant={STATUS_VARIANT[d.status]} className="shrink-0">
                 {t(('docs.status.' + d.status) as MessageKey)}
@@ -305,7 +306,8 @@ export function AssociateDocumentsView() {
             return (
               <li
                 key={d.id}
-                className="p-3 bg-navy border border-navy-secondary rounded-lg"
+                className="p-3 bg-navy border border-navy-secondary rounded-lg animate-enter"
+                style={enterStagger(i)}
               >
                 {/* md+: packed single-line row (mouse precision). */}
                 <div className="hidden md:flex md:items-center md:gap-3">

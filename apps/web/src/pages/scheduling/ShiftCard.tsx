@@ -24,6 +24,7 @@ import { toast } from '@/components/ui/Toaster';
 import { fmtDateTz, fmtShiftRangeTz, fmtWeekdayTz, mapsUrl } from '@/lib/format';
 import { ArrowLeftRight, Check, ChevronDown, MapPin, Users } from 'lucide-react';
 import { hapticConfirm } from '@/lib/haptics';
+import { enterStagger } from '@/lib/motion';
 import { useI18n, type Translate } from '@/lib/i18n';
 
 export function statusBadge(
@@ -83,11 +84,14 @@ export function ShiftCard({
   isNext,
   muted = false,
   onSwapCreated,
+  appearIndex,
 }: {
   shift: Shift;
   isNext: boolean;
   muted?: boolean;
   onSwapCreated?: () => void;
+  /** Position in the list — drives the capped entrance stagger. */
+  appearIndex?: number;
 }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
@@ -145,8 +149,9 @@ export function ShiftCard({
   const detailId = `shift-detail-${shift.id}`;
   return (
     <li
+      style={enterStagger(appearIndex ?? 0)}
       className={[
-        'rounded-lg border',
+        'rounded-lg border animate-enter',
         isNext
           ? 'bg-navy border-gold/50 ring-1 ring-gold/30'
           : 'bg-navy border-navy-secondary',
@@ -225,7 +230,13 @@ export function ShiftCard({
       )}
 
       {expanded && (
-        <div id={detailId} className="border-t border-navy-secondary px-4 py-3">
+        // The unfold: grid-rows 0fr→1fr animates TRUE auto-height with no
+        // JS measuring. Open only — close unmounts instantly, matching the
+        // house "land softly, depart quickly" cadence (and keeping the
+        // collapsed DOM free of focusable ghosts).
+        <div className="grid animate-unfold">
+          <div className="overflow-hidden">
+            <div id={detailId} className="border-t border-navy-secondary px-4 py-3">
           <ShiftDetail
             shift={shift}
             muted={muted}
@@ -287,6 +298,8 @@ export function ShiftCard({
                 ))}
               </ul>
             )}
+          </div>
+            </div>
           </div>
         </div>
       )}
@@ -357,8 +370,10 @@ function ShiftDetail({
       {upcoming && (
         <div className="flex flex-wrap items-center gap-2 pt-1">
           {ackAt ? (
-            <span className="inline-flex items-center gap-1 text-xs text-success">
-              <Check className="h-3.5 w-3.5" aria-hidden="true" />
+            // The confirmation lands as one event: haptic (fired in the
+            // handler) + this check popping in.
+            <span className="inline-flex items-center gap-1 text-xs text-success animate-enter">
+              <Check className="h-3.5 w-3.5 animate-check-pop" aria-hidden="true" />
               {t('shift.youConfirmed')}
             </span>
           ) : (

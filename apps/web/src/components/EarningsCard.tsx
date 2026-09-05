@@ -4,6 +4,7 @@ import { Flame, ReceiptText, TrendingUp, Zap } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { displayLocale, fmtMoney, fmtMoneyCompact } from '@/lib/format';
+import { enterStagger } from '@/lib/motion';
 import { Card, CardContent } from '@/components/ui/Card';
 import { CountUpValue } from '@/components/ui/MetricCard';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -224,7 +225,7 @@ export function EarningsCard() {
           role="img"
           aria-label={t('earn.weekBarsLabel')}
         >
-          {data.days.map((d) => {
+          {data.days.map((d, idx) => {
             const total = d.workedAmount + d.scheduledAmount;
             const isToday = d.date === todayIso;
             // A 30-minute morning must still read as a sliver, never as an
@@ -246,20 +247,23 @@ export function EarningsCard() {
                   )}
                 >
                   {/* DOM order = top→bottom: scheduled (ghost) rides on top
-                      of worked (solid), so the top segment owns the radius. */}
+                      of worked (solid), so the top segment owns the radius.
+                      grow-y builds each day from the baseline on mount,
+                      staggered left→right — replays are impossible because
+                      the elements are position-stable across refetches. */}
                   {d.scheduledAmount > 0 && (
                     <div
-                      className="w-full rounded-t-sm bg-gold/25"
-                      style={{ height: h(d.scheduledAmount) }}
+                      className="w-full rounded-t-sm bg-gold/25 origin-bottom animate-grow-y"
+                      style={{ height: h(d.scheduledAmount), ...enterStagger(idx, 40, 6) }}
                     />
                   )}
                   {d.workedAmount > 0 && (
                     <div
                       className={cn(
-                        'w-full bg-gold',
+                        'w-full bg-gold origin-bottom animate-grow-y',
                         d.scheduledAmount === 0 && 'rounded-t-sm',
                       )}
-                      style={{ height: h(d.workedAmount) }}
+                      style={{ height: h(d.workedAmount), ...enterStagger(idx, 40, 6) }}
                     />
                   )}
                 </div>
@@ -284,12 +288,14 @@ export function EarningsCard() {
           })}
         </div>
 
-        {/* The week filling up. */}
+        {/* The week filling up. scaleX, not width — width re-lays-out the
+            page on every tick of the live ticker; scaleX stays on the
+            compositor. */}
         <div className="mt-3 flex items-center gap-2">
           <div className="h-2 flex-1 overflow-hidden rounded-full bg-navy-secondary/70">
             <div
-              className="h-full rounded-full bg-gold transition-all duration-700 ease-out motion-reduce:transition-none"
-              style={{ width: `${pct}%` }}
+              className="h-full w-full origin-left bg-gold transition-transform duration-700 ease-out motion-reduce:transition-none"
+              style={{ transform: `scaleX(${pct / 100})` }}
             />
           </div>
           <span className="text-2xs tabular-nums text-silver/60">{pct}%</span>

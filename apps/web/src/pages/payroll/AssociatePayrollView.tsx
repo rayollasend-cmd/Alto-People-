@@ -24,6 +24,7 @@ import {
 import { fileCase } from '@/lib/hrCases123Api';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtHours, fmtMoney, parseYmd } from '@/lib/format';
+import { enterStagger } from '@/lib/motion';
 import { statusTone } from '@/lib/status';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
@@ -641,10 +642,11 @@ function PaystubGroup({
         </span>
       </summary>
       <ul className="space-y-3 p-3 pt-0">
-        {items.map((it) => (
+        {items.map((it, i) => (
           <PaystubCard
             key={it.id}
             item={it}
+            appearIndex={i}
             expanded={expanded.has(it.id)}
             onToggle={() => onToggle(it.id)}
             onAsk={() => onAsk(it)}
@@ -660,11 +662,13 @@ function PaystubCard({
   expanded,
   onToggle,
   onAsk,
+  appearIndex = 0,
 }: {
   item: PayrollItem;
   expanded: boolean;
   onToggle: () => void;
   onAsk: () => void;
+  appearIndex?: number;
 }) {
   const { t } = useI18n();
   // YTD comes from the server, not from summing the loaded stubs: the list
@@ -693,7 +697,10 @@ function PaystubCard({
   };
 
   return (
-    <li className="bg-navy border border-navy-secondary rounded-lg overflow-hidden">
+    <li
+      className="bg-navy border border-navy-secondary rounded-lg overflow-hidden animate-enter"
+      style={enterStagger(appearIndex)}
+    >
       <button
         type="button"
         onClick={onToggle}
