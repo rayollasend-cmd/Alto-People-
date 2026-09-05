@@ -12,6 +12,7 @@ import {
   fmtDateTz,
   fmtHours,
   fmtMoney,
+  fmtMoneyEst,
   fmtTime,
   fmtWeekdayTz,
   ymdLocal,
@@ -111,8 +112,13 @@ export function MyTimesheet() {
   const [activePreset, setActivePreset] = useState<Preset | null>('LAST14');
   const [disputeTarget, setDisputeTarget] = useState<TimeEntry | null>(null);
 
+  // The From/To inputs are power-user furniture — hidden until the
+  // Custom chip asks for them, so the page opens as chips, not a form.
+  const [showCustom, setShowCustom] = useState(false);
+
   const applyPreset = (p: Preset) => {
     setActivePreset(p);
+    setShowCustom(false);
     const now = new Date();
     if (p === 'LAST14') {
       setFromYmd(daysAgoYmd(13));
@@ -229,27 +235,37 @@ export function MyTimesheet() {
         <CardDescription>{t('time.myTimesheetDesc')}</CardDescription>
       </CardHeader>
       <CardContent>
-        {/* The score, not a stat strip: what this period is WORTH (gross
-            estimate when every approved entry carries a rate, else the
-            approved hours), with one human sentence under it. */}
-        {!entries && !query.isError && <Skeleton className="h-16 mb-4" />}
+        {/* The score in the HOUSE hero grammar — gold face, inset radial
+            glow (never an offset blur; e2e rect guard): what this period
+            is WORTH (gross when every approved entry carries a rate,
+            else approved hours), one human sentence under it. */}
+        {!entries && !query.isError && <Skeleton className="h-28 mb-5" />}
         {entries && entries.length > 0 && (
-          <div className="mb-5 animate-enter">
-            <div className="text-4xl font-bold tracking-tight tabular-nums text-white">
-              {grossEstimate !== null
-                ? fmtMoney(grossEstimate)
-                : fmtH(approvedMin)}
+          <div className="relative overflow-hidden rounded-lg border border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent p-5 mb-5 animate-enter">
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]"
+            />
+            <div className="relative">
+              <span className="text-xs font-medium uppercase tracking-wider text-gold">
+                {t('time.thisPeriod')}
+              </span>
+              <div className="mt-2 text-5xl font-bold tracking-tight tabular-nums text-white">
+                {grossEstimate !== null
+                  ? fmtMoney(grossEstimate)
+                  : fmtH(approvedMin)}
+              </div>
+              <p className="mt-1.5 text-sm text-silver tabular-nums">
+                {grossEstimate !== null
+                  ? t('time.heroLineGross', { hours: fmtH(approvedMin) })
+                  : t('time.heroLineHours')}
+                {pendingMin > 0 && (
+                  <span className="text-gold">
+                    {' '}· {t('time.heroPending', { hours: fmtH(pendingMin) })}
+                  </span>
+                )}
+              </p>
             </div>
-            <p className="mt-1 text-sm text-silver tabular-nums">
-              {grossEstimate !== null
-                ? t('time.heroLineGross', { hours: fmtH(approvedMin) })
-                : t('time.heroLineHours')}
-              {pendingMin > 0 && (
-                <span className="text-gold">
-                  {' '}· {t('time.heroPending', { hours: fmtH(pendingMin) })}
-                </span>
-              )}
-            </p>
           </div>
         )}
 
@@ -277,37 +293,53 @@ export function MyTimesheet() {
                 </Button>
               );
             })}
+            <Button
+              size="xs"
+              variant="outline"
+              aria-pressed={showCustom || activePreset === null}
+              onClick={() => setShowCustom(true)}
+              className={cn(
+                (showCustom || activePreset === null) &&
+                  'border-gold text-gold bg-gold/10 hover:border-gold hover:text-gold',
+              )}
+            >
+              {t('time.custom')}
+            </Button>
           </div>
-          <label className="block">
-            <span className="text-xs font-medium text-silver">
-              {t('common.from')}
-            </span>
-            <Input
-              type="date"
-              value={fromYmd}
-              max={toYmd}
-              onChange={(e) => {
-                setFromYmd(e.target.value);
-                setActivePreset(null);
-              }}
-              className="mt-1 w-40"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium text-silver">
-              {t('common.to')}
-            </span>
-            <Input
-              type="date"
-              value={toYmd}
-              min={fromYmd}
-              onChange={(e) => {
-                setToYmd(e.target.value);
-                setActivePreset(null);
-              }}
-              className="mt-1 w-40"
-            />
-          </label>
+          {(showCustom || activePreset === null) && (
+            <>
+              <label className="block">
+                <span className="text-xs font-medium text-silver">
+                  {t('common.from')}
+                </span>
+                <Input
+                  type="date"
+                  value={fromYmd}
+                  max={toYmd}
+                  onChange={(e) => {
+                    setFromYmd(e.target.value);
+                    setActivePreset(null);
+                  }}
+                  className="mt-1 w-40"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-medium text-silver">
+                  {t('common.to')}
+                </span>
+                <Input
+                  type="date"
+                  value={toYmd}
+                  min={fromYmd}
+                  onChange={(e) => {
+                    setToYmd(e.target.value);
+                    setActivePreset(null);
+                  }}
+                  className="mt-1 w-40"
+                />
+              </label>
+            </>
+          )}
         </div>
 
         {query.isError && (
@@ -336,6 +368,19 @@ export function MyTimesheet() {
           <div className="space-y-6">
             {weeks.map(([weekMs, bucket]) => {
               const overtimeMin = Math.max(0, bucket.workedMin - WEEK_REGULAR_CAP_MIN);
+              // The week as a payday line — worth shown when every counted
+              // entry carries a rate (the same honesty gate as the hero).
+              const counted = bucket.entries.filter((e) => e.status !== 'REJECTED');
+              const weekGross =
+                counted.length > 0 && counted.every((e) => e.payRate != null)
+                  ? counted.reduce(
+                      (s, e) =>
+                        s +
+                        ((e.netMinutes ?? e.minutesElapsed) / 60) *
+                          (e.payRate as number),
+                      0,
+                    )
+                  : null;
               return (
                 <section key={weekMs}>
                   <div className="mb-2 flex items-baseline justify-between gap-3 border-b border-navy-secondary pb-1.5">
@@ -353,6 +398,11 @@ export function MyTimesheet() {
                     </h3>
                     <span className="flex items-center gap-2 text-xs tabular-nums text-silver/70">
                       {fmtH(bucket.workedMin)}
+                      {weekGross !== null && weekGross > 0 && (
+                        <span className="font-semibold text-gold">
+                          {fmtMoneyEst(weekGross)}
+                        </span>
+                      )}
                       {overtimeMin > 0 && (
                         <span className="rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-warning">
                           {t('time.weekOvertime', { hours: fmtH(overtimeMin) })}
@@ -410,20 +460,12 @@ export function MyTimesheet() {
                                   {e.rejectionReason}
                                 </div>
                               )}
-                              <Button
-                                size="xs"
-                                variant="ghost"
-                                className="mt-1 -ml-2 text-silver/60 hover:text-white"
-                                onClick={() => setDisputeTarget(e)}
-                              >
-                                <Flag className="h-3 w-3" />
-                                {t('time.reportIssue')}
-                              </Button>
                             </div>
                             <div className="flex shrink-0 flex-col items-end gap-1.5">
+                              {/* The row's SCORE — hours read before words. */}
                               <span
                                 className={cn(
-                                  'text-base font-medium tabular-nums',
+                                  'text-lg font-semibold tabular-nums leading-tight',
                                   e.status === 'REJECTED'
                                     ? 'text-silver/50 line-through'
                                     : 'text-white',
@@ -434,6 +476,19 @@ export function MyTimesheet() {
                               <Badge variant={statusTone(e.status, { overrides: TIME_ENTRY_STATUS_TONES })}>
                                 {t(STATUS_KEY[e.status])}
                               </Badge>
+                              {/* One quiet flag instead of a text button
+                                  repeated on every row — the dialog still
+                                  carries the full explanation. */}
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                className="-mr-2 text-silver/50 hover:text-white"
+                                aria-label={t('time.reportIssue')}
+                                title={t('time.reportIssue')}
+                                onClick={() => setDisputeTarget(e)}
+                              >
+                                <Flag className="h-3.5 w-3.5" />
+                              </Button>
                             </div>
                           </div>
                         </li>
