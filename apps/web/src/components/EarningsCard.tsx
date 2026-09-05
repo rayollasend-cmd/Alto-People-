@@ -148,13 +148,17 @@ export function EarningsCard() {
   return (
     <Card className="relative overflow-hidden border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent">
       {/* Depth: one soft glow anchored behind the number — success-green
-          while money is actively printing, gold otherwise. Static blur,
-          zero runtime cost. */}
+          while money is actively printing, gold otherwise. An INSET radial
+          gradient, not an offset blurred circle: the e2e overflow guard
+          measures raw rects (overflow-hidden clipping doesn't exempt you),
+          and a gradient needs no blur filter at paint time either. */}
       <div
         aria-hidden="true"
         className={cn(
-          'pointer-events-none absolute -top-20 -left-12 h-56 w-56 rounded-full blur-3xl',
-          onClock ? 'bg-success/15' : 'bg-gold/15',
+          'pointer-events-none absolute inset-0',
+          onClock
+            ? 'bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-success)/0.14),transparent_55%)]'
+            : 'bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]',
         )}
       />
       <CardContent className="relative p-5">
