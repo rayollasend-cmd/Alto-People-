@@ -141,14 +141,15 @@ describe('AuthProvider session death', () => {
 
     // RequireAuth bounced to /login with the prior location in state.from.
     // Generous timeout: the 401 → confirming re-probe → state update →
-    // redirect chain is eventually-consistent by design, and the default
-    // 1s window flakes under CI parallel load.
+    // redirect chain is eventually-consistent by design. 12s inside the
+    // 15s budget — the earlier 5s inner window still expired on loaded CI
+    // runners (2026-09-05: chain took >5s under parallel suite load).
     expect(
-      await screen.findByTestId('login', undefined, { timeout: 5_000 }),
+      await screen.findByTestId('login', undefined, { timeout: 12_000 }),
     ).toHaveTextContent('next=/payroll');
-    // The 15s third arg raises the per-test budget: the inner 5s findBy
-    // equalled vitest's default 5s test timeout, so on a loaded CI runner
-    // the OUTER timeout always fired first and failed the build.
+    // The 15s third arg raises the per-test budget above the inner wait —
+    // vitest's default 5s outer timeout used to fire first and mask the
+    // real assertion.
   }, 15_000);
 
   it('shows the session-ended toast exactly once, not once per failed request', async () => {
@@ -165,12 +166,12 @@ describe('AuthProvider session death', () => {
     await failBusinessRequest('/time/entries');
     await failBusinessRequest('/scheduling/shifts');
 
-    await screen.findByTestId('login', undefined, { timeout: 5_000 });
+    await screen.findByTestId('login', undefined, { timeout: 12_000 });
     expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(toast.error).mock.calls[0][0]).toMatch(
       /session ended/i,
     );
-    // Same inner-5s-vs-outer-5s trap as the redirect test above.
+    // Same inner-vs-outer timeout headroom as the redirect test above.
   }, 15_000);
 
   it('keeps the session when the re-probe succeeds (one-off 401)', async () => {
