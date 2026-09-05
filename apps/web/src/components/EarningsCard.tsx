@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Flame, ReceiptText, TrendingUp, Zap } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
-import { displayLocale, fmtMoney } from '@/lib/format';
+import { displayLocale, fmtMoney, fmtMoneyCompact } from '@/lib/format';
 import { Card, CardContent } from '@/components/ui/Card';
 import { CountUpValue } from '@/components/ui/MetricCard';
 import { Skeleton } from '@/components/ui/Skeleton';
@@ -58,6 +58,15 @@ interface Earnings {
 
 const REFRESH_MS = 60_000;
 
+/** "$1,234.56" → dollars + cents, so the hero can set the cents smaller —
+ *  the fintech treatment that makes a money number feel engineered. Falls
+ *  back to the whole string if the locale ever drops the decimal point. */
+function splitMoney(v: number): { main: string; cents: string } {
+  const s = fmtMoney(v);
+  const i = s.lastIndexOf('.');
+  return i === -1 ? { main: s, cents: '' } : { main: s.slice(0, i), cents: s.slice(i) };
+}
+
 export function EarningsCard() {
   const { t } = useI18n();
   const [data, setData] = useState<Earnings | null>(null);
@@ -105,7 +114,7 @@ export function EarningsCard() {
   }, []);
 
   if (failed && data === null) return null;
-  if (data === null) return <Skeleton className="h-36" />;
+  if (data === null) return <Skeleton className="h-64" />;
   // Nothing scheduled and nothing worked: stay quiet rather than show $0.
   if (data.projectedWeek <= 0 && data.earnedSoFar <= 0) return null;
 
@@ -125,6 +134,11 @@ export function EarningsCard() {
   );
   const todayIso = new Date().toISOString().slice(0, 10);
   const behindBy = data.lastWeekEarned - data.projectedWeek;
+  const daysLeft = Math.max(
+    0,
+    Math.ceil((new Date(data.weekEnd).getTime() - Date.now()) / 86_400_000),
+  );
+  const earned = splitMoney(onClock ? liveEarned : data.earnedSoFar);
 
   return (
     <Card className="border-gold/25 bg-gradient-to-br from-gold/[0.07] to-transparent">
@@ -137,7 +151,7 @@ export function EarningsCard() {
           {onClock ? (
             <span className="flex items-center gap-1.5 text-xs text-success">
               <span className="relative flex h-2 w-2" aria-hidden="true">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
               </span>
               {t('earn.live', { rate: fmtMoney(data.currentRatePerHour) })}
@@ -156,13 +170,20 @@ export function EarningsCard() {
 
         <div className="mt-2 flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
           <div>
-            <div className="text-3xl font-semibold tabular-nums text-white">
+            <div
+              className="text-3xl font-semibold tabular-nums text-white"
+              aria-live="off"
+              aria-label={fmtMoney(onClock ? liveEarned : data.earnedSoFar)}
+            >
               {onClock ? (
                 // Live: no mount animation fighting the ticker — the
                 // number itself is the animation.
-                <span>{fmtMoney(liveEarned)}</span>
+                <span>{earned.main}</span>
               ) : (
-                <CountUpValue value={fmtMoney(data.earnedSoFar)} />
+                <CountUpValue value={earned.main} />
+              )}
+              {earned.cents && (
+                <span className="text-lg font-medium text-silver/80">{earned.cents}</span>
               )}
             </div>
             <div className="text-2xs text-silver/70">{t('earn.soFar')}</div>
@@ -171,7 +192,14 @@ export function EarningsCard() {
             <div className="text-xl font-semibold tabular-nums text-gold">
               {fmtMoney(liveProjected)}
             </div>
-            <div className="text-2xs text-silver/70">{t('earn.projected')}</div>
+            <div className="text-2xs text-silver/70">
+              {t('earn.projected')}
+              {daysLeft > 0 && (
+                <span className="text-silver/50">
+                  {' '}· {daysLeft === 1 ? t('earn.dayLeft') : t('earn.daysLeft', { n: String(daysLeft) })}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -199,6 +227,10 @@ export function EarningsCard() {
           {data.days.map((d) => {
             const total = d.workedAmount + d.scheduledAmount;
             const isToday = d.date === todayIso;
+            // A 30-minute morning must still read as a sliver, never as an
+            // empty day — floor each non-zero segment at 6%.
+            const h = (amt: number) =>
+              amt > 0 ? `${Math.max(6, (amt / maxDay) * 100)}%` : '0%';
             return (
               <div
                 key={d.date}
@@ -207,17 +239,27 @@ export function EarningsCard() {
                   d.scheduledAmount > 0 ? ` + ${fmtMoney(d.scheduledAmount)}` : ''
                 }`}
               >
-                <div className="flex h-12 w-full flex-col justify-end overflow-hidden rounded-sm bg-navy-secondary/50">
+                <div
+                  className={cn(
+                    'flex h-12 w-full flex-col justify-end overflow-hidden rounded-sm bg-navy-secondary/50',
+                    isToday && 'ring-1 ring-gold/50',
+                  )}
+                >
+                  {/* DOM order = top→bottom: scheduled (ghost) rides on top
+                      of worked (solid), so the top segment owns the radius. */}
                   {d.scheduledAmount > 0 && (
                     <div
-                      className="w-full bg-gold/25"
-                      style={{ height: `${(d.scheduledAmount / maxDay) * 100}%` }}
+                      className="w-full rounded-t-sm bg-gold/25"
+                      style={{ height: h(d.scheduledAmount) }}
                     />
                   )}
                   {d.workedAmount > 0 && (
                     <div
-                      className="w-full bg-gold"
-                      style={{ height: `${(d.workedAmount / maxDay) * 100}%` }}
+                      className={cn(
+                        'w-full bg-gold',
+                        d.scheduledAmount === 0 && 'rounded-t-sm',
+                      )}
+                      style={{ height: h(d.workedAmount) }}
                     />
                   )}
                 </div>
@@ -235,7 +277,7 @@ export function EarningsCard() {
                     total > 0 ? 'text-silver/80' : 'text-silver/40',
                   )}
                 >
-                  {total > 0 ? fmtMoney(Math.round(total)).replace(/\.00$/, '') : '·'}
+                  {total > 0 ? fmtMoneyCompact(total) : '·'}
                 </span>
               </div>
             );
@@ -243,11 +285,14 @@ export function EarningsCard() {
         </div>
 
         {/* The week filling up. */}
-        <div className="mt-3 h-2 overflow-hidden rounded-full bg-navy-secondary/70">
-          <div
-            className="h-full rounded-full bg-gold transition-all duration-700 ease-out"
-            style={{ width: `${pct}%` }}
-          />
+        <div className="mt-3 flex items-center gap-2">
+          <div className="h-2 flex-1 overflow-hidden rounded-full bg-navy-secondary/70">
+            <div
+              className="h-full rounded-full bg-gold transition-all duration-700 ease-out motion-reduce:transition-none"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <span className="text-2xs tabular-nums text-silver/60">{pct}%</span>
         </div>
         <div className="mt-1 flex flex-wrap items-center justify-between gap-x-3 text-2xs text-silver/70">
           <span className="tabular-nums">
@@ -274,7 +319,7 @@ export function EarningsCard() {
           )}
         </div>
 
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-2xs">
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-navy-secondary/50 pt-2 text-2xs">
           {data.openShifts.count > 0 && data.openShifts.estAmount > 0 ? (
             <Link to="/marketplace" className="font-medium text-gold hover:text-gold-bright">
               {t('earn.openShifts', {
