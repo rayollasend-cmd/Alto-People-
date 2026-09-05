@@ -14,6 +14,7 @@ import {
 } from '@/lib/documentsApi';
 import { cn } from '@/lib/cn';
 import { fmtSize } from '@/lib/format';
+import { useI18n, type MessageKey, type Translate } from '@/lib/i18n';
 
 const STATUS_VARIANT: Record<
   DocumentRecord['status'],
@@ -41,6 +42,7 @@ interface DocumentPreviewProps {
  * pinned at bottom.
  */
 export function DocumentPreview({ doc, onOpenChange, actions }: DocumentPreviewProps) {
+  const { t } = useI18n();
   const open = doc !== null;
 
   return (
@@ -61,9 +63,8 @@ export function DocumentPreview({ doc, onOpenChange, actions }: DocumentPreviewP
                   {doc.filename}
                 </DialogTitle>
                 <DialogDescription className="text-xs text-silver mt-0.5 flex items-center gap-2 flex-wrap">
-                  <span className="uppercase tracking-wider">
-                    {doc.kind.replace(/_/g, ' ')}
-                  </span>
+                  {/* The translated kind label, not the raw enum code. */}
+                  <span>{t(('docs.kind.' + doc.kind) as MessageKey)}</span>
                   <span className="text-silver/70">·</span>
                   <span>{fmtSize(doc.size)}</span>
                   <span className="text-silver/70">·</span>
@@ -77,32 +78,33 @@ export function DocumentPreview({ doc, onOpenChange, actions }: DocumentPreviewP
                 </DialogDescription>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <Badge variant={STATUS_VARIANT[doc.status]}>{doc.status}</Badge>
+                <Badge variant={STATUS_VARIANT[doc.status]}>
+                  {t(('docs.status.' + doc.status) as MessageKey)}
+                </Badge>
                 {actions}
               </div>
             </header>
 
             <div className="bg-midnight overflow-hidden flex items-center justify-center">
-              <PreviewBody doc={doc} />
+              <PreviewBody doc={doc} t={t} />
             </div>
 
             <footer className="px-5 py-3 border-t border-navy-secondary flex items-center justify-between gap-3">
               <div className="text-xs text-silver">
                 {!doc.fileAvailable ? (
-                  <span className="text-alert">
-                    File no longer available — please re-upload.
-                  </span>
+                  <span className="text-alert">{t('docs.fileGoneFooter')}</span>
                 ) : doc.rejectionReason ? (
                   <span className="text-alert">
-                    Rejection reason: {doc.rejectionReason}
+                    {t('docs.rejectedReasonLine', { reason: doc.rejectionReason })}
                   </span>
                 ) : doc.verifiedAt ? (
-                  <>
-                    Verified
-                    {doc.verifierEmail ? ` by ${doc.verifierEmail}` : ''}
-                  </>
+                  doc.verifierEmail ? (
+                    t('docs.verifiedBy', { who: doc.verifierEmail })
+                  ) : (
+                    t('docs.verifiedPlain')
+                  )
                 ) : (
-                  'Awaiting HR review.'
+                  t('docs.awaitingReview')
                 )}
               </div>
               <div className="flex items-center gap-2">
@@ -115,19 +117,19 @@ export function DocumentPreview({ doc, onOpenChange, actions }: DocumentPreviewP
                       className="inline-flex items-center gap-1.5 text-xs text-silver hover:text-white px-2 py-1 rounded border border-navy-secondary hover:border-silver/50 transition"
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
-                      Open in new tab
+                      {t('docs.openTab')}
                     </a>
                     <a
                       href={downloadDocumentUrl(doc.id)}
                       className="btn-gold inline-flex items-center gap-1.5 text-xs text-navy px-2.5 py-1 rounded font-medium"
                     >
                       <Download className="h-3.5 w-3.5" />
-                      Download
+                      {t('docs.download')}
                     </a>
                   </>
                 ) : (
                   <span className="text-xs text-silver/70">
-                    Preview / download disabled — file missing on server
+                    {t('docs.fileGoneActions')}
                   </span>
                 )}
               </div>
@@ -139,19 +141,16 @@ export function DocumentPreview({ doc, onOpenChange, actions }: DocumentPreviewP
   );
 }
 
-function PreviewBody({ doc }: { doc: DocumentRecord }) {
+function PreviewBody({ doc, t }: { doc: DocumentRecord; t: Translate }) {
   const url = previewDocumentUrl(doc.id);
   if (!doc.fileAvailable) {
     return (
       <div className="text-center px-8 max-w-md">
         <FileWarning className="h-10 w-10 text-alert mx-auto mb-3" />
-        <p className="text-white font-medium">File no longer available</p>
-        <p className="text-sm text-silver mt-1">
-          The underlying upload was lost from server storage (this can happen
-          when the server is redeployed before files are migrated to durable
-          storage). The record metadata is intact — please ask the associate
-          to re-upload, or remove this entry.
-        </p>
+        <p className="text-white font-medium">{t('docs.fileGoneTitle')}</p>
+        {/* Audience-neutral wording — associates see this dialog too, so
+            "ask the associate to re-upload" read like leaked admin notes. */}
+        <p className="text-sm text-silver mt-1">{t('docs.fileGoneBody')}</p>
       </div>
     );
   }
@@ -180,10 +179,9 @@ function PreviewBody({ doc }: { doc: DocumentRecord }) {
   return (
     <div className="text-center px-8 max-w-md">
       <FileWarning className="h-10 w-10 text-silver/70 mx-auto mb-3" />
-      <p className="text-white font-medium">Preview not available</p>
+      <p className="text-white font-medium">{t('docs.noPreviewTitle')}</p>
       <p className="text-sm text-silver mt-1">
-        This file type ({doc.mimeType}) can't be previewed in-browser. Download
-        or open in a new tab to view it.
+        {t('docs.noPreviewBody', { mime: doc.mimeType })}
       </p>
       <p className="sr-only">{isPreviewable(doc.mimeType) ? '' : 'fallback'}</p>
     </div>

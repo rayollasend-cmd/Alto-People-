@@ -24,6 +24,7 @@ import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
 import {
   deleteMyDocument,
   listMyDocuments,
+  previewDocumentUrl,
   uploadMyDocument,
 } from '@/lib/documentsApi';
 import { ApiError } from '@/lib/api';
@@ -414,7 +415,7 @@ export function AssociateDocumentsView() {
               >
                 {/* md+: packed single-line row (mouse precision). */}
                 <div className="hidden md:flex md:items-center md:gap-3">
-                  <KindChip d={d} />
+                  <DocThumb d={d} onOpen={() => setPreviewDoc(d)} t={t} />
                   <div className="flex-1 min-w-0">
                     <DocInfo d={d} t={t} />
                   </div>
@@ -457,7 +458,7 @@ export function AssociateDocumentsView() {
                     full-width thumb-sized (≥44px) action buttons. */}
                 <div className="md:hidden space-y-3">
                   <div className="flex items-start gap-3">
-                    <KindChip d={d} />
+                    <DocThumb d={d} onOpen={() => setPreviewDoc(d)} t={t} />
                     <div className="min-w-0 flex-1">
                       <DocInfo d={d} t={t} />
                     </div>
@@ -644,12 +645,45 @@ function KindChip({ d }: { d: DocumentRecord }) {
     <div
       aria-hidden="true"
       className={cn(
-        'grid h-10 w-10 shrink-0 place-items-center rounded-lg',
+        'grid h-14 w-14 shrink-0 place-items-center rounded-lg',
         tone,
       )}
     >
-      <Icon className="h-5 w-5" />
+      <Icon className="h-6 w-6" />
     </div>
+  );
+}
+
+/** The document ITSELF leads the row when it's an image — visible at a
+ *  glance, no tap needed; tapping it opens the full viewer. PDFs and
+ *  missing files keep the kind chip (a live PDF frame per row would be
+ *  paint-cost for nothing). */
+function DocThumb({
+  d,
+  onOpen,
+  t,
+}: {
+  d: DocumentRecord;
+  onOpen: () => void;
+  t: Translate;
+}) {
+  if (!d.fileAvailable || !d.mimeType.startsWith('image/')) {
+    return <KindChip d={d} />;
+  }
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={t('docs.viewHint')}
+      className="shrink-0 overflow-hidden rounded-lg border border-navy-secondary focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+    >
+      <img
+        src={previewDocumentUrl(d.id)}
+        alt=""
+        loading="lazy"
+        className="h-14 w-14 object-cover"
+      />
+    </button>
   );
 }
 
