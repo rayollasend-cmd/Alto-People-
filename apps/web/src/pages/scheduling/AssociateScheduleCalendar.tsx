@@ -255,7 +255,7 @@ export function ScheduleWeekView({
         </span>
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-4">
         {days.map((d) => {
           const dayShifts = byDay.get(d.key) ?? [];
           const isToday = d.key === todayKey;
@@ -264,7 +264,7 @@ export function ScheduleWeekView({
             <section key={d.key}>
               <h3
                 className={[
-                  'text-sm mb-1.5',
+                  'text-sm mb-2',
                   isToday
                     ? 'font-semibold text-gold'
                     : 'font-medium text-silver',
@@ -285,7 +285,7 @@ export function ScheduleWeekView({
                   {isBlocked ? t('cal.dayOff') : t('cal.noShifts')}
                 </p>
               ) : (
-                <ul className="space-y-1.5">
+                <ul className="space-y-2">
                   {dayShifts.map((s, i) => (
                     <ShiftCard
                       key={s.id}

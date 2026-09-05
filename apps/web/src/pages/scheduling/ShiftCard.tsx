@@ -99,42 +99,42 @@ function TileMark({
   let shape: React.ReactNode;
   let label: string;
   if (needsConfirm) {
-    shape = <span className="h-2 w-2 rounded-full bg-gold" />;
+    shape = <span className="h-2.5 w-2.5 rounded-full bg-gold" />;
     label = t('shift.confirmNeeded');
   } else if (inProgress) {
     // The same live pulse as the hero and earnings card — a shift that's
     // happening RIGHT NOW shouldn't look like any other confirmed row.
     shape = (
-      <span className="relative flex h-2 w-2">
+      <span className="relative flex h-2.5 w-2.5">
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-success" />
       </span>
     );
     label = t('sched.heroNow');
   } else {
     switch (shift.status) {
       case 'COMPLETED':
-        shape = <Check className="h-3 w-3 text-success" strokeWidth={3} />;
+        shape = <Check className="h-3.5 w-3.5 text-success" strokeWidth={3} />;
         label = t('shift.worked');
         break;
       case 'CANCELLED':
-        shape = <X className="h-3 w-3 text-alert" strokeWidth={3} />;
+        shape = <X className="h-3.5 w-3.5 text-alert" strokeWidth={3} />;
         label = t('shift.cancelled');
         break;
       case 'OPEN':
         shape = (
-          <span className="h-2 w-2 rounded-full border-[1.5px] border-warning" />
+          <span className="h-2.5 w-2.5 rounded-full border-[1.5px] border-warning" />
         );
         label = t('shift.open');
         break;
       default:
-        shape = <span className="h-2 w-2 rounded-full bg-success" />;
+        shape = <span className="h-2.5 w-2.5 rounded-full bg-success" />;
         label = t('shift.confirmed');
     }
   }
   return (
     <span
-      className="shrink-0 inline-flex h-3 w-3 items-center justify-center"
+      className="shrink-0 inline-flex h-3.5 w-3.5 items-center justify-center"
       title={label}
     >
       {shape}
@@ -266,7 +266,7 @@ export function ShiftCard({
       {tile && (
         <div
           aria-hidden="true"
-          className="absolute left-0 top-0 bottom-0 w-1 rounded-l"
+          className="absolute left-0 top-0 bottom-0 w-1.5 rounded-l-md"
           style={{ backgroundColor: tileColor!.accent }}
         />
       )}
@@ -279,14 +279,17 @@ export function ShiftCard({
           // The tooltip carries what the truncating label can't — same
           // affordance as the admin tiles.
           title={`${fmtShiftRangeTz(shift.startsAt, shift.endsAt, shift.timezone)} · ${shift.position}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
-          className="w-full flex items-center gap-1.5 pl-3 pr-2 py-2 coarse:min-h-11 text-left rounded transition-colors active:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          // Roomier than the admin tile ON PURPOSE: managers scan a
+          // 40-row grid, an associate reads 2–3 tiles on a phone —
+          // density there is legibility lost, not information gained.
+          className="w-full flex items-center gap-2.5 pl-4 pr-3 py-3 coarse:min-h-11 text-left rounded-md transition-colors active:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         >
-          <span className="text-xs2 text-silver/90 tabular-nums shrink-0">
+          <span className="text-sm text-silver tabular-nums shrink-0">
             {fmtCompactRange(shift.startsAt, shift.endsAt, shift.timezone)}
           </span>
           <span
             className={[
-              'flex-1 min-w-0 truncate text-xs font-medium text-white',
+              'flex-1 min-w-0 truncate text-sm font-medium text-white',
               statusLabelClass(shift.status),
             ].join(' ')}
           >
@@ -310,7 +313,7 @@ export function ShiftCard({
           <ChevronDown
             aria-hidden="true"
             className={[
-              'h-3.5 w-3.5 shrink-0 text-silver/50 transition-transform',
+              'h-4 w-4 shrink-0 text-silver/60 transition-transform',
               expanded ? 'rotate-180' : '',
             ].join(' ')}
           />
@@ -382,13 +385,7 @@ export function ShiftCard({
           expand + a hunt into the detail panel for every shift past the
           first. Sibling of the toggle button (never nested inside it). */}
       {!expanded && needsConfirm && (
-        <div
-          className={
-            tile
-              ? 'border-t border-navy-secondary px-3 py-2'
-              : 'border-t border-navy-secondary px-4 py-2.5'
-          }
-        >
+        <div className="border-t border-navy-secondary px-4 py-2.5">
           <Button
             size="sm"
             onClick={acknowledge}
@@ -409,14 +406,7 @@ export function ShiftCard({
         // collapsed DOM free of focusable ghosts).
         <div className="grid animate-unfold">
           <div className="overflow-hidden">
-            <div
-              id={detailId}
-              className={
-                tile
-                  ? 'border-t border-navy-secondary px-3 py-3'
-                  : 'border-t border-navy-secondary px-4 py-3'
-              }
-            >
+            <div id={detailId} className="border-t border-navy-secondary px-4 py-3">
           <ShiftDetail
             shift={shift}
             muted={muted}
