@@ -1140,7 +1140,7 @@ const en = {
   'dash.noPaystubs': 'No paystubs yet',
   'dash.firstPaystub':
     'Your first one will show up here once your manager runs payroll.',
-  'dash.netWorked': 'Net · {hours}h worked',
+  'dash.netWorked': 'Net · {hours} worked',
   'dash.paidOn': 'paid {date}',
   'dash.viewPayHistory': 'View pay history',
   'dash.timeOff': 'Time off',
@@ -2701,7 +2701,7 @@ const es: Record<MessageKey, string> = {
   'dash.noPaystubs': 'Aún no hay recibos',
   'dash.firstPaystub':
     'El primero aparecerá aquí cuando tu gerente procese la nómina.',
-  'dash.netWorked': 'Neto · {hours}h trabajadas',
+  'dash.netWorked': 'Neto · {hours} trabajadas',
   'dash.paidOn': 'pagado {date}',
   'dash.viewPayHistory': 'Ver historial de pagos',
   'dash.timeOff': 'Ausencias',

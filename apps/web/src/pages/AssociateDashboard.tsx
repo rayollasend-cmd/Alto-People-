@@ -12,7 +12,6 @@ import {
   FileText,
   FileWarning,
   Inbox,
-  MapPin,
   Timer,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -30,7 +29,7 @@ import { acknowledgeMyShift, listMyShifts } from '@/lib/schedulingApi';
 import { listMyAgreements } from '@/lib/agreements122Api';
 import { listMyDocuments } from '@/lib/documentsApi';
 import { listMyInbox } from '@/lib/communicationsApi';
-import { fmtDate, fmtMoney, fmtRelativeDayTz, fmtShiftRangeTz, fmtTime } from '@/lib/format';
+import { fmtDate, fmtHours, fmtMoney, fmtRelativeDayTz, fmtShiftRangeTz, fmtTime } from '@/lib/format';
 import { listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { getEmployeeNumber } from '@/lib/selfApi';
@@ -476,7 +475,7 @@ function LoadFailedCard({
   return (
     <Card className={className}>
       <CardContent className="pt-5">
-        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
+        <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
           <Icon className="h-3 w-3" aria-hidden="true" />
           {label}
         </div>
@@ -525,11 +524,11 @@ function ClockCard({ active, isClockedIn }: ClockCardProps) {
       )}
     >
       <CardContent className="pt-5">
-        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
+        <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
           <Clock className="h-3 w-3" aria-hidden="true" />
           {t('dash.clock')}
         </div>
-        <div className="text-2xl text-white mt-2 leading-tight">
+        <div className="text-2xl font-semibold tracking-tight text-white mt-2 leading-tight">
           {isClockedIn ? t('dash.onClock') : t('dash.offClock')}
         </div>
         {isClockedIn && active?.active ? (
@@ -564,7 +563,7 @@ function EmployeeNumberLine() {
   });
   if (!data?.employeeNumber) return null;
   return (
-    <div className="mt-3 flex items-center justify-between gap-2 border-t border-navy-secondary pt-2.5">
+    <div className="mt-3 flex items-center justify-between gap-2">
       <span className="text-xs text-silver/70">{t('dash.myNumber')}</span>
       <button
         type="button"
@@ -617,7 +616,7 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
     return (
       <Card className="md:col-span-2">
         <CardContent className="pt-5">
-          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
+          <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
             <Timer className="h-3 w-3" aria-hidden="true" />
             {t('dash.nextShift')}
           </div>
@@ -639,31 +638,24 @@ function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
   return (
     <Card className="md:col-span-2">
       <CardContent className="pt-5">
-        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
+        <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
           <Timer className="h-3 w-3" aria-hidden="true" />
           {t('dash.nextShift')}
         </div>
-        <div className="flex items-baseline gap-2 mt-2 flex-wrap">
-          <div className="text-2xl text-white leading-tight">
-            {fmtRelativeDayTz(nextShift.startsAt, nextShift.timezone)}
-          </div>
-          <div className="text-lg text-gold tabular-nums">
+        {/* Same hero grammar as the schedule page's next-shift block —
+            day + time in heavy sans, one quiet line for everything else. */}
+        <div className="mt-2 text-3xl font-bold tracking-tight leading-tight text-white">
+          {fmtRelativeDayTz(nextShift.startsAt, nextShift.timezone)}
+          <span className="text-silver/50"> · </span>
+          <span className="tabular-nums">
             {fmtShiftRangeTz(nextShift.startsAt, nextShift.endsAt, nextShift.timezone)}
-          </div>
+          </span>
         </div>
-        <div className="text-sm text-silver mt-1">
+        <div className="text-sm text-silver mt-1.5">
           {nextShift.position}
           {nextShift.clientName && ` · ${nextShift.clientName}`}
+          {nextShift.location && ` · ${nextShift.location}`}
         </div>
-        {nextShift.location && (
-          // flex (not inline-flex): as an inline box this sat on the SAME
-          // line as the "See full schedule" link below with no separator —
-          // "Front endSee full schedule" (caught by the visual walk).
-          <div className="text-xs text-silver/70 mt-1 flex items-center gap-1">
-            <MapPin className="h-3 w-3" aria-hidden="true" />
-            {nextShift.location}
-          </div>
-        )}
         <div className="mt-3 flex items-center gap-3 flex-wrap">
           {nextShift.status === 'ASSIGNED' &&
             !nextShift.acknowledgedAt &&
@@ -708,7 +700,7 @@ function PaystubCard({
     return (
       <Card>
         <CardContent className="pt-5">
-          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
+          <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
             <DollarSign className="h-3 w-3" aria-hidden="true" />
             {t('dash.lastPaystub')}
           </div>
@@ -730,15 +722,17 @@ function PaystubCard({
   return (
     <Card>
       <CardContent className="pt-5">
-        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
+        <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
           <DollarSign className="h-3 w-3" aria-hidden="true" />
           {t('dash.lastPaystub')}
         </div>
-        <div className="font-display text-3xl text-gold mt-2 tabular-nums">
+        {/* Heavy sans, WHITE — the earnings hero above is the page's one
+            gold crown; a second gold money number dilutes it. */}
+        <div className="text-3xl font-bold tracking-tight text-white mt-2 tabular-nums">
           {fmtMoney(item.netPay)}
         </div>
         <div className="text-xs text-silver mt-1 tabular-nums">
-          {t('dash.netWorked', { hours: item.hoursWorked.toFixed(2) })}
+          {t('dash.netWorked', { hours: fmtHours(item.hoursWorked) })}
           {showDisbursed && item.disbursedAt && (
             <> · {t('dash.paidOn', { date: fmtDate(item.disbursedAt) })}</>
           )}
@@ -790,7 +784,7 @@ function TimeOffCard({
     return (
       <Card>
         <CardContent className="pt-5">
-          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
+          <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
             <CalendarOff className="h-3 w-3" aria-hidden="true" />
             {t('dash.timeOff')}
           </div>
@@ -815,28 +809,30 @@ function TimeOffCard({
   return (
     <Card>
       <CardContent className="pt-5">
-        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 flex items-center gap-1.5">
+        <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
           <CalendarOff className="h-3 w-3" aria-hidden="true" />
           {t('dash.timeOff')}
         </div>
         <div className="flex items-baseline gap-2 mt-2 flex-wrap">
-          <div className="font-display text-3xl text-gold tabular-nums">
-            {(primary.balanceMinutes / 60).toFixed(1)}h
+          <div className="text-3xl font-bold tracking-tight text-white tabular-nums">
+            {fmtHours(primary.balanceMinutes / 60)}
           </div>
           <div className="text-sm text-silver">
             {CATEGORY_KEY[primary.category] ? t(CATEGORY_KEY[primary.category]) : primary.category}
           </div>
         </div>
+        {/* The other balances as one quiet sentence, not a row of chips —
+            same grammar as the Time-off page's hero breakdown. */}
         {rest.length > 0 && (
-          <div className="flex flex-wrap gap-2 mt-2">
-            {rest.map((b) => (
-              <span
-                key={b.category}
-                className="text-xs text-silver bg-navy-secondary/40 rounded px-2 py-0.5 tabular-nums"
-              >
-                {CATEGORY_KEY[b.category] ? t(CATEGORY_KEY[b.category]) : b.category}: {(b.balanceMinutes / 60).toFixed(1)}h
-              </span>
-            ))}
+          <div className="text-xs text-silver mt-1 tabular-nums">
+            {rest
+              .map(
+                (b) =>
+                  `${fmtHours(b.balanceMinutes / 60)} ${
+                    CATEGORY_KEY[b.category] ? t(CATEGORY_KEY[b.category]) : b.category
+                  }`,
+              )
+              .join(' · ')}
           </div>
         )}
         <button
