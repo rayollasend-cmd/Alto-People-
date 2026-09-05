@@ -21,7 +21,7 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
-import { fmtCompactRange, fmtDateTz, fmtMoneyEst, fmtShiftRangeTz, fmtWeekdayTz, mapsUrl } from '@/lib/format';
+import { fmtDateTz, fmtMoneyEst, fmtShiftRangeTz, fmtWeekdayTz, mapsUrl } from '@/lib/format';
 import { ArrowLeftRight, Check, ChevronDown, MapPin, Users, X } from 'lucide-react';
 import { hapticConfirm } from '@/lib/haptics';
 import { enterStagger } from '@/lib/motion';
@@ -279,34 +279,40 @@ export function ShiftCard({
           // The tooltip carries what the truncating label can't — same
           // affordance as the admin tiles.
           title={`${fmtShiftRangeTz(shift.startsAt, shift.endsAt, shift.timezone)} · ${shift.position}${shift.clientName ? ` · ${shift.clientName}` : ''}`}
-          // Roomier than the admin tile ON PURPOSE: managers scan a
-          // 40-row grid, an associate reads 2–3 tiles on a phone —
-          // density there is legibility lost, not information gained.
-          className="w-full flex items-center gap-2.5 pl-4 pr-3 py-3 coarse:min-h-11 text-left rounded-md transition-colors active:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+          // A two-line EVENT BLOCK (Google-Calendar-mobile grammar), not
+          // the admin's one-line grid row: managers scan a 40-row matrix,
+          // an associate reads 2–3 tiles on a phone. Role bold on top,
+          // the full readable time range below — no "7a–3p" shorthand.
+          className="w-full flex items-center gap-3 pl-4 pr-3 py-3.5 text-left rounded-md transition-colors active:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
         >
-          <span className="text-sm text-silver tabular-nums shrink-0">
-            {fmtCompactRange(shift.startsAt, shift.endsAt, shift.timezone)}
-          </span>
-          <span
-            className={[
-              'flex-1 min-w-0 truncate text-sm font-medium text-white',
-              statusLabelClass(shift.status),
-            ].join(' ')}
-          >
-            {shift.position}
-            {/* The client matters when someone works two stores — admin
-                tiles hide it behind a hover card, but associates have no
-                hover. It shares the truncating span so narrow phones drop
-                it gracefully instead of crushing the time or the money. */}
-            {shift.clientName && (
-              <span className="text-silver/70 font-normal">
-                {' '}· {shift.clientName}
+          <div className="flex-1 min-w-0">
+            <div
+              className={[
+                'truncate text-base font-semibold text-white',
+                statusLabelClass(shift.status),
+              ].join(' ')}
+            >
+              {shift.position}
+              {/* The client matters when someone works two stores — admin
+                  tiles hide it behind a hover card, but associates have no
+                  hover. It shares the truncating line so narrow phones drop
+                  it gracefully instead of crushing the time below. */}
+              {shift.clientName && (
+                <span className="text-sm font-normal text-silver/80">
+                  {' '}· {shift.clientName}
+                </span>
+              )}
+            </div>
+            <div className="mt-0.5 text-sm text-silver tabular-nums">
+              {fmtShiftRangeTz(shift.startsAt, shift.endsAt, shift.timezone)}
+              <span className="text-silver/60">
+                {' '}· {fmtDuration(shift.scheduledMinutes)}
               </span>
-            )}
-          </span>
+            </div>
+          </div>
           {/* No ~$ on the tile face (owner call): the week's worth lives
               in the header total, and the card/detail views carry the
-              per-shift money — the tile stays time · role · status. */}
+              per-shift money — the tile stays role · time · status. */}
           <TileMark shift={shift} needsConfirm={needsConfirm} t={t} />
           {/* The card face advertises expandability with a chevron; the
               tile face must too, or it reads as inert decoration. */}
