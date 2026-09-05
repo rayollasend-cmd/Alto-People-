@@ -82,19 +82,19 @@ describe('<MyTimesheet>', () => {
     renderSheet();
     await waitFor(() => expect(listMyTimeEntries).toHaveBeenCalled());
 
-    // Approved: hours appear in the summary band AND on the row; the
-    // status word appears as the band label AND the row badge.
-    expect(await screen.findAllByText('7.53h')).toHaveLength(2);
-    expect(screen.getAllByText('Approved')).toHaveLength(2);
-    expect(screen.getByText(/0\.50h break/)).toBeInTheDocument();
-    // Pending: same duality.
-    expect(screen.getAllByText('4.00h')).toHaveLength(2);
-    expect(screen.getAllByText('Pending review')).toHaveLength(2);
-    // Gross estimate stat (7.533h × $20 = $150.67). Cents are shown: this
-    // used to render "$151" via a local formatter that rounded whole-dollar,
-    // silently dropping 67 cents off a money figure.
-    expect(screen.getByText('≈ Est. gross')).toBeInTheDocument();
-    expect(screen.getByText('$150.67')).toBeInTheDocument();
+    // The hero: gross leads (7.533h × $20 = $150.67, cents kept), with
+    // approved hours + pending folded into the one sentence under it.
+    expect(await screen.findByText('$150.67')).toBeInTheDocument();
+    expect(
+      screen.getByText(/7\.53h approved — estimated gross, before taxes/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/4h awaiting review/)).toBeInTheDocument();
+    // Rows: net hours in the shared dialect ("4h", not "4.00h") + badges.
+    expect(screen.getByText('7.53h')).toBeInTheDocument();
+    expect(screen.getByText('4h')).toBeInTheDocument();
+    expect(screen.getByText('Approved')).toBeInTheDocument();
+    expect(screen.getByText('Pending review')).toBeInTheDocument();
+    expect(screen.getByText(/0\.5h break/)).toBeInTheDocument();
     // Weekly grouping header (h3) — the label depends on how far real
     // time has moved past the fixed fixtures ("This week" → "Last week"
     // → "Week of …"), so accept all three. Role-scoped because preset

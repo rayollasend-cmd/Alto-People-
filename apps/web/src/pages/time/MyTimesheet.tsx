@@ -10,6 +10,7 @@ import { ApiError } from '@/lib/api';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import {
   fmtDateTz,
+  fmtHours,
   fmtMoney,
   fmtTime,
   fmtWeekdayTz,
@@ -17,6 +18,7 @@ import {
   ymdToIsoEndExclusive,
   ymdToIsoStart,
 } from '@/lib/format';
+import { enterStagger } from '@/lib/motion';
 import { Button } from '@/components/ui/Button';
 import {
   Card,
@@ -82,10 +84,10 @@ function weekStartMs(input: string | Date): number {
   return d.getTime();
 }
 
-// Two decimals, matching formatHM and the Fieldglass/payroll convention.
-function fmtH(minutes: number): string {
-  return `${(minutes / 60).toFixed(2)}h`;
-}
+// The app-wide hours dialect ("38.5h", locale-aware) — this page used to
+// print Fieldglass-style "38.50h"; that convention belongs on the admin
+// export, not an associate's phone.
+const fmtH = (minutes: number) => fmtHours(minutes / 60);
 
 /** "Wed, Jul 2" — house weekday+date formatting (browser-local). */
 function fmtEntryDay(iso: string): string {
@@ -227,29 +229,27 @@ export function MyTimesheet() {
         <CardDescription>{t('time.myTimesheetDesc')}</CardDescription>
       </CardHeader>
       <CardContent>
-        {/* Summary band — the three numbers the page exists to answer,
-            in the same stat-strip language as My Schedule. */}
+        {/* The score, not a stat strip: what this period is WORTH (gross
+            estimate when every approved entry carries a rate, else the
+            approved hours), with one human sentence under it. */}
         {!entries && !query.isError && <Skeleton className="h-16 mb-4" />}
         {entries && entries.length > 0 && (
-          <div className="mb-4 inline-flex items-stretch rounded-lg border border-navy-secondary bg-navy divide-x divide-navy-secondary">
-            <TimesheetStat
-              label={t('time.status.APPROVED')}
-              value={fmtH(approvedMin)}
-              tone="success"
-            />
-            <TimesheetStat
-              label={t('time.status.COMPLETED')}
-              value={fmtH(pendingMin)}
-              tone={pendingMin > 0 ? 'gold' : 'muted'}
-            />
-            {grossEstimate !== null && (
-              <TimesheetStat
-                label={t('time.grossLabel')}
-                value={fmtMoney(grossEstimate)}
-                tone="plain"
-                title={t('time.grossDisclaimer')}
-              />
-            )}
+          <div className="mb-5 animate-enter">
+            <div className="text-4xl font-bold tracking-tight tabular-nums text-white">
+              {grossEstimate !== null
+                ? fmtMoney(grossEstimate)
+                : fmtH(approvedMin)}
+            </div>
+            <p className="mt-1 text-sm text-silver tabular-nums">
+              {grossEstimate !== null
+                ? t('time.heroLineGross', { hours: fmtH(approvedMin) })
+                : t('time.heroLineHours')}
+              {pendingMin > 0 && (
+                <span className="text-gold">
+                  {' '}· {t('time.heroPending', { hours: fmtH(pendingMin) })}
+                </span>
+              )}
+            </p>
           </div>
         )}
 
@@ -279,7 +279,7 @@ export function MyTimesheet() {
             })}
           </div>
           <label className="block">
-            <span className="text-xs2 uppercase tracking-wider text-silver">
+            <span className="text-xs font-medium text-silver">
               {t('common.from')}
             </span>
             <Input
@@ -294,7 +294,7 @@ export function MyTimesheet() {
             />
           </label>
           <label className="block">
-            <span className="text-xs2 uppercase tracking-wider text-silver">
+            <span className="text-xs font-medium text-silver">
               {t('common.to')}
             </span>
             <Input
@@ -339,17 +339,19 @@ export function MyTimesheet() {
               return (
                 <section key={weekMs}>
                   <div className="mb-2 flex items-baseline justify-between gap-3 border-b border-navy-secondary pb-1.5">
+                    {/* Sentence-case, this week gold — the same day-header
+                        grammar as My Schedule. */}
                     <h3
                       className={cn(
-                        'text-xs2 uppercase tracking-wider',
+                        'text-sm',
                         weekMs === currentWeekMs
                           ? 'text-gold font-semibold'
-                          : 'text-silver/80',
+                          : 'text-silver font-medium',
                       )}
                     >
                       {weekLabel(weekMs)}
                     </h3>
-                    <span className="flex items-center gap-2 text-xs2 tabular-nums text-silver/70">
+                    <span className="flex items-center gap-2 text-xs tabular-nums text-silver/70">
                       {fmtH(bucket.workedMin)}
                       {overtimeMin > 0 && (
                         <span className="rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-warning">
@@ -359,15 +361,16 @@ export function MyTimesheet() {
                     </span>
                   </div>
                   <ul className="divide-y divide-navy-secondary/60">
-                    {bucket.entries.map((e) => {
+                    {bucket.entries.map((e, i) => {
                       const breakMin = (e.breaks ?? []).reduce((s, b) => s + b.minutes, 0);
                       const live = e.status === 'ACTIVE';
                       return (
                         <li
                           key={e.id}
                           ref={e.id === highlightId ? highlightRef : undefined}
+                          style={enterStagger(i)}
                           className={cn(
-                            'py-3 pl-3 -ml-3 rounded-md',
+                            'py-3 pl-3 -ml-3 rounded-md animate-enter',
                             live && 'bg-success/5',
                             e.status === 'REJECTED' &&
                               'border-l-2 border-l-alert pl-2.5',
@@ -391,8 +394,8 @@ export function MyTimesheet() {
                                 {' – '}
                                 {e.clockOutAt ? fmtTime(e.clockOutAt) : t('time.stillOn')}
                                 {breakMin > 0 &&
-                                  // Decimal hours like every other duration.
-                                  ` · ${t('time.breakMinutes', { minutes: (breakMin / 60).toFixed(2) })}`}
+                                  // Shared hours dialect like every other duration.
+                                  ` · ${t('time.breakMinutes', { minutes: fmtH(breakMin) })}`}
                               </div>
                               {e.shiftStartsAt && e.shiftEndsAt && (
                                 <div className="text-xs2 text-silver/60 mt-0.5 tabular-nums">
@@ -449,37 +452,6 @@ export function MyTimesheet() {
 
       <DisputeDialog target={disputeTarget} onClose={() => setDisputeTarget(null)} />
     </Card>
-  );
-}
-
-function TimesheetStat({
-  label,
-  value,
-  tone,
-  title,
-}: {
-  label: string;
-  value: string;
-  tone: 'success' | 'gold' | 'muted' | 'plain';
-  title?: string;
-}) {
-  return (
-    <div className="px-3.5 py-2 first:pl-4 last:pr-4" title={title}>
-      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70 whitespace-nowrap">
-        {label}
-      </div>
-      <div
-        className={cn(
-          'text-2xl tabular-nums mt-0.5',
-          tone === 'success' && 'text-success',
-          tone === 'gold' && 'text-gold',
-          tone === 'muted' && 'text-silver',
-          tone === 'plain' && 'text-white',
-        )}
-      >
-        {value}
-      </div>
-    </div>
   );
 }
 
@@ -580,7 +552,7 @@ function DisputeDialog({
           ))}
         </div>
         <label className="block">
-          <span className="text-xs2 uppercase tracking-wider text-silver">
+          <span className="text-xs font-medium text-silver">
             {t('time.whatsWrong')}
           </span>
           <Textarea
