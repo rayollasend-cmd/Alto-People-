@@ -1372,6 +1372,9 @@ const en = {
   // Time off — associate view
   'timeoff.title': 'Time off',
   'timeoff.subtitle': 'Submit a request, see your balance, track approvals.',
+  'timeoff.heroTitle': 'Time off available',
+  'timeoff.heroPendingOne': '{cat}, {dates} — awaiting approval',
+  'timeoff.heroPendingMany': '{count} requests awaiting approval',
   'timeoff.request': 'Request time off',
   'timeoff.myRequests': 'My requests',
   'timeoff.mostRecentFirst': 'Most recent first',
@@ -2926,6 +2929,9 @@ const es: Record<MessageKey, string> = {
 
   'timeoff.title': 'Ausencias',
   'timeoff.subtitle': 'Envía una solicitud, consulta tu saldo y sigue las aprobaciones.',
+  'timeoff.heroTitle': 'Tiempo libre disponible',
+  'timeoff.heroPendingOne': '{cat}, {dates} — pendiente de aprobación',
+  'timeoff.heroPendingMany': '{count} solicitudes pendientes de aprobación',
   'timeoff.request': 'Solicitar ausencia',
   'timeoff.myRequests': 'Mis solicitudes',
   'timeoff.mostRecentFirst': 'Las más recientes primero',

@@ -17,7 +17,8 @@ import {
 } from '@/lib/timeOffApi';
 import { listHolidays } from '@/lib/holiday117Api';
 import { ApiError } from '@/lib/api';
-import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
+import { fmtDate, fmtHours, parseYmd, ymdLocal } from '@/lib/format';
+import { enterStagger } from '@/lib/motion';
 import { performWithUndo } from '@/lib/undoToast';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { useI18n, type MessageKey } from '@/lib/i18n';
@@ -72,10 +73,9 @@ const STATUS_FILTERS: Array<TimeOffRequest['status']> = [
   'CANCELLED',
 ];
 
-function fmtHours(minutes: number): string {
-  const h = minutes / 60;
-  return `${h.toFixed(h % 1 === 0 ? 0 : 1)}h`;
-}
+/** Minutes → the app-wide hours dialect ("8h", "7.5h", locale-aware) —
+ *  this page used to roll its own and drift from every other surface. */
+const fmtMins = (minutes: number) => fmtHours(minutes / 60);
 
 /** Dates are date-only "YYYY-MM-DD" — parse at local midnight so they
  *  never render a day early west of UTC. */
@@ -251,7 +251,7 @@ export function AssociateTimeOffView() {
         </ErrorBanner>
       )}
 
-      {!loadError && <BalanceGrid balances={balances} />}
+      {!loadError && <BalanceHero balances={balances} requests={requests} />}
 
       <Card>
         <CardHeader>
@@ -269,40 +269,48 @@ export function AssociateTimeOffView() {
           )}
           {requests && requests.length > 0 && (
             <>
-              <SegmentedControl<TimeOffRequest['status'] | 'ALL'>
-                options={[
-                  { value: 'ALL', label: t('timeoff.filterAll') },
-                  ...STATUS_FILTERS.map((s) => ({
-                    value: s,
-                    label: t(STATUS_KEYS[s]),
-                  })),
-                ]}
-                value={statusFilter}
-                onChange={setStatusFilter}
-                ariaLabel={t('timeoff.filterAria')}
-                className="mb-3 flex-wrap"
-              />
+              {/* The five-way filter only earns its width once the list is
+                  long enough to need filtering — for the typical handful
+                  of requests it was pure console furniture. */}
+              {requests.length > 5 && (
+                <SegmentedControl<TimeOffRequest['status'] | 'ALL'>
+                  options={[
+                    { value: 'ALL', label: t('timeoff.filterAll') },
+                    ...STATUS_FILTERS.map((s) => ({
+                      value: s,
+                      label: t(STATUS_KEYS[s]),
+                    })),
+                  ]}
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  ariaLabel={t('timeoff.filterAria')}
+                  className="mb-3 flex-wrap"
+                />
+              )}
               {filteredRequests && filteredRequests.length === 0 && (
                 <p className="text-sm text-silver py-4 text-center">
                   {t('timeoff.noneWithStatus')}
                 </p>
               )}
               <ul className="divide-y divide-navy-secondary">
-                {(filteredRequests ?? []).map((r) => (
+                {(filteredRequests ?? []).map((r, i) => (
                   <li
                     key={r.id}
-                    className="py-3 flex items-start gap-4"
+                    style={enterStagger(i)}
+                    className="py-3 flex items-start gap-4 animate-enter"
                   >
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm text-white font-medium">
-                          {t(CATEGORY_KEYS[r.category])} · {fmtHours(r.requestedMinutes)}
+                      {/* Dates lead — people think "my Sep 21–23 trip",
+                          not "my VACATION·24h record". */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm text-white font-medium tabular-nums">
+                          {fmtYmd(r.startDate)}
+                          {r.startDate !== r.endDate && ` – ${fmtYmd(r.endDate)}`}
                         </span>
                         <StatusBadge status={r.status} />
                       </div>
                       <div className="text-xs text-silver mt-0.5">
-                        {fmtYmd(r.startDate)}
-                        {r.startDate !== r.endDate && ` – ${fmtYmd(r.endDate)}`}
+                        {t(CATEGORY_KEYS[r.category])} · {fmtMins(r.requestedMinutes)}
                       </div>
                       {r.reason && (
                         <div className="text-xs text-silver/80 mt-1 italic">
@@ -351,16 +359,24 @@ export function AssociateTimeOffView() {
   );
 }
 
-function BalanceGrid({ balances }: { balances: TimeOffBalance[] | null }) {
+/**
+ * The page's answer as a SCOREBOARD, not a console grid: total available
+ * time as the one hero number, a single human sentence breaking it down
+ * by category, and — when something is in flight — the pending request
+ * surfaced right here instead of buried in the filtered list below.
+ * Same card grammar as the earnings hero (gradient face, inset radial
+ * glow — never a negative-offset blur, per the e2e rect guard).
+ */
+function BalanceHero({
+  balances,
+  requests,
+}: {
+  balances: TimeOffBalance[] | null;
+  requests: TimeOffRequest[] | null;
+}) {
   const { t } = useI18n();
   if (!balances) {
-    return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        <Skeleton className="h-24" />
-        <Skeleton className="h-24" />
-        <Skeleton className="h-24" />
-      </div>
-    );
+    return <Skeleton className="h-36" />;
   }
   if (balances.length === 0) {
     return (
@@ -375,22 +391,57 @@ function BalanceGrid({ balances }: { balances: TimeOffBalance[] | null }) {
       </Card>
     );
   }
+  const totalMinutes = balances.reduce((sum, b) => sum + b.balanceMinutes, 0);
+  const pending = (requests ?? []).filter((r) => r.status === 'PENDING');
+  const first = pending[0];
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-      {balances.map((b) => (
-        <Card key={b.category}>
-          <CardContent className="py-4">
-            <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-              {t(CATEGORY_KEYS[b.category])}
-            </div>
-            <div className="text-2xl text-white mt-1 tabular-nums">
-              {fmtHours(b.balanceMinutes)}
-            </div>
-            <div className="text-xs text-silver/70 mt-0.5">{t('timeoff.available')}</div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
+    <Card className="relative overflow-hidden border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent animate-enter">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]"
+      />
+      <CardContent className="relative p-5">
+        <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
+          <Wallet className="h-3.5 w-3.5" aria-hidden="true" />
+          {t('timeoff.heroTitle')}
+        </span>
+        <div className="mt-2 text-5xl font-bold tracking-tight tabular-nums text-white">
+          {fmtMins(totalMinutes)}
+        </div>
+        {/* The number always says what it IS: one category → its name;
+            several → the one-sentence breakdown. */}
+        {balances.length === 1 ? (
+          <p className="mt-1.5 text-sm text-silver">
+            {t(CATEGORY_KEYS[balances[0].category])}
+          </p>
+        ) : (
+          <p className="mt-1.5 text-sm text-silver tabular-nums">
+            {balances
+              .map(
+                (b) => `${fmtMins(b.balanceMinutes)} ${t(CATEGORY_KEYS[b.category])}`,
+              )
+              .join(' · ')}
+          </p>
+        )}
+        {pending.length > 0 && (
+          <p className="mt-3 flex items-center gap-1.5 text-sm text-warning">
+            <span
+              className="h-2 w-2 shrink-0 rounded-full bg-warning"
+              aria-hidden="true"
+            />
+            {pending.length === 1 && first
+              ? t('timeoff.heroPendingOne', {
+                  cat: t(CATEGORY_KEYS[first.category]),
+                  dates:
+                    first.startDate === first.endDate
+                      ? fmtYmd(first.startDate)
+                      : `${fmtYmd(first.startDate)} – ${fmtYmd(first.endDate)}`,
+                })
+              : t('timeoff.heroPendingMany', { count: pending.length })}
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -738,10 +789,10 @@ function CreateRequestDialog({
               }
             >
               {afterMinutes < 0
-                ? t('timeoff.balanceOver', { over: fmtHours(-afterMinutes) })
+                ? t('timeoff.balanceOver', { over: fmtMins(-afterMinutes) })
                 : t('timeoff.balanceLine', {
-                    avail: fmtHours(balance.balanceMinutes - pendingMinutes),
-                    after: fmtHours(afterMinutes),
+                    avail: fmtMins(balance.balanceMinutes - pendingMinutes),
+                    after: fmtMins(afterMinutes),
                   })}
             </p>
           )}
