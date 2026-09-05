@@ -82,6 +82,22 @@ export function fmtMoneyCompact(
 }
 
 /**
+ * Whole-dollar ESTIMATE money — "~$102". The schedule's grain: a shift's
+ * worth is a forecast at the associate's base rate, so cents would be
+ * false precision and the "~" keeps it honest. Exact figures (paychecks,
+ * the earnings hero) stay on `fmtMoney`.
+ */
+export function fmtMoneyEst(value: number): string {
+  if (!Number.isFinite(value)) return DASH;
+  return `~${value.toLocaleString(displayLocale(), {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  })}`;
+}
+
+/**
  * Hours as a human string — ONE dialect for the whole app. Trailing zeros
  * drop ("8h", "7.5h", "7.25h"), locale-aware separators. Before this,
  * Schedule said `7.5h` while Pay said `7.50h` for the same quantity.

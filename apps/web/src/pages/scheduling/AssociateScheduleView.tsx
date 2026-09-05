@@ -6,6 +6,7 @@ import type {
   Shift,
 } from '@alto-people/shared';
 import {
+  acknowledgeMyShift,
   claimOpenShift,
   getMyCalendarUrl,
   listMyAvailabilityExceptions,
@@ -15,7 +16,7 @@ import {
   rotateMyCalendarUrl,
   withdrawOpenShiftClaim,
 } from '@/lib/schedulingApi';
-import { ApiError } from '@/lib/api';
+import { ApiError, apiFetch } from '@/lib/api';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -25,7 +26,7 @@ import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { toast } from '@/components/ui/Toaster';
-import { fmtDateTime, fmtHours, fmtRelativeDayTz, fmtShiftRangeTz, mapsUrl, zonedDayKey } from '@/lib/format';
+import { fmtDateTime, fmtHours, fmtMoneyEst, fmtRelativeDayTz, fmtShiftRangeTz, mapsUrl, zonedDayKey } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import {
@@ -227,6 +228,39 @@ export function AssociateScheduleView() {
   };
   const pullState = usePullToRefresh(onRefresh);
 
+  // The associate's hourly rate (comp record or org default, from the same
+  // endpoint that powers the earnings card) — prices every "~$" on this
+  // page. Decorative: a failed fetch just leaves the money off.
+  const [estRate, setEstRate] = useState<number | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<{ hourlyRate: number }>('/time/me/earnings')
+      .then((d) => {
+        if (!cancelled && Number.isFinite(d.hourlyRate) && d.hourlyRate > 0) {
+          setEstRate(d.hourlyRate);
+        }
+      })
+      .catch(() => {
+        // No rate → no estimates; the schedule still works.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshNonce]);
+
+  // Confirming attendance — from the hero OR a list card — lands in the
+  // page's copy of the shift, so the two surfaces can never disagree.
+  const markAcknowledged = useCallback(
+    (shiftId: string, acknowledgedAt: string) => {
+      setShifts((prev) =>
+        prev
+          ? prev.map((s) => (s.id === shiftId ? { ...s, acknowledgedAt } : s))
+          : prev,
+      );
+    },
+    [],
+  );
+
   // Split at "now" (ticks once a minute) into upcoming (ascending) and past
   // (descending), then group the upcoming list by store-local day. Week
   // totals use the viewer's local Sunday-start week — close enough for a
@@ -234,9 +268,8 @@ export function AssociateScheduleView() {
   const {
     upcomingDays,
     past,
-    nextId,
+    next,
     upcomingCount,
-    upcomingHours,
     thisWeekMinutes,
     nextWeekMinutes,
   } = useMemo(() => {
@@ -300,13 +333,12 @@ export function AssociateScheduleView() {
         });
       }
     }
-    const minutes = up.reduce((sum, s) => sum + paidShiftMinutes(s), 0);
     return {
       upcomingDays: groups,
       past: old,
-      nextId: up[0]?.id ?? null,
+      // The hero: the first upcoming shift that's actually happening.
+      next: up.find((s) => s.status !== 'CANCELLED') ?? null,
       upcomingCount: up.length,
-      upcomingHours: minutes / 60,
       thisWeekMinutes: thisWeekMin,
       nextWeekMinutes: nextWeekMin,
     };
@@ -339,62 +371,69 @@ export function AssociateScheduleView() {
         </div>
       )}
 
+      {/* The answer FIRST: the next shift as a hero, before any controls. */}
+      {loaded && !isEmpty && next && (
+        <NextShiftHero
+          shift={next}
+          estRate={estRate}
+          now={now}
+          onAcknowledged={markAcknowledged}
+        />
+      )}
+
       {loaded && !isEmpty && (
-        <div className="mb-4 space-y-3">
-          {/* Summary strip: the three numbers an associate actually checks —
-              what's coming, and whether either week is creeping past 40h.
-              One bordered strip instead of two loose text lines. */}
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            {upcomingCount === 0 ? (
-              <p className="text-sm text-silver">{t('sched.noUpcoming')}</p>
-            ) : (
-              <div className="flex items-stretch rounded-lg border border-navy-secondary bg-navy divide-x divide-navy-secondary">
-                <ScheduleStat
-                  label={t('sched.upcoming')}
-                  value={String(upcomingCount)}
-                  sub={fmtHours(upcomingHours)}
-                />
-                <ScheduleStat
-                  label={t('sched.thisWeek')}
-                  value={fmtHours(thisWeekMinutes / 60)}
-                  alert={thisWeekMinutes > 40 * 60}
-                />
-                <ScheduleStat
-                  label={t('sched.nextWeek')}
-                  value={fmtHours(nextWeekMinutes / 60)}
-                  alert={nextWeekMinutes > 40 * 60}
-                />
-              </div>
-            )}
-            <div className="flex items-center gap-2 flex-wrap justify-end">
-              <SegmentedControl<ScheduleViewMode>
-                ariaLabel={t('sched.viewAria')}
-                options={[
-                  { value: 'list', label: t('sched.list') },
-                  { value: 'week', label: t('sched.week') },
-                  { value: 'month', label: t('sched.month') },
-                ]}
-                value={view}
-                onChange={changeView}
-              />
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onRefresh}
-                loading={refreshing}
-                disabled={refreshing}
-                aria-label={t('sched.refresh')}
-              >
-                <RefreshCw className="h-4 w-4" />
-                {/* Pull-to-refresh covers phones; the label only earns its
-                    width where there's room. */}
-                <span className="hidden sm:inline">{t('sched.refresh')}</span>
-              </Button>
-            </div>
-          </div>
-          {(thisWeekMinutes > 40 * 60 || nextWeekMinutes > 40 * 60) && (
-            <p className="text-xs text-alert">{t('sched.over40')}</p>
+        <div className="mb-4 flex items-center justify-between gap-3 flex-wrap">
+          {/* One human sentence where the three-cell stat console stood —
+              what's ahead, this week's hours, and the 40h flag folded in. */}
+          {upcomingCount === 0 ? (
+            <p className="text-sm text-silver">{t('sched.noUpcoming')}</p>
+          ) : (
+            <p className="text-sm text-silver tabular-nums">
+              {upcomingCount === 1
+                ? t('sched.summaryAheadOne')
+                : t('sched.summaryAhead', { count: upcomingCount })}
+              {' · '}
+              {t('sched.summaryThisWeek', {
+                hours: fmtHours(thisWeekMinutes / 60),
+              })}
+              {nextWeekMinutes > 0 && (
+                <>
+                  {' · '}
+                  {t('sched.summaryNextWeek', {
+                    hours: fmtHours(nextWeekMinutes / 60),
+                  })}
+                </>
+              )}
+              {(thisWeekMinutes > 40 * 60 || nextWeekMinutes > 40 * 60) && (
+                <span className="text-alert"> · {t('sched.over40')}</span>
+              )}
+            </p>
           )}
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <SegmentedControl<ScheduleViewMode>
+              ariaLabel={t('sched.viewAria')}
+              options={[
+                { value: 'list', label: t('sched.list') },
+                { value: 'week', label: t('sched.week') },
+                { value: 'month', label: t('sched.month') },
+              ]}
+              value={view}
+              onChange={changeView}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onRefresh}
+              loading={refreshing}
+              disabled={refreshing}
+              aria-label={t('sched.refresh')}
+            >
+              <RefreshCw className="h-4 w-4" />
+              {/* Pull-to-refresh covers phones; the label only earns its
+                  width where there's room. */}
+              <span className="hidden sm:inline">{t('sched.refresh')}</span>
+            </Button>
+          </div>
         </div>
       )}
 
@@ -462,16 +501,18 @@ export function AssociateScheduleView() {
         <div className="space-y-5">
           {upcomingDays.map((group) => (
             <section key={group.reactKey}>
+              {/* Sentence-case day headers — a schedule, not a terminal. */}
               <h2 className="mb-2 flex items-baseline justify-between gap-3">
                 <span
-                  className={[
-                    'text-xs2 uppercase tracking-wider',
-                    group.isToday ? 'text-gold font-semibold' : 'text-silver/80',
-                  ].join(' ')}
+                  className={
+                    group.isToday
+                      ? 'text-sm font-semibold text-gold'
+                      : 'text-sm font-medium text-silver'
+                  }
                 >
                   {group.heading}
                 </span>
-                <span className="text-xs2 text-silver/60 tabular-nums">
+                <span className="text-xs text-silver/60 tabular-nums">
                   {t(group.items.length === 1 ? 'sched.shiftsWord' : 'sched.shiftsWordPlural', {
                     count: group.items.length,
                   })}
@@ -484,8 +525,11 @@ export function AssociateScheduleView() {
                   <ShiftCard
                     key={s.id}
                     shift={s}
-                    isNext={s.id === nextId}
+                    // The hero above owns "next" — no second gold ring here.
+                    isNext={false}
                     appearIndex={i}
+                    estRate={estRate}
+                    onAcknowledged={markAcknowledged}
                     onSwapCreated={() => setSwapVersion((v) => v + 1)}
                   />
                 ))}
@@ -495,14 +539,14 @@ export function AssociateScheduleView() {
         </div>
       )}
 
-      {loaded && <OpenShiftsSection key={refreshNonce} />}
+      {loaded && <OpenShiftsSection key={refreshNonce} estRate={estRate} />}
 
       {loaded && view === 'list' && (past.length > 0 || (history?.length ?? 0) > 0) && (
         <div className="mt-6">
           <button
             type="button"
             onClick={() => setShowPast((v) => !v)}
-            className="inline-flex items-center coarse:min-h-11 text-xs uppercase tracking-wider text-silver/80 hover:text-white active:text-white transition-colors"
+            className="inline-flex items-center coarse:min-h-11 text-sm text-silver/80 hover:text-white active:text-white transition-colors"
           >
             {t(showPast ? 'sched.hideRecent' : 'sched.showRecent', {
               count: past.length + (history?.length ?? 0),
@@ -547,33 +591,159 @@ export function AssociateScheduleView() {
   );
 }
 
-/** One cell of the summary strip: tiny uppercase label over a tabular value. */
-function ScheduleStat({
-  label,
-  value,
-  sub,
-  alert = false,
+/**
+ * The page's answer, as a hero: WHEN do I work next, and what's it worth.
+ * Day + time in heavy sans, the shift's ~$ value, and the two actions that
+ * matter (confirm, directions) zero taps deep. The list below stays the
+ * full ledger — this is the scoreboard. Same card family as the earnings
+ * hero: gradient face, one inset radial glow (success-green once the shift
+ * is actually happening), never a negative-offset blur (e2e rect guard).
+ */
+function NextShiftHero({
+  shift,
+  estRate,
+  now,
+  onAcknowledged,
 }: {
-  label: string;
-  value: string;
-  sub?: string;
-  alert?: boolean;
+  shift: Shift;
+  estRate: number | null;
+  now: number;
+  onAcknowledged: (shiftId: string, acknowledgedAt: string) => void;
 }) {
+  const { t } = useI18n();
+  const [acking, setAcking] = useState(false);
+  const started = new Date(shift.startsAt).getTime() <= now;
+  const needsConfirm =
+    shift.status === 'ASSIGNED' && !shift.acknowledgedAt && !started;
+  const confirmed =
+    shift.status === 'ASSIGNED' && Boolean(shift.acknowledgedAt) && !started;
+  const est = estRate != null ? (paidShiftMinutes(shift) / 60) * estRate : null;
+  const minsToStart = Math.max(
+    0,
+    Math.round((new Date(shift.startsAt).getTime() - now) / 60_000),
+  );
+  const countdown =
+    minsToStart >= 60
+      ? `${Math.floor(minsToStart / 60)}h${minsToStart % 60 ? ` ${minsToStart % 60}m` : ''}`
+      : `${minsToStart}m`;
+  const site = [shift.locationName, shift.location].filter(Boolean).join(' · ');
+
+  const acknowledge = async () => {
+    setAcking(true);
+    try {
+      const updated = await acknowledgeMyShift(shift.id);
+      onAcknowledged(
+        shift.id,
+        updated.acknowledgedAt ?? new Date().toISOString(),
+      );
+      hapticConfirm();
+      toast.success(t('shift.confirmedToast'));
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : t('shift.confirmFailed'),
+      );
+    } finally {
+      setAcking(false);
+    }
+  };
+
   return (
-    <div className="px-3.5 py-2 first:pl-4 last:pr-4">
-      <div className="text-2xs uppercase tracking-widest text-silver/80 whitespace-nowrap">
-        {label}
-      </div>
+    <section
+      aria-label={t('sched.nextShift')}
+      className={cn(
+        'relative overflow-hidden rounded-lg border mb-4 animate-enter',
+        started
+          ? 'border-success/40 bg-navy bg-gradient-to-br from-success/[0.12] via-transparent to-transparent'
+          : 'border-gold/30 bg-navy bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent',
+      )}
+    >
       <div
-        className={[
-          'text-sm font-medium tabular-nums mt-0.5',
-          alert ? 'text-alert' : 'text-white',
-        ].join(' ')}
-      >
-        {value}
-        {sub && <span className="text-silver font-normal"> · {sub}</span>}
+        aria-hidden="true"
+        className={cn(
+          'pointer-events-none absolute inset-0',
+          started
+            ? 'bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-success)/0.14),transparent_55%)]'
+            : 'bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]',
+        )}
+      />
+      <div className="relative p-5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
+            <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('sched.nextShift')}
+          </span>
+          {started ? (
+            <span className="flex items-center gap-1.5 text-xs text-success">
+              <span className="relative flex h-2 w-2" aria-hidden="true">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
+              </span>
+              {t('sched.heroNow')}
+            </span>
+          ) : (
+            minsToStart < 24 * 60 && (
+              <span className="text-xs text-silver/80 tabular-nums">
+                {t('sched.startsIn', { time: countdown })}
+              </span>
+            )
+          )}
+        </div>
+        <div className="mt-2 text-3xl sm:text-4xl font-bold tracking-tight leading-tight text-white">
+          {fmtRelativeDayTz(shift.startsAt, shift.timezone, now)}
+          <span className="text-silver/50"> · </span>
+          <span className="tabular-nums">
+            {fmtShiftRangeTz(shift.startsAt, shift.endsAt, shift.timezone)}
+          </span>
+        </div>
+        <p className="mt-1.5 text-sm text-silver">
+          {shift.position}
+          {shift.clientName ? ` · ${shift.clientName}` : ''}
+          {est != null && est > 0 && (
+            <span className="font-semibold text-gold">
+              {' '}· {t('sched.heroWorth', { amount: fmtMoneyEst(est) })}
+            </span>
+          )}
+        </p>
+        {(needsConfirm || confirmed || site) && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+            {needsConfirm && (
+              <Button
+                size="sm"
+                onClick={acknowledge}
+                loading={acking}
+                disabled={acking}
+              >
+                <Check className="h-3.5 w-3.5" />
+                {t('shift.illBeThere')}
+              </Button>
+            )}
+            {confirmed && (
+              <span className="inline-flex items-center gap-1 text-xs text-success">
+                <Check
+                  className="h-3.5 w-3.5 animate-check-pop"
+                  aria-hidden="true"
+                />
+                {t('shift.youConfirmed')}
+              </span>
+            )}
+            {site && (
+              <a
+                href={mapsUrl(
+                  [shift.clientName, shift.locationName, shift.location]
+                    .filter(Boolean)
+                    .join(' '),
+                )}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center coarse:min-h-11 text-sm text-gold hover:text-gold-bright underline underline-offset-2"
+              >
+                {t('shift.directions')}
+              </a>
+            )}
+          </div>
+        )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -583,7 +753,7 @@ function ScheduleStat({
  * pickup claim for the manager to approve — hidden entirely when there's
  * nothing to offer, so the page stays quiet most days.
  */
-function OpenShiftsSection() {
+function OpenShiftsSection({ estRate }: { estRate: number | null }) {
   const { t } = useI18n();
   const [items, setItems] = useState<OpenShiftsResponse['shifts'] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -673,11 +843,22 @@ function OpenShiftsSection() {
     }
   };
 
+  // Lead with the prize: what the whole board is worth if they took it all.
+  const totalEst =
+    estRate != null
+      ? items.reduce((sum, s) => sum + (paidShiftMinutes(s) / 60) * estRate, 0)
+      : null;
+
   return (
     <section className="mt-6">
-      <h2 className="text-xs2 uppercase tracking-wider text-silver/80 mb-2 flex items-center gap-1.5">
-        <HandHelping className="h-3.5 w-3.5" aria-hidden="true" />
+      <h2 className="text-sm font-medium text-white mb-2 flex flex-wrap items-center gap-1.5">
+        <HandHelping className="h-4 w-4 text-gold" aria-hidden="true" />
         {t('sched.openHeading', { count: items.length })}
+        {totalEst != null && totalEst > 0 && (
+          <span className="font-semibold text-gold">
+            · {t('sched.openWorth', { amount: fmtMoneyEst(totalEst) })}
+          </span>
+        )}
       </h2>
       <ul className="space-y-2">
         {items.map((s, i) => (
@@ -699,6 +880,11 @@ function OpenShiftsSection() {
               <div className="text-sm text-silver tabular-nums">
                 {fmtRelativeDayTz(s.startsAt, s.timezone)} ·{' '}
                 {fmtShiftRangeTz(s.startsAt, s.endsAt, s.timezone)}
+                {estRate != null && (
+                  <span className="font-medium text-gold">
+                    {' '}· {fmtMoneyEst((paidShiftMinutes(s) / 60) * estRate)}
+                  </span>
+                )}
               </div>
               {(s.locationName || s.location) && (
                 <div className="flex flex-wrap items-center gap-x-2 text-xs text-silver/70">

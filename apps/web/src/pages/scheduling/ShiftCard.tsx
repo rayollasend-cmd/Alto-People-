@@ -21,7 +21,7 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
-import { fmtDateTz, fmtShiftRangeTz, fmtWeekdayTz, mapsUrl } from '@/lib/format';
+import { fmtDateTz, fmtMoneyEst, fmtShiftRangeTz, fmtWeekdayTz, mapsUrl } from '@/lib/format';
 import { ArrowLeftRight, Check, ChevronDown, MapPin, Users } from 'lucide-react';
 import { hapticConfirm } from '@/lib/haptics';
 import { enterStagger } from '@/lib/motion';
@@ -85,6 +85,8 @@ export function ShiftCard({
   muted = false,
   onSwapCreated,
   appearIndex,
+  estRate,
+  onAcknowledged,
 }: {
   shift: Shift;
   isNext: boolean;
@@ -92,6 +94,13 @@ export function ShiftCard({
   onSwapCreated?: () => void;
   /** Position in the list — drives the capped entrance stagger. */
   appearIndex?: number;
+  /** The associate's hourly rate — paints the shift's ~$ worth on the
+   *  card face. Null/undefined (rate fetch failed, calendar views) just
+   *  leaves the money off. */
+  estRate?: number | null;
+  /** Confirming here also updates the page's copy of the shift, so the
+   *  next-shift hero above never disagrees with this card. */
+  onAcknowledged?: (shiftId: string, acknowledgedAt: string) => void;
 }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
@@ -101,6 +110,11 @@ export function ShiftCard({
   // the inline confirm strip stay in sync with the detail panel's button.
   const [ackAt, setAckAt] = useState(shift.acknowledgedAt);
   const [acking, setAcking] = useState(false);
+  // Confirming from the next-shift hero updates the page's shift object —
+  // adopt that here so the badge/confirm strip flip without a remount.
+  useEffect(() => {
+    if (shift.acknowledgedAt) setAckAt(shift.acknowledgedAt);
+  }, [shift.acknowledgedAt]);
   const needsConfirm =
     !muted &&
     shift.status === 'ASSIGNED' &&
@@ -111,7 +125,9 @@ export function ShiftCard({
     setAcking(true);
     try {
       const updated = await acknowledgeMyShift(shift.id);
-      setAckAt(updated.acknowledgedAt ?? new Date().toISOString());
+      const at = updated.acknowledgedAt ?? new Date().toISOString();
+      setAckAt(at);
+      onAcknowledged?.(shift.id, at);
       hapticConfirm();
       toast.success(t('shift.confirmedToast'));
     } catch (err) {
@@ -187,6 +203,14 @@ export function ShiftCard({
             <span className="text-silver/60">
               {' '}· {fmtDuration(shift.scheduledMinutes)}
             </span>
+            {/* What this shift is WORTH — paid minutes at the associate's
+                rate. They work shifts for the money; the schedule should
+                say so. "~" keeps the estimate honest (gross, base rate). */}
+            {!muted && estRate != null && shift.status !== 'CANCELLED' && (
+              <span className="font-medium text-gold">
+                {' '}· {fmtMoneyEst((paidShiftMinutes(shift) / 60) * estRate)}
+              </span>
+            )}
           </div>
           {shift.location && (
             <div className="text-xs text-silver/70">{shift.location}</div>

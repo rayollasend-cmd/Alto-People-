@@ -190,9 +190,42 @@ describe('<AssociateScheduleView> shift detail', () => {
     const user = userEvent.setup();
     renderView();
     await user.click(await screen.findByRole('button', { name: /F&D Morning Shift/ }));
-    await user.click(await screen.findByRole('button', { name: /i'll be there/i }));
-    expect(await screen.findByText(/You confirmed this shift/)).toBeInTheDocument();
+    // Two confirm buttons now: the next-shift hero's and the expanded
+    // panel's — this test drives the panel one (the last in the DOM).
+    const confirms = await screen.findAllByRole('button', { name: /i'll be there/i });
+    await user.click(confirms[confirms.length - 1]);
+    expect(
+      (await screen.findAllByText(/You confirmed this shift/)).length,
+    ).toBeGreaterThan(0);
     expect(acknowledgeMyShift).toHaveBeenCalledWith('s1');
+  });
+
+  it('shows the next shift as a hero; confirming there syncs the list card', async () => {
+    vi.mocked(acknowledgeMyShift).mockResolvedValue(
+      shift({ acknowledgedAt: new Date().toISOString() }) as never,
+    );
+    const user = userEvent.setup();
+    renderView();
+
+    // The hero leads with the answer: relative day + the shift's identity.
+    expect(await screen.findByText('Next shift')).toBeInTheDocument();
+    // "Tomorrow" appears in the hero AND the day-group header below it.
+    expect(screen.getAllByText('Tomorrow').length).toBeGreaterThanOrEqual(2);
+    // Unconfirmed → the list card carries the nudge badge too.
+    expect(screen.getByText('Confirm needed')).toBeInTheDocument();
+
+    // Confirm FROM the hero (first confirm button on the page).
+    const confirms = screen.getAllByRole('button', { name: /i'll be there/i });
+    await user.click(confirms[0]);
+
+    await waitFor(() => expect(acknowledgeMyShift).toHaveBeenCalledWith('s1'));
+    // Hero shows the confirmed state, and the card badge flipped with it —
+    // one source of truth, zero disagreement.
+    expect(await screen.findByText(/You confirmed this shift/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText('Confirm needed')).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText('Confirmed')).toBeInTheDocument();
   });
 
   it('open shifts section requests a pickup through the confirm dialog', async () => {
