@@ -427,7 +427,7 @@ const en = {
   'dash.celebrationSub': 'From all of us at Alto People — have a great one.',
   // Earnings motivation card
   'earn.title': 'My earnings this week',
-  'earn.readyToday': 'Ready to earn ~{amount} today? 💪',
+  'earn.readyToday': 'Ready to earn ~{amount} today?',
   'earn.finishToday': 'Finish today and add ~{amount} more.',
   'earn.soFar': 'earned so far',
   'earn.projected': 'projected by Friday',
@@ -2032,7 +2032,7 @@ const es: Record<MessageKey, string> = {
   'dash.happyAnniversary': '¡{years} años en Alto hoy, {name} — gracias! 🎉',
   'dash.celebrationSub': 'De parte de todos en Alto People — que tengas un gran día.',
   'earn.title': 'Mis ganancias esta semana',
-  'earn.readyToday': '¿Listo para ganar ~{amount} hoy? 💪',
+  'earn.readyToday': '¿Listo para ganar ~{amount} hoy?',
   'earn.finishToday': 'Termina hoy y suma ~{amount} más.',
   'earn.soFar': 'ganado hasta ahora',
   'earn.projected': 'proyectado para el viernes',

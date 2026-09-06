@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronDown, Flame, ReceiptText, TrendingUp, Zap } from 'lucide-react';
+import { ChevronDown, ReceiptText, TrendingUp } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { displayLocale, fmtMoney } from '@/lib/format';
@@ -226,7 +226,6 @@ export function EarningsCard() {
                   <span className="text-success">
                     {' '}
                     {t('earn.beatsLast')}
-                    <Flame className="ml-0.5 inline h-3.5 w-3.5" aria-hidden="true" />
                   </span>
                 ) : (
                   <span className="text-gold"> {t('earn.shortOfLast', { amount: fmtMoney(shortBy) })}</span>
@@ -244,8 +243,7 @@ export function EarningsCard() {
             parenthetical was exactly the figure-it-out noise the redesign
             removed. The forecast lives in Details for the curious. */}
         {data.overtime.unlocked && (
-          <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-success/15 px-2.5 py-1 text-xs font-medium text-success">
-            <Zap className="h-3.5 w-3.5" aria-hidden="true" />
+          <div className="mt-2 inline-flex items-center rounded-full bg-success/15 px-2.5 py-1 text-xs font-medium text-success">
             {t('earn.otUnlocked', { rate: fmtMoney(data.currentRatePerHour) })}
           </div>
         )}

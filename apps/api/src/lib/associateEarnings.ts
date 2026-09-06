@@ -358,7 +358,7 @@ export async function notifyClockOutEarnings(
   // awaiting the insert here costs the punch nothing — and callers that
   // do await (tests) see the row.
   await notifyAssociate(entry.associateId, {
-    subject: `You just added ~$${amount.toFixed(2)} to your week 💪`,
+    subject: `You just added ~$${amount.toFixed(2)} to your week`,
     body:
       `${hours}h worked today at ~$${rate.toFixed(2)}/hr.` +
       (otMinutes > 0
