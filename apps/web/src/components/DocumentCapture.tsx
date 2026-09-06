@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Camera, RotateCcw, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
+import { useI18n } from '@/lib/i18n';
 
 /**
  * Document camera capture. Opens the user's webcam / phone camera via
@@ -56,9 +57,14 @@ export function DocumentCapture({
   onCapture,
   onCancel,
 }: DocumentCaptureProps) {
+  const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  // Native camera-app fallback — a plain <input capture> opens the OS
+  // camera with NO getUserMedia permission prompt, so a denied prompt
+  // or an in-app browser never dead-ends the flow.
+  const fallbackRef = useRef<HTMLInputElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<string | null>(null);
   const [starting, setStarting] = useState(true);
@@ -152,11 +158,7 @@ export function DocumentCapture({
         }
       } catch (err) {
         if (cancelled) return;
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Camera unavailable. Check browser permissions.',
-        );
+        setError(err instanceof Error ? err.message : t('cap.checkPerms'));
       } finally {
         if (!cancelled) setStarting(false);
       }
@@ -193,7 +195,7 @@ export function DocumentCapture({
     c.toBlob(
       (blob) => {
         if (!blob) {
-          setError('Capture failed — try again.');
+          setError(t('cap.captureFailed'));
           return;
         }
         const filename = `${filenameBase}-${Date.now()}.jpg`;
@@ -207,10 +209,39 @@ export function DocumentCapture({
 
   return (
     <div className="space-y-3">
+      {/* Hidden native-camera input — the recovery path when getUserMedia
+          is denied or blocked (in-app browsers). Opens the OS camera app
+          directly; the photo flows into the same onCapture pipeline. */}
+      <input
+        ref={fallbackRef}
+        type="file"
+        accept="image/*"
+        capture={facingMode}
+        className="sr-only"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (f) onCapture(f);
+        }}
+      />
       {error ? (
-        <div className="rounded-md border border-alert/40 bg-alert/[0.06] p-4 text-sm">
-          <div className="text-alert font-medium mb-1">Camera unavailable</div>
-          <div className="text-silver">{error}</div>
+        <div className="rounded-md border border-alert/40 bg-alert/[0.06] p-4 text-sm space-y-3">
+          <div>
+            <div className="text-alert font-medium mb-1">{t('cap.unavailable')}</div>
+            <div className="text-silver">{error}</div>
+          </div>
+          <div className="text-silver">{t('cap.fallbackHint')}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={() => fallbackRef.current?.click()}>
+              <Camera className="h-4 w-4" />
+              {t('cap.openCameraApp')}
+            </Button>
+            {onCancel && (
+              <Button variant="ghost" onClick={onCancel}>
+                {t('common.cancel')}
+              </Button>
+            )}
+          </div>
         </div>
       ) : (
         <div className="relative bg-black rounded-md overflow-hidden aspect-video">
@@ -230,7 +261,7 @@ export function DocumentCapture({
           {snapshot && (
             <img
               src={snapshot}
-              alt="Captured document preview"
+              alt={t('cap.previewAlt')}
               className="absolute inset-0 w-full h-full object-cover"
             />
           )}
@@ -263,13 +294,13 @@ export function DocumentCapture({
                 />
               </svg>
               <div className="absolute bottom-2 inset-x-0 text-center text-xs text-white/90">
-                Fill the frame edge to edge
+                {t('cap.fillFrame')}
               </div>
             </div>
           )}
           {starting && (
             <div className="absolute inset-0 grid place-items-center text-silver text-sm">
-              Opening camera…
+              {t('cap.opening')}
             </div>
           )}
         </div>
@@ -282,7 +313,7 @@ export function DocumentCapture({
           {onCancel && (
             <Button variant="ghost" onClick={onCancel}>
               <X className="h-4 w-4" />
-              Cancel
+              {t('common.cancel')}
             </Button>
           )}
           <div className="flex items-center gap-2 ml-auto">
@@ -290,17 +321,17 @@ export function DocumentCapture({
               <>
                 <Button variant="secondary" onClick={retake}>
                   <RotateCcw className="h-4 w-4" />
-                  Retake
+                  {t('cap.retake')}
                 </Button>
                 <Button onClick={upload}>
                   <Upload className="h-4 w-4" />
-                  Use this photo
+                  {t('cap.usePhoto')}
                 </Button>
               </>
             ) : (
               <Button onClick={capture} disabled={starting}>
                 <Camera className="h-4 w-4" />
-                Capture
+                {t('cap.capture')}
               </Button>
             )}
           </div>

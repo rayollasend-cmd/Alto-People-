@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Button,
   Dialog,
@@ -8,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui';
+import { useI18n } from '@/lib/i18n';
 
 /**
  * Square crop step for profile photos — the fix for "I uploaded a picture
@@ -38,6 +39,7 @@ export function PhotoCropDialog({
   /** Receives the cropped square as a JPEG blob. */
   onCropped: (blob: Blob) => void;
 }) {
+  const { t } = useI18n();
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   const [loadError, setLoadError] = useState(false);
   // k = CSS pixels per source pixel; offset = top-left of the scaled image
@@ -47,15 +49,30 @@ export function PhotoCropDialog({
   const [exporting, setExporting] = useState(false);
   const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
 
-  const url = useMemo(() => URL.createObjectURL(file), [file]);
-  useEffect(() => () => URL.revokeObjectURL(url), [url]);
-
+  // Shared decode helper with a bitmap fallback — a bare <img> rejects
+  // library HEIC on some phones, which dead-ended the profile-photo step.
   useEffect(() => {
-    const el = new Image();
-    el.onload = () => setImg(el);
-    el.onerror = () => setLoadError(true);
-    el.src = url;
-  }, [url]);
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    (async () => {
+      try {
+        const { loadImageFile } = await import('@/lib/loadImageFile');
+        const el = await loadImageFile(file);
+        objectUrl = el.src.startsWith('blob:') ? el.src : null;
+        if (cancelled) {
+          if (objectUrl) URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        setImg(el);
+      } catch {
+        if (!cancelled) setLoadError(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [file]);
 
   // Cover the viewport: the image may never be smaller than the frame in
   // either axis, so there's no way to crop in blank space.
@@ -155,16 +172,15 @@ export function PhotoCropDialog({
     <Dialog open={true} onOpenChange={(o) => !o && onCancel()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Position your photo</DialogTitle>
+          <DialogTitle>
+            {loadError ? t('docscan.badTitle') : t('photocrop.title')}
+          </DialogTitle>
           <DialogDescription>
-            Drag to position, zoom until your face fills the circle — this is
-            exactly how it will appear across the app.
+            {loadError ? t('docscan.badBody') : t('photocrop.subtitle')}
           </DialogDescription>
         </DialogHeader>
         {loadError ? (
-          <div className="text-sm text-alert">
-            That image couldn&rsquo;t be read — try a different file.
-          </div>
+          <div className="text-sm text-alert">{t('docscan.badImage')}</div>
         ) : (
           <div className="grid gap-4 justify-items-center">
             <div
@@ -178,7 +194,7 @@ export function PhotoCropDialog({
             >
               {img && (
                 <img
-                  src={url}
+                  src={img.src}
                   alt=""
                   draggable={false}
                   className="absolute left-0 top-0 max-w-none origin-top-left pointer-events-none"
@@ -201,7 +217,7 @@ export function PhotoCropDialog({
             </div>
             <input
               type="range"
-              aria-label="Zoom"
+              aria-label={t('docscan.zoom')}
               className="w-64 accent-gold"
               min={kMin}
               max={kMin * MAX_ZOOM_FACTOR}
@@ -213,16 +229,22 @@ export function PhotoCropDialog({
           </div>
         )}
         <DialogFooter>
-          <Button type="button" variant="ghost" onClick={onCancel}>
-            Cancel
-          </Button>
           <Button
             type="button"
-            onClick={exportCrop}
-            disabled={!img || loadError || exporting}
+            variant={loadError ? 'secondary' : 'ghost'}
+            onClick={onCancel}
           >
-            {exporting ? 'Saving…' : 'Use photo'}
+            {loadError ? t('docscan.tryAnother') : t('common.cancel')}
           </Button>
+          {!loadError && (
+            <Button
+              type="button"
+              onClick={exportCrop}
+              disabled={!img || exporting}
+            >
+              {exporting ? t('docscan.saving') : t('photocrop.use')}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

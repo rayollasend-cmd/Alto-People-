@@ -149,27 +149,53 @@ export function DocumentCropDialog({
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const drag = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
 
-  const url = useMemo(() => URL.createObjectURL(file), [file]);
-  useEffect(() => () => URL.revokeObjectURL(url), [url]);
-
+  // Decode through the shared helper — the bare <img> path rejected
+  // library HEIC outright, stranding phone users on "couldn't be read"
+  // with no way forward (the #1 onboarding-upload complaint).
   useEffect(() => {
-    const el = new Image();
-    el.onload = () => setImg(el);
-    el.onerror = () => setLoadError(true);
-    el.src = url;
-  }, [url]);
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    (async () => {
+      try {
+        const { loadImageFile } = await import('@/lib/loadImageFile');
+        const el = await loadImageFile(file);
+        objectUrl = el.src.startsWith('blob:') ? el.src : null;
+        if (cancelled) {
+          if (objectUrl) URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        setImg(el);
+      } catch {
+        if (!cancelled) setLoadError(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [file]);
 
   const sourceCanvas = useMemo(() => (img ? imageToCanvas(img) : null), [img]);
 
   // Kick off detection once the image is in. Failure of any kind — wasm
   // unavailable, nothing found, low contrast — quietly lands in manual.
+  // TIME-BOXED: on slow store WiFi the ~2.5MB OpenCV chunk can stall,
+  // and "Finding your document…" with no timeout read as a dead end
+  // ("cannot find document"). Manual mode always has working tools.
   useEffect(() => {
     if (!sourceCanvas) return;
     let cancelled = false;
     (async () => {
       try {
-        const scan = await import('@/lib/docScan');
-        const found = await scan.detectDocumentQuad(sourceCanvas);
+        const found = await Promise.race([
+          (async () => {
+            const scan = await import('@/lib/docScan');
+            return scan.detectDocumentQuad(sourceCanvas);
+          })(),
+          new Promise<null>((resolve) =>
+            window.setTimeout(() => resolve(null), 4000),
+          ),
+        ]);
         if (cancelled) return;
         if (found) {
           setQuad(found);
@@ -455,11 +481,22 @@ export function DocumentCropDialog({
     <Dialog open={true} onOpenChange={(o) => !o && onCancel()}>
       <DialogContent>
         <DialogHeader>
+          {/* A photo that can't be decoded gets an HONEST header — the
+              old "Line up your document" title over a bare error read as
+              "there are supposed to be tools here and they're missing". */}
           <DialogTitle>
-            {mode === 'auto' ? t('docscan.autoTitle') : t('docscan.title')}
+            {loadError
+              ? t('docscan.badTitle')
+              : mode === 'auto'
+                ? t('docscan.autoTitle')
+                : t('docscan.title')}
           </DialogTitle>
           <DialogDescription>
-            {mode === 'auto' ? t('docscan.autoSubtitle') : t('docscan.subtitle')}
+            {loadError
+              ? t('docscan.badBody')
+              : mode === 'auto'
+                ? t('docscan.autoSubtitle')
+                : t('docscan.subtitle')}
           </DialogDescription>
         </DialogHeader>
         {loadError ? (
@@ -478,7 +515,7 @@ export function DocumentCropDialog({
               style={{ width: editFit.w, height: editFit.h }}
             >
               <img
-                src={url}
+                src={img.src}
                 alt=""
                 draggable={false}
                 className="absolute inset-0 h-full w-full pointer-events-none"
@@ -603,8 +640,12 @@ export function DocumentCropDialog({
           </div>
         )}
         <DialogFooter>
-          <Button type="button" variant="ghost" onClick={onCancel}>
-            {t('common.cancel')}
+          <Button
+            type="button"
+            variant={loadError ? 'secondary' : 'ghost'}
+            onClick={onCancel}
+          >
+            {loadError ? t('docscan.tryAnother') : t('common.cancel')}
           </Button>
           {mode === 'auto' && (
             <Button type="button" variant="outline" onClick={() => setMode('manual')}>
@@ -617,11 +658,11 @@ export function DocumentCropDialog({
               {t('docscan.backToAuto')}
             </Button>
           )}
+          {!loadError && (
           <Button
             type="button"
             onClick={() => (mode === 'auto' ? void exportAuto() : exportManual())}
             disabled={
-              loadError ||
               exporting ||
               mode === 'detecting' ||
               (mode === 'auto' ? !quad : !rotated || tooSmall)
@@ -633,6 +674,7 @@ export function DocumentCropDialog({
                 ? t('docscan.scan')
                 : t('docscan.use')}
           </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

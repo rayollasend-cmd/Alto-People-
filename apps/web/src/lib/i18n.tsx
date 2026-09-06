@@ -419,6 +419,27 @@ const en = {
   'docscan.adjustManually': 'Crop manually',
   'docscan.backToAuto': 'Auto-detect',
   'docscan.scan': 'Scan document',
+  'docscan.badTitle': "Couldn't read that photo",
+  'docscan.badBody':
+    "The file may be in a format this browser can't open (often HEIC from the photo library). Take the photo again with the camera, or pick a JPG or PNG.",
+  'docscan.tryAnother': 'Choose another photo',
+  // Camera capture (documents + profile photo)
+  'cap.unavailable': 'Camera unavailable',
+  'cap.checkPerms': 'Camera unavailable. Check browser permissions.',
+  'cap.fallbackHint':
+    'No problem — you can take the photo with your phone’s camera app instead. No browser permission needed.',
+  'cap.openCameraApp': 'Use my camera app',
+  'cap.opening': 'Opening camera…',
+  'cap.fillFrame': 'Fill the frame edge to edge',
+  'cap.capture': 'Capture',
+  'cap.retake': 'Retake',
+  'cap.usePhoto': 'Use this photo',
+  'cap.previewAlt': 'Captured photo preview',
+  'cap.captureFailed': 'Capture failed — try again.',
+  'photocrop.title': 'Position your photo',
+  'photocrop.subtitle':
+    'Drag to position, zoom until your face fills the circle — this is exactly how it will appear across the app.',
+  'photocrop.use': 'Use photo',
   'whatsnew.photoCrop':
     'Set your profile photo with a proper position-and-zoom step — Settings → Profile photo.',
   'whatsnew.confirmTap': 'Confirm a shift with one tap, right from the schedule list.',
@@ -2025,6 +2046,26 @@ const es: Record<MessageKey, string> = {
   'docscan.adjustManually': 'Recortar manualmente',
   'docscan.backToAuto': 'Detección automática',
   'docscan.scan': 'Escanear documento',
+  'docscan.badTitle': 'No se pudo leer esa foto',
+  'docscan.badBody':
+    'El archivo puede estar en un formato que este navegador no puede abrir (a menudo HEIC de la galería). Vuelve a tomar la foto con la cámara, o elige un JPG o PNG.',
+  'docscan.tryAnother': 'Elegir otra foto',
+  'cap.unavailable': 'Cámara no disponible',
+  'cap.checkPerms': 'Cámara no disponible. Revisa los permisos del navegador.',
+  'cap.fallbackHint':
+    'No hay problema — puedes tomar la foto con la app de cámara de tu teléfono. No requiere permisos del navegador.',
+  'cap.openCameraApp': 'Usar mi app de cámara',
+  'cap.opening': 'Abriendo la cámara…',
+  'cap.fillFrame': 'Llena el marco de borde a borde',
+  'cap.capture': 'Capturar',
+  'cap.retake': 'Repetir',
+  'cap.usePhoto': 'Usar esta foto',
+  'cap.previewAlt': 'Vista previa de la foto capturada',
+  'cap.captureFailed': 'La captura falló — inténtalo de nuevo.',
+  'photocrop.title': 'Posiciona tu foto',
+  'photocrop.subtitle':
+    'Arrastra para posicionar y acerca hasta que tu cara llene el círculo — así aparecerá en toda la app.',
+  'photocrop.use': 'Usar foto',
   'whatsnew.photoCrop':
     'Configura tu foto de perfil con ajuste de posición y zoom — Ajustes → Foto de perfil.',
   'whatsnew.confirmTap': 'Confirma un turno con un toque, directo desde tu horario.',
