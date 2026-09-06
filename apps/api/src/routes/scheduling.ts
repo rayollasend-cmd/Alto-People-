@@ -113,7 +113,16 @@ const MANAGE = requireCapability('manage:scheduling');
 // Read-only financial telemetry (KPIs, labor costs, floor board, OT
 // outlook) is also an executive surface — view:executive unlocks the
 // GETs without granting any scheduling writes.
-const MANAGE_OR_EXEC = requireAnyCapability('manage:scheduling', 'view:executive');
+// Read-side money surfaces (KPIs, labor costs, store trends, live floor,
+// OT outlook). process:payroll included: labor spend and the OT outlook
+// are payroll-funding inputs, and Finance was locked out of exactly the
+// numbers its runway planning needs. Every endpoint on this gate is
+// read-only — scheduling WRITES stay on manage:scheduling alone.
+const MANAGE_OR_EXEC = requireAnyCapability(
+  'manage:scheduling',
+  'view:executive',
+  'process:payroll',
+);
 
 // Reported 2026-05-02: scheduling pickers were listing every Associate
 // regardless of role or status, including managers (who use a separate

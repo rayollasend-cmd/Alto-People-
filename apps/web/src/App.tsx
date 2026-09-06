@@ -359,7 +359,7 @@ const LAYOUT_ROUTES = [
   { path: 'portal', element: <ClientPortalHome /> },
   { path: 'scheduling', element: <SchedulingHome /> },
   { path: 'approvals', element: <RequireCapability cap="manage:scheduling"><ApprovalsHome /></RequireCapability> },
-  { path: 'labor-costs', element: <RequireCapability cap="manage:scheduling" anyOf={['view:executive']}><LaborCostsHome /></RequireCapability> },
+  { path: 'labor-costs', element: <RequireCapability cap="manage:scheduling" anyOf={['view:executive', 'process:payroll']}><LaborCostsHome /></RequireCapability> },
   { path: 'ops', element: <RequireCapability cap="run:ops-shifts" anyOf={['view:ops']}><OpsHome /></RequireCapability> },
   { path: 'payroll', element: <RequireCapability cap="view:payroll"><PayrollHome /></RequireCapability> },
   { path: 'documents', element: <RequireCapability cap="view:documents"><DocumentsHome /></RequireCapability> },
@@ -373,7 +373,7 @@ const LAYOUT_ROUTES = [
   { path: 'settings', element: <Settings /> },
   { path: 'admin/users', element: <RequireCapability cap="view:hr-admin"><UsersAdmin /></RequireCapability> },
   { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },
-  { path: 'admin/billing', element: <RequireCapability cap="view:hr-admin"><BillingHome /></RequireCapability> },
+  { path: 'admin/billing', element: <RequireCapability cap="view:hr-admin" anyOf={['process:payroll']}><BillingHome /></RequireCapability> },
   { path: 'audit', element: <RequireCapability cap="view:audit"><AuditHome /></RequireCapability> },
   // No dedicated view:benefits capability exists — benefits elections are
   // paycheck deductions, so the module (see lib/modules.ts) is gated on

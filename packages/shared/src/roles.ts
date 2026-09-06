@@ -258,6 +258,11 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'process:payroll',
     'view:comp',
     'view:analytics',
+    // The client side of the money cycle: SOW bill rates, contracts, and
+    // per-client statements live under Clients — the role that finalizes
+    // statements and owns rate-card economics reads them (writes stay on
+    // manage:clients, which finance does not hold).
+    'view:clients',
     // Gap 10 — Finance settles approved reimbursements into the next
     // REGULAR run. Cannot approve at the manager step.
     'settle:reimbursement',

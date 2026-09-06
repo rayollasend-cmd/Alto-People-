@@ -179,6 +179,9 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'compensation',
   'reimbursements',
   'statements',
+  'clients',
+  'labor-costs',
+  'billing',
   'time-attendance',
   'time-off',
   'scheduling',
@@ -602,7 +605,8 @@ export const MODULES: ModuleNav[] = [
     // supervisors see their own client, org roles see everything. Also an
     // executive read (live margin board).
     requires: 'manage:scheduling',
-    requiresAny: ['manage:scheduling', 'view:executive'],
+    // Finance reads spend too — labor cost IS the payroll-funding input.
+    requiresAny: ['manage:scheduling', 'view:executive', 'process:payroll'],
     group: 'time-and-pay',
   },
   {
@@ -772,6 +776,9 @@ export const MODULES: ModuleNav[] = [
     description:
       'Plan, seat count, payment method, and invoice history. Manual contract today; self-serve billing on the roadmap.',
     requires: 'view:hr-admin',
+    // The company's own vendor bill — banking relationships and payment
+    // methods are the finance charter's territory.
+    requiresAny: ['view:hr-admin', 'process:payroll'],
     group: 'compliance',
   },
   {
