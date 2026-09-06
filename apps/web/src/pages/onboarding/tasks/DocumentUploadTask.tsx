@@ -17,6 +17,7 @@ import { useI18n } from '@/lib/i18n';
 import { TaskShell, Field, useNextTask } from './ProfileInfoTask';
 import { cn } from '@/lib/cn';
 import { fmtSize } from '@/lib/format';
+import { isImagePick } from '@/lib/loadImageFile';
 import { statusTone } from '@/lib/status';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -51,7 +52,10 @@ function listHeading(t: Translate, list: 'A' | 'B' | 'C'): string {
 
 const MAX_BYTES = UPLOAD_MAX_BYTES;
 
-const ACCEPTED_MIMES = 'application/pdf,image/png,image/jpeg,image/webp';
+// HEIC/HEIF included: iPhone & Samsung library photos convert to JPEG
+// in the browser at the crop step (lib/loadImageFile).
+const ACCEPTED_MIMES =
+  'application/pdf,image/png,image/jpeg,image/webp,image/heic,image/heif';
 
 
 function statusLabel(t: Translate, status: string): string {
@@ -245,7 +249,7 @@ export function DocumentUploadTask() {
       setError(t('ob.docs.tooLarge', { max: fmtSize(MAX_BYTES) }));
       return;
     }
-    if (file.type.startsWith('image/')) {
+    if (isImagePick(file)) {
       const entry = target?.i9DocTitle
         ? i9CatalogEntry(target.i9DocTitle)
         : selectedEntry;

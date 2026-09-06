@@ -14,7 +14,8 @@ import { Field, SubmitRow, TaskShell, inputCls, useNextTask } from './ProfileInf
 
 const SSN_PATTERN = /^\d{3}-?\d{2}-?\d{4}$/;
 
-const CARD_ACCEPTED_MIMES = 'application/pdf,image/png,image/jpeg,image/webp';
+const CARD_ACCEPTED_MIMES =
+  'application/pdf,image/png,image/jpeg,image/webp,image/heic,image/heif';
 const CARD_MAX_BYTES = UPLOAD_MAX_BYTES;
 
 export function W4Task() {

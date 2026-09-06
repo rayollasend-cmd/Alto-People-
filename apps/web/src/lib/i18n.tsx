@@ -421,7 +421,7 @@ const en = {
   'docscan.scan': 'Scan document',
   'docscan.badTitle': "Couldn't read that photo",
   'docscan.badBody':
-    "The file may be in a format this browser can't open (often HEIC from the photo library). Take the photo again with the camera, or pick a JPG or PNG.",
+    'The photo may be damaged or in a format this browser can’t open. Take it again with the camera, or pick a JPG or PNG.',
   'docscan.tryAnother': 'Choose another photo',
   // Camera capture (documents + profile photo)
   'cap.unavailable': 'Camera unavailable',
@@ -2048,7 +2048,7 @@ const es: Record<MessageKey, string> = {
   'docscan.scan': 'Escanear documento',
   'docscan.badTitle': 'No se pudo leer esa foto',
   'docscan.badBody':
-    'El archivo puede estar en un formato que este navegador no puede abrir (a menudo HEIC de la galería). Vuelve a tomar la foto con la cámara, o elige un JPG o PNG.',
+    'La foto puede estar dañada o en un formato que este navegador no puede abrir. Vuelve a tomarla con la cámara, o elige un JPG o PNG.',
   'docscan.tryAnother': 'Elegir otra foto',
   'cap.unavailable': 'Cámara no disponible',
   'cap.checkPerms': 'Cámara no disponible. Revisa los permisos del navegador.',

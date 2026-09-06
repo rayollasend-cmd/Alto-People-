@@ -35,7 +35,8 @@ function j1KindOptionLabel(t: Translate, kind: DocumentKind): string {
 }
 
 const MAX_BYTES = UPLOAD_MAX_BYTES;
-const ACCEPTED_MIMES = 'application/pdf,image/png,image/jpeg,image/webp';
+const ACCEPTED_MIMES =
+  'application/pdf,image/png,image/jpeg,image/webp,image/heic,image/heif';
 
 
 function statusLabel(t: Translate, status: string): string {

@@ -31,6 +31,7 @@ import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fmtDate, fmtSize } from '@/lib/format';
 import { enterStagger } from '@/lib/motion';
+import { isImagePick } from '@/lib/loadImageFile';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -209,7 +210,7 @@ export function AssociateDocumentsView() {
       setError(t('docs.chooseFirst'));
       return;
     }
-    if (file.type.startsWith('image/') && file.size <= MAX_UPLOAD_BYTES) {
+    if (isImagePick(file) && file.size <= MAX_UPLOAD_BYTES) {
       setCropPending(file);
       return;
     }
@@ -580,7 +581,7 @@ export function AssociateDocumentsView() {
             <input
               ref={fileRef}
               type="file"
-              accept="application/pdf,image/png,image/jpeg,image/webp"
+              accept="application/pdf,image/png,image/jpeg,image/webp,image/heic,image/heif"
               capture="environment"
               onChange={(e) => setFileName(e.target.files?.[0]?.name ?? null)}
               className="sr-only"

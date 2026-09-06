@@ -1363,7 +1363,7 @@ function ProfilePhoto({
       <input
         ref={fileRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp"
+        accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
         onChange={onFile}
         className="hidden"
       />

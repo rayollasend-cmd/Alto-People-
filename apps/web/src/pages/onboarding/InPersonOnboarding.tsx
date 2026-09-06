@@ -55,6 +55,7 @@ import { Badge } from '@/components/ui/Badge';
 import { DocumentCapture } from '@/components/DocumentCapture';
 import { DocumentCropDialog, shapeForDocument } from '@/components/DocumentCropDialog';
 import { cn } from '@/lib/cn';
+import { isImagePick } from '@/lib/loadImageFile';
 
 /**
  * Phase 145 — In-person onboarding workspace.
@@ -165,7 +166,7 @@ export function InPersonOnboarding() {
     const file = e.target.files?.[0];
     e.target.value = ''; // allow same-file re-selection
     if (!file) return;
-    if (file.type.startsWith('image/')) {
+    if (isImagePick(file)) {
       setCropPending(file);
       return;
     }
@@ -382,7 +383,7 @@ export function InPersonOnboarding() {
                 <input
                   type="file"
                   className="hidden"
-                  accept="application/pdf,image/png,image/jpeg,image/webp"
+                  accept="application/pdf,image/png,image/jpeg,image/webp,image/heic,image/heif"
                   onChange={onPickFile}
                   disabled={uploading}
                 />
