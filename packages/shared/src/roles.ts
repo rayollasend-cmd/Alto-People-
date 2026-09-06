@@ -34,16 +34,22 @@ export const ROLE_LABELS: Record<Role, string> = {
 
 export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   EXECUTIVE_CHAIRMAN: 'Read-only access across all modules and clients',
-  HR_ADMINISTRATOR: 'Full access to every module and client',
-  OPERATIONS_MANAGER: 'Full org-wide access (mirrors HR Administrator)',
+  HR_ADMINISTRATOR:
+    'Everything — including the two highest-risk actions: voiding payroll runs and exporting payroll PII. Reserve for one or two owners; daily admins belong on Operations Manager',
+  OPERATIONS_MANAGER:
+    'The everyday admin role: full org-wide access plus expense approval — everything except voiding payroll and exporting payroll PII',
   LIVE_ASN: 'System integration portal — not for human login',
   ASSOCIATE: 'Personal access to own profile, schedule, and pay',
   CLIENT_PORTAL: 'Read-only access scoped to one client account',
   FINANCE_ACCOUNTANT: 'Time, scheduling, and payroll only — runs pay cycles, no HR data',
-  INTERNAL_RECRUITER: 'Full org-wide access (mirrors HR Administrator)',
-  MANAGER: 'Full org-wide access (mirrors HR Administrator)',
-  WORKFORCE_MANAGER: 'Full org-wide access (mirrors HR Administrator)',
-  MARKETING_MANAGER: 'Full org-wide access (mirrors HR Administrator)',
+  INTERNAL_RECRUITER:
+    'Full org-wide access (no payroll void / PII export) — permissions identical to Workforce and Marketing Manager; the title is the only difference',
+  MANAGER:
+    'Full org-wide access (no payroll void / PII export); lands on the team dashboard — direct reports, approvals, timesheets',
+  WORKFORCE_MANAGER:
+    'Full org-wide access (no payroll void / PII export) — permissions identical to Internal Recruiter and Marketing Manager; prefer Operations Manager for daily admins',
+  MARKETING_MANAGER:
+    'Full org-wide access (no payroll void / PII export) — permissions identical to Internal Recruiter and Workforce Manager; the title is the only difference',
   SHIFT_SUPERVISOR:
     'Scheduling, time & attendance, and onboarding invites for one client only — assign the client in Users & access',
   FLOOR_SUPERVISOR:
