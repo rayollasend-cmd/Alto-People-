@@ -343,6 +343,8 @@ const ONBOARDING_ROUTES = [
 const LAYOUT_ROUTES = [
   { index: true, element: <Dashboard /> },
   { path: 'time-attendance', element: <TimeHome /> },
+  // Finance's alias for the same surface — their nav says "Timesheets".
+  { path: 'timesheets', element: <TimeHome /> },
   { path: 'time-off', element: <TimeOffHome /> },
   // Route-level capability gates below mirror the sidebar's module gating
   // (lib/modules.ts) so a bounded role (SHIFT_SUPERVISOR, CLIENT_PORTAL,

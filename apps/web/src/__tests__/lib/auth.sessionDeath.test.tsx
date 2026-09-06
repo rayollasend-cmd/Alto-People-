@@ -17,6 +17,7 @@ import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
 import {
   emitApiConnectivity,
+  onApiAuthFailure,
   resetSessionEventsForTest,
 } from '@/lib/sessionEvents';
 import { AuthProvider, OFFLINE_GRACE_MS, RequireAuth, useAuth } from '@/lib/auth';
@@ -143,17 +144,27 @@ describe('AuthProvider session death', () => {
       'admin@altohr.com',
     );
 
+    // STAGE 0 witness: the test's OWN subscriber on the same bus. When a
+    // failure splits stage 0 (emit) from stage 1 (provider re-probe), we
+    // know whether apiFetch never emitted or the provider's listener
+    // swallowed the event (userRef/in-flight guards).
+    let sawAuthFailure = 0;
+    const offWitness = onApiAuthFailure(() => {
+      sawAuthFailure += 1;
+    });
+
     await failBusinessRequest('/payroll/runs');
 
-    // STAGED assertions (3rd CI-only flake, 2026-09-05, never reproduced
-    // locally): first prove the confirming re-probe FIRED — if this stage
-    // fails, the authFailure event was lost between apiFetch's emit and
-    // the provider's listener; if it passes and the redirect below still
-    // fails, the die()/RequireAuth half is the problem. Either way the
-    // next failure names its stage instead of dumping a signed-in DOM.
+    // STAGED assertions (4th load-dependent flake 2026-09-05; the first
+    // staged capture died HERE at stage 1 — the re-probe never fired, so
+    // the redirect half is exonerated).
+    await waitFor(() => expect(sawAuthFailure).toBeGreaterThanOrEqual(1), {
+      timeout: 4_000,
+    });
     await waitFor(() => expect(meCalls).toBeGreaterThanOrEqual(2), {
       timeout: 8_000,
     });
+    offWitness();
     // RequireAuth bounced to /login with the prior location in state.from.
     expect(
       await screen.findByTestId('login', undefined, { timeout: 8_000 }),

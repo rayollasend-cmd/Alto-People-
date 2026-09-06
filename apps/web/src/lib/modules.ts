@@ -5,6 +5,7 @@ import type { Capability } from './roles';
 export type ModuleKey =
   | 'portal'
   | 'statements'
+  | 'timesheets'
   | 'onboarding'
   | 'time-attendance'
   | 'kiosk'
@@ -183,7 +184,7 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'labor-costs',
   'billing',
   'people',
-  'time-attendance',
+  'timesheets',
   'time-off',
   'scheduling',
   'holidays',
@@ -202,6 +203,10 @@ export function visibleModules(
     // "My store" only makes sense for a client account — internal roles
     // preview portals from the Clients page instead.
     (m) => m.key !== 'portal' || role === 'CLIENT_PORTAL',
+  ).filter(
+    // "Timesheets" is Finance's name for the T&A surface — everyone else
+    // already has Time & attendance; two entries would double-list it.
+    (m) => m.key !== 'timesheets' || role === 'FINANCE_ACCOUNTANT',
   );
   if (role === 'CLIENT_PORTAL') {
     return base.filter((m) => CLIENT_PORTAL_MODULE_KEYS.has(m.key));
@@ -656,6 +661,18 @@ export const MODULES: ModuleNav[] = [
     description:
       'Marketplace of open shifts qualified associates can pick up. Managers approve claims.',
     requires: 'view:scheduling',
+    group: 'time-and-pay',
+  },
+  {
+    key: 'timesheets',
+    path: '/timesheets',
+    label: 'Timesheets',
+    // Finance's name for the same full T&A surface (approve hours, work
+    // the corrections window, pull the Fieldglass hours sheet). Rendered
+    // only in the FINANCE_ACCOUNTANT nav — see visibleModules.
+    description:
+      'Review and approve worked hours, run the corrections window, and export the payroll hours sheets.',
+    requires: 'view:time',
     group: 'time-and-pay',
   },
   {
