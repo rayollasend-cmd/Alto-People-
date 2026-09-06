@@ -53,12 +53,17 @@ const unauthorizedBody = {
  * repeats once the script runs out.
  */
 let meScript: Array<() => Response>;
+/** /auth/me hit counter — lets the flaky-redirect tests assert the
+ *  confirming re-probe actually FIRED before asserting the redirect,
+ *  so a CI failure names the broken stage instead of "no login node". */
+let meCalls = 0;
 
 function stubFetch() {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) => {
       if (url === '/api/auth/me') {
+        meCalls += 1;
         const handler = meScript.length > 1 ? meScript.shift()! : meScript[0];
         return handler();
       }
@@ -118,6 +123,7 @@ beforeEach(() => {
   resetSessionEventsForTest();
   vi.clearAllMocks();
   meScript = [() => jsonResponse(200, { user: adminUser })];
+  meCalls = 0;
   stubFetch();
 });
 
@@ -139,18 +145,21 @@ describe('AuthProvider session death', () => {
 
     await failBusinessRequest('/payroll/runs');
 
+    // STAGED assertions (3rd CI-only flake, 2026-09-05, never reproduced
+    // locally): first prove the confirming re-probe FIRED — if this stage
+    // fails, the authFailure event was lost between apiFetch's emit and
+    // the provider's listener; if it passes and the redirect below still
+    // fails, the die()/RequireAuth half is the problem. Either way the
+    // next failure names its stage instead of dumping a signed-in DOM.
+    await waitFor(() => expect(meCalls).toBeGreaterThanOrEqual(2), {
+      timeout: 8_000,
+    });
     // RequireAuth bounced to /login with the prior location in state.from.
-    // Generous timeout: the 401 → confirming re-probe → state update →
-    // redirect chain is eventually-consistent by design. 12s inside the
-    // 15s budget — the earlier 5s inner window still expired on loaded CI
-    // runners (2026-09-05: chain took >5s under parallel suite load).
     expect(
-      await screen.findByTestId('login', undefined, { timeout: 12_000 }),
+      await screen.findByTestId('login', undefined, { timeout: 8_000 }),
     ).toHaveTextContent('next=/payroll');
-    // The 15s third arg raises the per-test budget above the inner wait —
-    // vitest's default 5s outer timeout used to fire first and mask the
-    // real assertion.
-  }, 15_000);
+    // Outer budget stays above the sum of the staged waits.
+  }, 20_000);
 
   it('shows the session-ended toast exactly once, not once per failed request', async () => {
     meScript = [
@@ -166,13 +175,16 @@ describe('AuthProvider session death', () => {
     await failBusinessRequest('/time/entries');
     await failBusinessRequest('/scheduling/shifts');
 
-    await screen.findByTestId('login', undefined, { timeout: 12_000 });
+    // Same staged split as the redirect test: re-probe proven first.
+    await waitFor(() => expect(meCalls).toBeGreaterThanOrEqual(2), {
+      timeout: 8_000,
+    });
+    await screen.findByTestId('login', undefined, { timeout: 8_000 });
     expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(toast.error).mock.calls[0][0]).toMatch(
       /session ended/i,
     );
-    // Same inner-vs-outer timeout headroom as the redirect test above.
-  }, 15_000);
+  }, 20_000);
 
   it('keeps the session when the re-probe succeeds (one-off 401)', async () => {
     meScript = [
