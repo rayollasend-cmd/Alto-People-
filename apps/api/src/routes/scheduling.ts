@@ -111,6 +111,16 @@ import { runShiftAutofillSweep } from '../lib/shiftAutofill.js';
 export const schedulingRouter = Router();
 
 const MANAGE = requireCapability('manage:scheduling');
+// Calendar READS for the read-only audiences: executives and finance
+// (payroll pays for the exact board managers build, so it must be able
+// to SEE it — "Missing capability: manage:scheduling" on a read was the
+// bug, latent for executives too). All writes stay on MANAGE, and the
+// scope helpers keep every read tenant-clamped regardless of gate.
+const SCHED_READ = requireAnyCapability(
+  'manage:scheduling',
+  'view:executive',
+  'process:payroll',
+);
 // Read-only financial telemetry (KPIs, labor costs, floor board, OT
 // outlook) is also an executive surface — view:executive unlocks the
 // GETs without granting any scheduling writes.
@@ -567,7 +577,7 @@ function parseDateParam(raw: string | undefined, name: string): Date | undefined
   return d;
 }
 
-schedulingRouter.get('/shifts', MANAGE, async (req, res, next) => {
+schedulingRouter.get('/shifts', SCHED_READ, async (req, res, next) => {
   try {
     const status = req.query.status?.toString();
     // Tenant clamp FIRST — same fix as /kpis. Spreading the raw query param
@@ -1329,7 +1339,7 @@ schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, async (req, res, next) => {
  * Every in-scope store with its CURRENT effective target (null when never
  * set). Bounded roles see their own client's stores only.
  */
-schedulingRouter.get('/staffing-targets', MANAGE, async (req, res, next) => {
+schedulingRouter.get('/staffing-targets', SCHED_READ, async (req, res, next) => {
   try {
     const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
     const stClientId = clamped === null ? NO_MATCH_ID : clamped;
@@ -2200,7 +2210,7 @@ schedulingRouter.delete('/rate-defaults/:id', MANAGE, async (req, res, next) => 
  * for. Drives the row axis of the pivot week view (rows=people × cols=days).
  * Gated to manage:scheduling, so only HR/Ops reach this endpoint.
  */
-schedulingRouter.get('/associates', MANAGE, async (req, res, next) => {
+schedulingRouter.get('/associates', SCHED_READ, async (req, res, next) => {
   try {
     let clientId = req.query.clientId?.toString();
     let locationId = req.query.locationId?.toString();

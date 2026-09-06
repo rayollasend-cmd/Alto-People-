@@ -992,7 +992,11 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   // client-portal viewer) used to fire a guaranteed-403 on every week
   // change with the strip hidden anyway.
   const canSeeKpis =
-    canManage || (user ? hasCapability(user.role, 'view:executive') : false);
+    canManage ||
+    (user
+      ? hasCapability(user.role, 'view:executive') ||
+        hasCapability(user.role, 'process:payroll')
+      : false);
   const kpiSeq = useRef(0);
   useEffect(() => {
     if (!canSeeKpis) return;
