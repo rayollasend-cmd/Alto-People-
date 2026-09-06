@@ -35,6 +35,7 @@ import type { ModuleKey } from './modules';
  * here moves the whole icon graph into the Layout chunk.
  */
 export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
+  'portal': StoreIcon,
   'me': UserCircleIcon,
   'onboarding': ClipboardList,
   'recruiting': UserPlus,

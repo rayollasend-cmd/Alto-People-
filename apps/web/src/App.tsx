@@ -111,6 +111,7 @@ const ReimbursementsHome = lazyNamed(() => import('@/pages/reimbursements/Reimbu
 
 // Clients / org / people
 const ClientsHome = lazyNamed(() => import('@/pages/clients/ClientsHome'), 'ClientsHome');
+const ClientPortalHome = lazyNamed(() => import('@/pages/portal/ClientPortalHome'), 'ClientPortalHome');
 const ClientDetail = lazyNamed(() => import('@/pages/clients/ClientDetail'), 'ClientDetail');
 const ClientStatementsRollup = lazyNamed(() => import('@/pages/clients/ClientStatementsRollup'), 'ClientStatementsRollup');
 const PeopleDirectory = lazyNamed(() => import('@/pages/people/PeopleDirectory'), 'PeopleDirectory');
@@ -352,6 +353,10 @@ const LAYOUT_ROUTES = [
   // payroll finalizes, executives read. Static segment outranks `clients/:id`.
   { path: 'clients/statements', element: <RequireCapability cap="process:payroll" anyOf={['view:executive']}><ClientStatementsRollup /></RequireCapability> },
   { path: 'clients/:id', element: <RequireCapability cap="view:clients"><ClientDetail /></RequireCapability> },
+  // The client portal home — CLIENT_PORTAL's landing view; admins with
+  // view:executive/manage:org preview any client via ?clientId= (the
+  // page gates internally, since no single capability fits both).
+  { path: 'portal', element: <ClientPortalHome /> },
   { path: 'scheduling', element: <SchedulingHome /> },
   { path: 'approvals', element: <RequireCapability cap="manage:scheduling"><ApprovalsHome /></RequireCapability> },
   { path: 'labor-costs', element: <RequireCapability cap="manage:scheduling" anyOf={['view:executive']}><LaborCostsHome /></RequireCapability> },

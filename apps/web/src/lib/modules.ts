@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import type { Capability } from './roles';
 
 export type ModuleKey =
+  | 'portal'
   | 'onboarding'
   | 'time-attendance'
   | 'kiosk'
@@ -157,6 +158,13 @@ export const ASSOCIATE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>(
   'help-center',
 ]);
 
+/** The client contact's curated nav: their store view and the read-only
+ *  schedule — a partner surface, not an HR console. */
+const CLIENT_PORTAL_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
+  'portal',
+  'scheduling',
+]);
+
 /** Capability-filtered module list, with per-role curation applied. */
 export function visibleModules(
   role: string | undefined,
@@ -164,7 +172,14 @@ export function visibleModules(
 ): ModuleNav[] {
   const base = MODULES.filter(
     (m) => can(m.requires) || (m.requiresAny?.some(can) ?? false),
+  ).filter(
+    // "My store" only makes sense for a client account — internal roles
+    // preview portals from the Clients page instead.
+    (m) => m.key !== 'portal' || role === 'CLIENT_PORTAL',
   );
+  if (role === 'CLIENT_PORTAL') {
+    return base.filter((m) => CLIENT_PORTAL_MODULE_KEYS.has(m.key));
+  }
   if (role === 'EXECUTIVE_CHAIRMAN') return base.filter((m) => EXEC_MODULE_KEYS.has(m.key));
   if (role === 'FLOOR_SUPERVISOR') {
     return base.filter((m) => FLOOR_SUPERVISOR_MODULE_KEYS.has(m.key));
@@ -179,6 +194,15 @@ export function visibleModules(
 
 
 export const MODULES: ModuleNav[] = [
+  {
+    key: 'portal',
+    path: '/portal',
+    label: 'My store',
+    description:
+      'Live floor coverage, today’s roster, this week’s fill, statements, and the coverage record for your store.',
+    requires: 'view:dashboard',
+    group: 'core',
+  },
   {
     key: 'me',
     path: '/me',
