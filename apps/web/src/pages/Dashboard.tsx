@@ -26,6 +26,9 @@ const ClientPortalHome = lazy(() =>
 const FinanceDashboard = lazy(() =>
   import('./FinanceDashboard').then((m) => ({ default: m.FinanceDashboard })),
 );
+const WorkforceDashboard = lazy(() =>
+  import('./WorkforceDashboard').then((m) => ({ default: m.WorkforceDashboard })),
+);
 
 function DashboardFallback() {
   return (
@@ -64,7 +67,9 @@ export function Dashboard() {
               ? ClientPortalHome
               : user?.role === 'FINANCE_ACCOUNTANT'
                 ? FinanceDashboard
-                : AdminDashboard;
+                : user?.role === 'WORKFORCE_MANAGER'
+                  ? WorkforceDashboard
+                  : AdminDashboard;
   return (
     <Suspense fallback={<DashboardFallback />}>
       <Variant />

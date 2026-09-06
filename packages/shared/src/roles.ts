@@ -47,7 +47,7 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   MANAGER:
     'Full org-wide access (no payroll void / PII export); lands on the team dashboard — direct reports, approvals, timesheets',
   WORKFORCE_MANAGER:
-    'Full org-wide access (no payroll void / PII export) — permissions identical to Internal Recruiter and Marketing Manager; prefer Operations Manager for daily admins',
+    'Field leadership: coverage across all stores, the supervisor corps, scheduling, time & standards, safety, recruiting and onboarding — no payroll, billing, or org-admin surface',
   MARKETING_MANAGER:
     'Full org-wide access (no payroll void / PII export) — permissions identical to Internal Recruiter and Workforce Manager; the title is the only difference',
   SHIFT_SUPERVISOR:
@@ -295,7 +295,35 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'submit:reimbursement',
     'approve:reimbursement',
   ]),
-  WORKFORCE_MANAGER: new Set<Capability>(FULL_ADMIN),
+  // The field-leadership role (owner charter 2026-09-06): the corporate
+  // connection to the store floor — coverage, the supervisor corps,
+  // standards, safety, and the people-supply chain end to end. Holds
+  // NO money-cycle powers (payroll/comp/statements are Finance's) and
+  // NO org-admin surface (users/branding/audit stay with HR Admin).
+  WORKFORCE_MANAGER: new Set<Capability>([
+    'view:dashboard',
+    // Hire and land the supervisor corps + seasonal cohorts.
+    'view:recruiting', 'manage:recruiting',
+    'view:onboarding', 'manage:onboarding', 'invite:onboarding',
+    // People + field org (assignments, managers, transfers).
+    'view:org', 'manage:org',
+    // Coverage across all stores and shifts.
+    'view:scheduling', 'manage:scheduling',
+    // Binder disciplines: sign-in/out, meal compliance, the points system.
+    'view:time', 'manage:time', 'view:time-live',
+    'view:my-team', 'manage:team-time', 'manage:team-time-off',
+    // Coaching, the five standards, discipline applied fairly.
+    'view:performance', 'manage:performance',
+    // Safety + incident response on every floor; certifications.
+    'view:compliance', 'manage:compliance',
+    'view:documents',
+    // Field broadcasts + dispatch communications.
+    'view:communications', 'manage:communications',
+    'view:analytics',
+    // Store Ops: shift plans, checklists, handover; the Site Playbook
+    // (SOP standards library) is THIS role's manual.
+    'view:ops', 'run:ops-shifts', 'manage:ops-library',
+  ]),
   MARKETING_MANAGER: new Set<Capability>(FULL_ADMIN),
   // Client-scoped floor supervisor: full manage of Scheduling + Time for
   // their one client (the scope* helpers enforce the client boundary), plus

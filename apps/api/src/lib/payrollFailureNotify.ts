@@ -20,7 +20,8 @@ const NOTIFY_ROLES = [
   'OPERATIONS_MANAGER',
   'MANAGER',
   'INTERNAL_RECRUITER',
-  'WORKFORCE_MANAGER',
+  // WORKFORCE_MANAGER removed 2026-09-06: the role was right-sized to the
+  // field-leadership charter and no longer holds process:payroll.
   'MARKETING_MANAGER',
   'FINANCE_ACCOUNTANT',
 ] as const;

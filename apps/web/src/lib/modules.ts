@@ -195,6 +195,31 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'reports',
 ]);
 
+/** The field-leadership nav: the people-supply chain plus the floor —
+ *  coverage, standards, safety, the supervisor pipeline. No money pages. */
+const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
+  'me',
+  'people',
+  'recruiting',
+  'onboarding',
+  'scheduling',
+  'approvals',
+  'marketplace',
+  'time-attendance',
+  'time-off',
+  'ops',
+  'performance',
+  'compliance',
+  'skills',
+  'expirations',
+  'learning-paths',
+  'headcount',
+  'communications',
+  'dircomms',
+  'analytics',
+  'reports',
+]);
+
 /** Capability-filtered module list, with per-role curation applied. */
 export function visibleModules(
   role: string | undefined,
@@ -216,6 +241,9 @@ export function visibleModules(
   }
   if (role === 'FINANCE_ACCOUNTANT') {
     return base.filter((m) => FINANCE_MODULE_KEYS.has(m.key));
+  }
+  if (role === 'WORKFORCE_MANAGER') {
+    return base.filter((m) => WORKFORCE_MODULE_KEYS.has(m.key));
   }
   if (role === 'EXECUTIVE_CHAIRMAN') return base.filter((m) => EXEC_MODULE_KEYS.has(m.key));
   if (role === 'FLOOR_SUPERVISOR') {
