@@ -242,6 +242,9 @@ financeOverviewRouter.get(
               id: true,
               firstName: true,
               lastName: true,
+              email: true,
+              phone: true,
+              hireDate: true,
               fieldglassRegistration: { select: { associateId: true } },
             },
           },
@@ -284,6 +287,13 @@ financeOverviewRouter.get(
             position: shift.position,
             firstShiftAt: shift.startsAt.toISOString(),
             approvedAt: a.approvedAt ? a.approvedAt.toISOString() : null,
+            // The Fieldglass entry facts — on the row, so most workers
+            // never require leaving the dashboard at all.
+            email: a.associate.email,
+            phone: a.associate.phone,
+            hireDate: a.associate.hireDate
+              ? a.associate.hireDate.toISOString().slice(0, 10)
+              : null,
           };
         })
         .filter((row): row is NonNullable<typeof row> => row !== null)

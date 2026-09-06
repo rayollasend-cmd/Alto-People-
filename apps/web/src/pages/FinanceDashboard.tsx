@@ -6,6 +6,7 @@ import {
   ArrowRight,
   Banknote,
   BarChart3,
+  ChevronDown,
   ClipboardCheck,
   ClockAlert,
   DollarSign,
@@ -71,6 +72,9 @@ interface FinanceOverview {
     position: string;
     firstShiftAt: string;
     approvedAt: string | null;
+    email: string | null;
+    phone: string | null;
+    hireDate: string | null;
   }>;
   billedVsPaid: {
     weekStart: string;
@@ -99,6 +103,8 @@ export function FinanceDashboard() {
   });
   const data = query.data;
   const [fgBusy, setFgBusy] = useState<string | null>(null);
+  // Which queue row is unfolded to show its Fieldglass entry facts.
+  const [fgOpen, setFgOpen] = useState<string | null>(null);
 
   const refreshOverview = () =>
     queryClient.invalidateQueries({ queryKey: ['finance', 'overview'] });
@@ -357,51 +363,109 @@ export function FinanceDashboard() {
                 const soon =
                   new Date(w.firstShiftAt).getTime() - Date.now() <
                   48 * 3600_000;
+                const open = fgOpen === w.associateId;
                 return (
-                  <li
-                    key={w.associateId}
-                    className="flex items-center gap-3 py-2.5"
-                  >
-                    <Avatar
-                      src={`/api/associates/${w.associateId}/photo`}
-                      name={w.name}
-                      email=""
-                      size="md"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <Link
-                        to={`/people?associateId=${w.associateId}`}
-                        className="block truncate text-sm font-medium text-white hover:text-gold"
+                  <li key={w.associateId} className="py-2.5">
+                    <div className="flex items-center gap-3">
+                      <Avatar
+                        src={`/api/associates/${w.associateId}/photo`}
+                        name={w.name}
+                        email=""
+                        size="md"
+                      />
+                      {/* Tap unfolds the entry facts — the whole Fieldglass
+                          entry happens here, no navigation round trip. */}
+                      <button
+                        type="button"
+                        onClick={() => setFgOpen(open ? null : w.associateId)}
+                        aria-expanded={open}
+                        className="min-w-0 flex-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
                       >
-                        {w.name}
-                        {w.clientName && (
-                          <span className="font-normal text-silver/80">
-                            {' '}· {w.clientName}
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate text-sm font-medium text-white">
+                            {w.name}
+                            {w.clientName && (
+                              <span className="font-normal text-silver/80">
+                                {' '}· {w.clientName}
+                              </span>
+                            )}
                           </span>
-                        )}
-                      </Link>
-                      <div className="text-xs text-silver tabular-nums">
-                        <span className={cn(soon && 'font-medium text-warning')}>
-                          {t('fin.fgFirstShift', { date: fmtDate(w.firstShiftAt) })}
-                        </span>
-                        <span className="text-silver/60"> · {w.position}</span>
-                        {w.approvedAt && (
-                          <span className="text-silver/60">
-                            {' '}· {t('fin.fgApprovedOn', { date: fmtDate(w.approvedAt) })}
+                          <ChevronDown
+                            aria-hidden="true"
+                            className={cn(
+                              'h-3.5 w-3.5 shrink-0 text-silver/50 transition-transform',
+                              open && 'rotate-180',
+                            )}
+                          />
+                        </div>
+                        <div className="text-xs text-silver tabular-nums">
+                          <span className={cn(soon && 'font-medium text-warning')}>
+                            {t('fin.fgFirstShift', { date: fmtDate(w.firstShiftAt) })}
                           </span>
-                        )}
-                      </div>
+                          <span className="text-silver/60"> · {w.position}</span>
+                          {w.approvedAt && (
+                            <span className="text-silver/60">
+                              {' '}· {t('fin.fgApprovedOn', { date: fmtDate(w.approvedAt) })}
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="shrink-0"
+                        loading={fgBusy === w.associateId}
+                        disabled={fgBusy !== null}
+                        onClick={() => void markFieldglass(w.associateId)}
+                      >
+                        {t('fin.fgMark')}
+                      </Button>
                     </div>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      className="shrink-0"
-                      loading={fgBusy === w.associateId}
-                      disabled={fgBusy !== null}
-                      onClick={() => void markFieldglass(w.associateId)}
-                    >
-                      {t('fin.fgMark')}
-                    </Button>
+                    {open && (
+                      <div className="grid animate-unfold">
+                        <div className="overflow-hidden">
+                          <div className="ml-[52px] mt-2 grid gap-x-6 gap-y-1 text-xs sm:grid-cols-2">
+                            {w.email && (
+                              <div>
+                                <span className="text-silver/60">{t('fin.fgEmail')}: </span>
+                                {/* select-all: one tap selects the value for
+                                    copying straight into Fieldglass. */}
+                                <span className="select-all text-white">{w.email}</span>
+                              </div>
+                            )}
+                            {w.phone && (
+                              <div>
+                                <span className="text-silver/60">{t('fin.fgPhone')}: </span>
+                                <span className="select-all text-white tabular-nums">
+                                  {w.phone}
+                                </span>
+                              </div>
+                            )}
+                            {w.hireDate && (
+                              <div>
+                                <span className="text-silver/60">{t('fin.fgStart')}: </span>
+                                <span className="select-all text-white tabular-nums">
+                                  {fmtDate(w.hireDate)}
+                                </span>
+                              </div>
+                            )}
+                            <div>
+                              <span className="text-silver/60">{t('fin.fgClient')}: </span>
+                              <span className="select-all text-white">
+                                {w.clientName ?? '—'}
+                              </span>
+                            </div>
+                          </div>
+                          <Link
+                            to={`/people?associateId=${w.associateId}&return=${encodeURIComponent('/')}`}
+                            className="ml-[52px] mt-2 inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-9"
+                          >
+                            {t('fin.fgFullRecord')}
+                            <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                          </Link>
+                        </div>
+                      </div>
+                    )}
                   </li>
                 );
               })}
