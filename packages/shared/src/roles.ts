@@ -253,6 +253,12 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   FINANCE_ACCOUNTANT: new Set<Capability>([
     'view:dashboard',
     'view:time',
+    // Payroll is finance's end-to-end (owner decision, 2026-09-05):
+    // approving timesheets and working the corrections window ARE the
+    // input side of the pay cycle, so finance holds the full time &
+    // attendance base — not just read access.
+    'manage:time',
+    'view:time-live',
     'view:scheduling',
     'view:payroll',
     'process:payroll',

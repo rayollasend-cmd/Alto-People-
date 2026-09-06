@@ -71,6 +71,7 @@ import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
 import { decryptString, encryptString, tryDecryptString } from '../lib/crypto.js';
 import { maskRoutingNumber } from '../lib/payoutMethod.js';
 import { enqueueAudit, recordOnboardingEvent } from '../lib/audit.js';
+import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
 import { withMandatoryTasks } from '../lib/checklistTasks.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import { CsvParseError, parseCsv } from '../lib/csv.js';
@@ -1133,6 +1134,10 @@ async function approveOneApplication(
     metadata: { hireDate, percentComplete: percent },
     req,
   });
+
+  // Finance handoff: if the new hire is already on the schedule, tell
+  // Finance to add them to Fieldglass (fires once; silent otherwise).
+  void maybeNotifyFinanceNewWorker(app.associateId);
 
   // Approval IS the hire moment — file the offer letter now so the
   // compliance scorecard's "Offer letter on file" signal tracks hires

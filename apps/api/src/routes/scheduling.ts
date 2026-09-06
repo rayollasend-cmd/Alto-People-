@@ -84,6 +84,7 @@ const NO_MATCH_ID = '00000000-0000-0000-0000-000000000000';
 import { firstLocationForClient } from '../lib/firstLocationForClient.js';
 import { z } from 'zod';
 import { enqueueAudit, recordShiftEvent } from '../lib/audit.js';
+import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
 import { formatShiftLine, notifyShift } from '../lib/notifyShift.js';
 import { notifyAllAdmins, notifyClientSupervisors, notifyManager } from '../lib/notify.js';
 import { shiftSwapManagerTemplate } from '../lib/emailTemplates.js';
@@ -2522,6 +2523,12 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
       req,
     });
 
+    // A brand-new hire's FIRST shift may arrive via direct creation —
+    // fire the Fieldglass handoff (deduped, silent unless approved+scheduled).
+    if (created.assignedAssociateId) {
+      void maybeNotifyFinanceNewWorker(created.assignedAssociateId);
+    }
+
     res.status(201).json(await withEffectiveRate(created));
   } catch (err) {
     next(err);
@@ -3252,6 +3259,11 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
         include: SHIFT_INCLUDE,
       });
     });
+
+    // Fieldglass handoff for first-time workers (deduped inside).
+    if (updated.assignedAssociateId) {
+      void maybeNotifyFinanceNewWorker(updated.assignedAssociateId);
+    }
 
     await recordShiftEvent({
       actorUserId: req.user!.id,

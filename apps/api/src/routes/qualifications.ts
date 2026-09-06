@@ -7,6 +7,7 @@ import { effectiveClientIdFilter, scopeShifts } from '../lib/scope.js';
 import { hasCapability } from '@alto-people/shared';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { formatShiftLine } from '../lib/notifyShift.js';
+import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
 
 /**
  * Phase 85 — Qualifications + open-shift marketplace.
@@ -511,6 +512,12 @@ qualificationsRouter.put(
         });
       }
     });
+
+    // A pickup can be a new hire's FIRST shift — Fieldglass handoff
+    // (deduped inside; silent unless the associate is approved+scheduled).
+    if (input.status === 'APPROVED') {
+      void maybeNotifyFinanceNewWorker(claim.associateId);
+    }
 
     if (input.status === 'APPROVED' || input.status === 'REJECTED') {
       const shiftLine = formatShiftLine({
