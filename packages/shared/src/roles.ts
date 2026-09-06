@@ -263,6 +263,10 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // statements and owns rate-card economics reads them (writes stay on
     // manage:clients, which finance does not hold).
     'view:clients',
+    // Associate lookup: pay questions, garnishments, and Fieldglass worker
+    // onboarding all start from the person record. Read-only — People
+    // WRITES stay on manage:org.
+    'view:org',
     // Gap 10 — Finance settles approved reimbursements into the next
     // REGULAR run. Cannot approve at the manager step.
     'settle:reimbursement',

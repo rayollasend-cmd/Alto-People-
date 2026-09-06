@@ -2191,7 +2191,10 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                 <AlertTriangle className="mr-1 inline h-3.5 w-3.5" /> Anomalies only
               </button>
 
-              {canManage && (
+              {/* Read-only exports — also for Finance (process:payroll),
+                  who pulls the hours sheet for Fieldglass without holding
+                  the manage:time write capability. */}
+              {(canManage || canProcessPayroll) && (
                 <div className="flex gap-2">
                   <Button
                     type="button"

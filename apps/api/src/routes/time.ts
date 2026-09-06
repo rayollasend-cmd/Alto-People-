@@ -80,6 +80,11 @@ import { renderTimesheetXlsx, timesheetFilename } from '../lib/timesheetXlsx.js'
 export const timeRouter = Router();
 
 const MANAGE = requireCapability('manage:time');
+// Read-only exports (hours CSVs + the payroll HOURS sheet). Finance owns
+// the Fieldglass hours submission (process:payroll) but must not need the
+// manage:time WRITE capability to pull hours — and the SSN+bank external
+// sheet is NOT on this gate; it stays on export:payroll-pii alone.
+const EXPORT_SHEETS = requireAnyCapability('manage:time', 'process:payroll');
 
 type RawEntry = Prisma.TimeEntryGetPayload<{
   include: {
@@ -2317,7 +2322,7 @@ const TIME_SUMMARY_MAX_ROWS = 20000;
 // Per-associate payroll-prep summary: regular vs overtime hours + pay rate,
 // scoped to a facility (Location) over a date range. APPROVED time only —
 // that's what payroll pays.
-timeRouter.post('/admin/export-summary.csv', MANAGE, async (req, res, next) => {
+timeRouter.post('/admin/export-summary.csv', EXPORT_SHEETS, async (req, res, next) => {
   try {
     const parsed = TimeExportInputSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -2475,7 +2480,7 @@ timeRouter.post('/admin/export-summary.csv', MANAGE, async (req, res, next) => {
   }
 });
 
-timeRouter.post('/admin/export.csv', MANAGE, async (req, res, next) => {
+timeRouter.post('/admin/export.csv', EXPORT_SHEETS, async (req, res, next) => {
   try {
     const parsed = TimeExportInputSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -2911,7 +2916,7 @@ function payrollSheetFilename(from: Date, to: Date, ext: string): string {
   return `payroll-sheet-${dayStr(from)}-to-${dayStr(new Date(to.getTime() - 1))}.${ext}`;
 }
 
-timeRouter.post('/admin/payroll-sheet.pdf', MANAGE, async (req, res, next) => {
+timeRouter.post('/admin/payroll-sheet.pdf', EXPORT_SHEETS, async (req, res, next) => {
   try {
     const parsed = TimeExportInputSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -2942,7 +2947,7 @@ timeRouter.post('/admin/payroll-sheet.pdf', MANAGE, async (req, res, next) => {
   }
 });
 
-timeRouter.post('/admin/payroll-sheet.xlsx', MANAGE, async (req, res, next) => {
+timeRouter.post('/admin/payroll-sheet.xlsx', EXPORT_SHEETS, async (req, res, next) => {
   try {
     const parsed = TimeExportInputSchema.safeParse(req.body);
     if (!parsed.success) {

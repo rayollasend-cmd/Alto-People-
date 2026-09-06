@@ -182,6 +182,7 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'clients',
   'labor-costs',
   'billing',
+  'people',
   'time-attendance',
   'time-off',
   'scheduling',
