@@ -39,11 +39,15 @@ export async function maybeNotifyFinanceNewWorker(
   associateId: string,
 ): Promise<void> {
   try {
-    const linkUrl = `/people?fieldglass=${associateId}`;
+    // ?associateId= opens the person's drawer directly in the People
+    // directory — the click lands ON the worker, not on a search box.
+    const linkUrl = `/people?associateId=${associateId}`;
 
-    // Fired already? One notification per worker, ever.
+    // Fired already? One notification per worker, ever. Matched by the
+    // associateId inside the link (not the exact URL) so a link-format
+    // change never re-fires old workers.
     const existing = await prisma.notification.findFirst({
-      where: { category: CATEGORY, linkUrl },
+      where: { category: CATEGORY, linkUrl: { contains: associateId } },
       select: { id: true },
     });
     if (existing) return;
