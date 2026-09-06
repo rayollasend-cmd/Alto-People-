@@ -47,7 +47,7 @@ workforceOverviewRouter.get(
 
       const published = { publishedAt: { not: null } } as const;
 
-      const [activeEntries, todayShifts, tomorrowShifts, weekEvents, incidentsToday, openNext48h] =
+      const [activeEntries, todayShifts, tomorrowShifts, weekEvents, incidentsToday, openNext48h, todayEvents, upcomingOpen] =
         await Promise.all([
           prisma.timeEntry.findMany({
             where: { status: 'ACTIVE' },
@@ -98,17 +98,49 @@ workforceOverviewRouter.get(
               startsAt: { gte: now, lt: new Date(now.getTime() + 48 * HOUR_MS) },
             },
           }),
+          // Today's exception FEED — names, not just counts ("daily
+          // exception post; silence means green").
+          prisma.attendanceEvent.findMany({
+            where: { occurredOn: { gte: todayStart }, excusedAt: null },
+            orderBy: { createdAt: 'desc' },
+            take: 6,
+            select: {
+              kind: true,
+              clientId: true,
+              createdAt: true,
+              associate: { select: { firstName: true, lastName: true } },
+            },
+          }),
+          // The dispatch list itself — the next open shifts to backfill.
+          prisma.shift.findMany({
+            where: {
+              ...published,
+              status: 'OPEN',
+              startsAt: { gte: now, lt: new Date(now.getTime() + 48 * HOUR_MS) },
+            },
+            orderBy: { startsAt: 'asc' },
+            take: 5,
+            select: {
+              id: true,
+              position: true,
+              startsAt: true,
+              client: { select: { name: true } },
+            },
+          }),
         ]);
 
       // Pre-shift check: on the clock with no shift behind the punch.
       const unscheduled = activeEntries.filter((e) => e.shiftId === null);
-      const unscheduledClientIds = [
-        ...new Set(unscheduled.map((e) => e.clientId).filter((c): c is string => !!c)),
+      const nameNeededIds = [
+        ...new Set(
+          [...unscheduled.map((e) => e.clientId), ...todayEvents.map((e) => e.clientId)]
+            .filter((c): c is string => !!c),
+        ),
       ];
       const clientNames = new Map(
         (
           await prisma.client.findMany({
-            where: { id: { in: unscheduledClientIds } },
+            where: { id: { in: nameNeededIds } },
             select: { id: true, name: true },
           })
         ).map((c) => [c.id, c.name]),
@@ -121,20 +153,64 @@ workforceOverviewRouter.get(
           s.endsAt.getTime() > now.getTime(),
       ).length;
 
-      // Today's coverage gaps, by client.
-      const gapMap = new Map<string, { clientName: string; open: number; filled: number }>();
+      // The store board: per-client NOW state (on floor vs scheduled
+      // right now) + today's open count — mission-control rows.
+      const storeMap = new Map<
+        string,
+        { clientName: string; onFloor: number; scheduledNow: number; openToday: number }
+      >();
+      const storeBucket = (id: string | null, name: string | null) => {
+        const key = id ?? 'none';
+        const b =
+          storeMap.get(key) ??
+          { clientName: name ?? '—', onFloor: 0, scheduledNow: 0, openToday: 0 };
+        storeMap.set(key, b);
+        return b;
+      };
       for (const s of todayShifts) {
-        const key = s.client?.id ?? 'none';
-        const bucket =
-          gapMap.get(key) ?? { clientName: s.client?.name ?? '—', open: 0, filled: 0 };
-        if (s.status === 'OPEN') bucket.open += 1;
-        else bucket.filled += 1;
-        gapMap.set(key, bucket);
+        const b = storeBucket(s.client?.id ?? null, s.client?.name ?? null);
+        if (s.status === 'OPEN') b.openToday += 1;
+        else if (
+          s.startsAt.getTime() <= now.getTime() &&
+          s.endsAt.getTime() > now.getTime()
+        ) {
+          b.scheduledNow += 1;
+        }
       }
-      const gaps = [...gapMap.values()]
-        .filter((g) => g.open > 0)
-        .sort((a, b) => b.open - a.open)
-        .slice(0, 5);
+      for (const e of activeEntries) {
+        if (!e.clientId) continue;
+        const existing = storeMap.get(e.clientId);
+        if (existing) existing.onFloor += 1;
+      }
+      // Entries at clients with no shifts today still deserve a row.
+      const missingIds = [
+        ...new Set(
+          activeEntries
+            .map((e) => e.clientId)
+            .filter((c): c is string => !!c && !storeMap.has(c)),
+        ),
+      ];
+      if (missingIds.length > 0) {
+        const named = await prisma.client.findMany({
+          where: { id: { in: missingIds } },
+          select: { id: true, name: true },
+        });
+        for (const c of named) storeBucket(c.id, c.name);
+        for (const e of activeEntries) {
+          if (e.clientId && missingIds.includes(e.clientId)) {
+            storeMap.get(e.clientId)!.onFloor += 1;
+          }
+        }
+      }
+      const stores = [...storeMap.values()]
+        .filter((s) => s.onFloor + s.scheduledNow + s.openToday > 0)
+        .sort(
+          (a, b) =>
+            b.openToday - a.openToday ||
+            (b.scheduledNow - b.onFloor) - (a.scheduledNow - a.onFloor) ||
+            b.scheduledNow - a.scheduledNow,
+        )
+        .slice(0, 6);
 
       const kindCount = (kind: string) =>
         weekEvents.filter((e) => e.kind === kind).length;
@@ -159,6 +235,11 @@ workforceOverviewRouter.get(
         now: {
           onFloor: activeEntries.length,
           scheduledNow,
+          // Faces for the hero — who is actually out there right now.
+          people: activeEntries.slice(0, 12).map((e) => ({
+            associateId: e.associate.id,
+            name: `${e.associate.firstName} ${e.associate.lastName}`.trim(),
+          })),
           unscheduled: unscheduled.slice(0, 10).map((e) => ({
             associateId: e.associate.id,
             name: `${e.associate.firstName} ${e.associate.lastName}`.trim(),
@@ -170,7 +251,16 @@ workforceOverviewRouter.get(
         today: {
           filled: todayShifts.filter((s) => s.status !== 'OPEN').length,
           open: todayShifts.filter((s) => s.status === 'OPEN').length,
-          gaps,
+          stores,
+        },
+        exceptionsToday: {
+          count: todayEvents.length,
+          feed: todayEvents.map((e) => ({
+            kind: e.kind,
+            name: `${e.associate.firstName} ${e.associate.lastName}`.trim(),
+            clientName: e.clientId ? clientNames.get(e.clientId) ?? null : null,
+            at: e.createdAt.toISOString(),
+          })),
         },
         tomorrow: {
           confirmed: tomorrowShifts.filter(
@@ -189,7 +279,15 @@ workforceOverviewRouter.get(
           lates: kindCount('LATE'),
         },
         incidentsToday,
-        dispatch: { openNext48h },
+        dispatch: {
+          openNext48h,
+          upcoming: upcomingOpen.map((s) => ({
+            shiftId: s.id,
+            clientName: s.client?.name ?? '—',
+            position: s.position,
+            startsAt: s.startsAt.toISOString(),
+          })),
+        },
       });
     } catch (err) {
       next(err);

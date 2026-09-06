@@ -14,7 +14,7 @@ import {
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
-import { fmtTime } from '@/lib/format';
+import { fmtDate, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -41,6 +41,7 @@ interface WorkforceOverview {
   now: {
     onFloor: number;
     scheduledNow: number;
+    people: Array<{ associateId: string; name: string }>;
     unscheduled: Array<{
       associateId: string;
       name: string;
@@ -52,7 +53,21 @@ interface WorkforceOverview {
   today: {
     filled: number;
     open: number;
-    gaps: Array<{ clientName: string; open: number; filled: number }>;
+    stores: Array<{
+      clientName: string;
+      onFloor: number;
+      scheduledNow: number;
+      openToday: number;
+    }>;
+  };
+  exceptionsToday: {
+    count: number;
+    feed: Array<{
+      kind: 'NO_CALL_NO_SHOW' | 'CALL_OUT' | 'LATE' | 'EARLY_OUT';
+      name: string;
+      clientName: string | null;
+      at: string;
+    }>;
   };
   tomorrow: { confirmed: number; unconfirmed: number; open: number };
   week: {
@@ -63,7 +78,15 @@ interface WorkforceOverview {
     lates: number;
   };
   incidentsToday: number;
-  dispatch: { openNext48h: number };
+  dispatch: {
+    openNext48h: number;
+    upcoming: Array<{
+      shiftId: string;
+      clientName: string;
+      position: string;
+      startsAt: string;
+    }>;
+  };
 }
 
 function greetKey(hour: number): MessageKey {
@@ -152,23 +175,85 @@ export function WorkforceDashboard() {
             )}
           />
           <CardContent className="relative p-5">
-            <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
-              <Users className="h-3.5 w-3.5" aria-hidden="true" />
-              {t('portal.onFloorNow')}
-            </span>
-            <div className="mt-2 text-5xl md:text-6xl font-bold tracking-tight tabular-nums text-white">
-              {data.now.onFloor}
+            <div className="flex flex-wrap items-start justify-between gap-x-10 gap-y-4">
+              <div className="min-w-0">
+                <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
+                  <Users className="h-3.5 w-3.5" aria-hidden="true" />
+                  {t('portal.onFloorNow')}
+                </span>
+                <div className="mt-2 text-5xl md:text-6xl font-bold tracking-tight tabular-nums text-white">
+                  {data.now.onFloor}
+                </div>
+                <p className="mt-1.5 text-sm text-silver tabular-nums">
+                  {data.now.scheduledNow > 0
+                    ? t('portal.onOfSched', {
+                        on: data.now.onFloor,
+                        sched: data.now.scheduledNow,
+                      })
+                    : data.now.onFloor > 0
+                      ? t('portal.onPlain', { on: data.now.onFloor })
+                      : t('portal.nobodyNow')}
+                </p>
+                {/* Faces, not just a number — the floor is people. */}
+                {data.now.people.length > 0 && (
+                  <div className="mt-3 flex items-center -space-x-2">
+                    {data.now.people.slice(0, 10).map((p) => (
+                      <Avatar
+                        key={p.associateId}
+                        src={`/api/associates/${p.associateId}/photo`}
+                        name={p.name}
+                        email=""
+                        size="md"
+                        ringed
+                      />
+                    ))}
+                    {data.now.onFloor > 10 && (
+                      <span className="pl-4 text-sm text-silver tabular-nums">
+                        +{data.now.onFloor - 10}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+              {/* The store board — per-client NOW bars, red when under. */}
+              {data.today.stores.length > 0 && (
+                <div className="w-full max-w-sm space-y-2.5 sm:w-auto sm:min-w-[260px]">
+                  {data.today.stores.map((s) => {
+                    const under = s.onFloor < s.scheduledNow;
+                    const pct =
+                      s.scheduledNow > 0
+                        ? Math.min(100, (s.onFloor / s.scheduledNow) * 100)
+                        : s.onFloor > 0
+                          ? 100
+                          : 0;
+                    return (
+                      <div key={s.clientName}>
+                        <div className="flex items-baseline justify-between gap-3 text-xs">
+                          <span className="truncate text-white">{s.clientName}</span>
+                          <span className="shrink-0 tabular-nums text-silver">
+                            {t('wf.storeNow', { on: s.onFloor, sched: s.scheduledNow })}
+                            {s.openToday > 0 && (
+                              <span className="text-alert">
+                                {' '}· {t('wf.storeOpen', { count: s.openToday })}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-navy-secondary/50">
+                          <div
+                            className={cn(
+                              'h-full rounded-full',
+                              under ? 'bg-warning/80' : 'bg-success/70',
+                            )}
+                            style={{ width: `${Math.max(4, pct)}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-            <p className="mt-1.5 text-sm text-silver tabular-nums">
-              {data.now.scheduledNow > 0
-                ? t('portal.onOfSched', {
-                    on: data.now.onFloor,
-                    sched: data.now.scheduledNow,
-                  })
-                : data.now.onFloor > 0
-                  ? t('portal.onPlain', { on: data.now.onFloor })
-                  : t('portal.nobodyNow')}
-            </p>
           </CardContent>
         </Card>
       </Link>
@@ -263,33 +348,38 @@ export function WorkforceDashboard() {
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* ---- Today's coverage gaps ---------------------------------- */}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {/* ---- Today's exception feed — names, not counts -------------- */}
         <Card
-          className={cn('animate-enter', data.today.open > 0 && 'border-warning/30')}
+          className={cn(
+            'animate-enter',
+            data.exceptionsToday.count > 0 && 'border-warning/30',
+          )}
           style={enterStagger(6)}
         >
           <CardContent className="p-5">
             <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
               <Store className="h-4 w-4 text-gold" aria-hidden="true" />
-              {t('wf.gaps')}
+              {t('wf.excToday')}
             </h2>
-            {data.today.gaps.length === 0 ? (
-              <p className="mt-3 text-sm text-success">{t('wf.gapsClean')}</p>
+            {data.exceptionsToday.feed.length === 0 ? (
+              <p className="mt-3 text-sm text-success">{t('wf.excTodayClean')}</p>
             ) : (
-              <ul className="mt-3 space-y-2">
-                {data.today.gaps.map((g) => (
-                  <li
-                    key={g.clientName}
-                    className="flex items-baseline justify-between gap-3 text-sm"
-                  >
-                    <span className="truncate text-white">{g.clientName}</span>
-                    <span className="shrink-0 tabular-nums">
-                      <span className="font-semibold text-alert">{g.open}</span>
-                      <span className="text-silver/60">
-                        {' '}· {t('wf.gapLine', { open: g.open, filled: g.filled })}
-                      </span>
+              <ul className="mt-3 divide-y divide-navy-secondary/60">
+                {data.exceptionsToday.feed.map((e, i) => (
+                  <li key={`${e.name}-${e.at}-${i}`} className="py-2 text-sm">
+                    <span
+                      className={cn(
+                        'font-medium',
+                        e.kind === 'NO_CALL_NO_SHOW' ? 'text-alert' : 'text-warning',
+                      )}
+                    >
+                      {t(`wf.kind.${e.kind}` as MessageKey)}
                     </span>
+                    <span className="text-white"> — {e.name}</span>
+                    {e.clientName && (
+                      <span className="text-silver/60"> · {e.clientName}</span>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -297,8 +387,48 @@ export function WorkforceDashboard() {
           </CardContent>
         </Card>
 
+        {/* ---- Dispatch — the actual backfill list --------------------- */}
+        <Card
+          className={cn(
+            'animate-enter',
+            data.dispatch.openNext48h > 0 && 'border-warning/30',
+          )}
+          style={enterStagger(7)}
+        >
+          <CardContent className="p-5">
+            <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
+              <Radio className="h-4 w-4 text-gold" aria-hidden="true" />
+              {t('wf.dispatchTitle')}
+            </h2>
+            {data.dispatch.upcoming.length === 0 ? (
+              <p className="mt-3 text-sm text-success">{t('wf.dispatchNone')}</p>
+            ) : (
+              <>
+                <ul className="mt-3 divide-y divide-navy-secondary/60">
+                  {data.dispatch.upcoming.map((s) => (
+                    <li key={s.shiftId} className="py-2 text-sm">
+                      <span className="font-medium text-white tabular-nums">
+                        {fmtDate(s.startsAt)}, {fmtTime(s.startsAt)}
+                      </span>
+                      <span className="text-silver"> — {s.position}</span>
+                      <span className="text-silver/60"> · {s.clientName}</span>
+                    </li>
+                  ))}
+                </ul>
+                <Link
+                  to="/marketplace"
+                  className="mt-2 inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-9"
+                >
+                  {t('wf.goMarketplace')}
+                  <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                </Link>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
         {/* ---- Tomorrow ------------------------------------------------ */}
-        <Card className="animate-enter" style={enterStagger(7)}>
+        <Card className="animate-enter" style={enterStagger(8)}>
           <CardContent className="p-5">
             <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
               <CalendarDays className="h-4 w-4 text-gold" aria-hidden="true" />
