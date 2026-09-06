@@ -81,12 +81,17 @@ describe('GET /finance/overview', () => {
       },
     });
 
+    // MANAGER_APPROVED requires the approval stamp (DB check constraint
+    // Reimbursement_manager_approved_chk) — mirror the real flow.
+    const { user: mgr } = await createUser({ role: 'OPERATIONS_MANAGER' });
     await prisma.reimbursement.create({
       data: {
         associateId: a1.id,
         title: 'Steel-toe boots',
         totalAmount: 84.5,
         status: 'MANAGER_APPROVED',
+        managerApprovedById: mgr.id,
+        managerApprovedAt: now,
       },
     });
 
