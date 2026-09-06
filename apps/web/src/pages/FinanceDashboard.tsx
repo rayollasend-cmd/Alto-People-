@@ -21,6 +21,7 @@ import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDate, fmtHours, fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
+import { usePersistentState } from '@/lib/usePersistentState';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Avatar } from '@/components/ui/Avatar';
 import { CountUpValue } from '@/components/ui/MetricCard';
@@ -105,6 +106,12 @@ export function FinanceDashboard() {
   const [fgBusy, setFgBusy] = useState<string | null>(null);
   // Which queue row is unfolded to show its Fieldglass entry facts.
   const [fgOpen, setFgOpen] = useState<string | null>(null);
+  // Whole-section collapse, persisted per browser — the count stays
+  // visible on the collapsed header so nothing hides silently.
+  const [fgCollapsed, setFgCollapsed] = usePersistentState<boolean>(
+    'fin.fgCollapsed',
+    false,
+  );
 
   const refreshOverview = () =>
     queryClient.invalidateQueries({ queryKey: ['finance', 'overview'] });
@@ -346,16 +353,39 @@ export function FinanceDashboard() {
         style={enterStagger(5)}
       >
         <CardContent className="p-5">
-          <div className="flex items-baseline justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => setFgCollapsed(!fgCollapsed)}
+            aria-expanded={!fgCollapsed}
+            className="flex w-full items-center justify-between gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+          >
             <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
               <ClipboardCheck className="h-4 w-4 text-gold" aria-hidden="true" />
               {t('fin.fg')}
+              {/* The count never hides — a collapsed section must still
+                  say how many workers are waiting. */}
+              {data.fieldglassQueue.length > 0 && (
+                <span className="rounded-full bg-gold/15 px-2 py-0.5 text-xs font-medium text-gold tabular-nums">
+                  {t('fin.fgWaiting', { count: data.fieldglassQueue.length })}
+                </span>
+              )}
             </h2>
-            {data.fieldglassQueue.length > 0 && (
-              <span className="text-xs text-silver/60">{t('fin.fgSub')}</span>
-            )}
-          </div>
-          {data.fieldglassQueue.length === 0 ? (
+            <span className="flex items-center gap-2">
+              {!fgCollapsed && data.fieldglassQueue.length > 0 && (
+                <span className="hidden sm:inline text-xs text-silver/60">
+                  {t('fin.fgSub')}
+                </span>
+              )}
+              <ChevronDown
+                aria-hidden="true"
+                className={cn(
+                  'h-4 w-4 shrink-0 text-silver/60 transition-transform',
+                  !fgCollapsed && 'rotate-180',
+                )}
+              />
+            </span>
+          </button>
+          {fgCollapsed ? null : data.fieldglassQueue.length === 0 ? (
             <p className="mt-3 text-sm text-success">{t('fin.fgEmpty')}</p>
           ) : (
             <ul className="mt-3 divide-y divide-navy-secondary/60">
