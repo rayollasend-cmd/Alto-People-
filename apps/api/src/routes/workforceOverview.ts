@@ -294,3 +294,66 @@ workforceOverviewRouter.get(
     }
   },
 );
+
+/**
+ * The supervisor corps — the WFM's direct line. Every active shift and
+ * floor supervisor account, with the contact facts that make the call
+ * possible: name/phone/photo from the linked associate record (accounts
+ * themselves carry only an email), grouped by store.
+ */
+workforceOverviewRouter.get(
+  '/workforce/supervisors',
+  requireCapability('manage:scheduling'),
+  async (_req, res, next) => {
+    try {
+      const users = await prisma.user.findMany({
+        where: {
+          status: 'ACTIVE',
+          role: { in: ['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR'] },
+        },
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          clientId: true,
+          associate: {
+            select: { id: true, firstName: true, lastName: true, phone: true },
+          },
+        },
+        take: 200,
+      });
+      const clientIds = [
+        ...new Set(users.map((u) => u.clientId).filter((c): c is string => !!c)),
+      ];
+      const clients = new Map(
+        (
+          await prisma.client.findMany({
+            where: { id: { in: clientIds } },
+            select: { id: true, name: true },
+          })
+        ).map((c) => [c.id, c.name]),
+      );
+      const rows = users
+        .map((u) => ({
+          userId: u.id,
+          role: u.role as 'SHIFT_SUPERVISOR' | 'FLOOR_SUPERVISOR',
+          email: u.email,
+          name: u.associate
+            ? `${u.associate.firstName} ${u.associate.lastName}`.trim()
+            : u.email.split('@')[0]!,
+          phone: u.associate?.phone ?? null,
+          associateId: u.associate?.id ?? null,
+          clientName: u.clientId ? clients.get(u.clientId) ?? null : null,
+        }))
+        .sort(
+          (a, b) =>
+            (a.clientName ?? 'zz').localeCompare(b.clientName ?? 'zz') ||
+            a.role.localeCompare(b.role) ||
+            a.name.localeCompare(b.name),
+        );
+      res.json({ supervisors: rows });
+    } catch (err) {
+      next(err);
+    }
+  },
+);

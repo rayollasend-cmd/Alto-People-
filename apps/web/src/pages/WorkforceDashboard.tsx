@@ -3,8 +3,12 @@ import { useQuery } from '@tanstack/react-query';
 import {
   ArrowRight,
   CalendarDays,
+  ChevronDown,
   ClipboardList,
   Inbox,
+  Mail,
+  MessageSquare,
+  Phone,
   Radio,
   ShieldAlert,
   Store,
@@ -13,6 +17,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { usePersistentState } from '@/lib/usePersistentState';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDate, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -89,6 +94,16 @@ interface WorkforceOverview {
   };
 }
 
+interface SupervisorRow {
+  userId: string;
+  role: 'SHIFT_SUPERVISOR' | 'FLOOR_SUPERVISOR';
+  email: string;
+  name: string;
+  phone: string | null;
+  associateId: string | null;
+  clientName: string | null;
+}
+
 function greetKey(hour: number): MessageKey {
   if (hour < 12) return 'fin.morning';
   if (hour < 17) return 'fin.afternoon';
@@ -105,6 +120,17 @@ export function WorkforceDashboard() {
   });
   const data = query.data;
   const firstName = user?.firstName || (user?.email?.split('@')[0] ?? '');
+  const supsQuery = useQuery({
+    queryKey: ['workforce', 'supervisors'],
+    queryFn: () =>
+      apiFetch<{ supervisors: SupervisorRow[] }>('/workforce/supervisors'),
+    staleTime: 5 * 60_000,
+  });
+  const sups = supsQuery.data?.supervisors ?? [];
+  const [supsCollapsed, setSupsCollapsed] = usePersistentState<boolean>(
+    'wf.supsCollapsed',
+    false,
+  );
 
   if (query.isError) {
     return (
@@ -304,6 +330,107 @@ export function WorkforceDashboard() {
           ) : (
             <p className="mt-3 text-sm text-success">{t('wf.preShiftClean')}</p>
           )}
+        </CardContent>
+      </Card>
+
+      {/* ---- The supervisor corps — the direct line -------------------- */}
+      <Card className="animate-enter" style={enterStagger(2)}>
+        <CardContent className="p-5">
+          <button
+            type="button"
+            onClick={() => setSupsCollapsed(!supsCollapsed)}
+            aria-expanded={!supsCollapsed}
+            className="flex w-full items-center justify-between gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
+          >
+            <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
+              <Phone className="h-4 w-4 text-gold" aria-hidden="true" />
+              {t('wf.sups')}
+              {sups.length > 0 && (
+                <span className="rounded-full bg-gold/15 px-2 py-0.5 text-xs font-medium text-gold tabular-nums">
+                  {t('wf.supsCount', { count: sups.length })}
+                </span>
+              )}
+            </h2>
+            <ChevronDown
+              aria-hidden="true"
+              className={cn(
+                'h-4 w-4 shrink-0 text-silver/60 transition-transform',
+                !supsCollapsed && 'rotate-180',
+              )}
+            />
+          </button>
+          {!supsCollapsed &&
+            (sups.length === 0 ? (
+              <p className="mt-3 text-sm text-silver/60">{t('wf.supsNone')}</p>
+            ) : (
+              <ul className="mt-3 divide-y divide-navy-secondary/60">
+                {sups.map((s) => (
+                  <li key={s.userId} className="flex items-center gap-3 py-2.5">
+                    <Avatar
+                      src={
+                        s.associateId
+                          ? `/api/associates/${s.associateId}/photo`
+                          : null
+                      }
+                      name={s.name}
+                      email={s.email}
+                      size="md"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-sm font-medium text-white">
+                          {s.name}
+                        </span>
+                        <span
+                          className={cn(
+                            'shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium',
+                            s.role === 'SHIFT_SUPERVISOR'
+                              ? 'bg-gold/15 text-gold'
+                              : 'bg-navy-secondary/60 text-silver',
+                          )}
+                        >
+                          {t(
+                            s.role === 'SHIFT_SUPERVISOR'
+                              ? 'wf.roleShift'
+                              : 'wf.roleFloor',
+                          )}
+                        </span>
+                      </div>
+                      <div className="truncate text-xs text-silver/70">
+                        {s.clientName ?? '—'}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {s.phone && (
+                        <>
+                          <a
+                            href={`tel:${s.phone}`}
+                            aria-label={`${t('me.mgr.call')} ${s.name}`}
+                            className="grid h-9 w-9 place-items-center rounded-md border border-navy-secondary text-silver transition-colors hover:border-gold/50 hover:text-gold"
+                          >
+                            <Phone className="h-4 w-4" aria-hidden="true" />
+                          </a>
+                          <a
+                            href={`sms:${s.phone}`}
+                            aria-label={`${t('me.mgr.text')} ${s.name}`}
+                            className="grid h-9 w-9 place-items-center rounded-md border border-navy-secondary text-silver transition-colors hover:border-gold/50 hover:text-gold"
+                          >
+                            <MessageSquare className="h-4 w-4" aria-hidden="true" />
+                          </a>
+                        </>
+                      )}
+                      <a
+                        href={`mailto:${s.email}`}
+                        aria-label={`${t('me.mgr.email')} ${s.name}`}
+                        className="grid h-9 w-9 place-items-center rounded-md border border-navy-secondary text-silver transition-colors hover:border-gold/50 hover:text-gold"
+                      >
+                        <Mail className="h-4 w-4" aria-hidden="true" />
+                      </a>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ))}
         </CardContent>
       </Card>
 

@@ -106,6 +106,33 @@ describe('GET /workforce/overview', () => {
     expect(res.body.dispatch.openNext48h).toBeGreaterThanOrEqual(1);
   });
 
+  it('lists the supervisor corps with contact facts from the linked associate', async () => {
+    const client = await createClient('Front Beach 218');
+    const supAssoc = await createAssociate({ firstName: 'Rae', lastName: 'Lead' });
+    await prisma.associate.update({
+      where: { id: supAssoc.id },
+      data: { phone: '+1 555 010 0200' },
+    });
+    await createUser({
+      role: 'SHIFT_SUPERVISOR',
+      email: supAssoc.email,
+      associateId: supAssoc.id,
+      clientId: client.id,
+    });
+    await createUser({ role: 'FLOOR_SUPERVISOR', clientId: client.id });
+
+    const { user } = await createUser({ role: 'WORKFORCE_MANAGER' });
+    const res = await (await loginAs(user.email)).get('/workforce/supervisors');
+    expect(res.status).toBe(200);
+    expect(res.body.supervisors).toHaveLength(2);
+    const shift = res.body.supervisors.find(
+      (s: { role: string }) => s.role === 'SHIFT_SUPERVISOR',
+    );
+    expect(shift.name).toBe('Rae Lead');
+    expect(shift.phone).toBe('+1 555 010 0200');
+    expect(shift.clientName).toBe('Front Beach 218');
+  });
+
   it('right-sized role: workforce manager is OUT of payroll', async () => {
     const { user } = await createUser({ role: 'WORKFORCE_MANAGER' });
     const agent = await loginAs(user.email);
