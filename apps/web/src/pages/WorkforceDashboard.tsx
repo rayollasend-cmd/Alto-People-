@@ -3,43 +3,67 @@ import { useQuery } from '@tanstack/react-query';
 import {
   ArrowRight,
   CalendarDays,
-  ChevronDown,
   ClipboardList,
   Inbox,
   Mail,
-  MessageSquare,
   Phone,
   Radio,
   ShieldAlert,
   Store,
-  UserX,
-  Users,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { usePersistentState } from '@/lib/usePersistentState';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDate, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { Card, CardContent } from '@/components/ui/Card';
-import { CountUpValue } from '@/components/ui/MetricCard';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
- * The Workforce Manager's field cockpit — the corporate connection to
- * the store floor, in the owner's charter language:
+ * The Workforce Manager's COMMAND CENTER — the engine room of the
+ * company, structured the way the field actually is: stores.
  *
- *   ON THE FLOOR NOW (hero) → PRE-SHIFT CHECK (unscheduled punches, by
- *   name — "go home before clock-in") → the four field counters (fill /
- *   exceptions / incidents / dispatch) → today's coverage gaps by store
- *   → tomorrow's headcount → the six doors the day walks through.
+ *   COMMAND STRIP — one instrument row of global truth (floor count,
+ *   stores needing you, unscheduled punches, fill, incidents, dispatch,
+ *   tomorrow).
  *
- * "Silence means green": every card has an explicit all-clear state.
+ *   THE BOARD — every operationally-live store as a status tile,
+ *   triage-sorted red → amber → green: its coverage bar, its problems
+ *   as chips, its supervisors with one-tap call. The board itself says
+ *   where to point.
+ *
+ *   LIVE WIRE — everything happening everywhere, newest first:
+ *   no-shows, incidents, unscheduled punches. Plus the dispatch list.
+ *
+ * Polls every 60s. Every state has an explicit all-clear.
  */
+
+interface StoreTile {
+  clientId: string | null;
+  clientName: string;
+  onFloor: number;
+  scheduledNow: number;
+  openToday: number;
+  unconfirmedTomorrow: number;
+  openTomorrow: number;
+  exceptionsToday: number;
+  noShowsToday: number;
+  incidentsToday: number;
+  unscheduledNow: number;
+  status: 'red' | 'amber' | 'green';
+}
+
+interface WireItem {
+  type: 'exception' | 'incident' | 'unscheduled';
+  kind: string | null;
+  name: string | null;
+  clientName: string | null;
+  at: string;
+}
 
 interface WorkforceOverview {
   generatedAt: string;
@@ -55,25 +79,8 @@ interface WorkforceOverview {
     }>;
     unscheduledCount: number;
   };
-  today: {
-    filled: number;
-    open: number;
-    stores: Array<{
-      clientName: string;
-      onFloor: number;
-      scheduledNow: number;
-      openToday: number;
-    }>;
-  };
-  exceptionsToday: {
-    count: number;
-    feed: Array<{
-      kind: 'NO_CALL_NO_SHOW' | 'CALL_OUT' | 'LATE' | 'EARLY_OUT';
-      name: string;
-      clientName: string | null;
-      at: string;
-    }>;
-  };
+  today: { filled: number; open: number; stores: StoreTile[] };
+  exceptionsToday: { count: number; feed: unknown[] };
   tomorrow: { confirmed: number; unconfirmed: number; open: number };
   week: {
     start: string;
@@ -83,6 +90,8 @@ interface WorkforceOverview {
     lates: number;
   };
   incidentsToday: number;
+  needsAttention: number;
+  wire: WireItem[];
   dispatch: {
     openNext48h: number;
     upcoming: Array<{
@@ -101,8 +110,20 @@ interface SupervisorRow {
   name: string;
   phone: string | null;
   associateId: string | null;
+  clientId: string | null;
   clientName: string | null;
 }
+
+const STATUS_EDGE: Record<StoreTile['status'], string> = {
+  red: 'border-l-alert',
+  amber: 'border-l-warning',
+  green: 'border-l-success/70',
+};
+const STATUS_DOT: Record<StoreTile['status'], string> = {
+  red: 'bg-alert',
+  amber: 'bg-warning',
+  green: 'bg-success/80',
+};
 
 function greetKey(hour: number): MessageKey {
   if (hour < 12) return 'fin.morning';
@@ -118,19 +139,21 @@ export function WorkforceDashboard() {
     queryFn: () => apiFetch<WorkforceOverview>('/workforce/overview'),
     refetchInterval: 60_000,
   });
-  const data = query.data;
-  const firstName = user?.firstName || (user?.email?.split('@')[0] ?? '');
   const supsQuery = useQuery({
     queryKey: ['workforce', 'supervisors'],
     queryFn: () =>
       apiFetch<{ supervisors: SupervisorRow[] }>('/workforce/supervisors'),
     staleTime: 5 * 60_000,
   });
-  const sups = supsQuery.data?.supervisors ?? [];
-  const [supsCollapsed, setSupsCollapsed] = usePersistentState<boolean>(
-    'wf.supsCollapsed',
-    false,
-  );
+  const data = query.data;
+  const supsByClient = new Map<string, SupervisorRow[]>();
+  for (const s of supsQuery.data?.supervisors ?? []) {
+    if (!s.clientId) continue;
+    const list = supsByClient.get(s.clientId) ?? [];
+    list.push(s);
+    supsByClient.set(s.clientId, list);
+  }
+  const firstName = user?.firstName || (user?.email?.split('@')[0] ?? '');
 
   if (query.isError) {
     return (
@@ -153,20 +176,56 @@ export function WorkforceDashboard() {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-1/3" />
-        <Skeleton className="h-40" />
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <Skeleton className="h-28" />
-          <Skeleton className="h-28" />
-          <Skeleton className="h-28 hidden lg:block" />
-          <Skeleton className="h-28 hidden lg:block" />
+        <Skeleton className="h-28" />
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <Skeleton className="h-72 lg:col-span-2" />
+          <Skeleton className="h-72" />
         </div>
       </div>
     );
   }
 
-  const preShiftHot = data.now.unscheduledCount > 0;
-  const exceptions =
-    data.week.noCallNoShows + data.week.callOuts + data.week.lates;
+  const instruments: Array<{
+    value: string;
+    label: string;
+    tone?: 'alert' | 'warning' | 'plain';
+    to: string;
+  }> = [
+    {
+      value: String(data.needsAttention),
+      label: t('wf.instrNeeds'),
+      tone: data.needsAttention > 0 ? 'alert' : 'plain',
+      to: '/scheduling',
+    },
+    {
+      value: String(data.now.unscheduledCount),
+      label: t('wf.instrUnsched'),
+      tone: data.now.unscheduledCount > 0 ? 'alert' : 'plain',
+      to: '/time-attendance',
+    },
+    {
+      value: data.week.fillRatePct !== null ? `${data.week.fillRatePct}%` : '—',
+      label: t('wf.instrFill'),
+      to: '/scheduling',
+    },
+    {
+      value: String(data.incidentsToday),
+      label: t('wf.instrIncidents'),
+      tone: data.incidentsToday > 0 ? 'alert' : 'plain',
+      to: '/compliance',
+    },
+    {
+      value: String(data.dispatch.openNext48h),
+      label: t('wf.instrOpen48'),
+      tone: data.dispatch.openNext48h > 0 ? 'warning' : 'plain',
+      to: '/marketplace',
+    },
+    {
+      value: String(data.tomorrow.confirmed),
+      label: t('wf.instrTomorrow'),
+      to: '/scheduling',
+    },
+  ];
 
   return (
     <div className="mx-auto space-y-5">
@@ -188,397 +247,284 @@ export function WorkforceDashboard() {
         </p>
       </div>
 
-      {/* ---- The floor now -------------------------------------------- */}
-      <Link to="/time-attendance" className="block group">
-        <Card className="relative overflow-hidden border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent animate-enter transition-colors group-hover:border-gold/50">
-          <div
-            aria-hidden="true"
-            className={cn(
-              'pointer-events-none absolute inset-0',
-              data.now.onFloor > 0
-                ? 'bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-success)/0.14),transparent_55%)]'
-                : 'bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]',
-            )}
-          />
-          <CardContent className="relative p-5">
-            <div className="flex flex-wrap items-start justify-between gap-x-10 gap-y-4">
-              <div className="min-w-0">
-                <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
-                  <Users className="h-3.5 w-3.5" aria-hidden="true" />
-                  {t('portal.onFloorNow')}
+      {/* ---- Command strip: the instrument row -------------------------- */}
+      <Card className="relative overflow-hidden border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent animate-enter">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]"
+        />
+        <CardContent className="relative p-5">
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
+            <Link to="/time-attendance" className="group shrink-0">
+              <div className="text-5xl md:text-6xl font-bold tracking-tight tabular-nums text-white group-hover:text-gold-bright transition-colors">
+                {data.now.onFloor}
+                <span className="ml-2 align-middle text-base font-normal text-silver">
+                  / {data.now.scheduledNow}
                 </span>
-                <div className="mt-2 text-5xl md:text-6xl font-bold tracking-tight tabular-nums text-white">
-                  {data.now.onFloor}
-                </div>
-                <p className="mt-1.5 text-sm text-silver tabular-nums">
-                  {data.now.scheduledNow > 0
-                    ? t('portal.onOfSched', {
-                        on: data.now.onFloor,
-                        sched: data.now.scheduledNow,
-                      })
-                    : data.now.onFloor > 0
-                      ? t('portal.onPlain', { on: data.now.onFloor })
-                      : t('portal.nobodyNow')}
-                </p>
-                {/* Faces, not just a number — the floor is people. */}
-                {data.now.people.length > 0 && (
-                  <div className="mt-3 flex items-center -space-x-2">
-                    {data.now.people.slice(0, 10).map((p) => (
-                      <Avatar
-                        key={p.associateId}
-                        src={`/api/associates/${p.associateId}/photo`}
-                        name={p.name}
-                        email=""
-                        size="md"
-                        ringed
-                      />
-                    ))}
-                    {data.now.onFloor > 10 && (
-                      <span className="pl-4 text-sm text-silver tabular-nums">
-                        +{data.now.onFloor - 10}
-                      </span>
-                    )}
-                  </div>
-                )}
               </div>
-              {/* The store board — per-client NOW bars, red when under. */}
-              {data.today.stores.length > 0 && (
-                <div className="w-full max-w-sm space-y-2.5 sm:w-auto sm:min-w-[260px]">
-                  {data.today.stores.map((s) => {
-                    const under = s.onFloor < s.scheduledNow;
-                    const pct =
-                      s.scheduledNow > 0
-                        ? Math.min(100, (s.onFloor / s.scheduledNow) * 100)
-                        : s.onFloor > 0
-                          ? 100
-                          : 0;
-                    return (
-                      <div key={s.clientName}>
-                        <div className="flex items-baseline justify-between gap-3 text-xs">
-                          <span className="truncate text-white">{s.clientName}</span>
-                          <span className="shrink-0 tabular-nums text-silver">
-                            {t('wf.storeNow', { on: s.onFloor, sched: s.scheduledNow })}
-                            {s.openToday > 0 && (
-                              <span className="text-alert">
-                                {' '}· {t('wf.storeOpen', { count: s.openToday })}
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-navy-secondary/50">
-                          <div
-                            className={cn(
-                              'h-full rounded-full',
-                              under ? 'bg-warning/80' : 'bg-success/70',
-                            )}
-                            style={{ width: `${Math.max(4, pct)}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <div className="mt-1 text-sm text-silver">{t('wf.instrFloor')}</div>
+            </Link>
+            <div
+              aria-hidden="true"
+              className="hidden h-12 w-px bg-navy-secondary sm:block"
+            />
+            <div className="grid flex-1 grid-cols-3 gap-x-6 gap-y-3 sm:grid-cols-6">
+              {instruments.map((ins) => (
+                <Link key={ins.label} to={ins.to} className="group min-w-0">
+                  <div
+                    className={cn(
+                      'text-2xl font-bold tracking-tight tabular-nums transition-colors',
+                      ins.tone === 'alert'
+                        ? 'text-alert'
+                        : ins.tone === 'warning'
+                          ? 'text-warning'
+                          : 'text-white group-hover:text-gold-bright',
+                    )}
+                  >
+                    {ins.value}
+                  </div>
+                  <div className="mt-0.5 truncate text-xs text-silver/70">
+                    {ins.label}
+                  </div>
+                </Link>
+              ))}
             </div>
-          </CardContent>
-        </Card>
-      </Link>
-
-      {/* ---- Pre-shift check ------------------------------------------ */}
-      <Card
-        className={cn('animate-enter', preShiftHot && 'border-alert/40')}
-        style={enterStagger(1)}
-      >
-        <CardContent className="p-5">
-          <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
-            <UserX
-              className={cn('h-4 w-4', preShiftHot ? 'text-alert' : 'text-gold')}
-              aria-hidden="true"
-            />
-            {t('wf.preShift')}
-          </h2>
-          {preShiftHot ? (
-            <>
-              <p className="mt-1 text-sm font-medium text-alert tabular-nums">
-                {t('wf.preShiftAlert', { count: data.now.unscheduledCount })}
-              </p>
-              <ul className="mt-2 divide-y divide-navy-secondary/60">
-                {data.now.unscheduled.map((p) => (
-                  <li key={p.associateId} className="flex items-center gap-3 py-2">
-                    <Avatar
-                      src={`/api/associates/${p.associateId}/photo`}
-                      name={p.name}
-                      email=""
-                      size="sm"
-                    />
-                    <Link
-                      to={`/people?associateId=${p.associateId}&return=${encodeURIComponent('/')}`}
-                      className="min-w-0 flex-1 truncate text-sm text-white hover:text-gold"
-                    >
-                      {p.name}
-                      {p.clientName && (
-                        <span className="text-silver/80"> · {p.clientName}</span>
-                      )}
-                    </Link>
-                    <span className="shrink-0 text-xs text-silver tabular-nums">
-                      {t('wf.preShiftSince', { time: fmtTime(p.clockInAt) })}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </>
-          ) : (
-            <p className="mt-3 text-sm text-success">{t('wf.preShiftClean')}</p>
-          )}
+          </div>
         </CardContent>
       </Card>
-
-      {/* ---- The supervisor corps — the direct line -------------------- */}
-      <Card className="animate-enter" style={enterStagger(2)}>
-        <CardContent className="p-5">
-          <button
-            type="button"
-            onClick={() => setSupsCollapsed(!supsCollapsed)}
-            aria-expanded={!supsCollapsed}
-            className="flex w-full items-center justify-between gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded"
-          >
-            <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
-              <Phone className="h-4 w-4 text-gold" aria-hidden="true" />
-              {t('wf.sups')}
-              {sups.length > 0 && (
-                <span className="rounded-full bg-gold/15 px-2 py-0.5 text-xs font-medium text-gold tabular-nums">
-                  {t('wf.supsCount', { count: sups.length })}
-                </span>
-              )}
-            </h2>
-            <ChevronDown
-              aria-hidden="true"
-              className={cn(
-                'h-4 w-4 shrink-0 text-silver/60 transition-transform',
-                !supsCollapsed && 'rotate-180',
-              )}
-            />
-          </button>
-          {!supsCollapsed &&
-            (sups.length === 0 ? (
-              <p className="mt-3 text-sm text-silver/60">{t('wf.supsNone')}</p>
-            ) : (
-              <ul className="mt-3 divide-y divide-navy-secondary/60">
-                {sups.map((s) => (
-                  <li key={s.userId} className="flex items-center gap-3 py-2.5">
-                    <Avatar
-                      src={
-                        s.associateId
-                          ? `/api/associates/${s.associateId}/photo`
-                          : null
-                      }
-                      name={s.name}
-                      email={s.email}
-                      size="md"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="truncate text-sm font-medium text-white">
-                          {s.name}
-                        </span>
-                        <span
-                          className={cn(
-                            'shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium',
-                            s.role === 'SHIFT_SUPERVISOR'
-                              ? 'bg-gold/15 text-gold'
-                              : 'bg-navy-secondary/60 text-silver',
-                          )}
-                        >
-                          {t(
-                            s.role === 'SHIFT_SUPERVISOR'
-                              ? 'wf.roleShift'
-                              : 'wf.roleFloor',
-                          )}
-                        </span>
-                      </div>
-                      <div className="truncate text-xs text-silver/70">
-                        {s.clientName ?? '—'}
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      {s.phone && (
-                        <>
-                          <a
-                            href={`tel:${s.phone}`}
-                            aria-label={`${t('me.mgr.call')} ${s.name}`}
-                            className="grid h-9 w-9 place-items-center rounded-md border border-navy-secondary text-silver transition-colors hover:border-gold/50 hover:text-gold"
-                          >
-                            <Phone className="h-4 w-4" aria-hidden="true" />
-                          </a>
-                          <a
-                            href={`sms:${s.phone}`}
-                            aria-label={`${t('me.mgr.text')} ${s.name}`}
-                            className="grid h-9 w-9 place-items-center rounded-md border border-navy-secondary text-silver transition-colors hover:border-gold/50 hover:text-gold"
-                          >
-                            <MessageSquare className="h-4 w-4" aria-hidden="true" />
-                          </a>
-                        </>
-                      )}
-                      <a
-                        href={`mailto:${s.email}`}
-                        aria-label={`${t('me.mgr.email')} ${s.name}`}
-                        className="grid h-9 w-9 place-items-center rounded-md border border-navy-secondary text-silver transition-colors hover:border-gold/50 hover:text-gold"
-                      >
-                        <Mail className="h-4 w-4" aria-hidden="true" />
-                      </a>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ))}
-        </CardContent>
-      </Card>
-
-      {/* ---- The four field counters ----------------------------------- */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <WfKpi
-          to="/scheduling"
-          label={t('wf.kpiFill')}
-          value={data.week.fillRatePct !== null ? `${data.week.fillRatePct}%` : '—'}
-          stagger={2}
-        />
-        <WfKpi
-          to="/time-attendance"
-          label={t('wf.kpiExceptions')}
-          value={String(exceptions)}
-          hot={exceptions > 0}
-          hint={
-            exceptions > 0
-              ? t('wf.excBreakdown', {
-                  ns: data.week.noCallNoShows,
-                  co: data.week.callOuts,
-                  late: data.week.lates,
-                })
-              : t('wf.silenceGreen')
-          }
-          stagger={3}
-        />
-        <WfKpi
-          to="/compliance"
-          label={t('wf.kpiIncidents')}
-          value={String(data.incidentsToday)}
-          hot={data.incidentsToday > 0}
-          hotTone="alert"
-          stagger={4}
-        />
-        <WfKpi
-          to="/marketplace"
-          label={t('wf.kpiDispatch')}
-          value={String(data.dispatch.openNext48h)}
-          hot={data.dispatch.openNext48h > 0}
-          stagger={5}
-        />
-      </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* ---- Today's exception feed — names, not counts -------------- */}
-        <Card
-          className={cn(
-            'animate-enter',
-            data.exceptionsToday.count > 0 && 'border-warning/30',
-          )}
-          style={enterStagger(6)}
-        >
-          <CardContent className="p-5">
+        {/* ---- THE BOARD ---------------------------------------------- */}
+        <div className="lg:col-span-2">
+          <div className="mb-2 flex items-baseline justify-between gap-3">
             <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
               <Store className="h-4 w-4 text-gold" aria-hidden="true" />
-              {t('wf.excToday')}
+              {t('wf.board')}
             </h2>
-            {data.exceptionsToday.feed.length === 0 ? (
-              <p className="mt-3 text-sm text-success">{t('wf.excTodayClean')}</p>
-            ) : (
-              <ul className="mt-3 divide-y divide-navy-secondary/60">
-                {data.exceptionsToday.feed.map((e, i) => (
-                  <li key={`${e.name}-${e.at}-${i}`} className="py-2 text-sm">
-                    <span
-                      className={cn(
-                        'font-medium',
-                        e.kind === 'NO_CALL_NO_SHOW' ? 'text-alert' : 'text-warning',
-                      )}
-                    >
-                      {t(`wf.kind.${e.kind}` as MessageKey)}
-                    </span>
-                    <span className="text-white"> — {e.name}</span>
-                    {e.clientName && (
-                      <span className="text-silver/60"> · {e.clientName}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* ---- Dispatch — the actual backfill list --------------------- */}
-        <Card
-          className={cn(
-            'animate-enter',
-            data.dispatch.openNext48h > 0 && 'border-warning/30',
-          )}
-          style={enterStagger(7)}
-        >
-          <CardContent className="p-5">
-            <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
-              <Radio className="h-4 w-4 text-gold" aria-hidden="true" />
-              {t('wf.dispatchTitle')}
-            </h2>
-            {data.dispatch.upcoming.length === 0 ? (
-              <p className="mt-3 text-sm text-success">{t('wf.dispatchNone')}</p>
-            ) : (
-              <>
-                <ul className="mt-3 divide-y divide-navy-secondary/60">
-                  {data.dispatch.upcoming.map((s) => (
-                    <li key={s.shiftId} className="py-2 text-sm">
-                      <span className="font-medium text-white tabular-nums">
-                        {fmtDate(s.startsAt)}, {fmtTime(s.startsAt)}
+            <span
+              className={cn(
+                'text-xs tabular-nums',
+                data.needsAttention > 0 ? 'text-alert' : 'text-success',
+              )}
+            >
+              {data.needsAttention > 0
+                ? t('wf.needsYou', { count: data.needsAttention })
+                : t('wf.allGreenBoard')}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {data.today.stores.map((s, i) => {
+              const sups = s.clientId ? supsByClient.get(s.clientId) ?? [] : [];
+              const chips: Array<{ text: string; cls: string }> = [
+                s.noShowsToday > 0 && {
+                  text: t('wf.tileNoShows', { count: s.noShowsToday }),
+                  cls: 'bg-alert/15 text-alert',
+                },
+                s.incidentsToday > 0 && {
+                  text: t('wf.tileIncidents', { count: s.incidentsToday }),
+                  cls: 'bg-alert/15 text-alert',
+                },
+                s.unscheduledNow > 0 && {
+                  text: t('wf.tileUnsched', { count: s.unscheduledNow }),
+                  cls: 'bg-alert/15 text-alert',
+                },
+                s.openToday > 0 && {
+                  text: t('wf.storeOpen', { count: s.openToday }),
+                  cls: 'bg-warning/15 text-warning',
+                },
+                s.unconfirmedTomorrow > 0 && {
+                  text: t('wf.tileUnconf', { count: s.unconfirmedTomorrow }),
+                  cls: 'bg-warning/15 text-warning',
+                },
+              ].filter(Boolean) as Array<{ text: string; cls: string }>;
+              const pct =
+                s.scheduledNow > 0
+                  ? Math.min(100, (s.onFloor / s.scheduledNow) * 100)
+                  : s.onFloor > 0
+                    ? 100
+                    : 0;
+              return (
+                <Card
+                  key={s.clientName}
+                  className={cn(
+                    'animate-enter border-l-2',
+                    STATUS_EDGE[s.status],
+                  )}
+                  style={enterStagger(i, 40, 8)}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate text-sm font-semibold text-white">
+                        {s.clientName}
                       </span>
-                      <span className="text-silver"> — {s.position}</span>
-                      <span className="text-silver/60"> · {s.clientName}</span>
+                      <span className="flex shrink-0 items-center gap-1.5 text-xs tabular-nums text-silver">
+                        <span
+                          aria-hidden="true"
+                          className={cn('h-2 w-2 rounded-full', STATUS_DOT[s.status])}
+                        />
+                        {t('wf.storeNow', { on: s.onFloor, sched: s.scheduledNow })}
+                      </span>
+                    </div>
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-navy-secondary/50">
+                      <div
+                        className={cn(
+                          'h-full rounded-full',
+                          s.onFloor < s.scheduledNow ? 'bg-warning/80' : 'bg-success/70',
+                        )}
+                        style={{ width: `${Math.max(4, pct)}%` }}
+                      />
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {chips.length === 0 ? (
+                        <span className="text-xs text-success">{t('wf.tileQuiet')}</span>
+                      ) : (
+                        chips.map((c) => (
+                          <span
+                            key={c.text}
+                            className={cn(
+                              'rounded-full px-2 py-0.5 text-2xs font-medium tabular-nums',
+                              c.cls,
+                            )}
+                          >
+                            {c.text}
+                          </span>
+                        ))
+                      )}
+                    </div>
+                    {sups.length > 0 && (
+                      <div className="mt-3 space-y-1.5 border-t border-navy-secondary/60 pt-2.5">
+                        {sups.slice(0, 3).map((sup) => (
+                          <div key={sup.userId} className="flex items-center gap-2">
+                            <Avatar
+                              src={
+                                sup.associateId
+                                  ? `/api/associates/${sup.associateId}/photo`
+                                  : null
+                              }
+                              name={sup.name}
+                              email={sup.email}
+                              size="xs"
+                            />
+                            <span className="min-w-0 flex-1 truncate text-xs text-silver">
+                              {sup.name}
+                              <span className="text-silver/50">
+                                {' '}· {t(
+                                  sup.role === 'SHIFT_SUPERVISOR'
+                                    ? 'wf.roleShift'
+                                    : 'wf.roleFloor',
+                                )}
+                              </span>
+                            </span>
+                            {sup.phone && (
+                              <a
+                                href={`tel:${sup.phone}`}
+                                aria-label={`${t('me.mgr.call')} ${sup.name}`}
+                                className="grid h-7 w-7 shrink-0 place-items-center rounded text-silver/70 transition-colors hover:text-gold"
+                              >
+                                <Phone className="h-3.5 w-3.5" aria-hidden="true" />
+                              </a>
+                            )}
+                            <a
+                              href={`mailto:${sup.email}`}
+                              aria-label={`${t('me.mgr.email')} ${sup.name}`}
+                              className="grid h-7 w-7 shrink-0 place-items-center rounded text-silver/70 transition-colors hover:text-gold"
+                            >
+                              <Mail className="h-3.5 w-3.5" aria-hidden="true" />
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ---- LIVE WIRE + dispatch ------------------------------------ */}
+        <div className="space-y-4">
+          <Card className="animate-enter" style={enterStagger(2)}>
+            <CardContent className="p-4">
+              <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
+                <Radio className="h-4 w-4 text-gold" aria-hidden="true" />
+                {t('wf.wire')}
+              </h2>
+              {data.wire.length === 0 ? (
+                <p className="mt-3 text-sm text-success">{t('wf.wireQuiet')}</p>
+              ) : (
+                <ul className="mt-3 space-y-2.5">
+                  {data.wire.map((w, i) => (
+                    <li key={`${w.type}-${w.at}-${i}`} className="flex gap-2.5 text-xs">
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          'mt-1 h-2 w-2 shrink-0 rounded-full',
+                          w.type === 'incident' || w.kind === 'NO_CALL_NO_SHOW' || w.type === 'unscheduled'
+                            ? 'bg-alert'
+                            : 'bg-warning',
+                        )}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="font-medium text-white">
+                          {w.type === 'incident'
+                            ? t('wf.incidentWord')
+                            : w.type === 'unscheduled'
+                              ? t('wf.unschedPunch')
+                              : t(`wf.kind.${w.kind}` as MessageKey)}
+                        </span>
+                        {w.name && <span className="text-silver"> — {w.name}</span>}
+                        {w.clientName && (
+                          <span className="text-silver/60"> · {w.clientName}</span>
+                        )}
+                        <span className="text-silver/40 tabular-nums"> · {fmtTime(w.at)}</span>
+                      </span>
                     </li>
                   ))}
                 </ul>
-                <Link
-                  to="/marketplace"
-                  className="mt-2 inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-9"
-                >
-                  {t('wf.goMarketplace')}
-                  <ArrowRight className="h-3 w-3" aria-hidden="true" />
-                </Link>
-              </>
-            )}
-          </CardContent>
-        </Card>
+              )}
+            </CardContent>
+          </Card>
 
-        {/* ---- Tomorrow ------------------------------------------------ */}
-        <Card className="animate-enter" style={enterStagger(8)}>
-          <CardContent className="p-5">
-            <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
-              <CalendarDays className="h-4 w-4 text-gold" aria-hidden="true" />
-              {t('portal.tomorrow')}
-            </h2>
-            <div className="mt-2 text-4xl font-bold tracking-tight tabular-nums text-white">
-              {data.tomorrow.confirmed}
-              <span className="ml-2 text-base font-normal text-silver">
-                {t('portal.confirmedWord')}
-              </span>
-            </div>
-            <p className="mt-1.5 text-sm text-silver tabular-nums">
-              {[
-                data.tomorrow.unconfirmed > 0 &&
-                  t('portal.awaiting', { count: data.tomorrow.unconfirmed }),
-                data.tomorrow.open > 0 &&
-                  t('portal.openCount', { count: data.tomorrow.open }),
-              ]
-                .filter(Boolean)
-                .join(' · ') || t('wf.gapsClean')}
-            </p>
-          </CardContent>
-        </Card>
+          <Card
+            className={cn(
+              'animate-enter',
+              data.dispatch.openNext48h > 0 && 'border-warning/30',
+            )}
+            style={enterStagger(3)}
+          >
+            <CardContent className="p-4">
+              <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
+                <Inbox className="h-4 w-4 text-gold" aria-hidden="true" />
+                {t('wf.dispatchTitle')}
+              </h2>
+              {data.dispatch.upcoming.length === 0 ? (
+                <p className="mt-3 text-sm text-success">{t('wf.dispatchNone')}</p>
+              ) : (
+                <>
+                  <ul className="mt-3 divide-y divide-navy-secondary/60">
+                    {data.dispatch.upcoming.map((s) => (
+                      <li key={s.shiftId} className="py-2 text-xs">
+                        <span className="font-medium text-white tabular-nums">
+                          {fmtDate(s.startsAt)}, {fmtTime(s.startsAt)}
+                        </span>
+                        <span className="text-silver"> — {s.position}</span>
+                        <span className="text-silver/60"> · {s.clientName}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <Link
+                    to="/marketplace"
+                    className="mt-2 inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-9"
+                  >
+                    {t('wf.goMarketplace')}
+                    <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                  </Link>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       {/* ---- The six doors --------------------------------------------- */}
@@ -611,54 +557,5 @@ export function WorkforceDashboard() {
         ))}
       </div>
     </div>
-  );
-}
-
-/** Same gold-rail KPI tile grammar as the finance cockpit. */
-function WfKpi({
-  to,
-  label,
-  value,
-  hint,
-  hot = false,
-  hotTone = 'warning',
-  stagger,
-}: {
-  to: string;
-  label: string;
-  value: string;
-  hint?: string;
-  hot?: boolean;
-  hotTone?: 'warning' | 'alert';
-  stagger: number;
-}) {
-  return (
-    <Link to={to} className="group block" style={enterStagger(stagger)}>
-      <Card
-        interactive
-        className="h-full animate-enter border-l-2 border-l-gold/40 transition-colors group-hover:border-l-gold"
-      >
-        <CardContent className="pt-5">
-          <div className="text-2xs font-medium uppercase tracking-[0.14em] text-silver/70">
-            {label}
-          </div>
-          <div
-            className={cn(
-              'mt-3 font-display text-3xl leading-none tabular-nums',
-              hot
-                ? hotTone === 'alert'
-                  ? 'text-alert'
-                  : 'text-warning'
-                : 'text-gold-bright',
-            )}
-          >
-            <CountUpValue value={value} />
-          </div>
-          {hint && (
-            <div className="mt-2 truncate text-xs text-silver">{hint}</div>
-          )}
-        </CardContent>
-      </Card>
-    </Link>
   );
 }

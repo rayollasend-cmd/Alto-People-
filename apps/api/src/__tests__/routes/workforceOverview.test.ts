@@ -102,7 +102,18 @@ describe('GET /workforce/overview', () => {
     expect(res.body.now.unscheduled[0].clientName).toBe('Front Beach 218');
 
     expect(res.body.today.open).toBeGreaterThanOrEqual(1);
-    expect(res.body.today.gaps[0].clientName).toBe('Front Beach 218');
+    // The board: one triage-sorted tile per store, red for the walk-on punch.
+    expect(res.body.today.stores[0].clientName).toBe('Front Beach 218');
+    expect(res.body.today.stores[0].unscheduledNow).toBe(1);
+    expect(res.body.today.stores[0].status).toBe('red');
+    expect(res.body.needsAttention).toBeGreaterThanOrEqual(1);
+    // The wire carries the unscheduled punch by name.
+    expect(
+      res.body.wire.some(
+        (w: { type: string; name: string | null }) =>
+          w.type === 'unscheduled' && w.name === 'Walk On',
+      ),
+    ).toBe(true);
     expect(res.body.dispatch.openNext48h).toBeGreaterThanOrEqual(1);
   });
 

@@ -61,7 +61,7 @@ workforceOverviewRouter.get(
 
       const published = { publishedAt: { not: null } } as const;
 
-      const [activeEntries, todayShifts, tomorrowShifts, weekEvents, incidentsToday, openNext48h, todayEvents, upcomingOpen] =
+      const [activeEntries, todayShifts, tomorrowShifts, weekEvents, incidentRows, openNext48h, todayEvents, upcomingOpen] =
         await Promise.all([
           prisma.timeEntry.findMany({
             where: { status: 'ACTIVE', ...clamp },
@@ -96,7 +96,7 @@ workforceOverviewRouter.get(
               ...clamp,
               startsAt: { gte: tomorrowStart, lt: dayAfterStart },
             },
-            select: { status: true, acknowledgedAt: true },
+            select: { status: true, acknowledgedAt: true, client: { select: { id: true } } },
             take: 2000,
           }),
           prisma.attendanceEvent.findMany({
@@ -104,8 +104,11 @@ workforceOverviewRouter.get(
             select: { kind: true },
             take: 2000,
           }),
-          prisma.oshaIncident.count({
+          prisma.oshaIncident.findMany({
             where: { occurredAt: { gte: todayStart }, ...clamp },
+            orderBy: { occurredAt: 'desc' },
+            take: 20,
+            select: { occurredAt: true, clientId: true, severity: true },
           }),
           prisma.shift.count({
             where: {
@@ -120,7 +123,7 @@ workforceOverviewRouter.get(
           prisma.attendanceEvent.findMany({
             where: { occurredOn: { gte: todayStart }, excusedAt: null, ...clamp },
             orderBy: { createdAt: 'desc' },
-            take: 6,
+            take: 100,
             select: {
               kind: true,
               clientId: true,
@@ -151,7 +154,7 @@ workforceOverviewRouter.get(
       const unscheduled = activeEntries.filter((e) => e.shiftId === null);
       const nameNeededIds = [
         ...new Set(
-          [...unscheduled.map((e) => e.clientId), ...todayEvents.map((e) => e.clientId)]
+          [...unscheduled.map((e) => e.clientId), ...todayEvents.map((e) => e.clientId), ...incidentRows.map((i) => i.clientId)]
             .filter((c): c is string => !!c),
         ),
       ];
@@ -171,17 +174,42 @@ workforceOverviewRouter.get(
           s.endsAt.getTime() > now.getTime(),
       ).length;
 
-      // The store board: per-client NOW state (on floor vs scheduled
-      // right now) + today's open count — mission-control rows.
-      const storeMap = new Map<
-        string,
-        { clientName: string; onFloor: number; scheduledNow: number; openToday: number }
-      >();
+      // THE BOARD: every operationally-live store as a status tile —
+      // now-state, today's holes, tomorrow's uncertainty, today's
+      // exceptions and incidents — triage-sorted red → amber → green.
+      interface StoreTile {
+        clientId: string | null;
+        clientName: string;
+        onFloor: number;
+        scheduledNow: number;
+        openToday: number;
+        unconfirmedTomorrow: number;
+        openTomorrow: number;
+        exceptionsToday: number;
+        noShowsToday: number;
+        incidentsToday: number;
+        unscheduledNow: number;
+        status: 'red' | 'amber' | 'green';
+      }
+      const storeMap = new Map<string, StoreTile>();
       const storeBucket = (id: string | null, name: string | null) => {
         const key = id ?? 'none';
         const b =
           storeMap.get(key) ??
-          { clientName: name ?? '—', onFloor: 0, scheduledNow: 0, openToday: 0 };
+          ({
+            clientId: id,
+            clientName: name ?? '—',
+            onFloor: 0,
+            scheduledNow: 0,
+            openToday: 0,
+            unconfirmedTomorrow: 0,
+            openTomorrow: 0,
+            exceptionsToday: 0,
+            noShowsToday: 0,
+            incidentsToday: 0,
+            unscheduledNow: 0,
+            status: 'green',
+          } as StoreTile);
         storeMap.set(key, b);
         return b;
       };
@@ -195,12 +223,33 @@ workforceOverviewRouter.get(
           b.scheduledNow += 1;
         }
       }
+      for (const s of tomorrowShifts) {
+        if (!s.client?.id) continue;
+        if (!storeMap.has(s.client.id)) continue; // named below if needed
+        const b = storeMap.get(s.client.id)!;
+        if (s.status === 'OPEN') b.openTomorrow += 1;
+        else if (s.acknowledgedAt === null) b.unconfirmedTomorrow += 1;
+      }
+      for (const e of todayEvents) {
+        if (!e.clientId) continue;
+        const b = storeMap.get(e.clientId);
+        if (!b) continue;
+        b.exceptionsToday += 1;
+        if (e.kind === 'NO_CALL_NO_SHOW') b.noShowsToday += 1;
+      }
+      for (const i of incidentRows) {
+        const b = storeMap.get(i.clientId);
+        if (b) b.incidentsToday += 1;
+      }
       for (const e of activeEntries) {
         if (!e.clientId) continue;
         const existing = storeMap.get(e.clientId);
-        if (existing) existing.onFloor += 1;
+        if (existing) {
+          existing.onFloor += 1;
+          if (e.shiftId === null) existing.unscheduledNow += 1;
+        }
       }
-      // Entries at clients with no shifts today still deserve a row.
+      // Punches at clients with no shifts today still deserve a tile.
       const missingIds = [
         ...new Set(
           activeEntries
@@ -216,19 +265,66 @@ workforceOverviewRouter.get(
         for (const c of named) storeBucket(c.id, c.name);
         for (const e of activeEntries) {
           if (e.clientId && missingIds.includes(e.clientId)) {
-            storeMap.get(e.clientId)!.onFloor += 1;
+            const b = storeMap.get(e.clientId)!;
+            b.onFloor += 1;
+            if (e.shiftId === null) b.unscheduledNow += 1;
           }
         }
       }
+      const rank = { red: 0, amber: 1, green: 2 } as const;
       const stores = [...storeMap.values()]
-        .filter((s) => s.onFloor + s.scheduledNow + s.openToday > 0)
+        .filter(
+          (s) =>
+            s.onFloor + s.scheduledNow + s.openToday + s.unconfirmedTomorrow + s.openTomorrow > 0,
+        )
+        .map((s) => {
+          s.status =
+            s.noShowsToday > 0 ||
+            s.incidentsToday > 0 ||
+            s.unscheduledNow > 0 ||
+            s.onFloor < s.scheduledNow
+              ? 'red'
+              : s.openToday > 0 || s.openTomorrow > 0 || s.unconfirmedTomorrow > 0
+                ? 'amber'
+                : 'green';
+          return s;
+        })
         .sort(
           (a, b) =>
+            rank[a.status] - rank[b.status] ||
             b.openToday - a.openToday ||
-            (b.scheduledNow - b.onFloor) - (a.scheduledNow - a.onFloor) ||
-            b.scheduledNow - a.scheduledNow,
+            a.clientName.localeCompare(b.clientName),
         )
-        .slice(0, 6);
+        .slice(0, 12);
+      const needsAttention = stores.filter((s) => s.status !== 'green').length;
+
+      // THE WIRE: everything happening everywhere, newest first —
+      // exceptions, incidents, and unscheduled punches, one stream.
+      const wire = [
+        ...todayEvents.slice(0, 8).map((e) => ({
+          type: 'exception' as const,
+          kind: e.kind as string,
+          name: `${e.associate.firstName} ${e.associate.lastName}`.trim(),
+          clientName: e.clientId ? clientNames.get(e.clientId) ?? null : null,
+          at: e.createdAt.toISOString(),
+        })),
+        ...incidentRows.slice(0, 6).map((i) => ({
+          type: 'incident' as const,
+          kind: i.severity as string,
+          name: null as string | null,
+          clientName: clientNames.get(i.clientId) ?? null,
+          at: i.occurredAt.toISOString(),
+        })),
+        ...unscheduled.slice(0, 6).map((e) => ({
+          type: 'unscheduled' as const,
+          kind: null as string | null,
+          name: `${e.associate.firstName} ${e.associate.lastName}`.trim(),
+          clientName: e.clientId ? clientNames.get(e.clientId) ?? null : null,
+          at: e.clockInAt.toISOString(),
+        })),
+      ]
+        .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+        .slice(0, 12);
 
       const kindCount = (kind: string) =>
         weekEvents.filter((e) => e.kind === kind).length;
@@ -273,7 +369,7 @@ workforceOverviewRouter.get(
         },
         exceptionsToday: {
           count: todayEvents.length,
-          feed: todayEvents.map((e) => ({
+          feed: todayEvents.slice(0, 6).map((e) => ({
             kind: e.kind,
             name: `${e.associate.firstName} ${e.associate.lastName}`.trim(),
             clientName: e.clientId ? clientNames.get(e.clientId) ?? null : null,
@@ -296,7 +392,9 @@ workforceOverviewRouter.get(
           callOuts: kindCount('CALL_OUT'),
           lates: kindCount('LATE'),
         },
-        incidentsToday,
+        incidentsToday: incidentRows.length,
+        needsAttention,
+        wire,
         dispatch: {
           openNext48h,
           upcoming: upcomingOpen.map((s) => ({
@@ -362,6 +460,7 @@ workforceOverviewRouter.get(
             : u.email.split('@')[0]!,
           phone: u.associate?.phone ?? null,
           associateId: u.associate?.id ?? null,
+          clientId: u.clientId,
           clientName: u.clientId ? clients.get(u.clientId) ?? null : null,
         }))
         .sort(
