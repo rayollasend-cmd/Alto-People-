@@ -72,6 +72,7 @@ import { worktags95Router } from './routes/worktags95.js';
 import { reports96Router } from './routes/reports96.js';
 import { reimbursements97Router } from './routes/reimbursements97.js';
 import { clientPortalRouter } from './routes/clientPortal.js';
+import { financeOverviewRouter } from './routes/financeOverview.js';
 import { kiosk99Router } from './routes/kiosk99.js';
 import { celebrationsRouter } from './routes/celebrations107.js';
 import { assetsRouter } from './routes/assets108.js';
@@ -414,6 +415,7 @@ export function createApp() {
   // require process:payroll.
   app.use('/', reimbursements97Router);
   app.use('/', clientPortalRouter);
+  app.use('/', financeOverviewRouter);
   // Phase 99 — kiosk-mode clock in/out. Admin endpoints self-gate with
   // view:time / manage:time; the public /kiosk/punch endpoint authenticates
   // via the device token (no user session needed).

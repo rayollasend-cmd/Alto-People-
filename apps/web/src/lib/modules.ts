@@ -4,6 +4,7 @@ import type { Capability } from './roles';
 
 export type ModuleKey =
   | 'portal'
+  | 'statements'
   | 'onboarding'
   | 'time-attendance'
   | 'kiosk'
@@ -165,6 +166,27 @@ const CLIENT_PORTAL_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'scheduling',
 ]);
 
+/** Finance's curated nav: the money cycle end-to-end — pay, tax, billing,
+ *  settlement, and the time/scheduling inputs that feed them. The
+ *  uncurated slice buried these under Pulse/Equity/Volunteer/Career noise. */
+const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
+  'me',
+  'payroll',
+  'payroll-tax',
+  'payroll-compliance',
+  'payrules',
+  'benefits',
+  'compensation',
+  'reimbursements',
+  'statements',
+  'time-attendance',
+  'time-off',
+  'scheduling',
+  'holidays',
+  'analytics',
+  'reports',
+]);
+
 /** Capability-filtered module list, with per-role curation applied. */
 export function visibleModules(
   role: string | undefined,
@@ -179,6 +201,9 @@ export function visibleModules(
   );
   if (role === 'CLIENT_PORTAL') {
     return base.filter((m) => CLIENT_PORTAL_MODULE_KEYS.has(m.key));
+  }
+  if (role === 'FINANCE_ACCOUNTANT') {
+    return base.filter((m) => FINANCE_MODULE_KEYS.has(m.key));
   }
   if (role === 'EXECUTIVE_CHAIRMAN') return base.filter((m) => EXEC_MODULE_KEYS.has(m.key));
   if (role === 'FLOOR_SUPERVISOR') {
@@ -626,6 +651,19 @@ export const MODULES: ModuleNav[] = [
     description:
       'Marketplace of open shifts qualified associates can pick up. Managers approve claims.',
     requires: 'view:scheduling',
+    group: 'time-and-pay',
+  },
+  {
+    key: 'statements',
+    path: '/clients/statements',
+    label: 'Client statements',
+    description:
+      'Weekly billing statements per client — generate due periods, finalize, and record payments. The client side of the money cycle.',
+    // The operator's surface: payroll finalizes and records payment;
+    // executives read. Finance lacked ANY nav path to this page before
+    // (it hid behind the Clients module, gated view:clients).
+    requires: 'process:payroll',
+    requiresAny: ['process:payroll', 'view:executive'],
     group: 'time-and-pay',
   },
   {
