@@ -130,4 +130,79 @@ describe('GET /finance/overview', () => {
     expect(res.body.receivables.outstandingTotal).toBe(5000);
     expect(res.body.receivables.oldestDays).toBeGreaterThanOrEqual(13);
   });
+
+  it('runs the Fieldglass queue: lists approved+scheduled workers, mark clears, undo restores', async () => {
+    const now = new Date();
+    const client = await createClient('Front Beach 218');
+    const a1 = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    await prisma.application.create({
+      data: {
+        associateId: a1.id,
+        clientId: client.id,
+        onboardingTrack: 'STANDARD',
+        status: 'APPROVED',
+        approvedAt: now,
+      },
+    });
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        assignedAssociateId: a1.id,
+        position: 'Stocker',
+        startsAt: new Date(now.getTime() + 24 * HOUR),
+        endsAt: new Date(now.getTime() + 32 * HOUR),
+        status: 'ASSIGNED',
+        publishedAt: now,
+      },
+    });
+    // Approved but UNSCHEDULED — must not appear.
+    const a2 = await createAssociate({ firstName: 'Noah', lastName: 'Unscheduled' });
+    await prisma.application.create({
+      data: {
+        associateId: a2.id,
+        clientId: client.id,
+        onboardingTrack: 'STANDARD',
+        status: 'APPROVED',
+        approvedAt: now,
+      },
+    });
+
+    const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const agent = await loginAs(user.email);
+
+    const before = await agent.get('/finance/overview');
+    expect(before.status).toBe(200);
+    expect(before.body.fieldglassQueue).toHaveLength(1);
+    expect(before.body.fieldglassQueue[0].name).toBe('Maria Lopez');
+    expect(before.body.fieldglassQueue[0].clientName).toBe('Front Beach 218');
+
+    // Mark added → row leaves the queue, attributed to the marker.
+    const mark = await agent.post(`/finance/fieldglass/${a1.id}/done`);
+    expect(mark.status).toBe(200);
+    const after = await agent.get('/finance/overview');
+    expect(after.body.fieldglassQueue).toHaveLength(0);
+    const reg = await prisma.fieldglassRegistration.findUnique({
+      where: { associateId: a1.id },
+    });
+    expect(reg?.addedById).toBe(user.id);
+
+    // Undo → back on the queue.
+    const undo = await agent.delete(`/finance/fieldglass/${a1.id}/done`);
+    expect(undo.status).toBe(200);
+    const restored = await agent.get('/finance/overview');
+    expect(restored.body.fieldglassQueue).toHaveLength(1);
+  });
+
+  it('gates the Fieldglass mark on process:payroll', async () => {
+    const associate = await createAssociate();
+    const { user } = await createUser({
+      role: 'ASSOCIATE',
+      email: associate.email,
+      associateId: associate.id,
+    });
+    const res = await (await loginAs(user.email)).post(
+      `/finance/fieldglass/${associate.id}/done`,
+    );
+    expect(res.status).toBe(403);
+  });
 });

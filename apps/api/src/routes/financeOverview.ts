@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { prisma } from '../db.js';
+import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import {
   netWorkedMinutes,
@@ -220,6 +221,78 @@ financeOverviewRouter.get(
           ? Math.round(payLags.reduce((a, b) => a + b, 0) / payLags.length)
           : null;
 
+      // The Fieldglass setup queue — approved+scheduled workers not yet
+      // marked as registered. Windowed to recent approvals so the first
+      // deploy never floods the list with historical associates.
+      const fgWindowStart = new Date(now.getTime() - 60 * DAY_MS);
+      const recentApproved = await prisma.application.findMany({
+        where: {
+          status: 'APPROVED',
+          approvedAt: { gte: fgWindowStart },
+          deletedAt: null,
+        },
+        orderBy: { approvedAt: 'desc' },
+        take: 100,
+        select: {
+          associateId: true,
+          approvedAt: true,
+          client: { select: { name: true } },
+          associate: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              fieldglassRegistration: { select: { associateId: true } },
+            },
+          },
+        },
+      });
+      const fgCandidates = recentApproved.filter(
+        (a) => a.associate.fieldglassRegistration === null,
+      );
+      const fgShifts =
+        fgCandidates.length > 0
+          ? await prisma.shift.findMany({
+              where: {
+                assignedAssociateId: { in: fgCandidates.map((a) => a.associateId) },
+                status: { in: ['ASSIGNED', 'COMPLETED'] },
+              },
+              orderBy: { startsAt: 'asc' },
+              take: 500,
+              select: {
+                assignedAssociateId: true,
+                startsAt: true,
+                position: true,
+                client: { select: { name: true } },
+              },
+            })
+          : [];
+      const firstShiftByAssociate = new Map<string, (typeof fgShifts)[number]>();
+      for (const s of fgShifts) {
+        if (s.assignedAssociateId && !firstShiftByAssociate.has(s.assignedAssociateId)) {
+          firstShiftByAssociate.set(s.assignedAssociateId, s);
+        }
+      }
+      const fieldglassQueue = fgCandidates
+        .map((a) => {
+          const shift = firstShiftByAssociate.get(a.associateId);
+          if (!shift) return null; // approved but not yet scheduled
+          return {
+            associateId: a.associateId,
+            name: `${a.associate.firstName} ${a.associate.lastName}`.trim(),
+            clientName: shift.client?.name ?? a.client?.name ?? null,
+            position: shift.position,
+            firstShiftAt: shift.startsAt.toISOString(),
+            approvedAt: a.approvedAt ? a.approvedAt.toISOString() : null,
+          };
+        })
+        .filter((row): row is NonNullable<typeof row> => row !== null)
+        .sort(
+          (x, y) =>
+            new Date(x.firstShiftAt).getTime() - new Date(y.firstShiftAt).getTime(),
+        )
+        .slice(0, 12);
+
       const billed = weekBilled.reduce((sum, s) => sum + stAmount(s.snapshot), 0);
       const paidGross = weekRuns.reduce((sum, r) => sum + Number(r.totalGross), 0);
       const thisWeekStart = startOfWeekUTC(now);
@@ -263,6 +336,7 @@ financeOverviewRouter.get(
           avgDaysToPay,
           draftStatements: draftCount,
         },
+        fieldglassQueue,
         billedVsPaid:
           billed > 0 || paidGross > 0
             ? {
@@ -273,6 +347,48 @@ financeOverviewRouter.get(
               }
             : null,
       });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/** Mark a worker as registered in Fieldglass — clears them from the
+ *  queue with attribution. Idempotent (re-marking keeps the first stamp). */
+financeOverviewRouter.post(
+  '/finance/fieldglass/:associateId/done',
+  requireCapability('process:payroll'),
+  async (req, res, next) => {
+    try {
+      const associate = await prisma.associate.findFirst({
+        where: { id: req.params.associateId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!associate) {
+        throw new HttpError(404, 'associate_not_found', 'Associate not found');
+      }
+      await prisma.fieldglassRegistration.upsert({
+        where: { associateId: associate.id },
+        create: { associateId: associate.id, addedById: req.user!.id },
+        update: {},
+      });
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/** Undo a mis-click — puts the worker back on the queue. */
+financeOverviewRouter.delete(
+  '/finance/fieldglass/:associateId/done',
+  requireCapability('process:payroll'),
+  async (req, res, next) => {
+    try {
+      await prisma.fieldglassRegistration.deleteMany({
+        where: { associateId: req.params.associateId },
+      });
+      res.json({ ok: true });
     } catch (err) {
       next(err);
     }

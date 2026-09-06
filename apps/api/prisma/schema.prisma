@@ -545,6 +545,7 @@ model User {
   staffingTargetsSet                StaffingTarget[]              @relation("StaffingTargetAuthor")
   clockInRequestsDecided            ClockInRequest[]              @relation("ClockInRequestDecider")
   attendanceExcusals                AttendanceEvent[]             @relation("AttendanceExcuser")
+  fieldglassRegistrations           FieldglassRegistration[]      @relation("FieldglassRegistrar")
   statementsFinalized               ClientStatement[]             @relation("StatementFinalizer")
   // Privacy erasures this admin performed (Associate.erasedById).
   associatesErased                  Associate[]                   @relation("AssociateEraser")
@@ -835,6 +836,18 @@ model AttendanceEvent {
   @@unique([shiftId, kind])
   @@index([associateId, occurredOn])
   @@index([clientId, occurredOn])
+}
+
+// Finance worklist state: the associate has been registered in
+// Fieldglass. Queue = approved+scheduled associates with NO row here;
+// "Mark added" on the finance dashboard inserts one with attribution.
+model FieldglassRegistration {
+  associateId String   @id @db.Uuid
+  addedById   String?  @db.Uuid
+  addedAt     DateTime @default(now()) @db.Timestamptz(6)
+
+  associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  addedBy   User?     @relation("FieldglassRegistrar", fields: [addedById], references: [id], onDelete: SetNull)
 }
 
 // One row per (associate, week) so the OT radar's morning digest alerts a
@@ -1319,6 +1332,8 @@ model Associate {
   hrCaseCommentsAuthored   HrCaseComment[]           @relation("HrCaseCommentAssociateAuthor")
   // Phase 124 — KB feedback votes.
   kbFeedback               KbFeedback[]
+  // Finance's Fieldglass worklist completion marker.
+  fieldglassRegistration   FieldglassRegistration?
   // Phase 125 — new-hire ramp plans.
   rampPlans                RampPlan[]
   // Phase 127 — tuition reimbursement requests.

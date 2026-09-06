@@ -1,9 +1,12 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import {
   ArrowRight,
   Banknote,
   BarChart3,
+  ClipboardCheck,
   ClockAlert,
   DollarSign,
   FileSpreadsheet,
@@ -18,6 +21,7 @@ import { fmtDate, fmtHours, fmtMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { Card, CardContent } from '@/components/ui/Card';
+import { Avatar } from '@/components/ui/Avatar';
 import { CountUpValue } from '@/components/ui/MetricCard';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -60,6 +64,14 @@ interface FinanceOverview {
     avgDaysToPay: number | null;
     draftStatements: number;
   };
+  fieldglassQueue: Array<{
+    associateId: string;
+    name: string;
+    clientName: string | null;
+    position: string;
+    firstShiftAt: string;
+    approvedAt: string | null;
+  }>;
   billedVsPaid: {
     weekStart: string;
     billed: number;
@@ -79,12 +91,40 @@ function greetKey(hour: number): MessageKey {
 export function FinanceDashboard() {
   const { t } = useI18n();
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ['finance', 'overview'],
     queryFn: () => apiFetch<FinanceOverview>('/finance/overview'),
     refetchInterval: 120_000,
   });
   const data = query.data;
+  const [fgBusy, setFgBusy] = useState<string | null>(null);
+
+  const refreshOverview = () =>
+    queryClient.invalidateQueries({ queryKey: ['finance', 'overview'] });
+
+  // Mark added → row leaves the queue; the toast carries a real Undo.
+  const markFieldglass = async (associateId: string) => {
+    setFgBusy(associateId);
+    try {
+      await apiFetch(`/finance/fieldglass/${associateId}/done`, { method: 'POST' });
+      void refreshOverview();
+      toast.success(t('fin.fgMarked'), {
+        action: {
+          label: t('fin.fgUndo'),
+          onClick: () => {
+            void apiFetch(`/finance/fieldglass/${associateId}/done`, {
+              method: 'DELETE',
+            }).then(() => refreshOverview());
+          },
+        },
+      });
+    } catch {
+      toast.error(t('fin.fgFailed'));
+    } finally {
+      setFgBusy(null);
+    }
+  };
 
   const firstName = user?.firstName || (user?.email?.split('@')[0] ?? '');
 
@@ -290,6 +330,85 @@ export function FinanceDashboard() {
           stagger={4}
         />
       </div>
+
+      {/* ---- Fieldglass setup queue ----------------------------------- */}
+      <Card
+        className={cn(
+          'animate-enter',
+          data.fieldglassQueue.length > 0 && 'border-gold/30',
+        )}
+        style={enterStagger(5)}
+      >
+        <CardContent className="p-5">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
+              <ClipboardCheck className="h-4 w-4 text-gold" aria-hidden="true" />
+              {t('fin.fg')}
+            </h2>
+            {data.fieldglassQueue.length > 0 && (
+              <span className="text-xs text-silver/60">{t('fin.fgSub')}</span>
+            )}
+          </div>
+          {data.fieldglassQueue.length === 0 ? (
+            <p className="mt-3 text-sm text-success">{t('fin.fgEmpty')}</p>
+          ) : (
+            <ul className="mt-3 divide-y divide-navy-secondary/60">
+              {data.fieldglassQueue.map((w) => {
+                const soon =
+                  new Date(w.firstShiftAt).getTime() - Date.now() <
+                  48 * 3600_000;
+                return (
+                  <li
+                    key={w.associateId}
+                    className="flex items-center gap-3 py-2.5"
+                  >
+                    <Avatar
+                      src={`/api/associates/${w.associateId}/photo`}
+                      name={w.name}
+                      email=""
+                      size="md"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <Link
+                        to={`/people?associateId=${w.associateId}`}
+                        className="block truncate text-sm font-medium text-white hover:text-gold"
+                      >
+                        {w.name}
+                        {w.clientName && (
+                          <span className="font-normal text-silver/80">
+                            {' '}· {w.clientName}
+                          </span>
+                        )}
+                      </Link>
+                      <div className="text-xs text-silver tabular-nums">
+                        <span className={cn(soon && 'font-medium text-warning')}>
+                          {t('fin.fgFirstShift', { date: fmtDate(w.firstShiftAt) })}
+                        </span>
+                        <span className="text-silver/60"> · {w.position}</span>
+                        {w.approvedAt && (
+                          <span className="text-silver/60">
+                            {' '}· {t('fin.fgApprovedOn', { date: fmtDate(w.approvedAt) })}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="shrink-0"
+                      loading={fgBusy === w.associateId}
+                      disabled={fgBusy !== null}
+                      onClick={() => void markFieldglass(w.associateId)}
+                    >
+                      {t('fin.fgMark')}
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* ---- The chase list, as bars -------------------------------- */}
