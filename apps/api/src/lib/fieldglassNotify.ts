@@ -35,19 +35,140 @@ const TIME_FMT = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
 });
 
+/** The client the worker CURRENTLY belongs to: their open assignment's
+ *  client, else their latest APPROVED application's — the same order the
+ *  migration backfill used. */
+export async function currentClientOf(
+  associateId: string,
+): Promise<{ id: string; name: string } | null> {
+  const assignment = await prisma.associateAssignment.findFirst({
+    where: { associateId, endedAt: null },
+    orderBy: { startedAt: 'desc' },
+    select: {
+      location: { select: { client: { select: { id: true, name: true } } } },
+    },
+  });
+  if (assignment?.location.client) return assignment.location.client;
+  const app = await prisma.application.findFirst({
+    where: { associateId, status: 'APPROVED', deletedAt: null },
+    orderBy: { approvedAt: 'desc' },
+    select: { client: { select: { id: true, name: true } } },
+  });
+  return app?.client ?? null;
+}
+
+/** Cross-client TRANSFER: registered under client A, now working client
+ *  B → tell finance to close the old Fieldglass account and open a new
+ *  one. Deduped per (associate, destination client). */
+async function maybeNotifyTransfer(
+  associateId: string,
+  registeredClientId: string,
+): Promise<void> {
+  const current = await currentClientOf(associateId);
+  if (!current || current.id === registeredClientId) return;
+
+  const linkUrl = `/people?associateId=${associateId}&fgClient=${current.id}`;
+  const existing = await prisma.notification.findFirst({
+    where: {
+      category: CATEGORY,
+      AND: [
+        { linkUrl: { contains: associateId } },
+        { linkUrl: { contains: current.id } },
+      ],
+    },
+    select: { id: true },
+  });
+  if (existing) return;
+
+  const [associate, oldClient] = await Promise.all([
+    prisma.associate.findFirst({
+      where: { id: associateId, deletedAt: null },
+      select: { firstName: true, lastName: true, email: true, phone: true },
+    }),
+    prisma.client.findFirst({
+      where: { id: registeredClientId },
+      select: { name: true },
+    }),
+  ]);
+  if (!associate) return;
+  const name = `${associate.firstName} ${associate.lastName}`.trim();
+  const contact = [associate.email, associate.phone].filter(Boolean).join(' · ');
+
+  await sendToFinance({
+    subject: `Fieldglass transfer — ${name}: ${oldClient?.name ?? '—'} → ${current.name}`,
+    body:
+      `${name} moved clients. ` +
+      `Close their Fieldglass account under ${oldClient?.name ?? 'the previous client'} ` +
+      `and open a new one under ${current.name}. ` +
+      (contact ? `Contact: ${contact}. ` : '') +
+      'The Fieldglass queue on your dashboard tracks this until you mark it done.',
+    linkUrl,
+  });
+}
+
+async function sendToFinance(opts: {
+  subject: string;
+  body: string;
+  linkUrl: string;
+}): Promise<void> {
+  let recipients = await prisma.user.findMany({
+    where: { status: 'ACTIVE', role: 'FINANCE_ACCOUNTANT' },
+    select: { id: true },
+    take: 50,
+  });
+  if (recipients.length === 0) {
+    recipients = await prisma.user.findMany({
+      where: { status: 'ACTIVE', role: 'HR_ADMINISTRATOR' },
+      select: { id: true },
+      take: 50,
+    });
+  }
+  if (recipients.length === 0) return;
+  await prisma.notification.createMany({
+    data: recipients.map((u) => ({
+      channel: 'IN_APP' as const,
+      status: 'SENT' as const,
+      recipientUserId: u.id,
+      subject: opts.subject,
+      body: opts.body,
+      category: CATEGORY,
+      linkUrl: opts.linkUrl,
+      sentAt: new Date(),
+    })),
+  });
+  for (const u of recipients) emitLiveEvent(u.id, 'notification');
+}
+
 export async function maybeNotifyFinanceNewWorker(
   associateId: string,
 ): Promise<void> {
   try {
+    // Already registered? Then the only possible news is a TRANSFER.
+    const registration = await prisma.fieldglassRegistration.findUnique({
+      where: { associateId },
+      select: { clientId: true },
+    });
+    if (registration) {
+      if (registration.clientId) {
+        await maybeNotifyTransfer(associateId, registration.clientId);
+      }
+      return;
+    }
+
     // ?associateId= opens the person's drawer directly in the People
     // directory — the click lands ON the worker, not on a search box.
     const linkUrl = `/people?associateId=${associateId}`;
 
-    // Fired already? One notification per worker, ever. Matched by the
+    // Fired already? One ADD notification per worker. Matched by the
     // associateId inside the link (not the exact URL) so a link-format
-    // change never re-fires old workers.
+    // change never re-fires old workers. Transfer notifications carry a
+    // client id too, so this exact-id-only probe must exclude them.
     const existing = await prisma.notification.findFirst({
-      where: { category: CATEGORY, linkUrl: { contains: associateId } },
+      where: {
+        category: CATEGORY,
+        linkUrl: { contains: associateId },
+        NOT: { linkUrl: { contains: 'fgClient=' } },
+      },
       select: { id: true },
     });
     if (existing) return;
@@ -92,35 +213,7 @@ export async function maybeNotifyFinanceNewWorker(
       (contact ? `Contact: ${contact}. ` : '') +
       'Add the worker in Fieldglass before their first shift.';
 
-    // Finance first; HR Administrator as the fallback so the signal never
-    // vanishes in an org that hasn't provisioned a finance seat yet.
-    let recipients = await prisma.user.findMany({
-      where: { status: 'ACTIVE', role: 'FINANCE_ACCOUNTANT' },
-      select: { id: true },
-      take: 50,
-    });
-    if (recipients.length === 0) {
-      recipients = await prisma.user.findMany({
-        where: { status: 'ACTIVE', role: 'HR_ADMINISTRATOR' },
-        select: { id: true },
-        take: 50,
-      });
-    }
-    if (recipients.length === 0) return;
-
-    await prisma.notification.createMany({
-      data: recipients.map((u) => ({
-        channel: 'IN_APP' as const,
-        status: 'SENT' as const,
-        recipientUserId: u.id,
-        subject,
-        body,
-        category: CATEGORY,
-        linkUrl,
-        sentAt: new Date(),
-      })),
-    });
-    for (const u of recipients) emitLiveEvent(u.id, 'notification');
+    await sendToFinance({ subject, body, linkUrl });
   } catch {
     // Never let the Fieldglass nudge break an approval or an assignment.
   }

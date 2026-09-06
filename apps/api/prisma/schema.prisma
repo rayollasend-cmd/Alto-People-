@@ -617,6 +617,7 @@ model Client {
   templates              OnboardingTemplate[]
   shifts                 Shift[]
   statements             ClientStatement[]
+  fieldglassRegistrations FieldglassRegistration[]
   opsShifts              OpsShift[]
   payrollRuns            PayrollRun[]
   // Wave 1.1 — Pay schedules scoped to this client.
@@ -843,10 +844,15 @@ model AttendanceEvent {
 // "Mark added" on the finance dashboard inserts one with attribution.
 model FieldglassRegistration {
   associateId String   @id @db.Uuid
+  // WHICH client the worker is registered under in Fieldglass — a
+  // mismatch against their current open assignment's client marks a
+  // pending transfer (close old account, open new one).
+  clientId    String?  @db.Uuid
   addedById   String?  @db.Uuid
   addedAt     DateTime @default(now()) @db.Timestamptz(6)
 
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
+  client    Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
   addedBy   User?     @relation("FieldglassRegistrar", fields: [addedById], references: [id], onDelete: SetNull)
 }
 

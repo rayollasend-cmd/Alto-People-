@@ -67,11 +67,13 @@ interface FinanceOverview {
     draftStatements: number;
   };
   fieldglassQueue: Array<{
+    kind: 'add' | 'transfer';
     associateId: string;
     name: string;
     clientName: string | null;
-    position: string;
-    firstShiftAt: string;
+    fromClientName: string | null;
+    position: string | null;
+    firstShiftAt: string | null;
     approvedAt: string | null;
     email: string | null;
     phone: string | null;
@@ -391,8 +393,9 @@ export function FinanceDashboard() {
             <ul className="mt-3 divide-y divide-navy-secondary/60">
               {data.fieldglassQueue.map((w) => {
                 const soon =
+                  w.firstShiftAt !== null &&
                   new Date(w.firstShiftAt).getTime() - Date.now() <
-                  48 * 3600_000;
+                    48 * 3600_000;
                 const open = fgOpen === w.associateId;
                 return (
                   <li key={w.associateId} className="py-2.5">
@@ -420,6 +423,11 @@ export function FinanceDashboard() {
                               </span>
                             )}
                           </span>
+                          {w.kind === 'transfer' && (
+                            <span className="shrink-0 rounded-full bg-warning/15 px-2 py-0.5 text-2xs font-medium text-warning">
+                              {t('fin.fgTransfer')}
+                            </span>
+                          )}
                           <ChevronDown
                             aria-hidden="true"
                             className={cn(
@@ -429,10 +437,23 @@ export function FinanceDashboard() {
                           />
                         </div>
                         <div className="text-xs text-silver tabular-nums">
+                          {w.kind === 'transfer' && (
+                            <span className="font-medium text-warning">
+                              {t('fin.fgTransferLine', {
+                                from: w.fromClientName ?? '—',
+                                to: w.clientName ?? '—',
+                              })}
+                            </span>
+                          )}
+                          {w.kind === 'transfer' && ' · '}
                           <span className={cn(soon && 'font-medium text-warning')}>
-                            {t('fin.fgFirstShift', { date: fmtDate(w.firstShiftAt) })}
+                            {w.firstShiftAt
+                              ? t('fin.fgFirstShift', { date: fmtDate(w.firstShiftAt) })
+                              : t('fin.fgNoShift')}
                           </span>
-                          <span className="text-silver/60"> · {w.position}</span>
+                          {w.position && (
+                            <span className="text-silver/60"> · {w.position}</span>
+                          )}
                           {w.approvedAt && (
                             <span className="text-silver/60">
                               {' '}· {t('fin.fgApprovedOn', { date: fmtDate(w.approvedAt) })}

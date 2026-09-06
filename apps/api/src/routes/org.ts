@@ -32,6 +32,7 @@ import { asOf, recordChange } from '../lib/associateHistory.js';
 import { eraseAssociate } from '../lib/erasure.js';
 import { executeDeactivation } from '../lib/deactivation.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
+import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
 import { notifyAssociate, notifyManager, notifyUser } from '../lib/notify.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { decryptString } from '../lib/crypto.js';
@@ -1904,6 +1905,10 @@ orgRouter.post(
       return row;
     });
     if (crossClient) {
+      // Finance's Fieldglass handoff: a cross-client move means "close
+      // the old Fieldglass account, open one under the new client".
+      // Fire-and-forget + deduped inside.
+      void maybeNotifyFinanceNewWorker(id);
       // The org-tree fields just changed — snapshot into the
       // effective-dated history so as-of reads stay truthful.
       await recordChange(prisma, {

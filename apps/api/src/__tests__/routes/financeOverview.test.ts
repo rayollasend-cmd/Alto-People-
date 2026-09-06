@@ -193,6 +193,65 @@ describe('GET /finance/overview', () => {
     expect(restored.body.fieldglassQueue).toHaveLength(1);
   });
 
+  it('detects a cross-client transfer: close old account, open new, mark re-stamps', async () => {
+    const now = new Date();
+    const clientA = await createClient('Front Beach 218');
+    const clientB = await createClient('Destin 4411');
+    const a1 = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    // Registered in Fieldglass under A…
+    await prisma.fieldglassRegistration.create({
+      data: { associateId: a1.id, clientId: clientA.id },
+    });
+    // …but now OPEN-assigned at B (the org transfer flow's end state).
+    const locB = await prisma.location.findFirst({
+      where: { clientId: clientB.id },
+      select: { id: true },
+    });
+    await prisma.associateAssignment.create({
+      data: { associateId: a1.id, locationId: locB!.id, startedAt: now },
+    });
+    // Upcoming shift at B — the transfer deadline.
+    await prisma.shift.create({
+      data: {
+        clientId: clientB.id,
+        assignedAssociateId: a1.id,
+        position: 'Stocker',
+        startsAt: new Date(now.getTime() + 24 * HOUR),
+        endsAt: new Date(now.getTime() + 32 * HOUR),
+        status: 'ASSIGNED',
+        publishedAt: now,
+      },
+    });
+
+    const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const agent = await loginAs(user.email);
+
+    const res = await agent.get('/finance/overview');
+    expect(res.status).toBe(200);
+    const row = res.body.fieldglassQueue.find(
+      (r: { associateId: string }) => r.associateId === a1.id,
+    );
+    expect(row).toBeDefined();
+    expect(row.kind).toBe('transfer');
+    expect(row.fromClientName).toBe('Front Beach 218');
+    expect(row.clientName).toBe('Destin 4411');
+    expect(row.firstShiftAt).not.toBeNull();
+
+    // Mark done → registration re-stamps to B → transfer row clears.
+    const mark = await agent.post(`/finance/fieldglass/${a1.id}/done`);
+    expect(mark.status).toBe(200);
+    const reg = await prisma.fieldglassRegistration.findUnique({
+      where: { associateId: a1.id },
+    });
+    expect(reg?.clientId).toBe(clientB.id);
+    const after = await agent.get('/finance/overview');
+    expect(
+      after.body.fieldglassQueue.filter(
+        (r: { associateId: string }) => r.associateId === a1.id,
+      ),
+    ).toHaveLength(0);
+  });
+
   it('gates the Fieldglass mark on process:payroll', async () => {
     const associate = await createAssociate();
     const { user } = await createUser({

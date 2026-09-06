@@ -276,16 +276,99 @@ financeOverviewRouter.get(
           firstShiftByAssociate.set(s.assignedAssociateId, s);
         }
       }
-      const fieldglassQueue = fgCandidates
+      // TRANSFERS: registered under one client, currently assigned to
+      // another → "close old account, open new one". Not windowed — a
+      // two-year associate can transfer.
+      const regs = await prisma.fieldglassRegistration.findMany({
+        where: { clientId: { not: null } },
+        take: 500,
+        select: {
+          associateId: true,
+          clientId: true,
+          client: { select: { name: true } },
+          associate: {
+            select: {
+              firstName: true,
+              lastName: true,
+              email: true,
+              phone: true,
+              hireDate: true,
+              deletedAt: true,
+              assignments: {
+                where: { endedAt: null },
+                orderBy: { startedAt: 'desc' },
+                take: 1,
+                select: {
+                  location: {
+                    select: { client: { select: { id: true, name: true } } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+      const transferRows = regs
+        .filter((r) => {
+          const cur = r.associate.assignments[0]?.location.client;
+          return (
+            r.associate.deletedAt === null &&
+            cur !== undefined &&
+            r.clientId !== null &&
+            cur.id !== r.clientId
+          );
+        })
+        .map((r) => {
+          const cur = r.associate.assignments[0]!.location.client!;
+          return {
+            kind: 'transfer' as const,
+            associateId: r.associateId,
+            name: `${r.associate.firstName} ${r.associate.lastName}`.trim(),
+            clientName: cur.name,
+            fromClientName: r.client?.name ?? null,
+            position: null as string | null,
+            firstShiftAt: null as string | null,
+            approvedAt: null as string | null,
+            email: r.associate.email,
+            phone: r.associate.phone,
+            hireDate: r.associate.hireDate
+              ? r.associate.hireDate.toISOString().slice(0, 10)
+              : null,
+          };
+        });
+      // Earliest upcoming shift at the NEW client — the transfer deadline.
+      if (transferRows.length > 0) {
+        const upcoming = await prisma.shift.findMany({
+          where: {
+            assignedAssociateId: { in: transferRows.map((r) => r.associateId) },
+            status: 'ASSIGNED',
+            startsAt: { gte: now },
+          },
+          orderBy: { startsAt: 'asc' },
+          take: 200,
+          select: { assignedAssociateId: true, startsAt: true, position: true },
+        });
+        for (const row of transferRows) {
+          const s = upcoming.find((u) => u.assignedAssociateId === row.associateId);
+          if (s) {
+            row.firstShiftAt = s.startsAt.toISOString();
+            row.position = s.position;
+          }
+        }
+      }
+
+      const addRows = fgCandidates
         .map((a) => {
           const shift = firstShiftByAssociate.get(a.associateId);
           if (!shift) return null; // approved but not yet scheduled
           return {
+            kind: 'add' as const,
             associateId: a.associateId,
             name: `${a.associate.firstName} ${a.associate.lastName}`.trim(),
             clientName: shift.client?.name ?? a.client?.name ?? null,
-            position: shift.position,
-            firstShiftAt: shift.startsAt.toISOString(),
+            fromClientName: null as string | null,
+            position: shift.position as string | null,
+            firstShiftAt: shift.startsAt.toISOString() as string | null,
             approvedAt: a.approvedAt ? a.approvedAt.toISOString() : null,
             // The Fieldglass entry facts — on the row, so most workers
             // never require leaving the dashboard at all.
@@ -296,11 +379,17 @@ financeOverviewRouter.get(
               : null,
           };
         })
-        .filter((row): row is NonNullable<typeof row> => row !== null)
-        .sort(
-          (x, y) =>
-            new Date(x.firstShiftAt).getTime() - new Date(y.firstShiftAt).getTime(),
-        )
+        .filter((row): row is NonNullable<typeof row> => row !== null);
+
+      // Transfers outrank adds (a live worker with a dead account beats a
+      // new one not yet started); within each, soonest shift first.
+      const shiftTime = (v: string | null) =>
+        v ? new Date(v).getTime() : Number.MAX_SAFE_INTEGER;
+      const fieldglassQueue = [...transferRows, ...addRows]
+        .sort((x, y) => {
+          if (x.kind !== y.kind) return x.kind === 'transfer' ? -1 : 1;
+          return shiftTime(x.firstShiftAt) - shiftTime(y.firstShiftAt);
+        })
         .slice(0, 12);
 
       const billed = weekBilled.reduce((sum, s) => sum + stAmount(s.snapshot), 0);
@@ -377,10 +466,23 @@ financeOverviewRouter.post(
       if (!associate) {
         throw new HttpError(404, 'associate_not_found', 'Associate not found');
       }
+      // Stamp the client the worker is registered under NOW — completing
+      // a transfer moves the stamp to the new client, which is exactly
+      // what clears the transfer row from the queue.
+      const { currentClientOf } = await import('../lib/fieldglassNotify.js');
+      const current = await currentClientOf(associate.id);
       await prisma.fieldglassRegistration.upsert({
         where: { associateId: associate.id },
-        create: { associateId: associate.id, addedById: req.user!.id },
-        update: {},
+        create: {
+          associateId: associate.id,
+          addedById: req.user!.id,
+          clientId: current?.id ?? null,
+        },
+        update: {
+          addedById: req.user!.id,
+          addedAt: new Date(),
+          clientId: current?.id ?? null,
+        },
       });
       res.json({ ok: true });
     } catch (err) {
