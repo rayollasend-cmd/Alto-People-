@@ -133,6 +133,46 @@ describe('GET /workforce/overview', () => {
     expect(shift.clientName).toBe('Front Beach 218');
   });
 
+  it('clamps client-bounded supervisors to their own client on every read', async () => {
+    const now = new Date();
+    const clientA = await createClient('Front Beach 218');
+    const clientB = await createClient('Destin 4411');
+    const aWorker = await createAssociate({ firstName: 'Ava', lastName: 'MineStore' });
+    const bWorker = await createAssociate({ firstName: 'Zed', lastName: 'OtherStore' });
+    // Live punches at BOTH clients (no shift → both are pre-shift flags).
+    await prisma.timeEntry.create({
+      data: { associateId: aWorker.id, clientId: clientA.id, clockInAt: now, status: 'ACTIVE' },
+    });
+    await prisma.timeEntry.create({
+      data: { associateId: bWorker.id, clientId: clientB.id, clockInAt: now, status: 'ACTIVE' },
+    });
+    // A supervisor account at B (must be invisible to A's supervisor).
+    await createUser({ role: 'FLOOR_SUPERVISOR', clientId: clientB.id });
+
+    const { user: supA } = await createUser({
+      role: 'SHIFT_SUPERVISOR',
+      clientId: clientA.id,
+    });
+    const agent = await loginAs(supA.email);
+
+    const overview = await agent.get('/workforce/overview');
+    expect(overview.status).toBe(200);
+    expect(overview.body.now.onFloor).toBe(1);
+    const raw = JSON.stringify(overview.body);
+    expect(raw).toContain('Ava MineStore');
+    expect(raw).not.toContain('OtherStore');
+    expect(raw).not.toContain('Destin 4411');
+
+    const sups = await agent.get('/workforce/supervisors');
+    expect(sups.status).toBe(200);
+    // Only their own client's supervisor corps (themselves here).
+    expect(
+      sups.body.supervisors.every(
+        (s: { clientName: string | null }) => s.clientName !== 'Destin 4411',
+      ),
+    ).toBe(true);
+  });
+
   it('right-sized role: workforce manager is OUT of payroll', async () => {
     const { user } = await createUser({ role: 'WORKFORCE_MANAGER' });
     const agent = await loginAs(user.email);

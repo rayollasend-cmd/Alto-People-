@@ -28,12 +28,26 @@ export const workforceOverviewRouter = Router();
 
 const ORG_TZ = 'America/New_York';
 const HOUR_MS = 3600_000;
+// Client-bounded callers (SHIFT_SUPERVISOR holds manage:scheduling!) are
+// clamped to their own client on EVERY query — fail closed when unset,
+// same NO_CLIENT convention as lib/scope.ts.
+const NO_CLIENT = '00000000-0000-0000-0000-000000000000';
+function clientClampFor(user: { role: string; clientId: string | null }): {
+  clientId?: string;
+} {
+  if (user.role === 'SHIFT_SUPERVISOR' || user.role === 'FLOOR_SUPERVISOR') {
+    return { clientId: user.clientId ?? NO_CLIENT };
+  }
+  return {};
+}
 
 workforceOverviewRouter.get(
   '/workforce/overview',
   requireCapability('manage:scheduling'),
-  async (_req, res, next) => {
+  async (req, res, next) => {
     try {
+      const user = req.user!;
+      const clamp = clientClampFor(user);
       const now = new Date();
       const todayKey = orgDateKey(now);
       const todayStart = utcInstantOfLocalMidnight(todayKey, ORG_TZ);
@@ -50,7 +64,7 @@ workforceOverviewRouter.get(
       const [activeEntries, todayShifts, tomorrowShifts, weekEvents, incidentsToday, openNext48h, todayEvents, upcomingOpen] =
         await Promise.all([
           prisma.timeEntry.findMany({
-            where: { status: 'ACTIVE' },
+            where: { status: 'ACTIVE', ...clamp },
             select: {
               clockInAt: true,
               shiftId: true,
@@ -63,6 +77,7 @@ workforceOverviewRouter.get(
             where: {
               ...published,
               status: { in: ['OPEN', 'ASSIGNED', 'COMPLETED'] },
+              ...clamp,
               startsAt: { lt: tomorrowStart },
               endsAt: { gt: todayStart },
             },
@@ -78,30 +93,32 @@ workforceOverviewRouter.get(
             where: {
               ...published,
               status: { in: ['OPEN', 'ASSIGNED'] },
+              ...clamp,
               startsAt: { gte: tomorrowStart, lt: dayAfterStart },
             },
             select: { status: true, acknowledgedAt: true },
             take: 2000,
           }),
           prisma.attendanceEvent.findMany({
-            where: { occurredOn: { gte: weekStart }, excusedAt: null },
+            where: { occurredOn: { gte: weekStart }, excusedAt: null, ...clamp },
             select: { kind: true },
             take: 2000,
           }),
           prisma.oshaIncident.count({
-            where: { occurredAt: { gte: todayStart } },
+            where: { occurredAt: { gte: todayStart }, ...clamp },
           }),
           prisma.shift.count({
             where: {
               ...published,
               status: 'OPEN',
+              ...clamp,
               startsAt: { gte: now, lt: new Date(now.getTime() + 48 * HOUR_MS) },
             },
           }),
           // Today's exception FEED — names, not just counts ("daily
           // exception post; silence means green").
           prisma.attendanceEvent.findMany({
-            where: { occurredOn: { gte: todayStart }, excusedAt: null },
+            where: { occurredOn: { gte: todayStart }, excusedAt: null, ...clamp },
             orderBy: { createdAt: 'desc' },
             take: 6,
             select: {
@@ -116,6 +133,7 @@ workforceOverviewRouter.get(
             where: {
               ...published,
               status: 'OPEN',
+              ...clamp,
               startsAt: { gte: now, lt: new Date(now.getTime() + 48 * HOUR_MS) },
             },
             orderBy: { startsAt: 'asc' },
@@ -304,12 +322,13 @@ workforceOverviewRouter.get(
 workforceOverviewRouter.get(
   '/workforce/supervisors',
   requireCapability('manage:scheduling'),
-  async (_req, res, next) => {
+  async (req, res, next) => {
     try {
       const users = await prisma.user.findMany({
         where: {
           status: 'ACTIVE',
           role: { in: ['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR'] },
+          ...clientClampFor(req.user!),
         },
         select: {
           id: true,
