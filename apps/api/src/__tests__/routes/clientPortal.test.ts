@@ -10,6 +10,7 @@ import {
   prisma,
   truncateAll,
 } from '../../../test/db.js';
+import { orgDateKey, utcInstantOfLocalMidnight } from '../../lib/timeAnomalies.js';
 
 /**
  * Client portal overview — "the Walmart view."
@@ -49,6 +50,21 @@ async function seedStore() {
   const b1 = await createAssociate({ firstName: 'Zed', lastName: 'OtherStore' });
   const now = new Date();
 
+  // Time anchors that hold at ANY run hour (the first CI run at ~7pm EST
+  // proved that now+29h can slide past "tomorrow"): shifts that must be
+  // TODAY start exactly at `now` (always inside [todayStart, tomorrowStart)),
+  // and tomorrow's trio anchors to ORG-local tomorrow NOON, so noon+0..+9h
+  // stays inside tomorrow's window whatever wall clock CI runs at.
+  const todayKey = orgDateKey(now);
+  const dayKeyPlus = (key: string, days: number) => {
+    const [y, m, d] = key.split('-').map(Number);
+    return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
+  };
+  const tomorrowNoon = new Date(
+    utcInstantOfLocalMidnight(dayKeyPlus(todayKey, 1), 'America/New_York').getTime() +
+      12 * HOUR,
+  );
+
   // Today at A: one live shift (Maria, clocked in), one OPEN, one DRAFT
   // (must stay invisible).
   const liveShift = await prisma.shift.create({
@@ -67,8 +83,8 @@ async function seedStore() {
     data: {
       clientId: clientA.id,
       position: 'Cashier',
-      startsAt: new Date(now.getTime() + HOUR),
-      endsAt: new Date(now.getTime() + 5 * HOUR),
+      startsAt: now,
+      endsAt: new Date(now.getTime() + 4 * HOUR),
       status: 'OPEN',
       publishedAt: now,
     },
@@ -77,14 +93,14 @@ async function seedStore() {
     data: {
       clientId: clientA.id,
       position: 'GhostDraft',
-      startsAt: new Date(now.getTime() + HOUR),
-      endsAt: new Date(now.getTime() + 5 * HOUR),
+      startsAt: now,
+      endsAt: new Date(now.getTime() + 4 * HOUR),
       status: 'OPEN',
       publishedAt: null,
     },
   });
   // Tomorrow at A: confirmed + unconfirmed + open.
-  const tmr = (h: number) => new Date(now.getTime() + 24 * HOUR + h * HOUR);
+  const tmr = (h: number) => new Date(tomorrowNoon.getTime() + h * HOUR);
   await prisma.shift.create({
     data: {
       clientId: clientA.id,
@@ -201,13 +217,15 @@ async function seedStore() {
       excusedAt: now,
     },
   });
+  // The replaced shift lives in the PAST so it can never bleed into the
+  // exact tomorrow-count assertions above.
   const claimShift = await prisma.shift.create({
     data: {
       clientId: clientA.id,
       position: 'Cashier',
-      startsAt: new Date(now.getTime() + 2 * HOUR),
-      endsAt: new Date(now.getTime() + 6 * HOUR),
-      status: 'ASSIGNED',
+      startsAt: new Date(now.getTime() - 26 * HOUR),
+      endsAt: new Date(now.getTime() - 22 * HOUR),
+      status: 'COMPLETED',
       assignedAssociateId: a1.id,
       publishedAt: now,
     },
