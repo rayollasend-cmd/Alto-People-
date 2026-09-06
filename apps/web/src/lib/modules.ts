@@ -187,6 +187,9 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'timesheets',
   'time-off',
   'scheduling',
+  // Comes with full scheduling authority: swap requests, pickup claims,
+  // and unconfirmed-shift decisions land here.
+  'approvals',
   'holidays',
   'analytics',
   'reports',

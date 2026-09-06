@@ -260,6 +260,10 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'manage:time',
     'view:time-live',
     'view:scheduling',
+    // Full scheduling authority (owner decision 2026-09-06, reversing the
+    // earlier read-only stance): finance runs the whole hours→pay cycle,
+    // including building and correcting the schedule that feeds it.
+    'manage:scheduling',
     'view:payroll',
     'process:payroll',
     'view:comp',
