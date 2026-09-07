@@ -80,7 +80,22 @@ describe('GET /workforce/overview', () => {
         status: 'ACTIVE',
       },
     });
-    // An OPEN shift later today (gap) that also lands in the 48h window.
+    // TODAY'S gap: an OPEN shift overlapping NOW — "later today" seeds
+    // (now+2h) slid past org-midnight when CI ran late in the ET evening
+    // and today.open read 0 (same time-anchor rot as the client-portal
+    // fix, 6d1520a). Overlapping now is today at any wall-clock hour.
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        position: 'Cashier',
+        startsAt: new Date(now.getTime() - 1 * HOUR),
+        endsAt: new Date(now.getTime() + 3 * HOUR),
+        status: 'OPEN',
+        publishedAt: now,
+      },
+    });
+    // THE DISPATCH row: an upcoming OPEN shift inside the 48h window —
+    // that window doesn't care about the midnight boundary.
     await prisma.shift.create({
       data: {
         clientId: client.id,
