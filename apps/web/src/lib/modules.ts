@@ -213,8 +213,15 @@ const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'scheduling',
   'approvals',
   'marketplace',
+  // The FULL time & scheduling families, same as the HR administrator
+  // sees them (owner decision 2026-09-06): the kiosk devices and PINs
+  // are Time & Attendance hardware, and the holiday calendar drives
+  // shift planning. The payroll-PII sheet is NOT part of either family
+  // and stays HR-admin-only.
   'time-attendance',
+  'kiosk',
   'time-off',
+  'holidays',
   'ops',
   'performance',
   'compliance',
