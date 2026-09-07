@@ -35,7 +35,7 @@ import {
   type AssociateHistoryEntry,
 } from '@/lib/orgApi';
 import { useAuth } from '@/lib/auth';
-import { hasCapability } from '@/lib/roles';
+import { boundedClientOf, hasCapability } from '@/lib/roles';
 import { ApiError } from '@/lib/api';
 import { useConfirm } from '@/lib/confirm';
 import { useStoreScope } from '@/lib/storeScope';
@@ -112,7 +112,7 @@ export function OrgHome() {
   // entry, later scope changes follow, and page-level changes write back so
   // Scheduling/Time/Labor stay on the same store. Bounded roles are pinned
   // to their clamp.
-  const boundedClientId = user?.clientId ?? '';
+  const boundedClientId = boundedClientOf(user)?.id ?? '';
   const storeScope = useStoreScope();
   const [pageClientId, setPageClientId] = usePersistentState<string>(
     'alto:list.org.client.v1',

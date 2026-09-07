@@ -78,7 +78,7 @@ import {
 import { apiFetch, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useStoreScope } from '@/lib/storeScope';
-import { hasCapability } from '@/lib/roles';
+import { boundedClientOf, hasCapability } from '@/lib/roles';
 import { useConfirm, type ConfirmOptions } from '@/lib/confirm';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -552,24 +552,26 @@ function parseView(raw: string | null): ViewMode {
 
 export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   const confirm = useConfirm();
-  const { user } = useAuth();
-  // Client-scoped roles (SHIFT_SUPERVISOR) can't list clients — /clients
+  const { user, can } = useAuth();
+  // Client-scoped ROLES (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Pin every client control to their one bound client
   // instead of fetching, so the Location → Team cascade still unlocks.
-  const boundedClient = useMemo<ClientSummary | null>(
-    () =>
-      user?.clientId
-        ? {
-            id: user.clientId,
-            name: user.clientName ?? 'Your client',
-            industry: null,
-            status: 'ACTIVE',
-            contactEmail: null,
-            state: null,
-          }
-        : null,
-    [user?.clientId, user?.clientName],
-  );
+  // Boundedness is a role property, never the account's: an org-wide
+  // role carrying an incidental clientId must not self-pin (that bug
+  // locked the WFM's client filter to one store).
+  const boundedClient = useMemo<ClientSummary | null>(() => {
+    const pin = boundedClientOf(user);
+    return pin
+      ? {
+          id: pin.id,
+          name: pin.name,
+          industry: null,
+          status: 'ACTIVE',
+          contactEmail: null,
+          state: null,
+        }
+      : null;
+  }, [user]);
   // Global Topbar store scope — one click there re-scopes this page (and
   // Time / Labor), and this page's own client select writes back to it.
   const storeScope = useStoreScope();
@@ -1203,13 +1205,31 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       return;
     }
     try {
-      const res = await apiFetch<{ clients: ClientSummary[] }>('/clients');
-      setClients(res.clients);
+      // /clients is the accounts area (view:clients, carries bill rates);
+      // scheduler-tier roles without it read the operational directory.
+      if (can('view:clients')) {
+        const res = await apiFetch<{ clients: ClientSummary[] }>('/clients');
+        setClients(res.clients);
+      } else {
+        const res = await apiFetch<{
+          clients: Array<{ id: string; name: string }>;
+        }>('/scheduling/clients');
+        setClients(
+          res.clients.map((c) => ({
+            id: c.id,
+            name: c.name,
+            industry: null,
+            status: 'ACTIVE' as const,
+            contactEmail: null,
+            state: null,
+          })),
+        );
+      }
       setClientsError(false);
     } catch {
       setClientsError(true);
     }
-  }, [canManage, boundedClient]);
+  }, [canManage, boundedClient, can]);
   useEffect(() => {
     loadClients();
   }, [loadClients]);
@@ -1877,7 +1897,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         // Resolve client: template's clientId wins; else fall back to the
         // current filter, then to a bounded user's own client; else error
         // (global template needs a target client).
-        const targetClientId = tpl.clientId ?? (clientFilter || user?.clientId || '');
+        const targetClientId =
+          tpl.clientId ?? (clientFilter || boundedClient?.id || '');
         if (!targetClientId) {
           toast.error('Pick a client filter first — global templates need a target.');
           return;
@@ -1948,7 +1969,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         toast.error(err instanceof ApiError ? err.message : 'Apply failed.');
       }
     },
-    [clientFilter, locationFilter, clientLocations, refresh, user?.clientId],
+    [clientFilter, locationFilter, clientLocations, refresh, boundedClient],
   );
 
   // Optimistic local-state helpers — patch the one changed shift immediately so

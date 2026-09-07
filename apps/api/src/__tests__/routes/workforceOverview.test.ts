@@ -280,6 +280,65 @@ describe('GET /workforce/overview', () => {
     expect(clamped.body.rebalance).toEqual([]);
   });
 
+  it('feeds the WFM filters: operational client directory + locations, no money', async () => {
+    const client = await createClient('Front Beach 218');
+    const other = await createClient('Destin 4411');
+    const { user } = await createUser({ role: 'WORKFORCE_MANAGER' });
+    const agent = await loginAs(user.email);
+
+    // The operational directory: id/name/week anchor, NEVER bill rates —
+    // that's why the WFM doesn't get /clients (view:clients) itself.
+    const dir = await agent.get('/scheduling/clients');
+    expect(dir.status).toBe(200);
+    expect(dir.body.clients.map((c: { name: string }) => c.name).sort()).toEqual([
+      'Destin 4411',
+      'Front Beach 218',
+    ]);
+    expect(JSON.stringify(dir.body)).not.toContain('BillRate');
+    expect((await agent.get('/clients')).status).toBe(403);
+
+    // The location cascade is open to the WFM org-wide (site pickers on
+    // the time board and scheduling grid were empty without it).
+    expect((await agent.get(`/clients/${client.id}/locations`)).status).toBe(200);
+    expect((await agent.get(`/clients/${other.id}/locations`)).status).toBe(200);
+
+    // A bounded supervisor's directory is clamped to their own store.
+    const { user: sup } = await createUser({
+      role: 'SHIFT_SUPERVISOR',
+      clientId: client.id,
+    });
+    const supDir = await (await loginAs(sup.email)).get('/scheduling/clients');
+    expect(supDir.status).toBe(200);
+    expect(supDir.body.clients.map((c: { name: string }) => c.name)).toEqual([
+      'Front Beach 218',
+    ]);
+  });
+
+  it('an org-wide WFM with an incidental clientId still reads the whole org', async () => {
+    const now = new Date();
+    const mine = await createClient('Front Beach 218');
+    const elsewhere = await createClient('Destin 4411');
+    const worker = await createAssociate({ firstName: 'Far', lastName: 'Away' });
+    await prisma.timeEntry.create({
+      data: {
+        associateId: worker.id,
+        clientId: elsewhere.id,
+        clockInAt: now,
+        status: 'ACTIVE',
+      },
+    });
+    // The account carries a clientId (mis-provisioned or re-roled) — the
+    // ROLE is org-wide, so nothing may clamp to it.
+    const { user } = await createUser({
+      role: 'WORKFORCE_MANAGER',
+      clientId: mine.id,
+    });
+    const res = await (await loginAs(user.email)).get('/workforce/overview');
+    expect(res.status).toBe(200);
+    expect(res.body.now.onFloor).toBe(1);
+    expect(JSON.stringify(res.body)).toContain('Far Away');
+  });
+
   it('right-sized role: workforce manager is OUT of payroll', async () => {
     const { user } = await createUser({ role: 'WORKFORCE_MANAGER' });
     const agent = await loginAs(user.email);

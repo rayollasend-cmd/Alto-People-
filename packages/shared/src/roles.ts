@@ -376,6 +376,37 @@ export function rolesWithCapability(capability: Capability): Role[] {
 }
 
 /**
+ * The roles whose tenancy is ONE client — the only roles a UI or query
+ * may clamp by the account's clientId. Boundedness is a property of the
+ * ROLE, never of the account: an org-wide role (HR admin, Workforce
+ * Manager) provisioned with an incidental clientId must NOT self-clamp
+ * — that bug emptied the WFM's live board and pinned every filter to
+ * one store (reported 2026-09-06).
+ */
+const CLIENT_BOUNDED_ROLES: ReadonlySet<Role> = new Set<Role>([
+  'SHIFT_SUPERVISOR',
+  'FLOOR_SUPERVISOR',
+  'CLIENT_PORTAL',
+]);
+
+export function isClientBoundedRole(role: Role): boolean {
+  return CLIENT_BOUNDED_ROLES.has(role);
+}
+
+/** The client pin for a bounded-role user, or null for org-wide roles
+ *  regardless of what clientId the account happens to carry. */
+export function boundedClientOf(
+  user:
+    | { role: Role; clientId?: string | null; clientName?: string | null }
+    | null
+    | undefined,
+): { id: string; name: string } | null {
+  if (!user || !CLIENT_BOUNDED_ROLES.has(user.role)) return null;
+  if (!user.clientId) return null;
+  return { id: user.clientId, name: user.clientName ?? 'Your client' };
+}
+
+/**
  * The full set of ASN-namespaced capabilities. Useful when an admin UI
  * mints an "ASN Supervisor" or "ASN Command Desk" key — preselect from
  * this list rather than free-typing strings.

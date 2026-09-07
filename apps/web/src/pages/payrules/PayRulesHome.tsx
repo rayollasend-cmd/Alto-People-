@@ -13,6 +13,7 @@ import {
 } from '@/lib/format';
 import { useClients } from '@/lib/useClients';
 import { useAuth } from '@/lib/auth';
+import { boundedClientOf } from '@/lib/roles';
 import {
   addAllocation,
   autoAllocate,
@@ -71,13 +72,7 @@ export function PayRulesHome() {
   const { user, can } = useAuth();
   // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Seed and pin the picker to their one client instead.
-  const boundedClient = useMemo(
-    () =>
-      user?.clientId
-        ? { id: user.clientId, name: user.clientName ?? 'Your client' }
-        : null,
-    [user?.clientId, user?.clientName],
-  );
+  const boundedClient = useMemo(() => boundedClientOf(user), [user]);
   // Shared react-query cache; the fetch is skipped entirely for bounded roles.
   const { clients: fetchedClients } = useClients({ enabled: !boundedClient });
   const clients = useMemo(

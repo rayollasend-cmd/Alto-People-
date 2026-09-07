@@ -29,6 +29,7 @@ import {
 import { onTimeEntriesChanged } from '@/lib/timeEntriesChannel';
 import { upsertAttestation } from '@/lib/complianceScorecardApi';
 import { useAuth } from '@/lib/auth';
+import { boundedClientOf } from '@/lib/roles';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { fmtDate, fmtDateTime, parseYmd, ymdLocal } from '@/lib/format';
@@ -126,13 +127,7 @@ export function TimesheetsView() {
   const canAttest = can('manage:compliance');
   // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Pin the client filter to their one client instead.
-  const boundedClient = useMemo(
-    () =>
-      user?.clientId
-        ? { id: user.clientId, name: user.clientName ?? 'Your client' }
-        : null,
-    [user?.clientId, user?.clientName],
-  );
+  const boundedClient = useMemo(() => boundedClientOf(user), [user]);
 
   // Round-trip state — the picked week (and client, below) live in the
   // URL (?week=YYYY-MM-DD&client=…, replace-written) so the fix-issue →

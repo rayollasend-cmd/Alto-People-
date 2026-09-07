@@ -55,7 +55,7 @@ import { usePersistentState } from '@/lib/usePersistentState';
 import type { LocationSummary } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm, usePrompt } from '@/lib/confirm';
-import { hasCapability } from '@/lib/roles';
+import { boundedClientOf, hasCapability } from '@/lib/roles';
 import {
   AssociatePicker,
   Badge,
@@ -647,9 +647,7 @@ function NewDeviceDrawer({
   const { user } = useAuth();
   // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Pin the required client choice to theirs instead.
-  const boundedClient = user?.clientId
-    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
-    : null;
+  const boundedClient = boundedClientOf(user);
   // Shared react-query client list (5-min cache). Bounded viewers are
   // seeded from the user and never fetch (the endpoint would 403).
   const { clients: clientList, isLoading: clientsLoading } = useClients({
@@ -1007,9 +1005,7 @@ function PinsTab({
   // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Seed the picker with their one client (no "All clients")
   // and start on it so the tab isn't an empty dead end.
-  const boundedClient = user?.clientId
-    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
-    : null;
+  const boundedClient = boundedClientOf(user);
   // Shared react-query client list (5-min cache). Bounded viewers are
   // seeded from the user and never fetch (the endpoint would 403).
   const { clients: clientList, isLoading: clientsLoading } = useClients({

@@ -15,7 +15,7 @@ import { useClients } from '@/lib/useClients';
 import type { ClientListItem } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { hasCapability } from '@/lib/roles';
+import { boundedClientOf, hasCapability } from '@/lib/roles';
 import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import {
   Badge,
@@ -173,13 +173,7 @@ export function HolidaysHome() {
   // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Seed the chips/drawers with their one client so the
   // filter and CLIENT_SPECIFIC holidays still work.
-  const boundedClient = useMemo(
-    () =>
-      user?.clientId
-        ? { id: user.clientId, name: user.clientName ?? 'Your client' }
-        : null,
-    [user?.clientId, user?.clientName],
-  );
+  const boundedClient = useMemo(() => boundedClientOf(user), [user]);
   const [year, setYear] = useState(CURRENT_YEAR);
   const [typeFilter, setTypeFilter] = useState<HolidayType | 'ALL'>('ALL');
   const [clientFilter, setClientFilter] = useState<string>('ALL');

@@ -75,6 +75,7 @@ import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import {
   associatesOfClient,
   effectiveClientIdFilter,
+  scopeClients,
   scopeShifts,
   scopeTimeEntries,
 } from '../lib/scope.js';
@@ -134,6 +135,29 @@ const MANAGE_OR_EXEC = requireAnyCapability(
   'view:executive',
   'process:payroll',
 );
+
+/**
+ * GET /scheduling/clients — the OPERATIONAL client directory: id, name,
+ * week anchor. Nothing else, deliberately: /clients is the accounts
+ * admin area and its summary carries fieldglassBillRate (money), which
+ * is why scheduler-tier roles without view:clients (the Workforce
+ * Manager) 403'd there — and their client/location filters rendered
+ * empty (reported 2026-09-06). Filters need names, not rates. Bounded
+ * roles stay clamped to their own client via scopeClients.
+ */
+schedulingRouter.get('/clients', SCHED_READ, async (req, res, next) => {
+  try {
+    const rows = await prisma.client.findMany({
+      where: { ...scopeClients(req.user!), status: 'ACTIVE' },
+      select: { id: true, name: true, weekStartsOn: true },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      take: 1000,
+    });
+    res.json({ clients: rows });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Reported 2026-05-02: scheduling pickers were listing every Associate
 // regardless of role or status, including managers (who use a separate

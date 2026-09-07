@@ -52,6 +52,7 @@ import {
   type PeriodPrefillRow,
 } from '@/lib/externalPaymentsApi';
 import { listClientLocations } from '@/lib/clientsApi';
+import { boundedClientOf } from '@/lib/roles';
 import { AttendanceCard } from '@/pages/time/AttendanceCard';
 import { useClients } from '@/lib/useClients';
 import { listShifts, listSchedulingAssociates } from '@/lib/schedulingApi';
@@ -707,9 +708,10 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
   // it, so bulk select-all spanned clients while timesheets file per
   // client. Bounded roles (SHIFT_SUPERVISOR) are clamped server-side
   // regardless; the pin below just makes the UI say so.
-  const boundedClient = user?.clientId
-    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
-    : null;
+  // Boundedness is a property of the ROLE, never the account: an
+  // org-wide role (WFM, HR) provisioned with an incidental clientId must
+  // not self-clamp — that bug emptied the WFM's live board and queue.
+  const boundedClient = boundedClientOf(user);
   const { clients } = useClients({ enabled: !boundedClient });
   // The global Topbar store scope is this page's default client filter —
   // previously the filter reset to "all clients" on every visit while
@@ -4242,9 +4244,10 @@ function SummaryExportDialog({
   const { user } = useAuth();
   // Client-bound roles can't list clients (403) — pin the dropdown to
   // their one client instead of fetching.
-  const boundedClient = user?.clientId
-    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
-    : null;
+  // Boundedness is a property of the ROLE, never the account: an
+  // org-wide role (WFM, HR) provisioned with an incidental clientId must
+  // not self-clamp — that bug emptied the WFM's live board and queue.
+  const boundedClient = boundedClientOf(user);
   // Shared 5-min-cached client list; only fetched while the dialog is open
   // and the viewer isn't pinned to a single client.
   const { clients } = useClients({ enabled: open && !boundedClient });
@@ -4730,9 +4733,10 @@ function ExternalPayrollSheetDialog({
   defaultClientId: string;
 }) {
   const { user } = useAuth();
-  const boundedClient = user?.clientId
-    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
-    : null;
+  // Boundedness is a property of the ROLE, never the account: an
+  // org-wide role (WFM, HR) provisioned with an incidental clientId must
+  // not self-clamp — that bug emptied the WFM's live board and queue.
+  const boundedClient = boundedClientOf(user);
   const { clients } = useClients({ enabled: open && !boundedClient });
   const [clientId, setClientId] = useState(boundedClient?.id ?? '');
   const [fromYmd, setFromYmd] = useState(defaultFromYmd);
@@ -4949,9 +4953,10 @@ function PayrollSheetDialog({
   const { user } = useAuth();
   // Client-bound roles can't list clients (403) — pin the required client
   // to theirs so the export isn't hard-blocked by an empty dropdown.
-  const boundedClient = user?.clientId
-    ? { id: user.clientId, name: user.clientName ?? 'Your client' }
-    : null;
+  // Boundedness is a property of the ROLE, never the account: an
+  // org-wide role (WFM, HR) provisioned with an incidental clientId must
+  // not self-clamp — that bug emptied the WFM's live board and queue.
+  const boundedClient = boundedClientOf(user);
   // Shared 5-min-cached client list; only fetched while the dialog is open
   // and the viewer isn't pinned to a single client.
   const { clients } = useClients({ enabled: open && !boundedClient });

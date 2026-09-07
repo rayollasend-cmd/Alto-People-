@@ -63,7 +63,14 @@ export function clientsAccessGate(
   if (
     req.method === 'GET' &&
     /^\/[^/]+\/locations\/?$/.test(req.path) &&
-    (req.user?.role === 'SHIFT_SUPERVISOR' || req.user?.role === 'CLIENT_PORTAL')
+    (req.user?.role === 'SHIFT_SUPERVISOR' ||
+      req.user?.role === 'CLIENT_PORTAL' ||
+      // WORKFORCE_MANAGER runs scheduling and the time board org-wide but
+      // deliberately lacks view:clients (the accounts area carries bill
+      // rates). Locations are operational data — names and timezones —
+      // and without them the WFM's site pickers rendered empty (reported
+      // 2026-09-06). Org-wide by design: scopeClients doesn't clamp them.
+      req.user?.role === 'WORKFORCE_MANAGER')
   ) {
     next();
     return;

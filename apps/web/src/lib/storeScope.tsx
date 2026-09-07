@@ -7,6 +7,7 @@ import {
   useState,
 } from 'react';
 import type { ReactNode } from 'react';
+import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { listClients } from '@/lib/clientsApi';
 
@@ -56,10 +57,14 @@ const StoreScopeContext = createContext<StoreScopeValue>({
 const storageKey = (userId: string) => `alto:storeScope:${userId}`;
 
 export function StoreScopeProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const enabled = !!user && !BOUNDED_ROLES.has(user.role);
   const userId = user?.id ?? null;
-  const boundedClientId = user?.clientId ?? '';
+  // Only bounded ROLES pin to the account's clientId — an org-wide role
+  // carrying an incidental clientId must not be silently scoped to it.
+  const boundedClientId =
+    user && BOUNDED_ROLES.has(user.role) ? (user.clientId ?? '') : '';
+  const canViewClients = can('view:clients');
 
   const [clients, setClients] = useState<StoreScopeClient[]>([]);
   const [clientId, setClientIdState] = useState('');
@@ -88,9 +93,19 @@ export function StoreScopeProvider({ children }: { children: ReactNode }) {
       return;
     }
     let alive = true;
-    void listClients({ status: 'ACTIVE' })
-      .then((r) => {
-        if (alive) setClients(r.clients.map((c) => ({ id: c.id, name: c.name })));
+    // Scheduler-tier roles without view:clients (the WFM) read the
+    // operational directory instead — /clients carries bill rates and
+    // 403s for them, which used to leave the store bar empty.
+    const load = canViewClients
+      ? listClients({ status: 'ACTIVE' }).then((r) =>
+          r.clients.map((c) => ({ id: c.id, name: c.name })),
+        )
+      : apiFetch<{ clients: Array<{ id: string; name: string }> }>(
+          '/scheduling/clients',
+        ).then((r) => r.clients.map((c) => ({ id: c.id, name: c.name })));
+    void load
+      .then((rows) => {
+        if (alive) setClients(rows);
       })
       .catch(() => {
         // Non-fatal: the bar just doesn't render; pages fall back to their
@@ -99,7 +114,7 @@ export function StoreScopeProvider({ children }: { children: ReactNode }) {
     return () => {
       alive = false;
     };
-  }, [enabled]);
+  }, [enabled, canViewClients]);
 
   // A persisted store that was deleted/renamed away falls back to "all".
   useEffect(() => {
