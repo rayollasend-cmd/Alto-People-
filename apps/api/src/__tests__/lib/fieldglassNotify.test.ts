@@ -1,5 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
-import { maybeNotifyFinanceNewWorker } from '../../lib/fieldglassNotify.js';
+import {
+  maybeNotifyFinanceDeparture,
+  maybeNotifyFinanceNewWorker,
+} from '../../lib/fieldglassNotify.js';
 import {
   createAssociate,
   createClient,
@@ -102,5 +105,39 @@ describe('maybeNotifyFinanceNewWorker', () => {
     });
     expect(rows).toHaveLength(1);
     expect(rows[0]!.recipientUserId).toBe(hr.id);
+  });
+});
+
+describe('maybeNotifyFinanceDeparture', () => {
+  it('tells finance ONCE to close a separated worker\'s account — silent without a registration', async () => {
+    const { client, associate } = await seedApproved();
+    const { user: finance } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+
+    // No registration yet → nothing to close, no noise.
+    await prisma.associate.update({
+      where: { id: associate.id },
+      data: { separatedAt: new Date() },
+    });
+    await maybeNotifyFinanceDeparture(associate.id, new Date());
+    expect(
+      await prisma.notification.count({
+        where: { category: 'finance.fieldglass_close' },
+      }),
+    ).toBe(0);
+
+    // Registered → the close-out fires, once, with the client named.
+    await prisma.fieldglassRegistration.create({
+      data: { associateId: associate.id, clientId: client.id },
+    });
+    await maybeNotifyFinanceDeparture(associate.id, new Date());
+    await maybeNotifyFinanceDeparture(associate.id, new Date()); // dedupe
+    const rows = await prisma.notification.findMany({
+      where: { category: 'finance.fieldglass_close' },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.recipientUserId).toBe(finance.id);
+    expect(rows[0]!.subject).toContain('close-out');
+    expect(rows[0]!.body).toContain('Front Beach 218');
+    expect(rows[0]!.linkUrl).toContain(associate.id);
   });
 });

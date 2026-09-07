@@ -4620,6 +4620,10 @@ export const TimeOffRequestSchema = z.object({
   /** Admin list only: the associate's current balance for this category,
    *  so approvers see over-draw BEFORE clicking approve. */
   balanceMinutes: z.number().int().nullable().optional(),
+  /** Admin list, PENDING rows only: how many ASSIGNED shifts the leave
+   *  window overlaps — the coverage hole the approver is about to punch.
+   *  Null/absent when not computed. */
+  assignedShiftOverlaps: z.number().int().nullable().optional(),
 });
 export type TimeOffRequest = z.infer<typeof TimeOffRequestSchema>;
 

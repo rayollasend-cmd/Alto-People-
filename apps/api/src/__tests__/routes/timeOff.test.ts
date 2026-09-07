@@ -4,10 +4,12 @@ import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
 import {
   DEFAULT_TEST_PASSWORD,
+  createClient,
   createUser,
   prisma,
   truncateAll,
 } from '../../../test/db.js';
+import { flushPendingNotifications } from '../../lib/notify.js';
 
 const app = () => createApp();
 
@@ -517,5 +519,107 @@ describe('GET /time-off/admin/requests', () => {
     const denied = await hrAgent.get('/time-off/admin/requests?status=DENIED');
     expect(denied.body.requests).toHaveLength(1);
     expect(denied.body.requests[0].id).toBe(c1.body.request.id);
+  });
+});
+
+/* -------------------------------------------------------------------------- *
+ *  The coverage seam — approved leave that overlaps assigned shifts
+ * -------------------------------------------------------------------------- */
+
+describe('coverage seam: leave overlapping assigned shifts', () => {
+  const ymd = (d: Date) => d.toISOString().slice(0, 10);
+  const DAY = 86_400_000;
+
+  it('previews the overlap to the approver and notifies the field on approve', async () => {
+    const { associate, assocUser, hr } = await seedAssociateWithBalance({
+      balanceMinutes: 960,
+    });
+    const client = await createClient('Front Beach 218');
+    const other = await createClient('Destin 4411');
+    const { user: wfm } = await createUser({ role: 'WORKFORCE_MANAGER' });
+    const { user: supHere } = await createUser({
+      role: 'SHIFT_SUPERVISOR',
+      clientId: client.id,
+    });
+    const { user: supElsewhere } = await createUser({
+      role: 'SHIFT_SUPERVISOR',
+      clientId: other.id,
+    });
+
+    // Leave window a week out, with one ASSIGNED shift inside it.
+    const startDate = ymd(new Date(Date.now() + 7 * DAY));
+    const endDate = ymd(new Date(Date.now() + 8 * DAY));
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        assignedAssociateId: associate.id,
+        position: 'Stocker',
+        startsAt: new Date(`${startDate}T15:00:00Z`),
+        endsAt: new Date(`${startDate}T23:00:00Z`),
+        status: 'ASSIGNED',
+        publishedAt: new Date(),
+      },
+    });
+
+    const assocAgent = await loginAs(assocUser.email);
+    const created = await assocAgent.post('/time-off/me/requests').send({
+      category: 'VACATION',
+      startDate,
+      endDate,
+      hours: 16,
+      reason: 'Trip',
+    });
+    expect(created.status).toBe(201);
+    const requestId = created.body.request.id as string;
+
+    // The approver sees the hole BEFORE clicking.
+    const hrAgent = await loginAs(hr.email);
+    const list = await hrAgent.get('/time-off/admin/requests?status=PENDING');
+    expect(list.status).toBe(200);
+    const row = list.body.requests.find((r: { id: string }) => r.id === requestId);
+    expect(row.assignedShiftOverlaps).toBe(1);
+
+    // Approving tells the field leaders — the WFM and THIS store's
+    // supervisor, never the other store's.
+    const approved = await hrAgent.post(`/time-off/admin/requests/${requestId}/approve`).send({});
+    expect(approved.status).toBe(200);
+    await flushPendingNotifications();
+
+    const notes = await prisma.notification.findMany({
+      where: { category: 'scheduling', channel: 'IN_APP' },
+      select: { recipientUserId: true, subject: true, body: true, linkUrl: true },
+    });
+    const recipients = notes.map((n) => n.recipientUserId).sort();
+    expect(recipients).toEqual([wfm.id, supHere.id].sort());
+    expect(notes.every((n) => n.recipientUserId !== supElsewhere.id)).toBe(true);
+    expect(notes[0]!.subject).toContain('Vac Taker');
+    expect(notes[0]!.body).toContain('1 assigned shift');
+    expect(notes[0]!.body).toContain('Front Beach 218');
+    expect(notes[0]!.linkUrl).toBe('/scheduling');
+  });
+
+  it('stays silent when the leave window overlaps nothing', async () => {
+    const { assocUser, hr } = await seedAssociateWithBalance({ balanceMinutes: 480 });
+    await createUser({ role: 'WORKFORCE_MANAGER' });
+    const startDate = ymd(new Date(Date.now() + 14 * DAY));
+
+    const assocAgent = await loginAs(assocUser.email);
+    const created = await assocAgent.post('/time-off/me/requests').send({
+      category: 'VACATION',
+      startDate,
+      endDate: startDate,
+      hours: 8,
+    });
+    const hrAgent = await loginAs(hr.email);
+    const approved = await hrAgent
+      .post(`/time-off/admin/requests/${created.body.request.id}/approve`)
+      .send({});
+    expect(approved.status).toBe(200);
+    await flushPendingNotifications();
+    expect(
+      await prisma.notification.count({
+        where: { category: 'scheduling', channel: 'IN_APP' },
+      }),
+    ).toBe(0);
   });
 });

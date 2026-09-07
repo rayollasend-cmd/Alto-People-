@@ -20,6 +20,7 @@ import { fmtDate, fmtTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { Card, CardContent } from '@/components/ui/Card';
+import { ClockStrip } from '@/components/ClockStrip';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -260,6 +261,7 @@ export function WorkforceDashboard() {
             {t('portal.live')}
           </span>
         </p>
+        <ClockStrip className="mt-1.5" />
       </div>
 
       {/* ---- Command strip: the instrument row -------------------------- */}

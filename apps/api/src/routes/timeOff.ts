@@ -20,7 +20,13 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
-import { notifyAllAdmins, notifyAssociate, notifyManager } from '../lib/notify.js';
+import {
+  notifyAllAdmins,
+  notifyAssociate,
+  notifyManager,
+  notifyUser,
+  trackNotificationWork,
+} from '../lib/notify.js';
 import { timeOffRequestTemplate } from '../lib/emailTemplates.js';
 import { env } from '../config/env.js';
 import {
@@ -72,6 +78,82 @@ const REQUEST_INCLUDE = {
   associate: { select: { firstName: true, lastName: true, managerId: true } },
   reviewer: { select: { email: true } },
 } as const;
+
+const DAY_MS = 86_400_000;
+
+/**
+ * SEAM: an HR/manager decision with a field consequence. Approving leave
+ * for someone holding ASSIGNED shifts silently punches a hole in the
+ * board — count the overlap and tell the field leaders (every Workforce
+ * Manager plus the affected stores' shift supervisors) the moment it
+ * happens, so the backfill starts the same minute the leave is granted.
+ * Fire-and-forget: a notification hiccup must never fail an approval.
+ */
+async function notifyCoverageImpact(row: {
+  associateId: string;
+  category: string;
+  startDate: Date;
+  endDate: Date;
+}): Promise<void> {
+  try {
+    const endExclusive = new Date(row.endDate.getTime() + DAY_MS);
+    const shifts = await prisma.shift.findMany({
+      where: {
+        assignedAssociateId: row.associateId,
+        status: 'ASSIGNED',
+        startsAt: { lt: endExclusive },
+        endsAt: { gt: row.startDate },
+      },
+      select: { clientId: true, client: { select: { name: true } } },
+      take: 100,
+    });
+    if (shifts.length === 0) return;
+
+    const associate = await prisma.associate.findUnique({
+      where: { id: row.associateId },
+      select: { firstName: true, lastName: true },
+    });
+    const name = associate
+      ? `${associate.firstName} ${associate.lastName}`.trim()
+      : 'An associate';
+    const clientIds = [
+      ...new Set(shifts.map((s) => s.clientId).filter((c): c is string => !!c)),
+    ];
+    const clientNames = [
+      ...new Set(shifts.map((s) => s.client?.name).filter((n): n is string => !!n)),
+    ];
+    const recipients = await prisma.user.findMany({
+      where: {
+        status: 'ACTIVE',
+        OR: [
+          { role: 'WORKFORCE_MANAGER' },
+          ...(clientIds.length > 0
+            ? [{ role: 'SHIFT_SUPERVISOR' as const, clientId: { in: clientIds } }]
+            : []),
+        ],
+      },
+      select: { id: true },
+      take: 50,
+    });
+    const range = `${formatDateUTC(row.startDate)} – ${formatDateUTC(row.endDate)}`;
+    const stores = clientNames.length > 0 ? ` at ${clientNames.join(', ')}` : '';
+    await Promise.all(
+      recipients.map((u) =>
+        notifyUser(u.id, {
+          subject: `Approved leave releases coverage — ${name}`,
+          body:
+            `${name}'s ${row.category.toLowerCase().replace(/_/g, ' ')} leave (${range}) ` +
+            `overlaps ${shifts.length} assigned shift${shifts.length === 1 ? '' : 's'}${stores}. ` +
+            'Rebook or release them before the gap reaches the floor.',
+          category: 'scheduling',
+          linkUrl: '/scheduling',
+        }),
+      ),
+    );
+  } catch {
+    // Never let the coverage nudge break an approval.
+  }
+}
 
 /**
  * Phase 26 — read endpoint for an associate's accrued time-off balances
@@ -355,12 +437,49 @@ timeOffRouter.get('/admin/requests', MANAGE, async (req, res, next) => {
     const balanceMap = new Map(
       balances.map((b) => [balanceKey(b.associateId, b.category), b.balanceMinutes]),
     );
+    // Coverage preview for PENDING rows: the assigned shifts each leave
+    // window would release — the approver sees the hole BEFORE punching it.
+    const pendingRows = rows.filter((r) => r.status === 'PENDING');
+    const overlapMap = new Map<string, number>();
+    if (pendingRows.length > 0) {
+      const minStart = new Date(
+        Math.min(...pendingRows.map((r) => r.startDate.getTime())),
+      );
+      const maxEndEx = new Date(
+        Math.max(...pendingRows.map((r) => r.endDate.getTime())) + 86_400_000,
+      );
+      const overlapShifts = await prisma.shift.findMany({
+        where: {
+          assignedAssociateId: {
+            in: [...new Set(pendingRows.map((r) => r.associateId))],
+          },
+          status: 'ASSIGNED',
+          startsAt: { lt: maxEndEx },
+          endsAt: { gt: minStart },
+        },
+        select: { assignedAssociateId: true, startsAt: true, endsAt: true },
+        take: 2000,
+      });
+      for (const r of pendingRows) {
+        const endEx = r.endDate.getTime() + 86_400_000;
+        overlapMap.set(
+          r.id,
+          overlapShifts.filter(
+            (s) =>
+              s.assignedAssociateId === r.associateId &&
+              s.startsAt.getTime() < endEx &&
+              s.endsAt.getTime() > r.startDate.getTime(),
+          ).length,
+        );
+      }
+    }
     res.json(
       TimeOffRequestListResponseSchema.parse({
         requests: rows.map((r) => ({
           ...toRequestDTO(r),
           balanceMinutes:
             balanceMap.get(balanceKey(r.associateId, r.category)) ?? null,
+          assignedShiftOverlaps: overlapMap.get(r.id) ?? null,
         })),
         total,
       })
@@ -419,6 +538,7 @@ timeOffRouter.post('/admin/requests/bulk-decide', MANAGE, async (req, res, next)
         if (input.decision === 'APPROVE') {
           // approveRequest owns the balance CAS — stays per-id.
           await approveRequest(prisma, id, user.id, input.note ?? null);
+          void trackNotificationWork(notifyCoverageImpact(row));
         } else {
           if (row.status !== 'PENDING') {
             throw new IllegalStateError(`Cannot deny a ${row.status} request`);
@@ -522,6 +642,15 @@ timeOffRouter.post('/admin/requests/:id/approve', MANAGE, async (req, res, next)
       linkUrl: '/time-off',
       emailFallback: true,
     });
+    // The field hears about the coverage hole the same minute.
+    void trackNotificationWork(
+      notifyCoverageImpact({
+        associateId: updated.associateId,
+        category: updated.category,
+        startDate: updated.startDate,
+        endDate: updated.endDate,
+      }),
+    );
     res.json(
       TimeOffRequestResponseSchema.parse({ request: toRequestDTO(updated) })
     );

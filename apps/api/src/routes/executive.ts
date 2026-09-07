@@ -41,6 +41,116 @@ executiveRouter.get('/briefing', EXEC, async (_req: Request, res: Response) => {
   res.json(await computeExecutiveBriefing(prisma));
 });
 
+// Batons in flight — the handoff spine's health, read-only. Every count
+// is work sitting between two departments; when one runs deep, the
+// chairman sees which building the baton is stuck in.
+executiveRouter.get('/batons', EXEC, async (_req: Request, res: Response) => {
+  const now = new Date();
+  const DAY_MS = 86_400_000;
+  const CASE_OPEN = ['OPEN', 'IN_PROGRESS', 'WAITING_ASSOCIATE'] as const;
+
+  const [closeOuts, fgCandidates, regs, unapprovedTimesheets, payrollCasesOpen, incidentsOpen] =
+    await Promise.all([
+      // Separated (or erased) workers still registered in Fieldglass.
+      prisma.fieldglassRegistration.count({
+        where: {
+          associate: {
+            OR: [{ separatedAt: { not: null } }, { deletedAt: { not: null } }],
+          },
+        },
+      }),
+      // Recent approvals with no registration yet (active workers only).
+      prisma.application.findMany({
+        where: {
+          status: 'APPROVED',
+          approvedAt: { gte: new Date(now.getTime() - 60 * DAY_MS) },
+          deletedAt: null,
+          associate: {
+            deletedAt: null,
+            separatedAt: null,
+            deactivatedAt: null,
+            fieldglassRegistration: { is: null },
+          },
+        },
+        select: { associateId: true },
+        take: 200,
+      }),
+      // Registered under one client while openly assigned at another.
+      prisma.fieldglassRegistration.findMany({
+        where: {
+          clientId: { not: null },
+          associate: { deletedAt: null, separatedAt: null },
+        },
+        select: {
+          clientId: true,
+          associate: {
+            select: {
+              assignments: {
+                where: { endedAt: null },
+                orderBy: { startedAt: 'desc' },
+                take: 1,
+                select: { location: { select: { clientId: true } } },
+              },
+            },
+          },
+        },
+        take: 500,
+      }),
+      prisma.timeEntry.count({
+        where: { status: 'COMPLETED', clockOutAt: { not: null } },
+      }),
+      prisma.hrCase.count({
+        where: { category: 'PAYROLL', status: { in: [...CASE_OPEN] } },
+      }),
+      prisma.oshaIncident.count({ where: { status: { not: 'RESOLVED' } } }),
+    ]);
+
+  const candidateIds = [...new Set(fgCandidates.map((a) => a.associateId))];
+  const [everScheduled, upcomingScheduled] =
+    candidateIds.length > 0
+      ? await Promise.all([
+          prisma.shift.findMany({
+            where: {
+              assignedAssociateId: { in: candidateIds },
+              status: { in: ['ASSIGNED', 'COMPLETED'] },
+            },
+            distinct: ['assignedAssociateId'],
+            select: { assignedAssociateId: true },
+          }),
+          prisma.shift.findMany({
+            where: {
+              assignedAssociateId: { in: candidateIds },
+              status: 'ASSIGNED',
+              startsAt: { gte: now },
+            },
+            distinct: ['assignedAssociateId'],
+            select: { assignedAssociateId: true },
+          }),
+        ])
+      : [[], []];
+  const everSet = new Set(everScheduled.map((s) => s.assignedAssociateId));
+  const upcomingSet = new Set(upcomingScheduled.map((s) => s.assignedAssociateId));
+  // Adds = approved AND scheduled but not yet registered (Finance's queue);
+  // ready-to-schedule = approved but holding no upcoming shift (WFM's).
+  const adds = candidateIds.filter((id) => everSet.has(id)).length;
+  const readyToSchedule = candidateIds.filter((id) => !upcomingSet.has(id)).length;
+  const transfers = regs.filter((r) => {
+    const cur = r.associate.assignments[0]?.location.clientId;
+    return cur !== undefined && cur !== r.clientId;
+  }).length;
+
+  res.json({
+    generatedAt: now.toISOString(),
+    batons: {
+      fieldglass: { closeOuts, transfers, adds },
+      readyToSchedule,
+      unapprovedTimesheets,
+      payrollCasesOpen,
+      incidentsOpen,
+    },
+  });
+});
+
 /* ===== Decision actions ==================================================== */
 //
 // The chairman's ONLY write surface — and it touches nothing but his own

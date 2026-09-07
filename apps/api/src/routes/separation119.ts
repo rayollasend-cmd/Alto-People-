@@ -4,7 +4,8 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
-import { notifyAllAdmins, notifyManager } from '../lib/notify.js';
+import { maybeNotifyFinanceDeparture } from '../lib/fieldglassNotify.js';
+import { notifyAllAdmins, notifyManager, trackNotificationWork } from '../lib/notify.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 
 /**
@@ -288,6 +289,12 @@ separation119Router.post(
           { separationId: id, associateId: existing.associateId, err: err instanceof Error ? err.message : err },
         );
       }
+      // The Finance baton: a separated worker with a live Fieldglass
+      // registration is an open account at the client for someone who no
+      // longer works here. Fire-and-forget — never blocks the completion.
+      void trackNotificationWork(
+        maybeNotifyFinanceDeparture(existing.associateId, existing.lastDayWorked),
+      );
       // Outbound webhooks â€” the separation completing IS the termination
       // event (access revoked, biometrics purged). Ids + dates only.
       void emitWebhookEvent('associate.terminated', {

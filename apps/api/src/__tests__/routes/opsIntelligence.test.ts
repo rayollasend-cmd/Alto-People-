@@ -192,8 +192,12 @@ describe('attendance points', () => {
           assignedAssociateId: assoc.id,
         },
       });
-    // 2 + 2 points: the second event crosses the 3-point line.
-    for (const iso of ['2026-06-08T08:00:00.000Z', '2026-06-09T08:00:00.000Z']) {
+    // 2 + 2 points: the second event crosses the 3-point line. Dates are
+    // RELATIVE — fixed June dates aged out of the 90-day scoring window
+    // when the calendar reached September and the test rotted.
+    const daysAgo = (n: number) =>
+      new Date(Date.now() - n * 24 * 3_600_000).toISOString();
+    for (const iso of [daysAgo(10), daysAgo(9)]) {
       const s = await shiftAt(iso);
       await recordNoShowAttendance(prisma, {
         id: s.id,

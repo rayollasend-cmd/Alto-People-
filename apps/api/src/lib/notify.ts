@@ -101,6 +101,15 @@ export async function flushPendingNotifications(): Promise<void> {
   }
 }
 
+/**
+ * Register outside async notification work (a fire-and-forget helper that
+ * does its own reads before notifying) with the in-flight set, so tests
+ * can await it via flushPendingNotifications like any notifyUser call.
+ */
+export function trackNotificationWork<T>(p: Promise<T>): Promise<T> {
+  return track(p);
+}
+
 export interface NotifyOpts {
   /** Topbar shows this in bold; keep it short. */
   subject: string | null;

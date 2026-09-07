@@ -218,13 +218,21 @@ financeOverviewRouter.get(
               email: true,
               phone: true,
               hireDate: true,
+              separatedAt: true,
+              deactivatedAt: true,
               fieldglassRegistration: { select: { associateId: true } },
             },
           },
         },
       });
+      // Never ask Finance to ADD someone who has since separated or is
+      // paused — their released shifts already dropped them in practice;
+      // this makes it explicit.
       const fgCandidates = recentApproved.filter(
-        (a) => a.associate.fieldglassRegistration === null,
+        (a) =>
+          a.associate.fieldglassRegistration === null &&
+          a.associate.separatedAt === null &&
+          a.associate.deactivatedAt === null,
       );
       const fgShifts =
         fgCandidates.length > 0
@@ -253,7 +261,6 @@ financeOverviewRouter.get(
       // another → "close old account, open new one". Not windowed — a
       // two-year associate can transfer.
       const regs = await prisma.fieldglassRegistration.findMany({
-        where: { clientId: { not: null } },
         take: 500,
         select: {
           associateId: true,
@@ -267,6 +274,7 @@ financeOverviewRouter.get(
               phone: true,
               hireDate: true,
               deletedAt: true,
+              separatedAt: true,
               assignments: {
                 where: { endedAt: null },
                 orderBy: { startedAt: 'desc' },
@@ -281,11 +289,35 @@ financeOverviewRouter.get(
           },
         },
       });
+      // CLOSE-OUTS: separated (or erased) workers still registered — a
+      // live account at the client for someone who no longer works here.
+      // Keys off separatedAt, NEVER deactivatedAt: deactivation is a
+      // reversible pause and must not close anyone's account.
+      const closeRows = regs
+        .filter(
+          (r) => r.associate.separatedAt !== null || r.associate.deletedAt !== null,
+        )
+        .map((r) => ({
+          kind: 'close' as const,
+          associateId: r.associateId,
+          name: `${r.associate.firstName} ${r.associate.lastName}`.trim(),
+          clientName: r.client?.name ?? null,
+          fromClientName: null as string | null,
+          position: null as string | null,
+          firstShiftAt: null as string | null,
+          approvedAt: null as string | null,
+          email: r.associate.email,
+          phone: r.associate.phone,
+          hireDate: r.associate.hireDate
+            ? r.associate.hireDate.toISOString().slice(0, 10)
+            : null,
+        }));
       const transferRows = regs
         .filter((r) => {
           const cur = r.associate.assignments[0]?.location.client;
           return (
             r.associate.deletedAt === null &&
+            r.associate.separatedAt === null &&
             cur !== undefined &&
             r.clientId !== null &&
             cur.id !== r.clientId
@@ -354,13 +386,15 @@ financeOverviewRouter.get(
         })
         .filter((row): row is NonNullable<typeof row> => row !== null);
 
-      // Transfers outrank adds (a live worker with a dead account beats a
-      // new one not yet started); within each, soonest shift first.
+      // Close-outs outrank transfers outrank adds (a dead account for a
+      // departed worker is the worst kind of open baton); within each,
+      // soonest shift first.
+      const KIND_RANK = { close: 0, transfer: 1, add: 2 } as const;
       const shiftTime = (v: string | null) =>
         v ? new Date(v).getTime() : Number.MAX_SAFE_INTEGER;
-      const fieldglassQueue = [...transferRows, ...addRows]
+      const fieldglassQueue = [...closeRows, ...transferRows, ...addRows]
         .sort((x, y) => {
-          if (x.kind !== y.kind) return x.kind === 'transfer' ? -1 : 1;
+          if (x.kind !== y.kind) return KIND_RANK[x.kind] - KIND_RANK[y.kind];
           return shiftTime(x.firstShiftAt) - shiftTime(y.firstShiftAt);
         })
         .slice(0, 12);

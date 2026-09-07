@@ -6,7 +6,14 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import { recordReimbursementEvent } from '../lib/audit.js';
-import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins, notifyAssociate, notifyManager } from '../lib/notify.js';
+import {
+  ADMIN_EMAIL_HR_ONLY,
+  notifyAllAdmins,
+  notifyAssociate,
+  notifyManager,
+  trackNotificationWork,
+} from '../lib/notify.js';
+import { sendToFinance } from '../lib/fieldglassNotify.js';
 
 /**
  * Gap 10 — Reimbursement two-step approval + payroll-fold integration.
@@ -410,6 +417,29 @@ reimbursements97Router.post(
       linkUrl: '/reimbursements',
       emailFallback: true,
     });
+    // The settlement baton: it just landed on Finance's desk — tell them,
+    // don't make the cockpit counter do all the work.
+    void trackNotificationWork((async () => {
+      try {
+        const associate = await prisma.associate.findUnique({
+          where: { id: r.associateId },
+          select: { firstName: true, lastName: true },
+        });
+        const who = associate
+          ? `${associate.firstName} ${associate.lastName}`.trim()
+          : 'An associate';
+        await sendToFinance({
+          subject: `Reimbursement ready to settle — ${who} ($${Number(r.totalAmount).toFixed(2)})`,
+          body:
+            `"${r.title}" ($${Number(r.totalAmount).toFixed(2)}) for ${who} was manager-approved ` +
+            'and is waiting on Finance to settle. It pays out with the next payroll run once settled.',
+          linkUrl: '/reimbursements',
+          category: 'finance.reimbursement',
+        });
+      } catch {
+        // Never let the Finance bell break an approval.
+      }
+    })());
     res.json({ ok: true });
   },
 );

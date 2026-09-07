@@ -106,10 +106,14 @@ async function maybeNotifyTransfer(
   });
 }
 
-async function sendToFinance(opts: {
+/** One bell/inbox row on every active Finance seat (HR admins as the
+ *  fallback when no Finance account exists yet). Shared by the Fieldglass
+ *  add/transfer/close notices and the other Finance-bound handoffs. */
+export async function sendToFinance(opts: {
   subject: string;
   body: string;
   linkUrl: string;
+  category?: string;
 }): Promise<void> {
   let recipients = await prisma.user.findMany({
     where: { status: 'ACTIVE', role: 'FINANCE_ACCOUNTANT' },
@@ -131,12 +135,62 @@ async function sendToFinance(opts: {
       recipientUserId: u.id,
       subject: opts.subject,
       body: opts.body,
-      category: CATEGORY,
+      category: opts.category ?? CATEGORY,
       linkUrl: opts.linkUrl,
       sentAt: new Date(),
     })),
   });
   for (const u of recipients) emitLiveEvent(u.id, 'notification');
+}
+
+const CLOSE_CATEGORY = 'finance.fieldglass_close';
+
+/**
+ * The lifecycle's last chapter: a separated worker with a live Fieldglass
+ * registration means an open account at the client for someone who no
+ * longer works here. Tell Finance once — close the account, prepare the
+ * final pay. Deactivation (a PAUSE, reversible in one click) deliberately
+ * does NOT fire this.
+ */
+export async function maybeNotifyFinanceDeparture(
+  associateId: string,
+  lastDayWorked?: Date | null,
+): Promise<void> {
+  try {
+    const registration = await prisma.fieldglassRegistration.findUnique({
+      where: { associateId },
+      select: { client: { select: { name: true } } },
+    });
+    if (!registration) return;
+
+    const linkUrl = `/people?associateId=${associateId}`;
+    const existing = await prisma.notification.findFirst({
+      where: { category: CLOSE_CATEGORY, linkUrl: { contains: associateId } },
+      select: { id: true },
+    });
+    if (existing) return;
+
+    const associate = await prisma.associate.findUnique({
+      where: { id: associateId },
+      select: { firstName: true, lastName: true },
+    });
+    if (!associate) return;
+    const name = `${associate.firstName} ${associate.lastName}`.trim();
+    const clientName = registration.client?.name ?? 'their client';
+
+    await sendToFinance({
+      subject: `Fieldglass close-out — ${name} (${clientName})`,
+      body:
+        `${name} has separated` +
+        (lastDayWorked ? ` (last day worked ${DATE_FMT.format(lastDayWorked)})` : '') +
+        `. Close their Fieldglass account under ${clientName} and prepare final pay. ` +
+        'The Fieldglass queue on your dashboard tracks this until you mark it closed.',
+      linkUrl,
+      category: CLOSE_CATEGORY,
+    });
+  } catch {
+    // Never let the close-out nudge break a separation.
+  }
 }
 
 export async function maybeNotifyFinanceNewWorker(

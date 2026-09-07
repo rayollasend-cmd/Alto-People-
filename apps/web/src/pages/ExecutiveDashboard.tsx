@@ -132,6 +132,17 @@ interface ProspectsResponse {
   }>;
 }
 
+interface ExecBatons {
+  generatedAt: string;
+  batons: {
+    fieldglass: { closeOuts: number; transfers: number; adds: number };
+    readyToSchedule: number;
+    unapprovedTimesheets: number;
+    payrollCasesOpen: number;
+    incidentsOpen: number;
+  };
+}
+
 interface ExecBriefing {
   generatedAt: string;
   today: {
@@ -695,6 +706,7 @@ export function ExecutiveDashboard() {
   const [targets, setTargets] = useState<TargetsResponse | null>(null);
   const [prospects, setProspects] = useState<ProspectsResponse | null>(null);
   const [brief, setBrief] = useState<ExecBriefing | null>(null);
+  const [batons, setBatons] = useState<ExecBatons | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [packBusy, setPackBusy] = useState(false);
 
@@ -713,6 +725,7 @@ export function ExecutiveDashboard() {
       .then(setProspects)
       .catch(() => setProspects(null));
     apiFetch<ExecBriefing>('/executive/briefing').then(setBrief).catch(() => setBrief(null));
+    apiFetch<ExecBatons>('/executive/batons').then(setBatons).catch(() => setBatons(null));
   }, []);
   useEffect(() => {
     load();
@@ -820,6 +833,83 @@ export function ExecutiveDashboard() {
             ))}
           </div>
         </>
+      )}
+
+      {/* Batons in flight — the handoff spine's health. Every number is
+          work sitting between two departments; a deep one names the
+          building it's stuck in. */}
+      {batons && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className="text-sm font-medium text-white">Batons in flight</h2>
+              <span className="text-2xs text-silver/60">
+                work in motion between departments
+              </span>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-7">
+              {(
+                [
+                  [
+                    batons.batons.fieldglass.closeOuts,
+                    'Fieldglass close-outs',
+                    '/people',
+                    'alert',
+                  ],
+                  [
+                    batons.batons.fieldglass.transfers,
+                    'Fieldglass transfers',
+                    '/people',
+                    'warning',
+                  ],
+                  [batons.batons.fieldglass.adds, 'Fieldglass adds', '/people', 'warning'],
+                  [
+                    batons.batons.readyToSchedule,
+                    'Ready to schedule',
+                    '/scheduling',
+                    'warning',
+                  ],
+                  [
+                    batons.batons.unapprovedTimesheets,
+                    'Timesheets unapproved',
+                    '/time-attendance',
+                    'warning',
+                  ],
+                  [
+                    batons.batons.payrollCasesOpen,
+                    'Payroll cases open',
+                    '/hr-cases',
+                    'warning',
+                  ],
+                  [
+                    batons.batons.incidentsOpen,
+                    'Incidents open',
+                    '/compliance/osha',
+                    'alert',
+                  ],
+                ] as const
+              ).map(([value, label, to, tone]) => (
+                <Link key={label} to={to} className="group min-w-0">
+                  <div
+                    className={cn(
+                      'text-2xl font-semibold tabular-nums transition-colors',
+                      value === 0
+                        ? 'text-success'
+                        : tone === 'alert'
+                          ? 'text-alert'
+                          : 'text-warning',
+                    )}
+                  >
+                    {value}
+                  </div>
+                  <div className="mt-0.5 truncate text-2xs text-silver/70 group-hover:text-silver">
+                    {label}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* The 6:45am read — today's exposure + the chairman's queue. */}

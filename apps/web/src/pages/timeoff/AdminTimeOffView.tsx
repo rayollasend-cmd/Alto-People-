@@ -441,6 +441,16 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                         <TableCell className="tabular-nums">
                           {fmtYmd(r.startDate)}
                           {r.startDate !== r.endDate && ` – ${fmtYmd(r.endDate)}`}
+                          {/* The coverage hole this approval would punch —
+                              shown BEFORE the click, not discovered at the
+                              pre-shift check. */}
+                          {r.status === 'PENDING' &&
+                            (r.assignedShiftOverlaps ?? 0) > 0 && (
+                              <span className="ml-2 inline-flex rounded-full bg-warning/15 px-2 py-0.5 text-2xs font-medium text-warning">
+                                releases {r.assignedShiftOverlaps}{' '}
+                                {r.assignedShiftOverlaps === 1 ? 'shift' : 'shifts'}
+                              </span>
+                            )}
                         </TableCell>
                         <TableCell
                           className={`text-right tabular-nums hidden sm:table-cell ${
@@ -592,6 +602,15 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                     detail.balanceMinutes !== undefined &&
                     ` · ${fmtHours(detail.balanceMinutes)} available`}
                 </span>
+                {detail.status === 'PENDING' &&
+                  (detail.assignedShiftOverlaps ?? 0) > 0 && (
+                    <span className="inline-flex rounded-full bg-warning/15 px-2 py-0.5 text-2xs font-medium text-warning">
+                      releases {detail.assignedShiftOverlaps}{' '}
+                      {detail.assignedShiftOverlaps === 1
+                        ? 'assigned shift'
+                        : 'assigned shifts'}
+                    </span>
+                  )}
               </div>
               <div>
                 <div className="text-2xs uppercase tracking-widest text-silver mb-1">

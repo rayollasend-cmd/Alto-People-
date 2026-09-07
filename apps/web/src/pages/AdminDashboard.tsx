@@ -53,6 +53,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { MyPlanCard } from '@/components/MyPlanCard';
+import { ClockStrip } from '@/components/ClockStrip';
 
 /**
  * Role-tailored subtitle on the greeting strip. The same dashboard scaffold
@@ -219,6 +220,7 @@ export function AdminDashboard() {
           {(role && SUBTITLE_BY_ROLE[role]) ??
             "Here's what's happening across your workforce today."}
         </p>
+        <ClockStrip className="mt-2" />
       </header>
 
       <WelcomeCard greetingName={greetingName} />

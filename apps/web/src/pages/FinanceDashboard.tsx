@@ -24,6 +24,7 @@ import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { usePersistentState } from '@/lib/usePersistentState';
 import { Card, CardContent } from '@/components/ui/Card';
+import { ClockStrip } from '@/components/ClockStrip';
 import { Avatar } from '@/components/ui/Avatar';
 import { CountUpValue } from '@/components/ui/MetricCard';
 import { Button } from '@/components/ui/Button';
@@ -74,7 +75,7 @@ interface FinanceOverview {
     draftStatements: number;
   };
   fieldglassQueue: Array<{
-    kind: 'add' | 'transfer';
+    kind: 'add' | 'transfer' | 'close';
     associateId: string;
     name: string;
     clientName: string | null;
@@ -139,6 +140,30 @@ export function FinanceDashboard() {
           onClick: () => {
             void apiFetch(`/finance/fieldglass/${associateId}/done`, {
               method: 'DELETE',
+            }).then(() => refreshOverview());
+          },
+        },
+      });
+    } catch {
+      toast.error(t('fin.fgFailed'));
+    } finally {
+      setFgBusy(null);
+    }
+  };
+
+  // Close-out done = the registration is removed (the account no longer
+  // exists at the client); Undo re-creates it.
+  const markFieldglassClosed = async (associateId: string) => {
+    setFgBusy(associateId);
+    try {
+      await apiFetch(`/finance/fieldglass/${associateId}/done`, { method: 'DELETE' });
+      void refreshOverview();
+      toast.success(t('fin.fgClosedDone'), {
+        action: {
+          label: t('fin.fgUndo'),
+          onClick: () => {
+            void apiFetch(`/finance/fieldglass/${associateId}/done`, {
+              method: 'POST',
             }).then(() => refreshOverview());
           },
         },
@@ -231,6 +256,7 @@ export function FinanceDashboard() {
             {t('fin.live')}
           </span>
         </p>
+        <ClockStrip className="mt-1.5" />
       </div>
 
       {/* ---- Payday — sacred ------------------------------------------ */}
@@ -456,6 +482,11 @@ export function FinanceDashboard() {
                               {t('fin.fgTransfer')}
                             </span>
                           )}
+                          {w.kind === 'close' && (
+                            <span className="shrink-0 rounded-full bg-alert/15 px-2 py-0.5 text-2xs font-medium text-alert">
+                              {t('fin.fgCloseBadge')}
+                            </span>
+                          )}
                           <ChevronDown
                             aria-hidden="true"
                             className={cn(
@@ -465,27 +496,35 @@ export function FinanceDashboard() {
                           />
                         </div>
                         <div className="text-xs text-silver tabular-nums">
-                          {w.kind === 'transfer' && (
-                            <span className="font-medium text-warning">
-                              {t('fin.fgTransferLine', {
-                                from: w.fromClientName ?? '—',
-                                to: w.clientName ?? '—',
-                              })}
+                          {w.kind === 'close' ? (
+                            <span className="font-medium text-alert">
+                              {t('fin.fgCloseLine', { client: w.clientName ?? '—' })}
                             </span>
-                          )}
-                          {w.kind === 'transfer' && ' · '}
-                          <span className={cn(soon && 'font-medium text-warning')}>
-                            {w.firstShiftAt
-                              ? t('fin.fgFirstShift', { date: fmtDate(w.firstShiftAt) })
-                              : t('fin.fgNoShift')}
-                          </span>
-                          {w.position && (
-                            <span className="text-silver/60"> · {w.position}</span>
-                          )}
-                          {w.approvedAt && (
-                            <span className="text-silver/60">
-                              {' '}· {t('fin.fgApprovedOn', { date: fmtDate(w.approvedAt) })}
-                            </span>
+                          ) : (
+                            <>
+                              {w.kind === 'transfer' && (
+                                <span className="font-medium text-warning">
+                                  {t('fin.fgTransferLine', {
+                                    from: w.fromClientName ?? '—',
+                                    to: w.clientName ?? '—',
+                                  })}
+                                </span>
+                              )}
+                              {w.kind === 'transfer' && ' · '}
+                              <span className={cn(soon && 'font-medium text-warning')}>
+                                {w.firstShiftAt
+                                  ? t('fin.fgFirstShift', { date: fmtDate(w.firstShiftAt) })
+                                  : t('fin.fgNoShift')}
+                              </span>
+                              {w.position && (
+                                <span className="text-silver/60"> · {w.position}</span>
+                              )}
+                              {w.approvedAt && (
+                                <span className="text-silver/60">
+                                  {' '}· {t('fin.fgApprovedOn', { date: fmtDate(w.approvedAt) })}
+                                </span>
+                              )}
+                            </>
                           )}
                         </div>
                       </button>
@@ -495,9 +534,13 @@ export function FinanceDashboard() {
                         className="shrink-0"
                         loading={fgBusy === w.associateId}
                         disabled={fgBusy !== null}
-                        onClick={() => void markFieldglass(w.associateId)}
+                        onClick={() =>
+                          void (w.kind === 'close'
+                            ? markFieldglassClosed(w.associateId)
+                            : markFieldglass(w.associateId))
+                        }
                       >
-                        {t('fin.fgMark')}
+                        {w.kind === 'close' ? t('fin.fgMarkClosed') : t('fin.fgMark')}
                       </Button>
                     </div>
                     {open && (

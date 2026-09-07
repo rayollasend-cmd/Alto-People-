@@ -165,10 +165,13 @@ describe('the payroll desk — Finance on PAYROLL cases only', () => {
     expect(queue.status).toBe(200);
     expect(queue.body.cases).toHaveLength(1);
     expect(queue.body.cases[0].id).toBe(payroll.id);
+    // Asking for another category doesn't widen the desk — the server
+    // forces PAYROLL and serves their own queue regardless.
     const sneaky = await request(app())
       .get('/hr-cases?category=HARASSMENT')
       .set('Cookie', cookie);
-    expect(sneaky.body.cases).toHaveLength(0);
+    expect(sneaky.body.cases).toHaveLength(1);
+    expect(sneaky.body.cases[0].id).toBe(payroll.id);
 
     // Detail: payroll readable, the sensitive case refused.
     expect(

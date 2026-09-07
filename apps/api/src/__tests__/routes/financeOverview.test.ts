@@ -265,6 +265,70 @@ describe('GET /finance/overview', () => {
     expect(res.status).toBe(403);
   });
 
+  it('queues a CLOSE-OUT for a separated registered worker, outranking everything', async () => {
+    const now = new Date();
+    const client = await createClient('Front Beach 218');
+    // A separated worker still registered in Fieldglass — the dead account.
+    const gone = await createAssociate({ firstName: 'Gone', lastName: 'Worker' });
+    await prisma.fieldglassRegistration.create({
+      data: { associateId: gone.id, clientId: client.id },
+    });
+    await prisma.associate.update({
+      where: { id: gone.id },
+      data: { separatedAt: now },
+    });
+    // A separated-but-unregistered recent approval must NOT appear as an add.
+    const goneToo = await createAssociate({ firstName: 'Also', lastName: 'Gone' });
+    await prisma.application.create({
+      data: {
+        associateId: goneToo.id,
+        clientId: client.id,
+        onboardingTrack: 'STANDARD',
+        status: 'APPROVED',
+        approvedAt: now,
+      },
+    });
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        assignedAssociateId: goneToo.id,
+        position: 'Stocker',
+        startsAt: new Date(now.getTime() + 24 * HOUR),
+        endsAt: new Date(now.getTime() + 32 * HOUR),
+        status: 'ASSIGNED',
+        publishedAt: now,
+      },
+    });
+    await prisma.associate.update({
+      where: { id: goneToo.id },
+      data: { separatedAt: now },
+    });
+    // A DEACTIVATED (paused) registered worker must NOT be a close-out.
+    const paused = await createAssociate({ firstName: 'Just', lastName: 'Paused' });
+    await prisma.fieldglassRegistration.create({
+      data: { associateId: paused.id, clientId: client.id },
+    });
+    await prisma.associate.update({
+      where: { id: paused.id },
+      data: { deactivatedAt: now },
+    });
+
+    const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const agent = await loginAs(user.email);
+    const res = await agent.get('/finance/overview');
+    expect(res.status).toBe(200);
+    const kinds = res.body.fieldglassQueue.map((r: { kind: string }) => r.kind);
+    expect(kinds).toEqual(['close']);
+    expect(res.body.fieldglassQueue[0].name).toBe('Gone Worker');
+    expect(res.body.fieldglassQueue[0].clientName).toBe('Front Beach 218');
+
+    // Mark closed = the registration is removed; the row clears.
+    const done = await agent.delete(`/finance/fieldglass/${gone.id}/done`);
+    expect(done.status).toBe(200);
+    const after = await agent.get('/finance/overview');
+    expect(after.body.fieldglassQueue).toHaveLength(0);
+  });
+
   it('counts the payroll case desk and stamps clientId on chase rows', async () => {
     const now = new Date();
     const client = await createClient('Front Beach 218');
@@ -341,8 +405,10 @@ describe('POST /finance/close/nudge', () => {
     // The WFM (field-wide) and THIS client's supervisor — never the
     // other store's.
     expect(first.body.notified).toBe(2);
+    // notifyUser writes an IN_APP row AND an EMAIL row — assert on the
+    // bell rows only.
     const rows = await prisma.notification.findMany({
-      where: { category: 'finance.close_nudge' },
+      where: { category: 'finance.close_nudge', channel: 'IN_APP' },
       select: { recipientUserId: true, body: true, linkUrl: true },
     });
     const recipients = rows.map((r) => r.recipientUserId).sort();
@@ -360,7 +426,7 @@ describe('POST /finance/close/nudge', () => {
     expect(second.body.notified).toBe(0);
     expect(
       await prisma.notification.count({
-        where: { category: 'finance.close_nudge' },
+        where: { category: 'finance.close_nudge', channel: 'IN_APP' },
       }),
     ).toBe(2);
   });
