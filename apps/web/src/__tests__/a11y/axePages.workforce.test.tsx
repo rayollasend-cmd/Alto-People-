@@ -276,7 +276,10 @@ function renderPage(ui: React.ReactElement): RenderResult {
 describe('axe — workforce/HR long-tail pages', () => {
   it('<HrCasesHome> has no axe violations', async () => {
     const { container } = renderPage(<HrCasesHome />);
-    await screen.findByText('No cases yet');
+    // Desk staff without an associate record land on the QUEUE tab now
+    // (their "mine" would always be empty), so the queue's empty state is
+    // the settled render.
+    await screen.findByText('Queue is empty');
     await expectNoViolations(container);
   });
 

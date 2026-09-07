@@ -6,6 +6,7 @@ import {
   startOfWeekUTC,
   utcInstantOfLocalMidnight,
 } from '../lib/timeAnomalies.js';
+import { soonestPayday } from '../lib/payday.js';
 
 /**
  * The Workforce Manager's field cockpit — one round trip behind the
@@ -61,7 +62,7 @@ workforceOverviewRouter.get(
 
       const published = { publishedAt: { not: null } } as const;
 
-      const [activeEntries, todayShifts, tomorrowShifts, weekEvents, incidentRows, openNext48h, todayEvents, upcomingOpen] =
+      const [activeEntries, todayShifts, tomorrowShifts, weekEvents, incidentRows, openNext48h, todayEvents, upcomingOpen, pendingApprovals, payday, recentApproved] =
         await Promise.all([
           prisma.timeEntry.findMany({
             where: { status: 'ACTIVE', ...clamp },
@@ -148,7 +149,63 @@ workforceOverviewRouter.get(
               client: { select: { name: true } },
             },
           }),
+          // SEAM: the money cycle. Completed-but-unapproved timesheets are
+          // what Finance chases to close payroll — surface the number on
+          // the field side so the chase mostly never has to happen.
+          prisma.timeEntry.count({
+            where: { status: 'COMPLETED', clockOutAt: { not: null }, ...clamp },
+          }),
+          soonestPayday(prisma, now),
+          // SEAM: the people supply chain. HR approved them; the next move
+          // (scheduling) is THIS desk's. Candidates resolve below.
+          prisma.application.findMany({
+            where: {
+              status: 'APPROVED',
+              approvedAt: { gte: new Date(now.getTime() - 60 * 24 * HOUR_MS) },
+              deletedAt: null,
+              ...clamp,
+            },
+            orderBy: { approvedAt: 'desc' },
+            take: 100,
+            select: {
+              associateId: true,
+              approvedAt: true,
+              client: { select: { name: true } },
+              associate: {
+                select: { id: true, firstName: true, lastName: true, deletedAt: true },
+              },
+            },
+          }),
         ]);
+
+      // Ready to schedule: approved in the last 60 days, and NOT holding a
+      // single upcoming assigned shift — the baton is on the floor.
+      const approvedIds = recentApproved
+        .filter((a) => a.associate.deletedAt === null)
+        .map((a) => a.associateId);
+      const withUpcoming =
+        approvedIds.length > 0
+          ? await prisma.shift.findMany({
+              where: {
+                assignedAssociateId: { in: approvedIds },
+                status: 'ASSIGNED',
+                startsAt: { gte: now },
+              },
+              select: { assignedAssociateId: true },
+              distinct: ['assignedAssociateId'],
+            })
+          : [];
+      const scheduledIds = new Set(withUpcoming.map((s) => s.assignedAssociateId));
+      const readyRows = recentApproved
+        .filter(
+          (a) => a.associate.deletedAt === null && !scheduledIds.has(a.associateId),
+        )
+        .map((a) => ({
+          associateId: a.associateId,
+          name: `${a.associate.firstName} ${a.associate.lastName}`.trim(),
+          clientName: a.client?.name ?? null,
+          approvedAt: a.approvedAt ? a.approvedAt.toISOString() : null,
+        }));
 
       // Pre-shift check: on the clock with no shift behind the punch.
       const unscheduled = activeEntries.filter((e) => e.shiftId === null);
@@ -395,6 +452,14 @@ workforceOverviewRouter.get(
         incidentsToday: incidentRows.length,
         needsAttention,
         wire,
+        close: {
+          pendingApprovals,
+          payday: payday ? { date: payday.date, schedule: payday.schedule } : null,
+        },
+        readyToSchedule: {
+          count: readyRows.length,
+          rows: readyRows.slice(0, 8),
+        },
         dispatch: {
           openNext48h,
           upcoming: upcomingOpen.map((s) => ({

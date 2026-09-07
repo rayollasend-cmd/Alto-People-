@@ -36,7 +36,7 @@ import {
 import { getDashboardKPIs } from '@/lib/analyticsApi';
 import { getW4RecollectionSummary } from '@/lib/w4RecollectionApi';
 import { searchAuditLogs } from '@/lib/auditApi';
-import { ApiError } from '@/lib/api';
+import { ApiError, apiFetch } from '@/lib/api';
 import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -159,6 +159,21 @@ export function AdminDashboard() {
   const ssnRecollectionOutstanding = canProcessPayroll
     ? (ssnRecollectionQuery.data?.outstanding ?? 0)
     : 0;
+  // Field incidents awaiting HR review — the supervisor/WFM who reported
+  // one is notified when it's resolved, so leaving these open leaves a
+  // colleague in another building waiting.
+  const canManageCompliance = can('manage:compliance');
+  const incidentsQuery = useQuery({
+    queryKey: ['osha', 'incidents', 'open'],
+    queryFn: () =>
+      apiFetch<{ incidents: Array<{ status: string }> }>('/osha/incidents'),
+    enabled: canManageCompliance,
+    staleTime: 60_000,
+  });
+  const openIncidents = canManageCompliance
+    ? (incidentsQuery.data?.incidents.filter((i) => i.status !== 'RESOLVED')
+        .length ?? 0)
+    : 0;
   const activityQuery = useQuery({
     queryKey: ['audit', 'recent', 15],
     queryFn: () => searchAuditLogs({ limit: 15 }),
@@ -216,10 +231,11 @@ export function AdminDashboard() {
       <ActionRequiredSection
         kpis={kpis}
         canManageOnboarding={can('manage:onboarding')}
-        canManageCompliance={can('manage:compliance')}
+        canManageCompliance={canManageCompliance}
         canManageDocuments={can('manage:documents')}
         canProcessPayroll={canProcessPayroll}
         ssnRecollectionOutstanding={ssnRecollectionOutstanding}
+        openIncidents={openIncidents}
       />
 
       <KpiSection kpis={kpis} role={role} />
@@ -322,6 +338,7 @@ function ActionRequiredSection({
   canManageDocuments,
   canProcessPayroll,
   ssnRecollectionOutstanding,
+  openIncidents,
 }: {
   kpis: DashboardKPIs | null;
   canManageOnboarding: boolean;
@@ -329,6 +346,7 @@ function ActionRequiredSection({
   canManageDocuments: boolean;
   canProcessPayroll: boolean;
   ssnRecollectionOutstanding: number;
+  openIncidents: number;
 }) {
   const hasAnyActionCapability =
     canManageOnboarding ||
@@ -354,6 +372,20 @@ function ActionRequiredSection({
         icon: ClipboardList,
         severity:
           kpis.pendingOnboardingApplications > 10 ? 'urgent' : 'attention',
+      });
+    }
+    if (canManageCompliance && openIncidents > 0) {
+      xs.push({
+        count: openIncidents,
+        label:
+          openIncidents === 1
+            ? 'Safety incident awaiting review'
+            : 'Safety incidents awaiting review',
+        hint: 'Reported from the field. Resolving one notifies the supervisor who filed it.',
+        to: '/compliance/osha',
+        cta: 'Open the injury log',
+        icon: AlertTriangle,
+        severity: 'urgent',
       });
     }
     if (canManageCompliance && kpis.pendingI9Section2 > 0) {
@@ -414,6 +446,7 @@ function ActionRequiredSection({
     canManageDocuments,
     canProcessPayroll,
     ssnRecollectionOutstanding,
+    openIncidents,
   ]);
 
   // Roles with no manage capabilities at all (EXECUTIVE_CHAIRMAN,

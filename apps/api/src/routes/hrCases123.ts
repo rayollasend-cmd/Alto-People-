@@ -2,16 +2,23 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireAuth, requireCapability } from '../middleware/auth.js';
-import { hasCapability } from '@alto-people/shared';
-import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins, notifyAssociate } from '../lib/notify.js';
+import { requireAuth } from '../middleware/auth.js';
+import { hasCapability, rolesWithCapability, type Role } from '@alto-people/shared';
+import {
+  ADMIN_EMAIL_HR_ONLY,
+  notifyAllAdmins,
+  notifyAssociate,
+  notifyUser,
+} from '../lib/notify.js';
 
 /**
- * Phase 123 — HR cases (ticketing).
+ * Phase 123 — HR cases (ticketing) — now the company's internal case desk.
  *
  * File / view-mine: open to authenticated associates.
- * Triage / assign / resolve / internal notes: gated by manage:onboarding
- * (HR/admin role family).
+ * Triage / assign / resolve / internal notes: manage:onboarding works
+ * every case (the HR/admin role family); process:payroll works PAYROLL
+ * cases ONLY — a missing paycheck is Finance's ticket, but a harassment
+ * case must never cross into another department's queue.
  *
  * Visibility rule: an associate can only read their own cases and only
  * sees comments where internalNote=false. The route handlers enforce both.
@@ -19,7 +26,17 @@ import { ADMIN_EMAIL_HR_ONLY, notifyAllAdmins, notifyAssociate } from '../lib/no
 
 export const hrCases123Router = Router();
 
-const MANAGE = requireCapability('manage:onboarding');
+/** What slice of the desk a staff role can work: everything, the PAYROLL
+ *  category only, or nothing. */
+function deskScope(role: Role): 'all' | 'payroll' | null {
+  if (hasCapability(role, 'manage:onboarding')) return 'all';
+  if (hasCapability(role, 'process:payroll')) return 'payroll';
+  return null;
+}
+function canWorkCase(role: Role, category: string): boolean {
+  const scope = deskScope(role);
+  return scope === 'all' || (scope === 'payroll' && category === 'PAYROLL');
+}
 
 const CATEGORY = z.enum([
   'BENEFITS',
@@ -113,7 +130,11 @@ hrCases123Router.get('/my/hr-cases', requireAuth, async (req, res) => {
 
 // ----- Queue (HR-facing) ---------------------------------------------------
 
-hrCases123Router.get('/hr-cases', MANAGE, async (req, res) => {
+hrCases123Router.get('/hr-cases', requireAuth, async (req, res) => {
+  const scope = deskScope(req.user!.role);
+  if (!scope) {
+    throw new HttpError(403, 'forbidden', 'Missing capability: manage:onboarding');
+  }
   const status = STATUS.optional().parse(req.query.status);
   const category = CATEGORY.optional().parse(req.query.category);
   const assignedToMe = z
@@ -124,8 +145,10 @@ hrCases123Router.get('/hr-cases', MANAGE, async (req, res) => {
   const rows = await prisma.hrCase.findMany({
     take: 100,
     where: {
+      // Finance sees the PAYROLL desk and nothing else.
+      ...(scope === 'payroll' ? { category: 'PAYROLL' } : {}),
       ...(status ? { status } : {}),
-      ...(category ? { category } : {}),
+      ...(category && scope !== 'payroll' ? { category } : {}),
       ...(assignedToMe === 'true' ? { assignedToId: req.user!.id } : {}),
     },
     include: {
@@ -183,9 +206,10 @@ hrCases123Router.get('/hr-cases/:id', requireAuth, async (req, res) => {
     throw new HttpError(404, 'not_found', 'Case not found.');
   }
 
-  // Visibility: subject can read only their own; HR can read all.
+  // Visibility: subject can read only their own; HR reads all; Finance
+  // reads PAYROLL cases.
   const isOwner = req.user!.associateId === c.associateId;
-  const canManage = hasCapability(req.user!.role, 'manage:onboarding');
+  const canManage = canWorkCase(req.user!.role, c.category);
   if (!isOwner && !canManage) {
     throw new HttpError(403, 'forbidden', 'Not yours.');
   }
@@ -238,8 +262,7 @@ hrCases123Router.post(
       throw new HttpError(404, 'not_found', 'Case not found.');
     }
     const isOwner = req.user!.associateId === c.associateId;
-    const canManage =
-  hasCapability(req.user!.role, 'manage:onboarding');
+    const canManage = canWorkCase(req.user!.role, c.category);
     if (!isOwner && !canManage) {
       throw new HttpError(403, 'forbidden', 'Not yours.');
     }
@@ -292,12 +315,15 @@ const TriageInputSchema = z.object({
   resolution: z.string().max(4000).optional().nullable(),
 });
 
-hrCases123Router.patch('/hr-cases/:id', MANAGE, async (req, res) => {
+hrCases123Router.patch('/hr-cases/:id', requireAuth, async (req, res) => {
   const id = z.string().uuid().parse(req.params.id);
   const input = TriageInputSchema.parse(req.body);
   const c = await prisma.hrCase.findUnique({ where: { id } });
   if (!c) {
     throw new HttpError(404, 'not_found', 'Case not found.');
+  }
+  if (!canWorkCase(req.user!.role, c.category)) {
+    throw new HttpError(403, 'forbidden', 'Missing capability: manage:onboarding');
   }
   const willResolve = input.status === 'RESOLVED' && c.status !== 'RESOLVED';
   await prisma.hrCase.update({
@@ -312,6 +338,22 @@ hrCases123Router.patch('/hr-cases/:id', MANAGE, async (req, res) => {
       ...(willResolve ? { resolvedAt: new Date() } : {}),
     },
   });
+  // Cross-department routing: assigning a case to someone else puts it on
+  // THEIR desk — they hear about it with a deep link, whatever building
+  // they sit in.
+  if (
+    input.assignedToId !== undefined &&
+    input.assignedToId !== null &&
+    input.assignedToId !== c.assignedToId &&
+    input.assignedToId !== req.user!.id
+  ) {
+    void notifyUser(input.assignedToId, {
+      subject: `HR case routed to you: ${c.subject}`,
+      body: `A ${c.category.replace(/_/g, ' ').toLowerCase()} case ("${c.subject}", priority ${c.priority}) was routed to you by ${req.user!.email}.`,
+      category: 'hr-cases',
+      linkUrl: `/hr-cases?case=${id}`,
+    });
+  }
   if (willResolve) {
     const resolution =
       input.resolution !== undefined ? input.resolution : c.resolution;
@@ -330,20 +372,25 @@ hrCases123Router.patch('/hr-cases/:id', MANAGE, async (req, res) => {
 
 // ----- Summary -------------------------------------------------------------
 
-hrCases123Router.get('/hr-cases-summary', MANAGE, async (_req, res) => {
+hrCases123Router.get('/hr-cases-summary', requireAuth, async (req, res) => {
+  const scope = deskScope(req.user!.role);
+  if (!scope) {
+    throw new HttpError(403, 'forbidden', 'Missing capability: manage:onboarding');
+  }
+  const desk = scope === 'payroll' ? { category: 'PAYROLL' as const } : {};
   const [openTotal, byStatus, byPriority, byCategory] = await Promise.all([
     prisma.hrCase.count({
-      where: { status: { in: ['OPEN', 'IN_PROGRESS', 'WAITING_ASSOCIATE'] } },
+      where: { ...desk, status: { in: ['OPEN', 'IN_PROGRESS', 'WAITING_ASSOCIATE'] } },
     }),
-    prisma.hrCase.groupBy({ by: ['status'], _count: { _all: true } }),
+    prisma.hrCase.groupBy({ by: ['status'], where: { ...desk }, _count: { _all: true } }),
     prisma.hrCase.groupBy({
       by: ['priority'],
-      where: { status: { not: 'CLOSED' } },
+      where: { ...desk, status: { not: 'CLOSED' } },
       _count: { _all: true },
     }),
     prisma.hrCase.groupBy({
       by: ['category'],
-      where: { status: { not: 'CLOSED' } },
+      where: { ...desk, status: { not: 'CLOSED' } },
       _count: { _all: true },
     }),
   ]);
@@ -354,4 +401,45 @@ hrCases123Router.get('/hr-cases-summary', MANAGE, async (_req, res) => {
   for (const r of byPriority) priority[r.priority] = r._count._all;
   for (const r of byCategory) category[r.category] = r._count._all;
   res.json({ openTotal, byStatus: status, byPriority: priority, byCategory: category });
+});
+
+// ----- The routing directory ------------------------------------------------
+//
+// Everyone who can work a desk, so any case can be routed to a specific
+// person in another department: HR/admin staff plus the Finance desk.
+// Emails only — this is staff-facing, no associate PII involved.
+
+hrCases123Router.get('/hr-cases-staff', requireAuth, async (req, res) => {
+  if (!deskScope(req.user!.role)) {
+    throw new HttpError(403, 'forbidden', 'Missing capability: manage:onboarding');
+  }
+  const staffRoles = [
+    ...new Set([
+      ...rolesWithCapability('manage:onboarding'),
+      ...rolesWithCapability('process:payroll'),
+    ]),
+  ];
+  const users = await prisma.user.findMany({
+    where: { status: 'ACTIVE', role: { in: staffRoles } },
+    select: {
+      id: true,
+      email: true,
+      role: true,
+      associate: { select: { firstName: true, lastName: true } },
+    },
+    orderBy: { email: 'asc' },
+    take: 200,
+  });
+  res.json({
+    staff: users.map((u) => ({
+      userId: u.id,
+      email: u.email,
+      role: u.role,
+      name: u.associate
+        ? `${u.associate.firstName} ${u.associate.lastName}`.trim()
+        : u.email.split('@')[0]!,
+      // The desk badge: which slice of cases this person can work.
+      desk: deskScope(u.role as Role),
+    })),
+  });
 });

@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   ArrowRight,
+  Banknote,
   CalendarDays,
   ClipboardList,
   Inbox,
@@ -10,6 +11,7 @@ import {
   Radio,
   ShieldAlert,
   Store,
+  UserPlus,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -92,6 +94,19 @@ interface WorkforceOverview {
   incidentsToday: number;
   needsAttention: number;
   wire: WireItem[];
+  close: {
+    pendingApprovals: number;
+    payday: { date: string; schedule: string } | null;
+  };
+  readyToSchedule: {
+    count: number;
+    rows: Array<{
+      associateId: string;
+      name: string;
+      clientName: string | null;
+      approvedAt: string | null;
+    }>;
+  };
   dispatch: {
     openNext48h: number;
     upcoming: Array<{
@@ -440,6 +455,60 @@ export function WorkforceDashboard() {
               );
             })}
           </div>
+
+          {/* ---- Ready to schedule: the HR → field baton ---------------- */}
+          <Card
+            className={cn(
+              'mt-3 animate-enter',
+              data.readyToSchedule.count > 0 && 'border-gold/30',
+            )}
+            style={enterStagger(4)}
+          >
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
+                  <UserPlus className="h-4 w-4 text-gold" aria-hidden="true" />
+                  {t('wf.readyTitle')}
+                </h2>
+                {data.readyToSchedule.count > 0 && (
+                  <Link
+                    to="/scheduling"
+                    className="inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-9"
+                  >
+                    {t('wf.goScheduling')}
+                    <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                  </Link>
+                )}
+              </div>
+              {data.readyToSchedule.count === 0 ? (
+                <p className="mt-2 text-sm text-success">{t('wf.readyNone')}</p>
+              ) : (
+                <ul className="mt-2 divide-y divide-navy-secondary/60">
+                  {data.readyToSchedule.rows.map((r) => (
+                    <li
+                      key={r.associateId}
+                      className="flex items-center gap-2 py-2 text-xs"
+                    >
+                      <Link
+                        to={`/people?associateId=${r.associateId}&return=${encodeURIComponent('/')}`}
+                        className="min-w-0 flex-1 truncate font-medium text-white hover:text-gold-bright"
+                      >
+                        {r.name}
+                      </Link>
+                      {r.clientName && (
+                        <span className="truncate text-silver/60">{r.clientName}</span>
+                      )}
+                      {r.approvedAt && (
+                        <span className="shrink-0 tabular-nums text-silver/40">
+                          {t('wf.readyApproved', { date: fmtDate(r.approvedAt) })}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
         </div>
 
         {/* ---- LIVE WIRE + dispatch ------------------------------------ */}
@@ -486,12 +555,53 @@ export function WorkforceDashboard() {
             </CardContent>
           </Card>
 
+          {/* ---- Payroll close: the field → Finance baton --------------- */}
+          <Card
+            className={cn(
+              'animate-enter',
+              data.close.pendingApprovals > 0 && 'border-warning/30',
+            )}
+            style={enterStagger(3)}
+          >
+            <CardContent className="p-4">
+              <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
+                <Banknote className="h-4 w-4 text-gold" aria-hidden="true" />
+                {t('wf.closeTitle')}
+              </h2>
+              {data.close.pendingApprovals === 0 ? (
+                <p className="mt-2 text-sm text-success">{t('wf.closeClear')}</p>
+              ) : (
+                <p className="mt-2 text-sm text-warning tabular-nums">
+                  {t('wf.closePending', { count: data.close.pendingApprovals })}
+                </p>
+              )}
+              <div className="mt-1.5 flex items-center justify-between gap-2 text-xs">
+                {data.close.payday ? (
+                  <span className="tabular-nums text-silver/60">
+                    {t('wf.closePayday', { date: fmtDate(data.close.payday.date) })}
+                  </span>
+                ) : (
+                  <span />
+                )}
+                {data.close.pendingApprovals > 0 && (
+                  <Link
+                    to="/time-attendance"
+                    className="inline-flex items-center gap-1 text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-9"
+                  >
+                    {t('wf.goLive')}
+                    <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                  </Link>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
           <Card
             className={cn(
               'animate-enter',
               data.dispatch.openNext48h > 0 && 'border-warning/30',
             )}
-            style={enterStagger(3)}
+            style={enterStagger(4)}
           >
             <CardContent className="p-4">
               <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">

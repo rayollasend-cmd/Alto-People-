@@ -11,6 +11,7 @@ import {
   ClockAlert,
   DollarSign,
   FileSpreadsheet,
+  Inbox,
   Receipt,
   Scale,
   Wallet,
@@ -56,8 +57,14 @@ interface FinanceOverview {
     pendingEntries: number;
     pendingHours: number;
     oldestDay: string | null;
-    byClient: Array<{ clientName: string; entries: number; hours: number }>;
+    byClient: Array<{
+      clientId: string | null;
+      clientName: string;
+      entries: number;
+      hours: number;
+    }>;
   };
+  payrollCases: { open: number; assignedToMe: number };
   settlements: { count: number; total: number };
   receivables: {
     outstandingTotal: number;
@@ -106,6 +113,8 @@ export function FinanceDashboard() {
   });
   const data = query.data;
   const [fgBusy, setFgBusy] = useState<string | null>(null);
+  // Which chase bar's Nudge is in flight ('all' | clientId | 'none').
+  const [nudging, setNudging] = useState<string | null>(null);
   // Which queue row is unfolded to show its Fieldglass entry facts.
   const [fgOpen, setFgOpen] = useState<string | null>(null);
   // Whole-section collapse, persisted per browser — the count stays
@@ -138,6 +147,25 @@ export function FinanceDashboard() {
       toast.error(t('fin.fgFailed'));
     } finally {
       setFgBusy(null);
+    }
+  };
+
+  // The chase, without the phone call: ping the field leaders who own
+  // these approvals. The API dedupes to one nudge per client per day.
+  const nudge = async (clientId: string | null) => {
+    setNudging(clientId ?? 'none');
+    try {
+      const r = await apiFetch<{ notified: number; deduped: boolean }>(
+        '/finance/close/nudge',
+        { method: 'POST', body: { clientId } },
+      );
+      if (r.deduped) toast.info(t('fin.nudgeDeduped'));
+      else if (r.notified === 0) toast.info(t('fin.nudgeNoOne'));
+      else toast.success(t('fin.nudgeSent', { count: r.notified }));
+    } catch {
+      toast.error(t('fin.nudgeFailed'));
+    } finally {
+      setNudging(null);
     }
   };
 
@@ -545,8 +573,18 @@ export function FinanceDashboard() {
                   <li key={c.clientName}>
                     <div className="flex items-baseline justify-between gap-3 text-sm">
                       <span className="truncate text-white">{c.clientName}</span>
-                      <span className="shrink-0 tabular-nums text-silver">
-                        {fmtHours(c.hours)}
+                      <span className="flex shrink-0 items-baseline gap-2">
+                        <span className="tabular-nums text-silver">
+                          {fmtHours(c.hours)}
+                        </span>
+                        <Button
+                          size="xs"
+                          variant="secondary"
+                          loading={nudging === (c.clientId ?? 'none')}
+                          onClick={() => void nudge(c.clientId)}
+                        >
+                          {t('fin.nudge')}
+                        </Button>
                       </span>
                     </div>
                     <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-navy-secondary/50">
@@ -603,8 +641,8 @@ export function FinanceDashboard() {
         )}
       </div>
 
-      {/* ---- The four actions the day needs --------------------------- */}
-      <div className="grid grid-cols-2 gap-2 md:grid-cols-4 md:gap-3">
+      {/* ---- The actions the day needs -------------------------------- */}
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-5 md:gap-3">
         {(
           [
             ['/payroll', 'fin.goPayroll', DollarSign],
@@ -629,6 +667,34 @@ export function FinanceDashboard() {
             />
           </Link>
         ))}
+        {/* The payroll case desk — PAYROLL-category HR cases routed to
+            Finance; the pill is the "assigned to you" count. */}
+        <Link
+          to="/hr-cases"
+          className="group flex min-h-12 items-center gap-2 rounded-md border border-navy-secondary bg-navy px-3 py-3 text-sm text-white transition-colors hover:border-gold/50 hover:bg-navy/80 active:border-gold/50 active:bg-navy-secondary/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        >
+          <Inbox
+            className="h-4 w-4 text-silver transition-colors group-hover:text-gold"
+            aria-hidden="true"
+          />
+          <span className="flex-1 truncate">{t('fin.goCases')}</span>
+          {data.payrollCases.open > 0 && (
+            <span
+              className={cn(
+                'rounded-full px-1.5 py-0.5 text-2xs font-semibold tabular-nums',
+                data.payrollCases.assignedToMe > 0
+                  ? 'bg-alert/15 text-alert'
+                  : 'bg-warning/15 text-warning',
+              )}
+            >
+              {data.payrollCases.open}
+            </span>
+          )}
+          <ArrowRight
+            className="h-3.5 w-3.5 text-silver/70 transition-colors group-hover:text-gold"
+            aria-hidden="true"
+          />
+        </Link>
       </div>
     </div>
   );

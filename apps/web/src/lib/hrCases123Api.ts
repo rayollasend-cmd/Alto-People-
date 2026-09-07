@@ -150,3 +150,15 @@ export const triageCase = (
 
 export const getCaseSummary = () =>
   apiFetch<CaseSummary>('/hr-cases-summary');
+
+export interface CaseStaffRow {
+  userId: string;
+  email: string;
+  role: string;
+  name: string;
+  /** Which slice of the desk they can work: every case, or PAYROLL only. */
+  desk: 'all' | 'payroll';
+}
+
+export const listCaseStaff = () =>
+  apiFetch<{ staff: CaseStaffRow[] }>('/hr-cases-staff');

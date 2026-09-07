@@ -11,12 +11,14 @@ import {
   getCase,
   getCaseSummary,
   listCaseQueue,
+  listCaseStaff,
   listMyCases,
   STATUS_LABELS,
   triageCase,
   type CaseCategory,
   type CaseDetail,
   type CasePriority,
+  type CaseStaffRow,
   type CaseStatus,
   type CaseSummary,
   type MyCaseRow,
@@ -110,8 +112,21 @@ const casePriorityLabel = (
 export function HrCasesHome() {
   const { user } = useAuth();
   const { t } = useI18n();
-  const canManage = user ? hasCapability(user.role, 'manage:onboarding') : false;
-  const [tab, setTab] = useState<'mine' | 'queue'>('mine');
+  // The case desk: manage:onboarding works every case; process:payroll
+  // (Finance) works the PAYROLL desk — the API scopes their queue.
+  const canManage = user
+    ? hasCapability(user.role, 'manage:onboarding') ||
+      hasCapability(user.role, 'process:payroll')
+    : false;
+  const payrollDeskOnly = user
+    ? !hasCapability(user.role, 'manage:onboarding') &&
+      hasCapability(user.role, 'process:payroll')
+    : false;
+  // Desk staff without an associate record have no "mine" — land on the
+  // queue instead of an empty tab.
+  const [tab, setTab] = useState<'mine' | 'queue'>(
+    canManage && !user?.associateId ? 'queue' : 'mine',
+  );
   const [mine, setMine] = useState<MyCaseRow[] | null>(null);
   const [queue, setQueue] = useState<QueueCaseRow[] | null>(null);
   const [summary, setSummary] = useState<CaseSummary | null>(null);
@@ -290,21 +305,25 @@ export function HrCasesHome() {
                   </option>
                 ))}
               </Select>
-              <Select
-                size="sm"
-                aria-label="Filter by category"
-                value={categoryFilter}
-                onChange={(e) =>
-                  setCategoryFilter(e.target.value as CaseCategory | 'ALL')
-                }
-              >
-                <option value="ALL">All categories</option>
-                {(Object.keys(CATEGORY_LABELS) as CaseCategory[]).map((k) => (
-                  <option key={k} value={k}>
-                    {CATEGORY_LABELS[k]}
-                  </option>
-                ))}
-              </Select>
+              {/* Finance's queue is PAYROLL-only server-side; the filter
+                  would be a row of dead options. */}
+              {!payrollDeskOnly && (
+                <Select
+                  size="sm"
+                  aria-label="Filter by category"
+                  value={categoryFilter}
+                  onChange={(e) =>
+                    setCategoryFilter(e.target.value as CaseCategory | 'ALL')
+                  }
+                >
+                  <option value="ALL">All categories</option>
+                  {(Object.keys(CATEGORY_LABELS) as CaseCategory[]).map((k) => (
+                    <option key={k} value={k}>
+                      {CATEGORY_LABELS[k]}
+                    </option>
+                  ))}
+                </Select>
+              )}
               <Button
                 size="sm"
                 variant={assignedToMe ? 'primary' : 'secondary'}
@@ -323,9 +342,13 @@ export function HrCasesHome() {
               </Button>
             </>
           )}
-          <Button onClick={() => setShowNew(true)}>
-            <Plus className="mr-2 h-4 w-4" /> {t('hrc.newCase')}
-          </Button>
+          {/* Filing needs an associate record — desk-only staff (Finance)
+              work cases, they don't file them. */}
+          {user?.associateId && (
+            <Button onClick={() => setShowNew(true)}>
+              <Plus className="mr-2 h-4 w-4" /> {t('hrc.newCase')}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -855,6 +878,17 @@ function TriageBlock({
   const { user } = useAuth();
   const [resolution, setResolution] = useState(detail.resolution ?? '');
   const [claiming, setClaiming] = useState(false);
+  // Cross-department routing: everyone who can work a desk. Finance can
+  // only take PAYROLL cases, so they're hidden as targets on the rest.
+  const [staff, setStaff] = useState<CaseStaffRow[]>([]);
+  useEffect(() => {
+    listCaseStaff()
+      .then((r) => setStaff(r.staff))
+      .catch(() => setStaff([]));
+  }, []);
+  const routable = staff.filter(
+    (s) => detail.category === 'PAYROLL' || s.desk === 'all',
+  );
   // Closing with an unsent reply typed below — intercepted behind a
   // three-way choice instead of stranding the text in a disabled composer.
   const [closeIntent, setCloseIntent] = useState(false);
@@ -918,6 +952,36 @@ function TriageBlock({
           <Button size="xs" variant="secondary" loading={claiming} onClick={claim}>
             Assign to me
           </Button>
+        )}
+        {routable.length > 0 && (
+          <Select
+            size="sm"
+            aria-label="Route to a person"
+            value=""
+            onChange={async (e) => {
+              const target = routable.find((s) => s.userId === e.target.value);
+              if (!target) return;
+              try {
+                await triageCase(detail.id, { assignedToId: target.userId });
+                toast.success(`Routed to ${target.name}.`);
+                onChange();
+              } catch (err) {
+                toast.error(
+                  err instanceof ApiError ? err.message : 'Could not route the case.',
+                );
+              }
+            }}
+          >
+            <option value="" disabled>
+              Route to…
+            </option>
+            {routable.map((s) => (
+              <option key={s.userId} value={s.userId}>
+                {s.name}
+                {s.desk === 'payroll' ? ' — Finance' : ''}
+              </option>
+            ))}
+          </Select>
         )}
       </div>
       <div className="flex gap-2 flex-wrap">

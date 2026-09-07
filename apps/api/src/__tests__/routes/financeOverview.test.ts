@@ -264,4 +264,121 @@ describe('GET /finance/overview', () => {
     );
     expect(res.status).toBe(403);
   });
+
+  it('counts the payroll case desk and stamps clientId on chase rows', async () => {
+    const now = new Date();
+    const client = await createClient('Front Beach 218');
+    const a1 = await createAssociate();
+    await prisma.timeEntry.create({
+      data: {
+        associateId: a1.id,
+        clientId: client.id,
+        clockInAt: new Date(now.getTime() - 30 * HOUR),
+        clockOutAt: new Date(now.getTime() - 22 * HOUR),
+        status: 'COMPLETED',
+      },
+    });
+    const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    // One open PAYROLL case routed to this accountant, one HR-side case
+    // that must NOT count toward the payroll desk.
+    await prisma.hrCase.create({
+      data: {
+        associateId: a1.id,
+        category: 'PAYROLL',
+        subject: 'Missing overtime on my last check',
+        description: 'Week of the 12th shows 40h, I worked 46.',
+        assignedToId: user.id,
+      },
+    });
+    await prisma.hrCase.create({
+      data: {
+        associateId: a1.id,
+        category: 'BENEFITS',
+        subject: 'Dental question',
+        description: 'Coverage start date?',
+      },
+    });
+
+    const res = await (await loginAs(user.email)).get('/finance/overview');
+    expect(res.status).toBe(200);
+    expect(res.body.payrollCases).toEqual({ open: 1, assignedToMe: 1 });
+    expect(res.body.close.byClient[0].clientId).toBe(client.id);
+  });
+});
+
+describe('POST /finance/close/nudge', () => {
+  it('pings the field leaders who own the approvals, deduped per client per day', async () => {
+    const now = new Date();
+    const client = await createClient('Front Beach 218');
+    const other = await createClient('Destin 4411');
+    const a1 = await createAssociate();
+    await prisma.timeEntry.create({
+      data: {
+        associateId: a1.id,
+        clientId: client.id,
+        clockInAt: new Date(now.getTime() - 30 * HOUR),
+        clockOutAt: new Date(now.getTime() - 22 * HOUR),
+        status: 'COMPLETED',
+      },
+    });
+    const { user: wfm } = await createUser({ role: 'WORKFORCE_MANAGER' });
+    const { user: supHere } = await createUser({
+      role: 'SHIFT_SUPERVISOR',
+      clientId: client.id,
+    });
+    const { user: supElsewhere } = await createUser({
+      role: 'SHIFT_SUPERVISOR',
+      clientId: other.id,
+    });
+    const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const agent = await loginAs(user.email);
+
+    const first = await agent
+      .post('/finance/close/nudge')
+      .send({ clientId: client.id });
+    expect(first.status).toBe(200);
+    expect(first.body.deduped).toBe(false);
+    // The WFM (field-wide) and THIS client's supervisor — never the
+    // other store's.
+    expect(first.body.notified).toBe(2);
+    const rows = await prisma.notification.findMany({
+      where: { category: 'finance.close_nudge' },
+      select: { recipientUserId: true, body: true, linkUrl: true },
+    });
+    const recipients = rows.map((r) => r.recipientUserId).sort();
+    expect(recipients).toEqual([wfm.id, supHere.id].sort());
+    expect(rows.every((r) => r.recipientUserId !== supElsewhere.id)).toBe(true);
+    expect(rows[0]!.body).toContain('Front Beach 218');
+    expect(rows[0]!.linkUrl).toContain('/time-attendance');
+
+    // Same client, same day → deduped, no second blast.
+    const second = await agent
+      .post('/finance/close/nudge')
+      .send({ clientId: client.id });
+    expect(second.status).toBe(200);
+    expect(second.body.deduped).toBe(true);
+    expect(second.body.notified).toBe(0);
+    expect(
+      await prisma.notification.count({
+        where: { category: 'finance.close_nudge' },
+      }),
+    ).toBe(2);
+  });
+
+  it('sends nothing when there is nothing to approve, and is finance-gated', async () => {
+    const client = await createClient('Front Beach 218');
+    await createUser({ role: 'WORKFORCE_MANAGER' });
+    const { user } = await createUser({ role: 'FINANCE_ACCOUNTANT' });
+    const res = await (await loginAs(user.email))
+      .post('/finance/close/nudge')
+      .send({ clientId: client.id });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ notified: 0, pendingEntries: 0 });
+
+    const { user: wfm } = await createUser({ role: 'WORKFORCE_MANAGER' });
+    const denied = await (await loginAs(wfm.email))
+      .post('/finance/close/nudge')
+      .send({});
+    expect(denied.status).toBe(403);
+  });
 });

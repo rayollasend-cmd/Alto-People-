@@ -190,6 +190,10 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   // Comes with full scheduling authority: swap requests, pickup claims,
   // and unconfirmed-shift decisions land here.
   'approvals',
+  // The payroll case desk: PAYROLL-category HR cases (missing paychecks,
+  // deduction questions) are Finance's tickets — the API scopes their
+  // queue to that category.
+  'hr-cases',
   'holidays',
   'analytics',
   'reports',

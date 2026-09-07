@@ -184,6 +184,58 @@ describe('GET /workforce/overview', () => {
     ).toBe(true);
   });
 
+  it('carries the two cross-department batons: ready-to-schedule and the payroll close', async () => {
+    const now = new Date();
+    const client = await createClient('Front Beach 218');
+    // HR approved both; only one has a future shift.
+    const scheduled = await createAssociate({ firstName: 'Sana', lastName: 'Scheduled' });
+    const waiting = await createAssociate({ firstName: 'Ben', lastName: 'Waiting' });
+    for (const a of [scheduled, waiting]) {
+      await prisma.application.create({
+        data: {
+          associateId: a.id,
+          clientId: client.id,
+          onboardingTrack: 'STANDARD',
+          status: 'APPROVED',
+          approvedAt: now,
+        },
+      });
+    }
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        assignedAssociateId: scheduled.id,
+        position: 'Stocker',
+        startsAt: new Date(now.getTime() + 24 * HOUR),
+        endsAt: new Date(now.getTime() + 32 * HOUR),
+        status: 'ASSIGNED',
+        publishedAt: now,
+      },
+    });
+    // One completed-but-unapproved timesheet — what Finance chases.
+    await prisma.timeEntry.create({
+      data: {
+        associateId: scheduled.id,
+        clientId: client.id,
+        clockInAt: new Date(now.getTime() - 30 * HOUR),
+        clockOutAt: new Date(now.getTime() - 22 * HOUR),
+        status: 'COMPLETED',
+      },
+    });
+
+    const { user } = await createUser({ role: 'WORKFORCE_MANAGER' });
+    const res = await (await loginAs(user.email)).get('/workforce/overview');
+    expect(res.status).toBe(200);
+
+    // The HR → field baton: approved with no upcoming shift.
+    expect(res.body.readyToSchedule.count).toBe(1);
+    expect(res.body.readyToSchedule.rows[0].name).toBe('Ben Waiting');
+    expect(res.body.readyToSchedule.rows[0].clientName).toBe('Front Beach 218');
+
+    // The field → Finance baton: unapproved timesheets on the WFM board.
+    expect(res.body.close.pendingApprovals).toBe(1);
+  });
+
   it('right-sized role: workforce manager is OUT of payroll', async () => {
     const { user } = await createUser({ role: 'WORKFORCE_MANAGER' });
     const agent = await loginAs(user.email);

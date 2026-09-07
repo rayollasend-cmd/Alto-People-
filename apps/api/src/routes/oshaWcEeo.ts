@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { requireCapability } from '../middleware/auth.js';
-import { notifyAllAdmins } from '../lib/notify.js';
+import { notifyAllAdmins, notifyUser } from '../lib/notify.js';
 
 /**
  * Phase 88 — OSHA + WC class codes + EEO-1.
@@ -134,6 +134,10 @@ oshaWcEeoRouter.post('/osha/incidents', MANAGE_COMP, async (req, res) => {
 oshaWcEeoRouter.put('/osha/incidents/:id', MANAGE_COMP, async (req, res) => {
   const id = req.params.id;
   const input = OshaUpdateSchema.parse(req.body);
+  const before = await prisma.oshaIncident.findUnique({
+    where: { id },
+    select: { status: true, reportedById: true, description: true },
+  });
   const resolved = input.status === 'RESOLVED';
   await prisma.oshaIncident.update({
     where: { id },
@@ -147,6 +151,27 @@ oshaWcEeoRouter.put('/osha/incidents/:id', MANAGE_COMP, async (req, res) => {
       resolvedAt: resolved ? new Date() : undefined,
     },
   });
+  // Close the loop with the person who reported it — the supervisor or
+  // workforce manager in another building learns their report landed,
+  // was worked, and is done. Open loops are what force the "did you see
+  // my incident report?" phone calls.
+  if (
+    resolved &&
+    before &&
+    before.status !== 'RESOLVED' &&
+    before.reportedById &&
+    before.reportedById !== req.user!.id
+  ) {
+    const summary = before.description.slice(0, 120);
+    void notifyUser(before.reportedById, {
+      subject: 'Your safety incident report was resolved',
+      body:
+        `The incident you reported ("${summary}${before.description.length > 120 ? '…' : ''}") has been reviewed and marked resolved.` +
+        (input.resolutionNote ? ` Resolution: ${input.resolutionNote}` : ''),
+      category: 'compliance',
+      linkUrl: '/compliance/osha',
+    });
+  }
   res.json({ ok: true });
 });
 

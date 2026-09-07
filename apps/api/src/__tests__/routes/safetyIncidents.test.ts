@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { flushPendingNotifications } from '../../lib/notify.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -204,5 +205,56 @@ describe('actions integration', () => {
     expect(saf.link).toBe('/compliance/osha');
     expect(res.body.score).toBeGreaterThanOrEqual(0);
     expect(res.body.score).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('the incident loop closes back to the reporter', () => {
+  it('resolving an incident notifies whoever reported it — once, not the resolver', async () => {
+    const client = await createClient();
+    const assoc = await activeAssociate(client.id);
+    // The field reporter (another building) and the HR resolver.
+    const { user: wfm } = await createUser({ role: 'WORKFORCE_MANAGER' });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+
+    const reported = await (await loginAs(wfm.email))
+      .post('/osha/incidents')
+      .send(incidentBody(client.id, assoc.id));
+    expect(reported.status).toBe(201);
+    const incidentId = reported.body.id as string;
+    await flushPendingNotifications();
+    await prisma.notification.deleteMany({}); // clear the filing broadcast
+
+    const resolve = await (await loginAs(hr.email))
+      .put(`/osha/incidents/${incidentId}`)
+      .send({ status: 'RESOLVED', resolutionNote: 'Wet-floor signage added; retrained crew.' });
+    expect(resolve.status).toBe(200);
+    await flushPendingNotifications();
+
+    const note = await prisma.notification.findFirst({
+      where: {
+        channel: 'IN_APP',
+        category: 'compliance',
+        recipientUserId: wfm.id,
+      },
+    });
+    expect(note).not.toBeNull();
+    expect(note?.subject).toBe('Your safety incident report was resolved');
+    expect(note?.body).toContain('Wet-floor signage added');
+    expect(note?.linkUrl).toBe('/compliance/osha');
+
+    // Re-saving an already-resolved incident must not re-notify.
+    await (await loginAs(hr.email))
+      .put(`/osha/incidents/${incidentId}`)
+      .send({ status: 'RESOLVED' });
+    await flushPendingNotifications();
+    expect(
+      await prisma.notification.count({
+        where: {
+          channel: 'IN_APP',
+          category: 'compliance',
+          recipientUserId: wfm.id,
+        },
+      }),
+    ).toBe(1);
   });
 });

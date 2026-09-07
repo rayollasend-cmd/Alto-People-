@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -6,7 +7,10 @@ import {
   netWorkedMinutes,
   orgDateKey,
   startOfWeekUTC,
+  utcInstantOfLocalMidnight,
 } from '../lib/timeAnomalies.js';
+import { nextPayDate } from '../lib/payday.js';
+import { notifyUser } from '../lib/notify.js';
 
 /**
  * The Finance cockpit — one round trip behind the FINANCE_ACCOUNTANT
@@ -32,43 +36,10 @@ export const financeOverviewRouter = Router();
 
 const DAY_MS = 86_400_000;
 
-/** Next pay date for a schedule: anchorDate treated as a period end;
- *  period ends advance by the frequency; payday = periodEnd + offset. */
-function nextPayDate(
-  s: { frequency: string; anchorDate: Date; payDateOffsetDays: number },
-  now: Date,
-): Date | null {
-  const stepDays =
-    s.frequency === 'WEEKLY' ? 7 : s.frequency === 'BIWEEKLY' ? 14 : null;
-  if (stepDays !== null) {
-    const t = new Date(s.anchorDate);
-    // Jump close, then walk — bounded either way.
-    const behind = Math.floor((now.getTime() - t.getTime()) / (stepDays * DAY_MS));
-    if (behind > 0) t.setUTCDate(t.getUTCDate() + behind * stepDays);
-    let pay = new Date(t.getTime() + s.payDateOffsetDays * DAY_MS);
-    for (let i = 0; i < 5 && pay <= now; i++) {
-      t.setUTCDate(t.getUTCDate() + stepDays);
-      pay = new Date(t.getTime() + s.payDateOffsetDays * DAY_MS);
-    }
-    return pay > now ? pay : null;
-  }
-  if (s.frequency === 'MONTHLY' || s.frequency === 'SEMIMONTHLY') {
-    const t = new Date(s.anchorDate);
-    const stepMonths = s.frequency === 'MONTHLY' ? 1 : 0;
-    for (let i = 0; i < 40; i++) {
-      const pay = new Date(t.getTime() + s.payDateOffsetDays * DAY_MS);
-      if (pay > now) return pay;
-      if (stepMonths) t.setUTCMonth(t.getUTCMonth() + 1);
-      else t.setUTCDate(t.getUTCDate() + 15); // semimonthly ≈ 15-day walk
-    }
-  }
-  return null;
-}
-
 financeOverviewRouter.get(
   '/finance/overview',
   requireCapability('process:payroll'),
-  async (_req, res, next) => {
+  async (req, res, next) => {
     try {
       const now = new Date();
 
@@ -194,6 +165,8 @@ financeOverviewRouter.get(
         .sort((a, b) => b[1].minutes - a[1].minutes)
         .slice(0, 5)
         .map(([key, c]) => ({
+          // clientId powers the Nudge button — the in-product chase.
+          clientId: key === 'none' ? null : key,
           clientName: clientNames.get(key) ?? 'Unassigned',
           entries: c.entries,
           hours: Math.round((c.minutes / 60) * 10) / 10,
@@ -396,6 +369,23 @@ financeOverviewRouter.get(
       const paidGross = weekRuns.reduce((sum, r) => sum + Number(r.totalGross), 0);
       const thisWeekStart = startOfWeekUTC(now);
 
+      // The payroll case desk — PAYROLL-category HR cases are Finance's
+      // tickets (missing paychecks, deduction questions). Open = anything
+      // not yet resolved; assignedToMe = routed to this accountant.
+      const CASE_OPEN = ['OPEN', 'IN_PROGRESS', 'WAITING_ASSOCIATE'] as const;
+      const [casesOpen, casesMine] = await Promise.all([
+        prisma.hrCase.count({
+          where: { category: 'PAYROLL', status: { in: [...CASE_OPEN] } },
+        }),
+        prisma.hrCase.count({
+          where: {
+            category: 'PAYROLL',
+            status: { in: [...CASE_OPEN] },
+            assignedToId: req.user!.id,
+          },
+        }),
+      ]);
+
       res.json({
         generatedAt: now.toISOString(),
         payday: {
@@ -436,6 +426,7 @@ financeOverviewRouter.get(
           draftStatements: draftCount,
         },
         fieldglassQueue,
+        payrollCases: { open: casesOpen, assignedToMe: casesMine },
         billedVsPaid:
           billed > 0 || paidGross > 0
             ? {
@@ -501,6 +492,114 @@ financeOverviewRouter.delete(
         where: { associateId: req.params.associateId },
       });
       res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// ----- The chase nudge -----------------------------------------------------
+//
+// Finance's hours-approval chase, without the phone call: one click on a
+// chase bar pings the people who OWN those approvals — every Workforce
+// Manager (field-wide) plus the shift supervisors bound to that client —
+// with a deep link straight to the timesheet queue. Deduped to one nudge
+// per client per org-day so a stressed accountant can't accidentally
+// spam the field.
+
+const NudgeInputSchema = z.object({
+  clientId: z.string().uuid().nullable().optional(),
+});
+
+financeOverviewRouter.post(
+  '/finance/close/nudge',
+  requireCapability('process:payroll'),
+  async (req, res, next) => {
+    try {
+      const input = NudgeInputSchema.parse(req.body ?? {});
+      const clientId = input.clientId ?? null;
+      const now = new Date();
+
+      const client = clientId
+        ? await prisma.client.findUnique({
+            where: { id: clientId },
+            select: { name: true },
+          })
+        : null;
+      if (clientId && !client) {
+        throw new HttpError(404, 'client_not_found', 'Client not found');
+      }
+
+      // Recompute the pending picture server-side — the nudge carries
+      // live facts, not whatever the dashboard had cached.
+      const pending = await prisma.timeEntry.findMany({
+        where: {
+          status: 'COMPLETED',
+          clockOutAt: { not: null },
+          ...(clientId ? { clientId } : {}),
+        },
+        select: {
+          clockInAt: true,
+          clockOutAt: true,
+          breaks: { select: { type: true, startedAt: true, endedAt: true } },
+        },
+        take: 2000,
+      });
+      if (pending.length === 0) {
+        return res.json({ notified: 0, deduped: false, pendingEntries: 0 });
+      }
+      let minutes = 0;
+      for (const e of pending) {
+        minutes += netWorkedMinutes(
+          { clockInAt: e.clockInAt, clockOutAt: e.clockOutAt! },
+          e.breaks,
+        );
+      }
+      const hours = Math.round((minutes / 60) * 10) / 10;
+
+      // One nudge per client per org-day. The linkUrl doubles as the
+      // dedupe key carrier (same pattern as the Fieldglass notifications).
+      const linkUrl = `/time-attendance?closeNudge=${clientId ?? 'all'}`;
+      const dayStart = utcInstantOfLocalMidnight(orgDateKey(now), 'America/New_York');
+      const already = await prisma.notification.findFirst({
+        where: {
+          category: 'finance.close_nudge',
+          linkUrl,
+          createdAt: { gte: dayStart },
+        },
+        select: { id: true },
+      });
+      if (already) {
+        return res.json({ notified: 0, deduped: true, pendingEntries: pending.length });
+      }
+
+      const recipients = await prisma.user.findMany({
+        where: {
+          status: 'ACTIVE',
+          OR: [
+            { role: 'WORKFORCE_MANAGER' },
+            ...(clientId
+              ? [{ role: 'SHIFT_SUPERVISOR' as const, clientId }]
+              : []),
+          ],
+          id: { not: req.user!.id },
+        },
+        select: { id: true },
+      });
+      const where = client ? ` at ${client.name}` : '';
+      await Promise.all(
+        recipients.map((r) =>
+          notifyUser(r.id, {
+            subject: 'Payroll close: timesheet approvals needed',
+            body:
+              `Finance is waiting on ${pending.length} completed timesheet${pending.length === 1 ? '' : 's'}` +
+              ` (~${hours}h)${where} to close payroll. Please review and approve them today.`,
+            category: 'finance.close_nudge',
+            linkUrl,
+          }),
+        ),
+      );
+      res.json({ notified: recipients.length, deduped: false, pendingEntries: pending.length });
     } catch (err) {
       next(err);
     }
