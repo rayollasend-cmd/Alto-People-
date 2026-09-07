@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { MessageSquare, Send } from 'lucide-react';
 import { ApiError, apiFetch } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { fmtDateTime } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
+import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Input';
 
 /**
@@ -25,6 +27,11 @@ interface WorkNoteRow {
   createdAt: string;
   authorEmail: string | null;
   authorName: string | null;
+  decisionDesk: string | null;
+  decisionStatus: 'PENDING' | 'APPROVED' | 'DECLINED' | null;
+  decisionNote: string | null;
+  decidedAt: string | null;
+  decidedByEmail: string | null;
 }
 
 const DESKS: Array<{ key: Desk; label: string }> = [
@@ -39,12 +46,26 @@ const DESK_CHIP: Record<string, string> = {
   WORKFORCE: 'bg-success/15 text-success',
 };
 
+/** Which desk this user answers for when ruling on a decision. */
+function deskOf(role: string | undefined): Desk | null {
+  if (role === 'FINANCE_ACCOUNTANT') return 'FINANCE';
+  if (role === 'WORKFORCE_MANAGER') return 'WORKFORCE';
+  if (role === 'HR_ADMINISTRATOR' || role === 'OPERATIONS_MANAGER') return 'HR';
+  return null;
+}
+
 export function WorkThreadPanel({ associateId }: { associateId: string }) {
+  const { user } = useAuth();
+  const myDesk = deskOf(user?.role);
   const [notes, setNotes] = useState<WorkNoteRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [body, setBody] = useState('');
   const [mentions, setMentions] = useState<Desk[]>([]);
+  const [decisionDesk, setDecisionDesk] = useState<Desk | ''>('');
   const [busy, setBusy] = useState(false);
+  // Which pending decision has its ruling composer open, and its note.
+  const [deciding, setDeciding] = useState<string | null>(null);
+  const [decisionText, setDecisionText] = useState('');
 
   const load = (soft = false) => {
     if (!soft) setNotes(null);
@@ -74,10 +95,12 @@ export function WorkThreadPanel({ associateId }: { associateId: string }) {
           subjectKey: associateId,
           body: text,
           mentionDesks: mentions,
+          ...(decisionDesk ? { decisionDesk } : {}),
         },
       });
       setBody('');
       setMentions([]);
+      setDecisionDesk('');
       load(true);
       if (mentions.length > 0) {
         toast.success(
@@ -88,6 +111,21 @@ export function WorkThreadPanel({ associateId }: { associateId: string }) {
       toast.error(err instanceof ApiError ? err.message : 'Could not post the note.');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const decide = async (noteId: string, approve: boolean) => {
+    try {
+      await apiFetch(`/work-notes/${noteId}/decide`, {
+        method: 'POST',
+        body: { approve, note: decisionText.trim() },
+      });
+      setDeciding(null);
+      setDecisionText('');
+      load(true);
+      toast.success(approve ? 'Approved — receipt recorded.' : 'Declined — receipt recorded.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not record the ruling.');
     }
   };
 
@@ -136,6 +174,86 @@ export function WorkThreadPanel({ associateId }: { associateId: string }) {
                 ))}
               </div>
               <p className="mt-1.5 whitespace-pre-wrap text-sm text-silver">{n.body}</p>
+
+              {/* Decisions with receipts. */}
+              {n.decisionStatus === 'PENDING' && (
+                <div className="mt-2 rounded border border-warning/30 bg-warning/5 p-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-warning">
+                      Decision pending — {n.decisionDesk?.toLowerCase()} desk
+                    </span>
+                    {myDesk === n.decisionDesk && deciding !== n.id && (
+                      <Button
+                        size="xs"
+                        variant="secondary"
+                        onClick={() => {
+                          setDeciding(n.id);
+                          setDecisionText('');
+                        }}
+                      >
+                        Rule on it
+                      </Button>
+                    )}
+                  </div>
+                  {deciding === n.id && (
+                    <div className="mt-2 space-y-2">
+                      <Textarea
+                        value={decisionText}
+                        onChange={(e) => setDecisionText(e.target.value)}
+                        placeholder="The reasoning that becomes the receipt…"
+                        rows={2}
+                        maxLength={2000}
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          size="xs"
+                          disabled={!decisionText.trim()}
+                          onClick={() => void decide(n.id, true)}
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          size="xs"
+                          variant="destructive"
+                          disabled={!decisionText.trim()}
+                          onClick={() => void decide(n.id, false)}
+                        >
+                          Decline
+                        </Button>
+                        <Button size="xs" variant="ghost" onClick={() => setDeciding(null)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              {(n.decisionStatus === 'APPROVED' || n.decisionStatus === 'DECLINED') && (
+                <div
+                  className={cn(
+                    'mt-2 rounded border p-2.5',
+                    n.decisionStatus === 'APPROVED'
+                      ? 'border-success/30 bg-success/5'
+                      : 'border-alert/30 bg-alert/5',
+                  )}
+                >
+                  <div
+                    className={cn(
+                      'text-2xs font-medium uppercase tracking-wider',
+                      n.decisionStatus === 'APPROVED' ? 'text-success' : 'text-alert',
+                    )}
+                  >
+                    {n.decisionStatus === 'APPROVED' ? 'Approved' : 'Declined'}
+                    {n.decidedByEmail && ` — ${n.decidedByEmail}`}
+                    {n.decidedAt && ` · ${fmtDateTime(n.decidedAt)}`}
+                  </div>
+                  {n.decisionNote && (
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-silver">
+                      {n.decisionNote}
+                    </p>
+                  )}
+                </div>
+              )}
             </li>
           ))}
         </ul>
@@ -155,6 +273,20 @@ export function WorkThreadPanel({ associateId }: { associateId: string }) {
             <span className="text-2xs uppercase tracking-wider text-silver/60">
               Ring:
             </span>
+            <Select
+              size="sm"
+              aria-label="Needs a decision from"
+              value={decisionDesk}
+              onChange={(e) => setDecisionDesk(e.target.value as Desk | '')}
+              className="w-auto"
+            >
+              <option value="">No decision needed</option>
+              {DESKS.map((d) => (
+                <option key={d.key} value={d.key}>
+                  Decision: {d.label}
+                </option>
+              ))}
+            </Select>
             {DESKS.map((d) => {
               const on = mentions.includes(d.key);
               return (

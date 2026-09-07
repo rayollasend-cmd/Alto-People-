@@ -207,6 +207,85 @@ workforceOverviewRouter.get(
           approvedAt: a.approvedAt ? a.approvedAt.toISOString() : null,
         }));
 
+      // THE INTERNAL LABOR MARKET: for each of the next 3 days, stores
+      // that are short (open shifts) side by side with the bench — active
+      // workers (worked in the last 30 days) holding NO shift that day.
+      // The field trades labor like one organism instead of silos.
+      // Skipped for client-bounded callers: the bench is org-wide data.
+      let rebalance: Array<{
+        dateKey: string;
+        clientId: string;
+        clientName: string;
+        open: number;
+        bench: number;
+      }> = [];
+      if (!('clientId' in clamp)) {
+        const horizon = 3;
+        const openAhead = await prisma.shift.findMany({
+          where: {
+            ...published,
+            status: 'OPEN',
+            startsAt: { gte: todayStart, lt: utcInstantOfLocalMidnight(dayKeyPlus(todayKey, horizon), ORG_TZ) },
+          },
+          select: { startsAt: true, client: { select: { id: true, name: true } } },
+          take: 500,
+        });
+        if (openAhead.length > 0) {
+          const recentWorkers = await prisma.timeEntry.findMany({
+            where: {
+              clockInAt: { gte: new Date(now.getTime() - 30 * 24 * HOUR_MS) },
+              associate: { deletedAt: null, separatedAt: null, deactivatedAt: null },
+            },
+            select: { associateId: true },
+            distinct: ['associateId'],
+            take: 2000,
+          });
+          const activeIds = recentWorkers.map((w) => w.associateId);
+          const busyAhead = await prisma.shift.findMany({
+            where: {
+              assignedAssociateId: { in: activeIds },
+              status: 'ASSIGNED',
+              startsAt: { gte: todayStart, lt: utcInstantOfLocalMidnight(dayKeyPlus(todayKey, horizon), ORG_TZ) },
+            },
+            select: { assignedAssociateId: true, startsAt: true },
+            take: 2000,
+          });
+          const busyByDay = new Map<string, Set<string>>();
+          for (const s of busyAhead) {
+            const key = orgDateKey(s.startsAt);
+            const set = busyByDay.get(key) ?? new Set<string>();
+            if (s.assignedAssociateId) set.add(s.assignedAssociateId);
+            busyByDay.set(key, set);
+          }
+          const needMap = new Map<
+            string,
+            { dateKey: string; clientId: string; clientName: string; open: number }
+          >();
+          for (const s of openAhead) {
+            if (!s.client) continue;
+            const dateKey = orgDateKey(s.startsAt);
+            const k = `${dateKey}:${s.client.id}`;
+            const row =
+              needMap.get(k) ??
+              ({ dateKey, clientId: s.client.id, clientName: s.client.name, open: 0 });
+            row.open += 1;
+            needMap.set(k, row);
+          }
+          rebalance = [...needMap.values()]
+            .map((r) => ({
+              ...r,
+              bench: Math.max(
+                0,
+                activeIds.length - (busyByDay.get(r.dateKey)?.size ?? 0),
+              ),
+            }))
+            .sort(
+              (a, b) => a.dateKey.localeCompare(b.dateKey) || b.open - a.open,
+            )
+            .slice(0, 6);
+        }
+      }
+
       // Pre-shift check: on the clock with no shift behind the punch.
       const unscheduled = activeEntries.filter((e) => e.shiftId === null);
       const nameNeededIds = [
@@ -460,6 +539,7 @@ workforceOverviewRouter.get(
           count: readyRows.length,
           rows: readyRows.slice(0, 8),
         },
+        rebalance,
         dispatch: {
           openNext48h,
           upcoming: upcomingOpen.map((s) => ({

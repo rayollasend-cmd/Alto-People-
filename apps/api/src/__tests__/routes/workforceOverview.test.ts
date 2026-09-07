@@ -236,6 +236,50 @@ describe('GET /workforce/overview', () => {
     expect(res.body.close.pendingApprovals).toBe(1);
   });
 
+  it('offers the internal labor market: short stores beside the bench', async () => {
+    const now = new Date();
+    const client = await createClient('Front Beach 218');
+    // A store short in the next days…
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        position: 'Stocker',
+        startsAt: new Date(now.getTime() + 5 * HOUR),
+        endsAt: new Date(now.getTime() + 13 * HOUR),
+        status: 'OPEN',
+        publishedAt: now,
+      },
+    });
+    // …and a recent worker holding no shift — the bench.
+    const bench = await createAssociate({ firstName: 'Ben', lastName: 'Available' });
+    await prisma.timeEntry.create({
+      data: {
+        associateId: bench.id,
+        clientId: client.id,
+        clockInAt: new Date(now.getTime() - 5 * 24 * HOUR),
+        clockOutAt: new Date(now.getTime() - 5 * 24 * HOUR + 8 * HOUR),
+        status: 'APPROVED',
+      },
+    });
+
+    const { user } = await createUser({ role: 'WORKFORCE_MANAGER' });
+    const res = await (await loginAs(user.email)).get('/workforce/overview');
+    expect(res.status).toBe(200);
+    expect(res.body.rebalance.length).toBeGreaterThanOrEqual(1);
+    expect(res.body.rebalance[0].clientName).toBe('Front Beach 218');
+    expect(res.body.rebalance[0].open).toBeGreaterThanOrEqual(1);
+    expect(res.body.rebalance[0].bench).toBeGreaterThanOrEqual(1);
+
+    // The bench is org-wide data — client-bounded callers get none of it.
+    const { user: sup } = await createUser({
+      role: 'SHIFT_SUPERVISOR',
+      clientId: client.id,
+    });
+    const clamped = await (await loginAs(sup.email)).get('/workforce/overview');
+    expect(clamped.status).toBe(200);
+    expect(clamped.body.rebalance).toEqual([]);
+  });
+
   it('right-sized role: workforce manager is OUT of payroll', async () => {
     const { user } = await createUser({ role: 'WORKFORCE_MANAGER' });
     const agent = await loginAs(user.email);

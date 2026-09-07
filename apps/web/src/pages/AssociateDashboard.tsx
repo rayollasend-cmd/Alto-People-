@@ -47,6 +47,7 @@ import { OnboardingBanner } from '@/components/OnboardingBanner';
 import { cn } from '@/lib/cn';
 import { CelebrationRibbon } from '@/components/CelebrationRibbon';
 import { EarningsCard } from '@/components/EarningsCard';
+import { FirstPaycheckCard } from '@/components/FirstPaycheckCard';
 
 /**
  * 403/404 are fully expected for accounts without the linked records
@@ -154,6 +155,9 @@ export function AssociateDashboard() {
       <OnboardingBanner />
       <div className="mb-4 space-y-4">
         <EarningsCard />
+        {/* New hires see their own relay lane — every "where's my check?"
+            this answers is a case that never gets filed. */}
+        <FirstPaycheckCard />
       </div>
       <EnablePushCard />
       <ActionNeededCard

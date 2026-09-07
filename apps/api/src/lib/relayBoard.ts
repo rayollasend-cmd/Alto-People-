@@ -54,6 +54,20 @@ export interface Lane {
   currentStage: LaneStage['key'] | null;
   stalled: boolean;
   completed: boolean;
+  cohortId: string | null;
+}
+
+export interface CohortSummary {
+  id: string;
+  name: string;
+  clientName: string | null;
+  targetHeadcount: number;
+  landByDate: string;
+  daysLeft: number;
+  members: number;
+  completed: number;
+  inFlight: number;
+  stalled: number;
 }
 
 export interface Baton {
@@ -85,6 +99,7 @@ export interface RelayBoard {
     windowDays: number;
   };
   lanes: Lane[];
+  cohorts: CohortSummary[];
   recentKept: Array<{ associateId: string; name: string; days: number; kept: boolean }>;
   batons: Baton[];
   agenda: AgendaItem[];
@@ -92,6 +107,138 @@ export interface RelayBoard {
 
 const LANE_WINDOW_DAYS = 45;
 const PAYCHECK_PROMISE_DAYS = 21;
+
+export interface LaneInputs {
+  approvedAt: Date;
+  firstShift: { startsAt: Date; endsAt: Date } | null;
+  regAt: Date | null;
+  firstEntry: { clockOutAt: Date; status: string } | null;
+  paidAt: Date | null;
+}
+
+/** The six stages of one first-paycheck lane — shared by the board's
+ *  bulk computation and the associate's own "road to your first
+ *  paycheck" card, so both always tell the same story. */
+export function buildLaneStages(input: LaneInputs, now: Date): LaneStage[] {
+  const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
+  const stages: LaneStage[] = [];
+  const stage = (
+    key: LaneStage['key'],
+    desk: Desk,
+    doneAt: Date | null,
+    dueAt: Date | null,
+  ) => {
+    const done = doneAt !== null;
+    stages.push({
+      key,
+      desk,
+      done,
+      at: iso(doneAt),
+      dueAt: iso(dueAt),
+      overdue: !done && dueAt !== null && dueAt.getTime() < now.getTime(),
+    });
+  };
+  const { approvedAt, firstShift, regAt, firstEntry, paidAt } = input;
+  stage('approved', 'HR', approvedAt, null);
+  stage(
+    'scheduled',
+    'WORKFORCE',
+    firstShift ? firstShift.startsAt : null,
+    new Date(approvedAt.getTime() + 5 * DAY_MS),
+  );
+  stage(
+    'fieldglass',
+    'FINANCE',
+    regAt,
+    firstShift ? firstShift.startsAt : new Date(approvedAt.getTime() + 7 * DAY_MS),
+  );
+  stage(
+    'firstShift',
+    'WORKFORCE',
+    firstEntry ? firstEntry.clockOutAt : null,
+    firstShift ? firstShift.endsAt : null,
+  );
+  stage(
+    'hoursApproved',
+    'WORKFORCE',
+    firstEntry && firstEntry.status === 'APPROVED' ? firstEntry.clockOutAt : null,
+    firstEntry ? closeAfter(firstEntry.clockOutAt) : null,
+  );
+  stage(
+    'paycheck',
+    'FINANCE',
+    paidAt,
+    firstEntry
+      ? new Date(firstEntry.clockOutAt.getTime() + PAYCHECK_PROMISE_DAYS * DAY_MS)
+      : null,
+  );
+  return stages;
+}
+
+/** One associate's lane — the "road to your first paycheck" the new hire
+ *  sees on their own dashboard. Null when they have no recent approval. */
+export async function computeSingleLane(
+  prisma: PrismaClient,
+  associateId: string,
+  now: Date = new Date(),
+): Promise<{
+  stages: LaneStage[];
+  currentStage: LaneStage['key'] | null;
+  completed: boolean;
+  approvedAt: string;
+} | null> {
+  const app = await prisma.application.findFirst({
+    where: {
+      associateId,
+      status: 'APPROVED',
+      approvedAt: { gte: new Date(now.getTime() - 90 * DAY_MS) },
+      deletedAt: null,
+    },
+    orderBy: { approvedAt: 'desc' },
+    select: { approvedAt: true },
+  });
+  if (!app?.approvedAt) return null;
+  const [firstShift, reg, firstEntry, paid] = await Promise.all([
+    prisma.shift.findFirst({
+      where: { assignedAssociateId: associateId, status: { in: ['ASSIGNED', 'COMPLETED'] } },
+      orderBy: { startsAt: 'asc' },
+      select: { startsAt: true, endsAt: true },
+    }),
+    prisma.fieldglassRegistration.findUnique({
+      where: { associateId },
+      select: { addedAt: true },
+    }),
+    prisma.timeEntry.findFirst({
+      where: { associateId, clockOutAt: { not: null } },
+      orderBy: { clockInAt: 'asc' },
+      select: { clockOutAt: true, status: true },
+    }),
+    prisma.payrollItem.findFirst({
+      where: { associateId, payrollRun: { status: 'DISBURSED' } },
+      orderBy: { payrollRun: { periodEnd: 'asc' } },
+      select: { payrollRun: { select: { updatedAt: true } } },
+    }),
+  ]);
+  const stages = buildLaneStages(
+    {
+      approvedAt: app.approvedAt,
+      firstShift,
+      regAt: reg?.addedAt ?? null,
+      firstEntry: firstEntry
+        ? { clockOutAt: firstEntry.clockOutAt!, status: firstEntry.status }
+        : null,
+      paidAt: paid?.payrollRun.updatedAt ?? null,
+    },
+    now,
+  );
+  const current = stages.find((s) => !s.done) ?? null;
+  return {
+    stages,
+    currentStage: current?.key ?? null,
+    completed: current === null,
+    approvedAt: app.approvedAt.toISOString(),
+  };
+}
 
 /** Next Tuesday (org-local) strictly after `d` — the hours-approval close
  *  that covers work done on day `d`. */
@@ -127,6 +274,7 @@ export async function computeRelayBoard(
     select: {
       associateId: true,
       approvedAt: true,
+      cohortId: true,
       client: { select: { name: true } },
       associate: { select: { firstName: true, lastName: true } },
     },
@@ -197,6 +345,7 @@ export async function computeRelayBoard(
   const lanes: Lane[] = [];
   const keptSamples: Array<{ associateId: string; name: string; days: number; kept: boolean }> =
     [];
+  const cohortCompletedIn45d = new Map<string, number>();
 
   for (const [associateId, seed] of laneSeeds) {
     const approvedAt = seed.approvedAt ?? windowStart;
@@ -206,58 +355,10 @@ export async function computeRelayBoard(
     const firstEntry = firstEntryBy.get(associateId) ?? null;
     const paidAt = paidBy.get(associateId) ?? null;
 
-    const stages: LaneStage[] = [];
-    const stage = (
-      key: LaneStage['key'],
-      desk: Desk,
-      doneAt: Date | null,
-      dueAt: Date | null,
-    ) => {
-      const done = doneAt !== null;
-      stages.push({
-        key,
-        desk,
-        done,
-        at: iso(doneAt),
-        dueAt: iso(dueAt),
-        overdue: !done && dueAt !== null && dueAt.getTime() < now.getTime(),
-      });
-    };
-
-    stage('approved', 'HR', approvedAt, null);
-    stage(
-      'scheduled',
-      'WORKFORCE',
-      firstShift ? firstShift.startsAt : null,
-      new Date(approvedAt.getTime() + 5 * DAY_MS),
+    const stages = buildLaneStages(
+      { approvedAt, firstShift, regAt, firstEntry, paidAt },
+      now,
     );
-    stage(
-      'fieldglass',
-      'FINANCE',
-      regAt,
-      firstShift ? firstShift.startsAt : new Date(approvedAt.getTime() + 7 * DAY_MS),
-    );
-    stage(
-      'firstShift',
-      'WORKFORCE',
-      firstEntry ? firstEntry.clockOutAt : null,
-      firstShift ? firstShift.endsAt : null,
-    );
-    stage(
-      'hoursApproved',
-      'WORKFORCE',
-      firstEntry && firstEntry.status === 'APPROVED' ? firstEntry.clockOutAt : null,
-      firstEntry ? closeAfter(firstEntry.clockOutAt) : null,
-    );
-    stage(
-      'paycheck',
-      'FINANCE',
-      paidAt,
-      firstEntry
-        ? new Date(firstEntry.clockOutAt.getTime() + PAYCHECK_PROMISE_DAYS * DAY_MS)
-        : null,
-    );
-
     const current = stages.find((s) => !s.done) ?? null;
     const completed = current === null;
     const lane: Lane = {
@@ -269,7 +370,14 @@ export async function computeRelayBoard(
       currentStage: current?.key ?? null,
       stalled: current !== null && current.overdue,
       completed,
+      cohortId: seed.cohortId ?? null,
     };
+    if (completed && seed.cohortId) {
+      cohortCompletedIn45d.set(
+        seed.cohortId,
+        (cohortCompletedIn45d.get(seed.cohortId) ?? 0) + 1,
+      );
+    }
     if (completed && paidAt && firstEntry) {
       keptSamples.push({
         associateId,
@@ -297,6 +405,38 @@ export async function computeRelayBoard(
   const sortedDays = keptSamples.map((k) => k.days).sort((a, b) => a - b);
   const medianDays =
     sortedDays.length > 0 ? sortedDays[Math.floor(sortedDays.length / 2)]! : null;
+
+  // Cohort mode: every active wave with its readiness against the clock.
+  // In-flight/stalled/completed counts come from this board's window —
+  // waves are near-term by nature, so the 45-day window covers them.
+  const activeCohorts = await prisma.cohort.findMany({
+    where: { archivedAt: null },
+    orderBy: { landByDate: 'asc' },
+    take: 12,
+    select: {
+      id: true,
+      name: true,
+      targetHeadcount: true,
+      landByDate: true,
+      client: { select: { name: true } },
+      _count: { select: { applications: true } },
+    },
+  });
+  const cohorts: CohortSummary[] = activeCohorts.map((c) => {
+    const inLanes = lanes.filter((l) => l.cohortId === c.id);
+    return {
+      id: c.id,
+      name: c.name,
+      clientName: c.client?.name ?? null,
+      targetHeadcount: c.targetHeadcount,
+      landByDate: c.landByDate.toISOString().slice(0, 10),
+      daysLeft: Math.ceil((c.landByDate.getTime() - now.getTime()) / DAY_MS),
+      members: c._count.applications,
+      completed: cohortCompletedIn45d.get(c.id) ?? 0,
+      inFlight: inLanes.length,
+      stalled: inLanes.filter((l) => l.stalled).length,
+    };
+  });
 
   /* ---- BATONS ------------------------------------------------------ */
 
@@ -579,6 +719,63 @@ export async function computeRelayBoard(
     );
   }
 
+  // The client in the loop: their open requests are batons like any
+  // other — except the person waiting is the customer.
+  const openRequests = await prisma.clientRequest.findMany({
+    where: { status: { not: 'RESOLVED' } },
+    orderBy: { createdAt: 'asc' },
+    select: { kind: true, createdAt: true },
+    take: 200,
+  });
+  const staffingReqs = openRequests.filter((r) => r.kind === 'STAFFING');
+  const hrReqs = openRequests.filter((r) => r.kind !== 'STAFFING');
+  const reqStatus = (rows: typeof openRequests): BatonStatus => {
+    const age = ageDays(rows[0]?.createdAt ?? null);
+    return age !== null && age > 2 ? 'overdue' : 'atRisk';
+  };
+  baton(
+    'client-requests',
+    'Client requests — staffing',
+    'WORKFORCE',
+    staffingReqs.length,
+    staffingReqs[0]?.createdAt ?? null,
+    null,
+    reqStatus(staffingReqs),
+    '/relay#client-requests',
+  );
+  baton(
+    'client-requests-hr',
+    'Client requests — feedback & issues',
+    'HR',
+    hrReqs.length,
+    hrReqs[0]?.createdAt ?? null,
+    null,
+    reqStatus(hrReqs),
+    '/relay#client-requests',
+  );
+
+  // Decisions with receipts: a pending ruling is a baton on that desk.
+  const pendingDecisions = await prisma.workNote.findMany({
+    where: { decisionStatus: 'PENDING' },
+    orderBy: { createdAt: 'asc' },
+    select: { decisionDesk: true, createdAt: true },
+    take: 200,
+  });
+  for (const desk of ['FINANCE', 'HR', 'WORKFORCE'] as const) {
+    const rows = pendingDecisions.filter((d) => d.decisionDesk === desk);
+    const age = ageDays(rows[0]?.createdAt ?? null);
+    baton(
+      `decisions-${desk.toLowerCase()}`,
+      `Decisions awaiting ${DESK_LABELS[desk]}`,
+      desk,
+      rows.length,
+      rows[0]?.createdAt ?? null,
+      null,
+      age !== null && age > 3 ? 'overdue' : age !== null && age > 1 ? 'atRisk' : 'quiet',
+      '/relay#decisions',
+    );
+  }
+
   const RANK: Record<BatonStatus, number> = { overdue: 0, atRisk: 1, quiet: 2 };
   batons.sort((a, b) => RANK[a.status] - RANK[b.status] || b.count - a.count);
 
@@ -603,6 +800,16 @@ export async function computeRelayBoard(
       text: `${b.label}: ${b.count} overdue on ${DESK_LABELS[b.desk]}'s desk${b.oldestAt ? ` (oldest ${Math.floor(ageDays(new Date(b.oldestAt))!)}d)` : ''}.`,
       link: b.link,
     });
+  }
+  for (const c of cohorts) {
+    if (c.daysLeft <= 14 && c.completed < c.targetHeadcount) {
+      agenda.push({
+        severity: c.stalled > 0 || c.daysLeft <= 7 ? 'red' : 'amber',
+        desk: 'WORKFORCE',
+        text: `Cohort "${c.name}": ${c.completed}/${c.targetHeadcount} ready, ${Math.max(0, c.daysLeft)} day${c.daysLeft === 1 ? '' : 's'} to landing${c.stalled > 0 ? ` — ${c.stalled} lane${c.stalled === 1 ? '' : 's'} stalled` : ''}.`,
+        link: '/relay',
+      });
+    }
   }
   const openThisWeek = await prisma.shift.count({
     where: {
@@ -655,6 +862,7 @@ export async function computeRelayBoard(
       windowDays: LANE_WINDOW_DAYS,
     },
     lanes: lanes.slice(0, 16),
+    cohorts,
     recentKept: keptSamples.slice(0, 5),
     batons,
     agenda,

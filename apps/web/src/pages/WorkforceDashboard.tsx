@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   Store,
   UserPlus,
+  Users,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -108,6 +109,13 @@ interface WorkforceOverview {
       approvedAt: string | null;
     }>;
   };
+  rebalance: Array<{
+    dateKey: string;
+    clientId: string;
+    clientName: string;
+    open: number;
+    bench: number;
+  }>;
   dispatch: {
     openNext48h: number;
     upcoming: Array<{
@@ -556,6 +564,48 @@ export function WorkforceDashboard() {
               )}
             </CardContent>
           </Card>
+
+          {/* ---- The internal market: short stores vs the bench ---------- */}
+          {data.rebalance.length > 0 && (
+            <Card className="animate-enter border-warning/30" style={enterStagger(3)}>
+              <CardContent className="p-4">
+                <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
+                  <Users className="h-4 w-4 text-gold" aria-hidden="true" />
+                  {t('wf.rebalTitle')}
+                </h2>
+                <ul className="mt-2 space-y-1.5">
+                  {data.rebalance.map((r) => (
+                    <li
+                      key={`${r.dateKey}-${r.clientId}`}
+                      className="flex items-baseline justify-between gap-2 text-xs"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-silver">
+                        <span className="tabular-nums text-silver/60">
+                          {fmtDate(`${r.dateKey}T12:00:00Z`)}
+                        </span>{' '}
+                        · <span className="text-white">{r.clientName}</span>
+                      </span>
+                      <span className="shrink-0 tabular-nums">
+                        <span className="font-medium text-warning">
+                          {t('wf.rebalNeeds', { count: r.open })}
+                        </span>
+                        <span className="text-silver/60">
+                          {' '}· {t('wf.rebalBench', { count: r.bench })}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <Link
+                  to="/scheduling"
+                  className="mt-2 inline-flex items-center gap-1 text-xs text-gold underline underline-offset-2 hover:text-gold-bright coarse:min-h-9"
+                >
+                  {t('wf.goScheduling')}
+                  <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                </Link>
+              </CardContent>
+            </Card>
+          )}
 
           {/* ---- Payroll close: the field → Finance baton --------------- */}
           <Card

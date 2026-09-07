@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { PortalRequests } from './PortalRequests';
 
 /**
  * The client portal home — "the Walmart view." The store manager's
@@ -464,6 +465,9 @@ export function ClientPortalHome() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ---- Requests: the client in the loop -------------------------- */}
+      {isPortal && <PortalRequests />}
     </div>
   );
 }

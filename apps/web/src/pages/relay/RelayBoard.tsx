@@ -1,22 +1,37 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import {
   ArrowRight,
   CalendarCheck,
   ClipboardList,
+  Store,
   Trophy,
   Waypoints,
 } from 'lucide-react';
-import { apiFetch } from '@/lib/api';
+import { ApiError, apiFetch } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { fmtDate } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { Avatar } from '@/components/ui/Avatar';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { ClockStrip } from '@/components/ClockStrip';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/Dialog';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Input, Textarea } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 
 /**
@@ -57,6 +72,32 @@ interface Lane {
   currentStage: StageKey | null;
   stalled: boolean;
   completed: boolean;
+  cohortId: string | null;
+}
+
+interface CohortSummary {
+  id: string;
+  name: string;
+  clientName: string | null;
+  targetHeadcount: number;
+  landByDate: string;
+  daysLeft: number;
+  members: number;
+  completed: number;
+  inFlight: number;
+  stalled: number;
+}
+
+interface ClientRequestRow {
+  id: string;
+  clientId: string;
+  clientName: string;
+  kind: 'STAFFING' | 'FEEDBACK' | 'ISSUE';
+  desk: Desk;
+  subject: string;
+  body: string;
+  status: 'RECEIVED' | 'IN_PROGRESS';
+  createdAt: string;
 }
 
 interface Baton {
@@ -86,6 +127,7 @@ interface RelayBoardData {
     windowDays: number;
   };
   lanes: Lane[];
+  cohorts: CohortSummary[];
   recentKept: Array<{ associateId: string; name: string; days: number; kept: boolean }>;
   batons: Baton[];
   agenda: AgendaItem[];
@@ -112,13 +154,263 @@ const DESK_CHIP: Record<Desk, string> = {
   WORKFORCE: 'bg-success/15 text-success',
 };
 
+const REQ_KIND_LABEL: Record<ClientRequestRow['kind'], string> = {
+  STAFFING: 'Staffing',
+  FEEDBACK: 'Feedback',
+  ISSUE: 'Issue',
+};
+
+/** The staff side of the client loop: the queue of asks the customer is
+ *  literally watching in their portal. Resolve = the reply they read. */
+function ClientRequestsSection({
+  rows,
+  canWork,
+  onChanged,
+}: {
+  rows: ClientRequestRow[];
+  canWork: boolean;
+  onChanged: () => void;
+}) {
+  const [resolving, setResolving] = useState<string | null>(null);
+  const [reply, setReply] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const patch = async (id: string, body: { status: string; resolution?: string }) => {
+    setBusy(true);
+    try {
+      await apiFetch(`/client-requests/${id}`, { method: 'PATCH', body });
+      setResolving(null);
+      setReply('');
+      onChanged();
+      if (body.status === 'RESOLVED') toast.success('Resolved — the client sees your reply.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not update the request.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div id="client-requests">
+      <div className="mb-2 flex items-baseline justify-between gap-3">
+        <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
+          <Store className="h-4 w-4 text-gold" aria-hidden="true" />
+          Client requests
+        </h2>
+        <span className="text-2xs text-silver/60">
+          the customer is watching this move in their portal
+        </span>
+      </div>
+      {rows.length === 0 ? (
+        <Card>
+          <CardContent className="p-4 text-sm text-success">
+            No open client requests. Silence means green.
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="p-0">
+            <ul className="divide-y divide-navy-secondary/60">
+              {rows.map((r) => (
+                <li key={r.id} className="px-4 py-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-white">{r.clientName}</span>
+                    <Badge variant={r.kind === 'ISSUE' ? 'destructive' : 'outline'}>
+                      {REQ_KIND_LABEL[r.kind]}
+                    </Badge>
+                    <span
+                      className={cn(
+                        'rounded-full px-1.5 py-0.5 text-2xs font-medium uppercase tracking-wider',
+                        DESK_CHIP[r.desk],
+                      )}
+                    >
+                      {DESK_LABELS[r.desk]}
+                    </span>
+                    {r.status === 'IN_PROGRESS' && (
+                      <Badge variant="accent">In progress</Badge>
+                    )}
+                    <span className="ml-auto text-2xs tabular-nums text-silver/50">
+                      {fmtDate(r.createdAt)}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-sm text-white">{r.subject}</div>
+                  <p className="mt-0.5 text-xs text-silver/70">{r.body}</p>
+                  {canWork && (
+                    <div className="mt-2">
+                      {resolving === r.id ? (
+                        <div className="space-y-2">
+                          <Textarea
+                            value={reply}
+                            onChange={(e) => setReply(e.target.value)}
+                            placeholder="The reply the client will read in their portal…"
+                            rows={2}
+                            maxLength={2000}
+                          />
+                          <div className="flex gap-2">
+                            <Button
+                              size="xs"
+                              loading={busy}
+                              disabled={!reply.trim()}
+                              onClick={() =>
+                                void patch(r.id, {
+                                  status: 'RESOLVED',
+                                  resolution: reply.trim(),
+                                })
+                              }
+                            >
+                              Send &amp; resolve
+                            </Button>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              disabled={busy}
+                              onClick={() => setResolving(null)}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex gap-2">
+                          {r.status === 'RECEIVED' && (
+                            <Button
+                              size="xs"
+                              variant="secondary"
+                              disabled={busy}
+                              onClick={() => void patch(r.id, { status: 'IN_PROGRESS' })}
+                            >
+                              Start
+                            </Button>
+                          )}
+                          <Button
+                            size="xs"
+                            variant="secondary"
+                            disabled={busy}
+                            onClick={() => {
+                              setResolving(r.id);
+                              setReply('');
+                            }}
+                          >
+                            Resolve
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/** "New wave" — name, headcount, landing date. */
+function NewCohortButton({ onCreated }: { onCreated: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [target, setTarget] = useState('');
+  const [landBy, setLandBy] = useState('');
+  const [busy, setBusy] = useState(false);
+  const valid =
+    name.trim().length >= 3 &&
+    Number(target) >= 1 &&
+    /^\d{4}-\d{2}-\d{2}$/.test(landBy);
+
+  const create = async () => {
+    setBusy(true);
+    try {
+      await apiFetch('/cohorts', {
+        method: 'POST',
+        body: {
+          name: name.trim(),
+          targetHeadcount: Number(target),
+          landByDate: landBy,
+        },
+      });
+      setOpen(false);
+      setName('');
+      setTarget('');
+      setLandBy('');
+      onCreated();
+      toast.success('Wave created — assign lanes to it below.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not create the wave.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <Button size="sm" variant="secondary" onClick={() => setOpen(true)}>
+        New wave
+      </Button>
+      <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New wave</DialogTitle>
+            <DialogDescription>
+              A hiring push with a headcount and a landing date — its lanes group
+              under one banner with a readiness bar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder='Name — e.g. "Peak season — Walmart DC"'
+              maxLength={120}
+            />
+            <Input
+              type="number"
+              min={1}
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              placeholder="Target headcount"
+            />
+            <Input
+              type="date"
+              value={landBy}
+              onChange={(e) => setLandBy(e.target.value)}
+              aria-label="Land by date"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setOpen(false)} disabled={busy}>
+              Cancel
+            </Button>
+            <Button onClick={() => void create()} loading={busy} disabled={!valid}>
+              Create wave
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
 export function RelayBoard() {
+  const { can } = useAuth();
+  const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ['relay', 'board'],
     queryFn: () => apiFetch<RelayBoardData>('/relay/board'),
     refetchInterval: 120_000,
   });
+  const requestsQuery = useQuery({
+    queryKey: ['relay', 'client-requests'],
+    queryFn: () => apiFetch<{ requests: ClientRequestRow[] }>('/client-requests'),
+    refetchInterval: 120_000,
+  });
   const data = query.data;
+  const canWorkRequests = can('manage:scheduling');
+  const canManageCohorts = can('manage:recruiting');
+  const refreshAll = () => {
+    void queryClient.invalidateQueries({ queryKey: ['relay'] });
+  };
 
   if (query.isError) {
     return (
@@ -253,6 +545,84 @@ export function RelayBoard() {
         </CardContent>
       </Card>
 
+      {/* ---- Client requests: the customer is waiting ------------------- */}
+      <ClientRequestsSection
+        rows={requestsQuery.data?.requests ?? []}
+        canWork={canWorkRequests}
+        onChanged={refreshAll}
+      />
+
+      {/* ---- Cohorts: waves against the clock --------------------------- */}
+      {(data.cohorts.length > 0 || canManageCohorts) && (
+        <div>
+          <div className="mb-2 flex items-baseline justify-between gap-3">
+            <h2 className="text-sm font-medium text-white">Waves</h2>
+            {canManageCohorts && <NewCohortButton onCreated={refreshAll} />}
+          </div>
+          {data.cohorts.length === 0 ? (
+            <p className="text-xs text-silver/50">
+              No waves defined. A cohort groups a hiring push — "40 heads by Nov 1"
+              — so three buildings staff it against the same clock.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {data.cohorts.map((c) => {
+                const pct = Math.min(
+                  100,
+                  Math.round((c.completed / Math.max(1, c.targetHeadcount)) * 100),
+                );
+                const hot = c.stalled > 0 || (c.daysLeft <= 7 && c.completed < c.targetHeadcount);
+                return (
+                  <Card
+                    key={c.id}
+                    className={cn('border-l-2', hot ? 'border-l-alert' : 'border-l-gold/40')}
+                  >
+                    <CardContent className="p-4">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="truncate text-sm font-semibold text-white">
+                          {c.name}
+                          {c.clientName && (
+                            <span className="font-normal text-silver/60"> · {c.clientName}</span>
+                          )}
+                        </span>
+                        <span
+                          className={cn(
+                            'shrink-0 text-xs tabular-nums',
+                            c.daysLeft <= 7 ? 'text-alert' : 'text-silver/60',
+                          )}
+                        >
+                          {c.daysLeft >= 0
+                            ? `${c.daysLeft}d to landing`
+                            : `${-c.daysLeft}d past landing`}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex items-baseline gap-2 text-sm tabular-nums">
+                        <span className="font-display text-2xl leading-none text-gold-bright">
+                          {c.completed}
+                        </span>
+                        <span className="text-silver/60">/ {c.targetHeadcount} ready</span>
+                        <span className="text-silver/40">
+                          · {c.inFlight} in flight
+                          {c.stalled > 0 && (
+                            <span className="text-alert"> · {c.stalled} stalled</span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-navy-secondary/50">
+                        <div
+                          className={cn('h-full rounded-full', hot ? 'bg-alert/80' : 'bg-gold/70')}
+                          style={{ width: `${Math.max(3, pct)}%` }}
+                        />
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ---- The lanes -------------------------------------------------- */}
       <div>
         <div className="mb-2 flex items-baseline justify-between gap-3">
@@ -357,8 +727,40 @@ export function RelayBoard() {
                         />
                       ))}
                     </div>
-                    <div className="mt-1 flex justify-between text-2xs text-silver/40">
+                    <div className="mt-1 flex items-center justify-between text-2xs text-silver/40">
                       <span>Approved</span>
+                      {canManageCohorts && data.cohorts.length > 0 ? (
+                        <Select
+                          size="sm"
+                          aria-label={`Wave for ${lane.name}`}
+                          className="w-auto"
+                          value={lane.cohortId ?? ''}
+                          onChange={(e) => {
+                            void apiFetch('/cohorts/assign', {
+                              method: 'POST',
+                              body: {
+                                associateId: lane.associateId,
+                                cohortId: e.target.value || null,
+                              },
+                            })
+                              .then(() => refreshAll())
+                              .catch(() => toast.error('Could not move the lane.'));
+                          }}
+                        >
+                          <option value="">No wave</option>
+                          {data.cohorts.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </Select>
+                      ) : (
+                        lane.cohortId && (
+                          <span className="text-gold/70">
+                            {data.cohorts.find((c) => c.id === lane.cohortId)?.name ?? ''}
+                          </span>
+                        )
+                      )}
                       <span>First paycheck</span>
                     </div>
                   </CardContent>
