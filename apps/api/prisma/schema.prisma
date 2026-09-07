@@ -546,6 +546,7 @@ model User {
   clockInRequestsDecided            ClockInRequest[]              @relation("ClockInRequestDecider")
   attendanceExcusals                AttendanceEvent[]             @relation("AttendanceExcuser")
   fieldglassRegistrations           FieldglassRegistration[]      @relation("FieldglassRegistrar")
+  workNotes                         WorkNote[]                    @relation("WorkNoteAuthor")
   statementsFinalized               ClientStatement[]             @relation("StatementFinalizer")
   // Privacy erasures this admin performed (Associate.erasedById).
   associatesErased                  Associate[]                   @relation("AssociateEraser")
@@ -854,6 +855,27 @@ model FieldglassRegistration {
   associate Associate @relation(fields: [associateId], references: [id], onDelete: Cascade)
   client    Client?   @relation(fields: [clientId], references: [id], onDelete: SetNull)
   addedBy   User?     @relation("FieldglassRegistrar", fields: [addedById], references: [id], onDelete: SetNull)
+}
+
+// The thread on the work itself — staff notes attached to an object
+// (today: an associate record), with desk @mentions that ring the other
+// building. Kills the cross-department phone call: the question, the
+// answer, and the decision live where the work lives, forever.
+// subjectType/subjectKey are deliberately generic strings so a thread
+// can later hang off a timesheet week or a baton without a migration.
+model WorkNote {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subjectType  String
+  subjectKey   String
+  body         String
+  authorUserId String?  @db.Uuid
+  // Desk tokens mentioned on this note ('FINANCE' | 'HR' | 'WORKFORCE').
+  mentions     String[] @default([])
+  createdAt    DateTime @default(now()) @db.Timestamptz(6)
+
+  authorUser User? @relation("WorkNoteAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+
+  @@index([subjectType, subjectKey, createdAt(sort: Desc)])
 }
 
 // One row per (associate, week) so the OT radar's morning digest alerts a

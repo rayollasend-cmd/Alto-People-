@@ -4,6 +4,7 @@ import type { Capability } from './roles';
 
 export type ModuleKey =
   | 'portal'
+  | 'relay'
   | 'statements'
   | 'timesheets'
   | 'onboarding'
@@ -112,6 +113,7 @@ export interface ModuleNav {
  */
 export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
+  'relay',
   'people',
   'org-chart',
   'headcount',
@@ -172,6 +174,7 @@ const CLIENT_PORTAL_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
  *  uncurated slice buried these under Pulse/Equity/Volunteer/Career noise. */
 const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
+  'relay',
   'payroll',
   'payroll-tax',
   'payroll-compliance',
@@ -203,6 +206,7 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
  *  coverage, standards, safety, the supervisor pipeline. No money pages. */
 const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
+  'relay',
   'people',
   'recruiting',
   'onboarding',
@@ -270,6 +274,15 @@ export const MODULES: ModuleNav[] = [
     description:
       'Live floor coverage, today’s roster, this week’s fill, statements, and the coverage record for your store.',
     requires: 'view:dashboard',
+    group: 'core',
+  },
+  {
+    key: 'relay',
+    path: '/relay',
+    label: 'The relay',
+    description:
+      'The one shared operating picture: first-paycheck lanes through HR, Workforce, and Finance; every cross-department baton with its holder, age, and due date; the Monday pack that writes itself.',
+    requires: 'view:org',
     group: 'core',
   },
   {

@@ -24,6 +24,7 @@ import { startUploadsBackupCron } from './lib/uploadsBackup.js';
 import { startShiftReminderCron } from './lib/shiftReminder.js';
 import { startAutoClockOutCron } from './lib/autoClockOut.js';
 import { startExecutiveAlertsCron } from './lib/executiveAlerts.js';
+import { startRelayEscalationCron } from './lib/relayEscalation.js';
 import { startNoShowRiskCron } from './lib/noShowRisk.js';
 import { startShiftAutofillCron } from './lib/shiftAutofill.js';
 import { startExecutiveDigestCron } from './lib/executiveDigest.js';
@@ -80,6 +81,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startScheduleDigestCron();
   startExecutiveDigestCron();
   startExecutiveAlertsCron();
+  startRelayEscalationCron();
   startShiftAutofillCron();
   startNoShowRiskCron();
   startAutoClockOutCron();

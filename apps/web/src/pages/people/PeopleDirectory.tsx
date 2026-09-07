@@ -94,6 +94,7 @@ import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
 import { nudgeApplicant } from '@/lib/onboardingApi';
 import { PhotoCropDialog } from '@/components/PhotoCropDialog';
+import { WorkThreadPanel } from '@/components/WorkThreadPanel';
 import {
   assignOrgFields,
   deleteAssociatePhoto,
@@ -1430,10 +1431,13 @@ function DirectoryDrawer({
   // deep-links straight into someone's document vault.
   const [drawerParams] = useSearchParams();
   const requestedDrawerTab = drawerParams.get('tab');
-  const [tab, setTab] = useState<'profile' | 'compensation' | 'payments' | 'documents'>(
+  const [tab, setTab] = useState<
+    'profile' | 'compensation' | 'payments' | 'documents' | 'thread'
+  >(
     requestedDrawerTab === 'compensation' ||
       requestedDrawerTab === 'documents' ||
-      requestedDrawerTab === 'payments'
+      requestedDrawerTab === 'payments' ||
+      requestedDrawerTab === 'thread'
       ? requestedDrawerTab
       : 'profile',
   );
@@ -1476,6 +1480,7 @@ function DirectoryDrawer({
             <TabsTrigger value="compensation">Compensation</TabsTrigger>
             {canSeePayments && <TabsTrigger value="payments">Payments</TabsTrigger>}
             <TabsTrigger value="documents">Documents</TabsTrigger>
+            <TabsTrigger value="thread">Thread</TabsTrigger>
           </TabsList>
 
           <TabsContent value="profile">
@@ -1495,6 +1500,11 @@ function DirectoryDrawer({
           )}
           <TabsContent value="documents">
             <DocumentsTab associateId={a.id} />
+          </TabsContent>
+          <TabsContent value="thread">
+            {/* The cross-department thread — notes with desk @mentions,
+                living on the record instead of in phone calls. */}
+            <WorkThreadPanel associateId={a.id} />
           </TabsContent>
         </Tabs>
       </DrawerBody>

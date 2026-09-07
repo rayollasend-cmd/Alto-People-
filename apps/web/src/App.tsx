@@ -132,6 +132,7 @@ const ExpirationsHome = lazyNamed(() => import('@/pages/expirations/ExpirationsH
 // Communications / HR cases
 const CommunicationsHome = lazyNamed(() => import('@/pages/communications/CommunicationsHome'), 'CommunicationsHome');
 const HrCasesHome = lazyNamed(() => import('@/pages/hrCases/HrCasesHome'), 'HrCasesHome');
+const RelayBoard = lazyNamed(() => import('@/pages/relay/RelayBoard'), 'RelayBoard');
 const HotlineAdmin = lazyNamed(() => import('@/pages/hotline/HotlineAdmin'), 'HotlineAdmin');
 
 // Performance / recruiting / learning
@@ -401,6 +402,7 @@ const LAYOUT_ROUTES = [
   { path: 'vaccinations', element: <VaccinationsHome /> },
   { path: 'agreements', element: <AgreementsHome /> },
   { path: 'hr-cases', element: <HrCasesHome /> },
+  { path: 'relay', element: <RequireCapability cap="view:org"><RelayBoard /></RequireCapability> },
   { path: 'help-center', element: <KbHome /> },
   { path: 'ramp', element: <RampHome /> },
   { path: 'career', element: <CareerHome /> },
