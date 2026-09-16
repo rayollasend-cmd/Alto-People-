@@ -218,7 +218,9 @@ describe('client requests', () => {
     const maria = await prisma.associate.create({
       data: { firstName: 'Maria', lastName: 'Lopez', email: 'maria.req@example.com' },
     });
-    await prisma.application.create({ data: { associateId: maria.id, clientId: client.id, status: 'APPROVED' } });
+    await prisma.application.create({
+      data: { associateId: maria.id, clientId: client.id, status: 'APPROVED', onboardingTrack: 'STANDARD' },
+    });
     const stranger = await prisma.associate.create({
       data: { firstName: 'Zed', lastName: 'Elsewhere', email: 'zed.req@example.com' },
     });

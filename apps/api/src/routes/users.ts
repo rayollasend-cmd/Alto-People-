@@ -18,6 +18,7 @@ import {
 } from '../lib/passwordResetToken.js';
 import { send } from '../lib/notifications.js';
 import { nudgePortalReadiness } from '../lib/portalReadiness.js';
+import { trackNotificationWork } from '../lib/notify.js';
 
 /**
  * HR user-administration surface. Lets HR list every account, change a
@@ -321,7 +322,7 @@ usersRouter.patch(
       effectiveClientId &&
       (data.role || data.clientId !== undefined || data.locationId !== undefined)
     ) {
-      void nudgePortalReadiness(effectiveClientId).catch(() => undefined);
+      void trackNotificationWork(nudgePortalReadiness(effectiveClientId).catch(() => false));
     }
 
     // Critical: privilege escalation and account disablement MUST land in

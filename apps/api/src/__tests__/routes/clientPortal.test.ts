@@ -391,8 +391,11 @@ describe('GET /client-portal/overview', () => {
     });
     // Yesterday: Maria worked her shift (punch linked), Ben's shift at the
     // sister store came and went with no punch — a miss with no event.
-    const yStart = new Date(now.getTime() - 30 * HOUR);
-    const yEnd = new Date(now.getTime() - 26 * HOUR);
+    // Anchored to ORG-local yesterday noon→4pm: "now − 30h" slides into the
+    // day before when CI runs near midnight Eastern.
+    const yKey = dayKeyPlus(orgDateKey(now), -1);
+    const yStart = new Date(utcInstantOfLocalMidnight(yKey, 'America/New_York').getTime() + 12 * HOUR);
+    const yEnd = new Date(yStart.getTime() + 4 * HOUR);
     const workedShift = await prisma.shift.create({
       data: {
         clientId: client.id,

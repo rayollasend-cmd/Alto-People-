@@ -23,6 +23,7 @@ import { generateInviteToken } from '../lib/inviteToken.js';
 import { inviteTemplate } from '../lib/emailTemplates.js';
 import { send } from '../lib/notifications.js';
 import { computePortalReadiness, nudgePortalReadiness } from '../lib/portalReadiness.js';
+import { trackNotificationWork } from '../lib/notify.js';
 import { scopeClients } from '../lib/scope.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { seedDefaultShiftPositions } from '../lib/shiftPositions.js';
@@ -1247,7 +1248,7 @@ clientsRouter.post('/:id/portal-users', MANAGE, async (req, res, next) => {
       'clients.portal_user_invited',
     );
     // The portal will show dashes if the store isn't set up — ring the desk.
-    void nudgePortalReadiness(client.id).catch(() => undefined);
+    void trackNotificationWork(nudgePortalReadiness(client.id).catch(() => false));
 
     res.status(201).json({
       id: user.id,
