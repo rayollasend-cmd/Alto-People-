@@ -113,6 +113,7 @@ const ReimbursementsHome = lazyNamed(() => import('@/pages/reimbursements/Reimbu
 const ClientsHome = lazyNamed(() => import('@/pages/clients/ClientsHome'), 'ClientsHome');
 const ClientPortalHome = lazyNamed(() => import('@/pages/portal/ClientPortalHome'), 'ClientPortalHome');
 const PortalSchedule = lazyNamed(() => import('@/pages/portal/PortalSchedule'), 'PortalSchedule');
+const PortalToday = lazyNamed(() => import('@/pages/portal/PortalToday'), 'PortalToday');
 const PortalRequestsPage = lazyNamed(() => import('@/pages/portal/PortalRequestsPage'), 'PortalRequestsPage');
 const ClientDetail = lazyNamed(() => import('@/pages/clients/ClientDetail'), 'ClientDetail');
 const ClientStatementsRollup = lazyNamed(() => import('@/pages/clients/ClientStatementsRollup'), 'ClientStatementsRollup');
@@ -362,6 +363,7 @@ const LAYOUT_ROUTES = [
   // view:executive/manage:org preview any client via ?clientId= (the
   // page gates internally, since no single capability fits both).
   { path: 'portal', element: <ClientPortalHome /> },
+  { path: 'portal/today', element: <PortalToday /> },
   { path: 'portal/schedule', element: <PortalSchedule /> },
   { path: 'portal/requests', element: <PortalRequestsPage /> },
   { path: 'scheduling', element: <SchedulingHome /> },

@@ -38,6 +38,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
 import { PortalRequests, type RequestPrefill } from './PortalRequests';
+import { groupWaves } from './waves';
 import {
   CoverageCurve,
   DetailsTable,
@@ -69,6 +70,7 @@ interface RosterRow {
   name: string | null;
   position: string;
   isLead: boolean;
+  clockInAt: string | null;
   startsAt: string;
   endsAt: string;
   timezone: string;
@@ -184,14 +186,6 @@ interface PortalOverview {
 
 const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 
-const STATE_STYLE: Record<RosterRow['state'], string> = {
-  'on-floor': 'text-success',
-  confirmed: 'text-silver',
-  unconfirmed: 'text-warning',
-  done: 'text-silver/60',
-  open: 'text-alert',
-};
-
 const GRADE_STYLE: Record<NonNullable<PortalOverview['reliability']['grade']>, string> = {
   A: 'text-success',
   B: 'text-success',
@@ -267,6 +261,7 @@ export function ClientPortalHome() {
   });
   const data = query.data;
 
+  const waves = useMemo(() => (data ? groupWaves(data.today.roster) : []), [data]);
   const curve = useMemo(
     () =>
       data
@@ -654,62 +649,70 @@ export function ClientPortalHome() {
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
-        {/* ---- Today's roster ----------------------------------------- */}
-        <Card className="animate-enter md:row-span-2 xl:col-span-5" style={enterStagger(2)}>
+        {/* ---- Today by shift (the full list lives on /portal/today) ---- */}
+        <Card className="animate-enter xl:col-span-5" style={enterStagger(2)}>
           <CardContent className="p-5">
             <div className="flex items-baseline justify-between gap-3">
-              <h2 className="text-sm font-medium text-white">{t('portal.today')}</h2>
-              <span
-                className={cn('text-xs tabular-nums', data.today.open > 0 ? 'text-alert' : 'text-silver/60')}
-              >
-                {t('portal.todayMeta', { filled: data.today.filled, open: data.today.open })}
-              </span>
+              <h2 className="text-sm font-medium text-white">{t('portal.todayByShift')}</h2>
+              <Link to={`/portal/today${qs}`} className="text-xs text-gold underline-offset-2 hover:underline">
+                {t('portal.todayOpen')}
+              </Link>
             </div>
-            {data.today.roster.length === 0 ? (
+            {waves.length === 0 ? (
               <p className="mt-3 text-sm text-silver/60">{t('portal.noShiftsToday')}</p>
             ) : (
-              <ul className="mt-3 divide-y divide-navy-secondary/60">
-                {data.today.roster.map((r, i) => (
-                  <li
-                    key={r.shiftId}
-                    style={enterStagger(i)}
-                    className="flex items-center gap-3 py-2.5 animate-enter"
-                  >
-                    {r.associateId ? (
-                      <Avatar src={photoUrl(r.associateId)} name={r.name ?? ''} email="" size="md" />
-                    ) : (
-                      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-dashed border-alert/50 text-alert text-xs">
-                        ?
-                      </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium text-white">
-                        {r.name ?? t('portal.state.open')}
-                        <span className="font-normal text-silver/80"> · {r.position}</span>
-                        {r.isLead && (
-                          <span className="ml-1.5 rounded bg-gold/15 px-1 py-px text-2xs font-medium uppercase tracking-wider text-gold">
-                            {t('portal.leadTag')}
+              <ul className="mt-3 space-y-3">
+                {waves.map((w) => {
+                  const inCount = w.phase === 'finished' ? w.worked : w.clockedIn.length;
+                  const pct = w.expected > 0 ? Math.round((inCount / w.expected) * 100) : 0;
+                  const short = w.phase === 'live' && inCount < w.expected;
+                  return (
+                    <li key={w.key}>
+                      <Link
+                        to={`/portal/today${qs}`}
+                        className="-mx-2 block rounded-md px-2 py-1 hover:bg-navy-secondary/30"
+                      >
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span
+                            className={cn(
+                              'text-sm tabular-nums',
+                              w.phase === 'finished' ? 'text-silver/70' : 'text-white',
+                            )}
+                          >
+                            {fmtShiftRangeTz(w.startsAt, w.endsAt, w.timezone)}
+                            {w.phase === 'live' && (
+                              <span className="ml-2 text-2xs font-medium uppercase tracking-wider text-success">
+                                {t('portal.live')}
+                              </span>
+                            )}
                           </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-silver tabular-nums">
-                        {fmtShiftRangeTz(r.startsAt, r.endsAt, r.timezone)}
-                        {!data.store && r.locationName && (
-                          <span className="text-silver/60"> · {r.locationName}</span>
-                        )}
-                      </div>
-                    </div>
-                    <span className={cn('flex max-w-[6.5rem] shrink-0 items-center gap-1.5 text-right text-2xs leading-tight sm:max-w-none sm:text-xs', STATE_STYLE[r.state])}>
-                      {r.state === 'on-floor' && (
-                        <span className="relative flex h-2 w-2" aria-hidden="true">
-                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
-                          <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-                        </span>
-                      )}
-                      {t(`portal.state.${r.state}` as MessageKey)}
-                    </span>
-                  </li>
-                ))}
+                          <span
+                            className={cn(
+                              'text-sm font-semibold tabular-nums',
+                              short ? 'text-warning' : w.phase === 'finished' ? 'text-silver/70' : 'text-white',
+                            )}
+                          >
+                            {w.phase === 'upcoming'
+                              ? t('portal.waveExpected', { expected: w.expected })
+                              : t('portal.waveInOfShort', { in: inCount, expected: w.expected })}
+                            {w.open.length > 0 && (
+                              <span className="text-alert"> · {t('portal.openCount', { count: w.open.length })}</span>
+                            )}
+                          </span>
+                        </div>
+                        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">
+                          <div
+                            className={cn(
+                              'h-full rounded-full',
+                              w.phase === 'upcoming' ? 'bg-silver/30' : short ? 'bg-warning' : 'bg-success',
+                            )}
+                            style={{ width: `${w.phase === 'upcoming' ? 100 : pct}%` }}
+                          />
+                        </div>
+                      </Link>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </CardContent>

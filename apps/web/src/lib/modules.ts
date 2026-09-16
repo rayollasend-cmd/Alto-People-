@@ -4,6 +4,7 @@ import type { Capability } from './roles';
 
 export type ModuleKey =
   | 'portal'
+  | 'portal-today'
   | 'portal-schedule'
   | 'portal-requests'
   | 'relay'
@@ -168,6 +169,7 @@ export const ASSOCIATE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>(
  *  schedule — a partner surface, not an HR console. */
 const CLIENT_PORTAL_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'portal',
+  'portal-today',
   'portal-schedule',
   'portal-requests',
 ]);
@@ -284,6 +286,15 @@ export const MODULES: ModuleNav[] = [
     label: 'My store',
     description:
       'Live floor coverage, today’s roster, this week’s fill, statements, and the coverage record for your store.',
+    requires: 'view:dashboard',
+    group: 'core',
+  },
+  {
+    key: 'portal-today',
+    path: '/portal/today',
+    label: 'Today',
+    description:
+      'Who is on your floor right now, wave by wave — clocked in, not in yet, unfilled — with finished shifts folded to their proof line.',
     requires: 'view:dashboard',
     group: 'core',
   },

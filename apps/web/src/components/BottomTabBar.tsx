@@ -9,6 +9,7 @@ import {
   MessageSquare,
   Store,
   Timer,
+  Users,
   type LucideIcon,
 } from 'lucide-react';
 import type { Capability } from '@alto-people/shared';
@@ -87,6 +88,7 @@ const FLOOR_TABS: TabDef[] = [
 /** The store manager (client portal): their store, the week, the loop. */
 const PORTAL_TABS: TabDef[] = [
   { path: DASHBOARD_NAV.path, labelKey: 'portal.title', icon: Store, requires: null },
+  { path: '/portal/today', labelKey: 'portal.todayNav', icon: Users, requires: null },
   { path: '/portal/schedule', labelKey: 'portal.schedule', icon: Calendar, requires: 'view:scheduling' },
   { path: '/portal/requests', labelKey: 'portal.reqTitle', icon: MessageSquare, requires: null },
 ];

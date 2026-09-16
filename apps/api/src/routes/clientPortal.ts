@@ -515,6 +515,11 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
     });
 
     const onFloorIds = new Set(onFloorEntries.map((e) => e.associateId));
+    // Punch time per person on the floor — shown next to the name on the
+    // Today page. A time, never a "late" label: the judgment stays with Alto.
+    const clockInByAssociate = new Map(
+      onFloorEntries.map((e) => [e.associateId, e.clockInAt.toISOString()]),
+    );
     const leadNames = new Set(leadPositions.map((p) => p.name));
 
     const roster = todayShifts.map((s) => {
@@ -536,6 +541,10 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         name: s.assignedAssociate ? fullName(s.assignedAssociate) : null,
         position: s.position,
         isLead: leadNames.has(s.position),
+        clockInAt:
+          onFloor && s.assignedAssociateId
+            ? (clockInByAssociate.get(s.assignedAssociateId) ?? null)
+            : null,
         startsAt: s.startsAt.toISOString(),
         endsAt: s.endsAt.toISOString(),
         timezone: s.locationRel?.timezone ?? ORG_TZ,
