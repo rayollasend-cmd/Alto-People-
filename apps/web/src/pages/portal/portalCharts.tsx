@@ -714,3 +714,55 @@ export function HoursChart({
     </div>
   );
 }
+
+/* ---- Stores side by side: one horizontal bar per store ----------------- */
+
+export function StoreBarChart({
+  rows,
+  labels,
+}: {
+  rows: Array<{ id: string; name: string; value: number | null }>;
+  labels: { value: string; target: string; heading: (n: string) => string };
+}) {
+  const series = { value: { name: labels.value, color: SERIES.primary } };
+  const data = rows.map((r) => ({ ...r, value: r.value ?? 0 }));
+  const height = Math.max(120, rows.length * 30 + 24);
+  return (
+    <div style={{ height }} className="w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} layout="vertical" margin={{ top: 4, right: 24, bottom: 0, left: 4 }} barCategoryGap="30%">
+          <CartesianGrid stroke={GRID} strokeWidth={1} horizontal={false} />
+          <XAxis
+            type="number"
+            domain={[0, 100]}
+            ticks={[0, 50, 100]}
+            tick={TICK}
+            axisLine={{ stroke: GRID }}
+            tickLine={false}
+            tickFormatter={(v: number) => `${v}%`}
+          />
+          <YAxis type="category" dataKey="name" tick={{ ...TICK, fontSize: 11 }} axisLine={false} tickLine={false} width={120} />
+          <ChartTooltip
+            cursor={{ fill: 'rgb(var(--color-navy-secondary) / 0.35)' }}
+            content={<PortalTooltip series={series} heading={(l) => labels.heading(l)} format={(v) => `${v}%`} />}
+          />
+          <ReferenceLine
+            x={88}
+            stroke={REF}
+            strokeDasharray="4 3"
+            label={{ value: labels.target, position: 'insideTopRight', fill: 'rgb(var(--color-silver) / 0.8)', fontSize: 10 }}
+          />
+          <Bar dataKey="value" fill={SERIES.primary} maxBarSize={18} radius={[0, 4, 4, 0]} isAnimationActive={false}>
+            {data.map((r) => (
+              <Cell
+                key={r.id}
+                fill={r.value >= 88 ? STATUS.good : r.value >= 70 ? SERIES.primary : STATUS.bad}
+                fillOpacity={rows.find((x) => x.id === r.id)?.value === null ? 0.25 : 1}
+              />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}

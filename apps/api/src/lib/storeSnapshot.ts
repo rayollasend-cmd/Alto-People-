@@ -1,8 +1,10 @@
 import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { orgDateKey, startOfWeekUTC, utcInstantOfLocalMidnight } from './timeAnomalies.js';
+import { zonedMinutes } from './timezone.js';
 import {
   DAY,
+  HOUR,
   ORG_TZ,
   attendanceWhere,
   coverageByHours,
@@ -13,6 +15,7 @@ import {
   loadTargets,
   nextKey,
   shiftScope,
+  targetAtMinute,
   type PortalScope,
 } from './portalMetrics.js';
 
@@ -45,6 +48,11 @@ export interface StoreSnapshot {
   leads: { onFloor: number; total: number };
   /** Live alert this minute: a wave under way is short. */
   alert: string | null;
+  /** Today by hour (org day): assigned, unfilled, contracted — the store's
+   *  own coverage curve, summable across a region. */
+  hours: Array<{ hour: number; scheduled: number; open: number; target: number | null }>;
+  /** 4 completed weeks + this one: delivered vs contracted (or showed-up). */
+  weeks: Array<{ start: string; reliabilityPct: number | null; current: boolean }>;
 }
 
 export async function storeSnapshot(
@@ -93,7 +101,7 @@ export async function storeSnapshot(
         take: 500,
       }),
       prisma.shift.findMany({
-        where: { ...shifts, startsAt: { gte: trendStart, lt: weekStart } },
+        where: { ...shifts, startsAt: { gte: trendStart, lt: tomorrowStart } },
         select: { id: true, locationId: true, startsAt: true, endsAt: true, status: true, assignedAssociateId: true },
         take: 5000,
       }),
@@ -142,21 +150,50 @@ export async function storeSnapshot(
     locations: targets,
     storeScoped: true,
     from: trendStart,
-    to: weekStart,
+    to: tomorrowStart,
     now,
     shifts: trendShifts,
     entries: punches.entries,
   });
-  const ended = trendShifts.filter((s) => s.endsAt.getTime() <= nowMs);
+  const completedTrend = trendShifts.filter((s) => s.startsAt.getTime() < weekStart.getTime());
+  const completedHours = hours.filter((h) => h.instant.getTime() < weekStart.getTime());
+  const ended = completedTrend.filter((s) => s.endsAt.getTime() <= nowMs);
   const showed = ended.filter((s) => s.status !== 'OPEN' && !ncns.has(s.id) && punches.punched(s)).length;
   const graded = gradeWeeks([
     {
-      contracted: hours.reduce((a, h) => a + h.target, 0),
-      delivered: hours.reduce((a, h) => a + h.delivered, 0),
+      contracted: completedHours.reduce((a, h) => a + h.target, 0),
+      delivered: completedHours.reduce((a, h) => a + h.delivered, 0),
       ended: ended.length,
       showed,
     },
   ]);
+  // Week by week (4 completed + this one), on the same basis.
+  const weekKeys: string[] = [];
+  for (let i = 4; i >= 0; i--) weekKeys.push(orgDateKey(new Date(weekStart.getTime() - i * 7 * DAY)));
+  const weekOf = (d: Date) => orgDateKey(startOfWeekUTC(d));
+  const weeks = weekKeys.map((k) => {
+    const hs = hours.filter((h) => weekOf(h.instant) === k);
+    const ws = trendShifts.filter((s) => weekOf(s.startsAt) === k && s.endsAt.getTime() <= nowMs);
+    const contracted = hs.reduce((a, h) => a + h.target, 0);
+    const delivered = hs.reduce((a, h) => a + h.delivered, 0);
+    const showedW = ws.filter((s) => s.status !== 'OPEN' && !ncns.has(s.id) && punches.punched(s)).length;
+    const g = gradeWeeks([{ contracted, delivered, ended: ws.length, showed: showedW }]);
+    return { start: k, reliabilityPct: g.score, current: k === orgDateKey(weekStart) };
+  });
+  // Today by hour in the store's own zone: assigned, unfilled, contracted.
+  const tz = location.timezone;
+  const dayLoc = targets[0] ?? null;
+  const hourRows = Array.from({ length: 24 }, (_, h) => {
+    const at = new Date(todayStart.getTime() + h * HOUR);
+    const covering = todayShifts.filter((s) => s.startsAt.getTime() <= at.getTime() && s.endsAt.getTime() > at.getTime());
+    const t = dayLoc ? targetAtMinute(dayLoc, zonedMinutes(at, tz)) : null;
+    return {
+      hour: h,
+      scheduled: covering.filter((s) => s.status !== 'OPEN').length,
+      open: covering.filter((s) => s.status === 'OPEN').length,
+      target: t ? t.target : null,
+    };
+  });
 
   const todayEnded = todayShifts.filter((s) => s.endsAt.getTime() <= nowMs && s.status !== 'OPEN');
   const missedSoFar = todayEnded.filter(
@@ -191,5 +228,7 @@ export async function storeSnapshot(
       total: leads.length,
     },
     alert: shortPastGrace ? `${shortNow} short on the floor right now` : null,
+    hours: hourRows,
+    weeks,
   };
 }

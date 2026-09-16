@@ -19,6 +19,22 @@ export interface StoreSnapshot {
   requests: { open: number; overdue: number };
   leads: { onFloor: number; total: number };
   alert: string | null;
+  hours: Array<{ hour: number; scheduled: number; open: number; target: number | null }>;
+  weeks: Array<{ start: string; reliabilityPct: number | null; current: boolean }>;
+}
+
+export interface RegionRequest {
+  id: string;
+  storeName: string;
+  clientId: string;
+  kind: 'STAFFING' | 'FEEDBACK' | 'ISSUE' | 'BILLING';
+  subject: string;
+  status: 'RECEIVED' | 'IN_PROGRESS';
+  createdAt: string;
+  dueAt: string | null;
+  overdue: boolean;
+  owner: string | null;
+  about: string | null;
 }
 
 export interface RegionOverview {
@@ -39,6 +55,9 @@ export interface RegionOverview {
     score: number | null;
     gradeCounts: Record<string, number>;
   };
+  hours: Array<{ hour: number; scheduled: number; open: number; target: number | null }>;
+  weeks: Array<{ start: string; reliabilityPct: number | null; current: boolean }>;
+  requests: RegionRequest[];
   stores: StoreSnapshot[];
 }
 

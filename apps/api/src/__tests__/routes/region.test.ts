@@ -121,6 +121,15 @@ describe('the region command center', () => {
     expect(a.leads).toEqual({ onFloor: 0, total: 1 });
     expect(res.body.totals.onFloor).toBe(1);
     expect(res.body.totals.openToday).toBe(1);
+    // The region-wide instruments: 24 summed hours, 5 averaged weeks, and
+    // every open request across the region with its store named.
+    expect(res.body.hours).toHaveLength(24);
+    expect(res.body.hours.reduce((n: number, h: { scheduled: number }) => n + h.scheduled, 0)).toBeGreaterThan(0);
+    expect(res.body.weeks).toHaveLength(5);
+    expect(res.body.weeks[4].current).toBe(true);
+    expect(Array.isArray(res.body.requests)).toBe(true);
+    expect(a.hours).toHaveLength(24);
+    expect(a.weeks).toHaveLength(5);
     // Rate hygiene and tenant hygiene on the raw payload.
     const raw = JSON.stringify(res.body);
     for (const w of ['payRate', 'billRate', 'hourlyRate', 'TargetOnlyPosition', s.clientC.id]) expect(raw).not.toContain(w);

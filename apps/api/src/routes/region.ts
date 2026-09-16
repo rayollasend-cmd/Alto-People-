@@ -86,6 +86,50 @@ regionRouter.get('/overview', requireAuth, async (req, res, next) => {
     const graded = stores.filter((s) => s.reliability.score !== null);
     const gradeCounts: Record<string, number> = { A: 0, B: 0, C: 0, D: 0, F: 0, none: 0 };
     for (const s of stores) gradeCounts[s.reliability.grade ?? 'none'] = (gradeCounts[s.reliability.grade ?? 'none'] ?? 0) + 1;
+    // The region's own coverage curve: every store's hours, summed.
+    const hours = Array.from({ length: 24 }, (_, h) => ({
+      hour: h,
+      scheduled: sum((s) => s.hours[h]?.scheduled ?? 0),
+      open: sum((s) => s.hours[h]?.open ?? 0),
+      target: stores.some((s) => s.hours[h]?.target !== null)
+        ? sum((s) => s.hours[h]?.target ?? 0)
+        : null,
+    }));
+    // Week by week: the average of the stores that have a number that week.
+    const weekStarts = stores[0]?.weeks.map((w) => w.start) ?? [];
+    const weeks = weekStarts.map((start, i) => {
+      const vals = stores.map((s) => s.weeks[i]?.reliabilityPct).filter((v): v is number => v !== null && v !== undefined);
+      return {
+        start,
+        reliabilityPct: vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : null,
+        current: stores[0]?.weeks[i]?.current ?? false,
+      };
+    });
+    // Open requests across the region, oldest first, with the store named.
+    const storeByClient = new Map<string, string>();
+    for (const l of region.locations) storeByClient.set(l.clientId, l.name);
+    const openRequests = await prisma.clientRequest.findMany({
+      where: { clientId: { in: [...storeByClient.keys()] }, status: { not: 'RESOLVED' } },
+      orderBy: { createdAt: 'asc' },
+      take: 50,
+      include: {
+        startedBy: { select: { associate: { select: { firstName: true } } } },
+        associate: { select: { firstName: true, lastName: true } },
+      },
+    });
+    const requests = openRequests.map((r) => ({
+      id: r.id,
+      storeName: storeByClient.get(r.clientId) ?? '—',
+      clientId: r.clientId,
+      kind: r.kind,
+      subject: r.subject,
+      status: r.status,
+      createdAt: r.createdAt.toISOString(),
+      dueAt: r.dueAt?.toISOString() ?? null,
+      overdue: !!r.dueAt && r.dueAt.getTime() < now.getTime(),
+      owner: r.startedBy?.associate?.firstName ?? null,
+      about: r.associate ? `${r.associate.firstName} ${r.associate.lastName}` : null,
+    }));
     res.json({
       region: { id: region.id, name: region.name },
       generatedAt: now.toISOString(),
@@ -107,6 +151,9 @@ regionRouter.get('/overview', requireAuth, async (req, res, next) => {
             : null,
         gradeCounts,
       },
+      hours,
+      weeks,
+      requests,
       stores,
     });
   } catch (err) {

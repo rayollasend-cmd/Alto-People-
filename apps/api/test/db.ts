@@ -20,6 +20,8 @@ const TABLES = [
   // BranchWebhookEvent FK to PayrollItem is ON DELETE SET NULL, so rows
   // would persist across tests with payrollItemId=null and trip the
   // branchEventId unique constraint on the next test that reuses an id.
+  // Region is a parent of Location and User, so nothing cascades into it.
+  'Region',
   'BranchWebhookEvent',
   // ResendWebhookEvent has no FKs but its svixId unique would trip the
   // next test that reuses an id; EmailSuppression's unique email likewise.

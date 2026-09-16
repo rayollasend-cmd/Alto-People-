@@ -37,9 +37,10 @@ describe('scopeClients', () => {
     });
   });
 
-  it('CLIENT_PORTAL without clientId falls back to base (defense-in-depth)', () => {
+  it('CLIENT_PORTAL without clientId fails closed (region accounts never see the world)', () => {
     expect(scopeClients(baseUser('CLIENT_PORTAL', { clientId: null }))).toEqual({
       deletedAt: null,
+      id: '00000000-0000-0000-0000-000000000000',
     });
   });
 
@@ -85,8 +86,10 @@ describe('scopeTemplates', () => {
     });
   });
 
-  it('CLIENT_PORTAL without clientId falls back to all (route still authz-gates)', () => {
-    expect(scopeTemplates(baseUser('CLIENT_PORTAL', { clientId: null }))).toEqual({});
+  it('CLIENT_PORTAL without clientId fails closed to org-wide templates only', () => {
+    expect(scopeTemplates(baseUser('CLIENT_PORTAL', { clientId: null }))).toEqual({
+      OR: [{ clientId: null }, { clientId: '00000000-0000-0000-0000-000000000000' }],
+    });
   });
 });
 
