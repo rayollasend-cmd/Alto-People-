@@ -18,10 +18,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { z } from 'zod';
-import { env } from '../config/env.js';
-import { generateInviteToken } from '../lib/inviteToken.js';
-import { inviteTemplate } from '../lib/emailTemplates.js';
-import { send } from '../lib/notifications.js';
+import { invitePortalAccount } from '../lib/portalInvite.js';
 import { computePortalReadiness, nudgePortalReadiness } from '../lib/portalReadiness.js';
 import { trackNotificationWork } from '../lib/notify.js';
 import { scopeClients } from '../lib/scope.js';
@@ -1142,6 +1139,8 @@ const PortalInviteSchema = z.object({
   email: z.string().email().max(254),
   /** null = the whole client (a market manager). */
   locationId: z.string().uuid().nullable().optional(),
+  /** How the note addresses them — name only; nothing else is known. */
+  name: z.string().trim().min(1).max(120).optional(),
 });
 
 /**
@@ -1170,83 +1169,15 @@ clientsRouter.post('/:id/portal-users', MANAGE, async (req, res, next) => {
       }
     }
 
-    const existing = await prisma.user.findUnique({ where: { email } });
-    if (existing && existing.deletedAt === null && existing.role !== 'CLIENT_PORTAL') {
-      throw new HttpError(409, 'email_in_use', 'That email already belongs to an Alto account.');
-    }
-    if (existing && existing.deletedAt === null && existing.clientId && existing.clientId !== client.id) {
-      throw new HttpError(409, 'email_in_use', 'That email already has a portal login for another client.');
-    }
-    if (existing && existing.status === 'ACTIVE' && existing.passwordHash) {
-      throw new HttpError(409, 'already_active', 'That store manager already has an active login.');
-    }
-
-    const invite = generateInviteToken();
-    const expiresAt = new Date(Date.now() + env.INVITE_TOKEN_TTL_SECONDS * 1000);
-    const user = await prisma.$transaction(async (tx) => {
-      const u = existing
-        ? await tx.user.update({
-            where: { id: existing.id },
-            data: {
-              role: 'CLIENT_PORTAL',
-              status: 'INVITED',
-              clientId: client.id,
-              locationId: location?.id ?? null,
-              deletedAt: null,
-              tokenVersion: { increment: 1 },
-            },
-          })
-        : await tx.user.create({
-            data: {
-              email,
-              role: 'CLIENT_PORTAL',
-              status: 'INVITED',
-              clientId: client.id,
-              locationId: location?.id ?? null,
-            },
-          });
-      await tx.inviteToken.updateMany({
-        where: { userId: u.id, consumedAt: null },
-        data: { consumedAt: new Date() },
-      });
-      await tx.inviteToken.create({ data: { tokenHash: invite.hash, userId: u.id, expiresAt } });
-      return u;
+    const storeCount = await prisma.location.count({ where: { clientId: client.id, deletedAt: null, isActive: true } });
+    // A store account gets the store-manager note; a client-wide account
+    // is a market manager over this client's stores and gets that note.
+    const { user, expiresAt, emailFailed } = await invitePortalAccount({
+      email,
+      name: input.name ?? null,
+      scope: { kind: 'store', clientId: client.id, clientName: client.name, location, storeCount },
+      actorUserId: req.user!.id,
     });
-    invalidateUserCache(user.id);
-
-    const acceptUrl = `${env.APP_BASE_URL}/accept-invite/${invite.raw}`;
-    const storeName = location?.name ?? client.name;
-    const tpl = inviteTemplate({
-      firstName: email.split('@')[0] ?? 'there',
-      clientName: storeName,
-      position: 'Store manager portal',
-      magicLink: acceptUrl,
-      linkExpiresAt: expiresAt.toISOString().slice(0, 10),
-    });
-    let emailFailed: string | null = null;
-    try {
-      await send({
-        channel: 'EMAIL',
-        recipient: { userId: user.id, phone: null, email },
-        subject: `Your ${storeName} portal login`,
-        body: tpl.text,
-        html: tpl.html,
-      });
-    } catch (err) {
-      emailFailed = err instanceof Error ? err.message : String(err);
-    }
-
-    enqueueAudit(
-      {
-        actorUserId: req.user!.id,
-        clientId: client.id,
-        action: 'client.portal_user_invited',
-        entityType: 'User',
-        entityId: user.id,
-        metadata: { email, locationId: location?.id ?? null, emailFailed },
-      },
-      'clients.portal_user_invited',
-    );
     // The portal will show dashes if the store isn't set up — ring the desk.
     void trackNotificationWork(nudgePortalReadiness(client.id).catch(() => false));
 

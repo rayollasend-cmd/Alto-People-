@@ -59,6 +59,7 @@ export function PortalAccessSection({ clientId }: Props) {
   const [locations, setLocations] = useState<{ id: string; name: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [locationId, setLocationId] = useState('');
   const [busy, setBusy] = useState(false);
@@ -86,13 +87,14 @@ export function PortalAccessSection({ clientId }: Props) {
   const invite = async () => {
     setBusy(true);
     try {
-      const r = await invitePortalUser(clientId, { email: email.trim(), locationId: locationId || null });
+      const r = await invitePortalUser(clientId, { email: email.trim(), locationId: locationId || null, name: name.trim() || undefined });
       toast.success(
         r.emailFailed
           ? 'Login created, but the invite email failed — resend from Users & access.'
           : `Invite sent to ${r.email}.`,
       );
       setOpen(false);
+      setName('');
       setEmail('');
       setLocationId('');
       await load();
@@ -234,23 +236,20 @@ export function PortalAccessSection({ clientId }: Props) {
         )}
       </CardContent>
 
-      <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)} confirmDiscard={() => email.trim().length > 0}>
+      <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)} confirmDiscard={() => email.trim().length > 0 || name.trim().length > 0}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Give a store a portal login</DialogTitle>
             <DialogDescription>
-              The store manager gets a magic link by email. Pick their store, or leave it on the whole client for a market or district manager.
+              The store manager gets a note by email, addressed by name, with one link that opens their store site. Leave the store on the whole client for a market manager over every store here — they get the command-center note instead.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <Field label="Store manager's email">
-              <Input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="manager@store.example"
-                autoFocus
-              />
+            <Field label="Name" hint="How the note addresses them. Nothing else is asked of them.">
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jordan Lee" autoFocus />
+            </Field>
+            <Field label="Email">
+              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="manager@store.example" />
             </Field>
             <Field label="Store">
               <Select value={locationId} onChange={(e) => setLocationId(e.target.value)}>

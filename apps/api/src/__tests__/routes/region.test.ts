@@ -187,6 +187,24 @@ describe('the region command center', () => {
     expect(bound.clientId).toBeNull();
     expect((await admin.patch(`/admin/users/${portal.id}`).send({ regionId: '00000000-0000-0000-0000-000000000000' })).status).toBe(400);
 
+    // The market manager is invited from the region: a name and an email,
+    // bound to the region and no client, and the command-center note.
+    const inv = await admin.post(`/regions/${s.region.id}/portal-users`).send({ email: 'Market.Lead@walmart.example', name: 'Sam Ortiz' });
+    expect(inv.status).toBe(201);
+    expect(inv.body.regionId).toBe(s.region.id);
+    const market = await prisma.user.findUniqueOrThrow({ where: { email: 'market.lead@walmart.example' } });
+    expect(market).toMatchObject({ role: 'CLIENT_PORTAL', status: 'INVITED', regionId: s.region.id, clientId: null, locationId: null });
+    const note = await prisma.notification.findFirstOrThrow({
+      where: { recipientUserId: market.id, channel: 'EMAIL', category: 'portal.invite' },
+    });
+    expect(note.subject).toBe('Your Florida Panhandle command center is ready');
+    expect(note.body.startsWith('Sam Ortiz,')).toBe(true);
+    expect(note.body).toContain('1 store');
+    expect(note.body).not.toContain('store site is ready');
+    // An Alto staff email is refused; an unknown region is a 404.
+    expect((await admin.post(`/regions/${s.region.id}/portal-users`).send({ email: hr.email })).status).toBe(409);
+    expect((await admin.post('/regions/00000000-0000-0000-0000-000000000000/portal-users').send({ email: 'x@y.example' })).status).toBe(404);
+
     // A store account has no command center; an associate has nothing here.
     const { user: storeMgr } = await createUser({ role: 'CLIENT_PORTAL', clientId: s.clientA.id });
     expect((await (await loginAs(storeMgr.email)).get('/region/overview')).status).toBe(403);

@@ -1511,3 +1511,94 @@ export function esignCopyTemplate(opts: EsignCopyOpts): EmailTemplate {
     }),
   };
 }
+
+/* ---------------- THE PORTAL: STORE + MARKET MANAGERS --------- */
+/*
+ * A store manager and a market manager are onboarded differently from
+ * an associate — no pre-employment paperwork, no start date, no "15
+ * minutes". Each gets a note addressed by name only that says what
+ * their site is and one button that opens it.
+ */
+
+const PORTAL_LINK_NOTE_TEXT =
+  'You will set your password the first time you open it. The link is unique to you — do not forward it. If it expires, ask your Alto contact for a new one.';
+const PORTAL_LINK_NOTE_HTML =
+  'You will set your password the first time you open it. The link is unique to you — <strong>do not forward it.</strong> If it expires, ask your Alto contact for a new one.';
+
+export interface StoreManagerInviteOpts {
+  /** The person's name — the only thing we know about them. */
+  name: string;
+  storeName: string;
+  clientName: string;
+  magicLink: string;
+  linkExpiresAt: string;
+}
+export function storeManagerInviteTemplate(opts: StoreManagerInviteOpts): EmailTemplate {
+  const refId = formatRef();
+  const subject = `Your ${opts.storeName} store site is ready`;
+  const heading = 'Your store site is ready';
+  const intro = `Your ${opts.storeName} site is ready. It shows who is on your floor right now against your contracted headcount, today's coverage hour by hour, your reliability grade, and one place to reach your Alto supervisor and log a request.`;
+  const dataBlock: DataRow[] = [{ label: 'Store', value: opts.storeName }];
+  if (opts.clientName && opts.clientName !== opts.storeName) dataBlock.push({ label: 'Client', value: opts.clientName });
+  dataBlock.push({ label: 'Link expires', value: opts.linkExpiresAt });
+  const text = composeText({
+    greeting: `${opts.name},`,
+    intro,
+    dataBlock,
+    cta: { label: 'Open my store site', url: opts.magicLink },
+    body: [PORTAL_LINK_NOTE_TEXT],
+    signatory: { kind: 'system' },
+    refId,
+  });
+  const html = wrapHtml({
+    heading,
+    intro: `${escapeHtml(opts.name)}, ${escapeHtml(intro.charAt(0).toLowerCase() + intro.slice(1))}`,
+    dataBlock,
+    body: [PORTAL_LINK_NOTE_HTML],
+    cta: { label: 'Open my store site', url: opts.magicLink },
+    signatory: { kind: 'system' },
+    refId,
+  });
+  return { subject, text, html };
+}
+
+export interface MarketManagerInviteOpts {
+  /** The person's name — the only thing we know about them. */
+  name: string;
+  /** The region (or, for a client-wide account, the client). */
+  regionName: string;
+  storeCount: number;
+  magicLink: string;
+  linkExpiresAt: string;
+}
+export function marketManagerInviteTemplate(opts: MarketManagerInviteOpts): EmailTemplate {
+  const refId = formatRef();
+  const subject = `Your ${opts.regionName} command center is ready`;
+  const heading = 'Your command center is ready';
+  const stores = `${opts.storeCount} ${opts.storeCount === 1 ? 'store' : 'stores'}`;
+  const intro = `Your command center for ${opts.regionName} is ready. Every store in your market on one screen: who is on each floor right now against contract, which store is short this minute, each store's four-week grade, and what is open with Alto. Each store's own site is one tap away.`;
+  const dataBlock: DataRow[] = [
+    { label: 'Market', value: opts.regionName },
+    { label: 'Stores', value: stores },
+    { label: 'Link expires', value: opts.linkExpiresAt },
+  ];
+  const text = composeText({
+    greeting: `${opts.name},`,
+    intro,
+    dataBlock,
+    cta: { label: 'Open my command center', url: opts.magicLink },
+    body: [PORTAL_LINK_NOTE_TEXT],
+    signatory: { kind: 'system' },
+    refId,
+  });
+  const html = wrapHtml({
+    heading,
+    intro: `${escapeHtml(opts.name)}, ${escapeHtml(intro.charAt(0).toLowerCase() + intro.slice(1))}`,
+    dataBlock,
+    body: [PORTAL_LINK_NOTE_HTML],
+    cta: { label: 'Open my command center', url: opts.magicLink },
+    signatory: { kind: 'system' },
+    refId,
+  });
+  return { subject, text, html };
+}

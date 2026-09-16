@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ExternalLink, Map, Plus, Trash2 } from 'lucide-react';
+import { ExternalLink, Map, Plus, Send, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -8,6 +8,7 @@ import { useConfirm } from '@/lib/confirm';
 import {
   createRegion,
   deleteRegion,
+  inviteRegionUser,
   listRegions,
   updateRegion,
   type RegionRow,
@@ -45,6 +46,7 @@ export function RegionsAdmin() {
   const [unassigned, setUnassigned] = useState<RegionStore[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<RegionRow | 'new' | null>(null);
+  const [inviting, setInviting] = useState<RegionRow | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -82,7 +84,7 @@ export function RegionsAdmin() {
     <div className="mx-auto max-w-5xl space-y-6">
       <PageHeader
         title="Regions"
-        subtitle="The command-center tier: a region is the stores a Manager, Business Operations Support runs. Bind an account to a region in Users & access."
+        subtitle="The command-center tier: a region is the stores a Manager, Business Operations Support runs. Invite the market manager from their region; they get the command-center note, not the store one."
         primaryAction={
           canManage ? (
             <Button size="sm" onClick={() => setEditing('new')}>
@@ -130,6 +132,10 @@ export function RegionsAdmin() {
                 )}
                 {canManage && (
                   <>
+                    <Button size="sm" variant="secondary" onClick={() => setInviting(r)}>
+                      <Send className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                      Invite market manager
+                    </Button>
                     <Button size="sm" variant="secondary" onClick={() => setEditing(r)}>
                       Edit stores
                     </Button>
@@ -165,6 +171,17 @@ export function RegionsAdmin() {
         ))
       )}
 
+      {inviting && (
+        <InviteDialog
+          region={inviting}
+          onClose={() => setInviting(null)}
+          onSent={() => {
+            setInviting(null);
+            void load();
+          }}
+        />
+      )}
+
       {editing && (
         <RegionDialog
           region={editing === 'new' ? null : editing}
@@ -177,6 +194,62 @@ export function RegionsAdmin() {
         />
       )}
     </div>
+  );
+}
+
+/**
+ * The market manager's onboarding: a name and an email. They are not an
+ * associate — no paperwork, no start date — so nothing else is asked.
+ * The note they get is the command-center one, distinct from the store
+ * manager's.
+ */
+function InviteDialog({ region, onClose, onSent }: { region: RegionRow; onClose: () => void; onSent: () => void }) {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [busy, setBusy] = useState(false);
+  const valid = /^\S+@\S+\.\S+$/.test(email.trim());
+  const sendInvite = async () => {
+    setBusy(true);
+    try {
+      const r = await inviteRegionUser(region.id, { email: email.trim(), name: name.trim() || undefined });
+      toast.success(
+        r.emailFailed ? 'Login created, but the note failed to send — resend from Users & access.' : `Command-center note sent to ${r.email}.`,
+      );
+      onSent();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Could not send the invite.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()} confirmDiscard={() => name.trim().length > 0 || email.trim().length > 0}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Invite the market manager for {region.name}</DialogTitle>
+          <DialogDescription>
+            They get a note by email, addressed by name, with one link that opens the command center for every store in {region.name}.
+            {region.stores.length === 0 ? ' Assign stores first, or the center opens empty.' : ''}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Field label="Name" hint="How the note addresses them. Nothing else is asked of them.">
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jordan Lee" autoFocus />
+          </Field>
+          <Field label="Email">
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="manager@market.example" />
+          </Field>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button onClick={() => void sendInvite()} loading={busy} disabled={!valid}>
+            Send invite
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

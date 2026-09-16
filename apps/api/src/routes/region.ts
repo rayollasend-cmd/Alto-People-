@@ -6,6 +6,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireAuth, requireCapability } from '../middleware/auth.js';
 import type { SessionUser } from '../types/express.js';
 import { storeSnapshot, type StoreSnapshot } from '../lib/storeSnapshot.js';
+import { invitePortalAccount } from '../lib/portalInvite.js';
 
 /**
  * The region command center — the Manager, Business Operations Support's
@@ -17,6 +18,7 @@ import { storeSnapshot, type StoreSnapshot } from '../lib/storeSnapshot.js';
  *   POST /regions                   (manage:org) create
  *   PATCH /regions/:id              (manage:org) rename / assign stores
  *   DELETE /regions/:id             (manage:org) retire (stores unassigned)
+ *   POST /regions/:id/portal-users  (manage:org) invite a market manager
  *
  * ACCESS: a CLIENT_PORTAL account with a regionId (and no client) sees
  * exactly its region. view:executive / manage:org preview any region via
@@ -236,6 +238,42 @@ regionsAdminRouter.patch('/:id', ADMIN, async (req, res, next) => {
       }
     });
     res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+const RegionInviteInput = z.object({
+  email: z.string().email().max(254),
+  /** How the note addresses them — name only; nothing else is known. */
+  name: z.string().trim().min(1).max(120).optional(),
+});
+
+/**
+ * POST /regions/:id/portal-users — "Give this market a command center."
+ * Creates (or re-invites) a CLIENT_PORTAL account bound to the region
+ * and no client, and mails the market-manager note.
+ */
+regionsAdminRouter.post('/:id/portal-users', ADMIN, async (req, res, next) => {
+  try {
+    const region = await prisma.region.findFirst({ where: { id: req.params.id, deletedAt: null }, select: { id: true, name: true } });
+    if (!region) throw new HttpError(404, 'region_not_found', 'Region not found');
+    const input = RegionInviteInput.parse(req.body);
+    const storeCount = await prisma.location.count({ where: { regionId: region.id, deletedAt: null, isActive: true } });
+    const r = await invitePortalAccount({
+      email: input.email,
+      name: input.name ?? null,
+      scope: { kind: 'region', regionId: region.id, regionName: region.name, storeCount },
+      actorUserId: req.user!.id,
+    });
+    res.status(201).json({
+      id: r.user.id,
+      email: r.user.email,
+      status: 'INVITED',
+      regionId: region.id,
+      inviteExpiresAt: r.expiresAt.toISOString(),
+      emailFailed: r.emailFailed,
+    });
   } catch (err) {
     next(err);
   }

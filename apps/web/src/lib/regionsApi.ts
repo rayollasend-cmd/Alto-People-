@@ -93,6 +93,13 @@ export function updateRegion(id: string, body: { name?: string; locationIds?: st
   return apiFetch<void>(`/regions/${id}`, { method: 'PATCH', body });
 }
 
+export function inviteRegionUser(
+  regionId: string,
+  body: { email: string; name?: string },
+): Promise<{ id: string; email: string; status: string; regionId: string; inviteExpiresAt: string; emailFailed: string | null }> {
+  return apiFetch(`/regions/${regionId}/portal-users`, { method: 'POST', body });
+}
+
 export function deleteRegion(id: string): Promise<void> {
   return apiFetch<void>(`/regions/${id}`, { method: 'DELETE' });
 }

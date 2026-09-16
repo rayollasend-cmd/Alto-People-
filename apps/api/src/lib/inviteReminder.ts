@@ -5,6 +5,7 @@ import { send } from './notifications.js';
 import { ADMIN_EMAIL_HIRING, notifyAllAdmins, notifyUser } from './notify.js';
 import { generateInviteToken } from './inviteToken.js';
 import { onboardingReminderTemplate, inviteTemplate } from './emailTemplates.js';
+import { portalDisplayName, portalInviteTemplate, portalScopeForUser } from './portalInvite.js';
 
 /**
  * Phase 17 — invite reminder sweep.
@@ -160,8 +161,17 @@ export async function sendReminderForUser(
   const acceptUrl = `${env.APP_BASE_URL}/accept-invite/${fresh.raw}`;
   // Manual resends are treated as a fresh invite (HR clicked Resend); the
   // 48h cron path is the actual "you forgot" reminder template.
-  const tpl =
-    reason === 'manual'
+  // A portal account (store or market manager) is never an associate:
+  // resend the note it was onboarded with, addressed by name only.
+  const portalScope = user.role === 'CLIENT_PORTAL' ? await portalScopeForUser(user) : null;
+  const tpl = portalScope
+    ? portalInviteTemplate({
+        name: portalDisplayName(null, user.email),
+        scope: portalScope,
+        magicLink: acceptUrl,
+        linkExpiresAt: expiresAt.toISOString().slice(0, 10),
+      }).template
+    : reason === 'manual'
       ? inviteTemplate({
           firstName,
           clientName,

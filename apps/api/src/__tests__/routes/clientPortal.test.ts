@@ -836,7 +836,7 @@ describe('closing the loops — people, reviewed marks, the store roll-up', () =
     // Invite a store manager for store B.
     const invited = await admin
       .post(`/clients/${s.client.id}/portal-users`)
-      .send({ email: 'Manager.4411@walmart.example', locationId: s.storeB.id });
+      .send({ email: 'Manager.4411@walmart.example', locationId: s.storeB.id, name: 'Jordan Lee' });
     expect(invited.status).toBe(201);
     expect(invited.body.email).toBe('manager.4411@walmart.example');
     expect(invited.body.locationName).toBe('Walmart 4411');
@@ -845,6 +845,15 @@ describe('closing the loops — people, reviewed marks, the store roll-up', () =
     expect(created.status).toBe('INVITED');
     expect(created.locationId).toBe(s.storeB.id);
     expect(await prisma.inviteToken.count({ where: { userId: created.id, consumedAt: null } })).toBe(1);
+    // The store manager's note: their store site, by name only — never
+    // the associate's pre-employment onboarding.
+    const note = await prisma.notification.findFirstOrThrow({
+      where: { recipientUserId: created.id, channel: 'EMAIL', category: 'portal.invite' },
+    });
+    expect(note.subject).toBe('Your Walmart 4411 store site is ready');
+    expect(note.body.startsWith('Jordan Lee,')).toBe(true);
+    expect(note.body).toContain('Open my store site');
+    for (const w of ['onboarding', 'Position', 'Start date', '15 minutes']) expect(note.body).not.toContain(w);
     // A store from another client, an Alto staff email, are refused.
     expect(
       (await admin.post(`/clients/${s.client.id}/portal-users`).send({ email: 'x@y.example', locationId: s.otherStore.id }))
@@ -861,7 +870,17 @@ describe('closing the loops — people, reviewed marks, the store roll-up', () =
     expect(ready.body.gaps.some((g: string) => g.includes('Walmart 4411'))).toBe(true);
     // …and the Workforce desk was rung about it (once).
     const { user: wfm } = await createUser({ role: 'WORKFORCE_MANAGER' });
-    await admin.post(`/clients/${s.client.id}/portal-users`).send({ email: 'second@walmart.example' });
+    const marketInvite = await admin.post(`/clients/${s.client.id}/portal-users`).send({ email: 'second@walmart.example' });
+    expect(marketInvite.status).toBe(201);
+    // A client-wide login is a market manager: the command-center note,
+    // addressed by the front of the email when no name was given.
+    const marketNote = await prisma.notification.findFirstOrThrow({
+      where: { recipientUserId: marketInvite.body.id, channel: 'EMAIL', category: 'portal.invite' },
+    });
+    expect(marketNote.subject).toBe('Your Walmart 218 command center is ready');
+    expect(marketNote.body.startsWith('second,')).toBe(true);
+    expect(marketNote.body).toContain('2 stores');
+    expect(marketNote.body).toContain('Open my command center');
     await flushPendingNotifications();
     const bells = await prisma.notification.findMany({
       where: { category: 'portal.readiness', channel: 'IN_APP', recipientUserId: wfm.id },
