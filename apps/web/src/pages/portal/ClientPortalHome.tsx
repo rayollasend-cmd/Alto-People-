@@ -39,7 +39,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
 import { PortalRequests, type RequestPrefill } from './PortalRequests';
-import { groupWaves } from './waves';
+import { groupWaves, wavePresent } from './waves';
 import {
   CoverageCurve,
   DetailsTable,
@@ -226,7 +226,21 @@ export function ClientPortalHome() {
   });
   const data = query.data;
 
-  const waves = useMemo(() => (data ? groupWaves(data.today.roster) : []), [data]);
+  // The home card reads the live roster; the Day page reads the punch
+  // record. Map the live states onto the wave grammar.
+  const waves = useMemo(
+    () =>
+      data
+        ? groupWaves(
+            data.today.roster.map((r) => ({
+              ...r,
+              clockOutAt: null,
+              state: r.state === 'done' ? ('worked' as const) : r.state,
+            })),
+          )
+        : [],
+    [data],
+  );
   const curve = useMemo(
     () =>
       data
@@ -628,7 +642,7 @@ export function ClientPortalHome() {
             ) : (
               <ul className="mt-3 space-y-3">
                 {waves.map((w) => {
-                  const inCount = w.phase === 'finished' ? w.worked : w.clockedIn.length;
+                  const inCount = w.phase === 'finished' ? wavePresent(w) : w.clockedIn.length;
                   const pct = w.expected > 0 ? Math.round((inCount / w.expected) * 100) : 0;
                   const short = w.phase === 'live' && inCount < w.expected;
                   return (

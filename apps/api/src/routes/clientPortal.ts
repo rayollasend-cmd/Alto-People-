@@ -278,6 +278,56 @@ async function currentTarget(
 }
 
 /**
+ * The evidence layer shared by every historical lens: punches in a
+ * window, matched to shifts by the link when it exists, else by the
+ * assigned associate overlapping the shift (wrong kiosk still counts).
+ */
+async function loadPunches(scope: PortalScope, from: Date, to: Date, now: Date) {
+  const rows = await prisma.timeEntry.findMany({
+    where: {
+      ...entryScope(scope),
+      status: { in: ['ACTIVE', 'COMPLETED', 'APPROVED'] },
+      clockInAt: { gte: new Date(from.getTime() - DAY), lt: to },
+    },
+    select: { associateId: true, shiftId: true, clockInAt: true, clockOutAt: true },
+    orderBy: { clockInAt: 'asc' },
+    take: 20000,
+  });
+  const byShift = new Map<string, (typeof rows)[number]>();
+  const byAssociate = new Map<string, typeof rows>();
+  for (const e of rows) {
+    if (e.shiftId && !byShift.has(e.shiftId)) byShift.set(e.shiftId, e);
+    const list = byAssociate.get(e.associateId) ?? [];
+    list.push(e);
+    byAssociate.set(e.associateId, list);
+  }
+  type ShiftLike = { id: string; assignedAssociateId: string | null; startsAt: Date; endsAt: Date };
+  const punchFor = (s: ShiftLike) =>
+    byShift.get(s.id) ??
+    (s.assignedAssociateId
+      ? (byAssociate.get(s.assignedAssociateId) ?? []).find(
+          (e) => e.clockInAt < s.endsAt && (e.clockOutAt ?? now) > s.startsAt,
+        ) ?? null
+      : null);
+  return { punchFor, punched: (s: ShiftLike) => punchFor(s) !== null };
+}
+
+/** Unexcused attendance events in a window, keyed the way the store
+ *  scope needs (shiftId — the model carries no relation). */
+function attendanceWhere(
+  scope: PortalScope,
+  from: Date,
+  shiftIds: string[],
+): Prisma.AttendanceEventWhereInput {
+  return {
+    clientId: scope.clientId,
+    occurredOn: { gte: from },
+    excusedAt: null,
+    ...(scope.locationId ? { shiftId: { in: shiftIds } } : {}),
+  };
+}
+
+/**
  * The reliability grade — one honest number: of the shifts that have
  * happened, how many had an Alto person on the floor.
  *
@@ -509,47 +559,14 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
           }),
     ]);
 
-    // Attendance events carry a shiftId but no relation, so the store scope
-    // keys them on the store's own shifts (already loaded for the trend).
-    const trendEvents = await prisma.attendanceEvent.findMany({
-      where: {
-        clientId,
-        occurredOn: { gte: trendStart },
-        excusedAt: null,
-        ...(scope.locationId ? { shiftId: { in: trendShifts.map((s) => s.id) } } : {}),
-      },
-      select: { kind: true, occurredOn: true, shiftId: true },
-      take: 2000,
-    });
-    // The evidence: punches in the trend window, matched to shifts by the
-    // link when it exists, else by associate + overlap.
-    const trendEntries = await prisma.timeEntry.findMany({
-      where: {
-        ...entries,
-        status: { in: ['ACTIVE', 'COMPLETED', 'APPROVED'] },
-        clockInAt: { gte: new Date(trendStart.getTime() - DAY), lt: weekEnd },
-      },
-      select: { associateId: true, shiftId: true, clockInAt: true, clockOutAt: true },
-      take: 20000,
-    });
-    const entriesByShift = new Set(trendEntries.map((e) => e.shiftId).filter(Boolean));
-    const entriesByAssociate = new Map<string, typeof trendEntries>();
-    for (const e of trendEntries) {
-      const list = entriesByAssociate.get(e.associateId) ?? [];
-      list.push(e);
-      entriesByAssociate.set(e.associateId, list);
-    }
-    const punched = (s: {
-      id: string;
-      assignedAssociateId: string | null;
-      startsAt: Date;
-      endsAt: Date;
-    }) =>
-      entriesByShift.has(s.id) ||
-      (!!s.assignedAssociateId &&
-        (entriesByAssociate.get(s.assignedAssociateId) ?? []).some(
-          (e) => e.clockInAt < s.endsAt && (e.clockOutAt ?? now) > s.startsAt,
-        ));
+    const [trendEvents, { punched }] = await Promise.all([
+      prisma.attendanceEvent.findMany({
+        where: attendanceWhere(scope, trendStart, trendShifts.map((s) => s.id)),
+        select: { kind: true, occurredOn: true, shiftId: true },
+        take: 2000,
+      }),
+      loadPunches(scope, trendStart, weekEnd, now),
+    ]);
     const ncnsShiftIds = new Set(
       trendEvents.filter((e) => e.kind === 'NO_CALL_NO_SHOW' && e.shiftId).map((e) => e.shiftId),
     );
@@ -1106,3 +1123,343 @@ clientPortalRouter.get(
     }
   },
 );
+
+/* ====================================================================== */
+/* The historical lenses: a day, and a range.                              */
+/* ====================================================================== */
+
+type DayState =
+  | 'open'
+  | 'on-floor'
+  | 'worked'
+  | 'missed'
+  | 'not-in'
+  | 'confirmed'
+  | 'unconfirmed';
+
+function parseDayKey(raw: unknown, name: string): string {
+  const s = typeof raw === 'string' ? raw : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    throw new HttpError(400, `invalid_${name}`, `\`${name}\` must be YYYY-MM-DD`);
+  }
+  return s;
+}
+
+/**
+ * GET /client-portal/day?date=YYYY-MM-DD
+ * One day, wave by wave, from the punch record: who worked (in/out
+ * times), who was expected and never punched, who is on the floor right
+ * now (today), unfilled slots. Past, present and future read from the
+ * same route so "2 days ago" looks exactly like today did at close.
+ */
+clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next) => {
+  try {
+    const scope = await resolveScope(req.user!, req.query);
+    const now = new Date();
+    const dateKey = req.query.date === undefined ? orgDateKey(now) : parseDayKey(req.query.date, 'date');
+    const dayStart = utcInstantOfLocalMidnight(dateKey, ORG_TZ);
+    const dayEnd = utcInstantOfLocalMidnight(nextKey(dateKey, 1), ORG_TZ);
+
+    const [rows, leadPositions, { punchFor }, target] = await Promise.all([
+      prisma.shift.findMany({
+        where: { ...shiftScope(scope), startsAt: { lt: dayEnd }, endsAt: { gt: dayStart } },
+        select: {
+          id: true,
+          position: true,
+          startsAt: true,
+          endsAt: true,
+          status: true,
+          acknowledgedAt: true,
+          assignedAssociateId: true,
+          assignedAssociate: { select: { firstName: true, lastName: true } },
+          locationRel: { select: { name: true, timezone: true } },
+        },
+        orderBy: { startsAt: 'asc' },
+        take: 300,
+      }),
+      prisma.shiftPosition.findMany({
+        where: { clientId: scope.clientId, isLead: true, deletedAt: null },
+        select: { name: true },
+        take: 50,
+      }),
+      loadPunches(scope, dayStart, dayEnd, now),
+      currentTarget(scope, now),
+    ]);
+    const ncns = new Set(
+      (
+        await prisma.attendanceEvent.findMany({
+          where: {
+            ...attendanceWhere(scope, dayStart, rows.map((s) => s.id)),
+            kind: 'NO_CALL_NO_SHOW',
+            shiftId: { in: rows.map((s) => s.id) },
+          },
+          select: { shiftId: true },
+          take: 500,
+        })
+      ).map((e) => e.shiftId),
+    );
+    const leadNames = new Set(leadPositions.map((p) => p.name));
+
+    const roster = rows.map((s) => {
+      const punch = s.status === 'OPEN' ? null : punchFor(s);
+      const ended = s.endsAt.getTime() <= now.getTime();
+      const started = s.startsAt.getTime() <= now.getTime();
+      let state: DayState;
+      if (s.status === 'OPEN') state = 'open';
+      else if (ncns.has(s.id)) state = 'missed';
+      else if (punch && punch.clockOutAt === null && !ended) state = 'on-floor';
+      else if (punch) state = 'worked';
+      else if (ended) state = 'missed';
+      else if (started) state = 'not-in';
+      else state = s.acknowledgedAt ? 'confirmed' : 'unconfirmed';
+      return {
+        shiftId: s.id,
+        associateId: s.assignedAssociateId,
+        name: s.assignedAssociate ? fullName(s.assignedAssociate) : null,
+        position: s.position,
+        isLead: leadNames.has(s.position),
+        startsAt: s.startsAt.toISOString(),
+        endsAt: s.endsAt.toISOString(),
+        timezone: s.locationRel?.timezone ?? ORG_TZ,
+        locationName: s.locationRel?.name ?? null,
+        state,
+        clockInAt: punch && state !== 'missed' ? punch.clockInAt.toISOString() : null,
+        clockOutAt: punch && state === 'worked' ? (punch.clockOutAt?.toISOString() ?? null) : null,
+      };
+    });
+
+    res.json({
+      client: { id: scope.client.id, name: scope.client.name },
+      store: scope.location
+        ? { id: scope.location.id, name: scope.location.name, timezone: scope.location.timezone }
+        : null,
+      date: dateKey,
+      today: orgDateKey(now),
+      generatedAt: now.toISOString(),
+      target: target.target,
+      roster,
+      summary: {
+        expected: roster.filter((r) => r.state !== 'open').length,
+        worked: roster.filter((r) => r.state === 'worked' || r.state === 'on-floor').length,
+        onFloor: roster.filter((r) => r.state === 'on-floor').length,
+        missed: roster.filter((r) => r.state === 'missed').length,
+        open: roster.filter((r) => r.state === 'open').length,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /client-portal/history?from=YYYY-MM-DD&to=YYYY-MM-DD
+ * A range (org days, inclusive, ≤ 92 days): the home page's cards
+ * computed for that slice — showed-up rate and grade, fill and hours per
+ * day, incidents as counts, checklist evidence, safety, the statements
+ * that closed inside it, and the service report for every week it
+ * touches. Every number comes from the same queries the live view uses.
+ */
+clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, next) => {
+  try {
+    const scope = await resolveScope(req.user!, req.query);
+    const now = new Date();
+    const fromKey = parseDayKey(req.query.from, 'from');
+    const toKey = parseDayKey(req.query.to, 'to');
+    if (toKey < fromKey) throw new HttpError(400, 'invalid_range', '`to` is before `from`');
+    const from = utcInstantOfLocalMidnight(fromKey, ORG_TZ);
+    const toExclusive = utcInstantOfLocalMidnight(nextKey(toKey, 1), ORG_TZ);
+    const spanDays = Math.round((toExclusive.getTime() - from.getTime()) / DAY);
+    if (spanDays > 92) throw new HttpError(400, 'range_too_long', 'Pick 92 days or fewer.');
+
+    const shifts = await prisma.shift.findMany({
+      where: { ...shiftScope(scope), startsAt: { gte: from, lt: toExclusive } },
+      select: { id: true, startsAt: true, endsAt: true, status: true, assignedAssociateId: true },
+      take: 20000,
+    });
+    const shiftIds = shifts.map((s) => s.id);
+    const dayKeys = new Set<string>();
+    for (let k = fromKey; k <= toKey; k = nextKey(k, 1)) dayKeys.add(k);
+
+    const [events, { punched }, worked, claims, ops, incidents, openIncidents, statements] =
+      await Promise.all([
+        prisma.attendanceEvent.findMany({
+          where: { ...attendanceWhere(scope, from, shiftIds), occurredOn: { gte: from, lt: toExclusive } },
+          select: { kind: true, shiftId: true },
+          take: 5000,
+        }),
+        loadPunches(scope, from, toExclusive, now),
+        prisma.timeEntry.findMany({
+          where: {
+            ...entryScope(scope),
+            status: { in: ['COMPLETED', 'APPROVED'] },
+            clockInAt: { gte: from, lt: toExclusive },
+          },
+          select: {
+            clockInAt: true,
+            clockOutAt: true,
+            breaks: { select: { startedAt: true, endedAt: true } },
+          },
+          take: 20000,
+        }),
+        prisma.openShiftClaim.count({
+          where: {
+            status: 'APPROVED',
+            decidedAt: { gte: from, lt: toExclusive },
+            shift: { clientId: scope.clientId, ...(scope.locationId ? { locationId: scope.locationId } : {}) },
+          },
+        }),
+        prisma.opsShift.findMany({
+          where: { clientId: scope.clientId, dateKey: { in: [...dayKeys] } },
+          select: {
+            sopDone: true,
+            sopTotal: true,
+            taskDone: true,
+            taskTotal: true,
+            tempAlerts: true,
+            closedIncomplete: true,
+            _count: { select: { tasks: { where: { photos: { some: {} } } } } },
+          },
+          take: 2000,
+        }),
+        prisma.oshaIncident.count({
+          where: { clientId: scope.clientId, occurredAt: { gte: from, lt: toExclusive } },
+        }),
+        prisma.oshaIncident.count({
+          where: {
+            clientId: scope.clientId,
+            occurredAt: { gte: from, lt: toExclusive },
+            status: { not: 'RESOLVED' },
+          },
+        }),
+        prisma.clientStatement.findMany({
+          where: { clientId: scope.clientId, status: 'FINAL', periodEnd: { gte: from, lt: toExclusive } },
+          orderBy: { periodEnd: 'desc' },
+          take: 20,
+          select: {
+            id: true,
+            number: true,
+            periodStart: true,
+            periodEnd: true,
+            paidAt: true,
+            snapshot: true,
+          },
+        }),
+      ]);
+
+    const ncnsIds = new Set(events.filter((e) => e.kind === 'NO_CALL_NO_SHOW' && e.shiftId).map((e) => e.shiftId));
+    const days = new Map(
+      [...dayKeys].map((k) => [
+        k,
+        { date: k, published: 0, filled: 0, ended: 0, showed: 0, open: 0, scheduledHours: 0 },
+      ]),
+    );
+    for (const s of shifts) {
+      const d = days.get(orgDateKey(s.startsAt));
+      if (!d) continue;
+      d.published += 1;
+      if (s.status === 'OPEN') d.open += 1;
+      else d.filled += 1;
+      d.scheduledHours += paidMinutesForRange(s.startsAt, s.endsAt) / 60;
+      if (s.endsAt.getTime() <= now.getTime()) {
+        d.ended += 1;
+        if (s.status !== 'OPEN' && !ncnsIds.has(s.id) && punched(s)) d.showed += 1;
+      }
+    }
+    const workedByDay = new Map<string, number>();
+    for (const e of worked) {
+      const k = orgDateKey(e.clockInAt);
+      workedByDay.set(k, (workedByDay.get(k) ?? 0) + netMinutes(e, now) / 60);
+    }
+    const dayRows = [...days.values()].map((d) => ({
+      ...d,
+      scheduledHours: Math.round(d.scheduledHours * 10) / 10,
+      workedHours: Math.round((workedByDay.get(d.date) ?? 0) * 10) / 10,
+      fillPct: d.published > 0 ? Math.round((d.filled / d.published) * 100) : null,
+      reliabilityPct: d.ended > 0 ? Math.round((d.showed / d.ended) * 100) : null,
+    }));
+    const sum = (f: (d: (typeof dayRows)[number]) => number) => dayRows.reduce((a, d) => a + f(d), 0);
+    const published = sum((d) => d.published);
+    const filled = sum((d) => d.filled);
+    const graded = gradeWeeks(dayRows);
+    const count = (kind: string) => events.filter((e) => e.kind === kind).length;
+    const opsSum = (f: (o: (typeof ops)[number]) => number) => ops.reduce((a, o) => a + f(o), 0);
+
+    // One service report per org week the range touches.
+    const weekStarts: string[] = [];
+    for (let k = orgDateKey(startOfWeekUTC(from)); k <= toKey; k = nextKey(k, 7)) weekStarts.push(k);
+    const preview = req.user!.role !== 'CLIENT_PORTAL';
+    const previewQs = preview
+      ? `&clientId=${encodeURIComponent(scope.clientId)}${scope.locationId ? `&locationId=${encodeURIComponent(scope.locationId)}` : ''}`
+      : scope.locationId && !req.user!.locationId
+        ? `&locationId=${encodeURIComponent(scope.locationId)}`
+        : '';
+
+    res.json({
+      client: { id: scope.client.id, name: scope.client.name },
+      store: scope.location ? { id: scope.location.id, name: scope.location.name } : null,
+      range: { from: fromKey, to: toKey, days: spanDays },
+      generatedAt: now.toISOString(),
+      days: dayRows,
+      totals: {
+        published,
+        filled,
+        open: published - filled,
+        ended: sum((d) => d.ended),
+        showed: sum((d) => d.showed),
+        fillPct: published > 0 ? Math.round((filled / published) * 100) : null,
+        reliabilityPct: graded.score,
+        grade: graded.grade,
+        scheduledHours: Math.round(sum((d) => d.scheduledHours) * 10) / 10,
+        workedHours: Math.round(sum((d) => d.workedHours) * 10) / 10,
+      },
+      incidents: {
+        noCallNoShows: count('NO_CALL_NO_SHOW'),
+        callOuts: count('CALL_OUT'),
+        lates: count('LATE'),
+        replacementsFound: claims,
+      },
+      ops:
+        ops.length > 0
+          ? {
+              shifts: ops.length,
+              sopDone: opsSum((o) => o.sopDone),
+              sopTotal: opsSum((o) => o.sopTotal),
+              taskDone: opsSum((o) => o.taskDone),
+              taskTotal: opsSum((o) => o.taskTotal),
+              tempAlerts: opsSum((o) => o.tempAlerts),
+              incomplete: ops.filter((o) => o.closedIncomplete).length,
+              photos: opsSum((o) => o._count.tasks),
+            }
+          : null,
+      safety: { incidents, open: openIncidents },
+      statements: statements.map((st) => {
+        const snap = st.snapshot as {
+          totals?: { amount?: number; hours?: number };
+          stores?: Array<{ locationName: string; hours: number; amount: number }>;
+        } | null;
+        const storeLine = scope.location
+          ? (snap?.stores ?? []).find((s) => s.locationName === scope.location!.name) ?? null
+          : null;
+        return {
+          id: st.id,
+          number: st.number,
+          periodStart: st.periodStart.toISOString().slice(0, 10),
+          periodEnd: st.periodEnd.toISOString().slice(0, 10),
+          amount: snap?.totals?.amount ?? null,
+          hours: snap?.totals?.hours ?? null,
+          storeHours: storeLine ? storeLine.hours : null,
+          storeAmount: storeLine ? storeLine.amount : null,
+          paidAt: st.paidAt ? st.paidAt.toISOString() : null,
+          pdfUrl: `/api/client-portal/statements/${st.id}.pdf${previewQs ? `?${previewQs.slice(1)}` : ''}`,
+        };
+      }),
+      serviceReports: weekStarts.map((w) => ({
+        weekStart: w,
+        weekEnd: nextKey(w, 6),
+        url: `/api/client-portal/service-report.pdf?week=${w}${previewQs}`,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});

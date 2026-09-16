@@ -614,7 +614,9 @@ describe('the store site — scope, targets, evidence, downloads', () => {
     const positions = sched.body.days.flatMap((d: { shifts: { position: string }[] }) =>
       d.shifts.map((x) => x.position),
     );
-    expect(positions).toEqual(['StoreAOnly']);
+    // Yesterday's worked shift sits in this week too on most run days.
+    expect(positions.length).toBeGreaterThanOrEqual(1);
+    expect(positions.every((p: string) => p === 'StoreAOnly')).toBe(true);
     expect(JSON.stringify(sched.body)).not.toContain('payRate');
     expect((await agent.get('/client-portal/schedule?week=nope')).status).toBe(400);
 
@@ -674,5 +676,76 @@ describe('the store site — scope, targets, evidence, downloads', () => {
     expect(moved.status).toBe(204);
     const after = await prisma.user.findUniqueOrThrow({ where: { id: s.marketUser.id } });
     expect(after.locationId).toBeNull();
+  });
+});
+
+function dayKeyPlus(key: string, days: number): string {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
+}
+
+describe('the historical lenses — a day, and a range', () => {
+  it('reads any day from the punch record, store-scoped, and grades a range', async () => {
+    const s = await seedTwoStores();
+    const yesterday = dayKeyPlus(orgDateKey(new Date()), -1);
+    const store = await loginAs(s.storeUser.email);
+
+    // Yesterday at store A: Maria worked (in/out on the row); nothing
+    // from the sister store, and no "late" label anywhere.
+    const day = await store.get(`/client-portal/day?date=${yesterday}`);
+    expect(day.status).toBe(200);
+    expect(day.body.date).toBe(yesterday);
+    expect(day.body.store.id).toBe(s.storeA.id);
+    const worked = day.body.roster.filter((r: { state: string }) => r.state === 'worked');
+    expect(worked).toHaveLength(1);
+    expect(worked[0].name).toBe('Maria Lopez');
+    expect(worked[0].clockInAt).toBeTruthy();
+    expect(worked[0].clockOutAt).toBeTruthy();
+    expect(day.body.summary).toMatchObject({ expected: 1, worked: 1, missed: 0, open: 0 });
+    expect(JSON.stringify(day.body)).not.toContain('Okafor');
+    expect(JSON.stringify(day.body).toLowerCase()).not.toContain('late');
+
+    // The market account sees both stores yesterday: Ben's shift came and
+    // went with no punch → missed.
+    const market = await loginAs(s.marketUser.email);
+    const mday = await market.get(`/client-portal/day?date=${yesterday}`);
+    expect(mday.body.summary).toMatchObject({ expected: 2, worked: 1, missed: 1 });
+    const missed = mday.body.roster.find((r: { state: string }) => r.state === 'missed');
+    expect(missed.name).toBe('Ben Okafor');
+    expect(missed.clockInAt).toBeNull();
+
+    // Today reads live: Maria is on the floor with a punch time.
+    const today = await store.get('/client-portal/day');
+    expect(today.body.summary.onFloor).toBe(1);
+    expect(today.body.roster[0].state).toBe('on-floor');
+
+    // Bad dates are refused; a foreign store is not found.
+    expect((await store.get('/client-portal/day?date=nope')).status).toBe(400);
+    expect(
+      (await market.get(`/client-portal/day?date=${yesterday}&locationId=${s.otherStore.id}`)).status,
+    ).toBe(404);
+
+    // The range: last 7 days for the market account — 2 ended shifts, 1
+    // showed → 50%, F; fill counts every published shift in the range.
+    const from = dayKeyPlus(yesterday, -6);
+    const hist = await market.get(`/client-portal/history?from=${from}&to=${yesterday}`);
+    expect(hist.status).toBe(200);
+    expect(hist.body.range).toEqual({ from, to: yesterday, days: 7 });
+    expect(hist.body.days).toHaveLength(7);
+    expect(hist.body.totals).toMatchObject({ published: 2, filled: 2, ended: 2, showed: 1, grade: 'F', reliabilityPct: 50 });
+    expect(hist.body.totals.workedHours).toBe(4);
+    expect(hist.body.totals.scheduledHours).toBe(8);
+    // Statement #7 closed inside a wider range and carries its PDF link.
+    const wide = await market.get(`/client-portal/history?from=${dayKeyPlus(yesterday, -20)}&to=${yesterday}`);
+    expect(wide.body.statements.map((x: { number: number }) => x.number)).toContain(7);
+    expect(wide.body.serviceReports.length).toBeGreaterThanOrEqual(3);
+    const raw = JSON.stringify(wide.body);
+    for (const word of ['payRate', 'billRate', 'hourlyRate', 'Target 9']) expect(raw).not.toContain(word);
+
+    // Guard rails: reversed and oversized ranges.
+    expect((await market.get(`/client-portal/history?from=${yesterday}&to=${from}`)).status).toBe(400);
+    expect(
+      (await market.get(`/client-portal/history?from=${dayKeyPlus(yesterday, -120)}&to=${yesterday}`)).status,
+    ).toBe(400);
   });
 });

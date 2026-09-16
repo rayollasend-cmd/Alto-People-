@@ -1,11 +1,11 @@
 import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, CalendarDays, Users } from 'lucide-react';
+import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, Users } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
-import { fmtDate, fmtShiftRangeTz, fmtTime, fmtTimeTz, parseYmd } from '@/lib/format';
+import { fmtDate, fmtShiftRangeTz, fmtTime, fmtTimeTz, parseYmd, ymdLocal } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -14,58 +14,53 @@ import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { groupWaves, type Wave, type WaveRow } from './waves';
+import { groupWaves, wavePresent, type Wave, type WaveRow } from './waves';
+import { scopeParams, shiftDays } from './scope';
 
 /**
- * Today — who is on the floor, wave by wave. The page a store manager
- * opens when the district lead calls: each shift window with the people
- * clocked in (faces, positions, punch times), the gap ("7 of 8 in") with
- * who isn't in yet, unfilled slots, and finished waves folded to their
+ * A day — who was on the floor, wave by wave. Today reads live; any
+ * other date reads from the punch record, so "2 days ago" looks exactly
+ * like today did at close: who worked (in/out times), who was expected
+ * and never punched, unfilled slots, and finished waves folded to their
  * proof line. Punch times only — never a "late" label; the judgment
- * stays with Alto.
- *
- * Reads the same overview payload as the home page (one round trip,
- * shared cache), so the two never disagree.
+ * stays with Alto. The date lives in the URL so a link to last Tuesday
+ * opens on last Tuesday.
  */
 
-interface TodayPayload {
+interface DayPayload {
   client: { id: string; name: string };
-  store: { id: string; name: string; timezone: string; address: string | null } | null;
+  store: { id: string; name: string; timezone: string } | null;
+  date: string;
+  today: string;
   generatedAt: string;
-  now: { onFloor: Array<{ associateId: string }>; target: number | null };
-  today: { date: string; roster: WaveRow[]; filled: number; open: number };
+  target: number | null;
+  roster: WaveRow[];
+  summary: { expected: number; worked: number; onFloor: number; missed: number; open: number };
 }
 
 const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 
-function scopeQuery(params: URLSearchParams, isPortal: boolean): string {
-  const q = new URLSearchParams();
-  const client = params.get('clientId');
-  const loc = params.get('locationId');
-  if (!isPortal && client) q.set('clientId', client);
-  if (loc) q.set('locationId', loc);
-  const s = q.toString();
-  return s ? `?${s}` : '';
-}
-
 export function PortalToday() {
   const { t } = useI18n();
   const { user, can } = useAuth();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isPortal = user?.role === 'CLIENT_PORTAL';
   const canPreview = can('view:executive') || can('manage:org');
   const previewId = searchParams.get('clientId');
-  const qs = scopeQuery(searchParams, isPortal);
+  const scope = scopeParams(searchParams, isPortal);
+  const scopeQs = scope.toString() ? `?${scope.toString()}` : '';
+  const date = searchParams.get('date') ?? ymdLocal();
+  const qs = `?${new URLSearchParams([...scope.entries(), ['date', date]]).toString()}`;
 
   const enabled = isPortal || (canPreview && !!previewId);
   const query = useQuery({
-    queryKey: ['clientPortal', 'overview', isPortal ? 'me' : previewId, qs],
-    queryFn: () => apiFetch<TodayPayload>(`/client-portal/overview${qs}`),
+    queryKey: ['clientPortal', 'day', qs],
+    queryFn: () => apiFetch<DayPayload>(`/client-portal/day${qs}`),
     enabled,
-    refetchInterval: 60_000,
+    refetchInterval: date === ymdLocal() ? 60_000 : false,
   });
   const data = query.data;
-  const waves = useMemo(() => (data ? groupWaves(data.today.roster) : []), [data]);
+  const waves = useMemo(() => (data ? groupWaves(data.roster) : []), [data]);
 
   if (!isPortal && !canPreview) {
     return <EmptyState icon={Users} title={t('portal.noAccess')} description="" />;
@@ -74,23 +69,37 @@ export function PortalToday() {
     return <EmptyState icon={Users} title={t('portal.todayNav')} description={t('portal.pickClient')} />;
   }
 
-  const onFloor = data?.now.onFloor.length ?? 0;
-  const expected = waves.reduce((a, w) => a + w.expected, 0);
+  const goDay = (next: string | null) => {
+    const p = new URLSearchParams(searchParams);
+    if (next === null) p.delete('date');
+    else p.set('date', next);
+    setSearchParams(p, { replace: true });
+  };
+  const isToday = date === ymdLocal();
+  const isPast = date < ymdLocal();
+  const dayLabel = isToday
+    ? t('portal.todayNav')
+    : date === shiftDays(ymdLocal(), -1)
+      ? t('portal.yesterday')
+      : fmtDate(parseYmd(date));
+  const present = data ? data.summary.worked : 0;
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
       <PageHeader
-        title={t('portal.todayNav')}
+        title={dayLabel}
         topbarTitle={t('portal.todayNav')}
         subtitle={
           data
-            ? `${data.store ? data.store.name : data.client.name} · ${fmtDate(parseYmd(data.today.date))} · ${t('portal.asOf', { time: fmtTime(data.generatedAt) })}`
+            ? `${data.store ? data.store.name : data.client.name} · ${fmtDate(parseYmd(data.date))}${
+                isToday ? ` · ${t('portal.asOf', { time: fmtTime(data.generatedAt) })}` : ''
+              }`
             : undefined
         }
-        breadcrumbs={[{ label: t('portal.title'), to: `/portal${qs}` }]}
+        breadcrumbs={[{ label: t('portal.title'), to: `/portal${scopeQs}` }]}
         secondaryActions={
           <Button size="sm" variant="ghost" asChild>
-            <Link to={`/portal${qs}`}>
+            <Link to={`/portal${scopeQs}`}>
               <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
               {t('portal.backHome')}
             </Link>
@@ -98,13 +107,51 @@ export function PortalToday() {
         }
         primaryAction={
           <Button size="sm" variant="outline" asChild>
-            <Link to={`/portal/schedule${qs}`}>
+            <Link to={`/portal/schedule${scope.toString() ? `?${scope.toString()}&` : '?'}week=${date}`}>
               <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
               {t('portal.openSchedule')}
             </Link>
           </Button>
         }
       />
+
+      {/* ---- Date control: one row, above everything it scopes ---------- */}
+      <div className="sticky top-0 z-10 -mx-4 flex items-center gap-2 bg-navy/95 px-4 py-2 backdrop-blur md:mx-0 md:px-0">
+        <Button size="sm" variant="ghost" onClick={() => goDay(shiftDays(date, -1))} aria-label={t('portal.prevDay')}>
+          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+        </Button>
+        <div className="flex flex-1 items-center gap-1 overflow-x-auto">
+          <Button size="sm" variant={isToday ? 'secondary' : 'ghost'} onClick={() => goDay(null)}>
+            {t('portal.todayNav')}
+          </Button>
+          <Button
+            size="sm"
+            variant={date === shiftDays(ymdLocal(), -1) ? 'secondary' : 'ghost'}
+            onClick={() => goDay(shiftDays(ymdLocal(), -1))}
+          >
+            {t('portal.yesterday')}
+          </Button>
+          <label className="ml-1 flex items-center gap-1.5 text-xs text-silver/70">
+            <span className="sr-only">{t('portal.pickDate')}</span>
+            <input
+              type="date"
+              value={date}
+              onChange={(e) => e.target.value && goDay(e.target.value)}
+              className="h-8 rounded-md border border-navy-secondary bg-navy px-2 text-xs text-white coarse:h-10"
+              aria-label={t('portal.pickDate')}
+            />
+          </label>
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => goDay(shiftDays(date, 1))}
+          aria-label={t('portal.nextDay')}
+          disabled={date >= shiftDays(ymdLocal(), 14)}
+        >
+          <ChevronRight className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      </div>
 
       {query.isError ? (
         <ErrorBanner
@@ -123,12 +170,18 @@ export function PortalToday() {
         </div>
       ) : waves.length === 0 ? (
         <Card>
-          <CardContent className="p-5 text-sm text-silver/60">{t('portal.noShiftsToday')}</CardContent>
+          <CardContent className="p-5 text-sm text-silver/60">
+            {isPast ? t('portal.noShiftsThatDay') : t('portal.noShiftsToday')}
+          </CardContent>
         </Card>
       ) : (
         <>
           <p className="text-sm text-silver tabular-nums">
-            {t('portal.todaySummary', { on: onFloor, expected, waves: waves.length })}
+            {isToday
+              ? t('portal.todaySummary', { on: data.summary.onFloor, expected: data.summary.expected, waves: waves.length })
+              : isPast
+                ? t('portal.daySummaryPast', { worked: present, expected: data.summary.expected, missed: data.summary.missed, open: data.summary.open })
+                : t('portal.daySummaryFuture', { expected: data.summary.expected, open: data.summary.open })}
           </p>
           {waves.map((w) => (
             <WaveCard key={w.key} wave={w} showLocation={!data.store} />
@@ -142,10 +195,12 @@ export function PortalToday() {
 function WaveCard({ wave: w, showLocation }: { wave: Wave; showLocation: boolean }) {
   const { t } = useI18n();
   const range = fmtShiftRangeTz(w.startsAt, w.endsAt, w.timezone);
+  const present = wavePresent(w);
   const short = w.phase === 'live' && w.clockedIn.length < w.expected;
+  const missedAll = w.phase === 'finished' && present < w.expected;
   const headline =
     w.phase === 'finished'
-      ? t('portal.waveWorked', { worked: w.worked, expected: w.expected })
+      ? t('portal.waveWorked', { worked: present, expected: w.expected })
       : w.phase === 'upcoming'
         ? t('portal.waveStarts', { time: fmtTimeTz(w.startsAt, w.timezone), expected: w.expected })
         : t('portal.waveInOf', { in: w.clockedIn.length, expected: w.expected });
@@ -171,13 +226,22 @@ function WaveCard({ wave: w, showLocation }: { wave: Wave; showLocation: boolean
               <div className="text-xs text-silver/60">{r.locationName}</div>
             )}
           </div>
-          {r.clockInAt ? (
+          {r.state === 'on-floor' && r.clockInAt ? (
             <span className="flex shrink-0 items-center gap-1.5 text-xs text-success tabular-nums">
               <span className="relative flex h-2 w-2" aria-hidden="true">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
               </span>
               {t('portal.clockedInAt', { time: fmtTimeTz(r.clockInAt, r.timezone) })}
+            </span>
+          ) : r.state === 'worked' && r.clockInAt ? (
+            <span className="shrink-0 text-xs text-silver tabular-nums">
+              {r.clockOutAt
+                ? t('portal.punchRange', {
+                    in: fmtTimeTz(r.clockInAt, r.timezone),
+                    out: fmtTimeTz(r.clockOutAt, r.timezone),
+                  })
+                : t('portal.clockedInAt', { time: fmtTimeTz(r.clockInAt, r.timezone) })}
             </span>
           ) : (
             <span className="shrink-0 text-xs text-silver/60">
@@ -192,9 +256,12 @@ function WaveCard({ wave: w, showLocation }: { wave: Wave; showLocation: boolean
   const body = (
     <>
       {w.clockedIn.length > 0 && people(w.clockedIn, false)}
+      {w.worked.length > 0 && people(w.worked, false)}
       {w.notIn.length > 0 && (
-        <p className="mt-2 text-xs text-warning tabular-nums">
-          {t('portal.waveNotIn', { names: w.notIn.map((r) => r.name).join(', ') })}
+        <p className={cn('mt-2 text-xs tabular-nums', w.phase === 'finished' ? 'text-alert' : 'text-warning')}>
+          {w.phase === 'finished'
+            ? t('portal.waveNoPunch', { names: w.notIn.map((r) => r.name).join(', ') })
+            : t('portal.waveNotIn', { names: w.notIn.map((r) => r.name).join(', ') })}
         </p>
       )}
       {w.upcoming.length > 0 && people(w.upcoming, true)}
@@ -213,13 +280,20 @@ function WaveCard({ wave: w, showLocation }: { wave: Wave; showLocation: boolean
   );
 
   return (
-    <Card className={cn(w.phase === 'live' && (short ? 'border-warning/40' : 'border-success/30'))}>
+    <Card
+      className={cn(
+        w.phase === 'live' && (short ? 'border-warning/40' : 'border-success/30'),
+        missedAll && 'border-alert/30',
+      )}
+    >
       <CardContent className="p-5">
         {w.phase === 'finished' ? (
-          <details className="group">
+          <details className="group" open={missedAll}>
             <summary className="flex cursor-pointer list-none items-baseline justify-between gap-3">
               <span className="text-sm font-medium text-silver">{range}</span>
-              <span className="text-xs text-silver/60 tabular-nums">{headline}</span>
+              <span className={cn('text-xs tabular-nums', missedAll ? 'text-alert' : 'text-silver/60')}>
+                {headline}
+              </span>
             </summary>
             <div className="mt-3">{body}</div>
           </details>

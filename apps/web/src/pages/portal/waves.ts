@@ -1,8 +1,25 @@
 /**
- * Group today's roster into shift waves — the way a store manager reads
+ * Group a day's roster into shift waves — the way a store manager reads
  * a day: the 6a–2p crew, the 2p–10p crew, overnight. A wave is every
  * shift sharing the same start and end instant, ordered by start.
+ *
+ * States come from the punch record (the /client-portal/day route):
+ *   on-floor     clocked in right now (today only)
+ *   worked       punched in, shift over (or clocked out)
+ *   missed       shift over, no punch — or a no-call no-show stamped
+ *   not-in       shift under way, no punch yet
+ *   confirmed / unconfirmed   shift hasn't started
+ *   open         an unfilled slot
  */
+
+export type DayState =
+  | 'open'
+  | 'on-floor'
+  | 'worked'
+  | 'missed'
+  | 'not-in'
+  | 'confirmed'
+  | 'unconfirmed';
 
 export interface WaveRow {
   shiftId: string;
@@ -11,11 +28,12 @@ export interface WaveRow {
   position: string;
   isLead: boolean;
   clockInAt: string | null;
+  clockOutAt: string | null;
   startsAt: string;
   endsAt: string;
   timezone: string;
   locationName: string | null;
-  state: 'open' | 'on-floor' | 'done' | 'confirmed' | 'unconfirmed';
+  state: DayState;
 }
 
 export type WavePhase = 'upcoming' | 'live' | 'finished';
@@ -28,14 +46,14 @@ export interface Wave {
   phase: WavePhase;
   /** Assigned people (open slots excluded). */
   expected: number;
-  /** Clocked in right now. */
+  /** On the floor right now. */
   clockedIn: WaveRow[];
-  /** Assigned, wave is live or finished, no punch on record right now. */
+  /** Punched in and done (past waves) — in/out on the row. */
+  worked: WaveRow[];
+  /** Expected, no punch: under way (not-in) or over (missed). */
   notIn: WaveRow[];
   /** Assigned, wave hasn't started yet. */
   upcoming: WaveRow[];
-  /** Finished the shift (or still clocked in past the end). */
-  worked: number;
   /** Unfilled slots. */
   open: WaveRow[];
 }
@@ -57,37 +75,53 @@ export function groupWaves(rows: WaveRow[], now: Date = new Date()): Wave[] {
         phase: nowMs < start ? 'upcoming' : nowMs >= end ? 'finished' : 'live',
         expected: 0,
         clockedIn: [],
+        worked: [],
         notIn: [],
         upcoming: [],
-        worked: 0,
         open: [],
       };
       byKey.set(key, w);
     }
-    if (r.state === 'open') {
-      w.open.push(r);
-      continue;
-    }
-    w.expected += 1;
-    if (r.state === 'on-floor') {
-      w.clockedIn.push(r);
-      w.worked += 1;
-    } else if (r.state === 'done') {
-      w.worked += 1;
-    } else if (w.phase === 'upcoming') {
-      w.upcoming.push(r);
-    } else {
-      w.notIn.push(r);
+    switch (r.state) {
+      case 'open':
+        w.open.push(r);
+        break;
+      case 'on-floor':
+        w.expected += 1;
+        w.clockedIn.push(r);
+        break;
+      case 'worked':
+        w.expected += 1;
+        w.worked.push(r);
+        break;
+      case 'missed':
+      case 'not-in':
+        w.expected += 1;
+        w.notIn.push(r);
+        break;
+      case 'confirmed':
+      case 'unconfirmed':
+        w.expected += 1;
+        w.upcoming.push(r);
+        break;
     }
   }
   const waves = [...byKey.values()].sort(
     (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
   );
+  const byName = (a: WaveRow, b: WaveRow) => (a.name ?? '').localeCompare(b.name ?? '');
+  const byPunch = (a: WaveRow, b: WaveRow) =>
+    (a.clockInAt ?? '').localeCompare(b.clockInAt ?? '') || byName(a, b);
   for (const w of waves) {
-    const byName = (a: WaveRow, b: WaveRow) => (a.name ?? '').localeCompare(b.name ?? '');
-    w.clockedIn.sort((a, b) => (a.clockInAt ?? '').localeCompare(b.clockInAt ?? '') || byName(a, b));
+    w.clockedIn.sort(byPunch);
+    w.worked.sort(byPunch);
     w.notIn.sort(byName);
     w.upcoming.sort(byName);
   }
   return waves;
+}
+
+/** People on the floor for the wave, past or present. */
+export function wavePresent(w: Wave): number {
+  return w.clockedIn.length + w.worked.length;
 }

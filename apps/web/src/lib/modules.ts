@@ -6,6 +6,7 @@ export type ModuleKey =
   | 'portal'
   | 'portal-today'
   | 'portal-schedule'
+  | 'portal-history'
   | 'portal-requests'
   | 'relay'
   | 'statements'
@@ -171,6 +172,7 @@ const CLIENT_PORTAL_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'portal',
   'portal-today',
   'portal-schedule',
+  'portal-history',
   'portal-requests',
 ]);
 
@@ -305,6 +307,15 @@ export const MODULES: ModuleNav[] = [
     description:
       'Your store’s published week, day by day — print it, or download the weekly service report.',
     requires: 'view:scheduling',
+    group: 'core',
+  },
+  {
+    key: 'portal-history',
+    path: '/portal/history',
+    label: 'History',
+    description:
+      'How Alto delivered over any period — last week, last month, or a custom range: showed-up grade, fill and hours per day, incidents, checklist evidence, safety, statements and service reports.',
+    requires: 'view:dashboard',
     group: 'core',
   },
   {

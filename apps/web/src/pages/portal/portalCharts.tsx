@@ -666,3 +666,51 @@ function DayRow({
     </>
   );
 }
+
+/* ---- Hours: scheduled vs delivered per day (two series, one axis) ------ */
+
+export function HoursChart({
+  days,
+  labels,
+}: {
+  days: Array<{ date: string; day: string; scheduledHours: number; workedHours: number }>;
+  labels: { scheduled: string; worked: string; heading: (d: string) => string };
+}) {
+  const series = {
+    scheduledHours: { name: labels.scheduled, color: SERIES.secondary },
+    workedHours: { name: labels.worked, color: SERIES.primary },
+  };
+  return (
+    <div>
+      <div className="h-40 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={days} margin={{ top: 8, right: 4, bottom: 0, left: -18 }} barCategoryGap="25%" barGap={2}>
+            <CartesianGrid stroke={GRID} strokeWidth={1} vertical={false} />
+            <XAxis dataKey="day" tick={TICK} axisLine={{ stroke: GRID }} tickLine={false} />
+            <YAxis tick={TICK} axisLine={false} tickLine={false} width={36} tickFormatter={(v: number) => `${v}h`} />
+            <ChartTooltip
+              cursor={{ fill: 'rgb(var(--color-navy-secondary) / 0.35)' }}
+              content={
+                <PortalTooltip
+                  series={series}
+                  heading={(l) => labels.heading(l)}
+                  format={(v) => `${Math.round(v * 10) / 10}h`}
+                />
+              }
+            />
+            <Bar dataKey="scheduledHours" fill={SERIES.secondary} maxBarSize={16} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+            <Bar dataKey="workedHours" fill={SERIES.primary} maxBarSize={16} radius={[4, 4, 0, 0]} isAnimationActive={false} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="mt-1">
+        <LegendKey
+          items={[
+            { name: labels.scheduled, color: SERIES.secondary },
+            { name: labels.worked, color: SERIES.primary },
+          ]}
+        />
+      </div>
+    </div>
+  );
+}
