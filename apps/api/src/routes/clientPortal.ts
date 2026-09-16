@@ -278,10 +278,18 @@ async function currentTarget(
 }
 
 /**
- * The reliability grade — one honest number: of the shifts the store
- * asked for, how many had an Alto person on the floor.
+ * The reliability grade — one honest number: of the shifts that have
+ * happened, how many had an Alto person on the floor.
  *
- *   showed-up rate = (assigned shifts − no-call no-shows) ÷ published shifts
+ *   showed-up rate = shifts with a punch on record ÷ shifts that have ended
+ *
+ * "On the floor" is EVIDENCE, not the absence of a complaint: a time entry
+ * linked to the shift, or by the assigned associate at this client
+ * overlapping the shift window (wrong kiosk, still counted). A missed
+ * shift with no event stamped reads as a miss, as it should; an unfilled
+ * slot that came and went reads as a miss too. A stamped no-call no-show
+ * overrides a stray punch. Shifts still in progress or in the future are
+ * not graded yet — the current week grades only what has ended.
  *
  * Pooled across the weeks (a 200-shift week weighs ten times a 20-shift
  * week), never an average of weekly percentages. Call-outs and lates are
@@ -292,12 +300,12 @@ async function currentTarget(
  * is not an A to a store manager.
  */
 function gradeWeeks(
-  weeks: Array<{ total: number; filled: number; noCallNoShows: number }>,
+  weeks: Array<{ ended: number; showed: number }>,
 ): { grade: 'A' | 'B' | 'C' | 'D' | 'F' | null; score: number | null } {
-  const total = weeks.reduce((a, w) => a + w.total, 0);
-  if (total === 0) return { grade: null, score: null };
-  const showed = weeks.reduce((a, w) => a + Math.max(0, w.filled - w.noCallNoShows), 0);
-  const score = Math.round((showed / total) * 100);
+  const ended = weeks.reduce((a, w) => a + w.ended, 0);
+  if (ended === 0) return { grade: null, score: null };
+  const showed = weeks.reduce((a, w) => a + w.showed, 0);
+  const score = Math.round((showed / ended) * 100);
   const grade = score >= 98 ? 'A' : score >= 95 ? 'B' : score >= 90 ? 'C' : score >= 85 ? 'D' : 'F';
   return { grade, score };
 }
@@ -510,9 +518,41 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         excusedAt: null,
         ...(scope.locationId ? { shiftId: { in: trendShifts.map((s) => s.id) } } : {}),
       },
-      select: { kind: true, occurredOn: true },
+      select: { kind: true, occurredOn: true, shiftId: true },
       take: 2000,
     });
+    // The evidence: punches in the trend window, matched to shifts by the
+    // link when it exists, else by associate + overlap.
+    const trendEntries = await prisma.timeEntry.findMany({
+      where: {
+        ...entries,
+        status: { in: ['ACTIVE', 'COMPLETED', 'APPROVED'] },
+        clockInAt: { gte: new Date(trendStart.getTime() - DAY), lt: weekEnd },
+      },
+      select: { associateId: true, shiftId: true, clockInAt: true, clockOutAt: true },
+      take: 20000,
+    });
+    const entriesByShift = new Set(trendEntries.map((e) => e.shiftId).filter(Boolean));
+    const entriesByAssociate = new Map<string, typeof trendEntries>();
+    for (const e of trendEntries) {
+      const list = entriesByAssociate.get(e.associateId) ?? [];
+      list.push(e);
+      entriesByAssociate.set(e.associateId, list);
+    }
+    const punched = (s: {
+      id: string;
+      assignedAssociateId: string | null;
+      startsAt: Date;
+      endsAt: Date;
+    }) =>
+      entriesByShift.has(s.id) ||
+      (!!s.assignedAssociateId &&
+        (entriesByAssociate.get(s.assignedAssociateId) ?? []).some(
+          (e) => e.clockInAt < s.endsAt && (e.clockOutAt ?? now) > s.startsAt,
+        ));
+    const ncnsShiftIds = new Set(
+      trendEvents.filter((e) => e.kind === 'NO_CALL_NO_SHOW' && e.shiftId).map((e) => e.shiftId),
+    );
 
     const onFloorIds = new Set(onFloorEntries.map((e) => e.associateId));
     // Punch time per person on the floor — shown next to the name on the
@@ -563,7 +603,17 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
     const weekAgg = new Map(
       weekKeys.map((k) => [
         k,
-        { start: k, filled: 0, total: 0, noCallNoShows: 0, callOuts: 0, lates: 0, replaced: 0 },
+        {
+          start: k,
+          filled: 0,
+          total: 0,
+          ended: 0,
+          showed: 0,
+          noCallNoShows: 0,
+          callOuts: 0,
+          lates: 0,
+          replaced: 0,
+        },
       ]),
     );
     const dayKeys: string[] = [];
@@ -576,6 +626,10 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       if (wk) {
         wk.total += 1;
         if (s.status !== 'OPEN') wk.filled += 1;
+        if (s.endsAt.getTime() <= now.getTime()) {
+          wk.ended += 1;
+          if (s.status !== 'OPEN' && !ncnsShiftIds.has(s.id) && punched(s)) wk.showed += 1;
+        }
       }
       if (s.startsAt >= weekStart) {
         const bucket = dayMap.get(orgDateKey(s.startsAt));
@@ -605,12 +659,9 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         ...w,
         end: nextKey(k, 6),
         fillPct: w.total > 0 ? Math.round((w.filled / w.total) * 100) : null,
-        // The graded figure: shifts a person actually showed up for.
-        showed: Math.max(0, w.filled - w.noCallNoShows),
-        reliabilityPct:
-          w.total > 0
-            ? Math.round((Math.max(0, w.filled - w.noCallNoShows) / w.total) * 100)
-            : null,
+        // The graded figure: of the shifts that have ended, those with a
+        // person on the floor (punch evidence, no no-show stamped).
+        reliabilityPct: w.ended > 0 ? Math.round((w.showed / w.ended) * 100) : null,
         current: k === thisWeekKey,
       };
     });

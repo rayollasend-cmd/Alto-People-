@@ -389,6 +389,45 @@ describe('the store site — scope, targets, evidence, downloads', () => {
         status: 'ACTIVE',
       },
     });
+    // Yesterday: Maria worked her shift (punch linked), Ben's shift at the
+    // sister store came and went with no punch — a miss with no event.
+    const yStart = new Date(now.getTime() - 30 * HOUR);
+    const yEnd = new Date(now.getTime() - 26 * HOUR);
+    const workedShift = await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        locationId: storeA!.id,
+        assignedAssociateId: a1.id,
+        position: 'StoreAOnly',
+        startsAt: yStart,
+        endsAt: yEnd,
+        status: 'COMPLETED',
+        publishedAt: now,
+      },
+    });
+    await prisma.timeEntry.create({
+      data: {
+        associateId: a1.id,
+        clientId: client.id,
+        locationId: storeA!.id,
+        shiftId: workedShift.id,
+        clockInAt: yStart,
+        clockOutAt: yEnd,
+        status: 'APPROVED',
+      },
+    });
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        locationId: storeB.id,
+        assignedAssociateId: a2.id,
+        position: 'StoreBOnly',
+        startsAt: yStart,
+        endsAt: yEnd,
+        status: 'ASSIGNED',
+        publishedAt: now,
+      },
+    });
     // Contracted headcount for store A: 3 on the floor at any hour.
     await prisma.staffingTarget.create({
       data: { locationId: storeA!.id, targetCount: 3, effectiveFrom: new Date('2020-01-01') },
@@ -508,6 +547,8 @@ describe('the store site — scope, targets, evidence, downloads', () => {
     expect(drilled.body.today.roster.map((r: { position: string }) => r.position)).toEqual([
       'StoreBOnly',
     ]);
+    // Store A's grade: its one ended shift has a punch → 100, A.
+    expect(store.body.reliability).toMatchObject({ grade: 'A', score: 100 });
     // …but never into another tenant's store.
     const foreign = await (await loginAs(s.marketUser.email)).get(
       `/client-portal/overview?locationId=${s.otherStore.id}`,
@@ -531,12 +572,16 @@ describe('the store site — scope, targets, evidence, downloads', () => {
     // Reliability: 4 completed weeks + this one; this week has 2 filled shifts.
     expect(res.body.reliability.weeks).toHaveLength(5);
     const current = res.body.reliability.weeks.find((w: { current: boolean }) => w.current);
-    expect(current.filled).toBe(2);
-    expect(current.total).toBe(2);
-    // The grade is the showed-up rate: assigned minus no-call no-shows,
-    // over everything published. No history yet, so this week stands in.
-    expect(current.reliabilityPct).toBe(100);
-    expect(res.body.reliability).toMatchObject({ grade: 'A', score: 100 });
+    // Yesterday may sit in the previous org week (Saturday runs), so sum
+    // across the trend rather than pinning one week.
+    const weeks = res.body.reliability.weeks as Array<{ filled: number; total: number }>;
+    expect(weeks.reduce((a, w) => a + w.filled, 0)).toBe(4);
+    expect(weeks.reduce((a, w) => a + w.total, 0)).toBe(4);
+    expect(current).toBeTruthy();
+    // The grade is evidence: of the shifts that have ENDED (yesterday's
+    // two), Maria's has a punch and Ben's has none → 1 of 2, 50%, F.
+    // Today's live shifts are not graded yet.
+    expect(res.body.reliability).toMatchObject({ grade: 'F', score: 50 });
 
     // Safety: no incidents ever → 365+ (null) and nothing open.
     expect(res.body.safety).toEqual({ monthIncidents: 0, open: 0, daysSinceLast: null });
