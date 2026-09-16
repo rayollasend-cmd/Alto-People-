@@ -659,13 +659,20 @@ schedulingRouter.get('/shifts', SCHED_READ, async (req, res, next) => {
     // Resolve (client, position) default rates in one query so the grid's
     // labor-cost footer lights up for shifts with no explicit rate.
     const resolveRate = await loadRateResolver(page.map((r) => r.clientId));
+    // The client portal reads the schedule but never a rate: pay is
+    // Alto's business, bill rates live on the statement. Same nulling
+    // the associate-facing responses do.
+    const hideRates = req.user!.role === 'CLIENT_PORTAL';
     const payload = ShiftListResponseSchema.parse({
-      shifts: page.map((r) =>
-        toShift(
+      shifts: page.map((r) => {
+        const s = toShift(
           r,
           resolveRate(r.clientId, r.position, r.payRate ? Number(r.payRate) : null),
-        ),
-      ),
+        );
+        return hideRates
+          ? { ...s, payRate: null, effectivePayRate: null, hourlyRate: null }
+          : s;
+      }),
       truncated,
     });
     res.json(payload);

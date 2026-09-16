@@ -337,3 +337,292 @@ describe('GET /client-portal/overview', () => {
     expect(res.body.client.name).toBe('Destin 4411');
   });
 });
+
+describe('the store site — scope, targets, evidence, downloads', () => {
+  async function seedTwoStores() {
+    const client = await createClient('Walmart 218');
+    // createClient seeds one default Location named after the client; a
+    // second store makes the client a "market".
+    const [storeA] = await prisma.location.findMany({ where: { clientId: client.id } });
+    const storeB = await prisma.location.create({
+      data: { clientId: client.id, name: 'Walmart 4411', city: 'Destin', state: 'FL' },
+    });
+    const other = await createClient('Target 9');
+    const [otherStore] = await prisma.location.findMany({ where: { clientId: other.id } });
+    const a1 = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    const a2 = await createAssociate({ firstName: 'Ben', lastName: 'Okafor' });
+    const now = new Date();
+
+    const shiftA = await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        locationId: storeA!.id,
+        assignedAssociateId: a1.id,
+        position: 'StoreAOnly',
+        startsAt: now,
+        endsAt: new Date(now.getTime() + 4 * HOUR),
+        status: 'ASSIGNED',
+        publishedAt: now,
+        acknowledgedAt: now,
+      },
+    });
+    await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        locationId: storeB.id,
+        assignedAssociateId: a2.id,
+        position: 'StoreBOnly',
+        startsAt: now,
+        endsAt: new Date(now.getTime() + 4 * HOUR),
+        status: 'ASSIGNED',
+        publishedAt: now,
+      },
+    });
+    await prisma.timeEntry.create({
+      data: {
+        associateId: a1.id,
+        clientId: client.id,
+        locationId: storeA!.id,
+        shiftId: shiftA.id,
+        clockInAt: new Date(now.getTime() - HOUR),
+        status: 'ACTIVE',
+      },
+    });
+    // Contracted headcount for store A: 3 on the floor at any hour.
+    await prisma.staffingTarget.create({
+      data: { locationId: storeA!.id, targetCount: 3, effectiveFrom: new Date('2020-01-01') },
+    });
+    // Alto's lead at this client: a shift supervisor with a phone on file.
+    const sup = await createAssociate({ firstName: 'Dana', lastName: 'Reyes' });
+    await prisma.associate.update({ where: { id: sup.id }, data: { phone: '850-555-0101' } });
+    await createUser({
+      role: 'SHIFT_SUPERVISOR',
+      clientId: client.id,
+      associateId: sup.id,
+      email: 'dana.reyes@alto.example',
+    });
+    // Crew clearance: Maria fully cleared, Ben's background check in flight.
+    await prisma.i9Verification.create({
+      data: { associateId: a1.id, section1CompletedAt: now, section2CompletedAt: now },
+    });
+    await prisma.backgroundCheck.create({
+      data: { associateId: a1.id, provider: 'checkr', status: 'PASSED' },
+    });
+    await prisma.backgroundCheck.create({
+      data: { associateId: a2.id, provider: 'checkr', status: 'IN_PROGRESS' },
+    });
+    // A FINAL statement with per-store lines.
+    const statement = await prisma.clientStatement.create({
+      data: {
+        clientId: client.id,
+        periodStart: new Date(now.getTime() - 14 * 24 * HOUR),
+        periodEnd: new Date(now.getTime() - 8 * 24 * HOUR),
+        number: 7,
+        status: 'FINAL',
+        finalizedAt: now,
+        snapshot: {
+          clientName: 'Walmart 218',
+          periodStart: '2026-01-03',
+          periodEnd: '2026-01-09',
+          lines: [{ label: 'Associate', hours: 100, rate: 21.21, amount: 2121 }],
+          stores: [
+            { locationName: storeA!.name, hours: 60, amount: 1272.6 },
+            { locationName: 'Walmart 4411', hours: 40, amount: 848.4 },
+          ],
+          totals: { hours: 100, regularHours: 100, otHours: 0, amount: 2121 },
+          sla: {
+            publishedShifts: 20,
+            assignedShifts: 20,
+            fillRatePct: 100,
+            punctualPct: 100,
+            noShows: 0,
+            pendingEntries: 0,
+          },
+        },
+      },
+    });
+    const draft = await prisma.clientStatement.create({
+      data: {
+        clientId: client.id,
+        periodStart: new Date(now.getTime() - 7 * 24 * HOUR),
+        periodEnd: new Date(now.getTime() - 1 * 24 * HOUR),
+        status: 'DRAFT',
+        snapshot: { totals: { amount: 1, hours: 1, regularHours: 1, otHours: 0 } },
+      },
+    });
+
+    const { user: storeUser } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });
+    await prisma.user.update({ where: { id: storeUser.id }, data: { locationId: storeA!.id } });
+    const { user: marketUser } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });
+    return {
+      client,
+      storeA: storeA!,
+      storeB,
+      other,
+      otherStore: otherStore!,
+      storeUser,
+      marketUser,
+      statement,
+      draft,
+    };
+  }
+
+  it('pins a store account to its store and rolls the client up for a market account', async () => {
+    const s = await seedTwoStores();
+
+    // The store manager: one store, its target, its people — nothing from
+    // the sister store.
+    const store = await (await loginAs(s.storeUser.email)).get('/client-portal/overview');
+    expect(store.status).toBe(200);
+    expect(store.body.store.id).toBe(s.storeA.id);
+    expect(store.body.stores).toEqual([]);
+    expect(store.body.now.onFloor).toHaveLength(1);
+    expect(store.body.now.target).toBe(3);
+    const storePositions = store.body.today.roster.map((r: { position: string }) => r.position);
+    expect(storePositions).toContain('StoreAOnly');
+    expect(storePositions).not.toContain('StoreBOnly');
+    expect(JSON.stringify(store.body)).not.toContain('Okafor');
+    // Statement shows the store's share alongside the client total.
+    expect(store.body.statements[0].storeHours).toBe(60);
+    expect(store.body.statements[0].amount).toBe(2121);
+    // A store account cannot widen itself to the sister store.
+    const widened = await (await loginAs(s.storeUser.email)).get(
+      `/client-portal/overview?locationId=${s.storeB.id}`,
+    );
+    expect(widened.body.store.id).toBe(s.storeA.id);
+
+    // The market manager: the whole client with a per-store strip, and
+    // the right to drill into one of their OWN stores.
+    const market = await (await loginAs(s.marketUser.email)).get('/client-portal/overview');
+    expect(market.status).toBe(200);
+    expect(market.body.store).toBeNull();
+    expect(market.body.stores).toHaveLength(2);
+    const strip = market.body.stores.find((x: { id: string }) => x.id === s.storeA.id);
+    expect(strip.onFloor).toBe(1);
+    expect(market.body.today.roster).toHaveLength(2);
+    const drilled = await (await loginAs(s.marketUser.email)).get(
+      `/client-portal/overview?locationId=${s.storeB.id}`,
+    );
+    expect(drilled.body.store.id).toBe(s.storeB.id);
+    expect(drilled.body.today.roster.map((r: { position: string }) => r.position)).toEqual([
+      'StoreBOnly',
+    ]);
+    // …but never into another tenant's store.
+    const foreign = await (await loginAs(s.marketUser.email)).get(
+      `/client-portal/overview?locationId=${s.otherStore.id}`,
+    );
+    expect(foreign.status).toBe(404);
+  });
+
+  it('answers the store manager: lead on site, clearance, reliability, safety, evidence', async () => {
+    const s = await seedTwoStores();
+    const res = await (await loginAs(s.marketUser.email)).get('/client-portal/overview');
+    expect(res.status).toBe(200);
+
+    // The Alto lead — name and phone, never an email as a name.
+    expect(res.body.leads.people).toHaveLength(1);
+    expect(res.body.leads.people[0].name).toBe('Dana Reyes');
+    expect(res.body.leads.people[0].phone).toBe('850-555-0101');
+
+    // Clearance is counts only: 2 on the crew, 1 I-9 complete, 1 check in flight.
+    expect(res.body.clearance).toEqual({ total: 2, i9Complete: 1, checksInFlight: 1, flagged: 0 });
+
+    // Reliability: 4 completed weeks + this one; this week has 2 filled shifts.
+    expect(res.body.reliability.weeks).toHaveLength(5);
+    const current = res.body.reliability.weeks.find((w: { current: boolean }) => w.current);
+    expect(current.filled).toBe(2);
+    expect(current.total).toBe(2);
+
+    // Safety: no incidents ever → 365+ (null) and nothing open.
+    expect(res.body.safety).toEqual({ monthIncidents: 0, open: 0, daysSinceLast: null });
+
+    // Evidence: no ops shifts yet → null, not a fake zero.
+    expect(res.body.ops).toBeNull();
+
+    // Downloads are addressed to the portal's own routes.
+    expect(res.body.serviceReport.url).toMatch(/^\/api\/client-portal\/service-report\.pdf\?week=/);
+    expect(res.body.statements[0].pdfUrl).toBe(
+      `/api/client-portal/statements/${s.statement.id}.pdf`,
+    );
+
+    // Rate hygiene holds on the new payload: the sister tenant's name and
+    // every rate word stay out.
+    const raw = JSON.stringify(res.body);
+    for (const word of ['payRate', 'billRate', 'hourlyRate', '"rate"', 'Target 9']) {
+      expect(raw).not.toContain(word);
+    }
+  });
+
+  it('serves the week schedule and the PDFs, clamped to the tenant', async () => {
+    const s = await seedTwoStores();
+    const agent = await loginAs(s.storeUser.email);
+
+    const sched = await agent.get('/client-portal/schedule');
+    expect(sched.status).toBe(200);
+    expect(sched.body.days).toHaveLength(7);
+    expect(sched.body.store.id).toBe(s.storeA.id);
+    const positions = sched.body.days.flatMap((d: { shifts: { position: string }[] }) =>
+      d.shifts.map((x) => x.position),
+    );
+    expect(positions).toEqual(['StoreAOnly']);
+    expect(JSON.stringify(sched.body)).not.toContain('payRate');
+    expect((await agent.get('/client-portal/schedule?week=nope')).status).toBe(400);
+
+    const pdf = await agent.get(`/client-portal/statements/${s.statement.id}.pdf`);
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers['content-type']).toContain('application/pdf');
+    // Drafts don't exist for the client.
+    expect((await agent.get(`/client-portal/statements/${s.draft.id}.pdf`)).status).toBe(404);
+    // Another tenant's statement is simply not found.
+    const foreignStatement = await prisma.clientStatement.create({
+      data: {
+        clientId: s.other.id,
+        periodStart: new Date(),
+        periodEnd: new Date(),
+        number: 1,
+        status: 'FINAL',
+        finalizedAt: new Date(),
+        snapshot: { totals: { amount: 5, hours: 1, regularHours: 1, otHours: 0 } },
+      },
+    });
+    expect(
+      (await agent.get(`/client-portal/statements/${foreignStatement.id}.pdf`)).status,
+    ).toBe(404);
+
+    const report = await agent.get('/client-portal/service-report.pdf');
+    expect(report.status).toBe(200);
+    expect(report.headers['content-type']).toContain('application/pdf');
+  });
+
+  it('lets an admin provision the store scope, and the session carries it', async () => {
+    const s = await seedTwoStores();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const admin = await loginAs(hr.email);
+
+    // A store from another client is refused.
+    const wrong = await admin
+      .patch(`/admin/users/${s.marketUser.id}`)
+      .send({ locationId: s.otherStore.id });
+    expect(wrong.status).toBe(400);
+    expect(wrong.body.error.code).toBe('location_not_found');
+
+    const ok = await admin
+      .patch(`/admin/users/${s.marketUser.id}`)
+      .send({ locationId: s.storeB.id });
+    expect(ok.status).toBe(204);
+    const me = await (await loginAs(s.marketUser.email)).get('/auth/me');
+    expect(me.body.user.locationId).toBe(s.storeB.id);
+    expect(me.body.user.locationName).toBe('Walmart 4411');
+    const list = await admin.get('/admin/users');
+    const row = list.body.users.find((u: { id: string }) => u.id === s.marketUser.id);
+    expect(row.locationName).toBe('Walmart 4411');
+
+    // Moving the account to another client drops the store with it.
+    const moved = await admin
+      .patch(`/admin/users/${s.marketUser.id}`)
+      .send({ clientId: s.other.id });
+    expect(moved.status).toBe(204);
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: s.marketUser.id } });
+    expect(after.locationId).toBeNull();
+  });
+});

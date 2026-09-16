@@ -141,6 +141,12 @@ const EnvSchema = z.object({
   // ops shifts once per org-day after 8pm. On by default (hourly scan).
   // Set 0 to disable.
   OPS_DIGEST_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
+  // Client-portal morning note (lib/portalDigest.ts): one message per
+  // portal account per org-day after PORTAL_DIGEST_HOUR with today's and
+  // tomorrow's headcount and open slots. Silent when nothing is
+  // scheduled. Set 0 to disable.
+  PORTAL_DIGEST_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(1800),
+  PORTAL_DIGEST_HOUR: z.coerce.number().int().min(0).max(23).default(6),
   // Manual compliance attestation reminder cron. 0 (default) disables;
   // production should set 3600 (hourly) so HR gets pinged the day a
   // weekly/monthly compliance attestation comes due. Per-signal de-dup

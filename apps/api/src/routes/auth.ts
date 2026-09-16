@@ -219,6 +219,7 @@ function toAuthUser(u: {
   role: string;
   status: string;
   clientId: string | null;
+  locationId?: string | null;
   associateId: string | null;
   firstName?: string | null;
   lastName?: string | null;
@@ -235,6 +236,7 @@ function toAuthUser(u: {
     role: u.role as AuthUser['role'],
     status: u.status as AuthUser['status'],
     clientId: u.clientId,
+    locationId: u.locationId ?? null,
     associateId: u.associateId,
     firstName: u.firstName ?? null,
     lastName: u.lastName ?? null,
@@ -255,6 +257,24 @@ async function clientNameFor(clientId: string | null): Promise<string | null> {
     select: { name: true },
   });
   return c?.name ?? null;
+}
+
+/**
+ * Client + store display names for the bound scope. The store name is
+ * what a CLIENT_PORTAL store manager sees as their page title; null for
+ * client-wide (market manager) accounts and every other role.
+ */
+async function scopeNamesFor(u: {
+  clientId: string | null;
+  locationId?: string | null;
+}): Promise<{ clientName: string | null; locationName: string | null }> {
+  const [clientName, loc] = await Promise.all([
+    clientNameFor(u.clientId),
+    u.locationId
+      ? prisma.location.findUnique({ where: { id: u.locationId }, select: { name: true } })
+      : Promise.resolve(null),
+  ]);
+  return { clientName, locationName: loc?.name ?? null };
 }
 
 /**
@@ -451,7 +471,7 @@ authRouter.post(
       });
 
       const profile = await loadProfileFor(user.associateId);
-      res.json({ user: { ...toAuthUser({ ...user, ...profile }), clientName: await clientNameFor(user.clientId) } });
+      res.json({ user: { ...toAuthUser({ ...user, ...profile }), ...(await scopeNamesFor(user)) } });
     } catch (err) {
       next(err);
     }
@@ -599,7 +619,7 @@ authRouter.post(
       }
 
       const profile = await loadProfileFor(user.associateId);
-      res.json({ user: { ...toAuthUser({ ...user, ...profile }), clientName: await clientNameFor(user.clientId) } });
+      res.json({ user: { ...toAuthUser({ ...user, ...profile }), ...(await scopeNamesFor(user)) } });
     } catch (err) {
       next(err);
     }
@@ -643,7 +663,7 @@ authRouter.get('/me', async (req, res) => {
     });
     return;
   }
-  res.json({ user: req.user ? { ...toAuthUser(req.user), clientName: await clientNameFor(req.user.clientId) } : null });
+  res.json({ user: req.user ? { ...toAuthUser(req.user), ...(await scopeNamesFor(req.user)) } : null });
 });
 
 /* ===== Invitation flow (Phase 16) ====================================== */
@@ -794,7 +814,7 @@ authRouter.post('/accept-invite', acceptInviteIpLimiter, async (req, res, next) 
     const nextPath = await pickPostAcceptPath(updatedUser.id);
 
     const profile = await loadProfileFor(updatedUser.associateId);
-    res.json({ user: { ...toAuthUser({ ...updatedUser, ...profile }), clientName: await clientNameFor(updatedUser.clientId) }, nextPath });
+    res.json({ user: { ...toAuthUser({ ...updatedUser, ...profile }), ...(await scopeNamesFor(updatedUser)) }, nextPath });
   } catch (err) {
     next(err);
   }
@@ -2425,7 +2445,7 @@ authRouter.post('/webauthn/login/verify', loginIpLimiter, async (req, res, next)
     res.json({
       user: {
         ...toAuthUser({ ...user, ...profile }),
-        clientName: await clientNameFor(user.clientId),
+        ...(await scopeNamesFor(user)),
       },
     });
   } catch (err) {

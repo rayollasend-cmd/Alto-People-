@@ -8,6 +8,9 @@ export interface SessionUser {
   role: Role;
   status: UserStatus;
   clientId: string | null;
+  /** CLIENT_PORTAL store scope — one Location under clientId, or null for
+   *  the whole client. Ignored for every other role. */
+  locationId: string | null;
   associateId: string | null;
   tokenVersion: number;
   firstName: string | null;

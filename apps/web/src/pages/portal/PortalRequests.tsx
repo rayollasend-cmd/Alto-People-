@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { MessageSquarePlus, Send } from 'lucide-react';
@@ -21,12 +21,13 @@ import { Select } from '@/components/ui/Select';
 
 /**
  * The client's side of the loop: make a structured request (staffing /
- * feedback / issue) and watch its status move — received → in progress
- * → resolved, with Alto's reply — inside their own portal. The request
- * lands as a baton on the right desk the moment it's sent.
+ * feedback / issue / billing) and watch it move — received → in progress
+ * → resolved — with the desk that owns it, the person who picked it up,
+ * the promised reply-by date, and Alto's reply. The request lands as a
+ * baton on the right desk the moment it's sent.
  */
 
-type ReqKind = 'STAFFING' | 'FEEDBACK' | 'ISSUE';
+export type ReqKind = 'STAFFING' | 'FEEDBACK' | 'ISSUE' | 'BILLING';
 type ReqStatus = 'RECEIVED' | 'IN_PROGRESS' | 'RESOLVED';
 
 interface PortalRequest {
@@ -38,12 +39,17 @@ interface PortalRequest {
   resolution: string | null;
   createdAt: string;
   resolvedAt: string | null;
+  dueAt: string | null;
+  desk: string;
+  owner: string | null;
+  overdue: boolean;
 }
 
 const KIND_KEY: Record<ReqKind, MessageKey> = {
   STAFFING: 'portal.reqKindStaffing',
   FEEDBACK: 'portal.reqKindFeedback',
   ISSUE: 'portal.reqKindIssue',
+  BILLING: 'portal.reqKindBilling',
 };
 const STATUS_KEY: Record<ReqStatus, MessageKey> = {
   RECEIVED: 'portal.reqReceived',
@@ -56,7 +62,15 @@ const STATUS_VARIANT: Record<ReqStatus, 'pending' | 'accent' | 'success'> = {
   RESOLVED: 'success',
 };
 
-export function PortalRequests() {
+export interface RequestPrefill {
+  kind: ReqKind;
+  subject: string;
+  body?: string;
+  /** Bump to re-open the dialog with a fresh prefill. */
+  nonce: number;
+}
+
+export function PortalRequests({ prefill }: { prefill?: RequestPrefill | null }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const query = useQuery({
@@ -69,6 +83,18 @@ export function PortalRequests() {
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // A "dispute this statement" click elsewhere on the page opens the
+  // dialog pre-addressed to Finance with the statement named.
+  useEffect(() => {
+    if (!prefill) return;
+    setKind(prefill.kind);
+    setSubject(prefill.subject);
+    setBody(prefill.body ?? '');
+    setOpen(true);
+  }, [prefill]);
+
+  const dirty = () => subject.trim().length > 0 || body.trim().length > 0;
 
   const submit = async () => {
     setBusy(true);
@@ -93,7 +119,7 @@ export function PortalRequests() {
   const rows = query.data?.requests ?? [];
 
   return (
-    <Card className="animate-enter">
+    <Card className="animate-enter" id="requests">
       <CardContent className="p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-medium text-white">{t('portal.reqTitle')}</h2>
@@ -113,13 +139,23 @@ export function PortalRequests() {
                     {r.subject}
                   </span>
                   <Badge variant="outline">{t(KIND_KEY[r.kind])}</Badge>
-                  <Badge variant={STATUS_VARIANT[r.status]}>
-                    {t(STATUS_KEY[r.status])}
+                  <Badge variant={r.overdue ? 'destructive' : STATUS_VARIANT[r.status]}>
+                    {r.overdue ? t('portal.reqOverdue') : t(STATUS_KEY[r.status])}
                   </Badge>
                 </div>
                 <p className="mt-1 text-xs text-silver/70">{r.body}</p>
                 <p className="mt-1 text-2xs tabular-nums text-silver/50">
                   {fmtDate(r.createdAt)}
+                  {' · '}
+                  {r.owner
+                    ? t('portal.reqOwner', { name: r.owner, desk: r.desk })
+                    : t('portal.reqDesk', { desk: r.desk })}
+                  {r.status !== 'RESOLVED' && r.dueAt && (
+                    <>
+                      {' · '}
+                      {t('portal.reqDue', { when: fmtDate(r.dueAt) })}
+                    </>
+                  )}
                 </p>
                 {r.resolution && (
                   <div className="mt-2 rounded border border-success/30 bg-success/5 p-2.5">
@@ -137,7 +173,7 @@ export function PortalRequests() {
         )}
       </CardContent>
 
-      <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
+      <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)} confirmDiscard={dirty}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t('portal.reqNew')}</DialogTitle>

@@ -27,7 +27,7 @@ import {
   type ListUsersFilters,
   type UserStatus,
 } from '@/lib/usersAdminApi';
-import { listClients } from '@/lib/clientsApi';
+import { listClients, listClientLocations } from '@/lib/clientsApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -162,6 +162,42 @@ export function UsersAdmin() {
   // A role change to a client-scoped role for a user with no client is held
   // here until a client is picked, then applied together.
   const [draftRole, setDraftRole] = useState<Record<string, Role>>({});
+
+  // Store pickers for CLIENT_PORTAL rows: locations load per client on
+  // demand (a Walmart store manager is ONE Location under the client; a
+  // market manager is the whole client). Keyed by clientId.
+  const [locationsByClient, setLocationsByClient] = useState<
+    Record<string, { id: string; name: string }[]>
+  >({});
+  const ensureLocations = useCallback(
+    async (clientId: string) => {
+      if (locationsByClient[clientId]) return;
+      try {
+        const r = await listClientLocations(clientId);
+        setLocationsByClient((m) => ({
+          ...m,
+          [clientId]: r.locations.map((l) => ({ id: l.id, name: l.name })),
+        }));
+      } catch {
+        // The picker falls back to "whole client" with a retry on next open.
+      }
+    },
+    [locationsByClient],
+  );
+
+  const onAssignLocation = async (u: AdminUser, newLocationId: string) => {
+    if (newLocationId === (u.locationId ?? '')) return;
+    setPendingId(u.id);
+    try {
+      await patchAdminUser(u.id, { locationId: newLocationId || null });
+      toast.success(newLocationId ? 'Store assigned.' : 'Now sees the whole client.');
+      await load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setPendingId(null);
+    }
+  };
 
   const loadClients = useCallback(async () => {
     setClientsError(false);
@@ -894,6 +930,28 @@ export function UsersAdmin() {
                             {clients.map((c) => (
                               <option key={c.id} value={c.id}>
                                 {c.name}
+                              </option>
+                            ))}
+                          </Select>
+                        )}
+                        {(draftRole[u.id] ?? u.role) === 'CLIENT_PORTAL' && u.clientId && (
+                          <Select
+                            size="sm"
+                            className="mt-1"
+                            value={u.locationId ?? ''}
+                            onFocus={() => void ensureLocations(u.clientId!)}
+                            onChange={(e) => onAssignLocation(u, e.target.value)}
+                            disabled={isMe || busy}
+                            aria-label="Assign store"
+                            title="A store manager sees one store; leave on 'Whole client' for a market or district manager."
+                          >
+                            <option value="">Whole client</option>
+                            {(locationsByClient[u.clientId] ?? (u.locationId && u.locationName
+                              ? [{ id: u.locationId, name: u.locationName }]
+                              : [])
+                            ).map((l) => (
+                              <option key={l.id} value={l.id}>
+                                {l.name}
                               </option>
                             ))}
                           </Select>

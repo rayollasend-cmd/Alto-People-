@@ -156,4 +156,59 @@ describe('client requests', () => {
       ).status,
     ).toBe(403);
   });
+
+  it('routes a billing question to Finance with an SLA clock and a named owner', async () => {
+    const client = await createClient('Front Beach 218');
+    const { user: portal } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });
+    const fin = await prisma.associate.create({
+      data: { firstName: 'Priya', lastName: 'Nair', email: 'priya@alto.example' },
+    });
+    const { user: finance } = await createUser({
+      role: 'FINANCE_ACCOUNTANT',
+      associateId: fin.id,
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+
+    const agent = await loginAs(portal.email);
+    const created = await agent.post('/client-portal/requests').send({
+      kind: 'BILLING',
+      subject: 'Question about statement #7',
+      body: 'Hours on the 3rd look higher than our sign-in sheet.',
+    });
+    expect(created.status).toBe(201);
+    await flushPendingNotifications();
+
+    // Finance is rung; HR is not.
+    const bells = await prisma.notification.findMany({
+      where: { category: 'client-request', channel: 'IN_APP' },
+      select: { recipientUserId: true },
+    });
+    expect(bells.some((b) => b.recipientUserId === finance.id)).toBe(true);
+    expect(bells.every((b) => b.recipientUserId !== hr.id)).toBe(true);
+
+    // The client sees the desk, the 72h promise, and no owner yet.
+    let mine = await agent.get('/client-portal/requests');
+    expect(mine.body.requests[0].desk).toBe('Finance desk');
+    expect(mine.body.requests[0].owner).toBeNull();
+    expect(mine.body.requests[0].overdue).toBe(false);
+    const due = new Date(mine.body.requests[0].dueAt as string).getTime();
+    const created_ = new Date(mine.body.requests[0].createdAt as string).getTime();
+    expect(Math.round((due - created_) / 3_600_000)).toBe(72);
+
+    // Finance picks it up → the client sees a first name, never an email.
+    const staff = await loginAs(finance.email);
+    const queue = await staff.get('/client-requests');
+    expect(queue.body.requests[0].desk).toBe('FINANCE');
+    const id = queue.body.requests[0].id as string;
+    expect((await staff.patch(`/client-requests/${id}`).send({ status: 'IN_PROGRESS' })).status).toBe(200);
+    mine = await agent.get('/client-portal/requests');
+    expect(mine.body.requests[0].owner).toBe('Priya');
+    expect(JSON.stringify(mine.body)).not.toContain(finance.email);
+
+    // The relay board carries it as a Finance baton.
+    const board = await (await loginAs(hr.email)).get('/relay/board');
+    expect(board.status).toBe(200);
+    const baton = board.body.batons.find((b: { key: string }) => b.key === 'client-requests-finance');
+    expect(baton?.count).toBe(1);
+  });
 });

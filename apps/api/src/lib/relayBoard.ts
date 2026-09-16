@@ -728,7 +728,8 @@ export async function computeRelayBoard(
     take: 200,
   });
   const staffingReqs = openRequests.filter((r) => r.kind === 'STAFFING');
-  const hrReqs = openRequests.filter((r) => r.kind !== 'STAFFING');
+  const billingReqs = openRequests.filter((r) => r.kind === 'BILLING');
+  const hrReqs = openRequests.filter((r) => r.kind !== 'STAFFING' && r.kind !== 'BILLING');
   const reqStatus = (rows: typeof openRequests): BatonStatus => {
     const age = ageDays(rows[0]?.createdAt ?? null);
     return age !== null && age > 2 ? 'overdue' : 'atRisk';
@@ -751,6 +752,16 @@ export async function computeRelayBoard(
     hrReqs[0]?.createdAt ?? null,
     null,
     reqStatus(hrReqs),
+    '/relay#client-requests',
+  );
+  baton(
+    'client-requests-finance',
+    'Client requests — billing',
+    'FINANCE',
+    billingReqs.length,
+    billingReqs[0]?.createdAt ?? null,
+    null,
+    reqStatus(billingReqs),
     '/relay#client-requests',
   );
 

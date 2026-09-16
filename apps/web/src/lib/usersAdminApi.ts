@@ -13,6 +13,10 @@ export interface AdminUser {
   associateName: string | null;
   clientId: string | null;
   clientName: string | null;
+  /** CLIENT_PORTAL store scope — one Location under the client, or null
+   *  for the whole client (a market manager). */
+  locationId: string | null;
+  locationName: string | null;
   /** Non-null iff the account is currently brute-force locked (the server
    *  only surfaces locks that are still in the future). */
   lockedUntil: string | null;
@@ -56,7 +60,12 @@ export function getUserCounts(): Promise<UserCountsResponse> {
 
 export function patchAdminUser(
   id: string,
-  body: { role?: Role; status?: UserStatus; clientId?: string | null },
+  body: {
+    role?: Role;
+    status?: UserStatus;
+    clientId?: string | null;
+    locationId?: string | null;
+  },
 ): Promise<void> {
   return apiFetch<void>(`/admin/users/${id}`, { method: 'PATCH', body });
 }

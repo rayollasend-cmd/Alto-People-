@@ -452,6 +452,10 @@ export const AuthUserSchema = z.object({
    *  (SHIFT_SUPERVISOR, CLIENT_PORTAL) — the web pins pickers/scope bars
    *  to it instead of fetching a client list those roles can't read. */
   clientName: z.string().nullable().optional(),
+  /** CLIENT_PORTAL store scope: one Location under clientId (a store
+   *  manager) or null for the whole client (a market manager). */
+  locationId: UuidSchema.nullable().optional(),
+  locationName: z.string().nullable().optional(),
   associateId: UuidSchema.nullable(),
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),

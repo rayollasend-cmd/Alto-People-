@@ -92,12 +92,14 @@ interface ClientRequestRow {
   id: string;
   clientId: string;
   clientName: string;
-  kind: 'STAFFING' | 'FEEDBACK' | 'ISSUE';
+  kind: 'STAFFING' | 'FEEDBACK' | 'ISSUE' | 'BILLING';
   desk: Desk;
   subject: string;
   body: string;
   status: 'RECEIVED' | 'IN_PROGRESS';
   createdAt: string;
+  dueAt: string | null;
+  overdue: boolean;
 }
 
 interface Baton {
@@ -158,6 +160,7 @@ const REQ_KIND_LABEL: Record<ClientRequestRow['kind'], string> = {
   STAFFING: 'Staffing',
   FEEDBACK: 'Feedback',
   ISSUE: 'Issue',
+  BILLING: 'Billing',
 };
 
 /** The staff side of the client loop: the queue of asks the customer is
@@ -229,8 +232,10 @@ function ClientRequestsSection({
                     {r.status === 'IN_PROGRESS' && (
                       <Badge variant="accent">In progress</Badge>
                     )}
+                    {r.overdue && <Badge variant="destructive">Past due</Badge>}
                     <span className="ml-auto text-2xs tabular-nums text-silver/50">
                       {fmtDate(r.createdAt)}
+                      {r.dueAt && !r.overdue && ` · due ${fmtDate(r.dueAt)}`}
                     </span>
                   </div>
                   <div className="mt-1 text-sm text-white">{r.subject}</div>

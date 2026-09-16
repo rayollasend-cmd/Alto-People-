@@ -154,6 +154,7 @@ async function resolveRunAsUser(
     role: u.role,
     status: u.status,
     clientId: u.clientId,
+    locationId: u.locationId,
     associateId: u.associateId,
     tokenVersion: u.tokenVersion,
     firstName: null,

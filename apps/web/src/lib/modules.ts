@@ -4,6 +4,7 @@ import type { Capability } from './roles';
 
 export type ModuleKey =
   | 'portal'
+  | 'portal-schedule'
   | 'relay'
   | 'statements'
   | 'timesheets'
@@ -166,7 +167,7 @@ export const ASSOCIATE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>(
  *  schedule — a partner surface, not an HR console. */
 const CLIENT_PORTAL_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'portal',
-  'scheduling',
+  'portal-schedule',
 ]);
 
 /** Finance's curated nav: the money cycle end-to-end — pay, tax, billing,
@@ -245,7 +246,8 @@ export function visibleModules(
   ).filter(
     // "My store" only makes sense for a client account — internal roles
     // preview portals from the Clients page instead.
-    (m) => m.key !== 'portal' || role === 'CLIENT_PORTAL',
+    (m) =>
+      (m.key !== 'portal' && m.key !== 'portal-schedule') || role === 'CLIENT_PORTAL',
   ).filter(
     // "Timesheets" is Finance's name for the T&A surface — everyone else
     // already has Time & attendance; two entries would double-list it.
@@ -281,6 +283,15 @@ export const MODULES: ModuleNav[] = [
     description:
       'Live floor coverage, today’s roster, this week’s fill, statements, and the coverage record for your store.',
     requires: 'view:dashboard',
+    group: 'core',
+  },
+  {
+    key: 'portal-schedule',
+    path: '/portal/schedule',
+    label: 'Schedule',
+    description:
+      'Your store’s published week, day by day — print it, or download the weekly service report.',
+    requires: 'view:scheduling',
     group: 'core',
   },
   {

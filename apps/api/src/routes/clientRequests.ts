@@ -25,16 +25,33 @@ import { notifyUser, trackNotificationWork } from '../lib/notify.js';
 
 export const clientRequestsRouter = Router();
 
-const KIND = z.enum(['STAFFING', 'FEEDBACK', 'ISSUE']);
+const KIND = z.enum(['STAFFING', 'FEEDBACK', 'ISSUE', 'BILLING']);
+type Kind = z.infer<typeof KIND>;
+type Desk = 'WORKFORCE' | 'HR' | 'FINANCE';
 
-const DESK_FOR_KIND: Record<z.infer<typeof KIND>, 'WORKFORCE' | 'HR'> = {
+export const DESK_FOR_KIND: Record<Kind, Desk> = {
   STAFFING: 'WORKFORCE',
   FEEDBACK: 'HR',
   ISSUE: 'HR',
+  // A statement question or dispute is Finance's baton — never HR's.
+  BILLING: 'FINANCE',
 };
-const DESK_ROLES: Record<'WORKFORCE' | 'HR', string[]> = {
+const DESK_ROLES: Record<Desk, string[]> = {
   WORKFORCE: ['WORKFORCE_MANAGER'],
   HR: ['HR_ADMINISTRATOR', 'OPERATIONS_MANAGER'],
+  FINANCE: ['FINANCE_ACCOUNTANT'],
+};
+/** The promise the client sees: hours until a request is due a reply. */
+export const SLA_HOURS: Record<Kind, number> = {
+  STAFFING: 24,
+  ISSUE: 48,
+  BILLING: 72,
+  FEEDBACK: 120,
+};
+const DESK_LABEL: Record<Desk, string> = {
+  WORKFORCE: 'Workforce desk',
+  HR: 'HR desk',
+  FINANCE: 'Finance desk',
 };
 
 function requireClientPortal(user: { role: string; clientId: string | null }): string {
@@ -71,6 +88,7 @@ clientRequestsRouter.post(
           subject: input.subject,
           body: input.body,
           createdByUserId: req.user!.id,
+          dueAt: new Date(Date.now() + SLA_HOURS[input.kind] * 3_600_000),
         },
         include: { client: { select: { name: true } } },
       });
@@ -119,7 +137,16 @@ clientRequestsRouter.get(
         where: { clientId },
         orderBy: { createdAt: 'desc' },
         take: 50,
+        include: {
+          startedBy: { select: { email: true, associate: { select: { firstName: true } } } },
+          resolvedBy: { select: { email: true, associate: { select: { firstName: true } } } },
+        },
       });
+      // The owner the client sees: the desk always, plus the FIRST name of
+      // whoever picked it up (or replied). Never an email — that is an
+      // internal identifier, not a human.
+      const ownerName = (u: { email: string; associate: { firstName: string } | null } | null) =>
+        u ? (u.associate?.firstName ?? null) : null;
       res.json({
         requests: rows.map((r) => ({
           id: r.id,
@@ -130,6 +157,11 @@ clientRequestsRouter.get(
           resolution: r.resolution,
           createdAt: r.createdAt.toISOString(),
           resolvedAt: r.resolvedAt?.toISOString() ?? null,
+          dueAt: r.dueAt?.toISOString() ?? null,
+          desk: DESK_LABEL[DESK_FOR_KIND[r.kind]],
+          owner: ownerName(r.status === 'RESOLVED' ? r.resolvedBy : r.startedBy),
+          overdue:
+            r.status !== 'RESOLVED' && !!r.dueAt && r.dueAt.getTime() < Date.now(),
         })),
       });
     } catch (err) {
@@ -172,6 +204,8 @@ clientRequestsRouter.get(
           body: r.body,
           status: r.status,
           createdAt: r.createdAt.toISOString(),
+          dueAt: r.dueAt?.toISOString() ?? null,
+          overdue: !!r.dueAt && r.dueAt.getTime() < Date.now(),
         })),
       });
     } catch (err) {
@@ -214,6 +248,9 @@ clientRequestsRouter.patch(
         where: { id },
         data: {
           status: input.status,
+          ...(input.status === 'IN_PROGRESS'
+            ? { startedAt: new Date(), startedById: req.user!.id }
+            : {}),
           ...(input.status === 'RESOLVED'
             ? {
                 resolution: input.resolution,

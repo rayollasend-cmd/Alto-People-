@@ -405,8 +405,15 @@ model User {
   mfaEnabledAt       DateTime?  @db.Timestamptz(6)
   associateId        String?    @unique @db.Uuid
   clientId           String?    @db.Uuid
+  // Store scope for CLIENT_PORTAL accounts: a store manager is ONE
+  // Location under the client; null = the whole client (a market or
+  // district manager sees every store rolled up). Must belong to
+  // clientId — the users PATCH validates that and clears it whenever the
+  // client changes.
+  locationId         String?    @db.Uuid
   associate          Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
   client             Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  location           Location?  @relation("UserStoreScope", fields: [locationId], references: [id], onDelete: SetNull)
   createdAt          DateTime   @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime   @updatedAt @db.Timestamptz(6)
   deletedAt          DateTime?  @db.Timestamptz(6)
@@ -550,6 +557,7 @@ model User {
   workNoteDecisions                 WorkNote[]                    @relation("WorkNoteDecider")
   clientRequestsAuthored            ClientRequest[]               @relation("ClientRequestAuthor")
   clientRequestsResolved            ClientRequest[]               @relation("ClientRequestResolver")
+  clientRequestsStarted             ClientRequest[]               @relation("ClientRequestStarter")
   cohortsCreated                    Cohort[]                      @relation("CohortCreator")
   statementsFinalized               ClientStatement[]             @relation("StatementFinalizer")
   // Privacy erasures this admin performed (Associate.erasedById).
@@ -735,6 +743,7 @@ model Location {
   timeEntries  TimeEntry[]
   shiftTeams   ShiftTeam[]
   staffingTargets StaffingTarget[]
+  portalUsers  User[]                @relation("UserStoreScope")
 
   @@index([clientId, isActive])
   @@index([deletedAt])
@@ -872,6 +881,8 @@ enum ClientRequestKind {
   STAFFING
   FEEDBACK
   ISSUE
+  // A statement question or dispute — rings the Finance desk.
+  BILLING
 }
 
 enum ClientRequestStatus {
@@ -892,10 +903,17 @@ model ClientRequest {
   resolution      String?
   createdAt       DateTime            @default(now()) @db.Timestamptz(6)
   resolvedAt      DateTime?           @db.Timestamptz(6)
+  // The SLA clock the client sees: stamped at creation from the kind
+  // (staffing 24h, issue 48h, billing 72h, feedback 5d).
+  dueAt           DateTime?           @db.Timestamptz(6)
+  // Who picked it up (IN_PROGRESS) — the named owner the client sees.
+  startedById     String?             @db.Uuid
+  startedAt       DateTime?           @db.Timestamptz(6)
 
   client        Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
   createdByUser User?  @relation("ClientRequestAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
   resolvedBy    User?  @relation("ClientRequestResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+  startedBy     User?  @relation("ClientRequestStarter", fields: [startedById], references: [id], onDelete: SetNull)
 
   @@index([clientId, createdAt(sort: Desc)])
   @@index([status])

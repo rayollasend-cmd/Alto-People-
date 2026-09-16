@@ -78,12 +78,16 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       status: true,
       createdAt: true,
       clientId: true,
+      locationId: true,
       associateId: true,
       lockedUntil: true,
       associate: {
         select: { firstName: true, lastName: true },
       },
       client: {
+        select: { id: true, name: true },
+      },
+      location: {
         select: { id: true, name: true },
       },
     },
@@ -104,6 +108,8 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
         : null,
       clientId: u.clientId,
       clientName: u.client?.name ?? null,
+      locationId: u.locationId,
+      locationName: u.location?.name ?? null,
       // Account lockout (brute-force lock). Only surfaced while still in
       // the future — an expired lock is just noise to an admin.
       lockedUntil:
@@ -145,10 +151,18 @@ const PatchInputSchema = z
     // Client scope for client-bounded roles (SHIFT_SUPERVISOR, CLIENT_PORTAL).
     // null clears it; omitted leaves it unchanged.
     clientId: z.string().uuid().nullable().optional(),
+    // Store scope for CLIENT_PORTAL accounts — a Location under the
+    // effective client. null clears it (whole-client view); omitted
+    // leaves it unchanged. Cleared automatically when the client changes.
+    locationId: z.string().uuid().nullable().optional(),
   })
   .refine(
-    (v) => v.role !== undefined || v.status !== undefined || v.clientId !== undefined,
-    { message: 'At least one of role, status, or clientId is required' },
+    (v) =>
+      v.role !== undefined ||
+      v.status !== undefined ||
+      v.clientId !== undefined ||
+      v.locationId !== undefined,
+    { message: 'At least one of role, status, clientId, or locationId is required' },
   );
 
 // Roles that must be pinned to a single client to function.
@@ -174,7 +188,7 @@ usersRouter.patch(
 
     const target = await prisma.user.findUnique({
       where: { id },
-      select: { id: true, role: true, status: true, clientId: true, deletedAt: true },
+      select: { id: true, role: true, status: true, clientId: true, locationId: true, deletedAt: true },
     });
     if (!target || target.deletedAt) {
       throw new HttpError(404, 'not_found', 'User not found.');
@@ -238,10 +252,37 @@ usersRouter.patch(
       );
     }
 
+    // Store scope: must be a live Location under the EFFECTIVE client.
+    // A client change always drops the old store (it can't belong to the
+    // new client) unless the same call names a new one.
+    let effectiveLocationId: string | null | undefined = undefined;
+    if (input.locationId) {
+      if (!effectiveClientId) {
+        throw new HttpError(400, 'client_required', 'Pick a client before a store.');
+      }
+      const location = await prisma.location.findFirst({
+        where: { id: input.locationId, clientId: effectiveClientId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!location) {
+        throw new HttpError(
+          400,
+          'location_not_found',
+          'That store does not belong to the selected client.',
+        );
+      }
+      effectiveLocationId = input.locationId;
+    } else if (input.locationId === null) {
+      effectiveLocationId = null;
+    } else if (input.clientId !== undefined && input.clientId !== target.clientId) {
+      effectiveLocationId = null;
+    }
+
     const data: {
       role?: Role;
       status?: 'ACTIVE' | 'DISABLED' | 'INVITED';
       clientId?: string | null;
+      locationId?: string | null;
       tokenVersion?: { increment: number };
     } = {};
     if (input.role && input.role !== target.role) data.role = input.role;
@@ -249,9 +290,17 @@ usersRouter.patch(
     if (input.clientId !== undefined && input.clientId !== target.clientId) {
       data.clientId = input.clientId;
     }
+    if (effectiveLocationId !== undefined && effectiveLocationId !== target.locationId) {
+      data.locationId = effectiveLocationId;
+    }
     // A role change, a client-scope change, or a flip into DISABLED kills
     // existing sessions so the new access takes effect immediately.
-    if (data.role || data.clientId !== undefined || data.status === 'DISABLED') {
+    if (
+      data.role ||
+      data.clientId !== undefined ||
+      data.locationId !== undefined ||
+      data.status === 'DISABLED'
+    ) {
       data.tokenVersion = { increment: 1 };
     }
 
@@ -282,6 +331,9 @@ usersRouter.patch(
             ...(data.status ? { status: { from: target.status, to: data.status } } : {}),
             ...(data.clientId !== undefined
               ? { clientId: { from: target.clientId, to: data.clientId } }
+              : {}),
+            ...(data.locationId !== undefined
+              ? { locationId: { from: target.locationId, to: data.locationId } }
               : {}),
           },
         },
