@@ -108,7 +108,7 @@ clientRequestsRouter.post(
         },
         include: { client: { select: { name: true } } },
       });
-      const aboutLine = associate ? ` About:  .` : '';
+      const aboutLine = associate ? ` About: ${associate.firstName} ${associate.lastName}.` : '';
 
       // Ring the owning desk with the client's own words attached.
       const desk = DESK_FOR_KIND[input.kind];
