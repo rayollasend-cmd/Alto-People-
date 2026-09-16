@@ -176,7 +176,7 @@ export function PortalSchedule() {
         }
       />
 
-      <div className="flex items-center justify-between gap-2 print:hidden">
+      <div className="sticky top-0 z-10 -mx-4 flex items-center justify-between gap-2 bg-navy/95 px-4 py-2 backdrop-blur md:mx-0 md:px-0 print:hidden">
         <Button size="sm" variant="ghost" onClick={() => goWeek(-1)} aria-label={t('portal.prevWeek')}>
           <ChevronLeft className="h-4 w-4" aria-hidden="true" />
         </Button>
@@ -238,12 +238,13 @@ export function PortalSchedule() {
           <p className="hidden text-sm text-silver tabular-nums print:block">
             {t('portal.schedSummary', { filled: data.filled, open: data.open })}
           </p>
+          <div className="grid gap-4 md:grid-cols-2 print:block">
           {data.days.map((d) => {
             const isToday = d.date === today;
             return (
               <Card
                 key={d.date}
-                className={cn('print:break-inside-avoid', isToday && 'border-gold/40')}
+                className={cn('print:mb-4 print:break-inside-avoid', isToday && 'border-gold/40')}
               >
                 <CardContent className="p-4">
                   <div className="flex items-baseline justify-between gap-3">
@@ -294,6 +295,7 @@ export function PortalSchedule() {
               </Card>
             );
           })}
+          </div>
         </>
       )}
     </div>

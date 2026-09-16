@@ -430,7 +430,7 @@ export function ClientPortalHome() {
 
       {/* ---- Per-store strip for market managers ------------------------ */}
       {data.stores.length > 1 && !data.store && (
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4 animate-enter">
+        <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 animate-enter">
           {data.stores.map((s) => {
             const pct = s.scheduledNow > 0 ? Math.min(100, Math.round((s.onFloor / s.scheduledNow) * 100)) : null;
             return (
@@ -498,8 +498,8 @@ export function ClientPortalHome() {
           )}
         />
         <CardContent className="relative p-5">
-          <div className="grid gap-5 lg:grid-cols-12">
-            <div className="lg:col-span-4">
+          <div className="grid gap-5 md:grid-cols-12">
+            <div className="md:col-span-4">
               <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
                 <Users className="h-3.5 w-3.5" aria-hidden="true" />
                 {t('portal.onFloorNow')}
@@ -507,7 +507,7 @@ export function ClientPortalHome() {
               <div className="mt-2 flex items-baseline gap-2">
                 <span
                   className={cn(
-                    'text-6xl font-bold leading-none tracking-tight',
+                    'text-5xl font-bold leading-none tracking-tight sm:text-6xl',
                     short ? 'text-warning' : 'text-white',
                   )}
                 >
@@ -551,7 +551,7 @@ export function ClientPortalHome() {
                 </div>
               )}
             </div>
-            <div className="lg:col-span-8">
+            <div className="md:col-span-8">
               <div className="flex items-baseline justify-between gap-3">
                 <h2 className="text-sm font-medium text-white">{t('portal.curveTitle')}</h2>
                 <span className="text-xs text-silver/60 tabular-nums">
@@ -583,7 +583,7 @@ export function ClientPortalHome() {
       </Card>
 
       {/* ---- KPI strip ------------------------------------------------------ */}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4 animate-enter" style={enterStagger(1)}>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 animate-enter" style={enterStagger(1)}>
         <StatTile
           label={t('portal.kpiFill')}
           value={data.week.fillRatePct !== null ? `${data.week.fillRatePct}%` : '—'}
@@ -651,9 +651,9 @@ export function ClientPortalHome() {
         />
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-12">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
         {/* ---- Today's roster ----------------------------------------- */}
-        <Card className="animate-enter lg:row-span-2 xl:col-span-5" style={enterStagger(2)}>
+        <Card className="animate-enter md:row-span-2 xl:col-span-5" style={enterStagger(2)}>
           <CardContent className="p-5">
             <div className="flex items-baseline justify-between gap-3">
               <h2 className="text-sm font-medium text-white">{t('portal.today')}</h2>
@@ -697,7 +697,7 @@ export function ClientPortalHome() {
                         )}
                       </div>
                     </div>
-                    <span className={cn('flex shrink-0 items-center gap-1.5 text-xs', STATE_STYLE[r.state])}>
+                    <span className={cn('flex max-w-[6.5rem] shrink-0 items-center gap-1.5 text-right text-2xs leading-tight sm:max-w-none sm:text-xs', STATE_STYLE[r.state])}>
                       {r.state === 'on-floor' && (
                         <span className="relative flex h-2 w-2" aria-hidden="true">
                           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />

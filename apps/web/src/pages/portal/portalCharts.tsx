@@ -123,7 +123,7 @@ export function DetailsTable({
 }) {
   return (
     <details className="group mt-2 print:hidden">
-      <summary className="cursor-pointer select-none text-2xs uppercase tracking-wider text-silver/60 hover:text-silver">
+      <summary className="inline-flex min-h-8 cursor-pointer select-none items-center text-2xs uppercase tracking-wider text-silver/60 hover:text-silver coarse:min-h-11">
         {label}
       </summary>
       <div className="mt-2 overflow-x-auto">
@@ -186,7 +186,7 @@ export function CoverageCurve({
   const nowLabel = nowHour !== null ? points[nowHour]?.label : undefined;
   return (
     <div>
-      <div className="h-44 w-full sm:h-48">
+      <div className="h-40 w-full sm:h-48">
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={points} margin={{ top: 12, right: 12, bottom: 0, left: -18 }}>
             <CartesianGrid stroke={GRID} strokeWidth={1} vertical={false} />
@@ -499,13 +499,13 @@ export function StatTile({
       )}
     >
       <div className="text-2xs font-medium uppercase tracking-wider text-silver/60">{label}</div>
-      <div className="mt-1.5 flex items-baseline gap-1.5">
-        <span className="text-3xl font-bold tracking-tight text-white">{value}</span>
+      <div className="mt-1.5 flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+        <span className="text-2xl font-bold tracking-tight text-white sm:text-3xl">{value}</span>
         {unit && <span className="text-sm text-silver">{unit}</span>}
         {delta && (
           <span
             className={cn(
-              'ml-auto text-xs font-medium tabular-nums',
+              'basis-full text-2xs font-medium tabular-nums sm:ml-auto sm:basis-auto sm:text-xs',
               deltaTone === 'good' ? 'text-success' : deltaTone === 'bad' ? 'text-alert' : 'text-silver/70',
             )}
           >

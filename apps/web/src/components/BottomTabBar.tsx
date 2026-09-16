@@ -6,6 +6,8 @@ import {
   DollarSign,
   Inbox,
   Menu,
+  MessageSquare,
+  Store,
   Timer,
   type LucideIcon,
 } from 'lucide-react';
@@ -82,6 +84,13 @@ const FLOOR_TABS: TabDef[] = [
   { path: '/time-attendance', label: 'Live floor', icon: Timer, requires: 'view:time' },
 ];
 
+/** The store manager (client portal): their store, the week, the loop. */
+const PORTAL_TABS: TabDef[] = [
+  { path: DASHBOARD_NAV.path, labelKey: 'portal.title', icon: Store, requires: null },
+  { path: '/portal/schedule', labelKey: 'portal.schedule', icon: Calendar, requires: 'view:scheduling' },
+  { path: '/portal/requests', labelKey: 'portal.reqTitle', icon: MessageSquare, requires: null },
+];
+
 /** Legacy fallback for roles that fit neither bucket. */
 const DEFAULT_TABS: TabDef[] = [
   HOME_TAB,
@@ -103,7 +112,9 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
         ? EXEC_TABS
         : user?.role === 'FLOOR_SUPERVISOR'
           ? FLOOR_TABS
-          : can('manage:scheduling')
+          : user?.role === 'CLIENT_PORTAL'
+            ? PORTAL_TABS
+            : can('manage:scheduling')
             ? SCHEDULER_TABS
             : DEFAULT_TABS;
   // Keep at most 4 destination tabs so every target stays comfortably
