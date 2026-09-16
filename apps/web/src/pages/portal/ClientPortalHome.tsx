@@ -82,6 +82,8 @@ interface WeekRow {
   filled: number;
   total: number;
   fillPct: number | null;
+  showed: number;
+  reliabilityPct: number | null;
   noCallNoShows: number;
   callOuts: number;
   lates: number;
@@ -894,8 +896,8 @@ export function ClientPortalHome() {
               <ReliabilityChart
                 weeks={relWeeks}
                 labels={{
-                  fill: t('portal.chartFillPct'),
-                  target: t('portal.chartTarget95'),
+                  fill: t('portal.chartShowed'),
+                  target: t('portal.chartTarget'),
                   heading: (l) => {
                     const w = relWeeks.find((x) => x.label === l);
                     return w ? `${fmtDate(parseYmd(w.start))} – ${fmtDate(parseYmd(w.end))}` : l;
@@ -925,6 +927,7 @@ export function ClientPortalHome() {
               label={t('portal.details')}
               columns={[
                 t('portal.chartWeek'),
+                t('portal.chartShowed'),
                 t('portal.chartFillPct'),
                 t('portal.covNoShowCol'),
                 t('portal.covCallOutCol'),
@@ -933,6 +936,7 @@ export function ClientPortalHome() {
               ]}
               rows={data.reliability.weeks.map((w) => [
                 `${fmtDate(parseYmd(w.start))} – ${fmtDate(parseYmd(w.end))}`,
+                w.reliabilityPct === null ? '—' : `${w.reliabilityPct}%`,
                 w.fillPct === null ? '—' : `${w.fillPct}%`,
                 w.noCallNoShows,
                 w.callOuts,

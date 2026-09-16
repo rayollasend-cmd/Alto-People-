@@ -277,26 +277,28 @@ async function currentTarget(
   return { target, label: labels.size === 1 ? [...labels][0]! : null };
 }
 
-/** Letter grade for a run of weeks. Per week: fill % minus 3 points per
- *  no-call no-show, 1 per call-out, ½ per late arrival (floored at 0);
- *  averaged over weeks that had shifts. A ≥ 95, B ≥ 88, C ≥ 80, D ≥ 70. */
+/**
+ * The reliability grade — one honest number: of the shifts the store
+ * asked for, how many had an Alto person on the floor.
+ *
+ *   showed-up rate = (assigned shifts − no-call no-shows) ÷ published shifts
+ *
+ * Pooled across the weeks (a 200-shift week weighs ten times a 20-shift
+ * week), never an average of weekly percentages. Call-outs and lates are
+ * reported beside the grade but don't move it: a covered call-out is
+ * already a filled shift, an uncovered one is already an open slot, and
+ * a late arrival is a coaching matter, not a "did they come" matter.
+ * Bands: A ≥ 98, B ≥ 95, C ≥ 90, D ≥ 85 — one uncovered shift in twenty
+ * is not an A to a store manager.
+ */
 function gradeWeeks(
-  weeks: Array<{
-    total: number;
-    fillPct: number | null;
-    noCallNoShows: number;
-    callOuts: number;
-    lates: number;
-  }>,
+  weeks: Array<{ total: number; filled: number; noCallNoShows: number }>,
 ): { grade: 'A' | 'B' | 'C' | 'D' | 'F' | null; score: number | null } {
-  const scored = weeks
-    .filter((w) => w.total > 0 && w.fillPct !== null)
-    .map((w) =>
-      Math.max(0, (w.fillPct ?? 0) - 3 * w.noCallNoShows - w.callOuts - 0.5 * w.lates),
-    );
-  if (scored.length === 0) return { grade: null, score: null };
-  const score = Math.round(scored.reduce((a, b) => a + b, 0) / scored.length);
-  const grade = score >= 95 ? 'A' : score >= 88 ? 'B' : score >= 80 ? 'C' : score >= 70 ? 'D' : 'F';
+  const total = weeks.reduce((a, w) => a + w.total, 0);
+  if (total === 0) return { grade: null, score: null };
+  const showed = weeks.reduce((a, w) => a + Math.max(0, w.filled - w.noCallNoShows), 0);
+  const score = Math.round((showed / total) * 100);
+  const grade = score >= 98 ? 'A' : score >= 95 ? 'B' : score >= 90 ? 'C' : score >= 85 ? 'D' : 'F';
   return { grade, score };
 }
 
@@ -594,6 +596,12 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         ...w,
         end: nextKey(k, 6),
         fillPct: w.total > 0 ? Math.round((w.filled / w.total) * 100) : null,
+        // The graded figure: shifts a person actually showed up for.
+        showed: Math.max(0, w.filled - w.noCallNoShows),
+        reliabilityPct:
+          w.total > 0
+            ? Math.round((Math.max(0, w.filled - w.noCallNoShows) / w.total) * 100)
+            : null,
         current: k === thisWeekKey,
       };
     });

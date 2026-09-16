@@ -351,11 +351,11 @@ export function ReliabilityChart({
   weeks,
   labels,
 }: {
-  weeks: Array<{ start: string; label: string; fillPct: number | null; current: boolean }>;
+  weeks: Array<{ start: string; label: string; reliabilityPct: number | null; current: boolean }>;
   labels: { fill: string; target: string; heading: (w: string) => string };
 }) {
-  const series = { fillPct: { name: labels.fill, color: SERIES.primary } };
-  const data = weeks.map((w) => ({ ...w, fillPct: w.fillPct ?? 0 }));
+  const series = { pct: { name: labels.fill, color: SERIES.primary } };
+  const data = weeks.map((w) => ({ ...w, pct: w.reliabilityPct ?? 0 }));
   return (
     <div className="h-36 w-full">
       <ResponsiveContainer width="100%" height="100%">
@@ -382,7 +382,7 @@ export function ReliabilityChart({
             }
           />
           <ReferenceLine
-            y={95}
+            y={98}
             stroke={REF}
             strokeDasharray="4 3"
             label={{
@@ -393,7 +393,7 @@ export function ReliabilityChart({
             }}
           />
           <Bar
-            dataKey="fillPct"
+            dataKey="pct"
             fill={SERIES.primary}
             maxBarSize={24}
             radius={[4, 4, 0, 0]}

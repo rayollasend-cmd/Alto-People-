@@ -532,6 +532,10 @@ describe('the store site — scope, targets, evidence, downloads', () => {
     const current = res.body.reliability.weeks.find((w: { current: boolean }) => w.current);
     expect(current.filled).toBe(2);
     expect(current.total).toBe(2);
+    // The grade is the showed-up rate: assigned minus no-call no-shows,
+    // over everything published. No history yet, so this week stands in.
+    expect(current.reliabilityPct).toBe(100);
+    expect(res.body.reliability).toMatchObject({ grade: 'A', score: 100 });
 
     // Safety: no incidents ever → 365+ (null) and nothing open.
     expect(res.body.safety).toEqual({ monthIncidents: 0, open: 0, daysSinceLast: null });
