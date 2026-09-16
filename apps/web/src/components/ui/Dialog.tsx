@@ -263,9 +263,10 @@ export const DialogContent = React.forwardRef<
         // guard's preventDefault holds the dialog open. Drag-to-dismiss
         // funnels through this button (closeRef.click()) — guarded too.
         onClick={(e) => discardGuard?.onUserDismiss(e)}
-        // Same safe-area-aware positioning as Drawer's close button so
-        // iOS notches don't clip the X target on full-bleed dialogs.
-        className="absolute grid place-items-center h-10 w-10 rounded-md text-silver hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright top-[max(0.5rem,env(safe-area-inset-top))] right-[max(0.5rem,env(safe-area-inset-right))]"
+        // On phones the sheet sits at the BOTTOM, so the notch inset must
+        // not push the X into the title; the safe-area offset only applies
+        // to the centered (sm+) variant, where the top can meet the notch.
+        className="absolute grid place-items-center h-10 w-10 rounded-md text-silver hover:text-white hover:bg-navy-secondary/60 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright top-2 right-2 sm:top-[max(0.5rem,env(safe-area-inset-top))] sm:right-[max(0.5rem,env(safe-area-inset-right))]"
         aria-label="Close"
       >
         <X className="h-4 w-4" />

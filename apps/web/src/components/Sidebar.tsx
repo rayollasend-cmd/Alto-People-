@@ -139,6 +139,16 @@ export function Sidebar() {
 
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => readCollapsedGroups());
   const [railCollapsed, setRailCollapsed] = useState<boolean>(() => readRailCollapsed());
+  // The rail default is read once at mount; an iPad rotating landscape →
+  // portrait would keep a 256px rail on a 768px screen. Follow the
+  // breakpoint: collapse below lg, restore the stored choice above it.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const onChange = () => setRailCollapsed(mq.matches ? readRailCollapsed() : true);
+    mq.addEventListener?.('change', onChange);
+    return () => mq.removeEventListener?.('change', onChange);
+  }, []);
 
   const toggleGroup = useCallback((group: string) => {
     setCollapsedGroups((prev) => {

@@ -122,7 +122,7 @@ export function ServiceReportDialog({
     { key: 'day', label: t('portal.svcADay') },
     { key: 'range', label: t('portal.svcARange') },
   ];
-  const inputCls = 'h-9 rounded-md border border-navy-secondary bg-navy px-2 text-sm text-white coarse:h-11';
+  const inputCls = 'h-9 w-full rounded-md border border-navy-secondary bg-navy px-2 text-sm text-white coarse:h-11 coarse:text-base';
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && !busy && onClose()}>
@@ -153,8 +153,8 @@ export function ServiceReportDialog({
             </label>
           )}
           {preset === 'range' && (
-            <div className="flex flex-wrap items-center gap-2 text-sm text-silver">
-              <label className="flex items-center gap-1.5">
+            <div className="grid grid-cols-2 gap-2 text-sm text-silver">
+              <label className="flex flex-col gap-1">
                 {t('portal.rangeFrom')}
                 <input
                   type="date"
@@ -164,7 +164,7 @@ export function ServiceReportDialog({
                   className={inputCls}
                 />
               </label>
-              <label className="flex items-center gap-1.5">
+              <label className="flex flex-col gap-1">
                 {t('portal.rangeTo')}
                 <input
                   type="date"

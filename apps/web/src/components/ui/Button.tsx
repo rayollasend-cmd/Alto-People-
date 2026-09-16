@@ -49,9 +49,9 @@ const buttonVariants = cva(
         // device, phone or tablet.
         //
         // xs — chip-sized. Filter pills, segment toggles, inline controls.
-        xs: 'h-7 px-2.5 text-xs coarse:h-9 coarse:px-3',
+        xs: 'h-7 px-2.5 text-xs coarse:h-11 coarse:min-w-11 coarse:px-3',
         // sm — secondary actions, Cancel/Edit/row chrome.
-        sm: 'h-8 px-3 text-xs coarse:h-10',
+        sm: 'h-8 px-3 text-xs coarse:h-11 coarse:min-w-11',
         md: 'h-10 px-4 coarse:h-11',
         lg: 'h-11 px-6 text-base',
         // Icon-only — square; intended for IconButton use.
@@ -59,7 +59,7 @@ const buttonVariants = cva(
         // Big enough for a thumb to hit destructive row actions (Delete,
         // Suspend, etc.) on touch; compact where row density matters and
         // the pointer is precise.
-        'icon-sm': 'h-8 w-8 coarse:h-10 coarse:w-10',
+        'icon-sm': 'h-8 w-8 coarse:h-11 coarse:w-11',
       },
     },
     defaultVariants: {

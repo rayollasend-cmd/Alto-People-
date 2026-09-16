@@ -141,7 +141,7 @@ export function PortalToday() {
             <Button
               size="sm"
               variant="outline"
-              className="print:hidden"
+              className="hidden print:hidden sm:inline-flex"
               disabled={!data || data.roster.length === 0}
               onClick={() =>
                 data &&
@@ -165,7 +165,7 @@ export function PortalToday() {
               <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
               CSV
             </Button>
-            <Button size="sm" variant="outline" className="print:hidden" onClick={() => window.print()}>
+            <Button size="sm" variant="outline" className="hidden print:hidden sm:inline-flex" onClick={() => window.print()}>
               <Printer className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
               {t('portal.print')}
             </Button>
@@ -184,7 +184,7 @@ export function PortalToday() {
         <Button size="sm" variant="ghost" onClick={() => goDay(shiftDays(date, -1))} aria-label={t('portal.prevDay')}>
           <ChevronLeft className="h-4 w-4" aria-hidden="true" />
         </Button>
-        <div className="flex flex-1 items-center gap-1 overflow-x-auto">
+        <div className="flex flex-1 flex-wrap items-center gap-1">
           <Button size="sm" variant={isToday ? 'secondary' : 'ghost'} onClick={() => goDay(null)}>
             {t('portal.todayNav')}
           </Button>
@@ -201,7 +201,7 @@ export function PortalToday() {
               type="date"
               value={date}
               onChange={(e) => e.target.value && goDay(e.target.value)}
-              className="h-8 rounded-md border border-navy-secondary bg-navy px-2 text-xs text-white coarse:h-10"
+              className="h-8 rounded-md border border-navy-secondary bg-navy px-2 text-xs text-white coarse:h-11 coarse:text-base"
               aria-label={t('portal.pickDate')}
             />
           </label>
@@ -376,10 +376,7 @@ function WaveCard({ wave: w, multiStore }: { wave: Wave; multiStore: boolean }) 
                       </span>
                     )}
                     {g.tone === 'on-floor' && (
-                      <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5" aria-hidden="true">
-                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
-                        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-success ring-2 ring-navy" />
-                      </span>
+                      <span className="absolute -right-0.5 -top-0.5 inline-flex h-2.5 w-2.5 rounded-full bg-success ring-2 ring-navy" aria-hidden="true" />
                     )}
                   </button>
                 </li>
@@ -398,13 +395,19 @@ function WaveCard({ wave: w, multiStore }: { wave: Wave; multiStore: boolean }) 
           <ul className="flex flex-wrap gap-2" role="list">
             {w.open.map((r) => (
               <li key={r.shiftId}>
-                <span
-                  className="grid h-12 w-12 place-items-center rounded-full border-2 border-dashed border-alert/50 text-sm text-alert"
+                <button
+                  type="button"
+                  onClick={() => setSelected(selected?.shiftId === r.shiftId ? null : r)}
+                  aria-pressed={selected?.shiftId === r.shiftId}
+                  className={cn(
+                    'grid h-12 w-12 place-items-center rounded-full border-2 border-dashed border-alert/50 text-sm text-alert focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                    selected?.shiftId === r.shiftId && 'border-gold text-gold',
+                  )}
                   title={r.position}
                   aria-label={`${t('portal.faceUnfilled')} · ${r.position}`}
                 >
                   ?
-                </span>
+                </button>
               </li>
             ))}
           </ul>

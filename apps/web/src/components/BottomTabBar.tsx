@@ -142,7 +142,12 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
   return (
     <nav
       aria-label="Primary"
-      className="md:hidden shrink-0 flex items-stretch border-t border-navy-secondary bg-navy pb-[env(safe-area-inset-bottom)]"
+      className={cn(
+        // The store manager's four destinations are labeled tabs, not
+        // icon-rail guesses — keep them through iPad widths.
+        user?.role === 'CLIENT_PORTAL' ? 'lg:hidden' : 'md:hidden',
+        'shrink-0 flex items-stretch border-t border-navy-secondary bg-navy pb-[env(safe-area-inset-bottom)]',
+      )}
     >
       {tabs.map((tab) => {
         const active = activePath === tab.path;
@@ -163,7 +168,7 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
               <Icon className="h-5 w-5" aria-hidden="true" strokeWidth={active ? 2.4 : 2} />
               {tab.badge === 'messages' && <UnreadMessagesBadge />}
             </span>
-            <span className={cn('text-2xs leading-none', active && 'font-semibold')}>
+            <span className={cn('w-full truncate px-1 text-center text-2xs leading-none', active && 'font-semibold')}>
               {tab.labelKey ? t(tab.labelKey) : tab.label}
             </span>
           </Link>

@@ -216,8 +216,14 @@ export function PortalHistory() {
     const next = new URLSearchParams(searchParams);
     next.set('range', p);
     if (p === 'custom') {
-      if (from) next.set('from', from);
-      if (to) next.set('to', to);
+      // The same ceiling as the service report picker: 31 days, so the
+      // charts never draw sub-pixel bars and the tables stay readable.
+      const end = to ?? range.to;
+      let start = from ?? range.from;
+      if (start < shiftDays(end, -30)) start = shiftDays(end, -30);
+      if (start > end) start = end;
+      next.set('from', start);
+      next.set('to', end);
     } else {
       next.delete('from');
       next.delete('to');
@@ -245,7 +251,7 @@ export function PortalHistory() {
       : null;
 
   return (
-    <div className={cn('mx-auto space-y-4', query.isFetching && data && 'opacity-80 transition-opacity')}>
+    <div className={cn('mx-auto space-y-4 print-area', query.isFetching && data && 'opacity-80 transition-opacity')}>
       <PageHeader
         title={t('portal.historyNav')}
         topbarTitle={t('portal.historyNav')}
@@ -278,7 +284,7 @@ export function PortalHistory() {
       />
 
       {/* ---- Range: one row, above everything it scopes ---------------- */}
-      <div className="sticky top-0 z-10 -mx-4 bg-navy/95 px-4 py-2 backdrop-blur md:mx-0 md:px-0">
+      <div className="sticky top-0 z-10 -mx-4 bg-navy/95 px-4 py-2 backdrop-blur print:hidden md:mx-0 md:px-0">
         <div className="flex flex-wrap items-center gap-1.5">
           {presets.map((p) => (
             <Button
@@ -295,20 +301,21 @@ export function PortalHistory() {
               <input
                 type="date"
                 value={range.from}
+                min={shiftDays(range.to, -30)}
                 max={range.to}
                 onChange={(e) => e.target.value && setPreset('custom', e.target.value, range.to)}
                 aria-label={t('portal.rangeFrom')}
-                className="h-8 rounded-md border border-navy-secondary bg-navy px-2 text-xs text-white coarse:h-10"
+                className="h-8 rounded-md border border-navy-secondary bg-navy px-2 text-xs text-white coarse:h-11 coarse:text-base"
               />
               –
               <input
                 type="date"
                 value={range.to}
                 min={range.from}
-                max={today}
+                max={shiftDays(range.from, 30) < today ? shiftDays(range.from, 30) : today}
                 onChange={(e) => e.target.value && setPreset('custom', range.from, e.target.value)}
                 aria-label={t('portal.rangeTo')}
-                className="h-8 rounded-md border border-navy-secondary bg-navy px-2 text-xs text-white coarse:h-10"
+                className="h-8 rounded-md border border-navy-secondary bg-navy px-2 text-xs text-white coarse:h-11 coarse:text-base"
               />
             </span>
           )}
@@ -581,7 +588,7 @@ export function PortalHistory() {
                     {data.statements.map((s) => {
                       const amount = data.store && s.storeAmount !== null ? s.storeAmount : s.amount;
                       return (
-                        <li key={s.id} className="flex items-center justify-between gap-2 py-2.5">
+                        <li key={s.id} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 py-2.5">
                           <div className="min-w-0">
                             <div className="text-sm font-medium text-white tabular-nums">
                               {s.number !== null ? t('portal.stNumber', { n: s.number }) : t('portal.statements')}
@@ -590,7 +597,7 @@ export function PortalHistory() {
                               {fmtDate(parseYmd(s.periodStart))} – {fmtDate(parseYmd(s.periodEnd))}
                             </div>
                           </div>
-                          <div className="flex shrink-0 items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             {amount !== null && (
                               <span className="text-sm font-semibold tabular-nums text-white">{fmtMoney(amount)}</span>
                             )}
@@ -608,20 +615,20 @@ export function PortalHistory() {
                             >
                               <FileText className="h-3.5 w-3.5" aria-hidden="true" />
                             </Button>
-                            {reviewedMark(s.reviewed, () => void markReviewed('STATEMENT', s.id))}
+                            <span className="basis-full sm:basis-auto">{reviewedMark(s.reviewed, () => void markReviewed('STATEMENT', s.id))}</span>
                           </div>
                         </li>
                       );
                     })}
                     {data.serviceReports.map((r) => (
-                      <li key={r.weekStart} className="flex items-center justify-between gap-2 py-2.5">
+                      <li key={r.weekStart} className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 py-2.5">
                         <div className="min-w-0">
                           <div className="text-sm text-white">{t('portal.svcReportWeek')}</div>
                           <div className="text-xs text-silver/70 tabular-nums">
                             {fmtDate(parseYmd(r.weekStart))} – {fmtDate(parseYmd(r.weekEnd))}
                           </div>
                         </div>
-                        <div className="flex shrink-0 items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <Button
                             size="xs"
                             variant="ghost"
@@ -630,7 +637,7 @@ export function PortalHistory() {
                             <FileText className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
                             PDF
                           </Button>
-                          {reviewedMark(r.reviewed, () => void markReviewed('SERVICE_REPORT', r.weekStart))}
+                          <span className="basis-full sm:basis-auto">{reviewedMark(r.reviewed, () => void markReviewed('SERVICE_REPORT', r.weekStart))}</span>
                         </div>
                       </li>
                     ))}

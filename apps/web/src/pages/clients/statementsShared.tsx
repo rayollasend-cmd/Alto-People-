@@ -19,10 +19,26 @@ import { Input } from '@/components/ui/Input';
 
 // Fetch-then-save instead of a bare <a download>: an auth failure or 500
 // on a raw link dumps the user on a JSON error page with no way back.
+/** iPhone and iPad (including "desktop-class" iPadOS Safari, which
+ *  reports as a Mac with touch). A blob + download attribute is unreliable
+ *  there, and does nothing at all in a home-screen (standalone) app. */
+function isApplePhoneOrTablet(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent;
+  return /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+}
+
 export async function downloadStatementFile(
   url: string,
   fallbackName: string,
 ): Promise<void> {
+  if (isApplePhoneOrTablet()) {
+    // Safari shows the PDF with its own share/save sheet; cookies ride
+    // along because the API is same-origin.
+    const win = window.open(url, '_blank', 'noopener');
+    if (!win) window.location.assign(url);
+    return;
+  }
   try {
     const res = await fetch(url, { credentials: 'include' });
     if (!res.ok) throw new Error(String(res.status));

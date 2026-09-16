@@ -191,7 +191,7 @@ export function PortalSchedule() {
           </>
         }
         primaryAction={
-          <Button size="sm" className="print:hidden" onClick={() => window.print()}>
+          <Button size="sm" className="hidden print:hidden sm:inline-flex" onClick={() => window.print()}>
             <Printer className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
             {t('portal.print')}
           </Button>
@@ -248,6 +248,7 @@ export function PortalSchedule() {
                     scale: { low: t('portal.heatLow'), high: t('portal.heatHigh') },
                     unfilled: t('portal.heatUnfilled'),
                     belowTarget: t('portal.heatBelow', { target: target ?? 0 }),
+                    swipe: t('portal.heatSwipe'),
                   }}
                 />
                 <DetailsTable

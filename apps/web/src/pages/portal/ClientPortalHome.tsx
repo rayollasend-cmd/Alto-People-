@@ -11,6 +11,7 @@ import {
   HardHat,
   Mail,
   MapPin,
+  History,
   MessageSquare,
   Phone,
   ShieldCheck,
@@ -406,7 +407,7 @@ export function ClientPortalHome() {
   }));
 
   return (
-    <div className="mx-auto space-y-4">
+    <div className="mx-auto space-y-4 print-area">
       <PageHeader
         title={data.store ? data.store.name : data.client.name}
         topbarTitle={t('portal.title')}
@@ -439,6 +440,12 @@ export function ClientPortalHome() {
             <Button size="sm" variant="outline" onClick={() => setReportOpen(true)} title={t('portal.svcReportHint')}>
               <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
               {t('portal.svcReport')}
+            </Button>
+            <Button size="sm" variant="outline" className="print:hidden" asChild>
+              <Link to={`/portal/history${qs}`}>
+                <History className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                {t('portal.historyNav')}
+              </Link>
             </Button>
             <ServiceReportDialog
               open={reportOpen}
@@ -770,7 +777,7 @@ export function ClientPortalHome() {
             ) : (
               <ul className="mt-3 space-y-3">
                 {data.leads.people.map((p) => (
-                  <li key={p.email} className="flex items-center gap-3">
+                  <li key={p.email} className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 text-sm font-medium text-white">
                         <span className="truncate">{p.name}</span>
@@ -787,27 +794,30 @@ export function ClientPortalHome() {
                         {p.runningOps && <span className="text-gold"> · {t('portal.leadRunningOps')}</span>}
                       </div>
                     </div>
-                    {isPortal && (
-                      <Button size="sm" variant="secondary" asChild>
-                        <Link to={`/messages?to=${p.userId}`} aria-label={`${t('portal.messageLead')} ${p.name}`}>
-                          <MessageSquare className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                          {t('portal.messageLead')}
-                        </Link>
-                      </Button>
-                    )}
-                    {p.phone && (
+                    {/* Actions take their own row on a phone so the name never squeezes. */}
+                    <div className="flex w-full flex-wrap items-center gap-1 print:hidden sm:w-auto">
+                      {isPortal && (
+                        <Button size="sm" variant="secondary" asChild>
+                          <Link to={`/messages?to=${p.userId}`} aria-label={`${t('portal.messageLead')} ${p.name}`}>
+                            <MessageSquare className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                            {t('portal.messageLead')}
+                          </Link>
+                        </Button>
+                      )}
+                      {p.phone && (
+                        <Button size="sm" variant="ghost" asChild>
+                          <a href={`tel:${p.phone.replace(/[^+\d]/g, '')}`}>
+                            <Phone className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                            {t('portal.call')}
+                          </a>
+                        </Button>
+                      )}
                       <Button size="sm" variant="ghost" asChild>
-                        <a href={`tel:${p.phone.replace(/[^+\d]/g, '')}`}>
-                          <Phone className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                          {t('portal.call')}
+                        <a href={`mailto:${p.email}`} aria-label={t('portal.emailPerson', { name: p.name })}>
+                          <Mail className="h-4 w-4" aria-hidden="true" />
                         </a>
                       </Button>
-                    )}
-                    <Button size="sm" variant="ghost" asChild>
-                      <a href={`mailto:${p.email}`} aria-label={t('portal.emailPerson', { name: p.name })}>
-                        <Mail className="h-4 w-4" aria-hidden="true" />
-                      </a>
-                    </Button>
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -1100,7 +1110,7 @@ export function ClientPortalHome() {
                           )}
                         </div>
                       </div>
-                      <div className="mt-1.5 flex gap-1">
+                      <div className="mt-1.5 flex flex-wrap gap-1 print:hidden">
                         <Button
                           size="xs"
                           variant="ghost"
@@ -1142,7 +1152,7 @@ export function ClientPortalHome() {
       </div>
 
       {/* ---- Requests: the client in the loop -------------------------- */}
-      {isPortal && <PortalRequests prefill={prefill} />}
+      {isPortal && <PortalRequests prefill={prefill} refetchMs={180_000} />}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -60,7 +60,38 @@ import { downloadStatementFile } from '@/pages/clients/statementsShared';
 
 const photoUrl = (p: MessagePerson) => p.photoUrl;
 
+/**
+ * The messenger fills the shell's <main> exactly. Phone chrome (topbar +
+ * notch, safe areas, the tab bar) varies by device, so the height is
+ * measured off <main> instead of a magic calc — the composer can never
+ * fall below the fold behind a nested scroller.
+ */
+function useFillMain() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState<number | undefined>(undefined);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const main = el?.closest('main');
+    if (!el || !main) return;
+    const apply = () => {
+      const cs = getComputedStyle(main);
+      const h = main.clientHeight - parseFloat(cs.paddingTop || '0') - parseFloat(cs.paddingBottom || '0');
+      if (Number.isFinite(h) && h > 0) setHeight(Math.max(360, Math.floor(h)));
+    };
+    apply();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(apply) : null;
+    ro?.observe(main);
+    window.addEventListener('resize', apply);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', apply);
+    };
+  }, []);
+  return { ref, height };
+}
+
 export function MessagesHome() {
+  const fill = useFillMain();
   const { t } = useI18n();
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -110,7 +141,7 @@ export function MessagesHome() {
   const totalUnread = rows.reduce((a, r) => a + r.unread, 0);
 
   return (
-    <div className="mx-auto flex h-[calc(100dvh-8.5rem)] max-w-6xl flex-col md:h-[calc(100dvh-7rem)]">
+    <div ref={fill.ref} className="mx-auto flex h-[calc(100dvh-8.5rem)] max-w-6xl flex-col md:h-[calc(100dvh-7rem)]" style={fill.height ? { height: fill.height } : undefined}>
       <PageHeader
         title={t('msg.title')}
         subtitle={totalUnread > 0 ? t('msg.unreadLine', { count: totalUnread }) : t('msg.subtitle')}
@@ -401,7 +432,8 @@ function Thread({ id, meId, onBack }: { id: string; meId: string; onBack: () => 
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              // Enter sends only with a keyboard; on a phone Return is a newline.
+              if (e.key === 'Enter' && !e.shiftKey && (window.matchMedia?.('(pointer: fine)').matches ?? true)) {
                 e.preventDefault();
                 void send();
               }
@@ -412,7 +444,7 @@ function Thread({ id, meId, onBack }: { id: string; meId: string; onBack: () => 
             className="min-h-10 flex-1 resize-none"
             aria-label={t('msg.placeholder')}
           />
-          <Button size="sm" onClick={() => void send()} loading={busy} disabled={!draft.trim()}>
+          <Button size="md" onClick={() => void send()} loading={busy} disabled={!draft.trim()}>
             <Send className="h-4 w-4" aria-hidden="true" />
             <span className="sr-only">{t('msg.send')}</span>
           </Button>
@@ -544,7 +576,7 @@ function ComposeDialog({
               ))}
             </div>
           )}
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('msg.findPerson')} autoFocus />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('msg.findPerson')} autoFocus={typeof window === 'undefined' || !window.matchMedia?.('(pointer: coarse)').matches} />
           <ul className="max-h-56 divide-y divide-navy-secondary/60 overflow-y-auto rounded-md border border-navy-secondary">
             {candidates.length === 0 ? (
               <li className="p-3 text-xs text-silver/60">{directory.isLoading ? '…' : t('msg.noPeople')}</li>

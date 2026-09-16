@@ -75,13 +75,14 @@ export interface RequestPrefill {
   nonce: number;
 }
 
-export function PortalRequests({ prefill }: { prefill?: RequestPrefill | null }) {
+/** `refetchMs`: the Requests tab polls every minute; the Home embed can ease off. */
+export function PortalRequests({ prefill, refetchMs = 60_000 }: { prefill?: RequestPrefill | null; refetchMs?: number }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ['clientPortal', 'requests'],
     queryFn: () => apiFetch<{ requests: PortalRequest[] }>('/client-portal/requests'),
-    refetchInterval: 60_000,
+    refetchInterval: refetchMs,
   });
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<ReqKind>('STAFFING');
@@ -143,11 +144,11 @@ export function PortalRequests({ prefill }: { prefill?: RequestPrefill | null })
   const rows = query.data?.requests ?? [];
 
   return (
-    <Card className="animate-enter" id="requests">
+    <Card className="animate-enter print:hidden" id="requests">
       <CardContent className="p-5">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-medium text-white">{t('portal.reqTitle')}</h2>
-          <Button size="sm" onClick={() => setOpen(true)}>
+          <Button size="md" className="w-full sm:w-auto" onClick={() => setOpen(true)}>
             <MessageSquarePlus className="mr-1.5 h-4 w-4" aria-hidden="true" />
             {t('portal.reqNew')}
           </Button>
@@ -172,7 +173,7 @@ export function PortalRequests({ prefill }: { prefill?: RequestPrefill | null })
                     {t('portal.reqAbout', { name: r.associateName })}
                   </p>
                 )}
-                <p className="mt-1 text-xs text-silver/70">{r.body}</p>
+                <p className="mt-1 line-clamp-3 text-xs text-silver/70">{r.body}</p>
                 <p className="mt-1 text-2xs tabular-nums text-silver/50">
                   {fmtDate(r.createdAt)}
                   {' · '}

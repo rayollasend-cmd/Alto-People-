@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   Area,
   Bar,
@@ -561,26 +561,46 @@ export function CoverageHeatmap({
     scale: { low: string; high: string };
     unfilled: string;
     belowTarget: string;
+    /** Phone hint under the grid ("swipe for later hours"). */
+    swipe?: string;
   };
 }) {
   const max = Math.max(1, ...days.flatMap((d) => d.scheduled));
+  // A tapped cell reads its numbers out below the grid — hover tooltips
+  // never fire on touch, so this is the phone path to the exact figure.
+  const [picked, setPicked] = useState<string | null>(null);
   return (
     <div>
-      <div className="overflow-x-auto">
-        <div className="min-w-[36rem]">
-          <div className="grid" style={{ gridTemplateColumns: '2.75rem repeat(24, minmax(0, 1fr))' }}>
-            <div />
+      <div className="relative">
+        <div className="overflow-x-auto">
+          <div className="min-w-[36rem]">
+            <div className="grid" style={{ gridTemplateColumns: '2.75rem repeat(24, minmax(0, 1fr))' }}>
+              <div className="sticky left-0 z-10 bg-navy" />
             {Array.from({ length: 24 }, (_, h) => (
               <div key={h} className="pb-1 text-center text-2xs text-silver/60">
                 {h % 3 === 0 ? hourLabelShort(h) : ''}
               </div>
             ))}
             {days.map((d) => (
-              <DayRow key={d.date} day={d} max={max} target={target} isToday={d.date === todayKey} labels={labels} />
+              <DayRow
+                key={d.date}
+                day={d}
+                max={max}
+                target={target}
+                isToday={d.date === todayKey}
+                labels={labels}
+                onPick={(text) => setPicked((cur) => (cur === text ? null : text))}
+              />
             ))}
+            </div>
           </div>
         </div>
+        <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-navy to-transparent sm:hidden" />
       </div>
+      <div className={cn('mt-1 min-h-5 text-xs transition-opacity', picked ? 'text-white opacity-100' : 'opacity-0')} aria-live="polite">
+        {picked ?? ''}
+      </div>
+      {labels.swipe && <p className="text-2xs text-silver/50 sm:hidden">{labels.swipe}</p>}
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-silver/80">
         <span className="flex items-center gap-1.5">
           {labels.scale.low}
@@ -619,29 +639,33 @@ function DayRow({
   target,
   isToday,
   labels,
+  onPick,
 }: {
   day: HeatDay;
   max: number;
   target: number | null;
   isToday: boolean;
   labels: { cell: (day: string, hour: string, scheduled: number, open: number) => string };
+  onPick: (text: string) => void;
 }) {
   return (
     <>
-      <div className={cn('flex items-center pr-2 text-2xs', isToday ? 'font-medium text-gold' : 'text-silver/70')}>
+      <div className={cn('sticky left-0 z-10 flex items-center pr-2 text-2xs bg-navy', isToday ? 'font-medium text-gold' : 'text-silver/70')}>
         {day.label}
       </div>
       {day.scheduled.map((n, h) => {
         const open = day.open[h] ?? 0;
         const below = target !== null && n < target && (n > 0 || open > 0);
         const opacity = n === 0 ? 0 : 0.12 + (n / max) * 0.83;
+        const text = labels.cell(day.label, hourLabelShort(h), n, open);
         return (
-          <div
+          <button
             key={h}
-            className="relative m-px h-6 rounded-sm bg-navy-secondary/40"
-            title={labels.cell(day.label, hourLabelShort(h), n, open)}
-            role="img"
-            aria-label={labels.cell(day.label, hourLabelShort(h), n, open)}
+            type="button"
+            onClick={() => onPick(text)}
+            className="relative m-px h-6 rounded-sm bg-navy-secondary/40 focus:outline-none focus-visible:ring-1 focus-visible:ring-gold coarse:h-7"
+            title={text}
+            aria-label={text}
           >
             {n > 0 && (
               <div className="absolute inset-0 rounded-sm" style={{ background: SERIES.primary, opacity }} />
@@ -660,7 +684,7 @@ function DayRow({
                 aria-hidden="true"
               />
             )}
-          </div>
+          </button>
         );
       })}
     </>
