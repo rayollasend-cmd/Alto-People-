@@ -382,7 +382,7 @@ export function ReliabilityChart({
             }
           />
           <ReferenceLine
-            y={98}
+            y={88}
             stroke={REF}
             strokeDasharray="4 3"
             label={{

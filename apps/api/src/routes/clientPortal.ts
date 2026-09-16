@@ -478,7 +478,7 @@ function attendanceWhere(
  * period (a busy week weighs more than a quiet one). When a store has no
  * floor target there is nothing to grade against, so the grade falls back
  * to the showed-up rate (punched shifts ÷ ended shifts) and says so.
- * Bands: A ≥ 98, B ≥ 95, C ≥ 90, D ≥ 85.
+ * Bands (owner decision 2026-09-16): A ≥ 88, B ≥ 70, F below 70.
  */
 type GradeBasis = 'contract' | 'schedule';
 function gradeWeeks(
@@ -499,7 +499,7 @@ function gradeWeeks(
   } else {
     return { grade: null, score: null, basis: null };
   }
-  const grade = score >= 98 ? 'A' : score >= 95 ? 'B' : score >= 90 ? 'C' : score >= 85 ? 'D' : 'F';
+  const grade = score >= 88 ? 'A' : score >= 70 ? 'B' : 'F';
   return { grade, score, basis };
 }
 
