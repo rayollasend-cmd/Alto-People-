@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, FileText, History } from 'lucide-react';
-import { apiFetch } from '@/lib/api';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { ArrowLeft, CheckCircle2, FileText, History } from 'lucide-react';
+import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { fmtDate, fmtHours, fmtMoney, parseYmd, ymdLocal } from '@/lib/format';
@@ -80,8 +81,26 @@ interface HistoryPayload {
     storeAmount: number | null;
     paidAt: string | null;
     pdfUrl: string;
+    reviewed: { reviewedAt: string; reviewedBy: string | null } | null;
   }>;
-  serviceReports: Array<{ weekStart: string; weekEnd: string; url: string }>;
+  serviceReports: Array<{
+    weekStart: string;
+    weekEnd: string;
+    url: string;
+    reviewed: { reviewedAt: string; reviewedBy: string | null } | null;
+  }>;
+  /** Market accounts only: the stores side by side, ranked by grade. */
+  stores: Array<{
+    id: string;
+    name: string;
+    published: number;
+    filled: number;
+    ended: number;
+    showed: number;
+    fillPct: number | null;
+    reliabilityPct: number | null;
+    grade: 'A' | 'B' | 'C' | 'D' | 'F' | null;
+  }>;
 }
 
 type Preset = 'last7' | 'lastWeek' | 'thisMonth' | 'lastMonth' | 'custom';
@@ -149,6 +168,33 @@ export function PortalHistory() {
     placeholderData: (prev) => prev,
   });
   const data = query.data;
+  const queryClient = useQueryClient();
+  const markReviewed = async (kind: 'STATEMENT' | 'SERVICE_REPORT', key: string) => {
+    try {
+      await apiFetch('/client-portal/acknowledge', { method: 'POST', body: { kind, key } });
+      toast.success(t('portal.markedReviewed'));
+      void queryClient.invalidateQueries({ queryKey: ['clientPortal'] });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : t('portal.loadFailed'));
+    }
+  };
+  const reviewedMark = (
+    reviewed: { reviewedAt: string; reviewedBy: string | null } | null,
+    onMark: () => void,
+  ) =>
+    reviewed ? (
+      <span className="flex items-center gap-1 text-2xs text-success">
+        <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+        {reviewed.reviewedBy
+          ? t('portal.reviewed', { name: reviewed.reviewedBy, date: fmtDate(reviewed.reviewedAt) })
+          : t('portal.reviewedNoName', { date: fmtDate(reviewed.reviewedAt) })}
+      </span>
+    ) : isPortal ? (
+      <Button size="xs" variant="ghost" onClick={onMark}>
+        <CheckCircle2 className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+        {t('portal.markReviewed')}
+      </Button>
+    ) : null;
 
   if (!isPortal && !canPreview) {
     return <EmptyState icon={History} title={t('portal.noAccess')} description="" />;
@@ -319,6 +365,66 @@ export function PortalHistory() {
             />
           </div>
 
+          <details className="-mt-1">
+            <summary className="inline-flex min-h-8 cursor-pointer select-none items-center text-2xs uppercase tracking-wider text-silver/60 hover:text-silver coarse:min-h-11">
+              {t('portal.gradeHow')}
+            </summary>
+            <p className="mt-1 max-w-3xl text-xs leading-relaxed text-silver/80">{t('portal.gradeHowText')}</p>
+          </details>
+
+          {/* ---- Market accounts: the stores side by side ------------------ */}
+          {data.stores.length > 0 && (
+            <Card>
+              <CardContent className="p-4 sm:p-5">
+                <div className="flex items-baseline justify-between gap-3">
+                  <h2 className="text-sm font-medium text-white">{t('portal.storesRanked')}</h2>
+                  <span className="text-xs text-silver/60">{t('portal.storesRankedSub')}</span>
+                </div>
+                <div className="mt-3 overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-2xs uppercase tracking-wider text-silver/60">
+                        <th className="py-1 pr-3 font-medium">{t('portal.colStore')}</th>
+                        <th className="py-1 pr-3 font-medium">{t('portal.colGrade')}</th>
+                        <th className="py-1 pr-3 font-medium">{t('portal.colShowed')}</th>
+                        <th className="py-1 pr-3 font-medium">{t('portal.colFill')}</th>
+                        <th className="py-1 pr-3 font-medium">{t('portal.colShifts')}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-navy-secondary/60">
+                      {data.stores.map((s) => {
+                        const to = `/portal/history?${new URLSearchParams([
+                          ...scope.entries(),
+                          ['locationId', s.id],
+                          ['range', preset],
+                          ...(preset === 'custom' ? ([['from', range.from], ['to', range.to]] as [string, string][]) : []),
+                        ]).toString()}`;
+                        return (
+                          <tr key={s.id}>
+                            <td className="py-2 pr-3">
+                              <Link to={to} className="font-medium text-white underline-offset-2 hover:underline">
+                                {s.name}
+                              </Link>
+                            </td>
+                            <td className={cn('py-2 pr-3 text-lg font-bold leading-none', s.grade ? GRADE_STYLE[s.grade] : 'text-silver/50')}>
+                              {s.grade ?? '—'}
+                            </td>
+                            <td className="py-2 pr-3 tabular-nums text-white">
+                              {s.reliabilityPct === null ? '—' : `${s.reliabilityPct}%`}
+                              <span className="text-silver/50"> · {s.showed}/{s.ended}</span>
+                            </td>
+                            <td className="py-2 pr-3 tabular-nums text-white">{s.fillPct === null ? '—' : `${s.fillPct}%`}</td>
+                            <td className="py-2 pr-3 tabular-nums text-silver">{s.published}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
             {/* ---- Fill per day ------------------------------------------ */}
             <Card className="xl:col-span-7">
@@ -475,6 +581,7 @@ export function PortalHistory() {
                             >
                               <FileText className="h-3.5 w-3.5" aria-hidden="true" />
                             </Button>
+                            {reviewedMark(s.reviewed, () => void markReviewed('STATEMENT', s.id))}
                           </div>
                         </li>
                       );
@@ -487,14 +594,17 @@ export function PortalHistory() {
                             {fmtDate(parseYmd(r.weekStart))} – {fmtDate(parseYmd(r.weekEnd))}
                           </div>
                         </div>
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          onClick={() => void downloadStatementFile(r.url, `service-report-${r.weekStart}.pdf`)}
-                        >
-                          <FileText className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
-                          PDF
-                        </Button>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Button
+                            size="xs"
+                            variant="ghost"
+                            onClick={() => void downloadStatementFile(r.url, `service-report-${r.weekStart}.pdf`)}
+                          >
+                            <FileText className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+                            PDF
+                          </Button>
+                          {reviewedMark(r.reviewed, () => void markReviewed('SERVICE_REPORT', r.weekStart))}
+                        </div>
                       </li>
                     ))}
                   </ul>

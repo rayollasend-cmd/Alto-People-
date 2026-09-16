@@ -33,6 +33,7 @@ import { StatementsSection } from './StatementsSection';
 import { LocationsSection } from './LocationsSection';
 import { BenefitsPlansSection } from './BenefitsPlansSection';
 import { QuickbooksSection } from './QuickbooksSection';
+import { PortalAccessSection } from './PortalAccessSection';
 
 const STATUSES: ClientStatus[] = ['PROSPECT', 'ACTIVE', 'INACTIVE'];
 
@@ -195,6 +196,10 @@ export function ClientDetail() {
 
       <div id="section-locations" className="scroll-mt-20 empty:hidden">
         <LocationsSection clientId={client.id} />
+      </div>
+
+      <div id="section-portal" className="scroll-mt-20 empty:hidden">
+        <PortalAccessSection clientId={client.id} />
       </div>
 
       <div id="section-jobs" className="scroll-mt-20 empty:hidden">

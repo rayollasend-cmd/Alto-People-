@@ -128,9 +128,20 @@ export async function runPortalDigestSweep(
         risk > 0
           ? `${storeName}: ${risk} open slot${risk === 1 ? '' : 's'} need cover`
           : `${storeName}: staffed and confirmed`,
-      body: `${todayLine}\n${tomorrowLine}\n\nYour live store view has the roster, the lead on site, and last night's checklist. [${todayKey}]`,
+      body:
+        `${todayLine}\n${tomorrowLine}\n\n` +
+        (risk > 0
+          ? 'Need cover? Open the link and the request is pre-filled for the Workforce desk. '
+          : "Your live store view has the roster, the lead on site, and last night's checklist. ") +
+        `[${todayKey}]`,
       category: CATEGORY,
-      linkUrl: '/portal',
+      // One tap from the email into a pre-filled staffing request.
+      linkUrl:
+        risk > 0
+          ? `/portal/requests?new=STAFFING&subject=${encodeURIComponent(
+              `Cover for ${risk} open slot${risk === 1 ? '' : 's'} (${todayKey})`,
+            )}`
+          : '/portal',
     });
     sent += 1;
   }

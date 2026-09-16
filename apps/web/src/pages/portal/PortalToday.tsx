@@ -1,11 +1,12 @@
 import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, Users } from 'lucide-react';
+import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, Download, Printer, Users } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { fmtDate, fmtShiftRangeTz, fmtTime, fmtTimeTz, parseYmd, ymdLocal } from '@/lib/format';
+import { downloadCsv } from '@/lib/csv';
 import { cn } from '@/lib/cn';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -85,7 +86,7 @@ export function PortalToday() {
   const present = data ? data.summary.worked : 0;
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4">
+    <div className="mx-auto max-w-4xl space-y-4 print-area">
       <PageHeader
         title={dayLabel}
         topbarTitle={t('portal.todayNav')}
@@ -106,17 +107,50 @@ export function PortalToday() {
           </Button>
         }
         primaryAction={
-          <Button size="sm" variant="outline" asChild>
-            <Link to={`/portal/schedule${scope.toString() ? `?${scope.toString()}&` : '?'}week=${date}`}>
-              <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              {t('portal.openSchedule')}
-            </Link>
-          </Button>
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className="print:hidden"
+              disabled={!data || data.roster.length === 0}
+              onClick={() =>
+                data &&
+                downloadCsv(`day-${date}.csv`, [
+                  ['Date', 'Store', 'Shift start', 'Shift end', 'Name', 'Position', 'Lead', 'Status', 'Clock in', 'Clock out'],
+                  ...data.roster.map((r) => [
+                    data.date,
+                    r.locationName ?? data.store?.name ?? data.client.name,
+                    fmtTimeTz(r.startsAt, r.timezone),
+                    fmtTimeTz(r.endsAt, r.timezone),
+                    r.name ?? '',
+                    r.position,
+                    r.isLead ? 'yes' : '',
+                    r.state,
+                    r.clockInAt ? fmtTimeTz(r.clockInAt, r.timezone) : '',
+                    r.clockOutAt ? fmtTimeTz(r.clockOutAt, r.timezone) : '',
+                  ]),
+                ])
+              }
+            >
+              <Download className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              CSV
+            </Button>
+            <Button size="sm" variant="outline" className="print:hidden" onClick={() => window.print()}>
+              <Printer className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              {t('portal.print')}
+            </Button>
+            <Button size="sm" variant="outline" className="print:hidden" asChild>
+              <Link to={`/portal/schedule${scope.toString() ? `?${scope.toString()}&` : '?'}week=${date}`}>
+                <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                {t('portal.openSchedule')}
+              </Link>
+            </Button>
+          </>
         }
       />
 
       {/* ---- Date control: one row, above everything it scopes ---------- */}
-      <div className="sticky top-0 z-10 -mx-4 flex items-center gap-2 bg-navy/95 px-4 py-2 backdrop-blur md:mx-0 md:px-0">
+      <div className="sticky top-0 z-10 -mx-4 flex items-center gap-2 bg-navy/95 px-4 py-2 backdrop-blur md:mx-0 md:px-0 print:hidden">
         <Button size="sm" variant="ghost" onClick={() => goDay(shiftDays(date, -1))} aria-label={t('portal.prevDay')}>
           <ChevronLeft className="h-4 w-4" aria-hidden="true" />
         </Button>

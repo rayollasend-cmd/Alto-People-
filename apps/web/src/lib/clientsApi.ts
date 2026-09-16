@@ -158,3 +158,45 @@ export function archiveLocation(clientId: string, locationId: string): Promise<v
     method: 'DELETE',
   });
 }
+
+/* ---- Portal access (the store manager site) ------------------------- */
+
+export interface PortalUserRow {
+  id: string;
+  email: string;
+  status: 'ACTIVE' | 'INVITED' | 'DISABLED';
+  createdAt: string;
+  locationId: string | null;
+  locationName: string | null;
+  inviteExpiresAt: string | null;
+}
+
+export interface PortalReadiness {
+  accounts: number;
+  stores: Array<{ id: string; name: string; hasTarget: boolean; portalAccounts: number }>;
+  leadPositions: number;
+  supervisors: Array<{ name: string; hasPhone: boolean }>;
+  photos: { withPhoto: number; total: number; pct: number | null };
+  supportEmail: string | null;
+  mfa: { policy: string; coversPortal: boolean };
+  gaps: string[];
+}
+
+export function listPortalUsers(clientId: string): Promise<{ users: PortalUserRow[] }> {
+  return apiFetch(`/clients/${clientId}/portal-users`);
+}
+
+export function invitePortalUser(
+  clientId: string,
+  body: { email: string; locationId: string | null },
+): Promise<PortalUserRow & { emailFailed: string | null }> {
+  return apiFetch(`/clients/${clientId}/portal-users`, { method: 'POST', body });
+}
+
+export function disablePortalUser(clientId: string, userId: string): Promise<void> {
+  return apiFetch<void>(`/clients/${clientId}/portal-users/${userId}/disable`, { method: 'POST' });
+}
+
+export function getPortalReadiness(clientId: string): Promise<PortalReadiness> {
+  return apiFetch(`/clients/${clientId}/portal-readiness`);
+}

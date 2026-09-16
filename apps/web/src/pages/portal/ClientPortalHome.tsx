@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import {
   Building2,
   CalendarDays,
+  CheckCircle2,
   ClipboardCheck,
   FileText,
   HardHat,
@@ -13,7 +15,7 @@ import {
   ShieldCheck,
   Users,
 } from 'lucide-react';
-import { apiFetch } from '@/lib/api';
+import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import {
@@ -172,6 +174,7 @@ interface PortalOverview {
     finalizedAt: string | null;
     paidAt: string | null;
     pdfUrl: string;
+    reviewed: { reviewedAt: string; reviewedBy: string | null } | null;
   }>;
   coverage: {
     weekStart: string;
@@ -181,7 +184,40 @@ interface PortalOverview {
     replacementsFound: number;
   };
   safety: { monthIncidents: number; open: number; daysSinceLast: number | null };
-  serviceReport: { weekStart: string; url: string };
+  serviceReport: {
+    weekStart: string;
+    url: string;
+    reviewed: { reviewedAt: string; reviewedBy: string | null } | null;
+  };
+}
+
+/** "Reviewed by Dana · Sep 3" — the client's own mark on a document. */
+function ReviewedMark({
+  reviewed,
+  onMark,
+  t,
+}: {
+  reviewed: { reviewedAt: string; reviewedBy: string | null } | null;
+  onMark: (() => void) | null;
+  t: ReturnType<typeof useI18n>['t'];
+}) {
+  if (reviewed) {
+    return (
+      <span className="flex items-center gap-1 text-2xs text-success">
+        <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+        {reviewed.reviewedBy
+          ? t('portal.reviewed', { name: reviewed.reviewedBy, date: fmtDate(reviewed.reviewedAt) })
+          : t('portal.reviewedNoName', { date: fmtDate(reviewed.reviewedAt) })}
+      </span>
+    );
+  }
+  if (!onMark) return null;
+  return (
+    <Button size="xs" variant="ghost" onClick={onMark}>
+      <CheckCircle2 className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+      {t('portal.markReviewed')}
+    </Button>
+  );
 }
 
 const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
@@ -216,6 +252,16 @@ export function ClientPortalHome() {
   const previewId = searchParams.get('clientId');
   const qs = scopeQuery(searchParams, isPortal);
   const [prefill, setPrefill] = useState<RequestPrefill | null>(null);
+  const queryClient = useQueryClient();
+  const markReviewed = async (kind: 'STATEMENT' | 'SERVICE_REPORT', key: string) => {
+    try {
+      await apiFetch('/client-portal/acknowledge', { method: 'POST', body: { kind, key } });
+      toast.success(t('portal.markedReviewed'));
+      void queryClient.invalidateQueries({ queryKey: ['clientPortal'] });
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : t('portal.loadFailed'));
+    }
+  };
 
   const enabled = isPortal || (canPreview && !!previewId);
   const query = useQuery({
@@ -379,20 +425,27 @@ export function ClientPortalHome() {
           </span>
         }
         secondaryActions={
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() =>
-              void downloadStatementFile(
-                data.serviceReport.url,
-                `service-report-${data.serviceReport.weekStart}.pdf`,
-              )
-            }
-            title={t('portal.svcReportHint', { week: fmtDate(parseYmd(data.serviceReport.weekStart)) })}
-          >
-            <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-            {t('portal.svcReport')}
-          </Button>
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                void downloadStatementFile(
+                  data.serviceReport.url,
+                  `service-report-${data.serviceReport.weekStart}.pdf`,
+                )
+              }
+              title={t('portal.svcReportHint', { week: fmtDate(parseYmd(data.serviceReport.weekStart)) })}
+            >
+              <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              {t('portal.svcReport')}
+            </Button>
+            <ReviewedMark
+              reviewed={data.serviceReport.reviewed}
+              onMark={isPortal ? () => void markReviewed('SERVICE_REPORT', data.serviceReport.weekStart) : null}
+              t={t}
+            />
+          </>
         }
         primaryAction={
           <Button size="sm" asChild>
@@ -905,6 +958,12 @@ export function ClientPortalHome() {
               )}
               {replaced && <span className="text-success"> · {replaced}</span>}
             </p>
+            <details className="mt-2">
+              <summary className="inline-flex min-h-8 cursor-pointer select-none items-center text-2xs uppercase tracking-wider text-silver/60 hover:text-silver coarse:min-h-11">
+                {t('portal.gradeHow')}
+              </summary>
+              <p className="mt-1 text-xs leading-relaxed text-silver/80">{t('portal.gradeHowText')}</p>
+            </details>
             <DetailsTable
               label={t('portal.details')}
               columns={[
@@ -1054,6 +1113,11 @@ export function ClientPortalHome() {
                             {t('portal.stDispute')}
                           </Button>
                         )}
+                        <ReviewedMark
+                          reviewed={s.reviewed}
+                          onMark={isPortal ? () => void markReviewed('STATEMENT', s.id) : null}
+                          t={t}
+                        />
                       </div>
                     </li>
                   );

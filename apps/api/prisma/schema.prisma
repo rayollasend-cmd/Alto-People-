@@ -558,6 +558,7 @@ model User {
   clientRequestsAuthored            ClientRequest[]               @relation("ClientRequestAuthor")
   clientRequestsResolved            ClientRequest[]               @relation("ClientRequestResolver")
   clientRequestsStarted             ClientRequest[]               @relation("ClientRequestStarter")
+  clientAcknowledgements            ClientAcknowledgement[]
   cohortsCreated                    Cohort[]                      @relation("CohortCreator")
   statementsFinalized               ClientStatement[]             @relation("StatementFinalizer")
   // Privacy erasures this admin performed (Associate.erasedById).
@@ -632,6 +633,7 @@ model Client {
   statements             ClientStatement[]
   fieldglassRegistrations FieldglassRegistration[]
   clientRequests         ClientRequest[]
+  clientAcknowledgements ClientAcknowledgement[]
   cohorts                Cohort[]
   opsShifts              OpsShift[]
   payrollRuns            PayrollRun[]
@@ -909,14 +911,41 @@ model ClientRequest {
   // Who picked it up (IN_PROGRESS) — the named owner the client sees.
   startedById     String?             @db.Uuid
   startedAt       DateTime?           @db.Timestamptz(6)
+  // The person the request is about (feedback / issue), picked from the
+  // store's own roster — never free text Alto has to decode.
+  associateId     String?             @db.Uuid
 
-  client        Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  client        Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  associate     Associate? @relation("ClientRequestSubject", fields: [associateId], references: [id], onDelete: SetNull)
   createdByUser User?  @relation("ClientRequestAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
   resolvedBy    User?  @relation("ClientRequestResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
   startedBy     User?  @relation("ClientRequestStarter", fields: [startedById], references: [id], onDelete: SetNull)
 
   @@index([clientId, createdAt(sort: Desc)])
   @@index([status])
+}
+
+// The client's "reviewed" mark on a statement or a weekly service report
+// — timestamped, attributed, one per document per client. Disputes then
+// have a record on both sides.
+enum ClientAcknowledgementKind {
+  STATEMENT
+  SERVICE_REPORT
+}
+
+model ClientAcknowledgement {
+  id         String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId   String                    @db.Uuid
+  kind       ClientAcknowledgementKind
+  // STATEMENT → the statement id; SERVICE_REPORT → the org week start (YYYY-MM-DD).
+  subjectKey String                    @db.VarChar(64)
+  userId     String?                   @db.Uuid
+  createdAt  DateTime                  @default(now()) @db.Timestamptz(6)
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([clientId, kind, subjectKey])
 }
 
 // A seasonal wave: N heads for a client by a date. Lanes on the relay
@@ -1467,6 +1496,7 @@ model Associate {
   clockInRequests          ClockInRequest[]
   // Rolling 90-day attendance signals (late/early/no-show/call-out).
   attendanceEvents         AttendanceEvent[]
+  clientRequestsAbout      ClientRequest[]    @relation("ClientRequestSubject")
   otAlertStamps            OtAlertStamp[]
   // Phase 131 — location-assignment history. The open row (endedAt IS
   // NULL) is the associate's current work site.

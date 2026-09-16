@@ -17,6 +17,7 @@ import {
   PASSWORD_RESET_TTL_SECONDS,
 } from '../lib/passwordResetToken.js';
 import { send } from '../lib/notifications.js';
+import { nudgePortalReadiness } from '../lib/portalReadiness.js';
 
 /**
  * HR user-administration surface. Lets HR list every account, change a
@@ -311,6 +312,17 @@ usersRouter.patch(
 
     await prisma.user.update({ where: { id }, data });
     invalidateUserCache(id);
+
+    // A store manager account just got its client or store: make sure the
+    // portal will have something to show. Fire-and-forget; rings the
+    // Workforce desk once per client per day.
+    if (
+      effectiveRole === 'CLIENT_PORTAL' &&
+      effectiveClientId &&
+      (data.role || data.clientId !== undefined || data.locationId !== undefined)
+    ) {
+      void nudgePortalReadiness(effectiveClientId).catch(() => undefined);
+    }
 
     // Critical: privilege escalation and account disablement MUST land in
     // AuditLog before the request returns. Without that, an admin who

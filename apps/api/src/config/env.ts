@@ -147,6 +147,16 @@ const EnvSchema = z.object({
   // scheduled. Set 0 to disable.
   PORTAL_DIGEST_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(1800),
   PORTAL_DIGEST_HOUR: z.coerce.number().int().min(0).max(23).default(6),
+  // Saturday service-report email to every portal account
+  // (lib/serviceReportMailer.ts). Interval = how often we CHECK; sends
+  // once per account per week after SERVICE_REPORT_MAIL_HOUR org time.
+  SERVICE_REPORT_MAIL_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
+  SERVICE_REPORT_MAIL_HOUR: z.coerce.number().int().min(0).max(23).default(7),
+  // "Your 6am wave is 2 short" push to portal accounts + supervisors
+  // (lib/portalCoverageAlert.ts): checked every N seconds, a wave rings
+  // once per org-day after the grace period. 0 disables.
+  PORTAL_COVERAGE_ALERT_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(600),
+  PORTAL_COVERAGE_ALERT_GRACE_MINUTES: z.coerce.number().int().min(1).max(120).default(15),
   // Manual compliance attestation reminder cron. 0 (default) disables;
   // production should set 3600 (hourly) so HR gets pinged the day a
   // weekly/monthly compliance attestation comes due. Per-signal de-dup

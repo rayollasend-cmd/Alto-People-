@@ -16,7 +16,13 @@ import {
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
+import { invalidateUserCache, requireAnyCapability, requireCapability } from '../middleware/auth.js';
+import { z } from 'zod';
+import { env } from '../config/env.js';
+import { generateInviteToken } from '../lib/inviteToken.js';
+import { inviteTemplate } from '../lib/emailTemplates.js';
+import { send } from '../lib/notifications.js';
+import { computePortalReadiness, nudgePortalReadiness } from '../lib/portalReadiness.js';
 import { scopeClients } from '../lib/scope.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { seedDefaultShiftPositions } from '../lib/shiftPositions.js';
@@ -759,13 +765,32 @@ clientsRouter.post('/statements/generate-due', STATEMENTS, async (req, res, next
 
 clientsRouter.get('/:id/statements', STATEMENTS_READ, async (req, res, next) => {
   try {
-    const rows = await prisma.clientStatement.findMany({
-      where: { clientId: req.params.id },
-      orderBy: [{ periodStart: 'desc' }],
-      take: 60,
-      include: { finalizedBy: { select: { email: true } } },
+    const [rows, acks] = await Promise.all([
+      prisma.clientStatement.findMany({
+        where: { clientId: req.params.id },
+        orderBy: [{ periodStart: 'desc' }],
+        take: 60,
+        include: { finalizedBy: { select: { email: true } } },
+      }),
+      // The client's own "reviewed" marks — disputes have a record on both sides.
+      prisma.clientAcknowledgement.findMany({
+        where: { clientId: req.params.id, kind: 'STATEMENT' },
+        include: { user: { select: { email: true, associate: { select: { firstName: true } } } } },
+        take: 500,
+      }),
+    ]);
+    const reviewed = new Map(
+      acks.map((a) => [
+        a.subjectKey,
+        {
+          reviewedAt: a.createdAt.toISOString(),
+          reviewedBy: a.user?.associate?.firstName ?? a.user?.email.split('@')[0] ?? null,
+        },
+      ]),
+    );
+    res.json({
+      statements: rows.map((r) => ({ ...statementRow(r), clientReviewed: reviewed.get(r.id) ?? null })),
     });
-    res.json({ statements: rows.map(statementRow) });
   } catch (err) {
     next(err);
   }
@@ -1056,6 +1081,237 @@ clientsRouter.get('/:id/statements/:sid.pdf', STATEMENTS_READ, async (req, res, 
       }.pdf"`,
     );
     res.send(pdf);
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ====================================================================== */
+/* Portal access — the store's logins, from the client page.               */
+/* ====================================================================== */
+
+/**
+ * GET /clients/:id/portal-users — every CLIENT_PORTAL account bound to
+ * this client, with its store and status, so whoever owns the account
+ * can see who at the store has access and pull it.
+ */
+clientsRouter.get('/:id/portal-users', async (req, res, next) => {
+  try {
+    const client = await prisma.client.findFirst({
+      where: { id: req.params.id, deletedAt: null },
+      select: { id: true },
+    });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    const rows = await prisma.user.findMany({
+      where: { clientId: client.id, role: 'CLIENT_PORTAL', deletedAt: null },
+      select: {
+        id: true,
+        email: true,
+        status: true,
+        createdAt: true,
+        locationId: true,
+        location: { select: { name: true } },
+        inviteTokens: {
+          where: { consumedAt: null },
+          select: { expiresAt: true },
+          orderBy: { expiresAt: 'desc' },
+          take: 1,
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 200,
+    });
+    res.json({
+      users: rows.map((u) => ({
+        id: u.id,
+        email: u.email,
+        status: u.status,
+        createdAt: u.createdAt.toISOString(),
+        locationId: u.locationId,
+        locationName: u.location?.name ?? null,
+        inviteExpiresAt: u.inviteTokens[0]?.expiresAt.toISOString() ?? null,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const PortalInviteSchema = z.object({
+  email: z.string().email().max(254),
+  /** null = the whole client (a market manager). */
+  locationId: z.string().uuid().nullable().optional(),
+});
+
+/**
+ * POST /clients/:id/portal-users — "Give this store a portal login."
+ * Creates (or re-invites) a CLIENT_PORTAL account bound to the client and
+ * optionally one store, mails the magic link, and rings the Workforce
+ * desk if the store isn't ready for a portal yet. manage:clients.
+ */
+clientsRouter.post('/:id/portal-users', MANAGE, async (req, res, next) => {
+  try {
+    const client = await prisma.client.findFirst({
+      where: { id: req.params.id, deletedAt: null },
+      select: { id: true, name: true },
+    });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    const input = PortalInviteSchema.parse(req.body);
+    const email = input.email.trim().toLowerCase();
+    let location: { id: string; name: string } | null = null;
+    if (input.locationId) {
+      location = await prisma.location.findFirst({
+        where: { id: input.locationId, clientId: client.id, deletedAt: null },
+        select: { id: true, name: true },
+      });
+      if (!location) {
+        throw new HttpError(400, 'location_not_found', 'That store does not belong to this client.');
+      }
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing && existing.deletedAt === null && existing.role !== 'CLIENT_PORTAL') {
+      throw new HttpError(409, 'email_in_use', 'That email already belongs to an Alto account.');
+    }
+    if (existing && existing.deletedAt === null && existing.clientId && existing.clientId !== client.id) {
+      throw new HttpError(409, 'email_in_use', 'That email already has a portal login for another client.');
+    }
+    if (existing && existing.status === 'ACTIVE' && existing.passwordHash) {
+      throw new HttpError(409, 'already_active', 'That store manager already has an active login.');
+    }
+
+    const invite = generateInviteToken();
+    const expiresAt = new Date(Date.now() + env.INVITE_TOKEN_TTL_SECONDS * 1000);
+    const user = await prisma.$transaction(async (tx) => {
+      const u = existing
+        ? await tx.user.update({
+            where: { id: existing.id },
+            data: {
+              role: 'CLIENT_PORTAL',
+              status: 'INVITED',
+              clientId: client.id,
+              locationId: location?.id ?? null,
+              deletedAt: null,
+              tokenVersion: { increment: 1 },
+            },
+          })
+        : await tx.user.create({
+            data: {
+              email,
+              role: 'CLIENT_PORTAL',
+              status: 'INVITED',
+              clientId: client.id,
+              locationId: location?.id ?? null,
+            },
+          });
+      await tx.inviteToken.updateMany({
+        where: { userId: u.id, consumedAt: null },
+        data: { consumedAt: new Date() },
+      });
+      await tx.inviteToken.create({ data: { tokenHash: invite.hash, userId: u.id, expiresAt } });
+      return u;
+    });
+    invalidateUserCache(user.id);
+
+    const acceptUrl = `${env.APP_BASE_URL}/accept-invite/${invite.raw}`;
+    const storeName = location?.name ?? client.name;
+    const tpl = inviteTemplate({
+      firstName: email.split('@')[0] ?? 'there',
+      clientName: storeName,
+      position: 'Store manager portal',
+      magicLink: acceptUrl,
+      linkExpiresAt: expiresAt.toISOString().slice(0, 10),
+    });
+    let emailFailed: string | null = null;
+    try {
+      await send({
+        channel: 'EMAIL',
+        recipient: { userId: user.id, phone: null, email },
+        subject: `Your ${storeName} portal login`,
+        body: tpl.text,
+        html: tpl.html,
+      });
+    } catch (err) {
+      emailFailed = err instanceof Error ? err.message : String(err);
+    }
+
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: client.id,
+        action: 'client.portal_user_invited',
+        entityType: 'User',
+        entityId: user.id,
+        metadata: { email, locationId: location?.id ?? null, emailFailed },
+      },
+      'clients.portal_user_invited',
+    );
+    // The portal will show dashes if the store isn't set up — ring the desk.
+    void nudgePortalReadiness(client.id).catch(() => undefined);
+
+    res.status(201).json({
+      id: user.id,
+      email,
+      status: 'INVITED',
+      locationId: location?.id ?? null,
+      locationName: location?.name ?? null,
+      inviteExpiresAt: expiresAt.toISOString(),
+      emailFailed,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * POST /clients/:id/portal-users/:uid/disable — pull a store's login.
+ * Only CLIENT_PORTAL accounts of THIS client are reachable here, so the
+ * clients-area capability can never touch an Alto account.
+ */
+clientsRouter.post('/:id/portal-users/:uid/disable', MANAGE, async (req, res, next) => {
+  try {
+    const user = await prisma.user.findFirst({
+      where: { id: req.params.uid, clientId: req.params.id, role: 'CLIENT_PORTAL', deletedAt: null },
+      select: { id: true, status: true },
+    });
+    if (!user) throw new HttpError(404, 'not_found', 'Portal account not found');
+    if (user.status !== 'DISABLED') {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { status: 'DISABLED', tokenVersion: { increment: 1 } },
+      });
+      invalidateUserCache(user.id);
+      await recordCriticalAudit(
+        {
+          actorUserId: req.user!.id,
+          clientId: req.params.id,
+          action: 'client.portal_user_disabled',
+          entityType: 'User',
+          entityId: user.id,
+          metadata: { ip: req.ip ?? null },
+        },
+        'clients.portal_user_disabled',
+      );
+    }
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /clients/:id/portal-readiness — the setup checklist the portal
+ * depends on: contracted headcount per store, a lead position, supervisor
+ * phones, photos, the support address, the MFA policy.
+ */
+clientsRouter.get('/:id/portal-readiness', async (req, res, next) => {
+  try {
+    const client = await prisma.client.findFirst({
+      where: { id: req.params.id, deletedAt: null },
+      select: { id: true },
+    });
+    if (!client) throw new HttpError(404, 'client_not_found', 'Client not found');
+    res.json(await computePortalReadiness(client.id));
   } catch (err) {
     next(err);
   }

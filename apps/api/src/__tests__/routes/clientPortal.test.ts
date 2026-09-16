@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { createApp } from '../../app.js';
+import { flushPendingNotifications } from '../../lib/notify.js';
 import {
   DEFAULT_TEST_PASSWORD,
   createAssociate,
@@ -339,7 +340,6 @@ describe('GET /client-portal/overview', () => {
   });
 });
 
-describe('the store site — scope, targets, evidence, downloads', () => {
   async function seedTwoStores() {
     const client = await createClient('Walmart 218');
     // createClient seeds one default Location named after the client; a
@@ -507,6 +507,7 @@ describe('the store site — scope, targets, evidence, downloads', () => {
     };
   }
 
+describe('the store site — scope, targets, evidence, downloads', () => {
   it('pins a store account to its store and rolls the client up for a market account', async () => {
     const s = await seedTwoStores();
 
@@ -747,5 +748,113 @@ describe('the historical lenses — a day, and a range', () => {
     expect(
       (await market.get(`/client-portal/history?from=${dayKeyPlus(yesterday, -120)}&to=${yesterday}`)).status,
     ).toBe(400);
+  });
+});
+
+describe('closing the loops — people, reviewed marks, the store roll-up', () => {
+  it('names a person from the roster, marks documents reviewed, and ranks stores', async () => {
+    const s = await seedTwoStores();
+    const store = await loginAs(s.storeUser.email);
+    const market = await loginAs(s.marketUser.email);
+
+    // The store's own people: Maria (store A) only; the market sees both.
+    const people = await store.get('/client-portal/people');
+    expect(people.status).toBe(200);
+    expect(people.body.people.map((p: { name: string }) => p.name)).toEqual(['Maria Lopez']);
+    const mpeople = await market.get('/client-portal/people');
+    expect(mpeople.body.people.map((p: { name: string }) => p.name)).toEqual(['Ben Okafor', 'Maria Lopez']);
+
+    // Reviewed marks: a FINAL statement and a service report week, once each.
+    const first = await store.post('/client-portal/acknowledge').send({ kind: 'STATEMENT', key: s.statement.id });
+    expect(first.status).toBe(201);
+    expect(first.body.reviewedAt).toBeTruthy();
+    const again = await store.post('/client-portal/acknowledge').send({ kind: 'STATEMENT', key: s.statement.id });
+    expect(again.status).toBe(200);
+    expect(again.body.reviewedAt).toBe(first.body.reviewedAt);
+    // Drafts and other tenants' statements can't be marked; bad keys are refused.
+    expect((await store.post('/client-portal/acknowledge').send({ kind: 'STATEMENT', key: s.draft.id })).status).toBe(404);
+    expect((await store.post('/client-portal/acknowledge').send({ kind: 'SERVICE_REPORT', key: 'nope' })).status).toBe(400);
+    const week = await store.post('/client-portal/acknowledge').send({ kind: 'SERVICE_REPORT', key: '2026-01-03' });
+    expect(week.status).toBe(201);
+    // The marks show up on the overview and on the staff statements list.
+    const overview = await store.get('/client-portal/overview');
+    const st = overview.body.statements.find((x: { id: string }) => x.id === s.statement.id);
+    expect(st.reviewed.reviewedAt).toBe(first.body.reviewedAt);
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const staff = await loginAs(hr.email);
+    const list = await staff.get(`/clients/${s.client.id}/statements`);
+    expect(list.status).toBe(200);
+    const staffRow = list.body.statements.find((x: { id: string }) => x.id === s.statement.id);
+    expect(staffRow.clientReviewed.reviewedAt).toBe(first.body.reviewedAt);
+    // A preview can't sign for the client.
+    expect(
+      (await staff.post('/client-portal/acknowledge').send({ kind: 'STATEMENT', key: s.statement.id })).status,
+    ).toBe(403);
+
+    // The market roll-up: both stores, ranked — A (1 of 1) ahead of the
+    // sister store (0 of 1).
+    const yesterday = dayKeyPlus(orgDateKey(new Date()), -1);
+    const hist = await market.get(`/client-portal/history?from=${dayKeyPlus(yesterday, -6)}&to=${yesterday}`);
+    expect(hist.status).toBe(200);
+    expect(hist.body.stores.map((x: { name: string; grade: string | null }) => [x.name, x.grade])).toEqual([
+      ['Walmart 218', 'A'],
+      ['Walmart 4411', 'F'],
+    ]);
+    // A store account never gets the roll-up.
+    const shist = await store.get(`/client-portal/history?from=${dayKeyPlus(yesterday, -6)}&to=${yesterday}`);
+    expect(shist.body.stores).toEqual([]);
+  });
+
+  it('provisions and pulls portal logins from the client page, with a readiness check', async () => {
+    const s = await seedTwoStores();
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const admin = await loginAs(hr.email);
+
+    const before = await admin.get(`/clients/${s.client.id}/portal-users`);
+    expect(before.status).toBe(200);
+    expect(before.body.users).toHaveLength(2);
+
+    // Invite a store manager for store B.
+    const invited = await admin
+      .post(`/clients/${s.client.id}/portal-users`)
+      .send({ email: 'Manager.4411@walmart.example', locationId: s.storeB.id });
+    expect(invited.status).toBe(201);
+    expect(invited.body.email).toBe('manager.4411@walmart.example');
+    expect(invited.body.locationName).toBe('Walmart 4411');
+    const created = await prisma.user.findUniqueOrThrow({ where: { email: 'manager.4411@walmart.example' } });
+    expect(created.role).toBe('CLIENT_PORTAL');
+    expect(created.status).toBe('INVITED');
+    expect(created.locationId).toBe(s.storeB.id);
+    expect(await prisma.inviteToken.count({ where: { userId: created.id, consumedAt: null } })).toBe(1);
+    // A store from another client, an Alto staff email, are refused.
+    expect(
+      (await admin.post(`/clients/${s.client.id}/portal-users`).send({ email: 'x@y.example', locationId: s.otherStore.id }))
+        .status,
+    ).toBe(400);
+    expect((await admin.post(`/clients/${s.client.id}/portal-users`).send({ email: hr.email })).status).toBe(409);
+
+    // Readiness: store B has no headcount, no lead position, no supervisor phone…
+    await flushPendingNotifications();
+    const ready = await admin.get(`/clients/${s.client.id}/portal-readiness`);
+    expect(ready.status).toBe(200);
+    expect(ready.body.stores.find((x: { id: string }) => x.id === s.storeA.id).hasTarget).toBe(true);
+    expect(ready.body.stores.find((x: { id: string }) => x.id === s.storeB.id).hasTarget).toBe(false);
+    expect(ready.body.gaps.some((g: string) => g.includes('Walmart 4411'))).toBe(true);
+    // …and the Workforce desk was rung about it (once).
+    const { user: wfm } = await createUser({ role: 'WORKFORCE_MANAGER' });
+    await admin.post(`/clients/${s.client.id}/portal-users`).send({ email: 'second@walmart.example' });
+    await flushPendingNotifications();
+    const bells = await prisma.notification.findMany({
+      where: { category: 'portal.readiness', channel: 'IN_APP', recipientUserId: wfm.id },
+    });
+    expect(bells).toHaveLength(1);
+    expect(bells[0]!.linkUrl).toBe(`/clients/${s.client.id}?section=portal`);
+
+    // Pull a login: signed out, disabled, and only portal accounts of THIS client are reachable.
+    const pulled = await admin.post(`/clients/${s.client.id}/portal-users/${created.id}/disable`);
+    expect(pulled.status).toBe(204);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: created.id } })).status).toBe('DISABLED');
+    expect((await admin.post(`/clients/${s.other.id}/portal-users/${created.id}/disable`)).status).toBe(404);
+    expect((await admin.post(`/clients/${s.client.id}/portal-users/${hr.id}/disable`)).status).toBe(404);
   });
 });

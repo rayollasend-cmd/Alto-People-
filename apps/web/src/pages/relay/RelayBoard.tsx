@@ -100,6 +100,8 @@ interface ClientRequestRow {
   createdAt: string;
   dueAt: string | null;
   overdue: boolean;
+  associateId: string | null;
+  associateName: string | null;
 }
 
 interface Baton {
@@ -218,6 +220,9 @@ function ClientRequestsSection({
                 <li key={r.id} className="px-4 py-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold text-white">{r.clientName}</span>
+                    {r.associateName && (
+                      <span className="text-xs text-silver/80">· about {r.associateName}</span>
+                    )}
                     <Badge variant={r.kind === 'ISSUE' ? 'destructive' : 'outline'}>
                       {REQ_KIND_LABEL[r.kind]}
                     </Badge>

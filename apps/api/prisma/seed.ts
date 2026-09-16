@@ -345,6 +345,63 @@ async function main() {
     portalUser = existingPortalUser;
   }
 
+  // ---- The demo store: what a real store site looks like ------------------
+  // A store under the portal client, a contracted headcount, a lead
+  // position, a supervisor with a phone, and the portal account pinned to
+  // the store — so every demo shows "6 / 8", the Lead tag, and the Call
+  // button instead of dashes.
+  const demoStore =
+    (await prisma.location.findFirst({ where: { clientId: portalClient.id, name: 'Front Beach 218' } })) ??
+    (await prisma.location.create({
+      data: {
+        clientId: portalClient.id,
+        name: 'Front Beach 218',
+        addressLine1: '15495 Panama City Beach Pkwy',
+        city: 'Panama City Beach',
+        state: 'FL',
+        zip: '32413',
+        timezone: 'America/Chicago',
+      },
+    }));
+  if (!(await prisma.staffingTarget.findFirst({ where: { locationId: demoStore.id } }))) {
+    await prisma.staffingTarget.createMany({
+      data: [
+        { locationId: demoStore.id, targetCount: 8, effectiveFrom: new Date('2026-01-03') },
+        { locationId: demoStore.id, targetCount: 6, effectiveFrom: new Date('2026-01-03'), label: 'Overnight', startMinute: 22 * 60, endMinute: 6 * 60 },
+        { locationId: demoStore.id, targetCount: 8, effectiveFrom: new Date('2026-01-03'), label: 'Morning', startMinute: 6 * 60, endMinute: 14 * 60 },
+      ],
+    });
+  }
+  if (!(await prisma.shiftPosition.findFirst({ where: { clientId: portalClient.id, isLead: true } }))) {
+    await prisma.shiftPosition.create({
+      data: { clientId: portalClient.id, name: 'Shift Lead', isLead: true, sortOrder: 0 },
+    });
+  }
+  const demoSupervisorEmail = 'dana.reyes@altohr.com';
+  if (!(await prisma.user.findUnique({ where: { email: demoSupervisorEmail } }))) {
+    const dana =
+      (await prisma.associate.findUnique({ where: { email: demoSupervisorEmail } })) ??
+      (await prisma.associate.create({
+        data: { firstName: 'Dana', lastName: 'Reyes', email: demoSupervisorEmail, phone: '850-555-0101' },
+      }));
+    await prisma.user.create({
+      data: {
+        email: demoSupervisorEmail,
+        passwordHash: await hashPassword('supervisor-dev-2026!'),
+        role: 'SHIFT_SUPERVISOR',
+        status: 'ACTIVE',
+        clientId: portalClient.id,
+        associateId: dana.id,
+      },
+    });
+  }
+  if (!portalUser.locationId) {
+    portalUser = await prisma.user.update({
+      where: { id: portalUser.id },
+      data: { locationId: demoStore.id },
+    });
+  }
+
   // ---- Management users (one per non-HR role for QA / persona testing) ---
   for (const m of MANAGEMENT_USERS) {
     const existing = await prisma.user.findUnique({ where: { email: m.email } });

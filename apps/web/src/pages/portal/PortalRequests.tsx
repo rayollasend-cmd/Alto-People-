@@ -21,10 +21,12 @@ import { Select } from '@/components/ui/Select';
 
 /**
  * The client's side of the loop: make a structured request (staffing /
- * feedback / issue / billing) and watch it move — received → in progress
- * → resolved — with the desk that owns it, the person who picked it up,
+ * feedback / issue / billing), optionally about a named person from the
+ * store's own roster, and watch it move — received → in progress →
+ * resolved — with the desk that owns it, the person who picked it up,
  * the promised reply-by date, and Alto's reply. The request lands as a
- * baton on the right desk the moment it's sent.
+ * baton on the right desk the moment it's sent, and the requester hears
+ * back on pickup and on reply.
  */
 
 export type ReqKind = 'STAFFING' | 'FEEDBACK' | 'ISSUE' | 'BILLING';
@@ -43,6 +45,8 @@ interface PortalRequest {
   desk: string;
   owner: string | null;
   overdue: boolean;
+  associateId: string | null;
+  associateName: string | null;
 }
 
 const KIND_KEY: Record<ReqKind, MessageKey> = {
@@ -66,6 +70,7 @@ export interface RequestPrefill {
   kind: ReqKind;
   subject: string;
   body?: string;
+  associateId?: string | null;
   /** Bump to re-open the dialog with a fresh prefill. */
   nonce: number;
 }
@@ -82,30 +87,49 @@ export function PortalRequests({ prefill }: { prefill?: RequestPrefill | null })
   const [kind, setKind] = useState<ReqKind>('STAFFING');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
+  const [associateId, setAssociateId] = useState('');
   const [busy, setBusy] = useState(false);
+  // The store's own people — loaded only when the dialog is open.
+  const people = useQuery({
+    queryKey: ['clientPortal', 'people'],
+    queryFn: () =>
+      apiFetch<{ people: Array<{ id: string; name: string; position: string }> }>(
+        '/client-portal/people',
+      ),
+    enabled: open,
+    staleTime: 5 * 60_000,
+  });
 
-  // A "dispute this statement" click elsewhere on the page opens the
-  // dialog pre-addressed to Finance with the statement named.
+  // A "dispute this statement" click, or a digest link, opens the
+  // dialog pre-addressed with the subject named.
   useEffect(() => {
     if (!prefill) return;
     setKind(prefill.kind);
     setSubject(prefill.subject);
     setBody(prefill.body ?? '');
+    setAssociateId(prefill.associateId ?? '');
     setOpen(true);
   }, [prefill]);
 
   const dirty = () => subject.trim().length > 0 || body.trim().length > 0;
+  const aboutPerson = kind === 'FEEDBACK' || kind === 'ISSUE';
 
   const submit = async () => {
     setBusy(true);
     try {
       await apiFetch('/client-portal/requests', {
         method: 'POST',
-        body: { kind, subject: subject.trim(), body: body.trim() },
+        body: {
+          kind,
+          subject: subject.trim(),
+          body: body.trim(),
+          associateId: aboutPerson && associateId ? associateId : null,
+        },
       });
       setOpen(false);
       setSubject('');
       setBody('');
+      setAssociateId('');
       setKind('STAFFING');
       void queryClient.invalidateQueries({ queryKey: ['clientPortal', 'requests'] });
       toast.success(t('portal.reqSent'));
@@ -143,6 +167,11 @@ export function PortalRequests({ prefill }: { prefill?: RequestPrefill | null })
                     {r.overdue ? t('portal.reqOverdue') : t(STATUS_KEY[r.status])}
                   </Badge>
                 </div>
+                {r.associateName && (
+                  <p className="mt-1 text-xs text-silver">
+                    {t('portal.reqAbout', { name: r.associateName })}
+                  </p>
+                )}
                 <p className="mt-1 text-xs text-silver/70">{r.body}</p>
                 <p className="mt-1 text-2xs tabular-nums text-silver/50">
                   {fmtDate(r.createdAt)}
@@ -162,9 +191,7 @@ export function PortalRequests({ prefill }: { prefill?: RequestPrefill | null })
                     <div className="text-2xs font-medium uppercase tracking-wider text-success">
                       {t('portal.reqReply')}
                     </div>
-                    <p className="mt-1 whitespace-pre-wrap text-sm text-silver">
-                      {r.resolution}
-                    </p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-silver">{r.resolution}</p>
                   </div>
                 )}
               </li>
@@ -191,6 +218,20 @@ export function PortalRequests({ prefill }: { prefill?: RequestPrefill | null })
                 </option>
               ))}
             </Select>
+            {aboutPerson && (
+              <Select
+                aria-label={t('portal.reqAboutLabel')}
+                value={associateId}
+                onChange={(e) => setAssociateId(e.target.value)}
+              >
+                <option value="">{t('portal.reqAboutNone')}</option>
+                {(people.data?.people ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} · {p.position}
+                  </option>
+                ))}
+              </Select>
+            )}
             <Input
               value={subject}
               onChange={(e) => setSubject(e.target.value)}

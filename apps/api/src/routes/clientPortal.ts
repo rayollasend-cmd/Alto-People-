@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { hasCapability, paidMinutesForRange } from '@alto-people/shared';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
@@ -275,6 +276,32 @@ async function currentTarget(
   }
   if (!any) return { target: null, label: null };
   return { target, label: labels.size === 1 ? [...labels][0]! : null };
+}
+
+/** The name the client sees on a "reviewed" mark: the reviewer's first
+ *  name, else the account's mailbox name — never a bare email. */
+function reviewerName(
+  u: { email: string; associate: { firstName: string } | null } | null,
+): string | null {
+  if (!u) return null;
+  return u.associate?.firstName ?? u.email.split('@')[0] ?? null;
+}
+
+/** "Reviewed" marks for a client, keyed `${kind}|${key}`. */
+async function loadAcknowledgements(clientId: string) {
+  const rows = await prisma.clientAcknowledgement.findMany({
+    where: { clientId },
+    include: { user: { select: { email: true, associate: { select: { firstName: true } } } } },
+    take: 2000,
+  });
+  const map = new Map<string, { reviewedAt: string; reviewedBy: string | null }>();
+  for (const r of rows) {
+    map.set(`${r.kind}|${r.subjectKey}`, {
+      reviewedAt: r.createdAt.toISOString(),
+      reviewedBy: reviewerName(r.user),
+    });
+  }
+  return (kind: 'STATEMENT' | 'SERVICE_REPORT', key: string) => map.get(`${kind}|${key}`) ?? null;
 }
 
 /**
@@ -812,6 +839,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
     }
 
     const workedMinutes = weekEntries.reduce((a, e) => a + netMinutes(e, now), 0);
+    const reviewed = await loadAcknowledgements(clientId);
     const lastCompletedWeek = orgDateKey(new Date(weekStart.getTime() - 7 * DAY));
     const preview = req.user!.role !== 'CLIENT_PORTAL';
     const previewQs = preview
@@ -911,6 +939,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
           finalizedAt: st.finalizedAt ? st.finalizedAt.toISOString() : null,
           paidAt: st.paidAt ? st.paidAt.toISOString() : null,
           pdfUrl: withPreview(`/api/client-portal/statements/${st.id}.pdf`),
+          reviewed: reviewed('STATEMENT', st.id),
         };
       }),
       coverage: {
@@ -930,6 +959,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       serviceReport: {
         weekStart: lastCompletedWeek,
         url: withPreview(`/api/client-portal/service-report.pdf?week=${lastCompletedWeek}`),
+        reviewed: reviewed('SERVICE_REPORT', lastCompletedWeek),
       },
     });
   } catch (err) {
@@ -1347,6 +1377,57 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
       ]);
 
     const ncnsIds = new Set(events.filter((e) => e.kind === 'NO_CALL_NO_SHOW' && e.shiftId).map((e) => e.shiftId));
+    const reviewed = await loadAcknowledgements(scope.clientId);
+    // Market accounts: the stores side by side, ranked by the same grade.
+    let storeRows: Array<{
+      id: string;
+      name: string;
+      published: number;
+      filled: number;
+      ended: number;
+      showed: number;
+      fillPct: number | null;
+      reliabilityPct: number | null;
+      grade: 'A' | 'B' | 'C' | 'D' | 'F' | null;
+    }> = [];
+    if (!scope.locationId) {
+      const locations = await prisma.location.findMany({
+        where: { clientId: scope.clientId, deletedAt: null, isActive: true },
+        select: { id: true, name: true },
+        take: 200,
+      });
+      if (locations.length > 1) {
+        const shiftLoc = await prisma.shift.findMany({
+          where: { id: { in: shiftIds } },
+          select: { id: true, locationId: true },
+          take: 20000,
+        });
+        const locOf = new Map(shiftLoc.map((s) => [s.id, s.locationId]));
+        storeRows = locations
+          .map((l) => {
+            const mine = shifts.filter((s) => locOf.get(s.id) === l.id);
+            const published = mine.length;
+            const filled = mine.filter((s) => s.status !== 'OPEN').length;
+            const endedRows = mine.filter((s) => s.endsAt.getTime() <= now.getTime());
+            const showed = endedRows.filter(
+              (s) => s.status !== 'OPEN' && !ncnsIds.has(s.id) && punched(s),
+            ).length;
+            const g = gradeWeeks([{ ended: endedRows.length, showed }]);
+            return {
+              id: l.id,
+              name: l.name,
+              published,
+              filled,
+              ended: endedRows.length,
+              showed,
+              fillPct: published > 0 ? Math.round((filled / published) * 100) : null,
+              reliabilityPct: g.score,
+              grade: g.grade,
+            };
+          })
+          .sort((a, b) => (b.reliabilityPct ?? -1) - (a.reliabilityPct ?? -1) || a.name.localeCompare(b.name));
+      }
+    }
     const days = new Map(
       [...dayKeys].map((k) => [
         k,
@@ -1451,13 +1532,106 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
           storeAmount: storeLine ? storeLine.amount : null,
           paidAt: st.paidAt ? st.paidAt.toISOString() : null,
           pdfUrl: `/api/client-portal/statements/${st.id}.pdf${previewQs ? `?${previewQs.slice(1)}` : ''}`,
+          reviewed: reviewed('STATEMENT', st.id),
         };
       }),
       serviceReports: weekStarts.map((w) => ({
         weekStart: w,
         weekEnd: nextKey(w, 6),
         url: `/api/client-portal/service-report.pdf?week=${w}${previewQs}`,
+        reviewed: reviewed('SERVICE_REPORT', w),
       })),
+      stores: storeRows,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ====================================================================== */
+/* The loop: people on the roster, and the client's "reviewed" mark.       */
+/* ====================================================================== */
+
+/**
+ * GET /client-portal/people — the store's own roster (anyone with a
+ * published shift in the last 14 days or the next 14 at this scope), so a
+ * request can name the person it's about without free text. Names only.
+ */
+clientPortalRouter.get('/client-portal/people', requireAuth, async (req, res, next) => {
+  try {
+    const scope = await resolveScope(req.user!, req.query);
+    const now = new Date();
+    const rows = await prisma.shift.findMany({
+      where: {
+        ...shiftScope(scope),
+        assignedAssociateId: { not: null },
+        startsAt: { gte: new Date(now.getTime() - 14 * DAY), lt: new Date(now.getTime() + 14 * DAY) },
+      },
+      select: {
+        position: true,
+        startsAt: true,
+        assignedAssociate: { select: { id: true, firstName: true, lastName: true } },
+      },
+      orderBy: { startsAt: 'desc' },
+      take: 3000,
+    });
+    const people = new Map<string, { id: string; name: string; position: string }>();
+    for (const r of rows) {
+      const a = r.assignedAssociate;
+      if (!a || people.has(a.id)) continue;
+      people.set(a.id, { id: a.id, name: fullName(a), position: r.position });
+    }
+    res.json({
+      people: [...people.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const AcknowledgeSchema = z.object({
+  kind: z.enum(['STATEMENT', 'SERVICE_REPORT']),
+  /** STATEMENT → statement id; SERVICE_REPORT → org week start (YYYY-MM-DD). */
+  key: z.string().min(1).max(64),
+});
+
+/**
+ * POST /client-portal/acknowledge — "reviewed", timestamped and
+ * attributed, one per document per client. Idempotent: a second mark
+ * returns the first. Portal accounts only (a preview can't sign for the
+ * client).
+ */
+clientPortalRouter.post('/client-portal/acknowledge', requireAuth, async (req, res, next) => {
+  try {
+    if (req.user!.role !== 'CLIENT_PORTAL' || !req.user!.clientId) {
+      throw new HttpError(403, 'forbidden', 'Only a client account can mark a document reviewed.');
+    }
+    const clientId = req.user!.clientId;
+    const input = AcknowledgeSchema.parse(req.body);
+    if (input.kind === 'STATEMENT') {
+      const st = await prisma.clientStatement.findFirst({
+        where: { id: input.key, clientId, status: 'FINAL' },
+        select: { id: true },
+      });
+      if (!st) throw new HttpError(404, 'not_found', 'Statement not found');
+    } else if (!/^\d{4}-\d{2}-\d{2}$/.test(input.key)) {
+      throw new HttpError(400, 'invalid_key', 'A service report is keyed by its week start (YYYY-MM-DD).');
+    }
+    const existing = await prisma.clientAcknowledgement.findUnique({
+      where: { clientId_kind_subjectKey: { clientId, kind: input.kind, subjectKey: input.key } },
+      include: { user: { select: { associate: { select: { firstName: true } }, email: true } } },
+    });
+    const row =
+      existing ??
+      (await prisma.clientAcknowledgement.create({
+        data: { clientId, kind: input.kind, subjectKey: input.key, userId: req.user!.id },
+        include: { user: { select: { associate: { select: { firstName: true } }, email: true } } },
+      }));
+    res.status(existing ? 200 : 201).json({
+      kind: row.kind,
+      key: row.subjectKey,
+      reviewedAt: row.createdAt.toISOString(),
+      reviewedBy: reviewerName(row.user),
     });
   } catch (err) {
     next(err);

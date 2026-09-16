@@ -211,4 +211,82 @@ describe('client requests', () => {
     const baton = board.body.batons.find((b: { key: string }) => b.key === 'client-requests-finance');
     expect(baton?.count).toBe(1);
   });
+
+  it('names a person from the roster and tells the requester on pickup and on reply', async () => {
+    const client = await createClient('Front Beach 218');
+    const { user: portal } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });
+    const maria = await prisma.associate.create({
+      data: { firstName: 'Maria', lastName: 'Lopez', email: 'maria.req@example.com' },
+    });
+    await prisma.application.create({ data: { associateId: maria.id, clientId: client.id, status: 'APPROVED' } });
+    const stranger = await prisma.associate.create({
+      data: { firstName: 'Zed', lastName: 'Elsewhere', email: 'zed.req@example.com' },
+    });
+    const dana = await prisma.associate.create({
+      data: { firstName: 'Dana', lastName: 'Reyes', email: 'dana.req@example.com' },
+    });
+    const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR', associateId: dana.id });
+
+    const agent = await loginAs(portal.email);
+    // Someone not on the roster is refused; Maria is accepted.
+    expect(
+      (
+        await agent.post('/client-portal/requests').send({
+          kind: 'FEEDBACK',
+          subject: 'Great work',
+          body: 'Thursday was flawless.',
+          associateId: stranger.id,
+        })
+      ).status,
+    ).toBe(400);
+    const created = await agent.post('/client-portal/requests').send({
+      kind: 'FEEDBACK',
+      subject: 'Great work on Thursday',
+      body: 'The overnight reset was the best we have had.',
+      associateId: maria.id,
+    });
+    expect(created.status).toBe(201);
+    await flushPendingNotifications();
+    const deskBell = await prisma.notification.findFirst({
+      where: { category: 'client-request', channel: 'IN_APP', recipientUserId: hr.id },
+    });
+    expect(deskBell?.body).toContain('About: Maria Lopez');
+
+    // The client sees who it's about; staff see it on the queue too.
+    const mine = await agent.get('/client-portal/requests');
+    expect(mine.body.requests[0].associateName).toBe('Maria Lopez');
+    const staff = await loginAs(hr.email);
+    const queue = await staff.get('/client-requests');
+    expect(queue.body.requests[0].associateName).toBe('Maria Lopez');
+    const id = queue.body.requests[0].id as string;
+
+    // Pickup → the requester hears "Dana picked up your request"; reply →
+    // the requester gets the reply itself. Never an email address.
+    expect((await staff.patch(`/client-requests/${id}`).send({ status: 'IN_PROGRESS' })).status).toBe(200);
+    await flushPendingNotifications();
+    let bells = await prisma.notification.findMany({
+      where: { category: 'client-request', channel: 'IN_APP', recipientUserId: portal.id },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(bells).toHaveLength(1);
+    expect(bells[0]!.subject).toBe('Dana picked up your request: Great work on Thursday');
+    expect(bells[0]!.linkUrl).toBe('/portal/requests');
+    expect(
+      (
+        await staff.patch(`/client-requests/${id}`).send({
+          status: 'RESOLVED',
+          resolution: 'Passed to Maria and her lead — thank you.',
+        })
+      ).status,
+    ).toBe(200);
+    await flushPendingNotifications();
+    bells = await prisma.notification.findMany({
+      where: { category: 'client-request', channel: 'IN_APP', recipientUserId: portal.id },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(bells).toHaveLength(2);
+    expect(bells[1]!.subject).toBe('Reply from Alto: Great work on Thursday');
+    expect(bells[1]!.body).toContain('Passed to Maria and her lead');
+    expect(JSON.stringify(bells)).not.toContain(hr.email);
+  });
 });

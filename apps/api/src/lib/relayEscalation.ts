@@ -141,6 +141,52 @@ export async function runRelayEscalationSweep(
         'The relay board is red until this clears — everyone can see it.',
     );
   }
+
+  // CLIENT REQUESTS past their promised reply-by: ring the owning desk
+  // once per request per org-day; on the SECOND day still open, also the
+  // everyday admins — the customer is watching this one age.
+  const overdueRequests = await prisma.clientRequest.findMany({
+    where: { status: { not: 'RESOLVED' }, dueAt: { lt: now } },
+    select: { id: true, kind: true, subject: true, dueAt: true, client: { select: { name: true } } },
+    orderBy: { dueAt: 'asc' },
+    take: 200,
+  });
+  const REQUEST_DESK: Record<string, Desk> = {
+    STAFFING: 'WORKFORCE',
+    FEEDBACK: 'HR',
+    ISSUE: 'HR',
+    BILLING: 'FINANCE',
+  };
+  for (const r of overdueRequests) {
+    const desk = REQUEST_DESK[r.kind] ?? 'HR';
+    const stage1 = `/relay#client-requests:${r.id}`;
+    const stage2 = `/relay#client-requests:${r.id}:l2`;
+    const hoursLate = Math.max(1, Math.round((now.getTime() - (r.dueAt?.getTime() ?? now.getTime())) / 3_600_000));
+    const rungBefore = await prisma.notification.findFirst({
+      where: { category: CATEGORY, linkUrl: stage1, createdAt: { lt: dayStart } },
+      select: { id: true },
+    });
+    await ringOnce(
+      stage1,
+      await deskIds(desk),
+      `Past due for ${r.client.name}: ${r.subject}`,
+      `${r.client.name}'s ${r.kind.toLowerCase()} request "${r.subject}" is ${hoursLate}h past the reply-by date the store can see in their portal. Reply today.`,
+    );
+    if (rungBefore) {
+      await ringOnce(
+        stage2,
+        (
+          await prisma.user.findMany({
+            where: { status: 'ACTIVE', deletedAt: null, role: { in: ['OPERATIONS_MANAGER', 'HR_ADMINISTRATOR'] } },
+            select: { id: true },
+            take: 50,
+          })
+        ).map((u) => u.id),
+        `Escalated: ${r.client.name} is still waiting — ${r.subject}`,
+        `${DESK_LABELS[desk]} was reminded yesterday and "${r.subject}" from ${r.client.name} is still open, ${hoursLate}h past its reply-by. The store is watching it age in their portal.`,
+      );
+    }
+  }
   return sent;
 }
 
