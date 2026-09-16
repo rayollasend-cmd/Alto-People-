@@ -88,6 +88,9 @@ interface WeekRow {
   fillPct: number | null;
   showed: number;
   reliabilityPct: number | null;
+  showedUpPct: number | null;
+  contracted: number;
+  delivered: number;
   noCallNoShows: number;
   callOuts: number;
   lates: number;
@@ -160,6 +163,8 @@ interface PortalOverview {
     weeks: WeekRow[];
     grade: 'A' | 'B' | 'C' | 'D' | 'F' | null;
     score: number | null;
+    /** contract = delivered vs the floor target; schedule = no target set. */
+    basis: 'contract' | 'schedule' | null;
   };
   clearance: { total: number; i9Complete: number; checksInFlight: number; flagged: number };
   statements: Array<{
@@ -958,6 +963,9 @@ export function ClientPortalHome() {
               )}
               {replaced && <span className="text-success"> · {replaced}</span>}
             </p>
+            {data.reliability.basis === 'schedule' && (
+              <p className="mt-2 text-xs text-warning">{t('portal.relBasisSchedule')}</p>
+            )}
             <details className="mt-2">
               <summary className="inline-flex min-h-8 cursor-pointer select-none items-center text-2xs uppercase tracking-wider text-silver/60 hover:text-silver coarse:min-h-11">
                 {t('portal.gradeHow')}
@@ -969,6 +977,7 @@ export function ClientPortalHome() {
               columns={[
                 t('portal.chartWeek'),
                 t('portal.chartShowed'),
+                t('portal.chartShowedUp'),
                 t('portal.chartFillPct'),
                 t('portal.covNoShowCol'),
                 t('portal.covCallOutCol'),
@@ -978,6 +987,7 @@ export function ClientPortalHome() {
               rows={data.reliability.weeks.map((w) => [
                 `${fmtDate(parseYmd(w.start))} – ${fmtDate(parseYmd(w.end))}`,
                 w.reliabilityPct === null ? '—' : `${w.reliabilityPct}%`,
+                w.showedUpPct === null ? '—' : `${w.showedUpPct}%`,
                 w.fillPct === null ? '—' : `${w.fillPct}%`,
                 w.noCallNoShows,
                 w.callOuts,

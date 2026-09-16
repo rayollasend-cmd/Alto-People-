@@ -198,17 +198,20 @@ function netMinutes(
   return Math.max(0, ms / 60_000);
 }
 
-/**
- * The contracted headcount for "right now": per location, the newest
- * effective-dated window whose site-local wall-clock span contains now
- * (windows wrap past midnight when end <= start); when no window
- * matches, the location's TOTAL target (null label). Summed across the
- * scope's locations.
- */
-async function currentTarget(
-  scope: PortalScope,
-  now: Date,
-): Promise<{ target: number | null; label: string | null }> {
+/* ---- Floor targets and hourly coverage ------------------------------- */
+
+interface TargetLocation {
+  id: string;
+  timezone: string;
+  /** The store's TOTAL floor target (null label), if any. */
+  total: number | null;
+  /** Labeled windows in site-local minutes; end <= start wraps midnight. */
+  windows: Array<{ label: string; start: number; end: number; count: number }>;
+}
+
+/** The scope's stores with their newest effective-dated targets, per
+ *  (location, label). */
+async function loadTargets(scope: PortalScope, asOf: Date): Promise<TargetLocation[]> {
   const locations = await prisma.location.findMany({
     where: {
       clientId: scope.clientId,
@@ -219,60 +222,155 @@ async function currentTarget(
     select: { id: true, timezone: true },
     take: 200,
   });
-  if (locations.length === 0) return { target: null, label: null };
+  if (locations.length === 0) return [];
   const rows = await prisma.staffingTarget.findMany({
-    where: {
-      locationId: { in: locations.map((l) => l.id) },
-      effectiveFrom: { lte: now },
-    },
+    where: { locationId: { in: locations.map((l) => l.id) }, effectiveFrom: { lte: asOf } },
     orderBy: { effectiveFrom: 'desc' },
-    select: {
-      locationId: true,
-      targetCount: true,
-      label: true,
-      startMinute: true,
-      endMinute: true,
-    },
+    select: { locationId: true, targetCount: true, label: true, startMinute: true, endMinute: true },
     take: 2000,
   });
-  if (rows.length === 0) return { target: null, label: null };
-  // Newest-first: first hit per (location, label) wins.
   const seen = new Set<string>();
-  const totals = new Map<string, number>();
-  const windows = new Map<
-    string,
-    Array<{ label: string; start: number; end: number; count: number }>
-  >();
+  const byLoc = new Map<string, TargetLocation>(
+    locations.map((l) => [l.id, { id: l.id, timezone: l.timezone, total: null, windows: [] }]),
+  );
   for (const r of rows) {
     const key = `${r.locationId}|${r.label ?? ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    if (r.label === null) {
-      totals.set(r.locationId, r.targetCount);
-    } else if (r.startMinute !== null && r.endMinute !== null) {
-      const list = windows.get(r.locationId) ?? [];
-      list.push({ label: r.label, start: r.startMinute, end: r.endMinute, count: r.targetCount });
-      windows.set(r.locationId, list);
+    const loc = byLoc.get(r.locationId)!;
+    if (r.label === null) loc.total = r.targetCount;
+    else if (r.startMinute !== null && r.endMinute !== null) {
+      loc.windows.push({ label: r.label, start: r.startMinute, end: r.endMinute, count: r.targetCount });
     }
   }
+  return [...byLoc.values()];
+}
+
+/** Target for a site-local minute of day: the matching windows summed
+ *  (windowed), else the total (not windowed), else null. */
+function targetAtMinute(
+  loc: TargetLocation,
+  minute: number,
+): { target: number; windowed: boolean; labels: string[] } | null {
+  const matching = loc.windows.filter((w) =>
+    w.end > w.start ? minute >= w.start && minute < w.end : minute >= w.start || minute < w.end,
+  );
+  if (matching.length > 0) {
+    return {
+      target: matching.reduce((a, w) => a + w.count, 0),
+      windowed: true,
+      labels: matching.map((w) => w.label),
+    };
+  }
+  if (loc.total !== null) return { target: loc.total, windowed: false, labels: [] };
+  return null;
+}
+
+interface HourCoverage {
+  instant: Date;
+  /** Contracted headcount for the hour across the scope. */
+  target: number;
+  /** People on the floor with punch evidence, capped at the target. */
+  delivered: number;
+}
+
+/**
+ * Delivered vs contracted, hour by hour — the time-integrated twin of the
+ * hero's "6 / 8". An hour is GRADED when it falls inside a target window,
+ * or, for a store with only a total target, when anything was scheduled
+ * (so a 3am hour nobody planned for is not a miss). Delivered is the
+ * distinct people with a time entry covering the top of the hour at the
+ * scope, capped at the target — 40 on the floor against 30 is a full
+ * hour, never extra credit. Only whole hours already in the past count.
+ */
+function coverageByHours(opts: {
+  locations: TargetLocation[];
+  /** Store-scoped: attribute punches by location; client-wide: any punch at the client. */
+  storeScoped: boolean;
+  from: Date;
+  to: Date;
+  now: Date;
+  shifts: Array<{ locationId: string | null; startsAt: Date; endsAt: Date }>;
+  entries: Array<{
+    associateId: string;
+    locationId: string | null;
+    clockInAt: Date;
+    clockOutAt: Date | null;
+  }>;
+}): HourCoverage[] {
+  const { locations, storeScoped, from, to, now, shifts, entries } = opts;
+  if (locations.length === 0) return [];
+  const hourFloor = (d: Date) => Math.floor(d.getTime() / HOUR) * HOUR;
+  const start = hourFloor(from);
+  const end = Math.min(hourFloor(to), hourFloor(now));
+  if (end <= start) return [];
+  const singleSite = locations.length === 1;
+
+  // Pre-bucket: scheduled shifts per (location, hour) and punched people per hour.
+  const scheduledAt = new Map<string, number>(); // `${locId}|${hourMs}`
+  for (const s of shifts) {
+    const locId = s.locationId ?? (singleSite ? locations[0]!.id : null);
+    if (!locId) continue;
+    for (let h = Math.max(start, hourFloor(s.startsAt)); h < Math.min(end, s.endsAt.getTime()); h += HOUR) {
+      const key = `${locId}|${h}`;
+      scheduledAt.set(key, (scheduledAt.get(key) ?? 0) + 1);
+    }
+  }
+  const onFloorAt = new Map<string, Set<string>>(); // `${locId|*}|${hourMs}`
+  for (const e of entries) {
+    const outMs = (e.clockOutAt ?? now).getTime();
+    const bucketLoc = storeScoped ? (e.locationId ?? (singleSite ? locations[0]!.id : null)) : '*';
+    if (!bucketLoc) continue;
+    for (let h = Math.max(start, hourFloor(e.clockInAt)); h < Math.min(end, outMs); h += HOUR) {
+      if (e.clockInAt.getTime() > h) continue; // punched in after the top of the hour
+      const key = `${bucketLoc}|${h}`;
+      const set = onFloorAt.get(key) ?? new Set<string>();
+      set.add(e.associateId);
+      onFloorAt.set(key, set);
+    }
+  }
+
+  const out: HourCoverage[] = [];
+  for (let h = start; h < end; h += HOUR) {
+    const instant = new Date(h);
+    let target = 0;
+    let graded = false;
+    let deliveredStoreScoped = 0;
+    for (const loc of locations) {
+      const t = targetAtMinute(loc, zonedMinutes(instant, loc.timezone));
+      if (!t) continue;
+      const counts = t.windowed || (scheduledAt.get(`${loc.id}|${h}`) ?? 0) > 0;
+      if (!counts) continue;
+      graded = true;
+      target += t.target;
+      if (storeScoped) {
+        deliveredStoreScoped += Math.min(t.target, onFloorAt.get(`${loc.id}|${h}`)?.size ?? 0);
+      }
+    }
+    if (!graded || target === 0) continue;
+    const delivered = storeScoped
+      ? deliveredStoreScoped
+      : Math.min(target, onFloorAt.get(`*|${h}`)?.size ?? 0);
+    out.push({ instant, target, delivered });
+  }
+  return out;
+}
+
+/** The contracted headcount for "right now" — the hero's "/ 8". */
+async function currentTarget(
+  scope: PortalScope,
+  now: Date,
+): Promise<{ target: number | null; label: string | null }> {
+  const locations = await loadTargets(scope, now);
   let target = 0;
   let any = false;
   const labels = new Set<string>();
   for (const loc of locations) {
-    const minute = zonedMinutes(now, loc.timezone);
-    const matching = (windows.get(loc.id) ?? []).filter((w) =>
-      w.end > w.start ? minute >= w.start && minute < w.end : minute >= w.start || minute < w.end,
-    );
-    if (matching.length > 0) {
-      for (const w of matching) {
-        target += w.count;
-        labels.add(w.label);
-      }
-      any = true;
-    } else if (totals.has(loc.id)) {
-      target += totals.get(loc.id)!;
-      any = true;
-    }
+    const t = targetAtMinute(loc, zonedMinutes(now, loc.timezone));
+    if (!t) continue;
+    any = true;
+    target += t.target;
+    for (const l of t.labels) labels.add(l);
   }
   if (!any) return { target: null, label: null };
   return { target, label: labels.size === 1 ? [...labels][0]! : null };
@@ -316,7 +414,14 @@ async function loadPunches(scope: PortalScope, from: Date, to: Date, now: Date) 
       status: { in: ['ACTIVE', 'COMPLETED', 'APPROVED'] },
       clockInAt: { gte: new Date(from.getTime() - DAY), lt: to },
     },
-    select: { associateId: true, shiftId: true, clockInAt: true, clockOutAt: true },
+    select: {
+      associateId: true,
+      shiftId: true,
+      clockInAt: true,
+      clockOutAt: true,
+      locationId: true,
+      shift: { select: { locationId: true } },
+    },
     orderBy: { clockInAt: 'asc' },
     take: 20000,
   });
@@ -336,7 +441,13 @@ async function loadPunches(scope: PortalScope, from: Date, to: Date, now: Date) 
           (e) => e.clockInAt < s.endsAt && (e.clockOutAt ?? now) > s.startsAt,
         ) ?? null
       : null);
-  return { punchFor, punched: (s: ShiftLike) => punchFor(s) !== null };
+  const entries = rows.map((e) => ({
+    associateId: e.associateId,
+    locationId: e.locationId ?? e.shift?.locationId ?? null,
+    clockInAt: e.clockInAt,
+    clockOutAt: e.clockOutAt,
+  }));
+  return { punchFor, punched: (s: ShiftLike) => punchFor(s) !== null, entries };
 }
 
 /** Unexcused attendance events in a window, keyed the way the store
@@ -355,36 +466,41 @@ function attendanceWhere(
 }
 
 /**
- * The reliability grade — one honest number: of the shifts that have
- * happened, how many had an Alto person on the floor.
+ * The reliability grade — did the store get the people it contracted for.
  *
- *   showed-up rate = shifts with a punch on record ÷ shifts that have ended
+ *   delivered vs contracted = Σ min(on the floor, target) ÷ Σ target,
+ *                             over every graded hour in the period
  *
- * "On the floor" is EVIDENCE, not the absence of a complaint: a time entry
- * linked to the shift, or by the assigned associate at this client
- * overlapping the shift window (wrong kiosk, still counted). A missed
- * shift with no event stamped reads as a miss, as it should; an unfilled
- * slot that came and went reads as a miss too. A stamped no-call no-show
- * overrides a stray punch. Shifts still in progress or in the future are
- * not graded yet — the current week grades only what has ended.
- *
- * Pooled across the weeks (a 200-shift week weighs ten times a 20-shift
- * week), never an average of weekly percentages. Call-outs and lates are
- * reported beside the grade but don't move it: a covered call-out is
- * already a filled shift, an uncovered one is already an open slot, and
- * a late arrival is a coaching matter, not a "did they come" matter.
- * Bands: A ≥ 98, B ≥ 95, C ≥ 90, D ≥ 85 — one uncovered shift in twenty
- * is not an A to a store manager.
+ * Targets are the store's floor targets (windows, else the total);
+ * "on the floor" is punch evidence. Over-scheduling as a hedge is Alto's
+ * cost, not the store's problem, so it never moves the grade — and 40 on
+ * the floor against 30 is a full hour, never extra credit. Pooled over the
+ * period (a busy week weighs more than a quiet one). When a store has no
+ * floor target there is nothing to grade against, so the grade falls back
+ * to the showed-up rate (punched shifts ÷ ended shifts) and says so.
+ * Bands: A ≥ 98, B ≥ 95, C ≥ 90, D ≥ 85.
  */
+type GradeBasis = 'contract' | 'schedule';
 function gradeWeeks(
-  weeks: Array<{ ended: number; showed: number }>,
-): { grade: 'A' | 'B' | 'C' | 'D' | 'F' | null; score: number | null } {
-  const ended = weeks.reduce((a, w) => a + w.ended, 0);
-  if (ended === 0) return { grade: null, score: null };
-  const showed = weeks.reduce((a, w) => a + w.showed, 0);
-  const score = Math.round((showed / ended) * 100);
+  rows: Array<{ contracted: number; delivered: number; ended: number; showed: number }>,
+): { grade: 'A' | 'B' | 'C' | 'D' | 'F' | null; score: number | null; basis: GradeBasis | null } {
+  const contracted = rows.reduce((a, w) => a + w.contracted, 0);
+  const delivered = rows.reduce((a, w) => a + w.delivered, 0);
+  const ended = rows.reduce((a, w) => a + w.ended, 0);
+  const showed = rows.reduce((a, w) => a + w.showed, 0);
+  let score: number;
+  let basis: GradeBasis;
+  if (contracted > 0) {
+    score = Math.round((delivered / contracted) * 100);
+    basis = 'contract';
+  } else if (ended > 0) {
+    score = Math.round((showed / ended) * 100);
+    basis = 'schedule';
+  } else {
+    return { grade: null, score: null, basis: null };
+  }
   const grade = score >= 98 ? 'A' : score >= 95 ? 'B' : score >= 90 ? 'C' : score >= 85 ? 'D' : 'F';
-  return { grade, score };
+  return { grade, score, basis };
 }
 
 type RosterState = 'open' | 'on-floor' | 'done' | 'confirmed' | 'unconfirmed';
@@ -459,7 +575,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       }),
       prisma.shift.findMany({
         where: { ...shifts, startsAt: { gte: trendStart, lt: weekEnd } },
-        select: { id: true, startsAt: true, endsAt: true, status: true, assignedAssociateId: true },
+        select: { id: true, locationId: true, startsAt: true, endsAt: true, status: true, assignedAssociateId: true },
         take: 5000,
       }),
       prisma.shift.findMany({
@@ -586,14 +702,24 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
           }),
     ]);
 
-    const [trendEvents, { punched }] = await Promise.all([
+    const [trendEvents, { punched, entries: trendEntries }, targetLocations] = await Promise.all([
       prisma.attendanceEvent.findMany({
         where: attendanceWhere(scope, trendStart, trendShifts.map((s) => s.id)),
         select: { kind: true, occurredOn: true, shiftId: true },
         take: 2000,
       }),
       loadPunches(scope, trendStart, weekEnd, now),
+      loadTargets(scope, now),
     ]);
+    const trendHours = coverageByHours({
+      locations: targetLocations,
+      storeScoped: !!scope.locationId,
+      from: trendStart,
+      to: weekEnd,
+      now,
+      shifts: trendShifts,
+      entries: trendEntries,
+    });
     const ncnsShiftIds = new Set(
       trendEvents.filter((e) => e.kind === 'NO_CALL_NO_SHOW' && e.shiftId).map((e) => e.shiftId),
     );
@@ -653,6 +779,8 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
           total: 0,
           ended: 0,
           showed: 0,
+          contracted: 0,
+          delivered: 0,
           noCallNoShows: 0,
           callOuts: 0,
           lates: 0,
@@ -697,15 +825,26 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       const wk = weekAgg.get(weekKeyOf(c.decidedAt));
       if (wk) wk.replaced += 1;
     }
+    for (const h of trendHours) {
+      const wk = weekAgg.get(weekKeyOf(h.instant));
+      if (!wk) continue;
+      wk.contracted += h.target;
+      wk.delivered += h.delivered;
+    }
     const weeks = weekKeys.map((k) => {
       const w = weekAgg.get(k)!;
       return {
         ...w,
         end: nextKey(k, 6),
         fillPct: w.total > 0 ? Math.round((w.filled / w.total) * 100) : null,
-        // The graded figure: of the shifts that have ended, those with a
-        // person on the floor (punch evidence, no no-show stamped).
-        reliabilityPct: w.ended > 0 ? Math.round((w.showed / w.ended) * 100) : null,
+        // The graded figure: delivered vs contracted, else the showed-up rate.
+        reliabilityPct:
+          w.contracted > 0
+            ? Math.round((w.delivered / w.contracted) * 100)
+            : w.ended > 0
+              ? Math.round((w.showed / w.ended) * 100)
+              : null,
+        showedUpPct: w.ended > 0 ? Math.round((w.showed / w.ended) * 100) : null,
         current: k === thisWeekKey,
       };
     });
@@ -917,7 +1056,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         opsShifts.length > 0
           ? { yesterday: opsDay(yesterdayKey), today: opsDay(todayKey) }
           : null,
-      reliability: { weeks, grade: graded.grade, score: graded.score },
+      reliability: { weeks, grade: graded.grade, score: graded.score, basis: graded.basis },
       clearance,
       statements: statements.map((st) => {
         const snap = st.snapshot as {
@@ -1303,14 +1442,14 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
 
     const shifts = await prisma.shift.findMany({
       where: { ...shiftScope(scope), startsAt: { gte: from, lt: toExclusive } },
-      select: { id: true, startsAt: true, endsAt: true, status: true, assignedAssociateId: true },
+      select: { id: true, locationId: true, startsAt: true, endsAt: true, status: true, assignedAssociateId: true },
       take: 20000,
     });
     const shiftIds = shifts.map((s) => s.id);
     const dayKeys = new Set<string>();
     for (let k = fromKey; k <= toKey; k = nextKey(k, 1)) dayKeys.add(k);
 
-    const [events, { punched }, worked, claims, ops, incidents, openIncidents, statements] =
+    const [events, { punched, entries: rangeEntries }, worked, claims, ops, incidents, openIncidents, statements] =
       await Promise.all([
         prisma.attendanceEvent.findMany({
           where: { ...attendanceWhere(scope, from, shiftIds), occurredOn: { gte: from, lt: toExclusive } },
@@ -1377,6 +1516,16 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
       ]);
 
     const ncnsIds = new Set(events.filter((e) => e.kind === 'NO_CALL_NO_SHOW' && e.shiftId).map((e) => e.shiftId));
+    const targetLocations = await loadTargets(scope, now);
+    const rangeHours = coverageByHours({
+      locations: targetLocations,
+      storeScoped: !!scope.locationId,
+      from,
+      to: toExclusive,
+      now,
+      shifts,
+      entries: rangeEntries,
+    });
     const reviewed = await loadAcknowledgements(scope.clientId);
     // Market accounts: the stores side by side, ranked by the same grade.
     let storeRows: Array<{
@@ -1412,7 +1561,23 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
             const showed = endedRows.filter(
               (s) => s.status !== 'OPEN' && !ncnsIds.has(s.id) && punched(s),
             ).length;
-            const g = gradeWeeks([{ ended: endedRows.length, showed }]);
+            const mineHours = coverageByHours({
+              locations: targetLocations.filter((t) => t.id === l.id),
+              storeScoped: true,
+              from,
+              to: toExclusive,
+              now,
+              shifts: mine,
+              entries: rangeEntries.filter((e) => e.locationId === l.id),
+            });
+            const g = gradeWeeks([
+              {
+                contracted: mineHours.reduce((a, h) => a + h.target, 0),
+                delivered: mineHours.reduce((a, h) => a + h.delivered, 0),
+                ended: endedRows.length,
+                showed,
+              },
+            ]);
             return {
               id: l.id,
               name: l.name,
@@ -1431,7 +1596,17 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
     const days = new Map(
       [...dayKeys].map((k) => [
         k,
-        { date: k, published: 0, filled: 0, ended: 0, showed: 0, open: 0, scheduledHours: 0 },
+        {
+          date: k,
+          published: 0,
+          filled: 0,
+          ended: 0,
+          showed: 0,
+          open: 0,
+          scheduledHours: 0,
+          contracted: 0,
+          delivered: 0,
+        },
       ]),
     );
     for (const s of shifts) {
@@ -1446,6 +1621,12 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
         if (s.status !== 'OPEN' && !ncnsIds.has(s.id) && punched(s)) d.showed += 1;
       }
     }
+    for (const h of rangeHours) {
+      const d = days.get(orgDateKey(h.instant));
+      if (!d) continue;
+      d.contracted += h.target;
+      d.delivered += h.delivered;
+    }
     const workedByDay = new Map<string, number>();
     for (const e of worked) {
       const k = orgDateKey(e.clockInAt);
@@ -1456,7 +1637,13 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
       scheduledHours: Math.round(d.scheduledHours * 10) / 10,
       workedHours: Math.round((workedByDay.get(d.date) ?? 0) * 10) / 10,
       fillPct: d.published > 0 ? Math.round((d.filled / d.published) * 100) : null,
-      reliabilityPct: d.ended > 0 ? Math.round((d.showed / d.ended) * 100) : null,
+      reliabilityPct:
+        d.contracted > 0
+          ? Math.round((d.delivered / d.contracted) * 100)
+          : d.ended > 0
+            ? Math.round((d.showed / d.ended) * 100)
+            : null,
+      showedUpPct: d.ended > 0 ? Math.round((d.showed / d.ended) * 100) : null,
     }));
     const sum = (f: (d: (typeof dayRows)[number]) => number) => dayRows.reduce((a, d) => a + f(d), 0);
     const published = sum((d) => d.published);
@@ -1490,6 +1677,13 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
         fillPct: published > 0 ? Math.round((filled / published) * 100) : null,
         reliabilityPct: graded.score,
         grade: graded.grade,
+        basis: graded.basis,
+        contractedHours: sum((d) => d.contracted),
+        deliveredHours: sum((d) => d.delivered),
+        showedUpPct:
+          sum((d) => d.ended) > 0
+            ? Math.round((sum((d) => d.showed) / sum((d) => d.ended)) * 100)
+            : null,
         scheduledHours: Math.round(sum((d) => d.scheduledHours) * 10) / 10,
         workedHours: Math.round(sum((d) => d.workedHours) * 10) / 10,
       },

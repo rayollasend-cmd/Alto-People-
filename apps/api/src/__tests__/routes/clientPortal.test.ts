@@ -551,8 +551,9 @@ describe('the store site — scope, targets, evidence, downloads', () => {
     expect(drilled.body.today.roster.map((r: { position: string }) => r.position)).toEqual([
       'StoreBOnly',
     ]);
-    // Store A's grade: its one ended shift has a punch → 100, A.
-    expect(store.body.reliability).toMatchObject({ grade: 'A', score: 100 });
+    // Store A grades against its CONTRACT: target 3 for the 4 hours anything
+    // was scheduled yesterday, Maria alone on the floor → 4 of 12, F.
+    expect(store.body.reliability).toMatchObject({ grade: 'F', score: 33, basis: 'contract' });
     // …but never into another tenant's store.
     const foreign = await (await loginAs(s.marketUser.email)).get(
       `/client-portal/overview?locationId=${s.otherStore.id}`,
@@ -582,10 +583,11 @@ describe('the store site — scope, targets, evidence, downloads', () => {
     expect(weeks.reduce((a, w) => a + w.filled, 0)).toBe(4);
     expect(weeks.reduce((a, w) => a + w.total, 0)).toBe(4);
     expect(current).toBeTruthy();
-    // The grade is evidence: of the shifts that have ENDED (yesterday's
-    // two), Maria's has a punch and Ben's has none → 1 of 2, 50%, F.
-    // Today's live shifts are not graded yet.
-    expect(res.body.reliability).toMatchObject({ grade: 'F', score: 50 });
+    // Market account: only store A has a floor target, so the contract
+    // basis grades those hours (4 of 12 → 33%); store B's missed shift
+    // shows in the showed-up rate (1 of 2), which is context, not the grade.
+    expect(res.body.reliability).toMatchObject({ grade: 'F', score: 33, basis: 'contract' });
+    expect(current).toBeTruthy();
 
     // Safety: no incidents ever → 365+ (null) and nothing open.
     expect(res.body.safety).toEqual({ monthIncidents: 0, open: 0, daysSinceLast: null });
@@ -736,7 +738,18 @@ describe('the historical lenses — a day, and a range', () => {
     expect(hist.status).toBe(200);
     expect(hist.body.range).toEqual({ from, to: yesterday, days: 7 });
     expect(hist.body.days).toHaveLength(7);
-    expect(hist.body.totals).toMatchObject({ published: 2, filled: 2, ended: 2, showed: 1, grade: 'F', reliabilityPct: 50 });
+    expect(hist.body.totals).toMatchObject({
+      published: 2,
+      filled: 2,
+      ended: 2,
+      showed: 1,
+      showedUpPct: 50,
+      grade: 'F',
+      reliabilityPct: 33,
+      basis: 'contract',
+      contractedHours: 12,
+      deliveredHours: 4,
+    });
     expect(hist.body.totals.workedHours).toBe(4);
     expect(hist.body.totals.scheduledHours).toBe(8);
     // Statement #7 closed inside a wider range and carries its PDF link.

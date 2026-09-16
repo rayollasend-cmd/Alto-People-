@@ -45,6 +45,9 @@ interface HistoryPayload {
     workedHours: number;
     fillPct: number | null;
     reliabilityPct: number | null;
+    showedUpPct: number | null;
+    contracted: number;
+    delivered: number;
   }>;
   totals: {
     published: number;
@@ -55,6 +58,10 @@ interface HistoryPayload {
     fillPct: number | null;
     reliabilityPct: number | null;
     grade: 'A' | 'B' | 'C' | 'D' | 'F' | null;
+    basis: 'contract' | 'schedule' | null;
+    contractedHours: number;
+    deliveredHours: number;
+    showedUpPct: number | null;
     scheduledHours: number;
     workedHours: number;
   };
@@ -331,7 +338,16 @@ export function PortalHistory() {
                   ? t('portal.relScore', { score: data.totals.reliabilityPct })
                   : null
               }
-              sub={t('portal.kpiShowedSub', { showed: data.totals.showed, ended: data.totals.ended })}
+              sub={
+                data.totals.basis === 'contract'
+                  ? t('portal.kpiDeliveredSub', {
+                      delivered: Math.round(data.totals.deliveredHours),
+                      contracted: Math.round(data.totals.contractedHours),
+                    })
+                  : data.totals.basis === 'schedule'
+                    ? t('portal.kpiShowedSub', { showed: data.totals.showed, ended: data.totals.ended })
+                    : t('portal.relNoHistory')
+              }
             />
             <StatTile
               label={t('portal.kpiFillRange')}
@@ -365,6 +381,9 @@ export function PortalHistory() {
             />
           </div>
 
+          {data.totals.basis === 'schedule' && (
+            <p className="text-xs text-warning">{t('portal.relBasisSchedule')}</p>
+          )}
           <details className="-mt-1">
             <summary className="inline-flex min-h-8 cursor-pointer select-none items-center text-2xs uppercase tracking-wider text-silver/60 hover:text-silver coarse:min-h-11">
               {t('portal.gradeHow')}
