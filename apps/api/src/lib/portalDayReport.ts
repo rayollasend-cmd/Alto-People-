@@ -159,14 +159,6 @@ export function dayLabel(key: string): string {
   return new Date(`${key}T12:00:00.000Z`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 }
 
-function shortDay(key: string): string {
-  return new Date(`${key}T12:00:00.000Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
-}
-
-function monthDay(key: string): string {
-  return new Date(`${key}T12:00:00.000Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-}
-
 function hourLabel(h: number): string {
   if (h === 0) return '12a';
   if (h < 12) return `${h}a`;
@@ -200,7 +192,6 @@ export function pdfSafe(text: string): string {
 }
 
 const money = (v: number) => `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const hrs = (v: number) => `${Math.round(v * 10) / 10}h`;
 
 /** The scope for a client-wide or store account, loaded off the ids. */
 export async function portalScopeFor(clientId: string, locationId: string | null): Promise<PortalScope | null> {
@@ -736,675 +727,934 @@ export async function buildPortalReport(
 
 /* ---- render ------------------------------------------------------------ */
 
-const NAVY = '#0B1832';
-const NAVY_SOFT = '#22355C';
-const GOLD = '#C9A227';
-const GREY = '#5B6472';
-const LIGHT = '#9AA3B2';
-const PANEL = '#F3F5F9';
-const TRACK = '#E1E5EC';
-const GOOD = '#1A7F4B';
-const WARN = '#B45309';
-const BAD = '#B42318';
-const SCHEDULED = '#C9D2E3';
-const BLUE = '#2563EB';
+/*
+ * The layout system — one of each, applied everywhere:
+ *
+ *   Grid     Letter page, 44pt margins, 12 columns with 12pt gutters.
+ *   Type     Five sizes (8 label · 9.5 body · 12 title · 20 figure ·
+ *            36 hero), two weights, caps only on eyebrow labels.
+ *   Card     One outlined card: 14pt padding, a 12pt title row, an
+ *            optional 8pt meta on the right. The hero is the single
+ *            filled surface and earns it.
+ *   Colour   Ink for text; Alto gold for brand marks only (masthead,
+ *            hero rule); one blue for data; green / amber / red reserved
+ *            for status. Charts use the same palette as the tiles.
+ *   Dates    "Sep 16, 2026" everywhere ("Sep 16" inside a card, a
+ *            weekday prefix only where the day itself is the subject).
+ *   Pages    A masthead on page one, a running header on every other
+ *            page, a footer with the page count on all of them. Blocks
+ *            move whole to the next page; tables break between rows and
+ *            say "(continued)". Nothing is ever truncated.
+ */
 
-type TextOpts = { color?: string; bold?: boolean; size?: number; width?: number; align?: 'left' | 'center' | 'right'; ellipsis?: boolean; characterSpacing?: number; lineBreak?: boolean; height?: number };
+const C = {
+  ink: '#0B1832',
+  ink2: '#4A5568',
+  ink3: '#7C8799',
+  rule: '#DCE1E8',
+  wash: '#F4F6F9',
+  brand: '#C9A227',
+  mastSub: '#AEB8C9',
+  data: '#2F5FD0',
+  dataTint: '#C9D6F2',
+  good: '#1E7B4F',
+  warn: '#B7791F',
+  bad: '#C0392B',
+  white: '#FFFFFF',
+} as const;
+const T = { label: 8, body: 9.5, title: 12, figure: 20, hero: 36 } as const;
+const PAGE_W = 612;
+const PAGE_H = 792;
+const M = 44;
+const W = PAGE_W - M * 2;
+const GUTTER = 12;
+const GAP = 12;
+const PAD = 14;
+const HEAD = PAD + 15 + 8;
+const CONTENT_TOP = 62;
+const CONTENT_BOTTOM = PAGE_H - 58;
+const ASCENT = 0.718; // Helvetica ascender and cap height, as a fraction of size
+const colW = (n: number) => ((W - GUTTER * 11) / 12) * n + GUTTER * (n - 1);
+
+const keyDate = (key: string) => new Date(`${key}T12:00:00.000Z`);
+const fmtKey = (key: string, o: Intl.DateTimeFormatOptions) => keyDate(key).toLocaleDateString('en-US', { ...o, timeZone: 'UTC' });
+const dShort = (k: string) => fmtKey(k, { month: 'short', day: 'numeric' });
+const dFull = (k: string) => fmtKey(k, { month: 'short', day: 'numeric', year: 'numeric' });
+const dWeekday = (k: string) => `${fmtKey(k, { weekday: 'long' })}, ${dFull(k)}`;
+const dWeekdayShort = (k: string) => `${fmtKey(k, { weekday: 'short' })}, ${dShort(k)}`;
+const dSpan = (a: string, b: string) =>
+  a === b ? dFull(a) : a.slice(0, 4) === b.slice(0, 4) ? `${dShort(a)} – ${dFull(b)}` : `${dFull(a)} – ${dFull(b)}`;
+const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
+const fmtHours = (v: number) => (Math.round(v * 10) / 10).toLocaleString('en-US', { maximumFractionDigits: 1 });
+const gradeColor = (g: Grade) => (g === 'A' ? C.good : g === 'B' ? C.ink : g === 'F' ? C.bad : g ? C.warn : C.ink3);
+
+type Style = { size?: number; bold?: boolean; color?: string; caps?: boolean };
+type CardSpec = { title: string; meta?: string; bodyHeight: (w: number) => number; drawBody: (x: number, y: number, w: number) => void };
+type TableRow = { height: number; draw: (x: number, y: number, w: number) => void };
+type LegendItem = { color: string; label: string; kind?: 'box' | 'line' | 'dash' | 'outline' };
+type Tile = {
+  label: string;
+  value: string;
+  valueColor?: string;
+  chip?: Grade;
+  meter: { parts: Array<{ value: number; color: string }>; total: number; marker?: number } | null;
+  sub: string;
+  note?: string;
+  noteColor?: string;
+};
 
 export function renderPortalReportPdf(data: PortalReportData): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const where = data.storeName ?? data.clientName;
-    const period = data.isRange ? `${data.from} — ${data.to}` : data.from;
     const doc = new PDFDocument({
       size: 'LETTER',
-      margin: 48,
+      margin: 0,
       bufferPages: true,
-      info: { Title: `Service Report — ${where} — ${period}`, Author: data.orgName },
+      info: { Title: pdfSafe(`Service Report — ${where} — ${dSpan(data.from, data.to)}`), Author: pdfSafe(data.orgName) },
     });
     const chunks: Buffer[] = [];
     doc.on('data', (c: Buffer) => chunks.push(c));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    const left = doc.page.margins.left;
-    const right = doc.page.width - doc.page.margins.right;
-    const width = right - left;
-    const bottom = () => doc.page.height - doc.page.margins.bottom - 26;
-    const ensure = (needed: number) => {
-      if (doc.y + needed > bottom()) {
-        doc.addPage();
-        doc.y = 54;
-      }
-    };
-    const gradeTone = (g: Grade) => (g === 'A' || g === 'B' ? GOOD : g === 'F' ? BAD : NAVY);
-    const small = (text: string, x: number, y: number, opts: TextOpts = {}) => {
-      const { color, bold, size, ...rest } = opts;
-      doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size ?? 8).fillColor(color ?? GREY);
-      let t = pdfSafe(text);
-      // pdfkit wraps whenever a width is given, even with lineBreak:false —
-      // so a one-line field is trimmed by measurement, never by hope.
-      if (rest.width && rest.ellipsis && !rest.lineBreak) t = fitLine(t, rest.width);
-      doc.text(t, x, y, { lineBreak: false, ...rest });
-    };
-    const fitLine = (t: string, w: number): string => {
-      if (doc.widthOfString(t) <= w) return t;
-      let lo = 0;
-      let hi = t.length;
-      while (lo < hi) {
-        const mid = Math.ceil((lo + hi) / 2);
-        if (doc.widthOfString(t.slice(0, mid).trimEnd() + '…') <= w) lo = mid;
-        else hi = mid - 1;
-      }
-      return lo <= 0 ? '…' : t.slice(0, lo).trimEnd() + '…';
-    };
-
-    /* ---- letterhead ----------------------------------------------------- */
-    doc.rect(0, 0, doc.page.width, 118).fill(NAVY);
-    doc.rect(0, 118, doc.page.width, 3).fill(GOLD);
-    doc.font('Helvetica-Bold').fontSize(21).fillColor('#FFFFFF').text(pdfSafe(data.orgName), left, 34);
-    doc
-      .font('Helvetica')
-      .fontSize(8.5)
-      .fillColor(GOLD)
-      .text(data.isRange ? 'SERVICE REPORT · YOUR DASHBOARD, DAY BY DAY' : 'SERVICE REPORT · YOUR DASHBOARD, AS IT STOOD', left, 60, { characterSpacing: 2 });
-    doc.font('Helvetica-Bold').fontSize(14).fillColor('#FFFFFF').text(pdfSafe(where), left, 34, { width, align: 'right' });
-    doc
-      .font('Helvetica')
-      .fontSize(9)
-      .fillColor('#C7CEDC')
-      .text(data.isRange ? `${monthDay(data.from)} – ${monthDay(data.to)}, ${data.to.slice(0, 4)}` : dayLabel(data.from), left, 56, { width, align: 'right' })
-      .text(`Prepared ${data.generatedAt}`, left, 70, { width, align: 'right' });
-    const single = data.days.length === 1 ? data.days[0]! : null;
-    doc
-      .font('Helvetica')
-      .fontSize(8)
-      .fillColor('#8E99AD')
-      .text(
-        single?.isToday
-          ? 'Your store site, exactly as it reads right now — every card of the dashboard, frozen at the time above.'
-          : single
-            ? 'Your store site as it stood at the close of that day — every card of the dashboard, computed as of then.'
-            : 'Your store site as it stood at the close of each day in the period — the dashboard, one snapshot per day, behind a period summary.',
-        left,
-        90,
-        { width: width * 0.78 },
-      );
-    doc.y = 140;
-
-    /* ---- helpers ------------------------------------------------------- */
-    const section = (title: string, sub?: string) => {
-      // A heading never sits alone at the foot of a page: keep it with at
-      // least the first row of whatever follows.
-      ensure(sub ? 150 : 138);
-      const y = doc.y + 8;
-      doc.rect(left, y + 1, 4, 11).fill(GOLD);
-      doc.font('Helvetica-Bold').fontSize(11.5).fillColor(NAVY).text(title, left + 10, y, { lineBreak: false });
+    /* ---- text ---------------------------------------------------------- */
+    const spacingOf = (st: Style) => (st.caps ? 0.7 : 0);
+    const prep = (s: string, st: Style) => (st.caps ? pdfSafe(s).toUpperCase() : pdfSafe(s));
+    const font = (st: Style) =>
       doc
-        .moveTo(left, y + 18)
-        .lineTo(right, y + 18)
-        .lineWidth(0.5)
-        .strokeColor(TRACK)
-        .stroke();
-      doc.y = y + 24;
-      if (sub) {
-        doc.font('Helvetica').fontSize(8).fillColor(LIGHT).text(sub, left, doc.y, { width });
-        doc.y += 6;
-      }
+        .font(st.bold ? 'Helvetica-Bold' : 'Helvetica')
+        .fontSize(st.size ?? T.body)
+        .fillColor(st.color ?? C.ink);
+    const widthOf = (s: string, st: Style = {}) => {
+      font(st);
+      return doc.widthOfString(prep(s, st), { characterSpacing: spacingOf(st) });
     };
-    const cardTitle = (title: string, x: number, y: number, w: number, rightText?: string) => {
-      small(title, x, y, { bold: true, color: NAVY, size: 9.5, width: w });
-      if (rightText) small(rightText, x, y + 1, { color: LIGHT, size: 7.5, width: w, align: 'right' });
+    const text = (s: string, x: number, y: number, st: Style = {}) => {
+      font(st);
+      doc.text(prep(s, st), x, y, { lineBreak: false, characterSpacing: spacingOf(st) });
+    };
+    const textRight = (s: string, right: number, y: number, st: Style = {}) => text(s, right - widthOf(s, st), y, st);
+    const textCenter = (s: string, cx: number, y: number, st: Style = {}) => text(s, cx - widthOf(s, st) / 2, y, st);
+    const paraH = (s: string, w: number, st: Style = {}) => {
+      font(st);
+      return doc.heightOfString(prep(s, st), { width: w, lineGap: 1.5, characterSpacing: spacingOf(st) });
+    };
+    const para = (s: string, x: number, y: number, w: number, st: Style = {}) => {
+      font(st);
+      doc.text(prep(s, st), x, y, { width: w, lineGap: 1.5, characterSpacing: spacingOf(st) });
+      return paraH(s, w, st);
+    };
+    const LABEL: Style = { size: T.label, caps: true, bold: true, color: C.ink3 };
+
+    /* ---- marks --------------------------------------------------------- */
+    const hr = (x: number, y: number, w: number, color: string = C.rule, weight = 0.5) =>
+      doc.moveTo(x, y).lineTo(x + w, y).lineWidth(weight).strokeColor(color).stroke();
+    const frame = (x: number, y: number, w: number, h: number) => doc.roundedRect(x, y, w, h, 4).lineWidth(0.75).strokeColor(C.rule).stroke();
+    const meter = (x: number, y: number, w: number, parts: Array<{ value: number; color: string }>, total: number, marker?: number) => {
+      doc.save();
+      doc.roundedRect(x, y, w, 4, 2).clip();
+      doc.rect(x, y, w, 4).fill(C.rule);
+      let cx = x;
+      if (total > 0) {
+        for (const p of parts) {
+          if (p.value <= 0) continue;
+          const pw = Math.min(x + w - cx, (w * p.value) / total);
+          if (pw <= 0) break;
+          doc.rect(cx, y, pw, 4).fill(p.color);
+          cx += pw;
+        }
+      }
+      doc.restore();
+      if (marker !== undefined) doc.rect(x + (w * Math.min(100, marker)) / 100 - 0.5, y - 2, 1, 8).fill(C.ink);
+    };
+    const chip = (g: Grade, x: number, y: number, size: number) => {
+      if (!g) return;
+      doc.roundedRect(x, y, size, size, 3).fill(gradeColor(g));
+      textCenter(g, x + size / 2, y + (size - T.title * ASCENT) / 2, { size: T.title, bold: true, color: C.white });
+    };
+    const ring = (cx: number, cy: number, r: number, pct: number | null) => {
+      doc.circle(cx, cy, r).lineWidth(4.5).strokeColor(C.rule).stroke();
+      if (pct !== null && pct > 0) {
+        const sweep = Math.min(359.9, (360 * pct) / 100);
+        const th = ((-90 + sweep) * Math.PI) / 180;
+        doc
+          .path(`M ${cx} ${cy - r} A ${r} ${r} 0 ${sweep > 180 ? 1 : 0} 1 ${cx + r * Math.cos(th)} ${cy + r * Math.sin(th)}`)
+          .lineWidth(4.5)
+          .strokeColor(C.data)
+          .stroke();
+      }
+      textCenter(pct === null ? '—' : `${pct}%`, cx, cy - (T.body * ASCENT) / 2, { size: T.body, bold: true });
+    };
+    const legend = (items: LegendItem[], x: number, y: number) => {
+      let lx = x;
+      for (const it of items) {
+        if (it.kind === 'line' || it.kind === 'dash') {
+          doc.moveTo(lx, y + 3.5).lineTo(lx + 12, y + 3.5).lineWidth(1.2).strokeColor(it.color);
+          if (it.kind === 'dash') doc.dash(2.5, { space: 2 });
+          doc.stroke().undash();
+          lx += 16;
+        } else if (it.kind === 'outline') {
+          doc.rect(lx, y, 7, 7).fillAndStroke(C.dataTint, C.data);
+          lx += 11;
+        } else {
+          doc.rect(lx, y, 7, 7).fill(it.color);
+          lx += 11;
+        }
+        text(it.label, lx, y, { size: T.label, color: C.ink2 });
+        lx += widthOf(it.label, { size: T.label }) + 14;
+      }
     };
 
-    /** The coverage curve: scheduled (grey), on the floor (green), the contracted line (gold). */
-    const hourChart = (d: ReportDay, plotX: number, y0: number, plotW: number, h: number) => {
-      const slot = plotW / 24;
-      const maxV = Math.max(1, ...d.hours.map((r) => Math.max(r.scheduled, r.target ?? 0, r.delivered ?? 0)));
-      const yFor = (v: number) => y0 + h - (v / maxV) * h;
-      for (const g of [0, maxV]) {
-        const gy = yFor(g);
-        doc.moveTo(plotX, gy).lineTo(plotX + plotW, gy).lineWidth(0.4).strokeColor(TRACK).stroke();
-        small(String(g), plotX - 16, gy - 4, { color: LIGHT, size: 6.5, width: 13, align: 'right' });
+    /* ---- pages --------------------------------------------------------- */
+    let y = 0;
+    const newPage = () => {
+      doc.addPage();
+      y = CONTENT_TOP;
+    };
+    /** Reserve a whole block; it moves to the next page rather than split. */
+    const place = (h: number) => {
+      if (y + h > CONTENT_BOTTOM && y > CONTENT_TOP + 1) newPage();
+      const top = y;
+      y += h + GAP;
+      return top;
+    };
+
+    /* ---- cards --------------------------------------------------------- */
+    const cardHead = (title: string, meta: string | undefined, x: number, top: number, w: number) => {
+      text(title, x + PAD, top + PAD, { size: T.title, bold: true });
+      if (meta) textRight(meta, x + w - PAD, top + PAD + 3, { size: T.label, color: C.ink3 });
+    };
+    const cardsRow = (cards: CardSpec[], spans: number[]) => {
+      const ws = spans.map(colW);
+      const h = Math.max(...cards.map((c, i) => HEAD + c.bodyHeight(ws[i]! - PAD * 2) + PAD));
+      const top = place(h);
+      let x = M;
+      cards.forEach((c, i) => {
+        const w = ws[i]!;
+        frame(x, top, w, h);
+        cardHead(c.title, c.meta, x, top, w);
+        c.drawBody(x + PAD, top + HEAD, w - PAD * 2);
+        x += w + GUTTER;
+      });
+    };
+    /** A full-width card of rows that breaks between rows across pages. */
+    const tableCard = (
+      title: string,
+      meta: string | undefined,
+      columns: Array<{ label: string; x: number; right?: boolean }> | null,
+      rows: TableRow[],
+      empty: string,
+    ) => {
+      const iw = W - PAD * 2;
+      if (rows.length === 0) {
+        const h = HEAD + paraH(empty, iw, { color: C.ink3 }) + PAD;
+        const top = place(h);
+        frame(M, top, W, h);
+        cardHead(title, meta, M, top, W);
+        para(empty, M + PAD, top + HEAD, iw, { color: C.ink3 });
+        return;
       }
+      const headH = HEAD + (columns ? 16 : 0);
+      const wholeH = headH + rows.reduce((a, r) => a + r.height, 0) + PAD - 4;
+      const pageRoom = CONTENT_BOTTOM - CONTENT_TOP;
+      // Keep a table together when it fits a page on its own and only a
+      // sliver of it would land here — a lone row under a heading reads
+      // as a mistake, not a continuation.
+      if (y + wholeH > CONTENT_BOTTOM && wholeH <= pageRoom && y > CONTENT_TOP + 1) {
+        let fits = 0;
+        let hh = headH;
+        while (fits < rows.length && y + hh + rows[fits]!.height + PAD <= CONTENT_BOTTOM) {
+          hh += rows[fits]!.height;
+          fits += 1;
+        }
+        if (rows.length <= 3 || fits < Math.ceil(rows.length / 2)) newPage();
+      }
+      let i = 0;
+      let part = 0;
+      while (i < rows.length) {
+        if (y + headH + rows[i]!.height + PAD > CONTENT_BOTTOM && y > CONTENT_TOP + 1) newPage();
+        const top = y;
+        let h = headH;
+        let j = i;
+        while (j < rows.length && top + h + rows[j]!.height + PAD <= CONTENT_BOTTOM) {
+          h += rows[j]!.height;
+          j += 1;
+        }
+        if (j === i) {
+          h += rows[i]!.height;
+          j = i + 1;
+        }
+        // Never strand one row: pull one back so the next page carries two.
+        if (j === rows.length - 1 && j - i >= 3) {
+          j -= 1;
+          h -= rows[j]!.height;
+        }
+        h += PAD - 4;
+        frame(M, top, W, h);
+        cardHead(part === 0 ? title : `${title} (continued)`, part === 0 ? meta : undefined, M, top, W);
+        let ry = top + HEAD;
+        if (columns) {
+          for (const c of columns) (c.right ? textRight : text)(c.label, M + PAD + c.x, ry, LABEL);
+          ry += 16;
+        }
+        for (let k = i; k < j; k += 1) {
+          hr(M + PAD, ry, iw);
+          rows[k]!.draw(M + PAD, ry, iw);
+          ry += rows[k]!.height;
+        }
+        y = top + h + GAP;
+        i = j;
+        part += 1;
+      }
+    };
+    const tiles = (list: Tile[]) => {
+      const tw = colW(3);
+      const iw = tw - 24;
+      const noteH = (t: Tile) => (t.note ? paraH(t.note, iw, { size: T.label }) + 2 : 0);
+      const textH = Math.max(...list.map((t) => paraH(t.sub, iw, { size: T.label }) + noteH(t)));
+      const h = 76 + textH + 12;
+      const top = place(h);
+      list.forEach((t, i) => {
+        const x = M + i * (tw + GUTTER);
+        frame(x, top, tw, h);
+        const ix = x + 12;
+        text(t.label, ix, top + 12, LABEL);
+        let vx = ix;
+        if (t.chip) {
+          chip(t.chip, vx, top + 28, 24);
+          vx += 30;
+        }
+        text(t.value, vx, top + 30, { size: T.figure, bold: true, color: t.valueColor ?? C.ink });
+        if (t.meter) meter(ix, top + 62, iw, t.meter.parts, t.meter.total, t.meter.marker);
+        else meter(ix, top + 62, iw, [], 0);
+        const sh = para(t.sub, ix, top + 76, iw, { size: T.label, color: C.ink2 });
+        if (t.note) para(t.note, ix, top + 76 + sh + 2, iw, { size: T.label, bold: true, color: t.noteColor ?? C.ink2 });
+      });
+    };
+
+    /* ---- charts -------------------------------------------------------- */
+    /** Scheduled (tint), on the floor (blue), contracted (ink step line). */
+    const coverageChart = (d: ReportDay, x: number, y0: number, w: number, h: number) => {
+      const plotX = x + 18;
+      const plotW = w - 18;
+      const maxRaw = Math.max(1, ...d.hours.map((r) => Math.max(r.scheduled, r.target ?? 0, r.delivered ?? 0)));
+      const max = maxRaw <= 2 ? maxRaw : Math.ceil(maxRaw / 2) * 2;
+      const yFor = (v: number) => y0 + h - (v / max) * h;
+      for (const g of max >= 2 ? [0, max / 2, max] : [0, max]) {
+        hr(plotX, yFor(g), plotW);
+        textRight(String(g), plotX - 5, yFor(g) - (T.label * ASCENT) / 2, { size: T.label, color: C.ink3 });
+      }
+      const slot = plotW / 24;
       d.hours.forEach((r, i) => {
-        const x = plotX + i * slot;
-        if (r.scheduled > 0) doc.rect(x + 1, yFor(r.scheduled), slot - 2, y0 + h - yFor(r.scheduled)).fill(SCHEDULED);
+        const bx = plotX + i * slot;
+        if (r.scheduled > 0) doc.rect(bx + 0.75, yFor(r.scheduled), slot - 1.5, y0 + h - yFor(r.scheduled)).fill(C.dataTint);
         if (r.delivered !== null && r.delivered > 0) {
-          const bw = Math.max(2, (slot - 2) * 0.55);
-          doc.rect(x + 1 + (slot - 2 - bw) / 2, yFor(r.delivered), bw, y0 + h - yFor(r.delivered)).fill(GOOD);
+          const bw = Math.max(2, slot * 0.46);
+          doc.rect(bx + (slot - bw) / 2, yFor(r.delivered), bw, y0 + h - yFor(r.delivered)).fill(C.data);
         }
       });
-      doc.lineWidth(1.2).strokeColor(GOLD);
+      doc.lineWidth(1.1).strokeColor(C.ink);
       let pen = false;
       d.hours.forEach((r, i) => {
-        const x = plotX + i * slot;
+        const bx = plotX + i * slot;
         if (r.target === null) {
+          if (pen) doc.stroke();
           pen = false;
           return;
         }
-        const ty = yFor(r.target);
         if (!pen) {
-          doc.moveTo(x, ty);
+          doc.moveTo(bx, yFor(r.target));
           pen = true;
-        } else doc.lineTo(x, ty);
-        doc.lineTo(x + slot, ty);
+        } else doc.lineTo(bx, yFor(r.target));
+        doc.lineTo(bx + slot, yFor(r.target));
       });
       if (pen) doc.stroke();
       if (d.isToday) {
         const nx = plotX + (zonedMinutes(new Date(), ORG_TZ) / 60) * slot;
-        doc.moveTo(nx, y0).lineTo(nx, y0 + h).lineWidth(0.8).dash(2, { space: 2 }).strokeColor(NAVY_SOFT).stroke().undash();
-        small('now', nx + 2, y0 + 2, { color: NAVY_SOFT, size: 6.5 });
+        doc.moveTo(nx, y0).lineTo(nx, y0 + h).lineWidth(0.75).dash(2, { space: 2 }).strokeColor(C.ink3).stroke().undash();
+        text('Now', nx + 3, y0, { size: T.label, color: C.ink3 });
       }
-      d.hours.forEach((r, i) => {
-        if (i % 3 === 0) small(r.label, plotX + i * slot, y0 + h + 3, { color: LIGHT, size: 6.5, width: slot * 3 });
-      });
-      const ly = y0 + h + 14;
-      let lx = plotX;
-      const legend = (color: string, label: string, line = false) => {
-        if (line) doc.moveTo(lx, ly + 4).lineTo(lx + 10, ly + 4).lineWidth(1.2).strokeColor(color).stroke();
-        else doc.rect(lx, ly, 8, 8).fill(color);
-        small(label, lx + 13, ly, { color: GREY, size: 6.5 });
-        lx += 13 + doc.widthOfString(label) + 12;
-      };
-      legend(SCHEDULED, 'Scheduled');
-      legend(GOOD, 'On the floor');
-      legend(GOLD, 'Contracted', true);
+      for (let i = 0; i < 24; i += 3) textCenter(hourLabel(i), plotX + i * slot, y0 + h + 4, { size: T.label, color: C.ink3 });
+      legend(
+        [
+          { color: C.dataTint, label: 'Scheduled' },
+          { color: C.data, label: 'On the floor' },
+          { color: C.ink, label: 'Contracted', kind: 'line' },
+        ],
+        plotX,
+        y0 + h + 18,
+      );
     };
 
-    /** The hero: the number on the left, the coverage curve on the right. */
+    /* ---- sections -------------------------------------------------------- */
     const hero = (d: ReportDay) => {
       const db = d.dashboard;
-      ensure(170);
-      const y0 = doc.y;
-      const h = 150;
-      doc.roundedRect(left, y0, width, h, 8).fill(PANEL);
-      doc.rect(left, y0, 4, h).fill(GOLD);
-      const lx = left + 16;
-      const lw = width * 0.34 - 16;
-      if (db.live) {
-        small('ON THE FLOOR NOW', lx, y0 + 12, { color: GOLD, size: 7, characterSpacing: 1.2, bold: true });
-        const short = db.targetNow !== null && (db.onFloorNow ?? 0) < db.targetNow;
-        const big = String(db.onFloorNow ?? 0);
-        doc.font('Helvetica-Bold').fontSize(38).fillColor(short ? WARN : NAVY).text(big, lx, y0 + 24, { lineBreak: false });
-        if (db.targetNow !== null) {
-          const nw = doc.widthOfString(big);
-          doc.font('Helvetica-Bold').fontSize(16).fillColor(LIGHT).text(`/ ${db.targetNow}`, lx + nw + 6, y0 + 44, { lineBreak: false });
-        }
-        small(
+      const H = 178;
+      const top = place(H);
+      doc.roundedRect(M, top, W, H, 4).fill(C.wash);
+      doc.rect(M, top, 3, H).fill(C.brand);
+      const lx = M + 18;
+      const lw = colW(5) - 24;
+      let eyebrow: string;
+      let big: string;
+      let suffix = '';
+      let bigColor: string = C.ink;
+      let grade: Grade = null;
+      let sentence: string;
+      let stats: Array<[string, string, string?]>;
+      if (d.isToday) {
+        const on = db.onFloorNow ?? 0;
+        const short = db.targetNow !== null && on < db.targetNow;
+        const label = db.targetLabel ?? 'the contracted headcount';
+        eyebrow = 'On the floor now';
+        big = String(on);
+        suffix = db.targetNow !== null ? ` / ${db.targetNow}` : '';
+        bigColor = short ? C.warn : C.ink;
+        sentence =
           db.targetNow === null
-            ? 'No contracted headcount set for this hour.'
+            ? 'No contracted headcount is set for this hour.'
             : short
-              ? `${db.targetNow - (db.onFloorNow ?? 0)} short of ${db.targetLabel ?? 'the contracted headcount'} right now.`
-              : `Staffed to ${db.targetLabel ?? 'the contracted headcount'}.`,
-          lx,
-          y0 + 74,
-          { color: GREY, size: 8.5, width: lw, lineBreak: true, height: 30 },
-        );
-        small(
-          `Day so far: ${d.contract.score === null ? '—' : `${d.contract.score}%`} delivered vs contracted · ${d.summary.showed} of ${d.summary.expected} punched in · ${d.summary.open} unfilled`,
-          lx,
-          y0 + 112,
-          { color: GREY, size: 7.5, width: lw, lineBreak: true, height: 30 },
-        );
+              ? `${db.targetNow - on} short of ${label}.`
+              : `Staffed to ${label}.`;
+        stats = [
+          ['Delivered', d.contract.score === null ? '—' : `${d.contract.score}%`],
+          ['Punched in', `${d.summary.showed} of ${d.summary.expected}`],
+          ['Unfilled', String(d.summary.open), d.summary.open > 0 ? C.warn : undefined],
+        ];
+      } else if (d.isFuture) {
+        eyebrow = 'The day ahead';
+        big = String(d.summary.expected);
+        suffix = ' expected';
+        sentence = d.summary.open > 0 ? `${plural(d.summary.open, 'slot')} still unfilled.` : 'Every slot is filled.';
+        stats = [
+          ['Shifts', String(d.waves.length)],
+          ['Expected', String(d.summary.expected)],
+          ['Unfilled', String(d.summary.open), d.summary.open > 0 ? C.warn : undefined],
+        ];
       } else {
-        small(d.isFuture ? 'THE DAY AHEAD' : 'THE DAY, DELIVERED VS CONTRACTED', lx, y0 + 12, { color: GOLD, size: 7, characterSpacing: 1.2, bold: true });
         const c = d.contract;
-        const big = c.score === null ? '—' : `${c.score}%`;
-        doc.font('Helvetica-Bold').fontSize(38).fillColor(gradeTone(c.grade)).text(big, lx, y0 + 24, { lineBreak: false });
-        if (c.grade) {
-          const nw = doc.widthOfString(big);
-          doc.font('Helvetica-Bold').fontSize(16).fillColor(gradeTone(c.grade)).text(`· ${c.grade}`, lx + nw + 6, y0 + 44, { lineBreak: false });
-        }
-        small(
-          d.isFuture
-            ? `${d.summary.expected} expected · ${d.summary.open} unfilled`
-            : c.contractedHours > 0
-              ? `${c.deliveredHours} of ${c.contractedHours} contracted person-hours were on the floor.`
-              : c.basis === 'schedule'
-                ? 'No floor target that day — graded on the schedule.'
-                : 'No graded hours that day.',
-          lx,
-          y0 + 74,
-          { color: GREY, size: 8.5, width: lw, lineBreak: true, height: 30 },
-        );
-        if (!d.isFuture) {
-          small(`${d.summary.showed} of ${d.summary.expected} punched in · ${d.summary.missed} did not · ${d.summary.open} unfilled`, lx, y0 + 112, {
-            color: GREY,
-            size: 7.5,
-            width: lw,
-            lineBreak: true,
-            height: 30,
-          });
-        }
+        eyebrow = 'Delivered vs contract';
+        big = c.score === null ? '—' : `${c.score}%`;
+        grade = c.grade;
+        sentence =
+          c.contractedHours > 0
+            ? `${c.deliveredHours} of ${c.contractedHours} contracted person-hours were covered on the floor.`
+            : c.basis === 'schedule'
+              ? 'No floor target was set, so the day is graded on the schedule.'
+              : 'No graded hours this day.';
+        stats = [
+          ['Punched in', `${d.summary.showed} of ${d.summary.expected}`],
+          ['No punch', String(d.summary.missed), d.summary.missed > 0 ? C.bad : undefined],
+          ['Unfilled', String(d.summary.open), d.summary.open > 0 ? C.warn : undefined],
+        ];
       }
-      const cx = left + width * 0.36 + 16;
-      const cw = width - width * 0.36 - 28;
-      small('COVERAGE ACROSS THE DAY', cx, y0 + 12, { color: LIGHT, size: 6.5, characterSpacing: 0.8 });
-      hourChart(d, cx, y0 + 26, cw, 84);
-      doc.y = y0 + h + 12;
+      text(eyebrow, lx, top + 18, LABEL);
+      const bigTop = top + 34;
+      text(big, lx, bigTop, { size: T.hero, bold: true, color: bigColor });
+      let bx = lx + widthOf(big, { size: T.hero, bold: true });
+      const baseline = bigTop + T.hero * ASCENT;
+      if (suffix) {
+        text(suffix, bx + 2, baseline - T.figure * ASCENT, { size: T.figure, bold: true, color: C.ink3 });
+        bx += 2 + widthOf(suffix, { size: T.figure, bold: true });
+      }
+      if (grade) chip(grade, bx + 12, baseline - 24, 24);
+      para(sentence, lx, top + 86, lw, { color: C.ink2 });
+      const sw = lw / 3;
+      stats.forEach(([label, value, color], i) => {
+        text(label, lx + i * sw, top + 132, { size: T.label, color: C.ink3 });
+        text(value, lx + i * sw, top + 145, { size: T.title, bold: true, color: color ?? C.ink });
+      });
+      const cx = M + colW(5) + GUTTER;
+      text('Coverage across the day', cx, top + 18, LABEL);
+      coverageChart(d, cx, top + 40, M + W - 18 - cx, 100);
     };
 
-    const kpiCards = (cards: Array<{ label: string; value: string; tone?: string; sub?: string; meter?: number | null; meterTone?: string; delta?: string; deltaTone?: string }>) => {
-      ensure(74);
-      const gap = 8;
-      const cardW = (width - gap * (cards.length - 1)) / cards.length;
-      const cardH = 60;
-      const y0 = doc.y;
-      cards.forEach((k, i) => {
-        const x = left + i * (cardW + gap);
-        doc.roundedRect(x, y0, cardW, cardH, 5).fill(PANEL);
-        small(k.label, x + 8, y0 + 8, { color: LIGHT, size: 6.5, width: cardW - 16, characterSpacing: 0.4, ellipsis: true });
-        doc.font('Helvetica-Bold').fontSize(17).fillColor(k.tone ?? NAVY).text(k.value, x + 8, y0 + 19, { width: cardW - 16, lineBreak: false });
-        if (k.delta) {
-          const vw = doc.widthOfString(k.value);
-          small(k.delta, x + 8 + vw + 6, y0 + 27, { color: k.deltaTone ?? GREY, size: 7, width: Math.max(10, cardW - 16 - vw - 6), ellipsis: true });
+    const kpiTiles = (d: ReportDay) => {
+      const k = d.dashboard.kpis;
+      const t = k.tomorrow;
+      const tomorrowTotal = t.confirmed + t.unconfirmed + t.open;
+      const delta = k.fill.deltaPts;
+      tiles([
+        {
+          label: 'Fill rate · week',
+          value: k.fill.pct === null ? '—' : `${k.fill.pct}%`,
+          meter: { parts: [{ value: k.fill.filled, color: C.data }], total: k.fill.total },
+          sub: `${k.fill.filled} of ${k.fill.total} shifts filled`,
+          note: delta === null ? undefined : delta === 0 ? 'Level with last week' : `${delta > 0 ? '+' : '–'}${Math.abs(delta)} pts vs last week`,
+          noteColor: delta === null || delta === 0 ? C.ink2 : delta > 0 ? C.good : C.bad,
+        },
+        {
+          label: 'Reliability',
+          chip: k.grade.grade,
+          value: k.grade.score === null ? '—' : `${k.grade.score}%`,
+          meter: k.grade.score === null ? null : { parts: [{ value: Math.min(100, k.grade.score), color: C.data }], total: 100, marker: 88 },
+          sub: k.grade.basis === 'schedule' ? 'Last 4 weeks · showed up' : 'Last 4 weeks · delivered',
+          note: k.grade.hasHistory ? `${plural(k.grade.ncns, 'no-call no-show')}\n${k.grade.replaced} covered` : 'No completed weeks yet',
+          noteColor: k.grade.ncns > 0 ? C.warn : C.ink2,
+        },
+        {
+          label: 'Hours · week',
+          value: `${fmtHours(k.hours.worked)} h`,
+          meter: { parts: [{ value: k.hours.worked, color: C.data }], total: k.hours.scheduled },
+          sub: `of ${fmtHours(k.hours.scheduled)} h scheduled`,
+        },
+        {
+          label: 'Tomorrow',
+          value: tomorrowTotal === 0 ? '—' : `${t.confirmed} / ${tomorrowTotal}`,
+          meter: tomorrowTotal === 0 ? null : { parts: [{ value: t.confirmed, color: C.data }], total: tomorrowTotal },
+          sub: tomorrowTotal === 0 ? `Nothing scheduled for ${dShort(t.date)}` : `Confirmed for ${dShort(t.date)}`,
+          note:
+            tomorrowTotal === 0
+              ? undefined
+              : t.open + t.unconfirmed === 0
+                ? 'Everyone confirmed'
+                : [t.open > 0 && `${t.open} unfilled`, t.unconfirmed > 0 && `${t.unconfirmed} unconfirmed`].filter(Boolean).join('\n'),
+          noteColor: t.open > 0 ? C.warn : t.unconfirmed > 0 ? C.ink2 : C.good,
+        },
+      ]);
+    };
+
+    const shiftsCard = (d: ReportDay) => {
+      const status = d.waves.map((w) => {
+        const upcoming = w.groups.filter((g) => g.key === 'upcoming').flatMap((g) => g.people);
+        const confirmed = upcoming.filter((p) => p.state === 'confirmed').length;
+        const notIn = Math.max(0, w.expected - w.present - upcoming.length);
+        const total = w.expected + w.open;
+        const tail = (parts: Array<string | false>) => parts.filter(Boolean).join(' · ');
+        if (w.phase === 'finished') {
+          return {
+            main: `${w.present} of ${w.expected} on the floor`,
+            detail: tail([w.missed > 0 && `${w.missed} did not punch in`, w.open > 0 && `${w.open} unfilled`]) || 'Full crew',
+            color: w.missed > 0 ? C.bad : w.open > 0 ? C.warn : C.good,
+            parts: [
+              { value: w.present, color: C.good },
+              { value: w.missed, color: C.bad },
+              { value: w.open, color: C.warn },
+            ],
+            total,
+          };
         }
-        if (k.meter !== undefined && k.meter !== null) {
-          doc.roundedRect(x + 8, y0 + 40, cardW - 16, 3, 1.5).fill(TRACK);
-          const mw = Math.max(2, ((cardW - 16) * Math.min(100, Math.max(0, k.meter))) / 100);
-          doc.roundedRect(x + 8, y0 + 40, mw, 3, 1.5).fill(k.meterTone ?? BLUE);
+        if (w.phase === 'live') {
+          return {
+            main: `${w.onFloor} of ${w.expected} in`,
+            detail: tail([notIn > 0 && `${notIn} not in yet`, w.open > 0 && `${w.open} unfilled`]) || 'Everyone in',
+            color: w.open > 0 ? C.warn : notIn > 0 ? C.ink2 : C.good,
+            parts: [
+              { value: w.present, color: C.good },
+              { value: notIn, color: C.ink3 },
+              { value: w.open, color: C.warn },
+            ],
+            total,
+          };
         }
-        if (k.sub) small(k.sub, x + 8, y0 + 46, { color: GREY, size: 7, width: cardW - 16, ellipsis: true });
+        return {
+          main: `${w.expected} expected`,
+          detail: tail([`${confirmed} confirmed`, w.open > 0 && `${w.open} unfilled`]),
+          color: w.open > 0 ? C.warn : C.ink2,
+          parts: [
+            { value: confirmed, color: C.data },
+            { value: w.open, color: C.warn },
+          ],
+          total,
+        };
       });
-      doc.y = y0 + cardH + 12;
-    };
-
-    /** One line per wave, the way the dashboard card reads it, with the meter. */
-    const waveLine = (w: ReportWave) => {
-      ensure(30);
-      const y = doc.y + 4;
-      const notIn = Math.max(0, w.expected - w.present);
-      const confirmed = w.groups.filter((g) => g.key === 'upcoming').flatMap((g) => g.people).filter((p) => p.state === 'confirmed').length;
-      const status =
-        w.phase === 'finished'
-          ? `${w.present} of ${w.expected} on the floor${w.missed > 0 ? ` · ${w.missed} did not punch in` : ''}${w.open > 0 ? ` · ${w.open} unfilled` : ''}`
-          : w.phase === 'live'
-            ? `${w.onFloor} of ${w.expected} in${notIn > 0 ? ` · ${notIn} not in yet` : ''}${w.open > 0 ? ` · ${w.open} unfilled` : ''}`
-            : `starts ${formatTimeInZone(w.startsAt, w.timezone)} · ${w.expected} expected · ${confirmed} confirmed${w.open > 0 ? ` · ${w.open} unfilled` : ''}`;
-      const statusTone =
-        w.phase === 'upcoming' ? GREY : w.present + w.onFloor >= w.expected && w.open === 0 ? GOOD : w.missed > 0 || w.open > 0 ? WARN : NAVY;
-      small(`${w.name} · ${w.timeRange}`, left, y, { bold: true, color: NAVY, size: 9.5, width: width * 0.42, ellipsis: true });
-      small(status, left + width * 0.42, y + 1, { bold: true, color: statusTone, size: 8, width: width * 0.58, align: 'right', ellipsis: true });
-      const my = y + 14;
-      doc.roundedRect(left, my, width, 4, 2).fill(TRACK);
-      const denom = Math.max(1, w.expected + w.open);
-      const filled = (width * (w.present + w.onFloor)) / denom;
-      if (filled > 0) doc.roundedRect(left, my, Math.max(filled, 3), 4, 2).fill(w.phase === 'upcoming' ? LIGHT : GOOD);
-      doc.y = my + 12;
-    };
-
-    type Panel = { title: string; right?: string; body: (x: number, y: number, w: number) => number };
-    /** Side-by-side panels; each body draws inside (x, y, w) and returns its height. */
-    const panels = (items: Panel[], minH: number) => {
-      ensure(minH + 16);
-      const gap = 10;
-      const w = (width - gap * (items.length - 1)) / items.length;
-      const y0 = doc.y;
-      const hs = items.map((p, i) => {
-        const x = left + i * (w + gap);
-        cardTitle(p.title, x + 10, y0 + 10, w - 20, p.right);
-        return p.body(x + 10, y0 + 26, w - 20);
-      });
-      const h = Math.max(minH, ...hs.map((v) => v + 36));
-      items.forEach((_, i) => doc.roundedRect(left + i * (w + gap), y0, w, h, 6).lineWidth(0.6).strokeColor(TRACK).stroke());
-      doc.y = y0 + h + 10;
-    };
-
-    const weekBars = (db: DashboardSnapshot, dayKey: string, x: number, y: number, w: number): number => {
-      const h = 58;
-      const n = db.week.days.length;
-      const slot = w / n;
-      const maxV = Math.max(1, ...db.week.days.map((d) => d.filled + d.open));
-      db.week.days.forEach((d, i) => {
-        const cx = x + i * slot + slot * 0.2;
-        const bw = slot * 0.6;
-        const fh = (h * d.filled) / maxV;
-        const oh = (h * d.open) / maxV;
-        if (fh > 0) doc.rect(cx, y + h - fh, bw, fh).fill(d.date === dayKey ? NAVY : BLUE);
-        if (oh > 0) doc.rect(cx, y + h - fh - oh, bw, oh).fill(WARN);
-        small(shortDay(d.date).slice(0, 3), x + i * slot, y + h + 3, { color: d.date === dayKey ? NAVY : LIGHT, size: 6.5, width: slot, align: 'center', bold: d.date === dayKey });
-        if (d.filled + d.open > 0) small(String(d.filled + d.open), x + i * slot, y + h - fh - oh - 9, { color: GREY, size: 6.5, width: slot, align: 'center' });
-      });
-      const ly = y + h + 14;
-      doc.rect(x, ly, 8, 8).fill(BLUE);
-      small('Filled', x + 12, ly, { color: GREY, size: 6.5 });
-      doc.rect(x + 50, ly, 8, 8).fill(WARN);
-      small('Unfilled', x + 62, ly, { color: GREY, size: 6.5 });
-      return h + 26;
-    };
-
-    const reliabilityBars = (db: DashboardSnapshot, x: number, y: number, w: number): number => {
-      const h = 58;
-      const weeks = db.reliability.weeks;
-      const slot = w / weeks.length;
-      const yFor = (v: number) => y + h - (h * Math.min(100, v)) / 100;
-      doc.moveTo(x, yFor(88)).lineTo(x + w, yFor(88)).lineWidth(0.8).dash(3, { space: 2 }).strokeColor(GOLD).stroke().undash();
-      weeks.forEach((wk, i) => {
-        const cx = x + i * slot + slot * 0.25;
-        const bw = slot * 0.5;
-        if (wk.reliabilityPct !== null) {
-          const tone = wk.reliabilityPct >= 88 ? GOOD : wk.reliabilityPct >= 70 ? BLUE : BAD;
-          doc.rect(cx, yFor(wk.reliabilityPct), bw, y + h - yFor(wk.reliabilityPct)).fill(tone);
-          if (wk.current) doc.rect(cx, yFor(wk.reliabilityPct), bw, y + h - yFor(wk.reliabilityPct)).lineWidth(1).strokeColor(NAVY).stroke();
-          small(`${wk.reliabilityPct}%`, x + i * slot, yFor(wk.reliabilityPct) - 9, { color: GREY, size: 6.5, width: slot, align: 'center' });
-        } else {
-          small('—', x + i * slot, y + h - 10, { color: LIGHT, size: 7, width: slot, align: 'center' });
-        }
-        small(wk.current ? 'this wk' : monthDay(wk.start), x + i * slot, y + h + 3, { color: wk.current ? NAVY : LIGHT, size: 6.5, width: slot, align: 'center', bold: wk.current });
-      });
-      const t = db.reliability.thisWeek;
-      small(
-        `This week so far: ${t.ncns} no-call no-show${t.ncns === 1 ? '' : 's'} · ${t.callOuts} call-out${t.callOuts === 1 ? '' : 's'} · ${t.lates} late · ${t.replaced} covered`,
-        x,
-        y + h + 14,
-        { color: t.ncns > 0 ? WARN : GREY, size: 6.8, width: w, ellipsis: true },
+      const nameW = 150;
+      const statusW = Math.max(
+        120,
+        ...status.map((s) => Math.max(widthOf(s.main, { size: T.body, bold: true }), widthOf(s.detail, { size: T.label }))),
       );
-      return h + 26;
+      tableCard(
+        'Shifts',
+        d.waves.length ? `${plural(d.waves.length, 'wave')} · names are on the Today page` : undefined,
+        null,
+        d.waves.map((w, i) => ({
+          height: 36,
+          draw: (x, ry, iw) => {
+            const s = status[i]!;
+            text(w.name, x, ry + 8, { size: T.body, bold: true });
+            text(w.timeRange, x, ry + 21, { size: T.label, color: C.ink3 });
+            meter(x + nameW, ry + 16, Math.max(40, iw - nameW - statusW - 20), s.parts, s.total);
+            textRight(s.main, x + iw, ry + 8, { size: T.body, bold: true });
+            textRight(s.detail, x + iw, ry + 21, { size: T.label, color: s.color });
+          },
+        })),
+        d.isFuture ? 'Nothing is scheduled for this day yet.' : 'Nothing was scheduled this day.',
+      );
     };
 
-    const leadsPanel = (db: DashboardSnapshot, x: number, y: number, w: number): number => {
-      if (db.leads.length === 0) {
-        small('Your Alto contact is being assigned — a request lands on the right desk.', x, y, { color: LIGHT, size: 8, width: w, lineBreak: true, height: 30 });
-        return 22;
-      }
-      let yy = y;
-      for (const l of db.leads) {
-        doc.circle(x + 5, yy + 5, 3).fill(l.onSite ? GOOD : TRACK);
-        small(l.name, x + 14, yy, { bold: true, color: NAVY, size: 8.5, width: w - 14, ellipsis: true });
-        small(`${l.title === 'supervisor' ? 'Shift supervisor' : 'Floor lead'}${l.onSite ? ' · on site that day' : ''}${l.phone ? ` · ${l.phone}` : ''}`, x + 14, yy + 11, {
-          color: l.onSite ? GOOD : GREY,
-          size: 7,
-          width: w - 14,
-          ellipsis: true,
-        });
-        yy += 24;
-      }
-      return yy - y;
+    const leadCard = (d: ReportDay): CardSpec => {
+      const leads = d.dashboard.leads;
+      const role = (l: DashboardSnapshot['leads'][number]) =>
+        [
+          l.title === 'supervisor' ? 'Shift supervisor' : 'Floor lead',
+          l.onSite ? (d.isToday ? 'On site today' : 'On site that day') : d.isFuture ? '' : 'Not on site',
+          l.phone ?? '',
+        ]
+          .filter(Boolean)
+          .join(' · ');
+      const empty = 'Your Alto contact is being assigned. A request lands on the right desk in the meantime.';
+      const rowH = (l: DashboardSnapshot['leads'][number], w: number) =>
+        paraH(l.name, w - 14, { bold: true }) + 2 + paraH(role(l), w - 14, { size: T.label });
+      return {
+        title: 'Your Alto lead',
+        bodyHeight: (w) => (leads.length === 0 ? paraH(empty, w, { color: C.ink3 }) : leads.reduce((a, l) => a + rowH(l, w), 0) + (leads.length - 1) * 10),
+        drawBody: (x, by, w) => {
+          if (leads.length === 0) {
+            para(empty, x, by, w, { color: C.ink3 });
+            return;
+          }
+          let ry = by;
+          for (const l of leads) {
+            doc.circle(x + 3.5, ry + 4.5, 3.5).fill(l.onSite ? C.good : C.rule);
+            const nh = para(l.name, x + 14, ry, w - 14, { bold: true });
+            para(role(l), x + 14, ry + nh + 2, w - 14, { size: T.label, color: C.ink2 });
+            ry += rowH(l, w) + 10;
+          }
+        },
+      };
     };
 
-    const opsPanel = (db: DashboardSnapshot, x: number, y: number, w: number): number => {
-      const o = db.ops?.today ?? db.ops?.lastNight ?? null;
-      if (!o) {
-        small('No checklist shifts were run — nothing to show yet.', x, y, { color: LIGHT, size: 8, width: w, lineBreak: true, height: 30 });
-        return 22;
-      }
-      const pct = o.sopTotal > 0 ? Math.round((o.sopDone / o.sopTotal) * 100) : null;
-      const r = 16;
-      const cx = x + r + 2;
-      const cy = y + r + 2;
-      doc.circle(cx, cy, r).lineWidth(4).strokeColor(TRACK).stroke();
-      if (pct !== null && pct > 0) {
-        const sweep = Math.min(359.9, (360 * pct) / 100);
-        const theta = ((-90 + sweep) * Math.PI) / 180;
-        const ex = cx + r * Math.cos(theta);
-        const ey = cy + r * Math.sin(theta);
-        doc
-          .path(`M ${cx} ${cy - r} A ${r} ${r} 0 ${sweep > 180 ? 1 : 0} 1 ${ex} ${ey}`)
-          .lineWidth(4)
-          .strokeColor(pct >= 90 ? GOOD : pct >= 70 ? BLUE : WARN)
-          .stroke();
-      }
-      small(pct === null ? '—' : `${pct}%`, cx - r, cy - 4, { bold: true, color: NAVY, size: 8, width: 2 * r, align: 'center' });
-      const tx = cx + r + 10;
-      small(`SOP ${o.sopDone} of ${o.sopTotal} · ${o.shifts} shift${o.shifts === 1 ? '' : 's'}`, tx, y + 2, { bold: true, color: NAVY, size: 8.5, width: w - (tx - x), ellipsis: true });
-      small(`${o.taskDone} of ${o.taskTotal} tasks · ${o.photos} photo${o.photos === 1 ? '' : 's'}`, tx, y + 14, { color: GREY, size: 7.5, width: w - (tx - x), ellipsis: true });
-      const flags = [o.tempAlerts > 0 && `${o.tempAlerts} temperature alert${o.tempAlerts === 1 ? '' : 's'}`, o.incomplete > 0 && `${o.incomplete} closed incomplete`, o.open > 0 && `${o.open} still open`]
-        .filter(Boolean)
-        .join(' · ');
-      if (flags) small(flags, tx, y + 25, { color: WARN, size: 7.5, width: w - (tx - x), ellipsis: true });
-      let yy = y + 40;
-      for (const n of o.notes.slice(0, 2)) {
-        small(`${n.department} · ${n.period}: ${n.summary}`, x, yy, { color: GREY, size: 7, width: w, ellipsis: true });
-        yy += 10;
-      }
-      return yy - y;
+    const opsCard = (d: ReportDay): CardSpec => {
+      const ops = d.dashboard.ops;
+      const o = ops?.today ?? ops?.lastNight ?? null;
+      const title = ops?.today ? (d.isToday ? "Today's checklist" : 'Checklist') : "Last night's checklist";
+      const empty = 'No checklist shifts were run.';
+      const detail = o ? `${o.taskDone} of ${o.taskTotal} tasks · ${plural(o.photos, 'photo')} · ${plural(o.shifts, 'shift')}` : '';
+      const flags = o
+        ? [o.tempAlerts > 0 && plural(o.tempAlerts, 'temperature alert'), o.incomplete > 0 && `${o.incomplete} closed incomplete`, o.open > 0 && `${o.open} still open`]
+            .filter(Boolean)
+            .join(' · ')
+        : '';
+      const notes = o ? o.notes.slice(0, 3).map((n) => `${n.department}, ${n.period.toLowerCase()}: ${n.summary}`) : [];
+      const RING = 48;
+      const textBlockH = (w: number) =>
+        o ? paraH(`${o.sopDone} of ${o.sopTotal} SOP steps`, w - RING - 12, { bold: true }) + 3 + paraH(detail, w - RING - 12, { size: T.label }) + (flags ? 3 + paraH(flags, w - RING - 12, { size: T.label }) : 0) : 0;
+      const notesH = (w: number) => notes.reduce((a, n) => a + paraH(n, w, { size: T.label }) + 4, 0);
+      return {
+        title,
+        meta: o ? dShort(o.dateKey) : undefined,
+        bodyHeight: (w) => (o ? Math.max(RING, textBlockH(w)) + (notes.length ? 10 + notesH(w) : 0) : paraH(empty, w, { color: C.ink3 })),
+        drawBody: (x, by, w) => {
+          if (!o) {
+            para(empty, x, by, w, { color: C.ink3 });
+            return;
+          }
+          ring(x + RING / 2, by + RING / 2, RING / 2 - 3, o.sopTotal > 0 ? Math.round((o.sopDone / o.sopTotal) * 100) : null);
+          const tx = x + RING + 12;
+          const tw = w - RING - 12;
+          let ty = by + 2;
+          ty += para(`${o.sopDone} of ${o.sopTotal} SOP steps`, tx, ty, tw, { bold: true }) + 3;
+          ty += para(detail, tx, ty, tw, { size: T.label, color: C.ink2 });
+          if (flags) para(flags, tx, ty + 3, tw, { size: T.label, bold: true, color: C.warn });
+          let ny = by + Math.max(RING, textBlockH(w)) + 10;
+          for (const n of notes) ny += para(n, x, ny, w, { size: T.label, color: C.ink2 }) + 4;
+        },
+      };
+    };
+
+    const weekCard = (d: ReportDay): CardSpec => {
+      const wk = d.dashboard.week;
+      return {
+        title: 'The week',
+        meta: `${dShort(wk.start)} – ${dShort(wk.end)}`,
+        bodyHeight: () => 108,
+        drawBody: (x, by, w) => {
+          const h = 64;
+          const top = by + 12;
+          const slot = w / wk.days.length;
+          const max = Math.max(1, ...wk.days.map((q) => q.filled + q.open));
+          wk.days.forEach((q, i) => {
+            const cx = x + i * slot + slot / 2;
+            const bw = Math.min(20, slot * 0.55);
+            const fh = (h * q.filled) / max;
+            const oh = (h * q.open) / max;
+            if (fh > 0) doc.rect(cx - bw / 2, top + h - fh, bw, fh).fill(C.data);
+            if (oh > 0) doc.rect(cx - bw / 2, top + h - fh - oh, bw, oh).fill(C.warn);
+            if (q.filled + q.open > 0) textCenter(String(q.filled + q.open), cx, top + h - fh - oh - 11, { size: T.label, color: C.ink2 });
+            const isDay = q.date === d.key;
+            textCenter(fmtKey(q.date, { weekday: 'short' }), cx, top + h + 6, { size: T.label, bold: isDay, color: isDay ? C.ink : C.ink3 });
+            if (isDay) hr(cx - 9, top + h + 17, 18, C.ink, 1);
+          });
+          hr(x, top + h, w, C.rule, 0.75);
+          legend(
+            [
+              { color: C.data, label: 'Filled' },
+              { color: C.warn, label: 'Unfilled' },
+            ],
+            x,
+            top + h + 26,
+          );
+        },
+      };
+    };
+
+    const reliabilityCard = (d: ReportDay): CardSpec => {
+      const rel = d.dashboard.reliability;
+      const tw = rel.thisWeek;
+      const caption = `This week: ${plural(tw.ncns, 'no-show')} · ${plural(tw.callOuts, 'call-out')} · ${tw.lates} late · ${tw.replaced} covered`;
+      return {
+        title: 'Reliability',
+        meta: 'Delivered vs contract',
+        bodyHeight: (w) => 108 + 6 + paraH(caption, w, { size: T.label }),
+        drawBody: (x, by, w) => {
+          const h = 64;
+          const top = by + 12;
+          const slot = w / rel.weeks.length;
+          const yFor = (v: number) => top + h - (h * Math.min(100, Math.max(0, v))) / 100;
+          doc.moveTo(x, yFor(88)).lineTo(x + w, yFor(88)).lineWidth(0.75).dash(2.5, { space: 2 }).strokeColor(C.ink).stroke().undash();
+          rel.weeks.forEach((wk, i) => {
+            const cx = x + i * slot + slot / 2;
+            const bw = Math.min(24, slot * 0.5);
+            if (wk.reliabilityPct !== null) {
+              const by2 = yFor(wk.reliabilityPct);
+              if (wk.current) doc.rect(cx - bw / 2, by2, bw, top + h - by2).fillAndStroke(C.dataTint, C.data);
+              else doc.rect(cx - bw / 2, by2, bw, top + h - by2).fill(C.data);
+              const lbl = `${wk.reliabilityPct}%`;
+              const lw = widthOf(lbl, { size: T.label });
+              doc.rect(cx - lw / 2 - 2, by2 - 12, lw + 4, 10).fill(C.white);
+              textCenter(lbl, cx, by2 - 11, { size: T.label, color: C.ink2 });
+            } else {
+              textCenter('—', cx, top + h - 11, { size: T.label, color: C.ink3 });
+            }
+            textCenter(wk.current ? 'This week' : dShort(wk.start), cx, top + h + 6, { size: T.label, bold: wk.current, color: wk.current ? C.ink : C.ink3 });
+          });
+          hr(x, top + h, w, C.rule, 0.75);
+          legend(
+            [
+              { color: C.ink, label: 'Target 88% (grade A)', kind: 'dash' },
+              { color: C.dataTint, label: 'In progress', kind: 'outline' },
+            ],
+            x,
+            top + h + 26,
+          );
+          para(caption, x, by + 108 + 6, w, { size: T.label, color: tw.ncns > 0 ? C.warn : C.ink2 });
+        },
+      };
+    };
+
+    const clearanceCard = (d: ReportDay): CardSpec => {
+      const c = d.dashboard.clearance;
+      const cleared = c.total - c.checksInFlight - c.flagged;
+      const line =
+        c.flagged > 0
+          ? `${c.flagged} flagged${c.checksInFlight > 0 ? ` · ${c.checksInFlight} in progress` : ''}`
+          : c.checksInFlight > 0
+            ? `${plural(c.checksInFlight, 'check')} still in progress`
+            : 'Everyone on this week’s crew is cleared.';
+      const empty = 'No crew was scheduled this week.';
+      return {
+        title: 'Crew clearance',
+        bodyHeight: (w) => (c.total === 0 ? paraH(empty, w, { color: C.ink3 }) : 28 + paraH(line, w) + 4 + paraH(`I-9 complete for ${c.i9Complete} of ${c.total}`, w, { size: T.label })),
+        drawBody: (x, by, w) => {
+          if (c.total === 0) {
+            para(empty, x, by, w, { color: C.ink3 });
+            return;
+          }
+          text(`${cleared} of ${c.total}`, x, by, { size: T.figure, bold: true, color: c.flagged > 0 ? C.warn : cleared === c.total ? C.good : C.ink });
+          const lh = para(line, x, by + 28, w, { color: c.flagged > 0 ? C.warn : C.ink2 });
+          para(`I-9 complete for ${c.i9Complete} of ${c.total}`, x, by + 28 + lh + 4, w, { size: T.label, color: C.ink3 });
+        },
+      };
+    };
+
+    const safetyCard = (d: ReportDay): CardSpec => {
+      const s = d.dashboard.safety;
+      const line = `${s.monthIncidents === 0 ? 'No incidents this month' : `${plural(s.monthIncidents, 'incident')} this month`}${s.open > 0 ? ` · ${s.open} open` : ''}`;
+      return {
+        title: 'Safety',
+        bodyHeight: (w) => 28 + paraH('Days since the last incident', w, { size: T.label }) + 4 + paraH(line, w),
+        drawBody: (x, by, w) => {
+          text(s.daysSinceLast === null ? '365+' : String(s.daysSinceLast), x, by, { size: T.figure, bold: true, color: s.open > 0 ? C.warn : C.good });
+          const lh = para('Days since the last incident', x, by + 28, w, { size: T.label, color: C.ink3 });
+          para(line, x, by + 28 + lh + 4, w, { color: s.open > 0 ? C.warn : C.ink2 });
+        },
+      };
+    };
+
+    const statementsCard = (d: ReportDay): CardSpec => {
+      const list = d.dashboard.statements.slice(0, 3);
+      const empty = 'No statements issued yet.';
+      return {
+        title: 'Statements',
+        bodyHeight: (w) => (list.length === 0 ? paraH(empty, w, { color: C.ink3 }) : list.length * 30 - 6),
+        drawBody: (x, by, w) => {
+          if (list.length === 0) {
+            para(empty, x, by, w, { color: C.ink3 });
+            return;
+          }
+          list.forEach((st, i) => {
+            const ry = by + i * 30;
+            if (i > 0) hr(x, ry - 6, w);
+            text(st.number !== null ? `No. ${String(st.number).padStart(4, '0')}` : 'Statement', x, ry, { bold: true });
+            text(`${dShort(st.periodStart)} – ${dShort(st.periodEnd)}${st.hours !== null ? ` · ${fmtHours(st.hours)} h` : ''}`, x, ry + 13, { size: T.label, color: C.ink3 });
+            textRight(st.amount !== null ? money(st.amount) : '—', x + w, ry, { bold: true });
+            textRight(st.paid ? 'Paid' : 'Due', x + w, ry + 13, { size: T.label, bold: true, color: st.paid ? C.good : C.warn });
+          });
+        },
+      };
+    };
+
+    const requestsCard = (d: ReportDay) => {
+      const rq = d.dashboard.requests;
+      const dateW = 50;
+      const typeW = 70;
+      const statusW = 66;
+      const iw = W - PAD * 2;
+      const subjectW = iw - dateW - typeW - statusW - 12;
+      tableCard(
+        'Requests',
+        [rq.open.length > 0 && plural(rq.open.length, 'open request'), rq.loggedToday > 0 && `${rq.loggedToday} logged ${d.isToday ? 'today' : 'this day'}`].filter(Boolean).join(' · ') || undefined,
+        rq.open.length
+          ? [
+              { label: 'Opened', x: 0 },
+              { label: 'Type', x: dateW },
+              { label: 'Subject', x: dateW + typeW },
+              { label: 'Status', x: iw, right: true },
+            ]
+          : null,
+        rq.open.map((r) => {
+          const sh = paraH(r.subject, subjectW);
+          const status = r.overdue ? 'Past reply-by' : r.status === 'IN_PROGRESS' ? 'In progress' : 'Received';
+          return {
+            height: Math.max(24, sh + 10),
+            draw: (x, ry, w) => {
+              text(dShort(r.at), x, ry + 6, { size: T.label, color: C.ink2 });
+              text(r.kind, x + dateW, ry + 6, { size: T.label, caps: true, color: C.ink2 });
+              para(r.subject, x + dateW + typeW, ry + 5, subjectW);
+              textRight(status, x + w, ry + 6, { size: T.label, bold: r.overdue, color: r.overdue ? C.bad : C.ink2 });
+            },
+          };
+        }),
+        'Nothing is open with Alto.',
+      );
     };
 
     const dayBody = (d: ReportDay) => {
-      const db = d.dashboard;
       hero(d);
-      const t = db.kpis.tomorrow;
-      const tomorrowTotal = t.confirmed + t.unconfirmed + t.open;
-      kpiCards([
-        {
-          label: 'FILL RATE · THIS WEEK',
-          value: db.kpis.fill.pct === null ? '—' : `${db.kpis.fill.pct}%`,
-          delta: db.kpis.fill.deltaPts === null ? undefined : `${db.kpis.fill.deltaPts > 0 ? '+' : ''}${db.kpis.fill.deltaPts} pts vs last week`,
-          deltaTone: db.kpis.fill.deltaPts === null || db.kpis.fill.deltaPts === 0 ? GREY : db.kpis.fill.deltaPts > 0 ? GOOD : BAD,
-          meter: db.kpis.fill.pct,
-          meterTone: db.kpis.fill.pct === null ? BLUE : db.kpis.fill.pct >= 95 ? GOOD : db.kpis.fill.pct >= 85 ? BLUE : WARN,
-          sub: `${db.kpis.fill.filled} of ${db.kpis.fill.total} shifts filled`,
-        },
-        {
-          label: 'RELIABILITY · 4 WEEKS',
-          value: db.kpis.grade.grade ?? '—',
-          tone: gradeTone(db.kpis.grade.grade),
-          delta: db.kpis.grade.score === null ? undefined : `${db.kpis.grade.score}% ${db.kpis.grade.basis === 'schedule' ? 'showed up' : 'delivered'}`,
-          sub: db.kpis.grade.hasHistory ? `${db.kpis.grade.ncns} no-call no-shows · ${db.kpis.grade.replaced} covered` : 'no completed weeks yet',
-        },
-        {
-          label: 'HOURS · THIS WEEK',
-          value: hrs(db.kpis.hours.worked),
-          meter: db.kpis.hours.scheduled > 0 ? Math.min(100, Math.round((db.kpis.hours.worked / db.kpis.hours.scheduled) * 100)) : null,
-          sub: `of ${hrs(db.kpis.hours.scheduled)} scheduled`,
-        },
-        {
-          label: 'TOMORROW · CONFIRMED',
-          value: tomorrowTotal === 0 ? '—' : `${t.confirmed} / ${tomorrowTotal}`,
-          tone: t.open > 0 ? WARN : NAVY,
-          meter: tomorrowTotal > 0 ? Math.round((t.confirmed / tomorrowTotal) * 100) : null,
-          meterTone: t.open > 0 ? WARN : GOOD,
-          sub:
-            `${monthDay(t.date)} · ` +
-            (tomorrowTotal === 0
-              ? 'nothing scheduled'
-              : [t.open > 0 && `${t.open} unfilled`, t.unconfirmed > 0 && `${t.unconfirmed} awaiting confirmation`].filter(Boolean).join(' · ') || 'all confirmed'),
-        },
-      ]);
-
-      if (d.waves.length === 0) {
-        section(d.isToday ? 'Today by shift' : 'The day by shift');
-        small('Nothing scheduled this day.', left, doc.y, { color: LIGHT, size: 9 });
-        doc.y += 14;
-      } else {
-        section(
-          `${d.isToday ? 'Today' : 'The day'} by shift · ${d.waves.length} ${d.waves.length === 1 ? 'wave' : 'waves'}`,
-          'Each wave against its headcount. Names and punch times stay on the Today page in your portal.',
-        );
-        for (const w of d.waves) waveLine(w);
-        doc.y += 4;
-      }
-
-      section('Your Alto lead · the checklist');
-      panels(
-        [
-          { title: 'Your Alto lead', body: (x, y, w) => leadsPanel(db, x, y, w) },
-          {
-            title: db.ops?.today ? (d.isToday ? "Today's checklist work" : 'The checklist that day') : "Last night's work",
-            right: db.ops?.today ? undefined : db.ops?.lastNight ? monthDay(db.ops.lastNight.dateKey) : undefined,
-            body: (x, y, w) => opsPanel(db, x, y, w),
-          },
-        ],
-        70,
-      );
-
-      section('The week · reliability');
-      panels(
-        [
-          { title: `The week · ${monthDay(db.week.start)} – ${monthDay(db.week.end)}`, right: 'shifts per day', body: (x, y, w) => weekBars(db, d.key, x, y, w) },
-          { title: 'Reliability · 5 weeks', right: 'delivered vs contracted · A from 88%', body: (x, y, w) => reliabilityBars(db, x, y, w) },
-        ],
-        100,
-      );
-
-      section('Crew clearance · safety · statements');
-      panels(
-        [
-          {
-            title: 'Crew clearance',
-            body: (x, y, w) => {
-              const c = db.clearance;
-              if (c.total === 0) {
-                small('No crew scheduled this week.', x, y, { color: LIGHT, size: 8, width: w });
-                return 14;
-              }
-              const cleared = c.total - c.checksInFlight - c.flagged;
-              doc.font('Helvetica-Bold').fontSize(16).fillColor(c.flagged > 0 ? WARN : GOOD).text(`${cleared} / ${c.total}`, x, y, { lineBreak: false });
-              small(
-                cleared === c.total ? 'everyone on this week’s crew is cleared' : `${c.checksInFlight} check${c.checksInFlight === 1 ? '' : 's'} in flight${c.flagged > 0 ? ` · ${c.flagged} flagged` : ''}`,
-                x,
-                y + 20,
-                { color: GREY, size: 7, width: w, lineBreak: true, height: 20 },
-              );
-              small(`${c.i9Complete} of ${c.total} I-9 complete · current standing`, x, y + 38, { color: LIGHT, size: 6.5, width: w, ellipsis: true });
-              return 48;
-            },
-          },
-          {
-            title: 'Safety',
-            body: (x, y, w) => {
-              const s = db.safety;
-              doc.font('Helvetica-Bold').fontSize(16).fillColor(s.open > 0 ? WARN : GOOD).text(s.daysSinceLast === null ? '365+' : String(s.daysSinceLast), x, y, { lineBreak: false });
-              small('days since the last incident', x, y + 20, { color: GREY, size: 7, width: w });
-              small(`${s.monthIncidents === 0 ? 'a clean month' : `${s.monthIncidents} this month`}${s.open > 0 ? ` · ${s.open} open` : ''}`, x, y + 31, { color: s.open > 0 ? WARN : LIGHT, size: 7, width: w, ellipsis: true });
-              return 42;
-            },
-          },
-          {
-            title: 'Statements',
-            body: (x, y, w) => {
-              if (db.statements.length === 0) {
-                small('No statements yet.', x, y, { color: LIGHT, size: 8, width: w });
-                return 14;
-              }
-              let yy = y;
-              for (const st of db.statements.slice(0, 3)) {
-                small(`${st.number !== null ? `No. ${String(st.number).padStart(4, '0')}` : 'Statement'} · ${monthDay(st.periodStart)} – ${monthDay(st.periodEnd)}${st.storeShare ? ' · your store' : ''}`, x, yy, {
-                  color: NAVY,
-                  size: 7,
-                  width: w,
-                  ellipsis: true,
-                });
-                small(`${st.amount !== null ? money(st.amount) : '—'}${st.hours !== null ? ` · ${hrs(st.hours)}` : ''} · ${st.paid ? 'paid' : 'due'}`, x, yy + 9, { color: st.paid ? GOOD : GREY, size: 7, width: w, ellipsis: true });
-                yy += 22;
-              }
-              return yy - y;
-            },
-          },
-        ],
-        64,
-      );
-
-      const rq = db.requests;
-      section(`Requests · ${rq.open.length} open${rq.loggedToday > 0 ? ` · ${rq.loggedToday} logged ${d.isToday ? 'today' : 'that day'}` : ''}`);
-      if (rq.open.length === 0) {
-        small('Nothing open with Alto.', left, doc.y, { color: LIGHT, size: 9 });
-        doc.y += 14;
-      } else {
-        for (const r of rq.open) {
-          ensure(14);
-          const y = doc.y;
-          small(monthDay(r.at), left, y, { color: GREY, size: 8, width: 48 });
-          small(r.kind, left + 52, y, { bold: true, color: NAVY, size: 8, width: 64 });
-          small(r.subject, left + 122, y, { color: NAVY, size: 8, width: width - 230, ellipsis: true });
-          small(r.overdue ? 'past reply-by' : r.status.replace('_', ' ').toLowerCase(), right - 100, y, { color: r.overdue ? BAD : GREY, size: 8, width: 100, align: 'right' });
-          doc.y = y + 13;
-        }
-      }
+      kpiTiles(d);
+      shiftsCard(d);
+      cardsRow([leadCard(d), opsCard(d)], [6, 6]);
+      cardsRow([weekCard(d), reliabilityCard(d)], [6, 6]);
+      cardsRow([clearanceCard(d), safetyCard(d), statementsCard(d)], [4, 4, 4]);
+      requestsCard(d);
     };
 
-    /* ---- the period at a glance (range only) --------------------------- */
-    if (data.isRange) {
-      section('The period at a glance');
-      const tt = data.totals;
-      kpiCards([
-        {
-          label: 'DELIVERED VS CONTRACT',
-          value: tt.score === null ? '—' : `${tt.score}%${tt.grade ? ` · ${tt.grade}` : ''}`,
-          tone: gradeTone(tt.grade),
-          sub: tt.contractedHours > 0 ? `${tt.deliveredHours} of ${tt.contractedHours} person-hours` : 'no contracted hours in the period',
-        },
-        { label: 'ON THE FLOOR', value: `${tt.showed} / ${tt.expected}`, tone: tt.showed >= tt.expected ? GOOD : NAVY, sub: 'punched in of expected' },
-        { label: 'DID NOT PUNCH IN', value: String(tt.missed), tone: tt.missed > 0 ? BAD : GOOD, sub: tt.missed === 0 ? 'nobody missed' : 'shifts ended with no punch' },
-        { label: 'UNFILLED', value: String(tt.open), tone: tt.open > 0 ? WARN : GOOD, sub: tt.open === 0 ? 'every slot filled' : 'open slots in the period' },
-      ]);
-      section('Day by day', 'Each row is one day — its dashboard follows on its own pages.');
-      {
-        const rowH = 17;
-        const nameW = 92;
-        const numW = 46;
-        const barX = left + nameW + 6;
-        const barW = width - nameW - numW * 4 - 30;
-        small('DAY', left, doc.y, { color: LIGHT, size: 6.5, characterSpacing: 0.6 });
-        small('DELIVERED VS CONTRACTED', barX, doc.y, { color: LIGHT, size: 6.5, characterSpacing: 0.6 });
-        small('ON FLOOR', barX + barW + 8, doc.y, { color: LIGHT, size: 6.5, width: numW, align: 'right' });
-        small('NO PUNCH', barX + barW + 8 + numW, doc.y, { color: LIGHT, size: 6.5, width: numW, align: 'right' });
-        small('UNFILLED', barX + barW + 8 + numW * 2, doc.y, { color: LIGHT, size: 6.5, width: numW, align: 'right' });
-        small('GRADE', barX + barW + 8 + numW * 3, doc.y, { color: LIGHT, size: 6.5, width: numW, align: 'right' });
-        doc.y += 11;
-        for (const d of data.days) {
-          ensure(rowH + 2);
-          const y = doc.y;
-          small(shortDay(d.key), left, y + 3, { bold: true, color: NAVY, size: 8.5, width: nameW });
-          doc.roundedRect(barX, y + 3, barW, 8, 4).fill(TRACK);
-          const score = d.contract.score;
-          if (score !== null && score > 0) doc.roundedRect(barX, y + 3, Math.max(4, (barW * Math.min(100, score)) / 100), 8, 4).fill(gradeTone(d.contract.grade));
-          small(score === null ? (d.isFuture ? 'upcoming' : 'no graded hours') : `${score}%`, barX + barW - 60, y + 3, { color: GREY, size: 7, width: 58, align: 'right' });
-          small(`${d.summary.showed}/${d.summary.expected}`, barX + barW + 8, y + 3, { color: NAVY, size: 8.5, width: numW, align: 'right' });
-          small(String(d.summary.missed), barX + barW + 8 + numW, y + 3, { color: d.summary.missed > 0 ? BAD : LIGHT, size: 8.5, width: numW, align: 'right' });
-          small(String(d.summary.open), barX + barW + 8 + numW * 2, y + 3, { color: d.summary.open > 0 ? WARN : LIGHT, size: 8.5, width: numW, align: 'right' });
-          small(d.contract.grade ?? '—', barX + barW + 8 + numW * 3, y + 3, { bold: true, color: gradeTone(d.contract.grade), size: 8.5, width: numW, align: 'right' });
-          doc.y = y + rowH;
-        }
-      }
-      for (const d of data.days) {
-        doc.addPage();
-        doc.y = 54;
-        const by = doc.y;
-        doc.roundedRect(left, by, width, 40, 6).fill(NAVY);
-        doc.font('Helvetica-Bold').fontSize(13).fillColor('#FFFFFF').text(d.label, left + 12, by + 9, { lineBreak: false });
-        small(
-          d.isFuture ? `${d.summary.expected} expected · ${d.summary.open} unfilled` : `${d.summary.showed} of ${d.summary.expected} on the floor · ${d.summary.missed} did not punch in · ${d.summary.open} unfilled`,
-          left + 12,
-          by + 25,
-          { color: GOLD, size: 8 },
-        );
-        if (d.contract.grade) {
-          doc
-            .font('Helvetica-Bold')
-            .fontSize(18)
-            .fillColor(gradeTone(d.contract.grade) === NAVY ? '#FFFFFF' : gradeTone(d.contract.grade))
-            .text(d.contract.grade, left, by + 10, { width: width - 12, align: 'right', lineBreak: false });
-        }
-        doc.y = by + 48;
-        dayBody(d);
-      }
-    } else {
+    /* ---- masthead (page one) -------------------------------------------- */
+    const [genKey = '', ...genRest] = data.generatedAt.split(' ');
+    const prepared = `Prepared ${/^\d{4}-\d{2}-\d{2}$/.test(genKey) ? dFull(genKey) : genKey}${genRest.length ? `, ${genRest.join(' ')} ET` : ''}`;
+    const single = data.days.length === 1 ? data.days[0]! : null;
+    const snapshotNote = data.isRange
+      ? `${plural(data.days.length, 'day')}, each as of the close of day`
+      : single?.isToday
+        ? 'Live snapshot'
+        : single?.isFuture
+          ? 'The schedule as it stands'
+          : 'As of the close of day';
+    const MAST_H = 100;
+    doc.rect(0, 0, PAGE_W, MAST_H).fill(C.ink);
+    doc.rect(0, MAST_H, PAGE_W, 2.5).fill(C.brand);
+    text(`${data.orgName} · Service report`, M, 28, { ...LABEL, color: C.brand });
+    const storeStyle: Style = { size: widthOf(where, { size: T.figure, bold: true }) > colW(7) ? T.title : T.figure, bold: true, color: C.white };
+    text(where, M, 44, storeStyle);
+    text(data.storeName ? data.clientName : 'All stores', M, 72, { color: C.mastSub });
+    textRight(data.isRange ? 'Period' : 'Report date', M + W, 28, { ...LABEL, color: C.mastSub });
+    textRight(data.isRange ? dSpan(data.from, data.to) : dWeekday(data.from), M + W, 44, { size: T.title, bold: true, color: C.white });
+    textRight(prepared, M + W, 64, { size: T.label, color: C.mastSub });
+    textRight(snapshotNote, M + W, 76, { size: T.label, color: C.mastSub });
+    y = MAST_H + 2.5 + 22;
+
+    /* ---- body ------------------------------------------------------------ */
+    if (!data.isRange) {
       dayBody(data.days[0]!);
+    } else {
+      const tt = data.totals;
+      tiles([
+        {
+          label: 'Delivered',
+          chip: tt.grade,
+          value: tt.score === null ? '—' : `${tt.score}%`,
+          meter: tt.score === null ? null : { parts: [{ value: Math.min(100, tt.score), color: C.data }], total: 100, marker: 88 },
+          sub: tt.contractedHours > 0 ? `${tt.deliveredHours} of ${tt.contractedHours} contracted person-hours` : 'No contracted hours in the period',
+        },
+        {
+          label: 'On the floor',
+          value: `${tt.showed} of ${tt.expected}`,
+          meter: { parts: [{ value: tt.showed, color: C.good }], total: tt.expected },
+          sub: 'Punched in, of those expected',
+        },
+        {
+          label: 'No punch',
+          value: String(tt.missed),
+          valueColor: tt.missed > 0 ? C.bad : C.ink,
+          meter: { parts: [{ value: tt.missed, color: C.bad }], total: tt.expected },
+          sub: 'Shifts that ended with no punch',
+        },
+        {
+          label: 'Unfilled',
+          value: String(tt.open),
+          valueColor: tt.open > 0 ? C.warn : C.ink,
+          meter: { parts: [{ value: tt.open, color: C.warn }], total: tt.expected + tt.open },
+          sub: 'Open slots across the period',
+        },
+      ]);
+      const iw = W - PAD * 2;
+      const numW = 58;
+      const dayW = 104;
+      const barX = dayW;
+      const barW = iw - dayW - numW * 4 - 44;
+      tableCard(
+        'Day by day',
+        'Each day follows on its own pages',
+        [
+          { label: 'Day', x: 0 },
+          { label: 'Delivered vs contract', x: barX },
+          { label: 'On floor', x: iw - numW * 3, right: true },
+          { label: 'No punch', x: iw - numW * 2, right: true },
+          { label: 'Unfilled', x: iw - numW, right: true },
+          { label: 'Grade', x: iw, right: true },
+        ],
+        data.days.map((d) => ({
+          height: 24,
+          draw: (x, ry, w) => {
+            text(dWeekdayShort(d.key), x, ry + 8, { bold: true });
+            const sc = d.contract.score;
+            meter(x + barX, ry + 11, barW, sc === null ? [] : [{ value: Math.min(100, sc), color: C.data }], 100, 88);
+            text(sc === null ? (d.isFuture ? 'Upcoming' : '—') : `${sc}%`, x + barX + barW + 8, ry + 8, { size: T.label, color: C.ink2 });
+            textRight(`${d.summary.showed} of ${d.summary.expected}`, x + w - numW * 3, ry + 8);
+            textRight(String(d.summary.missed), x + w - numW * 2, ry + 8, { color: d.summary.missed > 0 ? C.bad : C.ink3 });
+            textRight(String(d.summary.open), x + w - numW, ry + 8, { color: d.summary.open > 0 ? C.warn : C.ink3 });
+            textRight(d.contract.grade ?? '—', x + w, ry + 8, { bold: true, color: gradeColor(d.contract.grade) });
+          },
+        })),
+        'No days in the period.',
+      );
+      data.days.forEach((d, i) => {
+        newPage();
+        text(dWeekday(d.key), M, y, { size: T.figure, bold: true });
+        text(
+          `Day ${i + 1} of ${data.days.length} · ${d.isToday ? 'Live snapshot' : d.isFuture ? 'The schedule as it stands' : 'As of the close of day'}`,
+          M,
+          y + 27,
+          { size: T.label, color: C.ink3 },
+        );
+        hr(M, y + 44, W, C.rule, 0.75);
+        y += 44 + 18;
+        dayBody(d);
+      });
     }
 
-    /* ---- footer on every page ------------------------------------------ */
-    const range = doc.bufferedPageRange();
-    for (let i = range.start; i < range.start + range.count; i++) {
-      doc.switchToPage(i);
-      doc
-        .moveTo(left, doc.page.height - 48)
-        .lineTo(right, doc.page.height - 48)
-        .lineWidth(0.5)
-        .strokeColor(GOLD)
-        .stroke();
-      const keep = doc.page.margins.bottom;
-      doc.page.margins.bottom = 0;
-      doc
-        .font('Helvetica')
-        .fontSize(7.5)
-        .fillColor(LIGHT)
-        .text(pdfSafe(`${data.orgName} · Service Report · ${where} · ${period} · Confidential · page ${i - range.start + 1} of ${range.count}`), left, doc.page.height - 40, {
-          width,
-          align: 'center',
-          lineBreak: false,
-        });
-      doc.page.margins.bottom = keep;
+    /* ---- running header + footer on every page ---------------------------- */
+    const pages = doc.bufferedPageRange();
+    for (let i = 0; i < pages.count; i += 1) {
+      doc.switchToPage(pages.start + i);
+      if (i > 0) {
+        text(`${data.orgName} · Service report`, M, 28, LABEL);
+        textRight(`${where} · ${dSpan(data.from, data.to)}`, M + W, 28, { size: T.label, color: C.ink3 });
+        hr(M, 42, W, C.rule, 0.75);
+      }
+      hr(M, PAGE_H - 44, W, C.rule, 0.75);
+      text(`Confidential · Prepared for ${data.clientName} by ${data.orgName}`, M, PAGE_H - 34, { size: T.label, color: C.ink3 });
+      textRight(`Page ${i + 1} of ${pages.count}`, M + W, PAGE_H - 34, { size: T.label, color: C.ink3 });
     }
     doc.end();
   });
