@@ -906,6 +906,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       opsShifts.filter((o) => o.dateKey === todayKey && o.status === 'ACTIVE').map((o) => o.openedById),
     );
     const leads = leadUsers.map((u) => ({
+      userId: u.id,
       name: u.associate ? fullName(u.associate) : u.email.split('@')[0] ?? u.email,
       phone: u.associate?.phone ?? null,
       email: u.email,

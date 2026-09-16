@@ -4,6 +4,7 @@ import type { Capability } from './roles';
 
 export type ModuleKey =
   | 'portal'
+  | 'messages'
   | 'portal-today'
   | 'portal-schedule'
   | 'portal-history'
@@ -117,6 +118,7 @@ export interface ModuleNav {
  */
 export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
+  'messages',
   'relay',
   'people',
   'org-chart',
@@ -138,6 +140,7 @@ export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
  *  own profile — nothing else to wander into. */
 const FLOOR_SUPERVISOR_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
+  'messages',
   'time-attendance',
 ]);
 
@@ -173,6 +176,7 @@ const CLIENT_PORTAL_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'portal-today',
   'portal-schedule',
   'portal-history',
+  'messages',
   'portal-requests',
 ]);
 
@@ -181,6 +185,7 @@ const CLIENT_PORTAL_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
  *  uncurated slice buried these under Pulse/Equity/Volunteer/Career noise. */
 const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
+  'messages',
   'relay',
   'payroll',
   'payroll-tax',
@@ -213,6 +218,7 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
  *  coverage, standards, safety, the supervisor pipeline. No money pages. */
 const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
+  'messages',
   'relay',
   'people',
   'recruiting',
@@ -253,7 +259,8 @@ export function visibleModules(
     // "My store" only makes sense for a client account — internal roles
     // preview portals from the Clients page instead.
     (m) =>
-      !m.key.startsWith('portal') || role === 'CLIENT_PORTAL',
+      (!m.key.startsWith('portal') || role === 'CLIENT_PORTAL') &&
+      (m.key !== 'messages' || (role !== 'ASSOCIATE' && role !== 'LIVE_ASN')),
   ).filter(
     // "Timesheets" is Finance's name for the T&A surface — everyone else
     // already has Time & attendance; two entries would double-list it.
@@ -324,6 +331,15 @@ export const MODULES: ModuleNav[] = [
     label: 'Requests',
     description:
       'Ask for coverage, flag an issue, or question a statement — and watch each request move to a named owner with a reply-by date.',
+    requires: 'view:dashboard',
+    group: 'core',
+  },
+  {
+    key: 'messages',
+    path: '/messages',
+    label: 'Messages',
+    description:
+      'Text the people who run the floor — store managers, supervisors, the desks — with every thread kept as a record.',
     requires: 'view:dashboard',
     group: 'core',
   },

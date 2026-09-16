@@ -22,7 +22,7 @@ const PING_INTERVAL_MS = 25_000;
 
 const streams = new Map<string, Set<Response>>();
 
-export type LiveEventType = 'notification';
+export type LiveEventType = 'notification' | 'message';
 
 export function registerLiveStream(userId: string, res: Response): void {
   let set = streams.get(userId);

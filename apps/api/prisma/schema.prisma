@@ -559,6 +559,9 @@ model User {
   clientRequestsResolved            ClientRequest[]               @relation("ClientRequestResolver")
   clientRequestsStarted             ClientRequest[]               @relation("ClientRequestStarter")
   clientAcknowledgements            ClientAcknowledgement[]
+  conversationsCreated              Conversation[]                @relation("ConversationCreator")
+  conversationParticipations        ConversationParticipant[]
+  messagesSent                      Message[]                     @relation("MessageSender")
   cohortsCreated                    Cohort[]                      @relation("CohortCreator")
   statementsFinalized               ClientStatement[]             @relation("StatementFinalizer")
   // Privacy erasures this admin performed (Associate.erasedById).
@@ -634,6 +637,7 @@ model Client {
   fieldglassRegistrations FieldglassRegistration[]
   clientRequests         ClientRequest[]
   clientAcknowledgements ClientAcknowledgement[]
+  conversations          Conversation[]
   cohorts                Cohort[]
   opsShifts              OpsShift[]
   payrollRuns            PayrollRun[]
@@ -746,6 +750,7 @@ model Location {
   shiftTeams   ShiftTeam[]
   staffingTargets StaffingTarget[]
   portalUsers  User[]                @relation("UserStoreScope")
+  conversations Conversation[]
 
   @@index([clientId, isActive])
   @@index([deletedAt])
@@ -931,6 +936,77 @@ model ClientRequest {
 enum ClientAcknowledgementKind {
   STATEMENT
   SERVICE_REPORT
+}
+
+// The in-app messenger: a store manager texts the supervisor on the
+// floor and the thread is the record. Conversations are direct, small
+// groups, or the STORE_CHANNEL every store gets (the store's portal
+// accounts + Alto's supervisors bound to the client). Messages are
+// immutable — append-only, never edited or deleted — so a dispute six
+// weeks later has the trail. Who may message whom is a rule, not a
+// directory (lib/messaging.ts); associates are never reachable here.
+enum ConversationKind {
+  DIRECT
+  GROUP
+  STORE_CHANNEL
+}
+
+enum MessageKind {
+  TEXT
+  SYSTEM
+}
+
+model Conversation {
+  id            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind          ConversationKind
+  // Tenant scope: set for STORE_CHANNEL (and for any thread that
+  // includes a client account), null for purely internal threads.
+  clientId      String?          @db.Uuid
+  locationId    String?          @db.Uuid
+  title         String?          @db.VarChar(120)
+  createdById   String?          @db.Uuid
+  createdAt     DateTime         @default(now()) @db.Timestamptz(6)
+  lastMessageAt DateTime?        @db.Timestamptz(6)
+  lastPreview   String?          @db.VarChar(160)
+
+  client       Client?                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  location     Location?                 @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  createdBy    User?                     @relation("ConversationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([clientId, kind])
+  @@index([lastMessageAt(sort: Desc)])
+}
+
+model ConversationParticipant {
+  conversationId String    @db.Uuid
+  userId         String    @db.Uuid
+  joinedAt       DateTime  @default(now()) @db.Timestamptz(6)
+  lastReadAt     DateTime? @db.Timestamptz(6)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String      @db.Uuid
+  senderId       String?     @db.Uuid
+  kind           MessageKind @default(TEXT)
+  body           String      @db.VarChar(4000)
+  attachmentKey  String?
+  attachmentType String?     @db.VarChar(100)
+  attachmentName String?     @db.VarChar(255)
+  createdAt      DateTime    @default(now()) @db.Timestamptz(6)
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User?        @relation("MessageSender", fields: [senderId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
 }
 
 model ClientAcknowledgement {

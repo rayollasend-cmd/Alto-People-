@@ -36,6 +36,7 @@ import type { ModuleKey } from './modules';
  */
 export const MODULE_ICONS: Record<ModuleKey, LucideIcon> = {
   'portal': StoreIcon,
+  'messages': MessageSquare,
   'portal-today': UsersIcon,
   'portal-schedule': HolidayIcon,
   'portal-history': ReportsIcon,

@@ -116,6 +116,7 @@ const PortalSchedule = lazyNamed(() => import('@/pages/portal/PortalSchedule'), 
 const PortalToday = lazyNamed(() => import('@/pages/portal/PortalToday'), 'PortalToday');
 const PortalRequestsPage = lazyNamed(() => import('@/pages/portal/PortalRequestsPage'), 'PortalRequestsPage');
 const PortalHistory = lazyNamed(() => import('@/pages/portal/PortalHistory'), 'PortalHistory');
+const MessagesHome = lazyNamed(() => import('@/pages/messages/MessagesHome'), 'MessagesHome');
 const ClientDetail = lazyNamed(() => import('@/pages/clients/ClientDetail'), 'ClientDetail');
 const ClientStatementsRollup = lazyNamed(() => import('@/pages/clients/ClientStatementsRollup'), 'ClientStatementsRollup');
 const PeopleDirectory = lazyNamed(() => import('@/pages/people/PeopleDirectory'), 'PeopleDirectory');
@@ -368,6 +369,8 @@ const LAYOUT_ROUTES = [
   { path: 'portal/schedule', element: <PortalSchedule /> },
   { path: 'portal/requests', element: <PortalRequestsPage /> },
   { path: 'portal/history', element: <PortalHistory /> },
+  { path: 'messages', element: <MessagesHome /> },
+  { path: 'messages/:id', element: <MessagesHome /> },
   { path: 'scheduling', element: <SchedulingHome /> },
   { path: 'approvals', element: <RequireCapability cap="manage:scheduling"><ApprovalsHome /></RequireCapability> },
   { path: 'labor-costs', element: <RequireCapability cap="manage:scheduling" anyOf={['view:executive', 'process:payroll']}><LaborCostsHome /></RequireCapability> },

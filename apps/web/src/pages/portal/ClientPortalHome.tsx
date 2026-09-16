@@ -11,6 +11,7 @@ import {
   HardHat,
   Mail,
   MapPin,
+  MessageSquare,
   Phone,
   ShieldCheck,
   Users,
@@ -149,6 +150,7 @@ interface PortalOverview {
   tomorrow: { confirmed: number; unconfirmed: number; open: number; coverInFlight: number };
   leads: {
     people: Array<{
+      userId: string;
       name: string;
       phone: string | null;
       email: string;
@@ -786,8 +788,16 @@ export function ClientPortalHome() {
                         {p.runningOps && <span className="text-gold"> · {t('portal.leadRunningOps')}</span>}
                       </div>
                     </div>
-                    {p.phone && (
+                    {isPortal && (
                       <Button size="sm" variant="secondary" asChild>
+                        <Link to={`/messages?to=${p.userId}`} aria-label={`${t('portal.messageLead')} ${p.name}`}>
+                          <MessageSquare className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                          {t('portal.messageLead')}
+                        </Link>
+                      </Button>
+                    )}
+                    {p.phone && (
+                      <Button size="sm" variant="ghost" asChild>
                         <a href={`tel:${p.phone.replace(/[^+\d]/g, '')}`}>
                           <Phone className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
                           {t('portal.call')}

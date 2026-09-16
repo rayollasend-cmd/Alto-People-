@@ -1,4 +1,8 @@
 import { Link } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { unreadMessages } from '@/lib/messagesApi';
+import { onLiveEvent } from '@/lib/liveEvents';
 import {
   Briefcase,
   Calendar,
@@ -46,6 +50,8 @@ interface TabDef {
   label?: string;
   icon: LucideIcon;
   requires: Capability | null;
+  /** Live count shown on the tab — only the messenger has one. */
+  badge?: 'messages';
 }
 
 const HOME_TAB: TabDef = {
@@ -89,8 +95,8 @@ const FLOOR_TABS: TabDef[] = [
 const PORTAL_TABS: TabDef[] = [
   { path: DASHBOARD_NAV.path, labelKey: 'portal.title', icon: Store, requires: null },
   { path: '/portal/today', labelKey: 'portal.todayNav', icon: Users, requires: null },
-  { path: '/portal/schedule', labelKey: 'portal.schedule', icon: Calendar, requires: 'view:scheduling' },
-  { path: '/portal/requests', labelKey: 'portal.reqTitle', icon: MessageSquare, requires: null },
+  { path: '/messages', labelKey: 'msg.title', icon: MessageSquare, requires: null, badge: 'messages' },
+  { path: '/portal/requests', labelKey: 'portal.reqTitle', icon: Inbox, requires: null },
 ];
 
 /** Legacy fallback for roles that fit neither bucket. */
@@ -145,7 +151,10 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
               active ? 'text-gold' : 'text-silver',
             )}
           >
-            <Icon className="h-5 w-5" aria-hidden="true" strokeWidth={active ? 2.4 : 2} />
+            <span className="relative">
+              <Icon className="h-5 w-5" aria-hidden="true" strokeWidth={active ? 2.4 : 2} />
+              {tab.badge === 'messages' && <UnreadMessagesBadge />}
+            </span>
             <span className={cn('text-2xs leading-none', active && 'font-semibold')}>
               {tab.labelKey ? t(tab.labelKey) : tab.label}
             </span>
@@ -166,5 +175,27 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
         <span className="text-2xs leading-none">{t('tabs.more')}</span>
       </button>
     </nav>
+  );
+}
+
+/** Live unread count for the Messages tab. Its own component so the
+ *  query only mounts for roles that have the tab. */
+function UnreadMessagesBadge() {
+  const queryClient = useQueryClient();
+  const unread = useQuery({
+    queryKey: ['messages', 'unread'],
+    queryFn: unreadMessages,
+    refetchInterval: 60_000,
+  });
+  useEffect(
+    () => onLiveEvent('message', () => void queryClient.invalidateQueries({ queryKey: ['messages'] })),
+    [queryClient],
+  );
+  const n = unread.data?.unread ?? 0;
+  if (n <= 0) return null;
+  return (
+    <span className="absolute -right-2 -top-1.5 rounded-full bg-gold px-1 text-[10px] font-semibold leading-4 text-on-accent">
+      {n > 99 ? '99+' : n}
+    </span>
   );
 }

@@ -77,6 +77,7 @@ import { workforceOverviewRouter } from './routes/workforceOverview.js';
 import { companyClockRouter } from './routes/companyClock.js';
 import { relayRouter } from './routes/relay.js';
 import { clientRequestsRouter } from './routes/clientRequests.js';
+import { messagesRouter } from './routes/messages.js';
 import { kiosk99Router } from './routes/kiosk99.js';
 import { celebrationsRouter } from './routes/celebrations107.js';
 import { assetsRouter } from './routes/assets108.js';
@@ -276,6 +277,8 @@ export function createApp() {
   // Not a bare requireCapability: the gate lets client-bounded roles
   // (SHIFT_SUPERVISOR, CLIENT_PORTAL) through to GET /:id/locations only —
   // see clientsAccessGate for why.
+  // The messenger gates per role inside (associates are never callers).
+  app.use('/messages', messagesRouter);
   app.use('/clients', clientsAccessGate, clientsRouter);
   app.use(
     '/onboarding',
