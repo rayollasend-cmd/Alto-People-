@@ -161,7 +161,7 @@ export function CommandPalette({
     // visibleModules, not a raw capability slice — the palette must offer
     // the same curated nav the sidebar shows (an associate was getting all
     // 25 HR modules here while their sidebar showed 14).
-    ...visibleModules(user?.role, can).map<PaletteItem>((m) => ({
+    ...visibleModules(user?.role, can, { regionId: user?.regionId }).map<PaletteItem>((m) => ({
       id: `nav-${m.key}`,
       label: m.label,
       hint: m.description,

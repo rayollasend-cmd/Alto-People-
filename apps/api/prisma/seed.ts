@@ -402,6 +402,26 @@ async function main() {
     });
   }
 
+  // ---- The region above the store: a command-center account ----------------
+  const demoRegion =
+    (await prisma.region.findFirst({ where: { name: 'Florida Panhandle', deletedAt: null } })) ??
+    (await prisma.region.create({ data: { name: 'Florida Panhandle' } }));
+  if (demoStore.regionId !== demoRegion.id) {
+    await prisma.location.update({ where: { id: demoStore.id }, data: { regionId: demoRegion.id } });
+  }
+  const regionEmail = 'region@coastalresort.example';
+  if (!(await prisma.user.findUnique({ where: { email: regionEmail } }))) {
+    await prisma.user.create({
+      data: {
+        email: regionEmail,
+        passwordHash: await hashPassword(PORTAL_DEV_PASSWORD),
+        role: 'CLIENT_PORTAL',
+        status: 'ACTIVE',
+        regionId: demoRegion.id,
+      },
+    });
+  }
+
   // ---- Management users (one per non-HR role for QA / persona testing) ---
   for (const m of MANAGEMENT_USERS) {
     const existing = await prisma.user.findUnique({ where: { email: m.email } });

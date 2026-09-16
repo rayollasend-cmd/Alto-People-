@@ -117,6 +117,8 @@ const PortalToday = lazyNamed(() => import('@/pages/portal/PortalToday'), 'Porta
 const PortalRequestsPage = lazyNamed(() => import('@/pages/portal/PortalRequestsPage'), 'PortalRequestsPage');
 const PortalHistory = lazyNamed(() => import('@/pages/portal/PortalHistory'), 'PortalHistory');
 const MessagesHome = lazyNamed(() => import('@/pages/messages/MessagesHome'), 'MessagesHome');
+const RegionHome = lazyNamed(() => import('@/pages/region/RegionHome'), 'RegionHome');
+const RegionsAdmin = lazyNamed(() => import('@/pages/admin/RegionsAdmin'), 'RegionsAdmin');
 const ClientDetail = lazyNamed(() => import('@/pages/clients/ClientDetail'), 'ClientDetail');
 const ClientStatementsRollup = lazyNamed(() => import('@/pages/clients/ClientStatementsRollup'), 'ClientStatementsRollup');
 const PeopleDirectory = lazyNamed(() => import('@/pages/people/PeopleDirectory'), 'PeopleDirectory');
@@ -369,6 +371,7 @@ const LAYOUT_ROUTES = [
   { path: 'portal/schedule', element: <PortalSchedule /> },
   { path: 'portal/requests', element: <PortalRequestsPage /> },
   { path: 'portal/history', element: <PortalHistory /> },
+  { path: 'region', element: <RegionHome /> },
   { path: 'messages', element: <MessagesHome /> },
   { path: 'messages/:id', element: <MessagesHome /> },
   { path: 'scheduling', element: <SchedulingHome /> },
@@ -386,6 +389,7 @@ const LAYOUT_ROUTES = [
   // profile / password / preferences here. RequireAuth above is enough.
   { path: 'settings', element: <Settings /> },
   { path: 'admin/users', element: <RequireCapability cap="view:hr-admin"><UsersAdmin /></RequireCapability> },
+  { path: 'admin/regions', element: <RequireCapability cap="view:org"><RegionsAdmin /></RequireCapability> },
   { path: 'admin/branding', element: <RequireCapability cap="view:hr-admin"><BrandingHome /></RequireCapability> },
   { path: 'admin/billing', element: <RequireCapability cap="view:hr-admin" anyOf={['process:payroll']}><BillingHome /></RequireCapability> },
   { path: 'audit', element: <RequireCapability cap="view:audit"><AuditHome /></RequireCapability> },

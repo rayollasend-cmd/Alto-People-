@@ -411,9 +411,14 @@ model User {
   // clientId — the users PATCH validates that and clears it whenever the
   // client changes.
   locationId         String?    @db.Uuid
+  // Region scope for a CLIENT_PORTAL account with NO client: the command
+  // center for every store in the region (Manager, Business Operations
+  // Support). Mutually exclusive with clientId.
+  regionId           String?    @db.Uuid
   associate          Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
   client             Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
   location           Location?  @relation("UserStoreScope", fields: [locationId], references: [id], onDelete: SetNull)
+  region             Region?    @relation("UserRegionScope", fields: [regionId], references: [id], onDelete: SetNull)
   createdAt          DateTime   @default(now()) @db.Timestamptz(6)
   updatedAt          DateTime   @updatedAt @db.Timestamptz(6)
   deletedAt          DateTime?  @db.Timestamptz(6)
@@ -736,6 +741,9 @@ model Location {
   // admins set it per location. Validated against SUPPORTED_TIMEZONES on
   // write.
   timezone             String    @default("America/New_York")
+  // The region this store rolls up to (the command center). Stores may
+  // belong to different clients and still share a region.
+  regionId             String?   @db.Uuid
   isActive             Boolean   @default(true)
   createdAt            DateTime  @default(now()) @db.Timestamptz(6)
   updatedAt            DateTime  @updatedAt @db.Timestamptz(6)
@@ -751,6 +759,7 @@ model Location {
   staffingTargets StaffingTarget[]
   portalUsers  User[]                @relation("UserStoreScope")
   conversations Conversation[]
+  region       Region?               @relation(fields: [regionId], references: [id], onDelete: SetNull)
 
   @@index([clientId, isActive])
   @@index([deletedAt])
@@ -936,6 +945,21 @@ model ClientRequest {
 enum ClientAcknowledgementKind {
   STATEMENT
   SERVICE_REPORT
+}
+
+// A region: the stores a Manager, Business Operations Support runs. Stores
+// may sit under different clients and still share a region.
+model Region {
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String     @db.VarChar(120)
+  createdAt DateTime   @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime   @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime?  @db.Timestamptz(6)
+
+  locations Location[]
+  users     User[]     @relation("UserRegionScope")
+
+  @@index([deletedAt])
 }
 
 // The in-app messenger: a store manager texts the supervisor on the

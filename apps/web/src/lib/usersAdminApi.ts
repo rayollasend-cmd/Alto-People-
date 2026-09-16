@@ -17,6 +17,9 @@ export interface AdminUser {
    *  for the whole client (a market manager). */
   locationId: string | null;
   locationName: string | null;
+  /** CLIENT_PORTAL command-center scope (a region; client + store are null). */
+  regionId: string | null;
+  regionName: string | null;
   /** Non-null iff the account is currently brute-force locked (the server
    *  only surfaces locks that are still in the future). */
   lockedUntil: string | null;
@@ -65,6 +68,7 @@ export function patchAdminUser(
     status?: UserStatus;
     clientId?: string | null;
     locationId?: string | null;
+    regionId?: string | null;
   },
 ): Promise<void> {
   return apiFetch<void>(`/admin/users/${id}`, { method: 'PATCH', body });

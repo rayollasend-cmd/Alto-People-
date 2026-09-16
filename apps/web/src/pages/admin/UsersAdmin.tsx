@@ -28,6 +28,7 @@ import {
   type UserStatus,
 } from '@/lib/usersAdminApi';
 import { listClients, listClientLocations } from '@/lib/clientsApi';
+import { listRegions } from '@/lib/regionsApi';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -184,6 +185,32 @@ export function UsersAdmin() {
     },
     [locationsByClient],
   );
+
+  // Regions for the command-center picker (CLIENT_PORTAL rows). Loaded once
+  // on first use; a region account has no client and no store.
+  const [regions, setRegions] = useState<{ id: string; name: string }[] | null>(null);
+  const ensureRegions = useCallback(async () => {
+    if (regions) return;
+    try {
+      const r = await listRegions();
+      setRegions(r.regions.map((x) => ({ id: x.id, name: x.name })));
+    } catch {
+      setRegions([]);
+    }
+  }, [regions]);
+  const onAssignRegion = async (u: AdminUser, newRegionId: string) => {
+    if (newRegionId === (u.regionId ?? '')) return;
+    setPendingId(u.id);
+    try {
+      await patchAdminUser(u.id, { regionId: newRegionId || null });
+      toast.success(newRegionId ? 'Region assigned — this is now a command-center account.' : 'Region cleared.');
+      await load();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed.');
+    } finally {
+      setPendingId(null);
+    }
+  };
 
   const onAssignLocation = async (u: AdminUser, newLocationId: string) => {
     if (newLocationId === (u.locationId ?? '')) return;
@@ -930,6 +957,25 @@ export function UsersAdmin() {
                             {clients.map((c) => (
                               <option key={c.id} value={c.id}>
                                 {c.name}
+                              </option>
+                            ))}
+                          </Select>
+                        )}
+                        {(draftRole[u.id] ?? u.role) === 'CLIENT_PORTAL' && (
+                          <Select
+                            size="sm"
+                            className="mt-1"
+                            value={u.regionId ?? ''}
+                            onFocus={() => void ensureRegions()}
+                            onChange={(e) => onAssignRegion(u, e.target.value)}
+                            disabled={isMe || busy}
+                            aria-label="Assign region"
+                            title="A region account is the command center for every store in the region; it replaces the client and store scope."
+                          >
+                            <option value="">{u.regionId ? '— no region —' : 'Region (command center)…'}</option>
+                            {(regions ?? (u.regionId && u.regionName ? [{ id: u.regionId, name: u.regionName }] : [])).map((r) => (
+                              <option key={r.id} value={r.id}>
+                                {r.name}
                               </option>
                             ))}
                           </Select>

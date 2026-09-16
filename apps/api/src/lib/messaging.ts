@@ -50,6 +50,7 @@ export interface Messenger {
   role: Role;
   clientId: string | null;
   locationId?: string | null;
+  regionId?: string | null;
 }
 
 export function canUseMessenger(role: Role): boolean {
@@ -62,6 +63,9 @@ export function canMessage(from: Messenger, to: Messenger): boolean {
   if (!canUseMessenger(from.role) || !canUseMessenger(to.role)) return false;
   const sameClient = !!from.clientId && from.clientId === to.clientId;
   if (from.role === 'CLIENT_PORTAL') {
+    // A region account: its store checks are async (the region's clients)
+    // — canMessageAsync covers it; here only the desks are certain.
+    if (!from.clientId && from.regionId) return DESK_ROLES.includes(to.role) || STORE_ROLES.includes(to.role);
     if (STORE_ROLES.includes(to.role)) return sameClient;
     if (DESK_ROLES.includes(to.role)) return true;
     return false;
@@ -74,9 +78,38 @@ export function canMessage(from: Messenger, to: Messenger): boolean {
   return true;
 }
 
+/** Clients that have a store in the caller's region (region accounts). */
+export async function regionClientIds(regionId: string, prisma: PrismaClient = defaultPrisma): Promise<string[]> {
+  const rows = await prisma.location.findMany({
+    where: { regionId, deletedAt: null },
+    select: { clientId: true },
+    distinct: ['clientId'],
+    take: 500,
+  });
+  return rows.map((r) => r.clientId);
+}
+
+/** canMessage, plus the region check a store target needs. */
+export async function canMessageAsync(from: Messenger, to: Messenger, prisma: PrismaClient = defaultPrisma): Promise<boolean> {
+  if (!canMessage(from, to)) return false;
+  if (from.role === 'CLIENT_PORTAL' && !from.clientId && from.regionId && STORE_ROLES.includes(to.role)) {
+    return !!to.clientId && (await regionClientIds(from.regionId, prisma)).includes(to.clientId);
+  }
+  return true;
+}
+
 /** The "where" the caller may message into, as a Prisma filter over users. */
-export function directoryWhere(from: Messenger) {
+export function directoryWhere(from: Messenger, regionClients: string[] = []) {
   const base = { status: 'ACTIVE' as const, deletedAt: null, id: { not: from.id } };
+  if (from.role === 'CLIENT_PORTAL' && !from.clientId && from.regionId) {
+    return {
+      ...base,
+      OR: [
+        { role: { in: STORE_ROLES }, clientId: { in: regionClients.length ? regionClients : ['00000000-0000-0000-0000-000000000000'] } },
+        { role: { in: DESK_ROLES } },
+      ],
+    };
+  }
   if (from.role === 'CLIENT_PORTAL') {
     return {
       ...base,

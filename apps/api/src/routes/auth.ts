@@ -220,6 +220,7 @@ function toAuthUser(u: {
   status: string;
   clientId: string | null;
   locationId?: string | null;
+  regionId?: string | null;
   associateId: string | null;
   firstName?: string | null;
   lastName?: string | null;
@@ -237,6 +238,7 @@ function toAuthUser(u: {
     status: u.status as AuthUser['status'],
     clientId: u.clientId,
     locationId: u.locationId ?? null,
+    regionId: u.regionId ?? null,
     associateId: u.associateId,
     firstName: u.firstName ?? null,
     lastName: u.lastName ?? null,
@@ -267,14 +269,18 @@ async function clientNameFor(clientId: string | null): Promise<string | null> {
 async function scopeNamesFor(u: {
   clientId: string | null;
   locationId?: string | null;
-}): Promise<{ clientName: string | null; locationName: string | null }> {
-  const [clientName, loc] = await Promise.all([
+  regionId?: string | null;
+}): Promise<{ clientName: string | null; locationName: string | null; regionName: string | null }> {
+  const [clientName, loc, region] = await Promise.all([
     clientNameFor(u.clientId),
     u.locationId
       ? prisma.location.findUnique({ where: { id: u.locationId }, select: { name: true } })
       : Promise.resolve(null),
+    u.regionId
+      ? prisma.region.findUnique({ where: { id: u.regionId }, select: { name: true } })
+      : Promise.resolve(null),
   ]);
-  return { clientName, locationName: loc?.name ?? null };
+  return { clientName, locationName: loc?.name ?? null, regionName: region?.name ?? null };
 }
 
 /**

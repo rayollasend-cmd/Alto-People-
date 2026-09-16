@@ -23,8 +23,8 @@ const NO_CLIENT = '00000000-0000-0000-0000-000000000000';
 
 export function scopeClients(user: SessionUser): Prisma.ClientWhereInput {
   const base: Prisma.ClientWhereInput = { deletedAt: null };
-  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
-    return { ...base, id: user.clientId };
+  if (user.role === 'CLIENT_PORTAL') {
+    return { ...base, id: (user.clientId ?? NO_CLIENT) };
   }
   // SHIFT_SUPERVISOR only ever sees its own client (fail closed if unset).
   if (user.role === 'SHIFT_SUPERVISOR') {
@@ -37,8 +37,8 @@ export function scopeApplications(
   user: SessionUser
 ): Prisma.ApplicationWhereInput {
   const base: Prisma.ApplicationWhereInput = { deletedAt: null };
-  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
-    return { ...base, clientId: user.clientId };
+  if (user.role === 'CLIENT_PORTAL') {
+    return { ...base, clientId: (user.clientId ?? NO_CLIENT) };
   }
   if (user.role === 'ASSOCIATE' && user.associateId) {
     return { ...base, associateId: user.associateId };
@@ -56,23 +56,23 @@ export function scopeApplications(
 export function scopeTemplates(
   user: SessionUser
 ): Prisma.OnboardingTemplateWhereInput {
-  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
+  if (user.role === 'CLIENT_PORTAL') {
     // Client-portal users see global templates and their own client's.
-    return { OR: [{ clientId: null }, { clientId: user.clientId }] };
+    return { OR: [{ clientId: null }, { clientId: (user.clientId ?? NO_CLIENT) }] };
   }
   return {};
 }
 
 export function scopeBackgroundChecks(user: SessionUser): Prisma.BackgroundCheckWhereInput {
-  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
-    return { clientId: user.clientId };
+  if (user.role === 'CLIENT_PORTAL') {
+    return { clientId: (user.clientId ?? NO_CLIENT) };
   }
   return {};
 }
 
 export function scopeDrugTests(user: SessionUser): Prisma.DrugTestWhereInput {
-  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
-    return { clientId: user.clientId };
+  if (user.role === 'CLIENT_PORTAL') {
+    return { clientId: (user.clientId ?? NO_CLIENT) };
   }
   return {};
 }
@@ -82,8 +82,8 @@ export function scopeDocuments(user: SessionUser): Prisma.DocumentRecordWhereInp
   if (user.role === 'ASSOCIATE' && user.associateId) {
     return { ...base, associateId: user.associateId };
   }
-  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
-    return { ...base, clientId: user.clientId };
+  if (user.role === 'CLIENT_PORTAL') {
+    return { ...base, clientId: (user.clientId ?? NO_CLIENT) };
   }
   return base;
 }
@@ -91,8 +91,8 @@ export function scopeDocuments(user: SessionUser): Prisma.DocumentRecordWhereInp
 export function scopePayrollRuns(user: SessionUser): Prisma.PayrollRunWhereInput {
   // CLIENT_PORTAL only ever sees runs for its own client (although it lacks
   // view:payroll today; defense in depth for when finance roles are added).
-  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
-    return { clientId: user.clientId };
+  if (user.role === 'CLIENT_PORTAL') {
+    return { clientId: (user.clientId ?? NO_CLIENT) };
   }
   // ASSOCIATE doesn't list runs — they hit /payroll/me/items instead.
   return {};
@@ -103,8 +103,8 @@ export function scopePayrollSchedules(user: SessionUser): Prisma.PayrollSchedule
   // ever sees schedules for its own client (plus org-wide nulls); other
   // privileged roles see everything not soft-deleted.
   const base: Prisma.PayrollScheduleWhereInput = { deletedAt: null };
-  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
-    return { ...base, OR: [{ clientId: null }, { clientId: user.clientId }] };
+  if (user.role === 'CLIENT_PORTAL') {
+    return { ...base, OR: [{ clientId: null }, { clientId: (user.clientId ?? NO_CLIENT) }] };
   }
   return base;
 }
@@ -124,8 +124,8 @@ export function scopeShifts(user: SessionUser): Prisma.ShiftWhereInput {
     };
   }
   // CLIENT_PORTAL is restricted to its own client's shifts.
-  if (user.role === 'CLIENT_PORTAL' && user.clientId) {
-    return { clientId: user.clientId };
+  if (user.role === 'CLIENT_PORTAL') {
+    return { clientId: (user.clientId ?? NO_CLIENT) };
   }
   // SHIFT_SUPERVISOR manages only its own client's shifts (fail closed).
   if (user.role === 'SHIFT_SUPERVISOR') {

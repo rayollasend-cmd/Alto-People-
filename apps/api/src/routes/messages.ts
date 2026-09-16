@@ -14,8 +14,9 @@ import { trackNotificationWork } from '../lib/notify.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import {
-  canMessage,
+  canMessageAsync,
   canUseMessenger,
+  regionClientIds,
   directoryWhere,
   displayName,
   ensureStoreChannels,
@@ -186,9 +187,11 @@ messagesRouter.get('/directory', requireAuth, async (req, res, next) => {
   try {
     const user = me(req);
     const q = (req.query.q?.toString() ?? '').trim();
+    const regionClients =
+      user.role === 'CLIENT_PORTAL' && !user.clientId && user.regionId ? await regionClientIds(user.regionId) : [];
     const rows = await prisma.user.findMany({
       where: {
-        ...directoryWhere(user),
+        ...directoryWhere(user, regionClients),
         ...(q
           ? {
               OR: [
@@ -230,7 +233,7 @@ messagesRouter.post('/conversations', requireAuth, async (req, res, next) => {
     });
     if (targets.length !== ids.length) throw new HttpError(404, 'not_found', 'Someone on that list was not found.');
     for (const t of targets) {
-      if (!canMessage(user, t)) {
+      if (!(await canMessageAsync(user, t))) {
         throw new HttpError(403, 'forbidden', `You can't message ${displayName(t)} from this account.`);
       }
     }

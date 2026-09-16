@@ -81,6 +81,7 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       createdAt: true,
       clientId: true,
       locationId: true,
+      regionId: true,
       associateId: true,
       lockedUntil: true,
       associate: {
@@ -90,6 +91,9 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
         select: { id: true, name: true },
       },
       location: {
+        select: { id: true, name: true },
+      },
+      region: {
         select: { id: true, name: true },
       },
     },
@@ -112,6 +116,8 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       clientName: u.client?.name ?? null,
       locationId: u.locationId,
       locationName: u.location?.name ?? null,
+      regionId: u.regionId,
+      regionName: u.region?.name ?? null,
       // Account lockout (brute-force lock). Only surfaced while still in
       // the future — an expired lock is just noise to an admin.
       lockedUntil:
@@ -157,14 +163,18 @@ const PatchInputSchema = z
     // effective client. null clears it (whole-client view); omitted
     // leaves it unchanged. Cleared automatically when the client changes.
     locationId: z.string().uuid().nullable().optional(),
+    // Region scope for a CLIENT_PORTAL command-center account. Setting a
+    // region clears the client and store; setting a client clears the region.
+    regionId: z.string().uuid().nullable().optional(),
   })
   .refine(
     (v) =>
       v.role !== undefined ||
       v.status !== undefined ||
       v.clientId !== undefined ||
-      v.locationId !== undefined,
-    { message: 'At least one of role, status, clientId, or locationId is required' },
+      v.locationId !== undefined ||
+      v.regionId !== undefined,
+    { message: 'At least one of role, status, clientId, locationId, or regionId is required' },
   );
 
 // Roles that must be pinned to a single client to function.
@@ -190,7 +200,7 @@ usersRouter.patch(
 
     const target = await prisma.user.findUnique({
       where: { id },
-      select: { id: true, role: true, status: true, clientId: true, locationId: true, deletedAt: true },
+      select: { id: true, role: true, status: true, clientId: true, locationId: true, regionId: true, deletedAt: true },
     });
     if (!target || target.deletedAt) {
       throw new HttpError(404, 'not_found', 'User not found.');
@@ -280,13 +290,34 @@ usersRouter.patch(
       effectiveLocationId = null;
     }
 
+    // Region scope: a live region; exclusive with the client scope.
+    let effectiveRegionId: string | null | undefined = undefined;
+    if (input.regionId) {
+      const region = await prisma.region.findFirst({
+        where: { id: input.regionId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!region) throw new HttpError(400, 'region_not_found', 'That region does not exist.');
+      effectiveRegionId = input.regionId;
+    } else if (input.regionId === null) {
+      effectiveRegionId = null;
+    } else if (input.clientId) {
+      effectiveRegionId = null;
+    }
+
     const data: {
       role?: Role;
       status?: 'ACTIVE' | 'DISABLED' | 'INVITED';
       clientId?: string | null;
       locationId?: string | null;
+      regionId?: string | null;
       tokenVersion?: { increment: number };
     } = {};
+    if (effectiveRegionId) {
+      // A region account has no client and no store.
+      if (target.clientId) data.clientId = null;
+      if (target.locationId) data.locationId = null;
+    }
     if (input.role && input.role !== target.role) data.role = input.role;
     if (input.status && input.status !== target.status) data.status = input.status;
     if (input.clientId !== undefined && input.clientId !== target.clientId) {
@@ -295,12 +326,16 @@ usersRouter.patch(
     if (effectiveLocationId !== undefined && effectiveLocationId !== target.locationId) {
       data.locationId = effectiveLocationId;
     }
+    if (effectiveRegionId !== undefined && effectiveRegionId !== target.regionId) {
+      data.regionId = effectiveRegionId;
+    }
     // A role change, a client-scope change, or a flip into DISABLED kills
     // existing sessions so the new access takes effect immediately.
     if (
       data.role ||
       data.clientId !== undefined ||
       data.locationId !== undefined ||
+      data.regionId !== undefined ||
       data.status === 'DISABLED'
     ) {
       data.tokenVersion = { increment: 1 };

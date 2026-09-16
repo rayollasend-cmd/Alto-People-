@@ -4,6 +4,8 @@ import type { Capability } from './roles';
 
 export type ModuleKey =
   | 'portal'
+  | 'region'
+  | 'regions'
   | 'messages'
   | 'portal-today'
   | 'portal-schedule'
@@ -119,6 +121,7 @@ export interface ModuleNav {
 export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
   'messages',
+  'regions',
   'relay',
   'people',
   'org-chart',
@@ -219,6 +222,7 @@ const FINANCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
 const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
   'messages',
+  'regions',
   'relay',
   'people',
   'recruiting',
@@ -248,10 +252,13 @@ const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'reports',
 ]);
 
-/** Capability-filtered module list, with per-role curation applied. */
+/** Capability-filtered module list, with per-role curation applied.
+ *  `scope.regionId` marks a CLIENT_PORTAL command-center account, whose nav
+ *  is the region and messages — never the single-store pages. */
 export function visibleModules(
   role: string | undefined,
   can: (c: Capability) => boolean,
+  scope: { regionId?: string | null } = {},
 ): ModuleNav[] {
   const base = MODULES.filter(
     (m) => can(m.requires) || (m.requiresAny?.some(can) ?? false),
@@ -260,6 +267,7 @@ export function visibleModules(
     // preview portals from the Clients page instead.
     (m) =>
       (!m.key.startsWith('portal') || role === 'CLIENT_PORTAL') &&
+      (m.key !== 'region' || role === 'CLIENT_PORTAL') &&
       (m.key !== 'messages' || (role !== 'ASSOCIATE' && role !== 'LIVE_ASN')),
   ).filter(
     // "Timesheets" is Finance's name for the T&A surface — everyone else
@@ -267,6 +275,7 @@ export function visibleModules(
     (m) => m.key !== 'timesheets' || role === 'FINANCE_ACCOUNTANT',
   );
   if (role === 'CLIENT_PORTAL') {
+    if (scope.regionId) return base.filter((m) => m.key === 'region' || m.key === 'messages');
     return base.filter((m) => CLIENT_PORTAL_MODULE_KEYS.has(m.key));
   }
   if (role === 'FINANCE_ACCOUNTANT') {
@@ -335,6 +344,15 @@ export const MODULES: ModuleNav[] = [
     group: 'core',
   },
   {
+    key: 'region',
+    path: '/region',
+    label: 'Command center',
+    description:
+      'Every store in your region at a glance — on the floor vs contracted, today, tomorrow, the grade, open requests — with each store one tap away.',
+    requires: 'view:dashboard',
+    group: 'core',
+  },
+  {
     key: 'messages',
     path: '/messages',
     label: 'Messages',
@@ -385,6 +403,15 @@ export const MODULES: ModuleNav[] = [
     label: 'People',
     description:
       'Directory of every associate — active, pending onboarding, and inactive — with workplace, pay rate, employment type, manager, and contact info in one row.',
+    requires: 'view:org',
+    group: 'workforce',
+  },
+  {
+    key: 'regions',
+    path: '/admin/regions',
+    label: 'Regions',
+    description:
+      'The command-center tier above the store: which stores roll up to which region, and the accounts that run each one.',
     requires: 'view:org',
     group: 'workforce',
   },

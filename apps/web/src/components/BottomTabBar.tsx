@@ -99,6 +99,12 @@ const PORTAL_TABS: TabDef[] = [
   { path: '/portal/requests', labelKey: 'portal.reqTitle', icon: Inbox, requires: null },
 ];
 
+/** The region command center account: the region, and messages. */
+const REGION_TABS: TabDef[] = [
+  { path: DASHBOARD_NAV.path, labelKey: 'region.title', icon: Store, requires: null },
+  { path: '/messages', labelKey: 'msg.title', icon: MessageSquare, requires: null, badge: 'messages' },
+];
+
 /** Legacy fallback for roles that fit neither bucket. */
 const DEFAULT_TABS: TabDef[] = [
   HOME_TAB,
@@ -121,7 +127,9 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
         : user?.role === 'FLOOR_SUPERVISOR'
           ? FLOOR_TABS
           : user?.role === 'CLIENT_PORTAL'
-            ? PORTAL_TABS
+            ? user.regionId && !user.clientId
+              ? REGION_TABS
+              : PORTAL_TABS
             : can('manage:scheduling')
             ? SCHEDULER_TABS
             : DEFAULT_TABS;

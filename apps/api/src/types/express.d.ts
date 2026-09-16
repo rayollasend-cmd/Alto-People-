@@ -11,6 +11,8 @@ export interface SessionUser {
   /** CLIENT_PORTAL store scope — one Location under clientId, or null for
    *  the whole client. Ignored for every other role. */
   locationId: string | null;
+  /** CLIENT_PORTAL region scope (command center) — set only when clientId is null. */
+  regionId: string | null;
   associateId: string | null;
   tokenVersion: number;
   firstName: string | null;

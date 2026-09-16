@@ -456,6 +456,9 @@ export const AuthUserSchema = z.object({
    *  manager) or null for the whole client (a market manager). */
   locationId: UuidSchema.nullable().optional(),
   locationName: z.string().nullable().optional(),
+  /** CLIENT_PORTAL region scope: the command center for every store in the region. */
+  regionId: UuidSchema.nullable().optional(),
+  regionName: z.string().nullable().optional(),
   associateId: UuidSchema.nullable(),
   firstName: z.string().nullable(),
   lastName: z.string().nullable(),

@@ -23,6 +23,7 @@ const ExecutiveDashboard = lazy(() =>
 const ClientPortalHome = lazy(() =>
   import('./portal/ClientPortalHome').then((m) => ({ default: m.ClientPortalHome })),
 );
+const RegionHome = lazy(() => import('./region/RegionHome').then((m) => ({ default: m.RegionHome })));
 const FinanceDashboard = lazy(() =>
   import('./FinanceDashboard').then((m) => ({ default: m.FinanceDashboard })),
 );
@@ -64,7 +65,9 @@ export function Dashboard() {
           : user?.role === 'EXECUTIVE_CHAIRMAN'
             ? ExecutiveDashboard
             : user?.role === 'CLIENT_PORTAL'
-              ? ClientPortalHome
+              ? user.regionId && !user.clientId
+                ? RegionHome
+                : ClientPortalHome
               : user?.role === 'FINANCE_ACCOUNTANT'
                 ? FinanceDashboard
                 : user?.role === 'WORKFORCE_MANAGER'

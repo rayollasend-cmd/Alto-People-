@@ -40,7 +40,7 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
   const approvalsCount = useApprovalsCount();
   const { pinned } = usePinnedModules();
   const recents = useRecentModules();
-  const visible = visibleModules(user?.role, can);
+  const visible = visibleModules(user?.role, can, { regionId: user?.regionId });
   const byKey = new Map(visible.map((m) => [m.key, m]));
   const pinnedModules = pinned
     .map((k) => byKey.get(k))

@@ -78,6 +78,7 @@ import { companyClockRouter } from './routes/companyClock.js';
 import { relayRouter } from './routes/relay.js';
 import { clientRequestsRouter } from './routes/clientRequests.js';
 import { messagesRouter } from './routes/messages.js';
+import { regionRouter, regionsAdminRouter } from './routes/region.js';
 import { kiosk99Router } from './routes/kiosk99.js';
 import { celebrationsRouter } from './routes/celebrations107.js';
 import { assetsRouter } from './routes/assets108.js';
@@ -279,6 +280,10 @@ export function createApp() {
   // see clientsAccessGate for why.
   // The messenger gates per role inside (associates are never callers).
   app.use('/messages', messagesRouter);
+  // The region command center (region accounts + admin preview) and the
+  // regions admin (manage:org).
+  app.use('/region', regionRouter);
+  app.use('/regions', regionsAdminRouter);
   app.use('/clients', clientsAccessGate, clientsRouter);
   app.use(
     '/onboarding',

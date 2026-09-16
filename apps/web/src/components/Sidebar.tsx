@@ -113,7 +113,7 @@ function writeRailCollapsed(value: boolean): void {
 
 export function Sidebar() {
   const { can, user } = useAuth();
-  const visible = visibleModules(user?.role, can);
+  const visible = visibleModules(user?.role, can, { regionId: user?.regionId });
   const activePath = useActiveNavPath();
   const approvalsCount = useApprovalsCount();
   const { pinned, isPinned, togglePin } = usePinnedModules();
