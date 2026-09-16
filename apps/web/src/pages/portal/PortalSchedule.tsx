@@ -14,9 +14,9 @@ import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { downloadStatementFile } from '@/pages/clients/statementsShared';
 import { CoverageHeatmap, DetailsTable, WeekFillChart, type HeatDay } from './portalCharts';
 import { coverageByHour } from './coverage';
+import { ServiceReportDialog } from './ServiceReportDialog';
 
 /**
  * The store's week — charts first. A coverage heatmap (day × hour) shows
@@ -90,6 +90,7 @@ export function PortalSchedule() {
   }, [isPortal, previewId, locationId]);
   const qs = `?${new URLSearchParams([...scopeQs.entries(), ['week', week]]).toString()}`;
   const homeQs = scopeQs.toString() ? `?${scopeQs.toString()}` : '';
+  const [reportOpen, setReportOpen] = useState(false);
 
   const enabled = isPortal || (canPreview && !!previewId);
   const query = useQuery({
@@ -177,20 +178,16 @@ export function PortalSchedule() {
                 {t('portal.backHome')}
               </Link>
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="print:hidden"
-              onClick={() =>
-                void downloadStatementFile(
-                  `/api/client-portal/service-report.pdf${qs}`,
-                  `service-report-${week}.pdf`,
-                )
-              }
-            >
+            <Button size="sm" variant="outline" className="print:hidden" onClick={() => setReportOpen(true)}>
               <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
               {t('portal.svcReport')}
             </Button>
+            <ServiceReportDialog
+              open={reportOpen}
+              onClose={() => setReportOpen(false)}
+              scope={scopeQs}
+              initial={{ kind: 'range', from: data?.week.start ?? week, to: data?.week.end ?? week }}
+            />
           </>
         }
         primaryAction={

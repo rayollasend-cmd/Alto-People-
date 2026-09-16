@@ -1,3 +1,5 @@
+import { zonedMinutesOfDay } from '@/lib/format';
+
 /**
  * Group a day's roster into shift waves — the way a store manager reads
  * a day: the 6a–2p crew, the 2p–10p crew, overnight. A wave is every
@@ -37,6 +39,17 @@ export interface WaveRow {
 }
 
 export type WavePhase = 'upcoming' | 'live' | 'finished';
+export type WaveName = 'morning' | 'midday' | 'evening' | 'overnight';
+
+/** What the store calls the wave, by its local start hour — the same
+ *  rule the service report PDF uses. */
+export function waveName(startsAt: string, timezone: string): WaveName {
+  const h = Math.floor(zonedMinutesOfDay(startsAt, timezone) / 60);
+  if (h >= 4 && h < 11) return 'morning';
+  if (h >= 11 && h < 16) return 'midday';
+  if (h >= 16 && h < 21) return 'evening';
+  return 'overnight';
+}
 
 export interface Wave {
   key: string;

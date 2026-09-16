@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
 import { DetailsTable, HoursChart, RingMeter, StatTile, WeekFillChart } from './portalCharts';
 import { scopeParams, shiftDays } from './scope';
+import { ServiceReportDialog } from './ServiceReportDialog';
 
 /**
  * History — how well Alto delivered over a period. One preset row above
@@ -157,6 +158,7 @@ export function PortalHistory() {
   const previewId = searchParams.get('clientId');
   const scope = scopeParams(searchParams, isPortal);
   const scopeQs = scope.toString() ? `?${scope.toString()}` : '';
+  const [reportOpen, setReportOpen] = useState(false);
   const today = ymdLocal();
   const preset = (searchParams.get('range') as Preset | null) ?? 'last7';
   const custom = { from: searchParams.get('from'), to: searchParams.get('to') };
@@ -254,12 +256,24 @@ export function PortalHistory() {
         }
         breadcrumbs={[{ label: t('portal.title'), to: `/portal${scopeQs}` }]}
         secondaryActions={
-          <Button size="sm" variant="ghost" asChild>
-            <Link to={`/portal${scopeQs}`}>
-              <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              {t('portal.backHome')}
-            </Link>
-          </Button>
+          <>
+            <Button size="sm" variant="ghost" asChild>
+              <Link to={`/portal${scopeQs}`}>
+                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                {t('portal.backHome')}
+              </Link>
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setReportOpen(true)}>
+              <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              {t('portal.svcReport')}
+            </Button>
+            <ServiceReportDialog
+              open={reportOpen}
+              onClose={() => setReportOpen(false)}
+              scope={scope}
+              initial={{ kind: 'range', from: range.from, to: range.to }}
+            />
+          </>
         }
       />
 

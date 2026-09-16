@@ -3,7 +3,8 @@ import { prisma as defaultPrisma } from '../db.js';
 import { env } from '../config/env.js';
 import { send } from './notifications.js';
 import { ensureBrandingLoaded } from './branding.js';
-import { buildClientServiceReport, renderClientServiceReportPdf } from './clientServiceReport.js';
+import { buildPortalReport, portalScopeFor, renderPortalReportPdf } from './portalDayReport.js';
+import { nextKey } from './portalMetrics.js';
 import { genericNotificationTemplate } from './emailTemplates.js';
 import { orgDateKey, startOfWeekUTC } from './timeAnomalies.js';
 
@@ -56,13 +57,15 @@ export async function runServiceReportMailSweep(
 
   const recipients = await prisma.user.findMany({
     where: { role: 'CLIENT_PORTAL', status: 'ACTIVE', deletedAt: null, clientId: { not: null } },
-    select: { id: true, email: true, clientId: true, client: { select: { name: true } }, location: { select: { name: true } } },
+    select: { id: true, email: true, clientId: true, locationId: true, client: { select: { name: true } }, location: { select: { name: true } } },
     take: 500,
   });
   if (recipients.length === 0) return { sent: 0, skipped: 0, reason: 'no_recipients' };
 
   const branding = await ensureBrandingLoaded(prisma);
-  const pdfByClient = new Map<string, { pdf: Buffer; periodStart: string; periodEnd: string }>();
+  // One build per (client, store): a store manager gets THEIR store's week.
+  const pdfByScope = new Map<string, { pdf: Buffer; periodStart: string; periodEnd: string } | null>();
+  const weekEndKey = nextKey(weekKey, 6);
   let sent = 0;
   let skipped = 0;
   for (const u of recipients) {
@@ -78,18 +81,25 @@ export async function runServiceReportMailSweep(
       skipped += 1;
       continue;
     }
-    let built = pdfByClient.get(u.clientId!);
+    const scopeKey = `${u.clientId}|${u.locationId ?? ''}`;
+    let built = pdfByScope.get(scopeKey);
+    if (built === undefined) {
+      const scope = await portalScopeFor(u.clientId!, u.locationId);
+      if (scope) {
+        const data = await buildPortalReport(scope, weekKey, weekEndKey, branding.orgName, now);
+        built = { pdf: await renderPortalReportPdf(data), periodStart: data.from, periodEnd: data.to };
+      } else built = null;
+      pdfByScope.set(scopeKey, built);
+    }
     if (!built) {
-      const data = await buildClientServiceReport(prisma, u.clientId!, weekStart, branding.orgName);
-      const pdf = await renderClientServiceReportPdf(data);
-      built = { pdf, periodStart: data.periodStart, periodEnd: data.periodEnd };
-      pdfByClient.set(u.clientId!, built);
+      skipped += 1;
+      continue;
     }
     const storeName = u.location?.name ?? u.client?.name ?? 'your store';
     const subject = `${storeName}: your weekly service report (${built.periodStart} – ${built.periodEnd})`;
     const linkUrl = `/portal/history?range=lastWeek`;
     const bodyText =
-      `Last week's service report for ${storeName} is attached — coverage day by day, the team, reliability, and billing status.\n\n` +
+      `Last week's service report for ${storeName} is attached — your store site, day by day: delivered against contract, coverage hour by hour, and every shift wave with who was on the floor.\n\n` +
       `Open History in your portal for the same week with every chart, or mark the report reviewed there. [${weekKey}]`;
     const tpl = genericNotificationTemplate({ subject, body: bodyText, linkUrl });
     let status: 'SENT' | 'FAILED' = 'SENT';

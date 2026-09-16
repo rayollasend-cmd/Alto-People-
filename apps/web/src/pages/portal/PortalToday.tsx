@@ -9,10 +9,11 @@ import {
   Download,
   Printer,
   Users,
+  FileText,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type MessageKey } from '@/lib/i18n';
 import { fmtDate, fmtShiftRangeTz, fmtTime, fmtTimeTz, parseYmd, ymdLocal } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
 import { cn } from '@/lib/cn';
@@ -23,7 +24,8 @@ import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
-import { groupWaves, wavePresent, type Wave, type WaveRow } from './waves';
+import { groupWaves, waveName, wavePresent, type Wave, type WaveName, type WaveRow } from './waves';
+import { ServiceReportDialog } from './ServiceReportDialog';
 import { scopeParams, shiftDays } from './scope';
 
 /**
@@ -52,6 +54,12 @@ interface DayPayload {
 }
 
 const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
+const WAVE_KEY: Record<WaveName, MessageKey> = {
+  morning: 'portal.wave.morning',
+  midday: 'portal.wave.midday',
+  evening: 'portal.wave.evening',
+  overnight: 'portal.wave.overnight',
+};
 
 export function PortalToday() {
   const { t } = useI18n();
@@ -74,6 +82,7 @@ export function PortalToday() {
   });
   const data = query.data;
   const waves = useMemo(() => (data ? groupWaves(data.roster) : []), [data]);
+  const [reportOpen, setReportOpen] = useState(false);
   // The store name only earns a place on a row when rows span stores.
   const multiStore = useMemo(
     () => new Set((data?.roster ?? []).map((r) => r.locationName ?? '')).size > 1,
@@ -124,6 +133,11 @@ export function PortalToday() {
         }
         primaryAction={
           <>
+            <Button size="sm" variant="outline" className="print:hidden" onClick={() => setReportOpen(true)}>
+              <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              {t('portal.svcReport')}
+            </Button>
+            <ServiceReportDialog open={reportOpen} onClose={() => setReportOpen(false)} scope={scope} initial={{ kind: 'day', date }} />
             <Button
               size="sm"
               variant="outline"
@@ -414,7 +428,7 @@ function WaveCard({ wave: w, multiStore }: { wave: Wave; multiStore: boolean }) 
   const header = (
     <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
       <h2 className={cn('text-sm font-medium', w.phase === 'finished' ? 'text-silver' : 'text-white')}>
-        {range}
+        <span className="text-gold">{t(WAVE_KEY[waveName(w.startsAt, w.timezone)])}</span> · {range}
         {w.phase === 'live' && (
           <span className="ml-2 text-2xs font-medium uppercase tracking-wider text-success">{t('portal.live')}</span>
         )}

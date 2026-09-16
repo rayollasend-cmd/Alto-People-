@@ -13,11 +13,8 @@ import {
 } from '../lib/timeAnomalies.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
-import {
-  buildClientServiceReport,
-  renderClientServiceReportPdf,
-} from '../lib/clientServiceReport.js';
 import { renderStatementPdf } from '../lib/statementPdf.js';
+import { REPORT_MAX_DAYS, buildPortalReport, renderPortalReportPdf } from '../lib/portalDayReport.js';
 import type { StatementSnapshot } from '../lib/clientStatement.js';
 import {
   DAY,
@@ -846,10 +843,13 @@ clientPortalRouter.get('/client-portal/schedule', requireAuth, async (req, res, 
 });
 
 /**
- * GET /client-portal/service-report.pdf?week=YYYY-MM-DD
- * The weekly service report, downloaded by the client themselves. Same
- * builder Alto uses from the Clients page, clamped to the caller's
- * client. Omitted week = the last completed one.
+ * GET /client-portal/service-report.pdf
+ *   ?date=YYYY-MM-DD            one day (default: today — the live page, frozen)
+ *   ?from=YYYY-MM-DD&to=…       a range of org days, ≤ 31
+ *   ?week=YYYY-MM-DD            the org week (Sat→Fri) containing that date
+ * The portal on paper: the same instruments as the live page, for the
+ * day the manager picks, so the 16th's report is what the portal showed
+ * on the 16th. Clamped to the caller's scope (store or client).
  */
 clientPortalRouter.get(
   '/client-portal/service-report.pdf',
@@ -857,21 +857,29 @@ clientPortalRouter.get(
   async (req, res, next) => {
     try {
       const scope = await resolveScope(req.user!, req.query);
-      const weekParam = req.query.week?.toString();
-      if (weekParam && !/^\d{4}-\d{2}-\d{2}$/.test(weekParam)) {
-        throw new HttpError(400, 'invalid_week', '`week` must be YYYY-MM-DD');
+      const now = new Date();
+      let fromKey: string;
+      let toKey: string;
+      if (req.query.week !== undefined) {
+        const weekParam = parseDayKey(req.query.week, 'week');
+        const weekStart = startOfWeekUTC(new Date(`${weekParam}T12:00:00.000Z`));
+        fromKey = orgDateKey(weekStart);
+        toKey = nextKey(fromKey, 6);
+      } else if (req.query.from !== undefined || req.query.to !== undefined) {
+        fromKey = parseDayKey(req.query.from, 'from');
+        toKey = parseDayKey(req.query.to, 'to');
+        if (toKey < fromKey) throw new HttpError(400, 'invalid_range', '`to` is before `from`');
+        const span = Math.round(
+          (utcInstantOfLocalMidnight(nextKey(toKey, 1), ORG_TZ).getTime() - utcInstantOfLocalMidnight(fromKey, ORG_TZ).getTime()) / DAY,
+        );
+        if (span > REPORT_MAX_DAYS) throw new HttpError(400, 'range_too_long', `Pick ${REPORT_MAX_DAYS} days or fewer.`);
+      } else {
+        fromKey = req.query.date === undefined ? orgDateKey(now) : parseDayKey(req.query.date, 'date');
+        toKey = fromKey;
       }
-      const weekStart = weekParam
-        ? startOfWeekUTC(new Date(`${weekParam}T12:00:00.000Z`))
-        : new Date(startOfWeekUTC(new Date()).getTime() - 7 * DAY);
       const branding = await ensureBrandingLoaded(prisma);
-      const data = await buildClientServiceReport(
-        prisma,
-        scope.clientId,
-        weekStart,
-        branding.orgName,
-      );
-      const pdf = await renderClientServiceReportPdf(data);
+      const data = await buildPortalReport(scope, fromKey, toKey, branding.orgName, now);
+      const pdf = await renderPortalReportPdf(data);
       enqueueAudit(
         {
           actorUserId: req.user!.id,
@@ -879,14 +887,15 @@ clientPortalRouter.get(
           action: 'client.service_report_exported',
           entityType: 'Client',
           entityId: scope.clientId,
-          metadata: { periodStart: data.periodStart, periodEnd: data.periodEnd, via: 'portal' },
+          metadata: { from: fromKey, to: toKey, locationId: scope.locationId, via: 'portal' },
         },
         'clients.service_report',
       );
+      const slug = (scope.location?.name ?? scope.client.name).replace(/[^A-Za-z0-9]+/g, '-').toLowerCase();
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader(
         'Content-Disposition',
-        `attachment; filename="service-report-${scope.client.name.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()}-${data.periodStart}.pdf"`,
+        `attachment; filename="service-report-${slug}-${fromKey === toKey ? fromKey : `${fromKey}-to-${toKey}`}.pdf"`,
       );
       res.send(pdf);
     } catch (err) {

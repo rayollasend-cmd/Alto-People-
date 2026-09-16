@@ -43,6 +43,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
 import { PortalRequests, type RequestPrefill } from './PortalRequests';
 import { groupWaves, wavePresent } from './waves';
+import { ServiceReportDialog } from './ServiceReportDialog';
+import { shiftDays } from './scope';
 import {
   CoverageCurve,
   DetailsTable,
@@ -259,6 +261,7 @@ export function ClientPortalHome() {
   const previewId = searchParams.get('clientId');
   const qs = scopeQuery(searchParams, isPortal);
   const [prefill, setPrefill] = useState<RequestPrefill | null>(null);
+  const [reportOpen, setReportOpen] = useState(false);
   const queryClient = useQueryClient();
   const markReviewed = async (kind: 'STATEMENT' | 'SERVICE_REPORT', key: string) => {
     try {
@@ -433,20 +436,16 @@ export function ClientPortalHome() {
         }
         secondaryActions={
           <>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                void downloadStatementFile(
-                  data.serviceReport.url,
-                  `service-report-${data.serviceReport.weekStart}.pdf`,
-                )
-              }
-              title={t('portal.svcReportHint', { week: fmtDate(parseYmd(data.serviceReport.weekStart)) })}
-            >
+            <Button size="sm" variant="outline" onClick={() => setReportOpen(true)} title={t('portal.svcReportHint')}>
               <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
               {t('portal.svcReport')}
             </Button>
+            <ServiceReportDialog
+              open={reportOpen}
+              onClose={() => setReportOpen(false)}
+              scope={new URLSearchParams(qs)}
+              initial={{ kind: 'range', from: data.serviceReport.weekStart, to: shiftDays(data.serviceReport.weekStart, 6) }}
+            />
             <ReviewedMark
               reviewed={data.serviceReport.reviewed}
               onMark={isPortal ? () => void markReviewed('SERVICE_REPORT', data.serviceReport.weekStart) : null}

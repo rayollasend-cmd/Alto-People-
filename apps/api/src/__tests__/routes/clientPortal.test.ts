@@ -647,9 +647,23 @@ describe('the store site — scope, targets, evidence, downloads', () => {
       (await agent.get(`/client-portal/statements/${foreignStatement.id}.pdf`)).status,
     ).toBe(404);
 
+    // The service report is the portal on paper: today by default, any
+    // day by `date`, a span by `from`/`to`, the org week by `week`.
     const report = await agent.get('/client-portal/service-report.pdf');
     expect(report.status).toBe(200);
     expect(report.headers['content-type']).toContain('application/pdf');
+    const todayKey = orgDateKey(new Date());
+    const yesterdayKey = dayKeyPlus(todayKey, -1);
+    const back = await agent.get(`/client-portal/service-report.pdf?date=${yesterdayKey}`);
+    expect(back.status).toBe(200);
+    expect(back.headers['content-type']).toContain('application/pdf');
+    expect(back.headers['content-disposition']).toContain(`-${yesterdayKey}.pdf`);
+    const span = await agent.get(`/client-portal/service-report.pdf?from=${dayKeyPlus(todayKey, -6)}&to=${todayKey}`);
+    expect(span.status).toBe(200);
+    expect(span.headers['content-disposition']).toContain(`${dayKeyPlus(todayKey, -6)}-to-${todayKey}.pdf`);
+    expect((await agent.get(`/client-portal/service-report.pdf?week=${yesterdayKey}`)).status).toBe(200);
+    expect((await agent.get('/client-portal/service-report.pdf?date=nope')).status).toBe(400);
+    expect((await agent.get(`/client-portal/service-report.pdf?from=${dayKeyPlus(todayKey, -40)}&to=${todayKey}`)).status).toBe(400);
   });
 
   it('lets an admin provision the store scope, and the session carries it', async () => {
