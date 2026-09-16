@@ -807,15 +807,18 @@ describe('closing the loops — people, reviewed marks, the store roll-up', () =
       (await staff.post('/client-portal/acknowledge').send({ kind: 'STATEMENT', key: s.statement.id })).status,
     ).toBe(403);
 
-    // The market roll-up: both stores, ranked — A (1 of 1) ahead of the
-    // sister store (0 of 1).
+    // The market roll-up: both stores, ranked by the same contract grade —
+    // store A (4 of 12 contracted person-hours, 33%) ahead of the sister
+    // store, which has no target and falls back to 0 of 1 showed up.
     const yesterday = dayKeyPlus(orgDateKey(new Date()), -1);
     const hist = await market.get(`/client-portal/history?from=${dayKeyPlus(yesterday, -6)}&to=${yesterday}`);
     expect(hist.status).toBe(200);
     expect(hist.body.stores.map((x: { name: string; grade: string | null }) => [x.name, x.grade])).toEqual([
-      ['Walmart 218', 'A'],
+      ['Walmart 218', 'F'],
       ['Walmart 4411', 'F'],
     ]);
+    expect(hist.body.stores[0].reliabilityPct).toBe(33);
+    expect(hist.body.stores[1].reliabilityPct).toBe(0);
     // A store account never gets the roll-up.
     const shist = await store.get(`/client-portal/history?from=${dayKeyPlus(yesterday, -6)}&to=${yesterday}`);
     expect(shist.body.stores).toEqual([]);
