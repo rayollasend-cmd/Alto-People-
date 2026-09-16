@@ -529,3 +529,140 @@ export function StatTile({
     </div>
   );
 }
+
+/* ---- Coverage heatmap: the week, one row per day, one cell per hour ---- */
+
+export interface HeatDay {
+  date: string;
+  label: string;
+  /** 24 entries: scheduled headcount at the top of each hour. */
+  scheduled: number[];
+  /** 24 entries: unfilled slots at the top of each hour. */
+  open: number[];
+}
+
+/**
+ * Sequential single hue (the series step) — more people, darker cell;
+ * an unfilled slot is a dot in the reserved alert color; an hour below
+ * the contracted headcount gets a hairline underline. Every cell carries
+ * a native tooltip and the table twin lives behind Details.
+ */
+export function CoverageHeatmap({
+  days,
+  target,
+  todayKey,
+  labels,
+}: {
+  days: HeatDay[];
+  target: number | null;
+  todayKey: string;
+  labels: {
+    cell: (day: string, hour: string, scheduled: number, open: number) => string;
+    scale: { low: string; high: string };
+    unfilled: string;
+    belowTarget: string;
+  };
+}) {
+  const max = Math.max(1, ...days.flatMap((d) => d.scheduled));
+  return (
+    <div>
+      <div className="overflow-x-auto">
+        <div className="min-w-[36rem]">
+          <div className="grid" style={{ gridTemplateColumns: '2.75rem repeat(24, minmax(0, 1fr))' }}>
+            <div />
+            {Array.from({ length: 24 }, (_, h) => (
+              <div key={h} className="pb-1 text-center text-2xs text-silver/60">
+                {h % 3 === 0 ? hourLabelShort(h) : ''}
+              </div>
+            ))}
+            {days.map((d) => (
+              <DayRow key={d.date} day={d} max={max} target={target} isToday={d.date === todayKey} labels={labels} />
+            ))}
+          </div>
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-silver/80">
+        <span className="flex items-center gap-1.5">
+          {labels.scale.low}
+          <span className="flex gap-px" aria-hidden="true">
+            {[0.12, 0.3, 0.5, 0.72, 0.95].map((o) => (
+              <span key={o} className="h-2.5 w-3 rounded-sm" style={{ background: SERIES.primary, opacity: o }} />
+            ))}
+          </span>
+          {labels.scale.high}
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-1.5 w-1.5 rounded-full" style={{ background: STATUS.bad }} aria-hidden="true" />
+          {labels.unfilled}
+        </span>
+        {target !== null && (
+          <span className="flex items-center gap-1.5">
+            <span className="h-0.5 w-3.5 rounded-full" style={{ background: STATUS.warn }} aria-hidden="true" />
+            {labels.belowTarget}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function hourLabelShort(h: number): string {
+  if (h === 0) return '12a';
+  if (h < 12) return `${h}a`;
+  if (h === 12) return '12p';
+  return `${h - 12}p`;
+}
+
+function DayRow({
+  day,
+  max,
+  target,
+  isToday,
+  labels,
+}: {
+  day: HeatDay;
+  max: number;
+  target: number | null;
+  isToday: boolean;
+  labels: { cell: (day: string, hour: string, scheduled: number, open: number) => string };
+}) {
+  return (
+    <>
+      <div className={cn('flex items-center pr-2 text-2xs', isToday ? 'font-medium text-gold' : 'text-silver/70')}>
+        {day.label}
+      </div>
+      {day.scheduled.map((n, h) => {
+        const open = day.open[h] ?? 0;
+        const below = target !== null && n < target && (n > 0 || open > 0);
+        const opacity = n === 0 ? 0 : 0.12 + (n / max) * 0.83;
+        return (
+          <div
+            key={h}
+            className="relative m-px h-6 rounded-sm bg-navy-secondary/40"
+            title={labels.cell(day.label, hourLabelShort(h), n, open)}
+            role="img"
+            aria-label={labels.cell(day.label, hourLabelShort(h), n, open)}
+          >
+            {n > 0 && (
+              <div className="absolute inset-0 rounded-sm" style={{ background: SERIES.primary, opacity }} />
+            )}
+            {open > 0 && (
+              <span
+                className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full"
+                style={{ background: STATUS.bad }}
+                aria-hidden="true"
+              />
+            )}
+            {below && (
+              <span
+                className="absolute inset-x-0.5 bottom-0 h-0.5 rounded-full"
+                style={{ background: STATUS.warn }}
+                aria-hidden="true"
+              />
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}

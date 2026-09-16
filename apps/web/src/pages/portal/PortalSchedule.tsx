@@ -1,7 +1,7 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, ChevronLeft, ChevronRight, FileText, Printer } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, FileText, Printer } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
@@ -15,14 +15,16 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
-import { DetailsTable, WeekFillChart } from './portalCharts';
+import { CoverageHeatmap, DetailsTable, WeekFillChart, type HeatDay } from './portalCharts';
+import { coverageByHour } from './coverage';
 
 /**
- * The store's published week — the "can you email me the schedule?"
- * page. Sat→Fri (the org week every statement uses), one section per
- * day, printable, with the matching weekly service report one click
- * away. Read-only and rate-free by construction: it reads the portal's
- * own schedule endpoint, never the manager grid.
+ * The store's week — charts first. A coverage heatmap (day × hour) shows
+ * WHEN the floor is covered and where the holes are; the fill columns
+ * show how many. Names stay one tap away per day (closed by default,
+ * always expanded in print), so "who is my lead Thursday" is still
+ * answerable without opening a PDF. Reads the portal's own rate-free
+ * endpoint, never the manager grid.
  */
 
 interface ScheduleShift {
@@ -62,6 +64,13 @@ function shiftDays(ymd: string, days: number): string {
   return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
 }
 
+function dayShort(ymd: string): string {
+  return new Intl.DateTimeFormat(
+    typeof document !== 'undefined' && document.documentElement.lang === 'es' ? 'es-US' : 'en-US',
+    { weekday: 'short' },
+  ).format(parseYmd(ymd) ?? new Date());
+}
+
 export function PortalSchedule() {
   const { t } = useI18n();
   const { user, can } = useAuth();
@@ -71,14 +80,16 @@ export function PortalSchedule() {
   const previewId = searchParams.get('clientId');
   const locationId = searchParams.get('locationId');
   const week = searchParams.get('week') ?? ymdLocal();
+  const [openDays, setOpenDays] = useState<Set<string>>(new Set());
 
-  const qs = useMemo(() => {
+  const scopeQs = useMemo(() => {
     const q = new URLSearchParams();
     if (!isPortal && previewId) q.set('clientId', previewId);
     if (locationId) q.set('locationId', locationId);
-    q.set('week', week);
-    return `?${q.toString()}`;
-  }, [isPortal, previewId, locationId, week]);
+    return q;
+  }, [isPortal, previewId, locationId]);
+  const qs = `?${new URLSearchParams([...scopeQs.entries(), ['week', week]]).toString()}`;
+  const homeQs = scopeQs.toString() ? `?${scopeQs.toString()}` : '';
 
   const enabled = isPortal || (canPreview && !!previewId);
   const query = useQuery({
@@ -87,6 +98,38 @@ export function PortalSchedule() {
     enabled,
     refetchInterval: 120_000,
   });
+  const overview = useQuery({
+    queryKey: ['clientPortal', 'overview', isPortal ? 'me' : previewId, homeQs],
+    queryFn: () =>
+      apiFetch<{ now: { target: number | null }; store: { timezone: string } | null }>(
+        `/client-portal/overview${homeQs}`,
+      ),
+    enabled,
+    staleTime: 60_000,
+  });
+  const data = query.data;
+  const target = overview.data?.now.target ?? null;
+  const tz = overview.data?.store?.timezone ?? null;
+
+  const heatDays: HeatDay[] = useMemo(
+    () =>
+      (data?.days ?? []).map((d) => {
+        const points = coverageByHour(d.shifts, d.date, tz);
+        return {
+          date: d.date,
+          label: dayShort(d.date),
+          scheduled: points.map((p) => p.scheduled),
+          open: points.map((p) => p.open),
+        };
+      }),
+    [data, tz],
+  );
+  const weekDays = (data?.days ?? []).map((d) => ({
+    date: d.date,
+    day: dayShort(d.date),
+    filled: d.shifts.filter((s) => s.state !== 'open').length,
+    open: d.shifts.filter((s) => s.state === 'open').length,
+  }));
 
   if (!isPortal && !canPreview) {
     return <EmptyState icon={FileText} title={t('portal.noAccess')} description="" />;
@@ -103,32 +146,14 @@ export function PortalSchedule() {
     else next.set('week', shiftDays(week, delta * 7));
     setSearchParams(next, { replace: true });
   };
-  const homeQs = (() => {
-    const q = new URLSearchParams();
-    if (!isPortal && previewId) q.set('clientId', previewId);
-    if (locationId) q.set('locationId', locationId);
-    const s = q.toString();
-    return s ? `?${s}` : '';
-  })();
-  const reportQs = (() => {
-    const q = new URLSearchParams();
-    if (!isPortal && previewId) q.set('clientId', previewId);
-    if (locationId) q.set('locationId', locationId);
-    q.set('week', week);
-    return `?${q.toString()}`;
-  })();
-
-  const data = query.data;
+  const toggleDay = (date: string) =>
+    setOpenDays((s) => {
+      const next = new Set(s);
+      if (next.has(date)) next.delete(date);
+      else next.add(date);
+      return next;
+    });
   const today = ymdLocal();
-  const weekDays = (data?.days ?? []).map((d) => ({
-    date: d.date,
-    day: new Intl.DateTimeFormat(
-      typeof document !== 'undefined' && document.documentElement.lang === 'es' ? 'es-US' : 'en-US',
-      { weekday: 'short' },
-    ).format(parseYmd(d.date) ?? new Date()),
-    filled: d.shifts.filter((s) => s.state !== 'open').length,
-    open: d.shifts.filter((s) => s.state === 'open').length,
-  }));
 
   return (
     <div className="mx-auto space-y-4 print-area">
@@ -158,7 +183,7 @@ export function PortalSchedule() {
               className="print:hidden"
               onClick={() =>
                 void downloadStatementFile(
-                  `/api/client-portal/service-report.pdf${reportQs}`,
+                  `/api/client-portal/service-report.pdf${qs}`,
                   `service-report-${week}.pdf`,
                 )
               }
@@ -200,20 +225,60 @@ export function PortalSchedule() {
         </ErrorBanner>
       ) : !data ? (
         <div className="space-y-3">
-          <Skeleton className="h-24" />
-          <Skeleton className="h-24" />
-          <Skeleton className="h-24" />
+          <Skeleton className="h-56" />
+          <Skeleton className="h-40" />
+          <Skeleton className="h-64" />
         </div>
       ) : (
         <>
-          <Card className="print:hidden">
-            <CardContent className="p-4">
+          {/* ---- When the floor is covered ------------------------------ */}
+          <Card>
+            <CardContent className="p-4 sm:p-5">
               <div className="flex items-baseline justify-between gap-3">
-                <h2 className="text-sm font-medium text-white">{t('portal.week')}</h2>
+                <h2 className="text-sm font-medium text-white">{t('portal.heatTitle')}</h2>
                 <span className="text-xs text-silver tabular-nums">
                   {t('portal.schedSummary', { filled: data.filled, open: data.open })}
                 </span>
               </div>
+              <div className="mt-3">
+                <CoverageHeatmap
+                  days={heatDays}
+                  target={target}
+                  todayKey={today}
+                  labels={{
+                    cell: (day, hour, scheduled, open) =>
+                      t('portal.heatCell', { day, hour, scheduled, open }),
+                    scale: { low: t('portal.heatLow'), high: t('portal.heatHigh') },
+                    unfilled: t('portal.heatUnfilled'),
+                    belowTarget: t('portal.heatBelow', { target: target ?? 0 }),
+                  }}
+                />
+                <DetailsTable
+                  label={t('portal.details')}
+                  columns={[
+                    t('portal.chartDay'),
+                    t('portal.heatPeak'),
+                    t('portal.heatLowest'),
+                    t('portal.chartOpen'),
+                  ]}
+                  rows={heatDays.map((d) => {
+                    const active = d.scheduled.filter((n) => n > 0);
+                    return [
+                      fmtDate(parseYmd(d.date)),
+                      active.length ? Math.max(...active) : 0,
+                      active.length ? Math.min(...active) : 0,
+                      d.open.reduce((a, b) => a + b, 0) > 0 ? t('portal.yes') : t('portal.no'),
+                    ];
+                  })}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* ---- How many, per day --------------------------------------- */}
+          <Card className="print:hidden">
+            <CardContent className="p-4 sm:p-5">
+              <h2 className="text-sm font-medium text-white">{t('portal.week')}</h2>
               <div className="mt-2">
                 <WeekFillChart
                   days={weekDays}
@@ -235,67 +300,95 @@ export function PortalSchedule() {
               </div>
             </CardContent>
           </Card>
-          <p className="hidden text-sm text-silver tabular-nums print:block">
-            {t('portal.schedSummary', { filled: data.filled, open: data.open })}
-          </p>
-          <div className="grid gap-4 md:grid-cols-2 print:block">
-          {data.days.map((d) => {
-            const isToday = d.date === today;
-            return (
-              <Card
-                key={d.date}
-                className={cn('print:mb-4 print:break-inside-avoid', isToday && 'border-gold/40')}
-              >
-                <CardContent className="p-4">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <h2 className={cn('text-sm font-medium', isToday ? 'text-gold' : 'text-white')}>
-                      {fmtDayHeaderTz(parseYmd(d.date), undefined)}
-                      {isToday && <span className="ml-2 text-2xs uppercase tracking-wider">{t('portal.todayWord')}</span>}
-                    </h2>
-                    <span className="text-xs tabular-nums text-silver/60">
-                      {d.shifts.length === 0
-                        ? t('portal.schedDayNone')
-                        : t('portal.schedDayMeta', {
-                            filled: d.shifts.filter((s) => s.state !== 'open').length,
-                            total: d.shifts.length,
-                          })}
-                    </span>
-                  </div>
-                  {d.shifts.length > 0 && (
-                    <ul className="mt-2 divide-y divide-navy-secondary/60">
-                      {d.shifts.map((s) => (
-                        <li key={s.shiftId} className="flex items-center gap-3 py-2">
-                          {s.associateId ? (
-                            <Avatar src={photoUrl(s.associateId)} name={s.name ?? ''} email="" size="sm" />
-                          ) : (
-                            <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-dashed border-alert/50 text-alert text-xs">
-                              ?
-                            </div>
+
+          {/* ---- Names, one tap away per day ------------------------------ */}
+          <Card>
+            <CardContent className="p-0">
+              <ul className="divide-y divide-navy-secondary/60">
+                {data.days.map((d) => {
+                  const isToday = d.date === today;
+                  const open = openDays.has(d.date);
+                  const filled = d.shifts.filter((s) => s.state !== 'open').length;
+                  const unfilled = d.shifts.length - filled;
+                  return (
+                    <li key={d.date} className="print:break-inside-avoid">
+                      <button
+                        type="button"
+                        onClick={() => toggleDay(d.date)}
+                        aria-expanded={open}
+                        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-navy-secondary/30 print:hidden"
+                      >
+                        <span
+                          className={cn(
+                            'min-w-0 flex-1 text-sm font-medium',
+                            isToday ? 'text-gold' : 'text-white',
                           )}
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm text-white">
-                              <span className="font-medium">{s.name ?? t('portal.state.open')}</span>
-                              <span className="text-silver/80"> · {s.position}</span>
-                            </div>
-                            <div className="text-xs text-silver tabular-nums">
-                              {fmtShiftRangeTz(s.startsAt, s.endsAt, s.timezone)}
-                              {!data.store && s.locationName && (
-                                <span className="text-silver/60"> · {s.locationName}</span>
+                        >
+                          {fmtDayHeaderTz(parseYmd(d.date), undefined)}
+                        </span>
+                        <span
+                          className={cn(
+                            'text-xs tabular-nums',
+                            unfilled > 0 ? 'text-alert' : 'text-silver/60',
+                          )}
+                        >
+                          {d.shifts.length === 0
+                            ? t('portal.schedDayNone')
+                            : t('portal.schedDayMeta', { filled, total: d.shifts.length })}
+                        </span>
+                        <ChevronDown
+                          className={cn(
+                            'h-4 w-4 shrink-0 text-silver/60 transition-transform',
+                            open && 'rotate-180',
+                          )}
+                          aria-hidden="true"
+                        />
+                      </button>
+                      <div className="hidden px-4 pt-3 text-sm font-medium text-white print:block">
+                        {fmtDayHeaderTz(parseYmd(d.date), undefined)}
+                      </div>
+                      {d.shifts.length > 0 && (
+                        <ul
+                          className={cn(
+                            'divide-y divide-navy-secondary/60 px-4 pb-3',
+                            !open && 'hidden',
+                            'print:block',
+                          )}
+                        >
+                          {d.shifts.map((s) => (
+                            <li key={s.shiftId} className="flex items-center gap-3 py-2">
+                              {s.associateId ? (
+                                <Avatar src={photoUrl(s.associateId)} name={s.name ?? ''} email="" size="sm" />
+                              ) : (
+                                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-dashed border-alert/50 text-alert text-xs">
+                                  ?
+                                </div>
                               )}
-                            </div>
-                          </div>
-                          <span className={cn('shrink-0 text-xs', STATE_STYLE[s.state])}>
-                            {t(`portal.state.${s.state}` as MessageKey)}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </CardContent>
-              </Card>
-            );
-          })}
-          </div>
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-sm text-white">
+                                  <span className="font-medium">{s.name ?? t('portal.state.open')}</span>
+                                  <span className="text-silver/80"> · {s.position}</span>
+                                </div>
+                                <div className="text-xs text-silver tabular-nums">
+                                  {fmtShiftRangeTz(s.startsAt, s.endsAt, s.timezone)}
+                                  {!data.store && s.locationName && (
+                                    <span className="text-silver/60"> · {s.locationName}</span>
+                                  )}
+                                </div>
+                              </div>
+                              <span className={cn('shrink-0 text-xs', STATE_STYLE[s.state])}>
+                                {t(`portal.state.${s.state}` as MessageKey)}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </CardContent>
+          </Card>
         </>
       )}
     </div>

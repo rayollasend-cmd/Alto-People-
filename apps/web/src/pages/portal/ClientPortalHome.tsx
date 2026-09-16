@@ -26,6 +26,7 @@ import {
   zonedDayKey,
   zonedMinutesOfDay,
 } from '@/lib/format';
+import { coverageByHour } from './coverage';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -46,7 +47,6 @@ import {
   RingMeter,
   StatTile,
   WeekFillChart,
-  type HourPoint,
 } from './portalCharts';
 
 /**
@@ -205,41 +205,6 @@ function scopeQuery(params: URLSearchParams, isPortal: boolean): string {
   if (loc) q.set('locationId', loc);
   const s = q.toString();
   return s ? `?${s}` : '';
-}
-
-function hourLabel(h: number): string {
-  if (h === 0) return '12a';
-  if (h < 12) return `${h}a`;
-  if (h === 12) return '12p';
-  return `${h - 12}p`;
-}
-
-/** Headcount at the top of each hour today, in the store's zone: how
- *  many assigned shifts (and how many unfilled slots) cover that hour. */
-function coverageByHour(
-  roster: RosterRow[],
-  todayKey: string,
-  tz: string | null,
-): HourPoint[] {
-  const points: HourPoint[] = Array.from({ length: 24 }, (_, h) => ({
-    hour: h,
-    label: hourLabel(h),
-    scheduled: 0,
-    open: 0,
-  }));
-  for (const r of roster) {
-    const zone = tz ?? r.timezone;
-    const startMin = zonedDayKey(r.startsAt, zone) === todayKey ? zonedMinutesOfDay(r.startsAt, zone) : 0;
-    const endMin = zonedDayKey(r.endsAt, zone) === todayKey ? zonedMinutesOfDay(r.endsAt, zone) : 1440;
-    for (const p of points) {
-      const m = p.hour * 60;
-      if (m >= startMin && m < endMin) {
-        if (r.state === 'open') p.open += 1;
-        else p.scheduled += 1;
-      }
-    }
-  }
-  return points;
 }
 
 export function ClientPortalHome() {
