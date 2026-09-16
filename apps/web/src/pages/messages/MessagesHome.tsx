@@ -37,6 +37,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Input, Textarea } from '@/components/ui/Input';
 import {
   Dialog,
@@ -195,6 +196,18 @@ export function MessagesHome() {
                   ))
                 )}
               </ul>
+            ) : inbox.isError && !inbox.data ? (
+              <div className="p-4">
+                <ErrorBanner
+                  action={
+                    <Button size="sm" variant="secondary" onClick={() => void inbox.refetch()}>
+                      {t('common.retry')}
+                    </Button>
+                  }
+                >
+                  {t('msg.loadFailed')}
+                </ErrorBanner>
+              </div>
             ) : inbox.isLoading ? (
               <div className="space-y-2 p-3">
                 <Skeleton className="h-12" />
@@ -316,11 +329,13 @@ function Thread({ id, meId, onBack }: { id: string; meId: string; onBack: () => 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end' });
   }, [count, id]);
-  // Reading the thread clears its unread count on the inbox and the badge.
+  // Reading the thread clears its unread count on the inbox and the badge —
+  // once per new message, not on every background refresh.
+  const lastMessageId = thread.data?.messages[thread.data.messages.length - 1]?.id ?? null;
   useEffect(() => {
-    if (!thread.data) return;
+    if (!lastMessageId) return;
     void markRead(id).then(() => queryClient.invalidateQueries({ queryKey: ['messages', 'inbox'] }));
-  }, [id, thread.data, queryClient]);
+  }, [id, lastMessageId, queryClient]);
 
   const send = useCallback(async () => {
     const body = draft.trim();
@@ -353,6 +368,7 @@ function Thread({ id, meId, onBack }: { id: string; meId: string; onBack: () => 
 
   const data = thread.data;
   const groups = useMemo(() => groupByDay(data?.messages ?? []), [data]);
+  const loadFailed = thread.isError && !data;
   const others = (data?.participants ?? []).filter((p) => p.id !== meId);
 
   return (
@@ -383,6 +399,17 @@ function Thread({ id, meId, onBack }: { id: string; meId: string; onBack: () => 
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+        {loadFailed && (
+          <ErrorBanner
+            action={
+              <Button size="sm" variant="secondary" onClick={() => void thread.refetch()}>
+                {t('common.retry')}
+              </Button>
+            }
+          >
+            {t('msg.loadFailed')}
+          </ErrorBanner>
+        )}
         {!data ? (
           <div className="space-y-2">
             <Skeleton className="h-10 w-2/3" />

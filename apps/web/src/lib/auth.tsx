@@ -356,7 +356,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     return <AuthSplash />;
   }
   if (!user) {
-    return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+    return <Navigate to="/login" state={{ from: `${location.pathname}${location.search}${location.hash}` }} replace />;
   }
   return <>{children}</>;
 }

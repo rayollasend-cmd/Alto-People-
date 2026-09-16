@@ -21,7 +21,7 @@ import { z } from 'zod';
 import { invitePortalAccount } from '../lib/portalInvite.js';
 import { portalEngagementFor } from '../lib/portalEngagement.js';
 import { computePortalReadiness, nudgePortalReadiness } from '../lib/portalReadiness.js';
-import { trackNotificationWork } from '../lib/notify.js';
+import { notifyUser, trackNotificationWork } from '../lib/notify.js';
 import { scopeClients } from '../lib/scope.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
 import { seedDefaultShiftPositions } from '../lib/shiftPositions.js';
@@ -845,6 +845,27 @@ clientsRouter.post('/:id/statements', STATEMENTS, async (req, res, next) => {
   }
 });
 
+/** Tell the client's portal accounts a statement was issued or paid. */
+function notifyPortalOfStatement(clientId: string, subject: string, body: string): void {
+  void trackNotificationWork(
+    (async () => {
+      const users = await prisma.user.findMany({
+        where: { clientId, role: 'CLIENT_PORTAL', status: 'ACTIVE', deletedAt: null },
+        select: { id: true },
+        take: 100,
+      });
+      await Promise.all(users.map((u) => notifyUser(u.id, { subject, body, category: 'portal.statement', linkUrl: '/portal' })));
+    })().catch((err: unknown) => {
+      console.warn('[clients] statement notice failed:', err instanceof Error ? err.message : err);
+    }),
+  );
+}
+
+const statementLabel = (number: number | null, start: Date, end: Date) => {
+  const d = (x: Date) => x.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return `${number !== null ? `Statement No. ${String(number).padStart(4, '0')}` : 'Your statement'} (${d(start)} – ${d(end)})`;
+};
+
 clientsRouter.post('/:id/statements/:sid/finalize', STATEMENTS, async (req, res, next) => {
   try {
     const user = req.user!;
@@ -885,6 +906,11 @@ clientsRouter.post('/:id/statements/:sid/finalize', STATEMENTS, async (req, res,
       },
       'clients.statement_finalized',
     );
+    notifyPortalOfStatement(
+      row.clientId,
+      `${statementLabel(updated.number, row.periodStart, row.periodEnd)} is ready`,
+      'Your statement is ready in your portal, with the hours behind it and the PDF to download.',
+    );
     res.json(statementRow(updated));
   } catch (err) {
     next(err);
@@ -924,6 +950,11 @@ clientsRouter.post('/:id/statements/:sid/mark-paid', STATEMENTS, async (req, res
         metadata: { number: row.number, paymentRef },
       },
       'clients.statement_paid',
+    );
+    notifyPortalOfStatement(
+      row.clientId,
+      `Payment received: ${statementLabel(row.number, row.periodStart, row.periodEnd)}`,
+      'Your payment is recorded against this statement. Thank you.',
     );
     res.json(statementRow(updated));
   } catch (err) {

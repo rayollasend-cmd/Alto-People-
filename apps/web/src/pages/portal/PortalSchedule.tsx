@@ -98,6 +98,8 @@ export function PortalSchedule() {
     queryFn: () => apiFetch<PortalSchedule>(`/client-portal/schedule${qs}`),
     enabled,
     refetchInterval: 120_000,
+    // Stepping between weeks keeps the page on screen until the next loads.
+    placeholderData: (prev) => prev,
   });
   const overview = useQuery({
     queryKey: ['clientPortal', 'overview', isPortal ? 'me' : previewId, homeQs],

@@ -163,6 +163,9 @@ const EnvSchema = z.object({
   // once per org-day after the grace period. 0 disables.
   PORTAL_COVERAGE_ALERT_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(600),
   PORTAL_COVERAGE_ALERT_GRACE_MINUTES: z.coerce.number().int().min(1).max(120).default(15),
+  // Ring only when a shift is short by at least this share of its headcount
+  // (and always at least one person): 10% of a 47-person overnight is 5.
+  PORTAL_COVERAGE_ALERT_MIN_SHORT_PCT: z.coerce.number().int().min(0).max(100).default(10),
   // Manual compliance attestation reminder cron. 0 (default) disables;
   // production should set 3600 (hourly) so HR gets pinged the day a
   // weekly/monthly compliance attestation comes due. Per-signal de-dup

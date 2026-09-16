@@ -29,6 +29,8 @@ import {
 import { DASHBOARD_ICON, MODULE_ICONS } from '@/lib/moduleIcons';
 import { useAuth } from '@/lib/auth';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
+import { useQuery } from '@tanstack/react-query';
+import { unreadMessages } from '@/lib/messagesApi';
 import { usePinnedModules, useRecentModules } from '@/lib/navPersonalization';
 import { useTheme } from '@/lib/theme';
 import { useDensity } from '@/lib/density';
@@ -116,6 +118,15 @@ export function Sidebar() {
   const visible = visibleModules(user?.role, can, { regionId: user?.regionId });
   const activePath = useActiveNavPath();
   const approvalsCount = useApprovalsCount();
+  // Same key as the phone tab bar's badge, so one request serves both.
+  const hasMessages = visible.some((m) => m.key === 'messages');
+  const unread = useQuery({
+    queryKey: ['messages', 'unread'],
+    queryFn: unreadMessages,
+    refetchInterval: 60_000,
+    enabled: hasMessages,
+  });
+  const badgeFor = (key: string) => (key === 'approvals' ? approvalsCount : key === 'messages' ? (unread.data?.unread ?? null) : null);
   const { pinned, isPinned, togglePin } = usePinnedModules();
   const recents = useRecentModules();
 
@@ -219,7 +230,7 @@ export function Sidebar() {
                 module={m}
                 active={activePath === m.path}
                 railCollapsed={railCollapsed}
-                badge={m.key === 'approvals' ? approvalsCount : null}
+                badge={badgeFor(m.key)}
                 pinned
                 onTogglePin={togglePin}
               />
@@ -240,7 +251,7 @@ export function Sidebar() {
                 module={m}
                 active={activePath === m.path}
                 railCollapsed={railCollapsed}
-                badge={m.key === 'approvals' ? approvalsCount : null}
+                badge={badgeFor(m.key)}
                 pinned={false}
                 onTogglePin={togglePin}
               />
@@ -266,7 +277,7 @@ export function Sidebar() {
                   module={m}
                   active={activePath === m.path}
                   railCollapsed={railCollapsed}
-                  badge={m.key === 'approvals' ? approvalsCount : null}
+                  badge={badgeFor(m.key)}
                   pinned={isPinned(m.key)}
                   onTogglePin={togglePin}
                 />

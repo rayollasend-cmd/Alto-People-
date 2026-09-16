@@ -22,6 +22,7 @@ import {
   ensureStoreChannels,
   fanOutMessage,
   roleLabel,
+  syncStoreChannel,
   type Messenger,
 } from '../lib/messaging.js';
 
@@ -369,7 +370,10 @@ async function appendMessage(
     });
     return m;
   });
-  const recipients = p.conversation.participants.filter((x) => x.userId !== user.id).map((x) => x.userId);
+  // A store channel is re-synced first, so today's new manager hears this
+  // message and yesterday's transfer does not.
+  const synced = p.conversation.kind === 'STORE_CHANNEL' ? await syncStoreChannel(conversationId) : null;
+  const recipients = (synced ?? p.conversation.participants.map((x) => x.userId)).filter((id) => id !== user.id);
   void trackNotificationWork(
     fanOutMessage({
       conversationId,

@@ -103,6 +103,9 @@ clientRequestsRouter.post(
           subject: input.subject,
           body: input.body,
           createdByUserId: req.user!.id,
+          // A store manager's request belongs to their store; a market
+          // account's is client-wide.
+          locationId: req.user!.locationId ?? null,
           associateId: associate?.id ?? null,
           dueAt: new Date(Date.now() + SLA_HOURS[input.kind] * 3_600_000),
         },
@@ -150,8 +153,10 @@ clientRequestsRouter.get(
   async (req, res, next) => {
     try {
       const clientId = requireClientPortal(req.user!);
+      // Store accounts see their own store's requests; market accounts see
+      // every store's.
       const rows = await prisma.clientRequest.findMany({
-        where: { clientId },
+        where: { clientId, ...(req.user!.locationId ? { locationId: req.user!.locationId } : {}) },
         orderBy: { createdAt: 'desc' },
         take: 50,
         include: {
@@ -254,7 +259,7 @@ clientRequestsRouter.patch(
       const input = PatchSchema.parse(req.body);
       const existing = await prisma.clientRequest.findFirst({
         where: { id, ...staffClamp(req.user!) },
-        select: { id: true, status: true, subject: true, createdByUserId: true },
+        select: { id: true, status: true, subject: true, createdByUserId: true, clientId: true, locationId: true },
       });
       if (!existing) {
         throw new HttpError(404, 'not_found', 'Request not found.');
@@ -285,16 +290,33 @@ clientRequestsRouter.patch(
             : {}),
         },
       });
-      // Close the loop: the store manager who asked hears back the moment
-      // someone picks it up, and again with the reply — bell + email.
-      if (existing.createdByUserId) {
+      // Close the loop: whoever asked, and every manager at that store,
+      // hears back the moment someone picks it up and again with the
+      // reply. Only on a real change — re-saving "in progress" is silent.
+      const recipients = new Set<string>();
+      if (existing.createdByUserId) recipients.add(existing.createdByUserId);
+      if (existing.locationId) {
+        const storeManagers = await prisma.user.findMany({
+          where: {
+            role: 'CLIENT_PORTAL',
+            status: 'ACTIVE',
+            deletedAt: null,
+            clientId: existing.clientId,
+            locationId: existing.locationId,
+          },
+          select: { id: true },
+          take: 50,
+        });
+        for (const m of storeManagers) recipients.add(m.id);
+      }
+      if (recipients.size > 0 && existing.status !== input.status) {
         const actor = await prisma.user.findUnique({
           where: { id: req.user!.id },
           select: { associate: { select: { firstName: true } } },
         });
         const who = actor?.associate?.firstName ?? 'Alto';
         void trackNotificationWork(
-          notifyUser(existing.createdByUserId, {
+          Promise.all([...recipients].map((rid) => notifyUser(rid, {
             subject:
               input.status === 'RESOLVED'
                 ? `Reply from Alto: ${existing.subject}`
@@ -305,7 +327,7 @@ clientRequestsRouter.patch(
                 : `${who} is working on "${existing.subject}". You'll hear back here when there's a reply.`,
             category: 'client-request',
             linkUrl: '/portal/requests',
-          }),
+          }))),
         );
       }
       res.json({ ok: true });

@@ -30,10 +30,10 @@ describe('GET /auth/me/notification-preferences', () => {
       mandatory: boolean;
       emailEnabled: boolean;
     }>;
-    // 9 opt-out-able (time_pay/growth/workplace joined in the email-saver
-    // batch — every raw category now maps to a mutable bucket) + 3
-    // mandatory = 12
-    expect(entries.length).toBe(12);
+    // 9 staff opt-out-able + messages + 3 mandatory = 13; the portal
+    // buckets are not offered to staff.
+    expect(entries.length).toBe(13);
+    expect(entries.some((e) => e.category.startsWith('store_'))).toBe(false);
     // Every entry defaults to enabled when no row exists.
     expect(entries.every((e) => e.emailEnabled)).toBe(true);
     // Mandatory ones are flagged.
@@ -53,6 +53,17 @@ describe('GET /auth/me/notification-preferences', () => {
     const entries = res.body.entries as Array<{ category: string; emailEnabled: boolean }>;
     const onboarding = entries.find((e) => e.category === 'onboarding');
     expect(onboarding?.emailEnabled).toBe(false);
+  });
+
+  it('offers a portal account its store buckets, not the HR ones', async () => {
+    const { user } = await createUser({ role: 'CLIENT_PORTAL', clientId: null });
+    const a = agent();
+    await loginAs(a, user.email, DEFAULT_TEST_PASSWORD);
+    const res = await a.get('/auth/me/notification-preferences');
+    const keys = (res.body.entries as Array<{ category: string }>).map((e) => e.category).sort();
+    expect(keys).toEqual(['messages', 'security', 'store_alerts', 'store_daily', 'store_reports', 'store_requests']);
+    expect((await a.patch('/auth/me/notification-preferences').send({ category: 'store_alerts', emailEnabled: false })).status).toBe(204);
+    expect((await a.patch('/auth/me/notification-preferences').send({ category: 'onboarding', emailEnabled: false })).status).toBe(400);
   });
 
   it('returns 401 without a session', async () => {

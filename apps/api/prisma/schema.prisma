@@ -415,6 +415,8 @@ model User {
   // center for every store in the region (Manager, Business Operations
   // Support). Mutually exclusive with clientId.
   regionId           String?    @db.Uuid
+  // The name an invite addressed (portal accounts carry no associate).
+  displayName        String?    @db.VarChar(120)
   associate          Associate? @relation(fields: [associateId], references: [id], onDelete: SetNull)
   client             Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
   location           Location?  @relation("UserStoreScope", fields: [locationId], references: [id], onDelete: SetNull)
@@ -563,6 +565,7 @@ model User {
   clientRequestsAuthored            ClientRequest[]               @relation("ClientRequestAuthor")
   clientRequestsResolved            ClientRequest[]               @relation("ClientRequestResolver")
   clientRequestsStarted             ClientRequest[]               @relation("ClientRequestStarter")
+  portalAlerts                      PortalAlertLog[]              @relation("PortalAlertLogUser")
   clientAcknowledgements            ClientAcknowledgement[]
   conversationsCreated              Conversation[]                @relation("ConversationCreator")
   conversationParticipations        ConversationParticipant[]
@@ -758,6 +761,7 @@ model Location {
   shiftTeams   ShiftTeam[]
   staffingTargets StaffingTarget[]
   portalUsers  User[]                @relation("UserStoreScope")
+  clientRequests ClientRequest[]     @relation("ClientRequestStore")
   conversations Conversation[]
   region       Region?               @relation(fields: [regionId], references: [id], onDelete: SetNull)
 
@@ -928,8 +932,11 @@ model ClientRequest {
   // The person the request is about (feedback / issue), picked from the
   // store's own roster — never free text Alto has to decode.
   associateId     String?             @db.Uuid
+  // The store it was raised for (the author's store); null = client-wide.
+  locationId      String?             @db.Uuid
 
   client        Client     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  location      Location?  @relation("ClientRequestStore", fields: [locationId], references: [id], onDelete: SetNull)
   associate     Associate? @relation("ClientRequestSubject", fields: [associateId], references: [id], onDelete: SetNull)
   createdByUser User?  @relation("ClientRequestAuthor", fields: [createdByUserId], references: [id], onDelete: SetNull)
   resolvedBy    User?  @relation("ClientRequestResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
@@ -937,6 +944,20 @@ model ClientRequest {
 
   @@index([clientId, createdAt(sort: Desc)])
   @@index([status])
+  @@index([locationId])
+}
+
+// One row per (account, alert key): a short-staffed wave rings each
+// person once, however many sweeps see it and across midnight.
+model PortalAlertLog {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @db.Uuid
+  alertKey  String
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  user      User     @relation("PortalAlertLogUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, alertKey])
+  @@index([createdAt])
 }
 
 // The client's "reviewed" mark on a statement or a weekly service report

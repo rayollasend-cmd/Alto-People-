@@ -8,6 +8,7 @@ import {
   ConfirmEmailChangeInputSchema,
   HUMAN_ROLES,
   NOTIFICATION_CATEGORIES,
+  notificationCategoriesFor,
   PatchNotificationPreferenceInputSchema,
   RequestEmailChangeInputSchema,
   UpdateProfileInputSchema,
@@ -1801,7 +1802,7 @@ authRouter.get('/me/notification-preferences', requireAuth, async (req, res, nex
     });
     const byCategory = new Map(stored.map((s) => [s.category, s.emailEnabled]));
 
-    const entries: NotificationPreferenceEntry[] = NOTIFICATION_CATEGORIES.map((c) => ({
+    const entries: NotificationPreferenceEntry[] = notificationCategoriesFor(req.user!.role).map((c) => ({
       category: c.key,
       label: c.label,
       description: c.description,
@@ -1830,6 +1831,9 @@ authRouter.patch('/me/notification-preferences', requireAuth, async (req, res, n
     }
     const { category, emailEnabled } = parsed.data;
     const meta = NOTIFICATION_CATEGORIES.find((c) => c.key === category);
+    if (!notificationCategoriesFor(req.user!.role).some((c) => c.key === category)) {
+      throw new HttpError(400, 'category_not_available', 'That notification type does not apply to this account.');
+    }
     if (meta?.mandatory && !emailEnabled) {
       throw new HttpError(
         400,

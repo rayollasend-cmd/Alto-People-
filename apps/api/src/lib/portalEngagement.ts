@@ -134,9 +134,29 @@ export async function notePortalSignIn(userId: string, prisma: PrismaClient = de
   const logins = await prisma.auditLog.count({ where: { actorUserId: userId, action: LOGIN_ACTION } });
   if (logins !== 1) return;
   const scope = describePortalScope(u);
+  // The store goes live once; a second manager at a live store is news of
+  // a different kind.
+  const peers = await prisma.user.findMany({
+    where: {
+      id: { not: u.id },
+      role: 'CLIENT_PORTAL',
+      deletedAt: null,
+      clientId: u.clientId,
+      regionId: u.regionId,
+      locationId: u.location ? { not: null } : null,
+    },
+    select: { id: true, locationId: true },
+    take: 200,
+  });
+  const me = await prisma.user.findUnique({ where: { id: u.id }, select: { locationId: true } });
+  const samePeers = peers.filter((p) => p.locationId === (me?.locationId ?? null)).map((p) => p.id);
+  const alreadyLive =
+    samePeers.length > 0 && (await prisma.auditLog.count({ where: { actorUserId: { in: samePeers }, action: LOGIN_ACTION } })) > 0;
   await notifyRoles(ENGAGEMENT_ROLES, {
-    subject: `${scope} is live`,
-    body: `${u.email} (${whoIs(u)}) signed in to the portal for the first time. Their site is in use from today.`,
+    subject: alreadyLive ? `New manager signed in · ${scope}` : `${scope} is live`,
+    body: alreadyLive
+      ? `${u.email} (${whoIs(u)}) signed in to the portal for the first time. ${scope} already had managers using it.`
+      : `${u.email} (${whoIs(u)}) signed in to the portal for the first time. Their site is in use from today.`,
     linkUrl: u.clientId ? `/clients/${u.clientId}?section=portal` : '/admin/regions',
     category: ENGAGEMENT_CATEGORY,
   }, prisma);
@@ -265,7 +285,6 @@ export async function runPortalEngagementDigest(
   const weekStart = new Date(thisWeekStart.getTime() - 7 * DAY);
   const weekKey = orgDateKey(weekStart);
   const weekEndKey = orgDateKey(new Date(weekStart.getTime() + 6 * DAY));
-  const marker = `[engagement-week-${weekKey}]`;
 
   const accounts = await prisma.user.findMany({
     where: { role: 'CLIENT_PORTAL', deletedAt: null, status: { not: 'DISABLED' } },
@@ -330,15 +349,15 @@ export async function runPortalEngagementDigest(
   const subject = `Portal engagement · week of ${weekKey} – ${weekEndKey}`;
   const bodyText =
     `${activeCount} of ${accounts.length} portal accounts signed in last week; ${pulled} report${pulled === 1 ? '' : 's'} pulled.\n\n` +
-    lines.join('\n') +
-    `\n\n${marker}`;
+    lines.join('\n');
   const tpl = genericNotificationTemplate({ subject, body: bodyText, linkUrl: '/executive' });
 
   let sent = 0;
   let skipped = 0;
   for (const r of recipients) {
     const already = await prisma.notification.findFirst({
-      where: { recipientUserId: r.id, category: ENGAGEMENT_DIGEST_CATEGORY, body: { contains: marker } },
+      // Already told this week (the row is stamped with the sweep's clock).
+      where: { recipientUserId: r.id, category: ENGAGEMENT_DIGEST_CATEGORY, channel: 'IN_APP', createdAt: { gte: thisWeekStart } },
       select: { id: true },
     });
     if (already) {
@@ -362,6 +381,7 @@ export async function runPortalEngagementDigest(
         category: ENGAGEMENT_DIGEST_CATEGORY,
         linkUrl: '/executive',
         sentAt: now,
+        createdAt: now,
       },
     });
     if (status === 'SENT') sent += 1;

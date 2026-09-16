@@ -152,12 +152,62 @@ export function roleLabel(role: Role): string {
  * their inbox, so a new supervisor appears without anyone adding them.
  * Returns the conversation ids the caller belongs to.
  */
+/** Who belongs in a store channel right now: the client's supervisors and
+ *  leads, plus its portal accounts (store accounts for their own store,
+ *  market accounts for every store). */
+async function storeChannelMembers(clientId: string, locationId: string | null, prisma: PrismaClient): Promise<string[]> {
+  const members = await prisma.user.findMany({
+    where: { clientId, status: 'ACTIVE', deletedAt: null, role: { in: ['CLIENT_PORTAL', ...STORE_ROLES] as Role[] } },
+    select: { id: true, role: true, locationId: true },
+  });
+  return members
+    .filter((m) => m.role !== 'CLIENT_PORTAL' || !locationId || !m.locationId || m.locationId === locationId)
+    .map((m) => m.id);
+}
+
+/**
+ * Bring one store channel in line with the store's people before a
+ * message goes out: add whoever belongs (a manager invited this morning
+ * hears the next message, not the one after they first open Messages),
+ * remove whoever moved store or left. Returns the members, or null when
+ * the conversation is not a store channel.
+ */
+export async function syncStoreChannel(conversationId: string, prisma: PrismaClient = defaultPrisma): Promise<string[] | null> {
+  const convo = await prisma.conversation.findFirst({
+    where: { id: conversationId, kind: 'STORE_CHANNEL' },
+    select: { id: true, clientId: true, locationId: true, participants: { select: { userId: true } } },
+  });
+  if (!convo || !convo.clientId) return null;
+  const want = new Set(await storeChannelMembers(convo.clientId, convo.locationId, prisma));
+  const have = new Set(convo.participants.map((p) => p.userId));
+  const add = [...want].filter((id) => !have.has(id));
+  const remove = [...have].filter((id) => !want.has(id));
+  if (add.length > 0) {
+    await prisma.conversationParticipant.createMany({
+      data: add.map((userId) => ({ conversationId: convo.id, userId })),
+      skipDuplicates: true,
+    });
+  }
+  if (remove.length > 0) {
+    await prisma.conversationParticipant.deleteMany({ where: { conversationId: convo.id, userId: { in: remove } } });
+  }
+  return [...want];
+}
+
 export async function ensureStoreChannels(
   user: Messenger,
   prisma: PrismaClient = defaultPrisma,
 ): Promise<string[]> {
-  if (!user.clientId) return [];
-  if (user.role !== 'CLIENT_PORTAL' && !STORE_ROLES.includes(user.role)) return [];
+  // Anyone who no longer belongs to a store (moved to a region, left the
+  // client, changed role) drops out of every store channel.
+  const leaveAll = async () => {
+    await prisma.conversationParticipant.deleteMany({
+      where: { userId: user.id, conversation: { kind: 'STORE_CHANNEL' } },
+    });
+    return [] as string[];
+  };
+  if (!user.clientId) return leaveAll();
+  if (user.role !== 'CLIENT_PORTAL' && !STORE_ROLES.includes(user.role)) return leaveAll();
   const client = await prisma.client.findFirst({
     where: { id: user.clientId, deletedAt: null },
     select: {
@@ -220,6 +270,10 @@ export async function ensureStoreChannels(
     }
     ids.push(convo.id);
   }
+  // A manager moved to another store (or client) leaves the old channels.
+  await prisma.conversationParticipant.deleteMany({
+    where: { userId: user.id, conversation: { kind: 'STORE_CHANNEL' }, conversationId: { notIn: ids } },
+  });
   return ids;
 }
 

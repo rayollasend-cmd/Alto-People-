@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/Input';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { CoverageCurve, DetailsTable, ReliabilityChart, RingMeter, StatTile, StoreBarChart } from '@/pages/portal/portalCharts';
 import { hourLabel } from '@/pages/portal/coverage';
+import { PushPrompt } from '@/components/PushPrompt';
 
 /**
  * The region command center — the market manager's page. Reads the way a
@@ -57,6 +58,7 @@ export function RegionHome() {
     queryFn: () => regionOverview(isRegion ? null : previewId),
     enabled,
     refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
   });
   const data = query.data;
 
@@ -170,6 +172,8 @@ export function RegionHome() {
           ) : undefined
         }
       />
+
+      {isRegion && <PushPrompt />}
 
       {/* ---- Hero: the market's floor right now, drawn across the day ------ */}
       <Card

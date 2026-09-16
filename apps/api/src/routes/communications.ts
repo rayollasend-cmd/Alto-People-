@@ -25,6 +25,15 @@ import { emitLiveEvent } from '../lib/liveEvents.js';
 
 export const communicationsRouter = Router();
 
+/**
+ * The personal half: your own inbox (the bell) and your own push
+ * subscriptions. Every signed-in account has these — including portal
+ * accounts, which hold no communications capability — so it mounts at
+ * /communications/me behind requireAuth, ahead of the capability-gated
+ * admin router.
+ */
+export const communicationsMeRouter = Router();
+
 const MANAGE = requireCapability('manage:communications');
 
 type RawNotif = Prisma.NotificationGetPayload<{
@@ -66,7 +75,7 @@ const NOTIF_INCLUDE = {
  * empty) when push isn't configured, so clients treat it exactly like an
  * unsupported browser and never show the enable card's success path.
  */
-communicationsRouter.get('/me/push/public-key', async (_req, res, next) => {
+communicationsMeRouter.get('/push/public-key', async (_req, res, next) => {
   try {
     if (!pushConfigured() || !env.VAPID_PUBLIC_KEY) {
       throw new HttpError(404, 'push_not_configured', 'Push is not configured');
@@ -77,7 +86,7 @@ communicationsRouter.get('/me/push/public-key', async (_req, res, next) => {
   }
 });
 
-communicationsRouter.post('/me/push/subscriptions', async (req, res, next) => {
+communicationsMeRouter.post('/push/subscriptions', async (req, res, next) => {
   try {
     const parsed = PushSubscribeInputSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -110,7 +119,7 @@ communicationsRouter.post('/me/push/subscriptions', async (req, res, next) => {
   }
 });
 
-communicationsRouter.delete('/me/push/subscriptions', async (req, res, next) => {
+communicationsMeRouter.delete('/push/subscriptions', async (req, res, next) => {
   try {
     const parsed = PushUnsubscribeInputSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -129,7 +138,7 @@ communicationsRouter.delete('/me/push/subscriptions', async (req, res, next) => 
 
 /* ===== Associate inbox (IN_APP) ======================================== */
 
-communicationsRouter.get('/me/inbox', async (req, res, next) => {
+communicationsMeRouter.get('/inbox', async (req, res, next) => {
   try {
     const user = req.user!;
     const where = { recipientUserId: user.id, channel: 'IN_APP' as const };
@@ -155,7 +164,7 @@ communicationsRouter.get('/me/inbox', async (req, res, next) => {
 // Opening the bell panel = "I have seen what's here". Stamps seenAt on
 // every unseen IN_APP row so the badge clears, while readAt (the row
 // highlight) survives until each item is actually clicked. Idempotent.
-communicationsRouter.post('/me/inbox/seen', async (req, res, next) => {
+communicationsMeRouter.post('/inbox/seen', async (req, res, next) => {
   try {
     const r = await prisma.notification.updateMany({
       where: { recipientUserId: req.user!.id, channel: 'IN_APP', seenAt: null },
@@ -170,7 +179,7 @@ communicationsRouter.post('/me/inbox/seen', async (req, res, next) => {
 // One request instead of the bell's old Promise.allSettled storm of up to
 // 100 individual /read calls. Also stamps seenAt — a row can't be read
 // but unseen.
-communicationsRouter.post('/me/inbox/read-all', async (req, res, next) => {
+communicationsMeRouter.post('/inbox/read-all', async (req, res, next) => {
   try {
     const now = new Date();
     const r = await prisma.notification.updateMany({
@@ -183,7 +192,7 @@ communicationsRouter.post('/me/inbox/read-all', async (req, res, next) => {
   }
 });
 
-communicationsRouter.post('/me/inbox/:id/read', async (req, res, next) => {
+communicationsMeRouter.post('/inbox/:id/read', async (req, res, next) => {
   try {
     const user = req.user!;
     const row = await prisma.notification.findFirst({

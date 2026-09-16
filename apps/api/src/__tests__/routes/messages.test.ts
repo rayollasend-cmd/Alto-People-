@@ -53,6 +53,32 @@ async function seed() {
   return { clientA, clientB, manager, supervisor, otherSupervisor, otherManager, wfm, associate };
 }
 
+describe('store channel membership', () => {
+  it('reaches a manager invited after the channel existed and drops one who moved', async () => {
+    const s = await seed();
+    const manager = await loginAs(s.manager.email);
+    const inbox = await manager.get('/messages/conversations');
+    const channel = inbox.body.conversations.find((c: { kind: string }) => c.kind === 'STORE_CHANNEL');
+    expect(channel).toBeTruthy();
+
+    // A second manager is added; they have never opened Messages.
+    const { user: newManager } = await createUser({ role: 'CLIENT_PORTAL', clientId: s.clientA.id });
+    const sup = await loginAs(s.supervisor.email);
+    expect((await sup.post(`/messages/conversations/${channel.id}/messages`).send({ body: 'Truck at 5am.' })).status).toBe(201);
+    await flushPendingNotifications();
+    expect(await prisma.notification.count({ where: { recipientUserId: newManager.id, category: 'message', channel: 'IN_APP' } })).toBe(1);
+
+    // The first manager moves to another client: the next message skips
+    // them and they are no longer in the channel.
+    await prisma.user.update({ where: { id: s.manager.id }, data: { clientId: s.clientB.id } });
+    const before = await prisma.notification.count({ where: { recipientUserId: s.manager.id, category: 'message', channel: 'IN_APP' } });
+    expect((await sup.post(`/messages/conversations/${channel.id}/messages`).send({ body: 'Truck moved to 6am.' })).status).toBe(201);
+    await flushPendingNotifications();
+    expect(await prisma.notification.count({ where: { recipientUserId: s.manager.id, category: 'message', channel: 'IN_APP' } })).toBe(before);
+    expect(await prisma.conversationParticipant.count({ where: { conversationId: channel.id, userId: s.manager.id } })).toBe(0);
+  });
+});
+
 describe('messages', () => {
   it('lets the store manager text their supervisor, keeps the record, and reaches the desk', async () => {
     const s = await seed();

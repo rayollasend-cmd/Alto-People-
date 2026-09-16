@@ -110,8 +110,14 @@ regionRouter.get('/overview', requireAuth, async (req, res, next) => {
     // Open requests across the region, oldest first, with the store named.
     const storeByClient = new Map<string, string>();
     for (const l of region.locations) storeByClient.set(l.clientId, l.name);
+    const storeById = new Map(region.locations.map((l) => [l.id, l.name]));
     const openRequests = await prisma.clientRequest.findMany({
-      where: { clientId: { in: [...storeByClient.keys()] }, status: { not: 'RESOLVED' } },
+      // The region's own stores' requests, plus client-wide ones.
+      where: {
+        clientId: { in: [...storeByClient.keys()] },
+        status: { not: 'RESOLVED' },
+        OR: [{ locationId: { in: [...storeById.keys()] } }, { locationId: null }],
+      },
       orderBy: { createdAt: 'asc' },
       take: 50,
       include: {
@@ -121,7 +127,7 @@ regionRouter.get('/overview', requireAuth, async (req, res, next) => {
     });
     const requests = openRequests.map((r) => ({
       id: r.id,
-      storeName: storeByClient.get(r.clientId) ?? '—',
+      storeName: (r.locationId ? storeById.get(r.locationId) : undefined) ?? storeByClient.get(r.clientId) ?? '—',
       clientId: r.clientId,
       kind: r.kind,
       subject: r.subject,

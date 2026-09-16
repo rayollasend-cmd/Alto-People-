@@ -144,9 +144,9 @@ export async function invitePortalAccount(input: {
     const u = existing
       ? await tx.user.update({
           where: { id: existing.id },
-          data: { role: 'CLIENT_PORTAL', status: 'INVITED', ...bind, deletedAt: null, tokenVersion: { increment: 1 } },
+          data: { role: 'CLIENT_PORTAL', status: 'INVITED', ...bind, displayName: input.name?.trim() || existing.displayName, deletedAt: null, tokenVersion: { increment: 1 } },
         })
-      : await tx.user.create({ data: { email, role: 'CLIENT_PORTAL', status: 'INVITED', ...bind } });
+      : await tx.user.create({ data: { email, role: 'CLIENT_PORTAL', status: 'INVITED', ...bind, displayName: input.name?.trim() || null } });
     await tx.inviteToken.updateMany({ where: { userId: u.id, consumedAt: null }, data: { consumedAt: new Date() } });
     await tx.inviteToken.create({ data: { tokenHash: invite.hash, userId: u.id, expiresAt } });
     return u;

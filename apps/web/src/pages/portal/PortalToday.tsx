@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -79,8 +79,19 @@ export function PortalToday() {
     queryFn: () => apiFetch<DayPayload>(`/client-portal/day${qs}`),
     enabled,
     refetchInterval: date === ymdLocal() ? 60_000 : false,
+    refetchOnWindowFocus: date === ymdLocal(),
+    // Stepping between days keeps the page on screen until the next loads.
+    placeholderData: (prev) => prev,
   });
   const data = query.data;
+  const switching = !!data && data.date !== date;
+  // An alert links here with ?wave=<start>: open that shift and bring it into view.
+  const focusWave = searchParams.get('wave');
+  useEffect(() => {
+    if (!focusWave || !data || switching) return;
+    const el = document.getElementById(`wave-${focusWave}`);
+    el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [focusWave, data, switching]);
   const waves = useMemo(() => (data ? groupWaves(data.roster) : []), [data]);
   const [reportOpen, setReportOpen] = useState(false);
   // The store name only earns a place on a row when rows span stores.
@@ -111,7 +122,7 @@ export function PortalToday() {
       : fmtDate(parseYmd(date));
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 print-area">
+    <div className={cn('mx-auto max-w-5xl space-y-4 print-area', switching && 'opacity-70 transition-opacity')}>
       <PageHeader
         title={dayLabel}
         topbarTitle={t('portal.todayNav')}
@@ -254,7 +265,7 @@ export function PortalToday() {
             <span className="text-silver/50"> · {t('portal.faceHint')}</span>
           </p>
           {waves.map((w) => (
-            <WaveCard key={w.key} wave={w} multiStore={multiStore} />
+            <WaveCard key={w.key} wave={w} multiStore={multiStore} focused={focusWave === w.startsAt} />
           ))}
         </>
       )}
@@ -266,7 +277,7 @@ export function PortalToday() {
 
 type FaceTone = 'on-floor' | 'worked' | 'missing' | 'upcoming';
 
-function WaveCard({ wave: w, multiStore }: { wave: Wave; multiStore: boolean }) {
+function WaveCard({ wave: w, multiStore, focused = false }: { wave: Wave; multiStore: boolean; focused?: boolean }) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<WaveRow | null>(null);
   const range = fmtShiftRangeTz(w.startsAt, w.endsAt, w.timezone);
@@ -457,14 +468,17 @@ function WaveCard({ wave: w, multiStore }: { wave: Wave; multiStore: boolean }) 
 
   return (
     <Card
+      id={`wave-${w.startsAt}`}
       className={cn(
+        'scroll-mt-20',
         w.phase === 'live' && (short ? 'border-warning/40' : 'border-success/30'),
         missedSome && 'border-alert/30',
+        focused && 'ring-2 ring-gold/70',
       )}
     >
       <CardContent className="p-4 sm:p-5">
         {w.phase === 'finished' ? (
-          <details className="group" open={missedSome}>
+          <details className="group" open={missedSome || focused}>
             <summary className="cursor-pointer list-none">
               {header}
               {meter}

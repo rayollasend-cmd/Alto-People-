@@ -166,7 +166,7 @@ export async function sendReminderForUser(
   const portalScope = user.role === 'CLIENT_PORTAL' ? await portalScopeForUser(user) : null;
   const tpl = portalScope
     ? portalInviteTemplate({
-        name: portalDisplayName(null, user.email),
+        name: portalDisplayName(user.displayName, user.email),
         scope: portalScope,
         magicLink: acceptUrl,
         linkExpiresAt: expiresAt.toISOString().slice(0, 10),

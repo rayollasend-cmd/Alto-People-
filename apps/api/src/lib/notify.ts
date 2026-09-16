@@ -73,6 +73,13 @@ const bucketForRawCategory = bucketForCategory;
  * resolves to. Always false for mandatory buckets and unknown raw
  * strings — see bucketForRawCategory comment.
  */
+/** True when the user muted this category's bucket (never for mandatory
+ *  ones). For senders that mail directly — attachments, digests — and so
+ *  can't go through notifyUser. */
+export function isEmailMuted(userId: string, rawCategory: string | undefined): Promise<boolean> {
+  return isEmailMutedForCategory(userId, rawCategory);
+}
+
 async function isEmailMutedForCategory(
   userId: string,
   rawCategory: string | undefined,

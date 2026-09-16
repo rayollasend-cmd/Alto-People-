@@ -4316,30 +4316,35 @@ export const NOTIFICATION_CATEGORIES = [
     description:
       'Application status, invite reminders, e-sign copies, and checklist nudges.',
     mandatory: false,
+    audience: 'staff',
   },
   {
     key: 'documents',
     label: 'Document changes',
     description: 'Confirmations and rejections for documents you upload.',
     mandatory: false,
+    audience: 'staff',
   },
   {
     key: 'time_off',
     label: 'Time-off decisions',
     description: 'Approvals, denials, and balance adjustments on PTO requests.',
     mandatory: false,
+    audience: 'staff',
   },
   {
     key: 'scheduling',
     label: 'Schedule changes',
     description: 'Shifts you are added to, moved off of, or that get cancelled.',
     mandatory: false,
+    audience: 'staff',
   },
   {
     key: 'shift_swaps',
     label: 'Shift swap requests',
     description: 'Peer swap offers, accepts, declines, and manager decisions.',
     mandatory: false,
+    audience: 'staff',
   },
   {
     key: 'broadcast',
@@ -4347,6 +4352,7 @@ export const NOTIFICATION_CATEGORIES = [
     description:
       'Broadcast messages from HR. Muting this (or using the unsubscribe link in an announcement email) stops the emails; the in-app copy still arrives.',
     mandatory: false,
+    audience: 'staff',
   },
   {
     key: 'time_pay',
@@ -4354,6 +4360,7 @@ export const NOTIFICATION_CATEGORIES = [
     description:
       'Time entry approvals and adjustments, payroll run notices, reimbursements, and benefits updates.',
     mandatory: false,
+    audience: 'staff',
   },
   {
     key: 'growth',
@@ -4361,6 +4368,7 @@ export const NOTIFICATION_CATEGORIES = [
     description:
       'Learning, mentorship, performance reviews, internal job postings, and development updates.',
     mandatory: false,
+    audience: 'staff',
   },
   {
     key: 'workplace',
@@ -4368,28 +4376,76 @@ export const NOTIFICATION_CATEGORIES = [
     description:
       'Org and team changes, HR cases, asset assignments, agreements, and operational alerts.',
     mandatory: false,
+    audience: 'staff',
   },
   {
     key: 'discipline',
     label: 'Disciplinary actions',
     description: 'Always on — formal HR record required by policy.',
     mandatory: true,
+    audience: 'staff',
   },
   {
     key: 'probation',
     label: 'Probation period',
     description: 'Always on — required HR notice.',
     mandatory: true,
+    audience: 'staff',
   },
   {
     key: 'security',
     label: 'Account security',
     description: 'Always on — password resets and other security alerts.',
     mandatory: true,
+    audience: 'all',
+  },
+  {
+    key: 'messages',
+    label: 'Messages',
+    description: 'New messages in your conversations and store channels.',
+    mandatory: false,
+    audience: 'all',
+  },
+  {
+    key: 'store_daily',
+    label: 'Morning store note',
+    description: "Today's headcount and open slots, and tomorrow's confirmations, each morning.",
+    mandatory: false,
+    audience: 'portal',
+  },
+  {
+    key: 'store_alerts',
+    label: 'Short-staffing alerts',
+    description: 'A shift under way is meaningfully short of the people expected.',
+    mandatory: false,
+    audience: 'portal',
+  },
+  {
+    key: 'store_requests',
+    label: 'Request updates',
+    description: 'Alto picked up or replied to a request raised for your store.',
+    mandatory: false,
+    audience: 'portal',
+  },
+  {
+    key: 'store_reports',
+    label: 'Reports and statements',
+    description: "Saturday's service report and statements issued or paid.",
+    mandatory: false,
+    audience: 'portal',
   },
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number]['key'];
+/** Who a bucket is for: Alto staff, portal (store / market / region)
+ *  accounts, or everyone. Settings lists only the buckets for the role. */
+export type NotificationAudience = (typeof NOTIFICATION_CATEGORIES)[number]['audience'];
+
+/** The buckets a role sees in Settings. */
+export function notificationCategoriesFor(role: string) {
+  const portal = role === 'CLIENT_PORTAL';
+  return NOTIFICATION_CATEGORIES.filter((c) => c.audience === 'all' || (portal ? c.audience === 'portal' : c.audience === 'staff'));
+}
 
 /**
  * Map a raw call-site category string (e.g. 'shift_published',
@@ -4404,6 +4460,11 @@ export function bucketForCategory(
 ): NotificationCategory | null {
   if (!raw) return null;
   if (raw === 'broadcast') return 'broadcast';
+  if (raw === 'message') return 'messages';
+  if (raw === 'portal.digest') return 'store_daily';
+  if (raw === 'portal.coverage') return 'store_alerts';
+  if (raw === 'client-request') return 'store_requests';
+  if (raw === 'portal.service_report' || raw === 'portal.statement') return 'store_reports';
   if (raw === 'discipline') return 'discipline';
   if (raw === 'probation') return 'probation';
   if (raw === 'security') return 'security';
@@ -4469,7 +4530,7 @@ export function bucketForCategory(
  *  rows in the alert tone so a failed payment never looks like a birthday. */
 export function isUrgentCategory(raw: string | null | undefined): boolean {
   if (!raw) return false;
-  return /failed|rejected|no_show|escalation|alert|voided|expired/.test(raw);
+  return /failed|rejected|no_show|escalation|alert|voided|expired|coverage/.test(raw);
 }
 
 const NOTIFICATION_CATEGORY_KEYS = NOTIFICATION_CATEGORIES.map((c) => c.key) as [

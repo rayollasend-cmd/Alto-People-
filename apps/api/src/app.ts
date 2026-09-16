@@ -32,7 +32,7 @@ import { documentsRouter } from './routes/documents.js';
 import { complianceRouter } from './routes/compliance.js';
 import { complianceScorecardRouter } from './routes/complianceScorecard.js';
 import { analyticsRouter } from './routes/analytics.js';
-import { communicationsRouter } from './routes/communications.js';
+import { communicationsMeRouter, communicationsRouter } from './routes/communications.js';
 import { performanceRouter } from './routes/performance.js';
 import { performance84Router } from './routes/performance84.js';
 import { recruitingRouter } from './routes/recruiting.js';
@@ -109,7 +109,7 @@ import { usersRouter } from './routes/users.js';
 import { orgSettingsRouter } from './routes/orgSettings.js';
 import { integrationsV1Router } from './routes/integrationsV1.js';
 import { scimRouter } from './routes/scim.js';
-import { attachUser, requireCapability } from './middleware/auth.js';
+import { attachUser, requireAuth, requireCapability } from './middleware/auth.js';
 import { defaultApiLimiter } from './middleware/rateLimit.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { requestId } from './middleware/requestId.js';
@@ -332,6 +332,9 @@ export function createApp() {
   // it must sit OUTSIDE the view:communications gate below. Mounted first —
   // Express matches the longer prefix before the gated /communications mount.
   app.use('/communications/unsubscribe', emailUnsubscribeRouter);
+  // Your own inbox and push subscriptions: every signed-in account,
+  // portal accounts included (they hold no communications capability).
+  app.use('/communications/me', requireAuth, communicationsMeRouter);
   app.use(
     '/communications',
     requireCapability('view:communications'),

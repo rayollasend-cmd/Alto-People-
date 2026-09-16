@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -44,6 +44,8 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
 import { PortalRequests, type RequestPrefill } from './PortalRequests';
 import { groupWaves, wavePresent } from './waves';
+import { PushPrompt } from '@/components/PushPrompt';
+import { onLiveEvent } from '@/lib/liveEvents';
 import { ServiceReportDialog } from './ServiceReportDialog';
 import { shiftDays } from './scope';
 import {
@@ -206,10 +208,12 @@ function ReviewedMark({
   reviewed,
   onMark,
   t,
+  busy = false,
 }: {
   reviewed: { reviewedAt: string; reviewedBy: string | null } | null;
   onMark: (() => void) | null;
   t: ReturnType<typeof useI18n>['t'];
+  busy?: boolean;
 }) {
   if (reviewed) {
     return (
@@ -223,7 +227,7 @@ function ReviewedMark({
   }
   if (!onMark) return null;
   return (
-    <Button size="xs" variant="ghost" onClick={onMark}>
+    <Button size="xs" variant="ghost" onClick={onMark} loading={busy} disabled={busy}>
       <CheckCircle2 className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
       {t('portal.markReviewed')}
     </Button>
@@ -264,13 +268,18 @@ export function ClientPortalHome() {
   const [prefill, setPrefill] = useState<RequestPrefill | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const queryClient = useQueryClient();
+  const [marking, setMarking] = useState<string | null>(null);
   const markReviewed = async (kind: 'STATEMENT' | 'SERVICE_REPORT', key: string) => {
+    if (marking) return;
+    setMarking(`${kind}:${key}`);
     try {
       await apiFetch('/client-portal/acknowledge', { method: 'POST', body: { kind, key } });
       toast.success(t('portal.markedReviewed'));
-      void queryClient.invalidateQueries({ queryKey: ['clientPortal'] });
+      await queryClient.invalidateQueries({ queryKey: ['clientPortal'] });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : t('portal.loadFailed'));
+    } finally {
+      setMarking(null);
     }
   };
 
@@ -280,8 +289,16 @@ export function ClientPortalHome() {
     queryFn: () => apiFetch<PortalOverview>(`/client-portal/overview${qs}`),
     enabled,
     refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+    // Drilling into a store keeps the page on screen until the store loads.
+    placeholderData: (prev) => prev,
   });
   const data = query.data;
+  // An alert, a reply or a statement rings the bell; the page catches up.
+  useEffect(
+    () => onLiveEvent('notification', () => void queryClient.invalidateQueries({ queryKey: ['clientPortal', 'overview'] })),
+    [queryClient],
+  );
 
   // The home card reads the live roster; the Day page reads the punch
   // record. Map the live states onto the wave grammar.
@@ -457,6 +474,7 @@ export function ClientPortalHome() {
               reviewed={data.serviceReport.reviewed}
               onMark={isPortal ? () => void markReviewed('SERVICE_REPORT', data.serviceReport.weekStart) : null}
               t={t}
+              busy={marking === `SERVICE_REPORT:${data.serviceReport.weekStart}`}
             />
           </>
         }
@@ -518,6 +536,8 @@ export function ClientPortalHome() {
           ← {t('portal.allStores', { client: data.client.name })}
         </button>
       )}
+
+      {isPortal && <PushPrompt />}
 
       {/* ---- Hero: the floor right now, drawn across the day --------------- */}
       <Card
@@ -1140,6 +1160,7 @@ export function ClientPortalHome() {
                           reviewed={s.reviewed}
                           onMark={isPortal ? () => void markReviewed('STATEMENT', s.id) : null}
                           t={t}
+                          busy={marking === `STATEMENT:${s.id}`}
                         />
                       </div>
                     </li>

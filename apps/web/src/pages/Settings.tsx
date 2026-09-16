@@ -852,6 +852,8 @@ type PushRowStatus =
 
 function NotificationsCard() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const isPortal = user?.role === 'CLIENT_PORTAL';
   const [pending, setPending] = useState<NotificationCategory | null>(null);
 
   // Push subscription state for this device. Settings is the recovery
@@ -957,8 +959,9 @@ function NotificationsCard() {
           Notifications
         </CardTitle>
         <CardDescription>
-          Choose which emails Alto sends you. The bell on the topbar always
-          shows everything — these toggles only affect email.
+          Choose what reaches you outside the app. The bell on the topbar
+          always shows everything; switching a type off stops its email and
+          push alert.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -1024,9 +1027,13 @@ function NotificationsCard() {
             </div>
             <div className="text-xs text-silver mt-0.5">
               {pushStatus === 'subscribed'
-                ? 'Shift alerts reach this device even when the app is closed.'
+                ? isPortal
+                  ? 'Short-staffing alerts, replies and messages reach this device even when the app is closed.'
+                  : 'Shift alerts reach this device even when the app is closed.'
                 : pushStatus === 'available'
-                  ? 'Get shift alerts on this device even when the app is closed.'
+                  ? isPortal
+                    ? 'Get short-staffing alerts, replies and messages on this device even when the app is closed.'
+                    : 'Get shift alerts on this device even when the app is closed.'
                   : pushStatus === 'denied'
                     ? 'Blocked in your browser settings — allow notifications for this site, then come back here.'
                     : pushStatus === 'unsupported'

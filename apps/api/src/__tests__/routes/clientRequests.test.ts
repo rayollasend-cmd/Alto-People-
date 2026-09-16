@@ -212,6 +212,43 @@ describe('client requests', () => {
     expect(baton?.count).toBe(1);
   });
 
+  it("belongs to the store it was raised for: that store's managers hear the reply, another store never sees it", async () => {
+    const client = await createClient('Walmart 218');
+    const storeA = await prisma.location.findFirstOrThrow({ where: { clientId: client.id } });
+    const storeB = await prisma.location.create({ data: { clientId: client.id, name: 'Destin 4411' } });
+    const { user: askerA } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });
+    const { user: peerA } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });
+    const { user: managerB } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });
+    const { user: market } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });
+    await prisma.user.updateMany({ where: { id: { in: [askerA.id, peerA.id] } }, data: { locationId: storeA.id } });
+    await prisma.user.update({ where: { id: managerB.id }, data: { locationId: storeB.id } });
+    const { user: wfm } = await createUser({ role: 'WORKFORCE_MANAGER' });
+
+    const asker = await loginAs(askerA.email);
+    const created = await asker
+      .post('/client-portal/requests')
+      .send({ kind: 'STAFFING', subject: 'Two more for Saturday', body: 'Overnight crew is thin.' });
+    expect(created.status).toBe(201);
+    expect((await prisma.clientRequest.findUniqueOrThrow({ where: { id: created.body.id } })).locationId).toBe(storeA.id);
+
+    // Store B does not see store A's request; the market account sees it.
+    expect((await (await loginAs(managerB.email)).get('/client-portal/requests')).body.requests).toHaveLength(0);
+    expect((await (await loginAs(market.email)).get('/client-portal/requests')).body.requests).toHaveLength(1);
+    expect((await (await loginAs(peerA.email)).get('/client-portal/requests')).body.requests).toHaveLength(1);
+
+    const staff = await loginAs(wfm.email);
+    expect((await staff.patch(`/client-requests/${created.body.id}`).send({ status: 'IN_PROGRESS' })).status).toBe(200);
+    // Re-saving "in progress" is silent.
+    expect((await staff.patch(`/client-requests/${created.body.id}`).send({ status: 'IN_PROGRESS' })).status).toBe(200);
+    await flushPendingNotifications();
+    const heard = async (id: string) =>
+      prisma.notification.count({ where: { recipientUserId: id, category: 'client-request', channel: 'IN_APP' } });
+    expect(await heard(askerA.id)).toBe(1);
+    expect(await heard(peerA.id)).toBe(1);
+    expect(await heard(managerB.id)).toBe(0);
+    expect(await heard(market.id)).toBe(0);
+  });
+
   it('names a person from the roster and tells the requester on pickup and on reply', async () => {
     const client = await createClient('Front Beach 218');
     const { user: portal } = await createUser({ role: 'CLIENT_PORTAL', clientId: client.id });

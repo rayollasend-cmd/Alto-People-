@@ -109,7 +109,8 @@ export async function storeSnapshot(
       loadTargets(scope, now),
       loadPunches(scope, trendStart, now, now),
       prisma.clientRequest.findMany({
-        where: { clientId: location.clientId, status: { not: 'RESOLVED' } },
+        // This store's requests, plus client-wide ones raised by the market.
+        where: { clientId: location.clientId, status: { not: 'RESOLVED' }, OR: [{ locationId: location.id }, { locationId: null }] },
         select: { dueAt: true },
         take: 200,
       }),

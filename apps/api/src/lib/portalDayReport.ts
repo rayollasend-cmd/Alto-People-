@@ -253,7 +253,12 @@ export async function buildPortalReport(
     loadPunches(scope, trendStart, spanEnd, now),
     loadTargets(scope, toExclusive < now ? toExclusive : now),
     prisma.clientRequest.findMany({
-      where: { clientId: scope.clientId, createdAt: { lt: toExclusive }, OR: [{ resolvedAt: null }, { resolvedAt: { gte: from } }] },
+      where: {
+        clientId: scope.clientId,
+        ...(scope.locationId ? { locationId: scope.locationId } : {}),
+        createdAt: { lt: toExclusive },
+        OR: [{ resolvedAt: null }, { resolvedAt: { gte: from } }],
+      },
       select: { kind: true, subject: true, status: true, createdAt: true, dueAt: true, resolvedAt: true },
       orderBy: { createdAt: 'desc' },
       take: 500,

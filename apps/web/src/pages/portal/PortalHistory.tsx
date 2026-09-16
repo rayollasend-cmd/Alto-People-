@@ -178,13 +178,18 @@ export function PortalHistory() {
   });
   const data = query.data;
   const queryClient = useQueryClient();
+  const [marking, setMarking] = useState<string | null>(null);
   const markReviewed = async (kind: 'STATEMENT' | 'SERVICE_REPORT', key: string) => {
+    if (marking) return;
+    setMarking(`${kind}:${key}`);
     try {
       await apiFetch('/client-portal/acknowledge', { method: 'POST', body: { kind, key } });
       toast.success(t('portal.markedReviewed'));
-      void queryClient.invalidateQueries({ queryKey: ['clientPortal'] });
+      await queryClient.invalidateQueries({ queryKey: ['clientPortal'] });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : t('portal.loadFailed'));
+    } finally {
+      setMarking(null);
     }
   };
   const reviewedMark = (
@@ -199,7 +204,7 @@ export function PortalHistory() {
           : t('portal.reviewedNoName', { date: fmtDate(reviewed.reviewedAt) })}
       </span>
     ) : isPortal ? (
-      <Button size="xs" variant="ghost" onClick={onMark}>
+      <Button size="xs" variant="ghost" onClick={onMark} loading={!!marking} disabled={!!marking}>
         <CheckCircle2 className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
         {t('portal.markReviewed')}
       </Button>

@@ -202,11 +202,18 @@ describe('Inbox (/me/inbox)', () => {
 });
 
 describe('CLIENT_PORTAL access', () => {
-  it('lacks view:communications → 403 across the router', async () => {
+  it('reads its own bell and nothing else in the router', async () => {
     const { user: portal } = await createUser({ role: 'CLIENT_PORTAL', clientId: null });
+    await prisma.notification.create({
+      data: { channel: 'IN_APP', status: 'SENT', recipientUserId: portal.id, subject: 'Front Beach 218 is short', body: 'x', category: 'portal.coverage' },
+    });
     const a = await loginAs(portal.email);
     const inbox = await a.get('/communications/me/inbox');
-    expect(inbox.status).toBe(403);
+    expect(inbox.status).toBe(200);
+    expect(inbox.body.notifications).toHaveLength(1);
+    expect((await a.post('/communications/me/inbox/read-all').send({})).status).toBe(200);
+    // The admin half stays behind the capability.
+    expect((await a.get('/communications/admin')).status).toBe(403);
   });
 });
 

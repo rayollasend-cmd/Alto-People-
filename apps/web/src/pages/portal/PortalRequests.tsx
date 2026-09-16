@@ -1,4 +1,7 @@
 import { useEffect, useState } from 'react';
+import { onLiveEvent } from '@/lib/liveEvents';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { MessageSquarePlus, Send } from 'lucide-react';
@@ -83,7 +86,13 @@ export function PortalRequests({ prefill, refetchMs = 60_000 }: { prefill?: Requ
     queryKey: ['clientPortal', 'requests'],
     queryFn: () => apiFetch<{ requests: PortalRequest[] }>('/client-portal/requests'),
     refetchInterval: refetchMs,
+    refetchOnWindowFocus: true,
   });
+  // A reply or pick-up rings the bell; the list catches up the same moment.
+  useEffect(
+    () => onLiveEvent('notification', () => void queryClient.invalidateQueries({ queryKey: ['clientPortal', 'requests'] })),
+    [queryClient],
+  );
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<ReqKind>('STAFFING');
   const [subject, setSubject] = useState('');
@@ -153,7 +162,24 @@ export function PortalRequests({ prefill, refetchMs = 60_000 }: { prefill?: Requ
             {t('portal.reqNew')}
           </Button>
         </div>
-        {rows.length === 0 ? (
+        {query.isError && !query.data ? (
+          <div className="mt-3">
+            <ErrorBanner
+              action={
+                <Button size="sm" variant="secondary" onClick={() => void query.refetch()}>
+                  {t('common.retry')}
+                </Button>
+              }
+            >
+              {t('portal.loadFailed')}
+            </ErrorBanner>
+          </div>
+        ) : query.isLoading ? (
+          <div className="mt-3 space-y-2">
+            <Skeleton className="h-14" />
+            <Skeleton className="h-14" />
+          </div>
+        ) : rows.length === 0 ? (
           <p className="mt-3 text-sm text-silver/60">{t('portal.reqNone')}</p>
         ) : (
           <ul className="mt-3 divide-y divide-navy-secondary/60">

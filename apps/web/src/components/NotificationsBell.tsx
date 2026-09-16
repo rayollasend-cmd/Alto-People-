@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useAuth } from '@/lib/auth';
 import { useNavigate } from 'react-router-dom';
 import {
+  AlertTriangle,
   ArrowLeftRight,
   Bell,
   BellRing,
@@ -12,8 +14,10 @@ import {
   Inbox,
   Lock,
   Megaphone,
+  MessageSquare,
   Plane,
   ShieldAlert,
+  Sunrise,
   TrendingUp,
   Wallet,
   type LucideIcon,
@@ -75,6 +79,11 @@ const BUCKET_ICON: Record<NotificationCategory, LucideIcon> = {
   discipline: ShieldAlert,
   probation: ShieldAlert,
   security: Lock,
+  messages: MessageSquare,
+  store_daily: Sunrise,
+  store_alerts: AlertTriangle,
+  store_requests: Inbox,
+  store_reports: FileText,
 };
 
 const BUCKET_LABEL: Record<string, string> = Object.fromEntries(
@@ -97,6 +106,10 @@ function categoryMeta(raw: string | null): {
 const SHOW_LIMIT = 50;
 
 export function NotificationsBell() {
+  // The full inbox page is a communications screen; portal accounts read
+  // their notifications here in the panel only.
+  const { can } = useAuth();
+  const hasInboxPage = can('view:communications');
   const [items, setItems] = useState<Notification[] | null>(null);
   const [total, setTotal] = useState(0);
   const [loadError, setLoadError] = useState(false);
@@ -424,7 +437,15 @@ export function NotificationsBell() {
             </div>
           )}
         </div>
-        {items && total > shown.length && (
+        {items && total > shown.length && !hasInboxPage && (
+          <>
+            <DropdownMenuSeparator className="m-0" />
+            <p className="px-3 py-2 text-center text-2xs text-silver/60">
+              Showing the latest {shown.length} of {total}
+            </p>
+          </>
+        )}
+        {items && total > shown.length && hasInboxPage && (
           <>
             <DropdownMenuSeparator className="m-0" />
             <button
