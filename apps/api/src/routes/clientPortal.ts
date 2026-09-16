@@ -330,7 +330,6 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       trendShifts,
       tomorrowShifts,
       statements,
-      trendEvents,
       trendClaims,
       pendingTomorrowClaims,
       weekEntries,
@@ -373,7 +372,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       }),
       prisma.shift.findMany({
         where: { ...shifts, startsAt: { gte: trendStart, lt: weekEnd } },
-        select: { startsAt: true, endsAt: true, status: true, assignedAssociateId: true },
+        select: { id: true, startsAt: true, endsAt: true, status: true, assignedAssociateId: true },
         take: 5000,
       }),
       prisma.shift.findMany({
@@ -394,16 +393,6 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
           paidAt: true,
           snapshot: true,
         },
-      }),
-      prisma.attendanceEvent.findMany({
-        where: {
-          clientId,
-          occurredOn: { gte: trendStart },
-          excusedAt: null,
-          ...(scope.locationId ? { shift: { is: shiftRel } } : {}),
-        },
-        select: { kind: true, occurredOn: true },
-        take: 2000,
       }),
       prisma.openShiftClaim.findMany({
         where: {
@@ -509,6 +498,19 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
             take: 100,
           }),
     ]);
+
+    // Attendance events carry a shiftId but no relation, so the store scope
+    // keys them on the store's own shifts (already loaded for the trend).
+    const trendEvents = await prisma.attendanceEvent.findMany({
+      where: {
+        clientId,
+        occurredOn: { gte: trendStart },
+        excusedAt: null,
+        ...(scope.locationId ? { shiftId: { in: trendShifts.map((s) => s.id) } } : {}),
+      },
+      select: { kind: true, occurredOn: true },
+      take: 2000,
+    });
 
     const onFloorIds = new Set(onFloorEntries.map((e) => e.associateId));
     const leadNames = new Set(leadPositions.map((p) => p.name));

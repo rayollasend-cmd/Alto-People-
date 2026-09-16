@@ -15,6 +15,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { downloadStatementFile } from '@/pages/clients/statementsShared';
+import { DetailsTable, WeekFillChart } from './portalCharts';
 
 /**
  * The store's published week — the "can you email me the schedule?"
@@ -119,9 +120,18 @@ export function PortalSchedule() {
 
   const data = query.data;
   const today = ymdLocal();
+  const weekDays = (data?.days ?? []).map((d) => ({
+    date: d.date,
+    day: new Intl.DateTimeFormat(
+      typeof document !== 'undefined' && document.documentElement.lang === 'es' ? 'es-US' : 'en-US',
+      { weekday: 'short' },
+    ).format(parseYmd(d.date) ?? new Date()),
+    filled: d.shifts.filter((s) => s.state !== 'open').length,
+    open: d.shifts.filter((s) => s.state === 'open').length,
+  }));
 
   return (
-    <div className="mx-auto space-y-4">
+    <div className="mx-auto space-y-4 print-area">
       <PageHeader
         title={data ? (data.store ? data.store.name : data.client.name) : t('portal.schedule')}
         topbarTitle={t('portal.schedule')}
@@ -196,7 +206,36 @@ export function PortalSchedule() {
         </div>
       ) : (
         <>
-          <p className="text-sm text-silver tabular-nums">
+          <Card className="print:hidden">
+            <CardContent className="p-4">
+              <div className="flex items-baseline justify-between gap-3">
+                <h2 className="text-sm font-medium text-white">{t('portal.week')}</h2>
+                <span className="text-xs text-silver tabular-nums">
+                  {t('portal.schedSummary', { filled: data.filled, open: data.open })}
+                </span>
+              </div>
+              <div className="mt-2">
+                <WeekFillChart
+                  days={weekDays}
+                  todayKey={today}
+                  labels={{
+                    filled: t('portal.chartFilled'),
+                    open: t('portal.chartOpen'),
+                    heading: (d) => {
+                      const row = weekDays.find((x) => x.day === d);
+                      return row ? fmtDate(parseYmd(row.date)) : d;
+                    },
+                  }}
+                />
+                <DetailsTable
+                  label={t('portal.details')}
+                  columns={[t('portal.chartDay'), t('portal.chartFilled'), t('portal.chartOpen')]}
+                  rows={weekDays.map((d) => [fmtDate(parseYmd(d.date)), d.filled, d.open])}
+                />
+              </div>
+            </CardContent>
+          </Card>
+          <p className="hidden text-sm text-silver tabular-nums print:block">
             {t('portal.schedSummary', { filled: data.filled, open: data.open })}
           </p>
           {data.days.map((d) => {

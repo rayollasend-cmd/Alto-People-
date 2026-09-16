@@ -268,7 +268,7 @@ describe('GET /client-portal/overview', () => {
     expect(live?.name).toBe('Maria Lopez');
 
     // Tomorrow: 1 confirmed, 1 awaiting, 1 open.
-    expect(res.body.tomorrow).toEqual({ confirmed: 1, unconfirmed: 1, open: 1 });
+    expect(res.body.tomorrow).toEqual({ confirmed: 1, unconfirmed: 1, open: 1, coverInFlight: 0 });
 
     // Statements: FINAL only, newest first, totals surfaced, DRAFT hidden.
     expect(res.body.statements).toHaveLength(2);
