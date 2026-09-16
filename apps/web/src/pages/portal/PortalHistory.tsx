@@ -384,12 +384,6 @@ export function PortalHistory() {
           {data.totals.basis === 'schedule' && (
             <p className="text-xs text-warning">{t('portal.relBasisSchedule')}</p>
           )}
-          <details className="-mt-1">
-            <summary className="inline-flex min-h-8 cursor-pointer select-none items-center text-2xs uppercase tracking-wider text-silver/60 hover:text-silver coarse:min-h-11">
-              {t('portal.gradeHow')}
-            </summary>
-            <p className="mt-1 max-w-3xl text-xs leading-relaxed text-silver/80">{t('portal.gradeHowText')}</p>
-          </details>
 
           {/* ---- Market accounts: the stores side by side ------------------ */}
           {data.stores.length > 0 && (

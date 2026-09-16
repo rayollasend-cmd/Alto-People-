@@ -1,7 +1,15 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, Download, Printer, Users } from 'lucide-react';
+import {
+  ArrowLeft,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Printer,
+  Users,
+} from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
@@ -19,13 +27,17 @@ import { groupWaves, wavePresent, type Wave, type WaveRow } from './waves';
 import { scopeParams, shiftDays } from './scope';
 
 /**
- * A day — who was on the floor, wave by wave. Today reads live; any
- * other date reads from the punch record, so "2 days ago" looks exactly
- * like today did at close: who worked (in/out times), who was expected
- * and never punched, unfilled slots, and finished waves folded to their
- * proof line. Punch times only — never a "late" label; the judgment
- * stays with Alto. The date lives in the URL so a link to last Tuesday
- * opens on last Tuesday.
+ * A day — who was on the floor, wave by wave, as FACES.
+ *
+ * A 47-person overnight crew is a wall of names as a list and a glance
+ * as a face wall: the photo where one exists, the system avatar (the
+ * tinted initials every associate gets at onboarding) where it doesn't.
+ * State rides the ring — green on the floor, red with no punch, muted
+ * for a crew that hasn't started — and the name appears on tap, so the
+ * page reads at arm's length on an iPad and still answers "who is that"
+ * with one touch. Today reads live; any other date reads from the punch
+ * record. Punch times only, never a "late" label. The date lives in the
+ * URL so a link to last Tuesday opens on last Tuesday.
  */
 
 interface DayPayload {
@@ -62,6 +74,11 @@ export function PortalToday() {
   });
   const data = query.data;
   const waves = useMemo(() => (data ? groupWaves(data.roster) : []), [data]);
+  // The store name only earns a place on a row when rows span stores.
+  const multiStore = useMemo(
+    () => new Set((data?.roster ?? []).map((r) => r.locationName ?? '')).size > 1,
+    [data],
+  );
 
   if (!isPortal && !canPreview) {
     return <EmptyState icon={Users} title={t('portal.noAccess')} description="" />;
@@ -83,10 +100,9 @@ export function PortalToday() {
     : date === shiftDays(ymdLocal(), -1)
       ? t('portal.yesterday')
       : fmtDate(parseYmd(date));
-  const present = data ? data.summary.worked : 0;
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 print-area">
+    <div className="mx-auto max-w-5xl space-y-4 print-area">
       <PageHeader
         title={dayLabel}
         topbarTitle={t('portal.todayNav')}
@@ -199,8 +215,8 @@ export function PortalToday() {
         </ErrorBanner>
       ) : !data ? (
         <div className="space-y-3">
-          <Skeleton className="h-32" />
-          <Skeleton className="h-32" />
+          <Skeleton className="h-40" />
+          <Skeleton className="h-40" />
         </div>
       ) : waves.length === 0 ? (
         <Card>
@@ -214,11 +230,17 @@ export function PortalToday() {
             {isToday
               ? t('portal.todaySummary', { on: data.summary.onFloor, expected: data.summary.expected, waves: waves.length })
               : isPast
-                ? t('portal.daySummaryPast', { worked: present, expected: data.summary.expected, missed: data.summary.missed, open: data.summary.open })
+                ? t('portal.daySummaryPast', {
+                    worked: data.summary.worked,
+                    expected: data.summary.expected,
+                    missed: data.summary.missed,
+                    open: data.summary.open,
+                  })
                 : t('portal.daySummaryFuture', { expected: data.summary.expected, open: data.summary.open })}
+            <span className="text-silver/50"> · {t('portal.faceHint')}</span>
           </p>
           {waves.map((w) => (
-            <WaveCard key={w.key} wave={w} showLocation={!data.store} />
+            <WaveCard key={w.key} wave={w} multiStore={multiStore} />
           ))}
         </>
       )}
@@ -226,12 +248,18 @@ export function PortalToday() {
   );
 }
 
-function WaveCard({ wave: w, showLocation }: { wave: Wave; showLocation: boolean }) {
+/* ---- One wave: the headline, the meter, the face wall ------------------ */
+
+type FaceTone = 'on-floor' | 'worked' | 'missing' | 'upcoming';
+
+function WaveCard({ wave: w, multiStore }: { wave: Wave; multiStore: boolean }) {
   const { t } = useI18n();
+  const [selected, setSelected] = useState<WaveRow | null>(null);
   const range = fmtShiftRangeTz(w.startsAt, w.endsAt, w.timezone);
   const present = wavePresent(w);
   const short = w.phase === 'live' && w.clockedIn.length < w.expected;
-  const missedAll = w.phase === 'finished' && present < w.expected;
+  const missedSome = w.phase === 'finished' && present < w.expected;
+  const pct = w.expected > 0 ? Math.round((present / w.expected) * 100) : 0;
   const headline =
     w.phase === 'finished'
       ? t('portal.waveWorked', { worked: present, expected: w.expected })
@@ -239,114 +267,198 @@ function WaveCard({ wave: w, showLocation }: { wave: Wave; showLocation: boolean
         ? t('portal.waveStarts', { time: fmtTimeTz(w.startsAt, w.timezone), expected: w.expected })
         : t('portal.waveInOf', { in: w.clockedIn.length, expected: w.expected });
 
-  const people = (rows: WaveRow[], muted: boolean) => (
-    <ul className={cn('divide-y divide-navy-secondary/60', muted && 'opacity-70')}>
-      {rows.map((r) => (
-        <li key={r.shiftId} className="flex items-center gap-3 py-2.5">
-          {r.associateId ? (
-            <Avatar src={photoUrl(r.associateId)} name={r.name ?? ''} email="" size="md" />
-          ) : null}
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium text-white">
-              {r.name}
-              <span className="font-normal text-silver/80"> · {r.position}</span>
-              {r.isLead && (
-                <span className="ml-1.5 rounded bg-gold/15 px-1 py-px text-2xs font-medium uppercase tracking-wider text-gold">
-                  {t('portal.leadTag')}
-                </span>
-              )}
-            </div>
-            {showLocation && r.locationName && (
-              <div className="text-xs text-silver/60">{r.locationName}</div>
-            )}
-          </div>
-          {r.state === 'on-floor' && r.clockInAt ? (
-            <span className="flex shrink-0 items-center gap-1.5 text-xs text-success tabular-nums">
-              <span className="relative flex h-2 w-2" aria-hidden="true">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-              </span>
-              {t('portal.clockedInAt', { time: fmtTimeTz(r.clockInAt, r.timezone) })}
-            </span>
-          ) : r.state === 'worked' && r.clockInAt ? (
-            <span className="shrink-0 text-xs text-silver tabular-nums">
-              {r.clockOutAt
-                ? t('portal.punchRange', {
-                    in: fmtTimeTz(r.clockInAt, r.timezone),
-                    out: fmtTimeTz(r.clockOutAt, r.timezone),
-                  })
-                : t('portal.clockedInAt', { time: fmtTimeTz(r.clockInAt, r.timezone) })}
-            </span>
-          ) : (
-            <span className="shrink-0 text-xs text-silver/60">
-              {r.state === 'confirmed' ? t('portal.state.confirmed') : t('portal.state.unconfirmed')}
-            </span>
-          )}
-        </li>
-      ))}
-    </ul>
-  );
+  const allGroups: Array<{ key: string; label: string; rows: WaveRow[]; tone: FaceTone }> = [
+    { key: 'in', label: t('portal.faceOnFloor'), rows: w.clockedIn, tone: 'on-floor' },
+    { key: 'worked', label: t('portal.faceWorked'), rows: w.worked, tone: 'worked' },
+    {
+      key: 'missing',
+      label: w.phase === 'finished' ? t('portal.faceNoPunch') : t('portal.faceNotIn'),
+      rows: w.notIn,
+      tone: 'missing',
+    },
+    { key: 'upcoming', label: t('portal.faceUpcoming'), rows: w.upcoming, tone: 'upcoming' },
+  ];
+  const groups = allGroups.filter((g) => g.rows.length > 0);
+
+  const caption = (r: WaveRow) => {
+    const who = `${r.name ?? ''} · ${r.position}${r.isLead ? ` · ${t('portal.leadTag')}` : ''}`;
+    const where = multiStore && r.locationName ? ` · ${r.locationName}` : '';
+    const when =
+      r.state === 'on-floor' && r.clockInAt
+        ? t('portal.clockedInAt', { time: fmtTimeTz(r.clockInAt, r.timezone) })
+        : r.state === 'worked' && r.clockInAt
+          ? r.clockOutAt
+            ? t('portal.punchRange', { in: fmtTimeTz(r.clockInAt, r.timezone), out: fmtTimeTz(r.clockOutAt, r.timezone) })
+            : t('portal.clockedInAt', { time: fmtTimeTz(r.clockInAt, r.timezone) })
+          : r.state === 'missed'
+            ? t('portal.faceNoPunch')
+            : r.state === 'not-in'
+              ? t('portal.faceNotIn')
+              : r.state === 'confirmed'
+                ? t('portal.state.confirmed')
+                : t('portal.state.unconfirmed');
+    return `${who}${where} · ${when}`;
+  };
 
   const body = (
-    <>
-      {w.clockedIn.length > 0 && people(w.clockedIn, false)}
-      {w.worked.length > 0 && people(w.worked, false)}
-      {w.notIn.length > 0 && (
-        <p className={cn('mt-2 text-xs tabular-nums', w.phase === 'finished' ? 'text-alert' : 'text-warning')}>
-          {w.phase === 'finished'
-            ? t('portal.waveNoPunch', { names: w.notIn.map((r) => r.name).join(', ') })
-            : t('portal.waveNotIn', { names: w.notIn.map((r) => r.name).join(', ') })}
-        </p>
-      )}
-      {w.upcoming.length > 0 && people(w.upcoming, true)}
+    <div className="space-y-4">
+      {groups.map((g) => (
+        <div key={g.key}>
+          <div className="mb-2 flex items-baseline gap-2 text-2xs uppercase tracking-wider text-silver/60">
+            <span
+              className={cn(
+                'inline-block h-1.5 w-1.5 rounded-full',
+                g.tone === 'on-floor'
+                  ? 'bg-success'
+                  : g.tone === 'missing'
+                    ? 'bg-alert'
+                    : g.tone === 'worked'
+                      ? 'bg-silver/70'
+                      : 'bg-silver/30',
+              )}
+              aria-hidden="true"
+            />
+            {g.label}
+            <span className="tabular-nums text-silver/40">{g.rows.length}</span>
+          </div>
+          <ul className="flex flex-wrap gap-2" role="list">
+            {g.rows.map((r) => {
+              const isSel = selected?.shiftId === r.shiftId;
+              return (
+                <li key={r.shiftId}>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(isSel ? null : r)}
+                    aria-pressed={isSel}
+                    aria-label={caption(r)}
+                    title={caption(r)}
+                    className={cn(
+                      'relative block rounded-full transition-transform focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                      'coarse:active:scale-95',
+                      isSel && 'scale-110',
+                    )}
+                  >
+                    <Avatar
+                      src={r.associateId ? photoUrl(r.associateId) : null}
+                      name={r.name ?? ''}
+                      email=""
+                      size="lg"
+                      className={cn(
+                        'ring-2 ring-offset-2 ring-offset-navy',
+                        g.tone === 'on-floor' && 'ring-success',
+                        g.tone === 'worked' && 'ring-navy-secondary',
+                        g.tone === 'missing' && 'ring-alert/70 opacity-60 grayscale',
+                        g.tone === 'upcoming' &&
+                          (r.state === 'confirmed' ? 'ring-navy-secondary opacity-80' : 'ring-warning/50 opacity-60'),
+                        isSel && 'ring-gold',
+                      )}
+                    />
+                    {r.isLead && (
+                      <span
+                        className="absolute -bottom-0.5 -right-0.5 grid h-4 w-4 place-items-center rounded-full bg-gold text-[9px] font-bold text-on-accent"
+                        aria-hidden="true"
+                      >
+                        L
+                      </span>
+                    )}
+                    {g.tone === 'on-floor' && (
+                      <span className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5" aria-hidden="true">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
+                        <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-success ring-2 ring-navy" />
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
       {w.open.length > 0 && (
-        <p className="mt-2 flex items-center gap-2 text-xs text-alert tabular-nums">
-          <span className="grid h-6 w-6 place-items-center rounded-full border border-dashed border-alert/50 text-2xs">
-            ?
-          </span>
-          {t('portal.waveUnfilled', {
-            count: w.open.length,
-            positions: [...new Set(w.open.map((r) => r.position))].join(', '),
-          })}
-        </p>
+        <div>
+          <div className="mb-2 flex items-baseline gap-2 text-2xs uppercase tracking-wider text-silver/60">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-alert" aria-hidden="true" />
+            {t('portal.faceUnfilled')}
+            <span className="tabular-nums text-silver/40">{w.open.length}</span>
+          </div>
+          <ul className="flex flex-wrap gap-2" role="list">
+            {w.open.map((r) => (
+              <li key={r.shiftId}>
+                <span
+                  className="grid h-12 w-12 place-items-center rounded-full border-2 border-dashed border-alert/50 text-sm text-alert"
+                  title={r.position}
+                  aria-label={`${t('portal.faceUnfilled')} · ${r.position}`}
+                >
+                  ?
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1.5 text-xs text-alert/80">
+            {[...new Set(w.open.map((r) => r.position))].join(', ')}
+          </p>
+        </div>
       )}
-    </>
+      <div
+        className={cn(
+          'min-h-5 text-sm transition-opacity',
+          selected ? 'text-white opacity-100' : 'text-silver/40 opacity-0',
+        )}
+        aria-live="polite"
+      >
+        {selected ? caption(selected) : ''}
+      </div>
+    </div>
+  );
+
+  const header = (
+    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+      <h2 className={cn('text-sm font-medium', w.phase === 'finished' ? 'text-silver' : 'text-white')}>
+        {range}
+        {w.phase === 'live' && (
+          <span className="ml-2 text-2xs font-medium uppercase tracking-wider text-success">{t('portal.live')}</span>
+        )}
+      </h2>
+      <span
+        className={cn(
+          'text-sm font-semibold tabular-nums',
+          short ? 'text-warning' : missedSome ? 'text-alert' : w.phase === 'finished' ? 'text-silver/70' : 'text-white',
+        )}
+      >
+        {headline}
+      </span>
+    </div>
+  );
+  const meter = w.phase !== 'upcoming' && w.expected > 0 && (
+    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">
+      <div
+        className={cn('h-full rounded-full', short || missedSome ? (pct < 70 ? 'bg-alert' : 'bg-warning') : 'bg-success')}
+        style={{ width: `${pct}%` }}
+      />
+    </div>
   );
 
   return (
     <Card
       className={cn(
         w.phase === 'live' && (short ? 'border-warning/40' : 'border-success/30'),
-        missedAll && 'border-alert/30',
+        missedSome && 'border-alert/30',
       )}
     >
-      <CardContent className="p-5">
+      <CardContent className="p-4 sm:p-5">
         {w.phase === 'finished' ? (
-          <details className="group" open={missedAll}>
-            <summary className="flex cursor-pointer list-none items-baseline justify-between gap-3">
-              <span className="text-sm font-medium text-silver">{range}</span>
-              <span className={cn('text-xs tabular-nums', missedAll ? 'text-alert' : 'text-silver/60')}>
-                {headline}
-              </span>
+          <details className="group" open={missedSome}>
+            <summary className="cursor-pointer list-none">
+              {header}
+              {meter}
             </summary>
-            <div className="mt-3">{body}</div>
+            <div className="mt-4">{body}</div>
           </details>
         ) : (
           <>
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 className="text-sm font-medium text-white">
-                {range}
-                {w.phase === 'live' && (
-                  <span className="ml-2 text-2xs font-medium uppercase tracking-wider text-success">
-                    {t('portal.live')}
-                  </span>
-                )}
-              </h2>
-              <span className={cn('text-sm font-semibold tabular-nums', short ? 'text-warning' : 'text-white')}>
-                {headline}
-              </span>
-            </div>
-            <div className="mt-3">{body}</div>
+            {header}
+            {meter}
+            <div className="mt-4">{body}</div>
           </>
         )}
       </CardContent>
