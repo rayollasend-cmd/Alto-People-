@@ -1,7 +1,6 @@
 import PDFDocument from 'pdfkit';
 import { paidMinutesForRange } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { getBlobStore } from './blobStore.js';
 import { orgDateKey, startOfWeekUTC, utcInstantOfLocalMidnight } from './timeAnomalies.js';
 import { formatTimeInZone, zonedMinutes } from './timezone.js';
 import {
@@ -29,8 +28,8 @@ import {
  * A manager who downloads the 16th gets the portal home page as it stood
  * on the 16th: the hero (the floor against the contracted headcount, the
  * coverage curve across the day), the four KPI tiles (fill rate, the
- * reliability grade, hours delivered, tomorrow), today by shift with the
- * faces and punches, the Alto lead, last night's checklist work, the
+ * reliability grade, hours delivered, tomorrow), today by shift as one
+ * line per wave (the roster stays on the Today page), the Alto lead, last night's checklist work, the
  * week's fill, the five-week reliability trend, crew clearance, safety,
  * statements, and open requests. Every figure is computed "as of" that
  * day from the same instruments the live page uses (portalMetrics), so
@@ -54,7 +53,6 @@ export interface ReportPerson {
   clockInAt: Date | null;
   clockOutAt: Date | null;
   timezone: string;
-  photo: Buffer | null;
 }
 
 export interface ReportWave {
@@ -186,6 +184,21 @@ function initialsOf(name: string | null): string {
     .toUpperCase();
 }
 
+/**
+ * The built-in PDF fonts only carry WinAnsi glyphs. Names from Turkish,
+ * Kazakh, Vietnamese … rosters would otherwise print as garbage, so
+ * strip accents the font lacks, map the common bare letters, and swap
+ * anything still outside Latin-1 for a question mark.
+ */
+const BARE: Record<string, string> = { ı: 'i', İ: 'I', ł: 'l', Ł: 'L', đ: 'd', Đ: 'D', ħ: 'h', ŧ: 't', ŋ: 'n', ĸ: 'k' };
+export function pdfSafe(text: string): string {
+  return text
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[ıİłŁđĐħŧŋĸ]/g, (c) => BARE[c] ?? c)
+    .replace(/[^\u0000-\u00ff\u2013\u2014\u2018\u2019\u201c\u201d\u2022\u2026\u00b7]/g, '?');
+}
+
 const money = (v: number) => `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const hrs = (v: number) => `${Math.round(v * 10) / 10}h`;
 
@@ -239,7 +252,7 @@ export async function buildPortalReport(
         acknowledgedAt: true,
         locationId: true,
         assignedAssociateId: true,
-        assignedAssociate: { select: { firstName: true, lastName: true, photoS3Key: true } },
+        assignedAssociate: { select: { firstName: true, lastName: true } },
         locationRel: { select: { name: true, timezone: true } },
       },
       orderBy: { startsAt: 'asc' },
@@ -331,21 +344,7 @@ export async function buildPortalReport(
   const dtLatest = latestStatus(dt);
   const i9Done = new Set(i9.map((r) => r.associateId));
 
-  // Faces: one fetch per distinct photo, bounded. A missing blob just
-  // renders the initials medallion, exactly as the live page does.
-  const blobStore = getBlobStore();
   const inRange = rows.filter((s) => s.startsAt < toExclusive && s.endsAt > from);
-  const photoKeys = [...new Set(inRange.map((s) => s.assignedAssociate?.photoS3Key).filter((k): k is string => !!k))].slice(0, 120);
-  const photos = new Map<string, Buffer | null>();
-  await Promise.all(
-    photoKeys.map(async (k) => {
-      try {
-        photos.set(k, await blobStore.get(k));
-      } catch {
-        photos.set(k, null);
-      }
-    }),
-  );
 
   const weekKeyOf = (d: Date) => orgDateKey(startOfWeekUTC(d));
   const opsDay = (key: string): OpsDaySnapshot | null => {
@@ -427,7 +426,6 @@ export async function buildPortalReport(
           clockInAt: punch && state !== 'missed' ? punch.clockInAt : null,
           clockOutAt: punch && state === 'worked' ? punch.clockOutAt : null,
           timezone: tz,
-          photo: s.assignedAssociate?.photoS3Key ? (photos.get(s.assignedAssociate.photoS3Key) ?? null) : null,
         } satisfies ReportPerson,
       };
     });
@@ -781,23 +779,35 @@ export function renderPortalReportPdf(data: PortalReportData): Promise<Buffer> {
     const gradeTone = (g: Grade) => (g === 'A' || g === 'B' ? GOOD : g === 'F' ? BAD : NAVY);
     const small = (text: string, x: number, y: number, opts: TextOpts = {}) => {
       const { color, bold, size, ...rest } = opts;
-      doc
-        .font(bold ? 'Helvetica-Bold' : 'Helvetica')
-        .fontSize(size ?? 8)
-        .fillColor(color ?? GREY)
-        .text(text, x, y, { lineBreak: false, ...rest });
+      doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size ?? 8).fillColor(color ?? GREY);
+      let t = pdfSafe(text);
+      // pdfkit wraps whenever a width is given, even with lineBreak:false —
+      // so a one-line field is trimmed by measurement, never by hope.
+      if (rest.width && rest.ellipsis && !rest.lineBreak) t = fitLine(t, rest.width);
+      doc.text(t, x, y, { lineBreak: false, ...rest });
+    };
+    const fitLine = (t: string, w: number): string => {
+      if (doc.widthOfString(t) <= w) return t;
+      let lo = 0;
+      let hi = t.length;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        if (doc.widthOfString(t.slice(0, mid).trimEnd() + '…') <= w) lo = mid;
+        else hi = mid - 1;
+      }
+      return lo <= 0 ? '…' : t.slice(0, lo).trimEnd() + '…';
     };
 
     /* ---- letterhead ----------------------------------------------------- */
     doc.rect(0, 0, doc.page.width, 118).fill(NAVY);
     doc.rect(0, 118, doc.page.width, 3).fill(GOLD);
-    doc.font('Helvetica-Bold').fontSize(21).fillColor('#FFFFFF').text(data.orgName, left, 34);
+    doc.font('Helvetica-Bold').fontSize(21).fillColor('#FFFFFF').text(pdfSafe(data.orgName), left, 34);
     doc
       .font('Helvetica')
       .fontSize(8.5)
       .fillColor(GOLD)
       .text(data.isRange ? 'SERVICE REPORT · YOUR DASHBOARD, DAY BY DAY' : 'SERVICE REPORT · YOUR DASHBOARD, AS IT STOOD', left, 60, { characterSpacing: 2 });
-    doc.font('Helvetica-Bold').fontSize(14).fillColor('#FFFFFF').text(where, left, 34, { width, align: 'right' });
+    doc.font('Helvetica-Bold').fontSize(14).fillColor('#FFFFFF').text(pdfSafe(where), left, 34, { width, align: 'right' });
     doc
       .font('Helvetica')
       .fontSize(9)
@@ -823,7 +833,9 @@ export function renderPortalReportPdf(data: PortalReportData): Promise<Buffer> {
 
     /* ---- helpers ------------------------------------------------------- */
     const section = (title: string, sub?: string) => {
-      ensure(sub ? 58 : 46);
+      // A heading never sits alone at the foot of a page: keep it with at
+      // least the first row of whatever follows.
+      ensure(sub ? 150 : 138);
       const y = doc.y + 8;
       doc.rect(left, y + 1, 4, 11).fill(GOLD);
       doc.font('Helvetica-Bold').fontSize(11.5).fillColor(NAVY).text(title, left + 10, y, { lineBreak: false });
@@ -997,99 +1009,28 @@ export function renderPortalReportPdf(data: PortalReportData): Promise<Buffer> {
       doc.y = y0 + cardH + 12;
     };
 
-    const punchLine = (p: ReportPerson): string => {
-      const tz = p.timezone;
-      switch (p.state) {
-        case 'on-floor':
-          return p.clockInAt ? `in ${formatTimeInZone(p.clockInAt, tz)}` : 'on the floor';
-        case 'worked':
-          return p.clockInAt ? (p.clockOutAt ? `in ${formatTimeInZone(p.clockInAt, tz)} · out ${formatTimeInZone(p.clockOutAt, tz)}` : `in ${formatTimeInZone(p.clockInAt, tz)}`) : 'worked';
-        case 'missed':
-          return 'no punch';
-        case 'not-in':
-          return 'not in yet';
-        case 'confirmed':
-          return 'confirmed';
-        case 'unconfirmed':
-          return 'not yet confirmed';
-        default:
-          return 'open';
-      }
-    };
-    const toneFor = (key: ReportWave['groups'][number]['key']) => (key === 'in' ? GOOD : key === 'worked' ? GREY : key === 'missing' ? BAD : key === 'open' ? WARN : LIGHT);
-
-    const faceCard = (p: ReportPerson, x: number, y: number, cw: number, ch: number, tone: string, multiStore: boolean) => {
-      doc.roundedRect(x, y, cw, ch, 5).fill(PANEL);
-      const avatar = 26;
-      const ax = x + 7;
-      const ay = y + (ch - avatar) / 2;
-      let drew = false;
-      if (p.photo) {
-        try {
-          doc.save();
-          doc.circle(ax + avatar / 2, ay + avatar / 2, avatar / 2).clip();
-          doc.image(p.photo, ax, ay, { width: avatar, height: avatar });
-          doc.restore();
-          drew = true;
-        } catch {
-          try {
-            doc.restore();
-          } catch {
-            /* no dangling save */
-          }
-        }
-      }
-      if (!drew) {
-        doc.circle(ax + avatar / 2, ay + avatar / 2, avatar / 2).fill(p.state === 'open' ? TRACK : NAVY_SOFT);
-        doc
-          .font('Helvetica-Bold')
-          .fontSize(9)
-          .fillColor(p.state === 'open' ? GREY : '#FFFFFF')
-          .text(p.initials, ax, ay + 8, { width: avatar, align: 'center', lineBreak: false });
-      }
-      doc.circle(ax + avatar / 2, ay + avatar / 2, avatar / 2 + 1.2).lineWidth(1.4).strokeColor(tone).stroke();
-      const tx = ax + avatar + 7;
-      const tw = cw - (tx - x) - 6;
-      small(p.state === 'open' ? 'OPEN' : (p.name ?? '—'), tx, y + 6, { bold: true, color: p.state === 'open' ? WARN : NAVY, size: 7.8, width: tw, ellipsis: true });
-      small(`${p.position}${p.isLead ? ' · Lead' : ''}${multiStore && p.locationName ? ` · ${p.locationName}` : ''}`, tx, y + 16, { color: GREY, size: 6.5, width: tw, ellipsis: true });
-      small(punchLine(p), tx, y + 25, { color: tone, size: 6.8, width: tw, ellipsis: true });
-    };
-
-    const waveBlock = (w: ReportWave, multiStore: boolean) => {
-      ensure(60);
-      const y = doc.y + 6;
-      small(`${w.name} · ${w.timeRange}`, left, y, { bold: true, color: NAVY, size: 10 });
+    /** One line per wave, the way the dashboard card reads it, with the meter. */
+    const waveLine = (w: ReportWave) => {
+      ensure(30);
+      const y = doc.y + 4;
+      const notIn = Math.max(0, w.expected - w.present);
+      const confirmed = w.groups.filter((g) => g.key === 'upcoming').flatMap((g) => g.people).filter((p) => p.state === 'confirmed').length;
       const status =
         w.phase === 'finished'
-          ? `${w.present} of ${w.expected} on the floor${w.open > 0 ? ` · ${w.open} unfilled` : ''}`
+          ? `${w.present} of ${w.expected} on the floor${w.missed > 0 ? ` · ${w.missed} did not punch in` : ''}${w.open > 0 ? ` · ${w.open} unfilled` : ''}`
           : w.phase === 'live'
-            ? `${w.onFloor} of ${w.expected} in${w.open > 0 ? ` · ${w.open} unfilled` : ''}`
-            : `starts ${formatTimeInZone(w.startsAt, w.timezone)} · ${w.expected} expected${w.open > 0 ? ` · ${w.open} unfilled` : ''}`;
-      const statusTone = w.phase === 'upcoming' ? GREY : w.present + w.onFloor >= w.expected && w.open === 0 ? GOOD : w.missed > 0 || w.open > 0 ? WARN : NAVY;
-      small(status, left, y + 2, { bold: true, color: statusTone, size: 8.5, width, align: 'right' });
-      const my = y + 16;
+            ? `${w.onFloor} of ${w.expected} in${notIn > 0 ? ` · ${notIn} not in yet` : ''}${w.open > 0 ? ` · ${w.open} unfilled` : ''}`
+            : `starts ${formatTimeInZone(w.startsAt, w.timezone)} · ${w.expected} expected · ${confirmed} confirmed${w.open > 0 ? ` · ${w.open} unfilled` : ''}`;
+      const statusTone =
+        w.phase === 'upcoming' ? GREY : w.present + w.onFloor >= w.expected && w.open === 0 ? GOOD : w.missed > 0 || w.open > 0 ? WARN : NAVY;
+      small(`${w.name} · ${w.timeRange}`, left, y, { bold: true, color: NAVY, size: 9.5, width: width * 0.42, ellipsis: true });
+      small(status, left + width * 0.42, y + 1, { bold: true, color: statusTone, size: 8, width: width * 0.58, align: 'right', ellipsis: true });
+      const my = y + 14;
       doc.roundedRect(left, my, width, 4, 2).fill(TRACK);
       const denom = Math.max(1, w.expected + w.open);
       const filled = (width * (w.present + w.onFloor)) / denom;
       if (filled > 0) doc.roundedRect(left, my, Math.max(filled, 3), 4, 2).fill(w.phase === 'upcoming' ? LIGHT : GOOD);
       doc.y = my + 12;
-      const cols = 3;
-      const gap = 6;
-      const cw = (width - gap * (cols - 1)) / cols;
-      const ch = 36;
-      for (const g of w.groups) {
-        ensure(ch + 22);
-        small(`${g.label.toUpperCase()}  ${g.people.length}`, left, doc.y + 2, { color: LIGHT, size: 6.5, characterSpacing: 0.6 });
-        doc.y += 12;
-        for (let i = 0; i < g.people.length; i += cols) {
-          ensure(ch + 6);
-          const rowY = doc.y;
-          g.people.slice(i, i + cols).forEach((p, col) => faceCard(p, left + col * (cw + gap), rowY, cw, ch, toneFor(g.key), multiStore));
-          doc.y = rowY + ch + 5;
-        }
-        doc.y += 2;
-      }
-      doc.y += 4;
     };
 
     type Panel = { title: string; right?: string; body: (x: number, y: number, w: number) => number };
@@ -1268,9 +1209,10 @@ export function renderPortalReportPdf(data: PortalReportData): Promise<Buffer> {
       } else {
         section(
           `${d.isToday ? 'Today' : 'The day'} by shift · ${d.waves.length} ${d.waves.length === 1 ? 'wave' : 'waves'}`,
-          'Who was on the floor and when they punched. Punch times are the record — there is no “late” label here.',
+          'Each wave against its headcount. Names and punch times stay on the Today page in your portal.',
         );
-        for (const w of d.waves) waveBlock(w, d.multiStore);
+        for (const w of d.waves) waveLine(w);
+        doc.y += 4;
       }
 
       section('Your Alto lead · the checklist');
@@ -1457,7 +1399,7 @@ export function renderPortalReportPdf(data: PortalReportData): Promise<Buffer> {
         .font('Helvetica')
         .fontSize(7.5)
         .fillColor(LIGHT)
-        .text(`${data.orgName} · Service Report · ${where} · ${period} · Confidential · page ${i - range.start + 1} of ${range.count}`, left, doc.page.height - 40, {
+        .text(pdfSafe(`${data.orgName} · Service Report · ${where} · ${period} · Confidential · page ${i - range.start + 1} of ${range.count}`), left, doc.page.height - 40, {
           width,
           align: 'center',
           lineBreak: false,
