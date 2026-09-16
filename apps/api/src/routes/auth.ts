@@ -1,3 +1,5 @@
+import { trackNotificationWork } from '../lib/notify.js';
+import { notePortalSignIn } from '../lib/portalEngagement.js';
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import {
@@ -475,6 +477,8 @@ authRouter.post(
         userId: user.id,
         clientId: user.clientId,
       });
+      // A portal account's first sign-in is a milestone the account team hears once.
+      void trackNotificationWork(notePortalSignIn(user.id));
 
       const profile = await loadProfileFor(user.associateId);
       res.json({ user: { ...toAuthUser({ ...user, ...profile }), ...(await scopeNamesFor(user)) } });
@@ -603,6 +607,8 @@ authRouter.post(
         userId: user.id,
         clientId: user.clientId,
       });
+      // A portal account's first sign-in is a milestone the account team hears once.
+      void trackNotificationWork(notePortalSignIn(user.id));
 
       if (usedRecovery) {
         // Distinct audit row so HR / the user can see "I had to fall back
@@ -811,6 +817,8 @@ authRouter.post('/accept-invite', acceptInviteIpLimiter, async (req, res, next) 
       userId: updatedUser.id,
       clientId: updatedUser.clientId,
     });
+    // A portal account's first sign-in is a milestone the account team hears once.
+    void trackNotificationWork(notePortalSignIn(updatedUser.id));
 
     // Phase 32 — point the freshly-activated user straight at their
     // checklist if they have one open. The dashboard is a fine fallback
@@ -1483,6 +1491,8 @@ authRouter.post('/me/mfa/enroll/confirm', allowMfaEnrollToken, requireAuth, mfaE
         userId: req.user!.id,
         clientId: req.user!.clientId,
       });
+      // A portal account's first sign-in is a milestone the account team hears once.
+      void trackNotificationWork(notePortalSignIn(req.user!.id));
     }
 
     res.status(204).end();

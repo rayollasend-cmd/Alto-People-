@@ -19,6 +19,7 @@ import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { z } from 'zod';
 import { invitePortalAccount } from '../lib/portalInvite.js';
+import { portalEngagementFor } from '../lib/portalEngagement.js';
 import { computePortalReadiness, nudgePortalReadiness } from '../lib/portalReadiness.js';
 import { trackNotificationWork } from '../lib/notify.js';
 import { scopeClients } from '../lib/scope.js';
@@ -1119,6 +1120,8 @@ clientsRouter.get('/:id/portal-users', async (req, res, next) => {
       orderBy: { createdAt: 'asc' },
       take: 200,
     });
+    // Are they using it: last seen, sign-ins this week, reports pulled.
+    const engagement = await portalEngagementFor(rows.map((u) => u.id), new Date());
     res.json({
       users: rows.map((u) => ({
         id: u.id,
@@ -1128,6 +1131,7 @@ clientsRouter.get('/:id/portal-users', async (req, res, next) => {
         locationId: u.locationId,
         locationName: u.location?.name ?? null,
         inviteExpiresAt: u.inviteTokens[0]?.expiresAt.toISOString() ?? null,
+        ...engagement.get(u.id)!,
       })),
     });
   } catch (err) {

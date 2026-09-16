@@ -11,6 +11,7 @@ import { computeExecutiveBriefing } from '../lib/executiveBriefing.js';
 import { computeExecutiveDecisions } from '../lib/executiveDecisions.js';
 import { computeExecutiveSummary } from '../lib/executiveSummary.js';
 import { notifyUser } from '../lib/notify.js';
+import { portalEngagementOverview } from '../lib/portalEngagement.js';
 import { startOfWeekUTC } from '../lib/timeAnomalies.js';
 import { env } from '../config/env.js';
 
@@ -39,6 +40,12 @@ executiveRouter.get('/summary', EXEC, async (_req: Request, res: Response) => {
 // cliff, and the people worth knowing this week.
 executiveRouter.get('/briefing', EXEC, async (_req: Request, res: Response) => {
   res.json(await computeExecutiveBriefing(prisma));
+});
+
+// Who on the client side is using their site: last seen, sign-ins this
+// week, the reports they pulled. The "are they even using it" card.
+executiveRouter.get('/portal-engagement', EXEC, async (_req: Request, res: Response) => {
+  res.json(await portalEngagementOverview(prisma));
 });
 
 // Batons in flight — the handoff spine's health, read-only. Every count

@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { fmtDate } from '@/lib/format';
+import { fmtDate, fmtRelativeDate } from '@/lib/format';
 import {
   disablePortalUser,
   getPortalReadiness,
@@ -181,6 +181,24 @@ export function PortalAccessSection({ clientId }: Props) {
                         {u.status === 'INVITED' && u.inviteExpiresAt
                           ? `invite expires ${fmtDate(u.inviteExpiresAt)}`
                           : `since ${fmtDate(u.createdAt)}`}
+                      </div>
+                      <div className={cn('text-xs tabular-nums', u.lastSeenAt ? 'text-silver/70' : 'text-warning')}>
+                        {u.lastSeenAt
+                          ? `seen ${fmtRelativeDate(u.lastSeenAt)} · ${u.signIns7d} sign-in${u.signIns7d === 1 ? '' : 's'} this week`
+                          : u.status === 'INVITED'
+                            ? 'has not signed in yet'
+                            : 'never signed in'}
+                        {u.downloads.length > 0 && (
+                          <>
+                            {' · '}
+                            {u.downloads.length === 1 ? 'report' : `${u.downloads.length} reports`}
+                            {': '}
+                            {u.downloads
+                              .slice(0, 3)
+                              .map((d) => (d.from === d.to ? fmtDate(d.from) : `${fmtDate(d.from)} – ${fmtDate(d.to)}`))
+                              .join(', ')}
+                          </>
+                        )}
                       </div>
                     </div>
                     <Badge

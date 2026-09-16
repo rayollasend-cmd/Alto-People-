@@ -19,7 +19,7 @@ import type { FloorNowResponse, OtOutlookResponse } from '@alto-people/shared';
 import { toast } from 'sonner';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { fmtDate, fmtMoney } from '@/lib/format';
+import { fmtDate, fmtMoney, fmtRelativeDate } from '@/lib/format';
 import { floorNow, otOutlook } from '@/lib/schedulingApi';
 import { getOpsBoard, getOpsScorecard } from '@/lib/opsApi';
 import { cn } from '@/lib/cn';
@@ -697,6 +697,20 @@ function Tile({
   return to ? <Link to={to}>{body}</Link> : body;
 }
 
+interface PortalEngagement {
+  accounts: Array<{
+    id: string;
+    email: string;
+    status: string;
+    scope: string;
+    clientId: string | null;
+    lastSeenAt: string | null;
+    signIns7d: number;
+    downloads: Array<{ at: string; from: string; to: string }>;
+  }>;
+  totals: { accounts: number; active7d: number; neverSignedIn: number; downloads7d: number };
+}
+
 export function ExecutiveDashboard() {
   const { user } = useAuth();
   const [summary, setSummary] = useState<ExecSummary | null>(null);
@@ -707,6 +721,7 @@ export function ExecutiveDashboard() {
   const [prospects, setProspects] = useState<ProspectsResponse | null>(null);
   const [brief, setBrief] = useState<ExecBriefing | null>(null);
   const [batons, setBatons] = useState<ExecBatons | null>(null);
+  const [engagement, setEngagement] = useState<PortalEngagement | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [packBusy, setPackBusy] = useState(false);
 
@@ -726,6 +741,7 @@ export function ExecutiveDashboard() {
       .catch(() => setProspects(null));
     apiFetch<ExecBriefing>('/executive/briefing').then(setBrief).catch(() => setBrief(null));
     apiFetch<ExecBatons>('/executive/batons').then(setBatons).catch(() => setBatons(null));
+    apiFetch<PortalEngagement>('/executive/portal-engagement').then(setEngagement).catch(() => setEngagement(null));
   }, []);
   useEffect(() => {
     load();
@@ -1505,6 +1521,57 @@ export function ExecutiveDashboard() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Portal engagement: are the store and market managers using it. */}
+          {engagement && engagement.accounts.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
+                  <CardTitle className="text-base">Portal engagement</CardTitle>
+                  <span className="text-xs tabular-nums text-silver">
+                    {engagement.totals.active7d} of {engagement.totals.accounts} in this week · {engagement.totals.downloads7d} report
+                    {engagement.totals.downloads7d === 1 ? '' : 's'} pulled
+                    {engagement.totals.neverSignedIn > 0 ? ` · ${engagement.totals.neverSignedIn} never signed in` : ''}
+                  </span>
+                </div>
+                <p className="text-xs text-silver">
+                  Who on the client side is using their site — last seen, sign-ins this week, and the reports they pulled. A Monday digest carries the same.
+                </p>
+              </CardHeader>
+              <CardContent>
+                <ul className="divide-y divide-navy-secondary/60">
+                  {engagement.accounts.map((a) => {
+                    const latest = a.downloads[0];
+                    return (
+                      <li key={a.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2 text-sm">
+                        <div className="min-w-0 flex-1">
+                          {a.clientId ? (
+                            <Link to={`/clients/${a.clientId}?section=portal`} className="truncate text-white underline-offset-2 hover:underline">
+                              {a.scope}
+                            </Link>
+                          ) : (
+                            <div className="truncate text-white">{a.scope}</div>
+                          )}
+                          <div className="truncate text-xs text-silver/70">{a.email}</div>
+                        </div>
+                        <span className={cn('text-xs tabular-nums', a.lastSeenAt ? 'text-silver' : 'text-warning')}>
+                          {a.lastSeenAt ? `seen ${fmtRelativeDate(a.lastSeenAt)}` : a.status === 'INVITED' ? 'invited, not in yet' : 'never signed in'}
+                        </span>
+                        <span className="text-xs tabular-nums text-silver">
+                          {a.signIns7d} sign-in{a.signIns7d === 1 ? '' : 's'} · 7d
+                        </span>
+                        <span className="text-xs tabular-nums text-silver">
+                          {latest
+                            ? `report ${latest.from === latest.to ? fmtDate(latest.from) : `${fmtDate(latest.from)} – ${fmtDate(latest.to)}`} · ${fmtRelativeDate(latest.at)}`
+                            : 'no reports pulled'}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Client health + capacity & the J-1 cliff. */}
           {brief && (

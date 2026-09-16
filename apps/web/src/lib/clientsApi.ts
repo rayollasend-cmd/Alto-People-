@@ -169,6 +169,10 @@ export interface PortalUserRow {
   locationId: string | null;
   locationName: string | null;
   inviteExpiresAt: string | null;
+  /** Engagement off the audit log: are they using it. */
+  lastSeenAt: string | null;
+  signIns7d: number;
+  downloads: Array<{ at: string; from: string; to: string }>;
 }
 
 export interface PortalReadiness {

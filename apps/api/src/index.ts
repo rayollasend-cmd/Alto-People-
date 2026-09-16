@@ -16,6 +16,7 @@ import { startDormancySweepCron } from './lib/dormancySweep.js';
 import { startOpsDigestCron } from './lib/opsDigest.js';
 import { startPortalDigestCron } from './lib/portalDigest.js';
 import { startServiceReportMailCron } from './lib/serviceReportMailer.js';
+import { startPortalEngagementDigestCron } from './lib/portalEngagement.js';
 import { startPortalCoverageAlertCron } from './lib/portalCoverageAlert.js';
 import { startAttestationReminderCron } from './lib/attestationReminder.js';
 import { startExpirationDigestCron } from './lib/expirationDigest.js';
@@ -75,6 +76,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startOpsDigestCron();
   startPortalDigestCron();
   startServiceReportMailCron();
+  startPortalEngagementDigestCron();
   startPortalCoverageAlertCron();
   startAttestationReminderCron();
   startExpirationDigestCron();

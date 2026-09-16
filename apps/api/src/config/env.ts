@@ -152,6 +152,12 @@ const EnvSchema = z.object({
   // once per account per week after SERVICE_REPORT_MAIL_HOUR org time.
   SERVICE_REPORT_MAIL_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
   SERVICE_REPORT_MAIL_HOUR: z.coerce.number().int().min(0).max(23).default(7),
+  // Monday portal-engagement digest to HR / Operations Manager / Chairman
+  // (lib/portalEngagement.ts): last week's sign-ins and report pulls per
+  // portal account. Interval = how often we CHECK; sends once per week
+  // after PORTAL_ENGAGEMENT_DIGEST_HOUR org time. 0 disables.
+  PORTAL_ENGAGEMENT_DIGEST_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
+  PORTAL_ENGAGEMENT_DIGEST_HOUR: z.coerce.number().int().min(0).max(23).default(7),
   // "Your 6am wave is 2 short" push to portal accounts + supervisors
   // (lib/portalCoverageAlert.ts): checked every N seconds, a wave rings
   // once per org-day after the grace period. 0 disables.

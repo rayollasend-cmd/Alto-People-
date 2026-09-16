@@ -15,6 +15,8 @@ import { enqueueAudit } from '../lib/audit.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
 import { renderStatementPdf } from '../lib/statementPdf.js';
 import { REPORT_MAX_DAYS, buildPortalReport, renderPortalReportPdf } from '../lib/portalDayReport.js';
+import { notePortalReportDownload } from '../lib/portalEngagement.js';
+import { trackNotificationWork } from '../lib/notify.js';
 import type { StatementSnapshot } from '../lib/clientStatement.js';
 import {
   DAY,
@@ -891,6 +893,11 @@ clientPortalRouter.get(
         },
         'clients.service_report',
       );
+      // A store or market manager pulling a report is a signal for the
+      // account team (bell to HR + the Operations Manager). Admin previews stay silent.
+      if (req.user!.role === 'CLIENT_PORTAL') {
+        void trackNotificationWork(notePortalReportDownload({ userId: req.user!.id, fromKey, toKey, now }));
+      }
       const slug = (scope.location?.name ?? scope.client.name).replace(/[^A-Za-z0-9]+/g, '-').toLowerCase();
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader(
