@@ -24,6 +24,13 @@ export function initSentry(): void {
       'AbortError',
       'ECONNRESET',
       'ECONNABORTED',
+      // body-parser's own wording when the socket closes before the body
+      // finishes arriving — someone navigated away, closed the tab, or
+      // lost signal mid-POST. ignoreErrors matches the message, and the
+      // message is all this error carries; the codes above never appear
+      // in it. The error middleware also swallows it upstream, so this is
+      // the backstop for anything captured elsewhere.
+      'request aborted',
       // 4xx HttpErrors are expected (validation, auth) — we throw them
       // intentionally, no point reporting.
       'HttpError',

@@ -51,6 +51,24 @@ export function notFoundHandler(req: Request, res: Response) {
   sendError(req, res, 404, { code: 'not_found', message: 'Route not found' });
 }
 
+/**
+ * True for the "request aborted" family: the client hung up before the
+ * body was fully read. body-parser/raw-body throw a BadRequestError with
+ * `type: 'request.aborted'` and `code: 'ECONNABORTED'`; a socket reset
+ * mid-body arrives as ECONNRESET. None of them are server faults, and
+ * none of them have anyone left to answer.
+ */
+export function isAbortedRequest(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { type?: unknown; code?: unknown; message?: unknown };
+  return (
+    e.type === 'request.aborted' ||
+    e.code === 'ECONNABORTED' ||
+    e.code === 'ECONNRESET' ||
+    e.message === 'request aborted'
+  );
+}
+
 export function errorHandler(
   err: unknown,
   req: Request,
@@ -75,7 +93,8 @@ export function errorHandler(
       { err: e.message, requestId },
       'error after headers sent — destroying streamed response',
     );
-    captureException(e);
+    // A client that vanished mid-stream is not an incident.
+    if (!isAbortedRequest(e)) captureException(e);
     res.destroy(e);
     return;
   }
@@ -138,6 +157,21 @@ export function errorHandler(
     } else {
       sendError(req, res, 400, { code: 'invalid_id', message: 'Malformed identifier.' });
     }
+    return;
+  }
+
+  // "request aborted" — body-parser gives up because the socket closed
+  // before the body finished arriving. That is someone hitting back,
+  // closing the tab, or a phone losing signal mid-POST: the client is
+  // already gone, there is nothing to fix and nothing to answer. Log it
+  // at debug and never page Sentry. (body-parser stamps type
+  // 'request.aborted'; raw-body sets code ECONNABORTED.)
+  if (isAbortedRequest(err)) {
+    (req.log ?? logger).debug(
+      { requestId, method: req.method, path: req.path },
+      'client aborted the request before the body arrived',
+    );
+    res.end();
     return;
   }
 
