@@ -3,6 +3,13 @@ export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
+      // 100vh on iOS is the height with the URL bar hidden — taller than the
+      // screen while it shows, so full-height pages scrolled by the bar and
+      // fixed-height panels lost their bottom edge. Every h-/min-h-/max-h-
+      // screen emits 100vh (fallback) then 100dvh (the visible viewport).
+      height: { screen: ['100vh', '100dvh'] },
+      minHeight: { screen: ['100vh', '100dvh'] },
+      maxHeight: { screen: ['100vh', '100dvh'] },
       colors: {
         navy: {
           DEFAULT: 'rgb(var(--color-navy) / <alpha-value>)',

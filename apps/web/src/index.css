@@ -160,10 +160,29 @@
     scroll-behavior: smooth;
   }
 
+  /* No rubber-band on the document: iOS bounced the whole app — header,
+     tab bar and all — when a drag started outside a scroller, leaving
+     blank space behind it. Inner scrollers keep their own momentum. */
+  html,
+  body {
+    overscroll-behavior: none;
+  }
+
+  /* Inside the authed shell the document never scrolls — <main> does. */
+  html.app-shell,
+  html.app-shell body {
+    height: 100%;
+    overflow: hidden;
+  }
+
   body {
     @apply bg-midnight font-sans antialiased;
     color: rgb(var(--color-fg));
+    /* 100vh on iOS is the height with the URL bar HIDDEN — taller than the
+       screen while it shows, so the page scrolled by the bar's height.
+       dvh tracks the visible viewport; 100vh stays as the fallback. */
     min-height: 100vh;
+    min-height: 100dvh;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -818,3 +837,22 @@ input[type='radio'] {
   }
 }
 
+/* iOS Safari zooms the page in when a text field under 16px takes focus,
+   and it stays zoomed after — the "page is suddenly too big" report. The
+   shared Input/Select/Textarea already go 16px on touch; these catch every
+   hand-rolled field (and future ones). Only ever RAISES: a field sized big
+   on purpose (a PIN pad's text-3xl) is left alone.
+     1. Fields that inherit their size (no size class): at least 16px —
+        element specificity, so any explicit size class still wins…
+     2. …and the explicit small sizes get lifted — :is() with a class
+        outranks the single utility class that set them. */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: max(16px, 100%);
+  }
+  :is(input, select, textarea):is(.text-3xs, .text-2xs, .text-xs2, .text-xs, .text-sm) {
+    font-size: 16px;
+  }
+}

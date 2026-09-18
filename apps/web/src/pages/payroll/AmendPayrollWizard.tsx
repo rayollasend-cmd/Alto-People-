@@ -369,7 +369,7 @@ export function AmendPayrollWizard({ open, onOpenChange, sourceRun, onAmended }:
                 {correctionEntries.length} editing
               </div>
             </div>
-            <ul className="space-y-1.5 max-h-[40vh] overflow-y-auto pr-1">
+            <ul className="space-y-1.5 max-h-[40dvh] overflow-y-auto pr-1">
               {sourceRun.items.map((it) => {
                 const isEditing = !!drafts[it.associateId];
                 const isExpanded = expanded === it.associateId;

@@ -128,7 +128,7 @@ export function SupervisorShiftDialog({
             , then come back to assign one.
           </div>
         ) : (
-          <div className="max-h-[55vh] space-y-4 overflow-y-auto pr-1">
+          <div className="max-h-[55dvh] space-y-4 overflow-y-auto pr-1">
             {withWindows.map((s) => (
               <fieldset key={s.locationId}>
                 <legend className="mb-1.5 text-xs uppercase tracking-wide text-silver/80">

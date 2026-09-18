@@ -78,6 +78,15 @@ export function Layout() {
     return () => stopLiveEvents();
   }, []);
 
+  // The shell owns scrolling: while it's mounted the document itself never
+  // scrolls or rubber-bands (index.css `html.app-shell`), so a drag on the
+  // top bar or tab bar can't slide the whole app off-screen. Public pages
+  // (sign-in, invites) keep normal document scrolling.
+  useEffect(() => {
+    document.documentElement.classList.add('app-shell');
+    return () => document.documentElement.classList.remove('app-shell');
+  }, []);
+
   useEffect(() => {
     const main = mainRef.current;
     if (!main) return;
@@ -125,9 +134,17 @@ export function Layout() {
         15.4+, so the iOS URL bar showing/hiding doesn't leave a gap.
         Browsers that don't understand dvh drop the inline rule and
         fall back to the class's 100vh.
+
+        `relative` (here and on <main>): overflow only clips descendants
+        whose containing block sits inside it. An absolutely positioned
+        element with no positioned ancestor — every `sr-only` label, for
+        one — resolved against the page itself, escaped the clip, and
+        stretched the DOCUMENT by however far down the page it sat (1,093px
+        on the HR home). The whole app then scrolled/bounced as one sheet,
+        leaving blank space ("I scroll up and the entire app moves").
       */}
       <div
-        className="h-screen flex bg-midnight text-white overflow-hidden"
+        className="relative h-screen flex bg-midnight text-white overflow-hidden"
         style={{ height: '100dvh' }}
       >
         <Sidebar />
@@ -156,7 +173,7 @@ export function Layout() {
             // horizontal panning at the page level; legitimately-wide
             // content (admin grids, paystub tables) lives inside its own
             // overflow-x-auto wrappers, which still scroll.
-            className="flex-1 overflow-y-auto overflow-x-clip overscroll-contain p-4 md:p-6 lg:p-8 focus:outline-none pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))] lg:pl-[max(2rem,env(safe-area-inset-left))] lg:pr-[max(2rem,env(safe-area-inset-right))]"
+            className="relative flex-1 overflow-y-auto overflow-x-clip overscroll-contain p-4 md:p-6 lg:p-8 focus:outline-none pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pb-[max(1rem,env(safe-area-inset-bottom))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))] lg:pl-[max(2rem,env(safe-area-inset-left))] lg:pr-[max(2rem,env(safe-area-inset-right))]"
           >
             {/* PERF: pure-CSS route fade (keyed remount replays the
                 animation) — this was the ONLY framer-motion usage in the

@@ -2125,7 +2125,7 @@ function ActionsTile({ refreshEpoch, clientId }: { refreshEpoch: number; clientI
             )}
           </div>
           {data && data.actions.length > 0 && (
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               <FilterChip active={filter === 'all'} onClick={() => setFilter('all')}>
                 All
                 <span className="tabular-nums font-semibold">
@@ -2429,12 +2429,15 @@ function ClauseTooltip({ clause, children }: { clause: string; children: React.R
     };
   }, [open]);
   return (
-    <span ref={ref} className="relative inline-block">
+    // min-w-0 + truncate on the trigger: as an inline-block flex item the
+    // label never shrank below its full text, so on a phone it shoved the
+    // score (and its bar) off the right edge instead of ellipsizing.
+    <span ref={ref} className="relative inline-flex min-w-0">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="cursor-help underline decoration-dotted decoration-silver/40 underline-offset-4 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-sm"
+        className="block min-w-0 max-w-full truncate cursor-help underline decoration-dotted decoration-silver/40 underline-offset-4 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright rounded-sm"
       >
         {children}
       </button>

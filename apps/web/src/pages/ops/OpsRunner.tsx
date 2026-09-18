@@ -1522,7 +1522,7 @@ function CloseDialog({
         summary.trim() !== '' || draftBody.trim() !== '' || items.length > 0
       }
     >
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Close shift — handover first</DialogTitle>
           <DialogDescription>

@@ -110,7 +110,12 @@ export function WhatsNew() {
     <div
       role="status"
       aria-label="What's new"
-      className="fixed bottom-20 right-4 z-40 w-80 max-w-[calc(100vw-2rem)] rounded-lg border border-gold/40 bg-navy elev-2 p-4 animate-fade-in md:bottom-6"
+      // Phones: full-width, clear of the tab bar AND the home indicator
+      // (bottom-20 alone sat on the tab bar on notched iPhones), the list
+      // capped so the card never covers half the screen. The supervisor's
+      // and store manager's tab bar stays through iPad, hence lg: for the
+      // desktop corner.
+      className="fixed inset-x-4 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-40 rounded-lg border border-gold/40 bg-navy elev-2 p-4 animate-fade-in sm:inset-x-auto sm:right-4 sm:w-80 lg:bottom-6"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-1.5 text-2xs uppercase tracking-widest text-gold">
@@ -127,7 +132,7 @@ export function WhatsNew() {
           <X className="h-4 w-4" aria-hidden="true" />
         </Button>
       </div>
-      <ul className="mt-2 space-y-1.5 text-sm text-silver">
+      <ul className="mt-2 max-h-[32dvh] space-y-1.5 overflow-y-auto overscroll-contain text-sm text-silver sm:max-h-none">
         {bullets.map((b) => {
           const label = b.key ? t(b.key) : b.text ?? '';
           return (

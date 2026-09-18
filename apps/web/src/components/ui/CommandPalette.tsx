@@ -356,7 +356,7 @@ export function CommandPalette({
               )}
             />
           </div>
-          <Command.List className="max-h-[60vh] w-full overflow-y-auto overflow-x-hidden p-1 [&_[cmdk-list-sizer]]:w-full [&_[cmdk-list-sizer]]:min-w-0">
+          <Command.List className="max-h-[60dvh] w-full overflow-y-auto overflow-x-hidden p-1 [&_[cmdk-list-sizer]]:w-full [&_[cmdk-list-sizer]]:min-w-0">
             {/* Suppress "No results." while a people search is pending so
                 the list shows only the Searching… row, not both. */}
             {!hasAnyResult && !peopleSearching && (

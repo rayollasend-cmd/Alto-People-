@@ -49,7 +49,7 @@ export function DocumentPreview({ doc, onOpenChange, actions }: DocumentPreviewP
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className={cn(
-          'max-w-5xl w-[95vw] h-[90vh]',
+          'max-w-5xl w-[95vw] h-[90dvh]',
           'p-0 gap-0 grid-rows-[auto,1fr,auto]',
           'overflow-hidden',
         )}

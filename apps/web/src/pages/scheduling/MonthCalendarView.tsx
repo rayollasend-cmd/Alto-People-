@@ -523,7 +523,7 @@ function DayDetailDialog({
             {day && fmtDayHeaderTz(day, null, { year: true })}
           </DialogTitle>
         </DialogHeader>
-        <ul className="space-y-1.5 max-h-[60vh] overflow-y-auto">
+        <ul className="space-y-1.5 max-h-[60dvh] overflow-y-auto">
           {shifts.map((s) => {
             const start = new Date(s.startsAt);
             const end = new Date(s.endsAt);

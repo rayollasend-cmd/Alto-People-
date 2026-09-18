@@ -226,7 +226,7 @@ export function ShiftTeamsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[85dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Shift teams{locationName ? ` — ${locationName}` : ''}</DialogTitle>
           <DialogDescription>

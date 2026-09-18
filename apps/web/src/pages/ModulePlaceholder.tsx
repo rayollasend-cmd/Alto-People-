@@ -15,10 +15,10 @@ export function ModulePlaceholder({
   // The placeholder card is small (~250-350px tall). Without vertical
   // centering it would stick to the top of <main> and leave a sea of
   // empty space below — making the dense sidebar look "longer than the
-  // content." min-h-[70vh] gives the page enough height to actually
+  // content." min-h-[70dvh] gives the page enough height to actually
   // center against; flex justify-center pushes the card to the middle.
   return (
-    <div className="min-h-[70vh] flex flex-col justify-center">
+    <div className="min-h-[70dvh] flex flex-col justify-center">
       <div className="w-full mx-auto">
         <PageHeader title={title} subtitle={description} />
 

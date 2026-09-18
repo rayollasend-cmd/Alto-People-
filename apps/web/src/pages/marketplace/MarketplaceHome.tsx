@@ -508,8 +508,8 @@ function ClaimsTab() {
                   <TableHead>Associate</TableHead>
                   <TableHead className="hidden md:table-cell">Position</TableHead>
                   <TableHead className="hidden md:table-cell">Client</TableHead>
-                  <TableHead>Shift</TableHead>
-                  <TableHead className="text-right w-44">Decide</TableHead>
+                  <TableHead className="hidden md:table-cell">Shift</TableHead>
+                  <TableHead className="hidden sm:table-cell text-right md:w-44">Decide</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -532,14 +532,39 @@ function ClaimsTab() {
                         {' · '}
                         {c.clientName}
                       </div>
+                      {/* Phone: the shift rides under the name — its own
+                          column squeezed to one word per line. */}
+                      <div className="md:hidden text-xs2 text-silver tabular-nums">
+                        {fmtDateTime(c.startsAt)} – {fmtTime(c.endsAt)}
+                      </div>
+                      {/* Phone: Approve/Reject ride inside the row — their own
+                          column pushed them off the right edge. */}
+                      <div className="mt-2 flex gap-2 sm:hidden">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => approve(c)}
+                          disabled={busyId === c.id || bulkBusy}
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setRejectTarget(c)}
+                          disabled={busyId === c.id || bulkBusy}
+                        >
+                          Reject
+                        </Button>
+                      </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{c.position}</TableCell>
                     <TableCell className="hidden md:table-cell">{c.clientName}</TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">
                       {fmtDateTime(c.startsAt)} –{' '}
                       {fmtTime(c.endsAt)}
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="hidden sm:table-cell text-right">
                       <div className="inline-flex gap-1">
                         <Button
                           size="sm"

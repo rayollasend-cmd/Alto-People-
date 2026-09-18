@@ -138,7 +138,9 @@ export function WebhookHealthTile() {
       <span className={`rounded-full p-2 ${style.iconBox}`}>
         <Icon className="h-4 w-4" aria-hidden />
       </span>
-      <div className="flex-1 text-sm">
+      {/* min-w-0 + break-words: the detail carries unbroken env tokens
+          (PAYROLL_DISBURSEMENT_PROVIDER=…) that pushed off a phone screen. */}
+      <div className="min-w-0 flex-1 break-words text-sm">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-white">Disbursement webhook</span>
           <span

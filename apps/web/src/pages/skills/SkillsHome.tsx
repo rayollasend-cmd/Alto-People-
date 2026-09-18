@@ -172,8 +172,10 @@ function SearchTab({ canManage }: { canManage: boolean }) {
     <div className="space-y-4">
       <Card>
         <CardContent className="space-y-3">
-          <div className="flex gap-3 items-end">
-            <div className="flex-1 relative">
+          {/* Phone: the skill field takes its own row — squeezed beside
+              the level picker and button it showed four letters. */}
+          <div className="flex flex-wrap gap-3 items-end">
+            <div className="relative basis-full sm:basis-0 sm:flex-1">
               <Label htmlFor="skills-search-query">Skill</Label>
               <Input
                 id="skills-search-query"

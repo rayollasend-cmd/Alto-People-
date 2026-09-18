@@ -383,10 +383,12 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                     )}
                     <TableHead>Associate</TableHead>
                     <TableHead className="hidden md:table-cell">Category</TableHead>
-                    <TableHead>Dates</TableHead>
+                    <TableHead className="hidden md:table-cell">Dates</TableHead>
                     <TableHead className="text-right hidden sm:table-cell">Hours</TableHead>
                     <TableHead className="hidden lg:table-cell">Reason</TableHead>
-                    <TableHead>Status</TableHead>
+                    {/* Phone: the tab already names the status — its column
+                        gives the approve/deny buttons room to stay on screen. */}
+                    <TableHead className="hidden sm:table-cell">Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -432,13 +434,25 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                                   {fmtHours(r.requestedMinutes)}
                                 </span>
                               </div>
+                              {/* Phone: the dates ride under the name — their
+                                  own column squeezed to one word per line. */}
+                              <div className="md:hidden text-xs2 text-silver tabular-nums">
+                                {fmtYmd(r.startDate)}
+                                {r.startDate !== r.endDate && ` – ${fmtYmd(r.endDate)}`}
+                                {r.status === 'PENDING' && (r.assignedShiftOverlaps ?? 0) > 0 && (
+                                  <span className="ml-1.5 text-warning">
+                                    · releases {r.assignedShiftOverlaps}{' '}
+                                    {r.assignedShiftOverlaps === 1 ? 'shift' : 'shifts'}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </TableCell>
                         <TableCell className="hidden md:table-cell">
                           {CATEGORY_LABELS[r.category] ?? r.category}
                         </TableCell>
-                        <TableCell className="tabular-nums">
+                        <TableCell className="hidden md:table-cell tabular-nums">
                           {fmtYmd(r.startDate)}
                           {r.startDate !== r.endDate && ` – ${fmtYmd(r.endDate)}`}
                           {/* The coverage hole this approval would punch —
@@ -465,7 +479,7 @@ export function AdminTimeOffView({ canManage }: { canManage: boolean }) {
                         <TableCell className="hidden lg:table-cell text-xs text-silver max-w-[18ch] truncate">
                           {r.reason || '—'}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden sm:table-cell">
                           <RowStatus status={r.status} />
                         </TableCell>
                         <TableCell

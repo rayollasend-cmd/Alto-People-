@@ -81,7 +81,7 @@ export function OpsShiftRecordDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-3xl max-h-[90dvh] overflow-y-auto">
         {error && <ErrorBanner>{error}</ErrorBanner>}
         {!detail && !error && <Skeleton className="h-64" />}
         {detail && (

@@ -476,7 +476,7 @@ export function SelectionToolbar({ selected, onClear, onSelectOnly, onAfterActio
       {/* flex-wrap + viewport ceiling: seven actions previously formed a
           fixed ~900px row that clipped off both edges of anything narrower
           than a desktop monitor. */}
-      <div className="flex flex-wrap items-center justify-center gap-2 px-4 py-2 rounded-lg bg-navy border border-gold/40 elev-3 max-h-[40vh] overflow-y-auto">
+      <div className="flex flex-wrap items-center justify-center gap-2 px-4 py-2 rounded-lg bg-navy border border-gold/40 elev-3 max-h-[40dvh] overflow-y-auto">
         <CheckCircle2 className="h-4 w-4 text-gold" />
         <span className="text-sm text-white tabular-nums">
           {selected.length} selected
