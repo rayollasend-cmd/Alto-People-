@@ -252,6 +252,29 @@ const WORKFORCE_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'reports',
 ]);
 
+/**
+ * The internal recruiter's curated nav: the hire-to-file pipeline plus the
+ * people + compliance surfaces the role owns — Recruiting, Onboarding, the
+ * People directory, Documents, Compliance, and the HR case desk. Per product
+ * policy the role carries the FULL admin capability surface (identical to
+ * Marketing / Workforce Manager — see ROLE_CAPABILITIES), so without this
+ * curation `visibleModules` fell through to `base` and dumped the entire
+ * ~50-row console into their sidebar. Everything trimmed here stays reachable
+ * by URL and by deep links from notifications — it's out of the NAV, not the
+ * app (same contract as the Exec / Finance / Associate curations above).
+ * `me` + `messages` are the personal baseline every curated role keeps.
+ */
+const RECRUITER_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
+  'me',
+  'messages',
+  'recruiting',
+  'onboarding',
+  'people',
+  'documents',
+  'compliance',
+  'hr-cases',
+]);
+
 /** Capability-filtered module list, with per-role curation applied.
  *  `scope.regionId` marks a CLIENT_PORTAL command-center account, whose nav
  *  is the region and messages — never the single-store pages. */
@@ -283,6 +306,9 @@ export function visibleModules(
   }
   if (role === 'WORKFORCE_MANAGER') {
     return base.filter((m) => WORKFORCE_MODULE_KEYS.has(m.key));
+  }
+  if (role === 'INTERNAL_RECRUITER') {
+    return base.filter((m) => RECRUITER_MODULE_KEYS.has(m.key));
   }
   if (role === 'EXECUTIVE_CHAIRMAN') return base.filter((m) => EXEC_MODULE_KEYS.has(m.key));
   if (role === 'FLOOR_SUPERVISOR') {

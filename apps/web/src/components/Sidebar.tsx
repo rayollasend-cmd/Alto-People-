@@ -135,6 +135,19 @@ export function Sidebar() {
     (grouped[m.group] ??= []).push(m);
   }
 
+  // The 'core' group renders headerless, right under the dashboard — the
+  // personal baseline (My profile, Messages, the relay) that sits outside
+  // the four themed groups and so is skipped by the GROUP_ORDER loop below.
+  // The client portal is a distinct client-facing surface with its own
+  // chrome (BottomTabBar + in-page tabs), so it opts out entirely — its
+  // core keys are the store/region views, never these staff utilities.
+  const coreItems =
+    user?.role === 'CLIENT_PORTAL'
+      ? []
+      : visible.filter(
+          (m) => m.group === 'core' && !m.key.startsWith('portal') && m.key !== 'region',
+        );
+
   // Personalized shortcuts above the groups: explicit pins first, then the
   // three most-recent modules that aren't already pinned. Both restricted
   // to what this user can actually see.
@@ -216,6 +229,22 @@ export function Sidebar() {
           icon={DASHBOARD_ICON}
           railCollapsed={railCollapsed}
         />
+
+        {coreItems.length > 0 && (
+          <div className="mt-1 mb-0.5">
+            {coreItems.map((m) => (
+              <PinnableRow
+                key={m.key}
+                module={m}
+                active={activePath === m.path}
+                railCollapsed={railCollapsed}
+                badge={badgeFor(m.key)}
+                pinned={isPinned(m.key)}
+                onTogglePin={togglePin}
+              />
+            ))}
+          </div>
+        )}
 
         {pinnedModules.length > 0 && (
           <SidebarSection

@@ -61,6 +61,17 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
     (grouped[m.group] ??= []).push(m);
   }
 
+  // Mirror the desktop Sidebar: the headerless 'core' group (My profile,
+  // Messages, the relay) renders under the dashboard. The GROUP_ORDER loop
+  // below skips 'core'. The client portal keeps its own chrome, and the
+  // portal / region keys belong to its BottomTabBar, so both are excluded.
+  const coreItems =
+    user?.role === 'CLIENT_PORTAL'
+      ? []
+      : visible.filter(
+          (m) => m.group === 'core' && !m.key.startsWith('portal') && m.key !== 'region',
+        );
+
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
@@ -165,6 +176,20 @@ export function MobileNav({ open, onClose, onOpenCommandPalette }: MobileNavProp
             label={DASHBOARD_NAV.label}
             icon={DASHBOARD_ICON}
           />
+          {coreItems.length > 0 && (
+            <div className="mt-1">
+              {coreItems.map((m) => (
+                <MobileLink
+                  key={m.key}
+                  to={m.path}
+                  active={activePath === m.path}
+                  label={m.label}
+                  icon={MODULE_ICONS[m.key]}
+                  badge={m.key === 'approvals' ? approvalsCount : null}
+                />
+              ))}
+            </div>
+          )}
           {pinnedModules.length > 0 && (
             <div className="mt-3">
               <div className="px-4 py-1 text-2xs font-semibold uppercase tracking-widest text-silver/80">
