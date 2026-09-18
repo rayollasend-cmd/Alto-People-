@@ -32,6 +32,7 @@ import { associatesOfClient, effectiveClientIdFilter } from '../lib/scope.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
 import { notifyClockOutEarnings } from '../lib/associateEarnings.js';
 import { supervisorRecipients } from '../lib/shiftWindows.js';
+import { openSopOnClockIn, sopBlockingClockOut, sopOpenMessage } from '../lib/storeShiftSop.js';
 import { recordAttendanceForEntry } from '../lib/attendance.js';
 import { env } from '../config/env.js';
 import { ROLE_CAPABILITIES, type Role } from '@alto-people/shared';
@@ -1837,6 +1838,18 @@ async function fileClockInRequest(opts: {
   })().catch(() => {});
 }
 
+/** The login behind a kiosk PIN, when it's a shift supervisor's — their
+ *  punches open and gate their store shift's SOP. */
+async function supervisorLoginFor(
+  db: Pick<typeof prisma, 'user'>,
+  associateId: string,
+): Promise<{ id: string; role: string } | null> {
+  return db.user.findFirst({
+    where: { associateId, role: 'SHIFT_SUPERVISOR', status: 'ACTIVE', deletedAt: null },
+    select: { id: true, role: true },
+  });
+}
+
 kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
   const input = VerifyPinInputSchema.parse(req.body);
 
@@ -1993,6 +2006,17 @@ kiosk99Router.post('/kiosk/verify-pin', async (req, res) => {
         stage: 'preflight',
       });
       throw new HttpError(409, 'not_on_schedule', NOT_ON_SCHEDULE_MSG);
+    }
+  }
+
+  // SOP gate, at the keypad: a supervisor can't clock out here while their
+  // shift's SOP is unsubmitted — it's finished (or submitted incomplete
+  // with a reason) in the Alto app first.
+  if (predictedAction === 'CLOCK_OUT') {
+    const sup = await supervisorLoginFor(prisma, pinRow.associateId);
+    const openSop = sup ? await sopBlockingClockOut(prisma, sup) : null;
+    if (openSop) {
+      throw new HttpError(409, 'sop_open', sopOpenMessage(openSop));
     }
   }
 
@@ -2610,6 +2634,17 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
         timeEntry = open;
         action = 'BREAK_END';
       } else {
+        // SOP gate (the preflight already said so at the keypad). Live
+        // punches only: a clock-out queued while the tablet was offline
+        // already happened — refusing it now would leave the entry running
+        // for hours nobody worked; the SOP sweep escalates it instead.
+        if (!clientPunchedAt) {
+          const sup = await supervisorLoginFor(tx, pinRow.associateId);
+          const openSop = sup ? await sopBlockingClockOut(tx, sup) : null;
+          if (openSop) {
+            throw new HttpError(409, 'sop_open', sopOpenMessage(openSop));
+          }
+        }
         timeEntry = await tx.timeEntry.update({
           where: { id: open.id },
           data: {
@@ -2767,6 +2802,24 @@ kiosk99Router.post('/kiosk/punch', async (req, res) => {
   // Kiosk clock-outs historically closed the entry with NO anomaly pass —
   // NO_BREAK / OT / EARLY_OUT flags only appeared on web clock-outs.
   // Advisory-only, so it runs after commit and never fails the punch.
+  // A supervisor's clock-in opens their store shift's SOP — waiting on
+  // their phone (notification) by the time they're on the floor.
+  if (result.action === 'CLOCK_IN') {
+    const sup = await supervisorLoginFor(prisma, pinRow.associateId);
+    if (sup) {
+      await openSopOnClockIn(prisma, {
+        userId: sup.id,
+        role: sup.role,
+        clientId: result.timeEntry.clientId,
+        locationId: result.timeEntry.locationId,
+        at: result.timeEntry.clockInAt,
+        timeEntryId: result.timeEntry.id,
+      }).catch((err: unknown) => {
+        console.warn('[kiosk] SOP auto-open failed:', err instanceof Error ? err.message : err);
+      });
+    }
+  }
+
   if (result.action === 'CLOCK_OUT') {
     void recomputeEntryAnomalies(prisma, result.timeEntry.id);
     // Attendance points: LATE / EARLY_OUT against the linked shift.

@@ -759,6 +759,8 @@ model Location {
   applications Application[]
   shifts       Shift[]
   supervisorShiftWindows SupervisorShiftWindow[]
+  opsShifts              OpsShift[]
+  storeShiftSops         StoreShiftSop[]
   kioskDevices KioskDevice[]
   timeEntries  TimeEntry[]
   shiftTeams   ShiftTeam[]
@@ -1983,6 +1985,7 @@ model OpsSopTemplate {
   createdById String?            @db.Uuid
   createdBy   User?              @relation("OpsSopTemplateCreator", fields: [createdById], references: [id], onDelete: SetNull)
   tasks       OpsSopTemplateTask[]
+  storeShifts StoreShiftSop[]
   createdAt   DateTime           @default(now()) @db.Timestamptz(6)
   updatedAt   DateTime           @updatedAt @db.Timestamptz(6)
 
@@ -2045,6 +2048,23 @@ model OpsShift {
   closedIncomplete   Boolean        @default(false)
   tempAlerts         Int            @default(0)
   closingSummary     String?        @db.VarChar(2000)
+  // Store-shift SOP — opened automatically at a supervisor's clock-in for
+  // the store and named shift window they're working (null on shifts
+  // opened by hand from the position picker).
+  locationId         String?        @db.Uuid
+  location           Location?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  windowLabel        String?        @db.VarChar(80)
+  /// The clock-in that opened it.
+  timeEntryId        String?        @db.Uuid
+  /// When the store shift window ends — reminders and escalation key off it.
+  dueAt              DateTime?      @db.Timestamptz(6)
+  /// Required when it's submitted with required items still open.
+  incompleteReason   String?        @db.VarChar(1000)
+  /// Submitted with an explicit "nothing to hand over" instead of a note.
+  handoverNone       Boolean        @default(false)
+  /// Reminder sent before the shift ends / escalated after it ended.
+  remindedAt         DateTime?      @db.Timestamptz(6)
+  escalatedAt        DateTime?      @db.Timestamptz(6)
   tasks              OpsTask[]
   handoverOut        OpsHandoverItem[] @relation("HandoverFrom")
   handoverDecided    OpsHandoverItem[] @relation("HandoverDecidedIn")
@@ -2052,6 +2072,28 @@ model OpsShift {
   @@index([clientId, dateKey])
   @@index([clientId, department, status])
   @@index([status, openedAt])
+  @@index([openedById, status])
+  @@index([locationId, status])
+}
+
+// The SOP a store runs on one of its named shift windows ("Front Beach 218 ·
+// Overnight → Overnight Standard"). Keyed by (store, window LABEL) like a
+// supervisor's shift, so a new headcount for the window doesn't unassign it.
+// A supervisor's clock-in opens this template's checklist automatically.
+model StoreShiftSop {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  locationId  String         @db.Uuid
+  label       String         @db.VarChar(80)
+  templateId  String         @db.Uuid
+  updatedById String?        @db.Uuid
+  createdAt   DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime       @updatedAt @db.Timestamptz(6)
+
+  location Location       @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  template OpsSopTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, label])
+  @@index([templateId])
 }
 
 model OpsTask {

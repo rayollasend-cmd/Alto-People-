@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type { BreakType, Job, TimeEntry } from '@alto-people/shared';
 import {
   clockIn,
@@ -21,6 +21,9 @@ import {
   ymdToIsoStart,
 } from '@/lib/format';
 import { hapticSuccess } from '@/lib/haptics';
+import { useAuth } from '@/lib/auth';
+import { getMySop } from '@/lib/opsApi';
+import { toast } from '@/components/ui/Toaster';
 import { timeAnomalyLabel } from '@/lib/timeLabels';
 import { Badge } from '@/components/ui/Badge';
 import { statusTone } from '@/lib/status';
@@ -130,6 +133,14 @@ export function AssociateTimeView({
     setOnBreak(active?.onBreak ?? false);
   }, [active]);
 
+  // A supervisor's clock-in opens their store shift's SOP (server-side);
+  // the clock takes them straight to it. A refused clock-out (SOP still
+  // open) takes them there too.
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const isSupervisor = user?.role === 'SHIFT_SUPERVISOR';
+  const openSop = (id: string) => navigate(`/ops?tab=shift&shift=${id}`);
+
   const handleClockIn = async () => {
     if (busy) return;
     setBusy(true);
@@ -145,6 +156,16 @@ export function AssociateTimeView({
         jobId: selectedJobId || undefined,
       });
       hapticSuccess();
+      if (isSupervisor) {
+        const { sop } = await getMySop().catch(() => ({ sop: null }));
+        if (sop) {
+          toast.success(
+            `Clocked in — your ${sop.windowLabel ?? ''} SOP is open. Submit it before you clock out.`,
+          );
+          openSop(sop.id);
+          return;
+        }
+      }
       await refresh();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Clock-in failed.');
@@ -165,6 +186,12 @@ export function AssociateTimeView({
       setOnBreak(false);
       await refresh();
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'sop_open') {
+        toast.error(err.message);
+        const id = (err.details as { opsShiftId?: string } | undefined)?.opsShiftId;
+        if (id) openSop(id);
+        return;
+      }
       setError(err instanceof ApiError ? err.message : 'Clock-out failed.');
     } finally {
       setBusy(false);

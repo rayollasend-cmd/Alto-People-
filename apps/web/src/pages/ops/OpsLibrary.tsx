@@ -14,6 +14,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { DEPT_FALLBACK_ICON, DEPT_ICON, DEPT_TONE } from './opsVisuals';
+import { StoreShiftSops } from './StoreShiftSops';
+import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
@@ -88,6 +90,7 @@ export function OpsLibrary() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [newOpen, setNewOpen] = useState(false);
   const confirm = useConfirm();
+  const { can } = useAuth();
 
   const load = useCallback(() => {
     getOpsLibrary()
@@ -184,6 +187,9 @@ export function OpsLibrary() {
           </Button>
         </div>
       </div>
+
+      {/* ===== Which SOP each store shift runs at clock-in ===== */}
+      <StoreShiftSops canEdit={can('manage:ops-library')} />
 
       {/* ===== Coverage matrix — where the standard reaches ===== */}
       <Card>

@@ -15,6 +15,7 @@ import {
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
+import { fmtTime } from '@/lib/format';
 import { useClientBounded } from '@/lib/useClientBounded';
 import { useClients } from '@/lib/useClients';
 import { Badge } from '@/components/ui/Badge';
@@ -645,6 +646,13 @@ function ShiftRunner({
               {shift.clientName} · {shift.position}
               {shift.templateName ? ` · ${shift.templateName}` : ''}
             </div>
+            {/* A store-shift SOP (opened at clock-in) is due with the shift
+                window, and gates the clock-out — say both, plainly. */}
+            {shift.dueAt && (
+              <div className="mt-1 text-xs text-gold">
+                Due by {fmtTime(shift.dueAt)} · submit it before you clock out
+              </div>
+            )}
             {/* Evidence strip — the shift's proof, live. */}
             <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs tabular-nums">
               <span className="inline-flex items-center gap-1.5 text-silver">
@@ -684,7 +692,10 @@ function ShiftRunner({
               )}
             </div>
           </div>
-          <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+          {/* Phone: the actions take their own full-width row under the
+              title — beside it they squeezed "Deli & Bakery · Morning" into
+              a word per line. */}
+          <div className="flex w-full shrink-0 gap-2 sm:w-auto [&>*]:flex-1 sm:[&>*]:flex-none">
             <Button variant="outline" onClick={() => setAdhocOpen(true)}>
               <Plus className="h-4 w-4" />
               Add task
@@ -693,7 +704,7 @@ function ShiftRunner({
               onClick={() => setCloseOpen(true)}
               className={cn(allDone && 'animate-pulse')}
             >
-              {allDone ? 'Ready — close shift' : 'Close shift'}
+              {allDone ? 'Ready — submit SOP' : 'Submit SOP'}
             </Button>
           </div>
         </div>
@@ -1556,6 +1567,17 @@ function AdhocDialog({
   );
 }
 
+/** Handover notes this submit will carry: already on the shift, typed
+ *  here, or unfinished work chipped over. */
+function handoverCountFor(
+  detail: OpsShiftDetail,
+  items: unknown[],
+  openWork: Array<{ id: string }>,
+  carriedIds: Set<string>,
+): number {
+  return detail.handoverOut.length + items.length + openWork.filter((t) => carriedIds.has(t.id)).length;
+}
+
 function CloseDialog({
   open,
   onOpenChange,
@@ -1575,6 +1597,10 @@ function CloseDialog({
   const [draftKind, setDraftKind] = useState<OpsHandoverKind>('NOTE');
   const [draftBody, setDraftBody] = useState('');
   const [busy, setBusy] = useState(false);
+  // Every submit hands over — a note, or this, said out loud.
+  const [nothingToHandOver, setNothingToHandOver] = useState(false);
+  // Submitting with required items open is the way out — with a reason.
+  const [reason, setReason] = useState('');
   // One-tap handover: unfinished tasks become chips — tap to hand over
   // verbatim instead of re-typing them at the most tired moment of the
   // shift. Tap again to leave out.
@@ -1596,6 +1622,8 @@ function CloseDialog({
       setItems([]);
       setDraftBody('');
       setDraftKind('NOTE');
+      setNothingToHandOver(false);
+      setReason('');
       // Required unfinished work defaults to handed-over — leaving it out
       // is the deliberate act, not the accident.
       setCarriedIds(
@@ -1617,16 +1645,17 @@ function CloseDialog({
       // Esc / overlay tap / X / drag-down can't silently destroy a
       // composed handover — the most tired moment of the shift.
       confirmDiscard={() =>
-        summary.trim() !== '' || draftBody.trim() !== '' || items.length > 0
+        summary.trim() !== '' || draftBody.trim() !== '' || items.length > 0 || reason.trim() !== ''
       }
     >
       <DialogContent className="max-w-lg max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Close shift — handover first</DialogTitle>
+          <DialogTitle>Submit your SOP — handover first</DialogTitle>
           <DialogDescription>
             What does the next shift need to know? Unfinished work, special
             orders, coach complaints, equipment — nothing on paper, nothing
-            verbal.
+            verbal. Once it's submitted the record is final, and you can
+            clock out.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
@@ -1637,10 +1666,20 @@ function CloseDialog({
                 open
               </div>
               <div className="mt-0.5 text-silver">
-                You can close anyway — the record will show the shift closed
-                incomplete and operations will see it. Consider handing the work
-                over below.
+                You can still submit it — incomplete, with the reason below.
+                Operations sees it right away. Hand the work over too.
               </div>
+              <Label htmlFor="sop-incomplete-reason" className="mt-2 block text-xs text-white">
+                Why can't it be finished?
+              </Label>
+              <Textarea
+                id="sop-incomplete-reason"
+                rows={2}
+                className="mt-1"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="e.g. Two call-outs — stocking carried to the evening shift"
+              />
             </div>
           )}
 
@@ -1755,6 +1794,17 @@ function CloseDialog({
             </div>
           </div>
 
+          {handoverCountFor(detail, items, openWork, carriedIds) === 0 && (
+            <label className="flex items-center gap-2 text-xs text-silver">
+              <input
+                type="checkbox"
+                checked={nothingToHandOver}
+                onChange={(e) => setNothingToHandOver(e.target.checked)}
+              />
+              Nothing to hand over to the next shift
+            </label>
+          )}
+
           <div>
             <Label className="text-xs">Closing summary (optional)</Label>
             <Textarea
@@ -1781,8 +1831,12 @@ function CloseDialog({
                 if (all.length > 0) {
                   await addOpsHandover(shift.id, all);
                 }
-                await closeOpsShift(shift.id, summary.trim() || undefined);
-                toast.success('Shift closed — the record is final.');
+                await closeOpsShift(shift.id, {
+                  summary: summary.trim() || undefined,
+                  handoverNone: all.length === 0 && detail.handoverOut.length === 0 && nothingToHandOver,
+                  incompleteReason: openRequired.length > 0 ? reason.trim() : undefined,
+                });
+                toast.success('SOP submitted — the record is final. You can clock out.');
                 onOpenChange(false);
                 onClosed();
               } catch (err) {
@@ -1792,8 +1846,12 @@ function CloseDialog({
               }
             }}
             loading={busy}
+            disabled={
+              (handoverCountFor(detail, items, openWork, carriedIds) === 0 && !nothingToHandOver) ||
+              (openRequired.length > 0 && reason.trim().length < 5)
+            }
           >
-            Close shift
+            {openRequired.length > 0 ? 'Submit incomplete' : 'Submit SOP'}
           </Button>
         </DialogFooter>
       </DialogContent>

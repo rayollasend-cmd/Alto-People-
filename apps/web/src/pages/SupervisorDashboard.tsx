@@ -1,13 +1,14 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarDays, MapPin, Timer, Users } from 'lucide-react';
+import { CalendarDays, ClipboardCheck, MapPin, Timer, Users } from 'lucide-react';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { boundedClientOf } from '@/lib/roles';
 import { listClientLocations } from '@/lib/clientsApi';
+import { getMySop } from '@/lib/opsApi';
 import { getSchedulingKpis, listShifts } from '@/lib/schedulingApi';
 import {
   fmtDate,
@@ -147,6 +148,12 @@ export function SupervisorDashboard() {
   const kpiLast = useQuery({
     queryKey: ['floor', 'kpis', 'last', todayKey],
     queryFn: () => getSchedulingKpis({ week: 'last' }),
+  });
+  // The SOP their clock-in opened — on top of My floor until submitted.
+  const sopQuery = useQuery({
+    queryKey: ['ops', 'my-sop'],
+    queryFn: getMySop,
+    refetchInterval: 60_000,
   });
   const approvalsQuery = useQuery({
     queryKey: ['floor', 'approvals-count'],
@@ -370,6 +377,8 @@ export function SupervisorDashboard() {
     <div className="mx-auto space-y-4">
       <PullToRefreshIndicator state={pullState} />
       {header}
+
+      {sopQuery.data?.sop && <SopBanner sop={sopQuery.data.sop} />}
 
       {myWindows.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 animate-enter">
@@ -725,6 +734,41 @@ function TileLink({ to, children }: { to: string; children: React.ReactNode }) {
       className="group block rounded-lg transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright [&>div]:transition-colors [&>div]:hover:border-gold/40"
     >
       {children}
+    </Link>
+  );
+}
+
+/** Their shift's SOP, open until submitted — you can't clock out before. */
+function SopBanner({ sop }: { sop: NonNullable<Awaited<ReturnType<typeof getMySop>>['sop']> }) {
+  const pct = sop.sopTotal > 0 ? Math.round((sop.sopDone / sop.sopTotal) * 100) : 0;
+  const overdue = sop.dueAt !== null && new Date(sop.dueAt).getTime() < Date.now();
+  return (
+    <Link
+      to={`/ops?tab=shift&shift=${sop.id}`}
+      className={cn(
+        'flex items-center gap-4 rounded-lg border p-4 transition-colors animate-enter',
+        overdue ? 'border-alert/50 bg-alert/[0.07] hover:bg-alert/10' : 'border-gold/40 bg-gold/[0.06] hover:bg-gold/10',
+      )}
+    >
+      <ClipboardCheck className={cn('h-6 w-6 shrink-0', overdue ? 'text-alert' : 'text-gold')} aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-white">
+          Your {sop.windowLabel ?? sop.position} SOP is open
+        </div>
+        <div className="mt-0.5 text-xs text-silver tabular-nums">
+          {sop.sopDone} of {sop.sopTotal} done
+          {sop.dueAt && (
+            <span className={overdue ? 'text-alert' : undefined}>
+              {' '}· {overdue ? 'was due' : 'due'} {fmtTime(sop.dueAt)}
+            </span>
+          )}
+          {' '}· submit it before you clock out
+        </div>
+        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">
+          <div className={cn('h-full rounded-full', overdue ? 'bg-alert' : 'bg-gold')} style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+      <span className="shrink-0 text-sm font-medium text-gold">Continue →</span>
     </Link>
   );
 }

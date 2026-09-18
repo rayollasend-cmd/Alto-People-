@@ -14,6 +14,7 @@ import { startOnboardingPurgeCron } from './lib/onboardingPurge.js';
 import { startStaleNudgeCron } from './lib/staleNudge.js';
 import { startDormancySweepCron } from './lib/dormancySweep.js';
 import { startOpsDigestCron } from './lib/opsDigest.js';
+import { startOpsSopCron } from './lib/storeShiftSop.js';
 import { startPortalDigestCron } from './lib/portalDigest.js';
 import { startServiceReportMailCron } from './lib/serviceReportMailer.js';
 import { startPortalEngagementDigestCron } from './lib/portalEngagement.js';
@@ -74,6 +75,7 @@ const server = app.listen(env.PORT, '0.0.0.0', async () => {
   startStaleNudgeCron();
   startDormancySweepCron();
   startOpsDigestCron();
+  startOpsSopCron();
   startPortalDigestCron();
   startServiceReportMailCron();
   startPortalEngagementDigestCron();

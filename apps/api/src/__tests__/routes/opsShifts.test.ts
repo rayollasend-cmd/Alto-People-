@@ -211,10 +211,26 @@ describe('store ops', () => {
       .patch(`/ops/tasks/${check.id}`)
       .send({ status: 'DONE', doneAssociateId: associate.id });
 
-    const close = await agent
+    // Every submit hands over — a note, or explicitly nothing.
+    const noHandover = await agent
       .post(`/ops/shifts/${open.body.shiftId}/close`)
-      .send({ summary: 'Short-staffed; carried stocking to evening.' });
+      .send({ summary: 'Short-staffed.', incompleteReason: 'Short-staffed; carried stocking to evening.' });
+    expect(noHandover.status).toBe(400);
+    expect(noHandover.body.error.code).toBe('handover_required');
+    // Submitting with required items open takes a reason.
+    const noReason = await agent
+      .post(`/ops/shifts/${open.body.shiftId}/close`)
+      .send({ summary: 'Short-staffed.', handoverNone: true });
+    expect(noReason.status).toBe(400);
+    expect(noReason.body.error.code).toBe('reason_required');
+
+    const close = await agent.post(`/ops/shifts/${open.body.shiftId}/close`).send({
+      summary: 'Short-staffed; carried stocking to evening.',
+      handoverNone: true,
+      incompleteReason: 'Two call-outs — stocking carried to evening.',
+    });
     expect(close.status).toBe(200);
+    expect(close.body.shift.incompleteReason).toBe('Two call-outs — stocking carried to evening.');
     expect(close.body.shift.status).toBe('CLOSED');
     expect(close.body.shift.sopDone).toBe(1);
     expect(close.body.shift.closedIncomplete).toBe(true);
@@ -242,7 +258,10 @@ describe('store ops', () => {
         { kind: 'STOCKING', body: '2 pallets of dairy left in staging.', priority: 'MEDIUM' },
       ],
     });
-    await agent.post(`/ops/shifts/${first.body.shiftId}/close`).send({});
+    const submitted = await agent
+      .post(`/ops/shifts/${first.body.shiftId}/close`)
+      .send({ incompleteReason: 'Freezer out — rest carried over.' });
+    expect(submitted.status).toBe(200);
 
     const second = await agent
       .post('/ops/shifts/open')

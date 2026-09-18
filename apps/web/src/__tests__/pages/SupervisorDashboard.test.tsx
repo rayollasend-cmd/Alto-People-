@@ -69,9 +69,11 @@ function renderPage(
     extraRows?: ReturnType<typeof row>[];
     myWindows?: MyWindow[];
     kpis?: { fillRatePercent: number; assignedShifts: number; completedShifts: number; openShifts: number };
+    sop?: Record<string, unknown> | null;
   } = {},
 ) {
   vi.mocked(apiFetch).mockImplementation(async (path: string) => {
+    if (path === '/ops/my-sop') return { sop: opts.sop ?? null };
     if (path === '/me/shift-windows')
       return {
         windows: (opts.myWindows ?? []).map((w) => ({
@@ -249,5 +251,19 @@ describe('<SupervisorDashboard> — My floor', () => {
     renderPage({ kpis: { fillRatePercent: 0, assignedShifts: 0, completedShifts: 0, openShifts: 0 } });
     expect(await screen.findByText('Nothing scheduled this week yet')).toBeInTheDocument();
     expect(screen.queryByText('0%')).not.toBeInTheDocument();
+  });
+
+  it('keeps their open SOP on top — progress, due time, and the way back into it', async () => {
+    renderPage({
+      sop: {
+        id: 'sop1', windowLabel: 'Overnight', position: 'Overnight shift', locationName: 'Front Beach 218',
+        dueAt: new Date(Date.now() + 3 * 3_600_000).toISOString(), openedAt: new Date().toISOString(),
+        sopDone: 3, sopTotal: 12, requiredOpen: 9, handoverCount: 0,
+      },
+    });
+    const banner = await screen.findByText('Your Overnight SOP is open');
+    expect(screen.getByText(/3 of 12 done/)).toBeInTheDocument();
+    expect(screen.getByText(/submit it before you clock out/)).toBeInTheDocument();
+    expect(banner.closest('a')).toHaveAttribute('href', '/ops?tab=shift&shift=sop1');
   });
 });

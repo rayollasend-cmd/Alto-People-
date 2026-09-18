@@ -34,6 +34,7 @@ import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { scopeTimeEntries, scopeShifts, effectiveClientIdFilter } from '../lib/scope.js';
+import { openSopOnClockIn, sopBlockingClockOut, sopOpenMessage } from '../lib/storeShiftSop.js';
 import { runWithConcurrency } from '../lib/concurrency.js';
 import { z } from 'zod';
 import { enqueueAudit, recordTimeEvent, recordCriticalAudit } from '../lib/audit.js';
@@ -482,6 +483,19 @@ timeRouter.post('/me/clock-in', async (req, res, next) => {
       req,
     });
 
+    // A supervisor's clock-in opens their store shift's SOP. Never blocks
+    // the punch — a failure here leaves them to open it by hand.
+    await openSopOnClockIn(prisma, {
+      userId: user.id,
+      role: user.role,
+      clientId: entry.clientId,
+      locationId: entry.locationId,
+      at: clockInAt,
+      timeEntryId: entry.id,
+    }).catch((err: unknown) => {
+      console.warn('[time] SOP auto-open failed:', err instanceof Error ? err.message : err);
+    });
+
     res.status(201).json(await toEntry(entry));
   } catch (err) {
     next(err);
@@ -497,6 +511,13 @@ timeRouter.post('/me/clock-out', async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const { notes, geo } = parsed.data;
+
+    // A supervisor submits their shift's SOP before they clock out — done,
+    // or submitted incomplete with a reason (the way out is always there).
+    const openSop = await sopBlockingClockOut(prisma, user);
+    if (openSop) {
+      throw new HttpError(409, 'sop_open', sopOpenMessage(openSop), { opsShiftId: openSop.id });
+    }
 
     const active = await prisma.timeEntry.findFirst({
       where: { associateId: user.associateId, status: 'ACTIVE' },

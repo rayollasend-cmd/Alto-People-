@@ -20,6 +20,8 @@ import {
   ensureOpsSeed,
   periodForPosition,
 } from '../lib/opsSops.js';
+import { createOpsShift } from '../lib/storeShiftSop.js';
+import { currentStoreWindows } from '../lib/shiftWindows.js';
 
 /**
  * Store Operations — the shift supervisor's floor tool and the leadership
@@ -78,6 +80,12 @@ function resolveClientId(req: Request, requested?: string): string {
     throw new HttpError(400, 'client_required', 'clientId is required.');
   }
   return clientId;
+}
+
+/** Which earlier shifts hand over to this one: the same store for a
+ *  store-shift SOP, the same department for a hand-opened shift. */
+function handoverScope(shift: { locationId: string | null; department: string }) {
+  return shift.locationId ? { locationId: shift.locationId } : { department: shift.department };
 }
 
 async function loadShiftScoped(req: Request, shiftId: string) {
@@ -212,6 +220,11 @@ function shiftHeader(s: {
   closedIncomplete: boolean;
   tempAlerts: number;
   closingSummary: string | null;
+  windowLabel?: string | null;
+  locationId?: string | null;
+  dueAt?: Date | null;
+  incompleteReason?: string | null;
+  handoverNone?: boolean;
 }) {
   return {
     id: s.id,
@@ -233,6 +246,12 @@ function shiftHeader(s: {
     closedIncomplete: s.closedIncomplete,
     tempAlerts: s.tempAlerts,
     closingSummary: s.closingSummary,
+    // Store-shift SOP (opened at clock-in): its window, and when it's due.
+    windowLabel: s.windowLabel ?? null,
+    locationId: s.locationId ?? null,
+    dueAt: s.dueAt?.toISOString() ?? null,
+    incompleteReason: s.incompleteReason ?? null,
+    handoverNone: s.handoverNone ?? false,
   };
 }
 
@@ -691,64 +710,18 @@ opsRouter.post('/shifts/open', RUN, async (req, res, next) => {
     }
     const period = periodForPosition(parsed.data.position, orgHour(now));
 
-    // Auto-populated header facts.
+    // Auto-populated header facts + the checklist, snapshotted from today's
+    // library (lib/storeShiftSop — the clock-in opens shifts the same way).
     const dayStart = utcInstantOfLocalMidnight(dateKey, 'America/New_York');
-    const dayEnd = new Date(dayStart.getTime() + DAY_MS);
-    const [scheduledHeadcount, actualHeadcount, template] = await Promise.all([
-      prisma.shift.count({
-        where: {
-          clientId,
-          position: parsed.data.position,
-          status: { not: 'CANCELLED' },
-          startsAt: { gte: dayStart, lt: dayEnd },
-        },
-      }),
-      prisma.timeEntry.count({ where: { clientId, status: 'ACTIVE' } }),
-      prisma.opsSopTemplate.findFirst({
-        where: { department, period, active: true, retiredAt: null },
-        orderBy: { createdAt: 'asc' },
-        include: { tasks: { orderBy: { order: 'asc' } } },
-      }),
-    ]);
-
-    const shift = await prisma.opsShift.create({
-      data: {
-        clientId,
-        department,
-        period,
-        position: parsed.data.position,
-        dateKey,
-        openedById: req.user!.id,
-        scheduledHeadcount,
-        actualHeadcount,
-        templateId: template?.id ?? null,
-        templateName: template?.name ?? null,
-        // Snapshot the standard AS IT IS TODAY — library edits after this
-        // moment don't rewrite a shift already being run.
-        tasks: template
-          ? {
-              create: template.tasks.map((task) => ({
-                source: 'SOP' as const,
-                templateTaskId: task.id,
-                section: task.section,
-                order: task.order,
-                title: task.title,
-                instructions: task.instructions,
-                responseType: task.responseType,
-                required: task.required,
-                photoRequired: task.photoRequired,
-                tempLabel: task.tempLabel,
-                tempMin: task.tempMin,
-                tempMax: task.tempMax,
-                metricKey: task.metricKey,
-                unit: task.unit,
-                followUpOn: task.followUpOn,
-                followUpRequirePhoto: task.followUpRequirePhoto,
-                followUpTaskTitle: task.followUpTaskTitle,
-              })),
-            }
-          : undefined,
-      },
+    const shift = await createOpsShift(prisma, {
+      clientId,
+      openedById: req.user!.id,
+      department,
+      period,
+      position: parsed.data.position,
+      scheduledBetween: { from: dayStart, to: new Date(dayStart.getTime() + DAY_MS) },
+      scheduledPosition: parsed.data.position,
+      now,
     });
     enqueueAudit(
       {
@@ -781,8 +754,9 @@ opsRouter.get('/shifts/:id', VIEW, async (req, res, next) => {
         orderBy: { createdAt: 'asc' },
         select: handoverSelect,
       }),
-      // Undecided items from EARLIER shifts of this department — the
-      // "from the previous shift" panel.
+      // Undecided items from EARLIER shifts — the "from the previous
+      // shift" panel. A store-shift SOP hands over store to store (Morning
+      // → Swing → Overnight); a hand-opened shift, department to department.
       shift.status === 'ACTIVE'
         ? prisma.opsHandoverItem.findMany({
             where: {
@@ -790,7 +764,7 @@ opsRouter.get('/shifts/:id', VIEW, async (req, res, next) => {
               fromShift: {
                 is: {
                   clientId: shift.clientId,
-                  department: shift.department,
+                  ...handoverScope(shift),
                   status: 'CLOSED',
                   id: { not: shift.id },
                 },
@@ -1207,7 +1181,7 @@ opsRouter.post('/handover/:id/decide', RUN, async (req, res, next) => {
     }
     const item = await prisma.opsHandoverItem.findUnique({
       where: { id: req.params.id },
-      include: { fromShift: { select: { clientId: true, department: true } } },
+      include: { fromShift: { select: { clientId: true, department: true, locationId: true } } },
     });
     if (!item) throw new HttpError(404, 'not_found', 'Handover item not found');
     if (item.status !== 'PENDING') {
@@ -1217,14 +1191,16 @@ opsRouter.post('/handover/:id/decide', RUN, async (req, res, next) => {
     if (target.status !== 'ACTIVE') {
       throw new HttpError(409, 'shift_closed', 'The receiving shift is closed.');
     }
-    if (
-      target.clientId !== item.fromShift.clientId ||
-      target.department !== item.fromShift.department
-    ) {
+    const sameLine = target.locationId
+      ? item.fromShift.locationId === target.locationId
+      : item.fromShift.department === target.department;
+    if (target.clientId !== item.fromShift.clientId || !sameLine) {
       throw new HttpError(
         409,
         'wrong_shift',
-        'Handover items can only be decided by the same store department.',
+        target.locationId
+          ? 'Handover items can only be decided by the same store.'
+          : 'Handover items can only be decided by the same store department.',
       );
     }
 
@@ -1267,6 +1243,156 @@ opsRouter.post('/handover/:id/decide', RUN, async (req, res, next) => {
   }
 });
 
+/* ===== Store-shift SOPs ================================================== */
+
+/**
+ * GET /ops/my-sop — the SOP the caller has open (opened at their clock-in
+ * or by hand), with progress — the "finish your SOP" banner and the
+ * clock-out guard read this. null when nothing is open.
+ */
+opsRouter.get('/my-sop', RUN, async (req, res, next) => {
+  try {
+    const shift = await prisma.opsShift.findFirst({
+      where: { openedById: req.user!.id, status: 'ACTIVE' },
+      orderBy: { openedAt: 'desc' },
+      include: { location: { select: { name: true } } },
+    });
+    if (!shift) {
+      res.json({ sop: null });
+      return;
+    }
+    const [counts, handoverCount, requiredOpen] = await Promise.all([
+      liveCounts(shift.id),
+      prisma.opsHandoverItem.count({ where: { fromShiftId: shift.id } }),
+      prisma.opsTask.count({ where: { opsShiftId: shift.id, required: true, status: { not: 'DONE' } } }),
+    ]);
+    res.json({
+      sop: {
+        id: shift.id,
+        windowLabel: shift.windowLabel,
+        position: shift.position,
+        locationName: shift.location?.name ?? null,
+        dueAt: shift.dueAt?.toISOString() ?? null,
+        openedAt: shift.openedAt.toISOString(),
+        sopDone: counts.sopDone,
+        sopTotal: counts.sopTotal,
+        requiredOpen,
+        handoverCount,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * GET /ops/store-shifts?clientId= — each store's named shift windows and
+ * the SOP assigned to each (what a supervisor's clock-in opens there).
+ * PUT /ops/store-shifts — assign (or clear) one: { locationId, label,
+ * templateId | null }.
+ */
+opsRouter.get('/store-shifts', LIB_READ, async (req, res, next) => {
+  try {
+    const clientId = resolveClientId(req, req.query.clientId?.toString());
+    await ensureOpsSeed(prisma);
+    const stores = await prisma.location.findMany({
+      where: { clientId, deletedAt: null, isActive: true },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    const [defs, assigned, templates] = await Promise.all([
+      currentStoreWindows(prisma, stores.map((st) => st.id)),
+      prisma.storeShiftSop.findMany({
+        where: { locationId: { in: stores.map((st) => st.id) } },
+        select: { locationId: true, label: true, templateId: true },
+      }),
+      prisma.opsSopTemplate.findMany({
+        where: { active: true, retiredAt: null },
+        select: { id: true, name: true, department: true, period: true, _count: { select: { tasks: true } } },
+        orderBy: [{ department: 'asc' }, { name: 'asc' }],
+      }),
+    ]);
+    const byKey = new Map(assigned.map((a) => [`${a.locationId}|${a.label}`, a.templateId]));
+    res.json({
+      stores: stores.map((st) => ({
+        locationId: st.id,
+        locationName: st.name,
+        windows: [...defs.values()]
+          .filter((w) => w.locationId === st.id)
+          .sort((a, b) => a.startMinute - b.startMinute)
+          .map((w) => ({
+            label: w.label,
+            startMinute: w.startMinute,
+            endMinute: w.endMinute,
+            templateId: byKey.get(`${st.id}|${w.label}`) ?? null,
+          })),
+      })),
+      templates: templates.map((t) => ({
+        id: t.id,
+        name: t.name,
+        department: t.department,
+        period: t.period,
+        taskCount: t._count.tasks,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+opsRouter.put('/store-shifts', LIB, async (req, res, next) => {
+  try {
+    const parsed = z
+      .object({
+        locationId: z.string().uuid(),
+        label: z.string().trim().min(1).max(80),
+        templateId: z.string().uuid().nullable(),
+      })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
+    }
+    const { locationId, label, templateId } = parsed.data;
+    const store = await prisma.location.findFirst({
+      where: { id: locationId, deletedAt: null },
+      select: { id: true, clientId: true },
+    });
+    if (!store) throw new HttpError(404, 'not_found', 'Store not found');
+    const defs = await currentStoreWindows(prisma, [locationId]);
+    if (!defs.has(`${locationId}|${label}`)) {
+      throw new HttpError(400, 'window_not_found', "That isn't one of this store's shift windows.");
+    }
+    if (templateId === null) {
+      await prisma.storeShiftSop.deleteMany({ where: { locationId, label } });
+    } else {
+      const template = await prisma.opsSopTemplate.findFirst({
+        where: { id: templateId, active: true, retiredAt: null },
+        select: { id: true },
+      });
+      if (!template) throw new HttpError(400, 'template_not_found', 'Pick an active SOP from the library.');
+      await prisma.storeShiftSop.upsert({
+        where: { locationId_label: { locationId, label } },
+        create: { locationId, label, templateId, updatedById: req.user!.id },
+        update: { templateId, updatedById: req.user!.id },
+      });
+    }
+    enqueueAudit(
+      {
+        actorUserId: req.user!.id,
+        clientId: store.clientId,
+        action: 'ops.store_shift_sop_set',
+        entityType: 'Location',
+        entityId: locationId,
+        metadata: { label, templateId },
+      },
+      'ops.library',
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 /* ===== Close ============================================================= */
 
 opsRouter.post('/shifts/:id/close', RUN, async (req, res, next) => {
@@ -1276,19 +1402,51 @@ opsRouter.post('/shifts/:id/close', RUN, async (req, res, next) => {
       throw new HttpError(409, 'shift_closed', 'This shift is already closed.');
     }
     const parsed = z
-      .object({ summary: z.string().trim().max(2000).optional() })
+      .object({
+        summary: z.string().trim().max(2000).optional(),
+        /** "Nothing to hand over" — the explicit alternative to a note. */
+        handoverNone: z.boolean().optional(),
+        /** Why required items are still open — submitting incomplete. */
+        incompleteReason: z.string().trim().max(1000).optional(),
+      })
       .safeParse(req.body ?? {});
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
-    const [counts, requiredOpen, actualHeadcount] = await Promise.all([
+    const [counts, requiredOpen, actualHeadcount, handoverCount] = await Promise.all([
       liveCounts(shift.id),
       prisma.opsTask.count({
         where: { opsShiftId: shift.id, required: true, status: { not: 'DONE' } },
       }),
-      prisma.timeEntry.count({ where: { clientId: shift.clientId, status: 'ACTIVE' } }),
+      prisma.timeEntry.count({
+        where: {
+          clientId: shift.clientId,
+          ...(shift.locationId ? { locationId: shift.locationId } : {}),
+          status: 'ACTIVE',
+        },
+      }),
+      prisma.opsHandoverItem.count({ where: { fromShiftId: shift.id } }),
     ]);
+    // Every submit hands over: a note for the next shift, or an explicit
+    // "nothing to hand over" — never silence.
+    if (handoverCount === 0 && !parsed.data.handoverNone) {
+      throw new HttpError(
+        400,
+        'handover_required',
+        'Write a handover note for the next shift, or mark that there is nothing to hand over.',
+      );
+    }
     const closedIncomplete = requiredOpen > 0;
+    // Submitting with required items open is the way out when a shift
+    // can't be finished — never a silent one: it takes a reason.
+    const incompleteReason = parsed.data.incompleteReason?.trim() ?? '';
+    if (closedIncomplete && incompleteReason.length < 5) {
+      throw new HttpError(
+        400,
+        'reason_required',
+        `${requiredOpen} required item${requiredOpen === 1 ? ' is' : 's are'} still open — say why before submitting it incomplete.`,
+      );
+    }
     const now = new Date();
     const updated = await prisma.opsShift.update({
       where: { id: shift.id },
@@ -1297,6 +1455,8 @@ opsRouter.post('/shifts/:id/close', RUN, async (req, res, next) => {
         closedById: req.user!.id,
         closedAt: now,
         closingSummary: parsed.data.summary || null,
+        incompleteReason: closedIncomplete ? incompleteReason : null,
+        handoverNone: handoverCount === 0,
         actualHeadcount,
         sopTotal: counts.sopTotal,
         sopDone: counts.sopDone,
@@ -1326,7 +1486,7 @@ opsRouter.post('/shifts/:id/close', RUN, async (req, res, next) => {
     if (closedIncomplete) {
       await notifyAllAdmins({
         subject: `Ops shift closed incomplete — ${shift.position}`,
-        body: `${shift.department} (${shift.dateKey}) closed with ${requiredOpen} required item${requiredOpen === 1 ? '' : 's'} unfinished. SOP ${counts.sopDone}/${counts.sopTotal}, tasks ${counts.taskDone}/${counts.taskTotal}. Closed by ${req.user!.email}.`,
+        body: `${shift.windowLabel ? `${shift.windowLabel} SOP` : shift.department} (${shift.dateKey}) submitted with ${requiredOpen} required item${requiredOpen === 1 ? '' : 's'} unfinished. SOP ${counts.sopDone}/${counts.sopTotal}, tasks ${counts.taskDone}/${counts.taskTotal}. Submitted by ${req.user!.email}. Reason: ${incompleteReason}`,
         category: 'ops.incomplete_close',
         linkUrl: '/ops',
       });

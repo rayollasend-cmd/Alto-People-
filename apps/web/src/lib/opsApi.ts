@@ -46,6 +46,12 @@ export interface OpsShiftHeader {
   closedIncomplete: boolean;
   tempAlerts: number;
   closingSummary: string | null;
+  /** Store-shift SOP (opened at clock-in): its window, and when it's due. */
+  windowLabel?: string | null;
+  locationId?: string | null;
+  dueAt?: string | null;
+  incompleteReason?: string | null;
+  handoverNone?: boolean;
 }
 
 export type OpsFollowUpOn = 'NO' | 'NO_OR_PARTIAL' | 'OUT_OF_RANGE';
@@ -325,13 +331,19 @@ export function decideOpsHandover(
   return apiFetch(`/ops/handover/${itemId}/decide`, { method: 'POST', body });
 }
 
+/** Submit the SOP. Every submit hands over (a note on the shift, or
+ *  `handoverNone`); required items still open need `incompleteReason`. */
 export function closeOpsShift(
   shiftId: string,
-  summary?: string,
+  opts: { summary?: string; handoverNone?: boolean; incompleteReason?: string } = {},
 ): Promise<{ shift: OpsShiftHeader }> {
   return apiFetch(`/ops/shifts/${shiftId}/close`, {
     method: 'POST',
-    body: summary ? { summary } : {},
+    body: {
+      ...(opts.summary ? { summary: opts.summary } : {}),
+      ...(opts.handoverNone ? { handoverNone: true } : {}),
+      ...(opts.incompleteReason ? { incompleteReason: opts.incompleteReason } : {}),
+    },
   });
 }
 
@@ -432,4 +444,45 @@ export function getOpsScorecard(weeks = 4): Promise<{
   }[];
 }> {
   return apiFetch(`/ops/scorecard?weeks=${weeks}`);
+}
+
+/** The SOP the signed-in supervisor has open — the "finish your SOP"
+ *  banner and the clock-out guard read it. */
+export interface MySop {
+  id: string;
+  windowLabel: string | null;
+  position: string;
+  locationName: string | null;
+  dueAt: string | null;
+  openedAt: string;
+  sopDone: number;
+  sopTotal: number;
+  requiredOpen: number;
+  handoverCount: number;
+}
+
+export function getMySop(): Promise<{ sop: MySop | null }> {
+  return apiFetch('/ops/my-sop');
+}
+
+/** Each store's named shift windows and the SOP assigned to each. */
+export interface StoreShiftSops {
+  stores: Array<{
+    locationId: string;
+    locationName: string;
+    windows: Array<{ label: string; startMinute: number; endMinute: number; templateId: string | null }>;
+  }>;
+  templates: Array<{ id: string; name: string; department: string; period: OpsPeriod; taskCount: number }>;
+}
+
+export function getStoreShiftSops(clientId: string): Promise<StoreShiftSops> {
+  return apiFetch(`/ops/store-shifts?clientId=${encodeURIComponent(clientId)}`);
+}
+
+export function setStoreShiftSop(body: {
+  locationId: string;
+  label: string;
+  templateId: string | null;
+}): Promise<{ ok: true }> {
+  return apiFetch('/ops/store-shifts', { method: 'PUT', body });
 }

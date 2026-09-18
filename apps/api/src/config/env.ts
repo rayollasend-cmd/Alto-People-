@@ -141,6 +141,10 @@ const EnvSchema = z.object({
   // ops shifts once per org-day after 8pm. On by default (hourly scan).
   // Set 0 to disable.
   OPS_DIGEST_INTERVAL_SECONDS: z.coerce.number().int().min(0).default(3600),
+  // Store-shift SOP sweep (lib/storeShiftSop.ts): reminds a supervisor to
+  // submit their SOP before their shift window ends and escalates one still
+  // open 30 minutes after. Every 5 minutes by default; 0 disables.
+  OPS_SOP_SWEEP_SECONDS: z.coerce.number().int().min(0).default(300),
   // Client-portal morning note (lib/portalDigest.ts): one message per
   // portal account per org-day after PORTAL_DIGEST_HOUR with today's and
   // tomorrow's headcount and open slots. Silent when nothing is
