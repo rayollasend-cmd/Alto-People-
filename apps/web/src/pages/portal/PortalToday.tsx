@@ -66,6 +66,9 @@ export function PortalToday() {
   const { user, can } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const isPortal = user?.role === 'CLIENT_PORTAL';
+  // The shift supervisor opens this page on their own client (the day
+  // route opts the role in, clamped server-side) — /today in their nav.
+  const isFloorLead = user?.role === 'SHIFT_SUPERVISOR';
   const canPreview = can('view:executive') || can('manage:org');
   const previewId = searchParams.get('clientId');
   const scope = scopeParams(searchParams, isPortal);
@@ -73,7 +76,9 @@ export function PortalToday() {
   const date = searchParams.get('date') ?? ymdLocal();
   const qs = `?${new URLSearchParams([...scope.entries(), ['date', date]]).toString()}`;
 
-  const enabled = isPortal || (canPreview && !!previewId);
+  const enabled = isPortal || isFloorLead || (canPreview && !!previewId);
+  const homeTo = isFloorLead ? '/' : `/portal${scopeQs}`;
+  const homeLabel = isFloorLead ? t('floor.title') : t('portal.backHome');
   const query = useQuery({
     queryKey: ['clientPortal', 'day', qs],
     queryFn: () => apiFetch<DayPayload>(`/client-portal/day${qs}`),
@@ -100,10 +105,10 @@ export function PortalToday() {
     [data],
   );
 
-  if (!isPortal && !canPreview) {
+  if (!isPortal && !isFloorLead && !canPreview) {
     return <EmptyState icon={Users} title={t('portal.noAccess')} description="" />;
   }
-  if (!isPortal && !previewId) {
+  if (!isPortal && !isFloorLead && !previewId) {
     return <EmptyState icon={Users} title={t('portal.todayNav')} description={t('portal.pickClient')} />;
   }
 
@@ -133,22 +138,27 @@ export function PortalToday() {
               }`
             : undefined
         }
-        breadcrumbs={[{ label: t('portal.title'), to: `/portal${scopeQs}` }]}
+        breadcrumbs={[{ label: isFloorLead ? t('floor.title') : t('portal.title'), to: homeTo }]}
         secondaryActions={
           <Button size="sm" variant="ghost" asChild>
-            <Link to={`/portal${scopeQs}`}>
+            <Link to={homeTo}>
               <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              {t('portal.backHome')}
+              {homeLabel}
             </Link>
           </Button>
         }
         primaryAction={
           <>
-            <Button size="sm" variant="outline" className="print:hidden" onClick={() => setReportOpen(true)}>
-              <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              {t('portal.svcReport')}
-            </Button>
-            <ServiceReportDialog open={reportOpen} onClose={() => setReportOpen(false)} scope={scope} initial={{ kind: 'day', date }} />
+            {/* The service report is the client's document — portal only. */}
+            {!isFloorLead && (
+              <>
+                <Button size="sm" variant="outline" className="print:hidden" onClick={() => setReportOpen(true)}>
+                  <FileText className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                  {t('portal.svcReport')}
+                </Button>
+                <ServiceReportDialog open={reportOpen} onClose={() => setReportOpen(false)} scope={scope} initial={{ kind: 'day', date }} />
+              </>
+            )}
             <Button
               size="sm"
               variant="outline"
@@ -181,7 +191,13 @@ export function PortalToday() {
               {t('portal.print')}
             </Button>
             <Button size="sm" variant="outline" className="print:hidden" asChild>
-              <Link to={`/portal/schedule${scope.toString() ? `?${scope.toString()}&` : '?'}week=${date}`}>
+              <Link
+                to={
+                  isFloorLead
+                    ? '/scheduling'
+                    : `/portal/schedule${scope.toString() ? `?${scope.toString()}&` : '?'}week=${date}`
+                }
+              >
                 <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
                 {t('portal.openSchedule')}
               </Link>

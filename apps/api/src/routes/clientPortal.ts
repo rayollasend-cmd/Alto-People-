@@ -75,10 +75,17 @@ export const clientPortalRouter = Router();
  * Resolve who the caller is looking at. Fails closed for a portal
  * account without a client; 404s when the preview target doesn't exist
  * or the store isn't under the client.
+ *
+ * `floorLead`: the route also serves the SHIFT_SUPERVISOR its own
+ * client — opt-in per route, so only payloads with nothing the role
+ * can't already see (the day roster: names, positions, punches) take
+ * it. The home overview and history carry statements and the client's
+ * service record, and never opt in.
  */
 async function resolveScope(
   user: SessionUser,
   query: { clientId?: unknown; locationId?: unknown },
+  opts: { floorLead?: boolean } = {},
 ): Promise<PortalScope> {
   let clientId: string;
   let locationId: string | null = null;
@@ -111,6 +118,15 @@ async function resolveScope(
     locationId =
       user.locationId ??
       (typeof query.locationId === 'string' && query.locationId ? query.locationId : null);
+  } else if (opts.floorLead && user.role === 'SHIFT_SUPERVISOR') {
+    // Clamped to their own client; ?clientId= is ignored. A store inside
+    // it may be named (validated below to belong to the same client).
+    if (!user.clientId) {
+      throw new HttpError(403, 'no_client_assigned', 'Your account is not assigned to a client.');
+    }
+    clientId = user.clientId;
+    locationId =
+      typeof query.locationId === 'string' && query.locationId ? query.locationId : null;
   } else if (
     hasCapability(user.role, 'view:executive') ||
     hasCapability(user.role, 'manage:org')
@@ -994,7 +1010,8 @@ function parseDayKey(raw: unknown, name: string): string {
  */
 clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next) => {
   try {
-    const scope = await resolveScope(req.user!, req.query);
+    // The supervisor's Today page is this page — same grammar, own client.
+    const scope = await resolveScope(req.user!, req.query, { floorLead: true });
     const now = new Date();
     const dateKey = req.query.date === undefined ? orgDateKey(now) : parseDayKey(req.query.date, 'date');
     const dayStart = utcInstantOfLocalMidnight(dateKey, ORG_TZ);

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { unreadMessages } from '@/lib/messagesApi';
 import { onLiveEvent } from '@/lib/liveEvents';
+import { useApprovalsCount } from '@/lib/useApprovalsCount';
 import {
   Briefcase,
   Calendar,
@@ -50,8 +51,9 @@ interface TabDef {
   label?: string;
   icon: LucideIcon;
   requires: Capability | null;
-  /** Live count shown on the tab — only the messenger has one. */
-  badge?: 'messages';
+  /** Live count shown on the tab — the messenger, and the supervisor's
+   *  decisions inbox. */
+  badge?: 'messages' | 'approvals';
 }
 
 const HOME_TAB: TabDef = {
@@ -75,6 +77,15 @@ const SCHEDULER_TABS: TabDef[] = [
   { path: '/scheduling', labelKey: 'tabs.schedule', icon: Calendar, requires: 'view:scheduling' },
   { path: '/approvals', label: 'Approvals', icon: Inbox, requires: 'manage:scheduling' },
   { path: '/time-attendance', label: 'Time', icon: Timer, requires: 'view:time' },
+];
+
+/** The shift supervisor's floor, the store manager's grammar: the floor
+ *  home, today's face wall, the schedule, and what's waiting on them. */
+const SUPERVISOR_TABS: TabDef[] = [
+  { path: DASHBOARD_NAV.path, labelKey: 'floor.title', icon: Store, requires: null },
+  { path: '/today', labelKey: 'portal.todayNav', icon: Users, requires: null },
+  { path: '/scheduling', labelKey: 'tabs.schedule', icon: Calendar, requires: 'view:scheduling' },
+  { path: '/approvals', label: 'Approvals', icon: Inbox, requires: 'manage:scheduling', badge: 'approvals' },
 ];
 
 /** Executive loop: numbers, clients, compliance — never a punch clock. */
@@ -126,6 +137,8 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
         ? EXEC_TABS
         : user?.role === 'FLOOR_SUPERVISOR'
           ? FLOOR_TABS
+          : user?.role === 'SHIFT_SUPERVISOR'
+            ? SUPERVISOR_TABS
           : user?.role === 'CLIENT_PORTAL'
             ? user.regionId && !user.clientId
               ? REGION_TABS
@@ -143,9 +156,10 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
     <nav
       aria-label="Primary"
       className={cn(
-        // The store manager's four destinations are labeled tabs, not
-        // icon-rail guesses — keep them through iPad widths.
-        user?.role === 'CLIENT_PORTAL' ? 'lg:hidden' : 'md:hidden',
+        // The store manager's and the shift supervisor's four
+        // destinations are labeled tabs, not icon-rail guesses — keep
+        // them through iPad widths.
+        user?.role === 'CLIENT_PORTAL' || user?.role === 'SHIFT_SUPERVISOR' ? 'lg:hidden' : 'md:hidden',
         'shrink-0 flex items-stretch border-t border-navy-secondary bg-navy pb-[env(safe-area-inset-bottom)]',
       )}
     >
@@ -167,6 +181,7 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
             <span className="relative">
               <Icon className="h-5 w-5" aria-hidden="true" strokeWidth={active ? 2.4 : 2} />
               {tab.badge === 'messages' && <UnreadMessagesBadge />}
+              {tab.badge === 'approvals' && <ApprovalsBadge />}
             </span>
             <span className={cn('w-full truncate px-1 text-center text-2xs leading-none', active && 'font-semibold')}>
               {tab.labelKey ? t(tab.labelKey) : tab.label}
@@ -188,6 +203,17 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
         <span className="text-2xs leading-none">{t('tabs.more')}</span>
       </button>
     </nav>
+  );
+}
+
+/** Decisions waiting on a supervisor — the same count as the nav badge. */
+function ApprovalsBadge() {
+  const n = useApprovalsCount() ?? 0;
+  if (n <= 0) return null;
+  return (
+    <span className="absolute -right-2 -top-1.5 rounded-full bg-gold px-1 text-[10px] font-semibold leading-4 text-on-accent">
+      {n > 99 ? '99+' : n}
+    </span>
   );
 }
 

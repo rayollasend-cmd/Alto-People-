@@ -80,6 +80,7 @@ describe('visibleModules — SHIFT_SUPERVISOR curation', () => {
       new Set<ModuleKey>([
         'me',
         'messages',
+        'floor-today',
         'scheduling',
         'approvals',
         'time-attendance',
@@ -122,5 +123,17 @@ describe('visibleModules — FLOOR_SUPERVISOR curation', () => {
     expect(new Set(keysFor('FLOOR_SUPERVISOR'))).toEqual(
       new Set<ModuleKey>(['me', 'messages', 'time-attendance']),
     );
+  });
+});
+
+describe('visibleModules — the supervisor Today page', () => {
+  // /today is the portal's Day page opened on the supervisor's own client
+  // (the day route opts SHIFT_SUPERVISOR in). Other manage:scheduling
+  // holders have no client to open it on, so it stays out of their nav.
+  it('is in the shift supervisor nav and nobody else\'s', () => {
+    expect(keysFor('SHIFT_SUPERVISOR')).toContain('floor-today');
+    for (const role of ['HR_ADMINISTRATOR', 'OPERATIONS_MANAGER', 'WORKFORCE_MANAGER', 'FINANCE_ACCOUNTANT', 'FLOOR_SUPERVISOR', 'CLIENT_PORTAL'] as Role[]) {
+      expect(keysFor(role)).not.toContain('floor-today');
+    }
   });
 });

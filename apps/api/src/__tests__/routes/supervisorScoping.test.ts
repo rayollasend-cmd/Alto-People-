@@ -1017,3 +1017,32 @@ describe('labor cost is withheld from the supervisor', () => {
     expect((await hr.get(`/scheduling/labor-costs?${window}`)).status).toBe(200);
   });
 });
+
+describe('the day roster (the supervisor Today page)', () => {
+  // /client-portal/day opts the supervisor in, clamped to their client —
+  // the roster and punches only. The portal's money/report routes never
+  // take the opt-in.
+  it('serves their own client only, and nothing else of the portal', async () => {
+    const { mine, other, myAssoc, otherAssoc, sup } = await seedTwoClients();
+    const startsAt = new Date(Date.now() - 2 * 3_600_000);
+    const endsAt = new Date(Date.now() + 6 * 3_600_000);
+    await prisma.shift.createMany({
+      data: [
+        { clientId: mine.id, position: 'Server', startsAt, endsAt, status: 'ASSIGNED', assignedAssociateId: myAssoc.id, publishedAt: new Date() },
+        { clientId: other.id, position: 'Server', startsAt, endsAt, status: 'ASSIGNED', assignedAssociateId: otherAssoc.id, publishedAt: new Date() },
+      ],
+    });
+
+    const day = await sup.get(`/client-portal/day?clientId=${other.id}`);
+    expect(day.status).toBe(200);
+    expect(day.body.client.id).toBe(mine.id);
+    const ids = (day.body.roster as Array<{ associateId: string }>).map((r) => r.associateId);
+    expect(ids).toEqual([myAssoc.id]);
+
+    for (const path of ['/client-portal/overview', '/client-portal/history', '/client-portal/schedule']) {
+      expect((await sup.get(path)).status, path).toBe(403);
+    }
+    const { user: floor } = await createUser({ role: 'FLOOR_SUPERVISOR', clientId: mine.id });
+    expect((await (await loginAs(floor.email)).get('/client-portal/day')).status).toBe(403);
+  });
+});

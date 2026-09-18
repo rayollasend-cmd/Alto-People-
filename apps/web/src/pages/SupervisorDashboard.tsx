@@ -1,704 +1,649 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  Activity,
-  AlertCircle,
-  ArrowLeftRight,
-  ArrowRight,
-  Building2,
-  Calendar,
-  CalendarOff,
-  CheckCircle2,
-  ClipboardList,
-  Clock,
-  Inbox,
-  Store,
-  Users,
-  type LucideIcon,
-} from 'lucide-react';
-import type { ActiveDashboardEntry, Shift } from '@alto-people/shared';
+import { CalendarDays, MapPin, Timer, Users } from 'lucide-react';
+import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
+import { ApiError, apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useI18n } from '@/lib/i18n';
+import { boundedClientOf } from '@/lib/roles';
+import { listClientLocations } from '@/lib/clientsApi';
+import { getSchedulingKpis, listShifts } from '@/lib/schedulingApi';
 import {
   fmtDate,
   fmtShiftRangeTz,
   fmtTime,
+  parseYmd,
   ymdLocal,
   zonedDayKey,
+  zonedMinutesOfDay,
 } from '@/lib/format';
-import { getActiveDashboard } from '@/lib/timeApi';
-import {
-  listAdminSwaps,
-  listOpenShiftClaims,
-  listShifts,
-} from '@/lib/schedulingApi';
-import { listAdminRequests } from '@/lib/timeOffApi';
-import { useApprovalsCount } from '@/lib/useApprovalsCount';
-import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
-import { Card, CardContent } from '@/components/ui/Card';
-import { Skeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
+import { enterStagger } from '@/lib/motion';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Card, CardContent } from '@/components/ui/Card';
+import { Avatar } from '@/components/ui/Avatar';
+import { Button } from '@/components/ui/Button';
+import { ErrorBanner } from '@/components/ui/ErrorBanner';
+import { Skeleton } from '@/components/ui/Skeleton';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { MyPlanCard } from '@/components/MyPlanCard';
-
-const greetingFor = (hour: number): string => {
-  if (hour < 5) return 'Up late';
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  if (hour < 22) return 'Good evening';
-  return 'Burning the midnight oil';
-};
-
-const firstNameFromEmail = (email: string): string => {
-  const local = email.split('@')[0] ?? '';
-  const first = local.split(/[._-]+/)[0] ?? local;
-  return first ? first.charAt(0).toUpperCase() + first.slice(1) : 'there';
-};
+import { coverageByHour } from '@/pages/portal/coverage';
+import { groupWaves, wavePresent, type WaveRow } from '@/pages/portal/waves';
+import { shiftDays } from '@/pages/portal/scope';
+import { CoverageCurve, DetailsTable, StatTile, WeekFillChart } from '@/pages/portal/portalCharts';
 
 /**
- * Supervisor dashboard — the SHIFT_SUPERVISOR landing surface. Every
- * endpoint used here is already client-scoped server-side (the scope*
- * helpers pin the caller to their bound client), so this page just
- * composes "your site today": who's on the clock, today's shifts, open
- * coverage, and the decisions waiting in the approvals inbox.
+ * My floor — the SHIFT_SUPERVISOR's home, in the store manager's grammar.
+ *
+ * It reads top-down like the portal's morning brief, from the other side
+ * of the counter: the place (the store, not the app), the floor RIGHT NOW
+ * against the contracted line drawn across today, the four numbers a
+ * supervisor runs the week by, then the cards — what's waiting on them,
+ * today shift by shift, the next seven days, and their own plan. The
+ * roster is faces on /today, never a wall of names here.
+ *
+ * Every read is clamped to the supervisor's client server-side. The day
+ * roster is the portal's own /client-portal/day (the route opts this role
+ * in), so the supervisor and the store manager can never disagree about
+ * who is on the floor. No money anywhere — labor cost is withheld from
+ * this role.
  */
+
+interface DayPayload {
+  client: { id: string; name: string };
+  store: { id: string; name: string; timezone: string } | null;
+  date: string;
+  today: string;
+  generatedAt: string;
+  target: number | null;
+  roster: WaveRow[];
+  summary: { expected: number; worked: number; onFloor: number; missed: number; open: number };
+}
+
+interface ApprovalsCount {
+  swaps: number;
+  pickups: number;
+  timeOff: number;
+  timesheets: number;
+  clockIns: number;
+  total: number;
+}
+
+const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
+const DAY_MS = 86_400_000;
+
+/** Local midnight of the Sunday that starts this week — the same window
+ *  the scheduling KPI strip defaults to. */
+function weekStart(offsetWeeks = 0): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - d.getDay() + offsetWeeks * 7);
+  return d;
+}
+
+const WEEKDAY = new Intl.DateTimeFormat('en-US', { weekday: 'short' });
+function weekdayShort(ymd: string): string {
+  const d = parseYmd(ymd);
+  return d ? WEEKDAY.format(d) : '';
+}
+
+function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
 export function SupervisorDashboard() {
-  const pullQueryClient = useQueryClient();
-  const pullState = usePullToRefresh(() => pullQueryClient.invalidateQueries());
+  const { t } = useI18n();
   const { user } = useAuth();
-  const [now, setNow] = useState(() => new Date());
-
-  useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 60_000);
-    return () => clearInterval(t);
-  }, []);
-
+  const queryClient = useQueryClient();
+  const pullState = usePullToRefresh(() => queryClient.invalidateQueries());
+  const client = boundedClientOf(user);
   const todayKey = ymdLocal();
+  const tomorrowKey = shiftDays(todayKey, 1);
 
-  // One week of shifts starting at local midnight — today's list AND the
-  // open-shift counts both derive from this single fetch.
-  const shiftsQuery = useQuery({
-    queryKey: ['supervisor', 'shifts', todayKey],
+  // ---- Reads -------------------------------------------------------------
+  const dayQuery = useQuery({
+    queryKey: ['floor', 'day', todayKey],
+    queryFn: () => apiFetch<DayPayload>('/client-portal/day'),
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+    placeholderData: (prev) => prev,
+  });
+  const tomorrowQuery = useQuery({
+    queryKey: ['floor', 'day', tomorrowKey],
+    queryFn: () => apiFetch<DayPayload>(`/client-portal/day?date=${tomorrowKey}`),
+    refetchInterval: 5 * 60_000,
+  });
+  const locationsQuery = useQuery({
+    queryKey: ['floor', 'locations', client?.id],
+    queryFn: () => listClientLocations(client!.id),
+    enabled: !!client,
+    staleTime: 10 * 60_000,
+  });
+  // The next seven days, today first — the fill chart and the open count.
+  const aheadQuery = useQuery({
+    queryKey: ['floor', 'ahead', todayKey],
     queryFn: () => {
       const from = new Date();
       from.setHours(0, 0, 0, 0);
-      const to = new Date(from.getTime() + 7 * 86_400_000);
-      return listShifts({ from: from.toISOString(), to: to.toISOString() });
+      return listShifts({ from: from.toISOString(), to: new Date(from.getTime() + 7 * DAY_MS).toISOString() });
     },
   });
-  // Live "who's on the clock" — refreshed every minute like the Time page.
-  const activeQuery = useQuery({
-    queryKey: ['supervisor', 'active-entries'],
-    queryFn: async () => (await getActiveDashboard()).entries,
+  const kpiThis = useQuery({
+    queryKey: ['floor', 'kpis', 'this', todayKey],
+    queryFn: () =>
+      getSchedulingKpis({ from: weekStart(0).toISOString(), to: weekStart(1).toISOString() }),
+  });
+  const kpiLast = useQuery({
+    queryKey: ['floor', 'kpis', 'last', todayKey],
+    queryFn: () =>
+      getSchedulingKpis({ from: weekStart(-1).toISOString(), to: weekStart(0).toISOString() }),
+  });
+  const approvalsQuery = useQuery({
+    queryKey: ['floor', 'approvals-count'],
+    queryFn: () => apiFetch<ApprovalsCount>('/approvals/count'),
     refetchInterval: 60_000,
   });
-  // Decision queues: swaps the peer already accepted (your call now),
-  // pending open-shift pickups, and pending time-off requests.
-  const swapsQuery = useQuery({
-    queryKey: ['supervisor', 'swaps', 'PEER_ACCEPTED'],
-    queryFn: async () =>
-      (await listAdminSwaps({ status: 'PEER_ACCEPTED' })).requests,
-  });
-  const claimsQuery = useQuery({
-    queryKey: ['supervisor', 'open-shift-claims'],
-    queryFn: async () => (await listOpenShiftClaims()).claims,
-  });
-  const timeOffQuery = useQuery({
-    queryKey: ['supervisor', 'timeoff', 'PENDING'],
-    queryFn: async () => (await listAdminRequests('PENDING')).requests,
-  });
-  // Nav-badge hook (server-scoped /approvals/count) doubles as the KPI —
-  // it polls, refreshes on focus, and never surfaces an error state.
-  const approvalsTotal = useApprovalsCount();
 
-  const shifts: Shift[] | null = shiftsQuery.data?.shifts ?? null;
-  const activeEntries: ActiveDashboardEntry[] | null =
-    activeQuery.data ?? null;
+  const data = dayQuery.data;
+  const waves = useMemo(() => (data ? groupWaves(data.roster) : []), [data]);
+  const storeTz = data?.store?.timezone ?? data?.roster[0]?.timezone ?? null;
+  const curve = useMemo(
+    () =>
+      data
+        ? coverageByHour(
+            data.roster.map((r) => ({
+              startsAt: r.startsAt,
+              endsAt: r.endsAt,
+              timezone: r.timezone,
+              state: r.state === 'open' ? ('open' as const) : ('confirmed' as const),
+            })),
+            data.date,
+            storeTz,
+          )
+        : [],
+    [data, storeTz],
+  );
 
-  // Today's shifts, bucketed by the STORE's calendar day (a shift is a UTC
-  // instant but belongs to the site), sorted by start time.
-  const todayShifts = useMemo(() => {
+  // Next seven days, one column per day: filled vs unfilled.
+  const aheadDays = useMemo(() => {
+    const shifts = aheadQuery.data?.shifts;
     if (!shifts) return null;
-    return shifts
-      .filter(
+    return Array.from({ length: 7 }, (_, i) => {
+      const date = shiftDays(todayKey, i);
+      const onDay = shifts.filter(
         (s) =>
           s.status !== 'CANCELLED' &&
-          zonedDayKey(s.startsAt, s.timezone) === todayKey,
-      )
-      .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
-  }, [shifts, todayKey]);
-  const openToday =
-    todayShifts?.filter((s) => s.status === 'OPEN').length ?? 0;
-  const openWeek = shifts?.filter((s) => s.status === 'OPEN').length ?? 0;
+          s.status !== 'DRAFT' &&
+          zonedDayKey(s.startsAt, s.timezone) === date,
+      );
+      const open = onDay.filter((s) => s.status === 'OPEN').length;
+      return {
+        date,
+        day: weekdayShort(date),
+        filled: onDay.length - open,
+        open,
+      };
+    });
+  }, [aheadQuery.data, todayKey]);
 
-  // associateId → active entry, to mark "on the clock" rows.
-  const activeByAssociate = useMemo(() => {
-    const m = new Map<string, ActiveDashboardEntry>();
-    for (const e of activeEntries ?? []) m.set(e.associateId, e);
-    return m;
-  }, [activeEntries]);
+  // ---- The place ---------------------------------------------------------
+  const locations = (locationsQuery.data?.locations ?? []).filter((l) => l.isActive);
+  const oneStore = locations.length === 1 ? locations[0] : null;
+  const placeName = oneStore?.name ?? data?.client.name ?? client?.name ?? t('floor.title');
+  const address = oneStore
+    ? [
+        oneStore.addressLine1,
+        [oneStore.city, [oneStore.state, oneStore.zip].filter(Boolean).join(' ')].filter(Boolean).join(', '),
+      ]
+        .filter(Boolean)
+        .join(' · ')
+    : null;
 
-  const pendingSwaps = swapsQuery.data?.length ?? 0;
-  const pendingPickups =
-    claimsQuery.data?.filter((c) => c.status === 'PENDING').length ?? 0;
-  const pendingTimeOff = timeOffQuery.data?.length ?? 0;
+  const header = (
+    <PageHeader
+      title={placeName}
+      topbarTitle={t('floor.title')}
+      subtitle={
+        <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span>
+            {oneStore
+              ? (data?.client.name ?? client?.name)
+              : locations.length > 1
+                ? plural(locations.length, 'store', 'stores')
+                : t('floor.title')}
+          </span>
+          {address && (
+            <span className="flex items-center gap-1 text-silver/70">
+              <MapPin className="h-3 w-3" aria-hidden="true" />
+              {address}
+            </span>
+          )}
+          {data && (
+            <span className="flex items-center gap-1.5 text-xs text-silver/60">
+              <span className="relative flex h-1.5 w-1.5" aria-hidden="true">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
+              </span>
+              {t('portal.asOf', { time: fmtTime(data.generatedAt) })}
+            </span>
+          )}
+        </span>
+      }
+      secondaryActions={
+        <>
+          <Button size="sm" variant="outline" asChild>
+            <Link to="/time-attendance">
+              <Timer className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              Live board
+            </Link>
+          </Button>
+          <Button size="sm" variant="outline" asChild>
+            <Link to="/today">
+              <Users className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              {t('portal.todayNav')}
+            </Link>
+          </Button>
+        </>
+      }
+      primaryAction={
+        <Button size="sm" asChild>
+          <Link to="/scheduling">
+            <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+            Open schedule
+          </Link>
+        </Button>
+      }
+    />
+  );
 
-  const greetingName =
-    user?.firstName?.trim() ||
-    (user?.email ? firstNameFromEmail(user.email) : 'there');
-  const greeting = greetingFor(now.getHours());
-  const clientName = user?.clientName ?? null;
+  if (dayQuery.isError && !data) {
+    return (
+      <div className="mx-auto space-y-4">
+        {header}
+        <ErrorBanner
+          action={
+            <Button size="sm" variant="secondary" onClick={() => void dayQuery.refetch()}>
+              {t('common.retry')}
+            </Button>
+          }
+        >
+          {dayQuery.error instanceof ApiError ? dayQuery.error.message : t('portal.loadFailed')}
+        </ErrorBanner>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-10 w-1/3" />
+        <Skeleton className="h-64" />
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Skeleton className="h-24" />
+          <Skeleton className="h-24" />
+          <Skeleton className="h-24" />
+          <Skeleton className="h-24" />
+        </div>
+        <Skeleton className="h-64" />
+      </div>
+    );
+  }
+
+  // ---- Hero figures ------------------------------------------------------
+  const onFloor = data.roster.filter((r) => r.state === 'on-floor');
+  const target = data.target;
+  const short = target !== null && onFloor.length < target;
+  const staffed = target !== null ? onFloor.length >= target : onFloor.length > 0;
+  const heroTone = short ? 'warning' : staffed ? 'success' : 'gold';
+  const scheduledNow = data.roster.filter((r) => r.state === 'on-floor' || r.state === 'not-in').length;
+  const nowHour =
+    zonedDayKey(new Date(), storeTz) === data.date
+      ? Math.floor(zonedMinutesOfDay(new Date(), storeTz) / 60)
+      : null;
+
+  // ---- KPI figures -------------------------------------------------------
+  const k = kpiThis.data;
+  const kLast = kpiLast.data;
+  const filledWeek = k ? k.assignedShifts + k.completedShifts : 0;
+  const fillDelta =
+    k && kLast && kLast.openShifts + kLast.assignedShifts + kLast.completedShifts > 0
+      ? k.fillRatePercent - kLast.fillRatePercent
+      : null;
+  const openAhead = aheadDays?.reduce((n, d) => n + d.open, 0) ?? null;
+  const filledAhead = aheadDays?.reduce((n, d) => n + d.filled, 0) ?? 0;
+  const tm = tomorrowQuery.data?.roster ?? null;
+  const tmConfirmed = tm?.filter((r) => r.state === 'confirmed').length ?? 0;
+  const tmUnconfirmed = tm?.filter((r) => r.state === 'unconfirmed').length ?? 0;
+  const tmOpen = tm?.filter((r) => r.state === 'open').length ?? 0;
+  const tmTotal = tmConfirmed + tmUnconfirmed + tmOpen;
+  const ap = approvalsQuery.data;
 
   return (
-    <div className="mx-auto space-y-8">
+    <div className="mx-auto space-y-4">
       <PullToRefreshIndicator state={pullState} />
-      {/* Greeting strip */}
-      <header>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="text-xs2 uppercase tracking-[0.18em] text-silver flex items-center gap-2">
-            <Calendar className="h-3 w-3" aria-hidden="true" />
-            {fmtDate(now)}
-          </div>
-          <span className="inline-flex items-center gap-1 rounded-full border border-steel/60 bg-steel/20 px-2 py-0.5 text-2xs uppercase tracking-widest text-white">
-            Supervisor view
-          </span>
-          {clientName && (
-            <Badge variant="accent" className="tracking-widest">
-              <Building2 className="h-3 w-3" aria-hidden="true" />
-              {clientName}
-            </Badge>
-          )}
-        </div>
-        <h1 className="font-display text-3xl md:text-4xl text-white mt-2 leading-tight">
-          {greeting}, <span className="text-gold">{greetingName}</span>.
-        </h1>
-        <p className="text-silver mt-2 text-sm md:text-base">
-          Your site today — who&apos;s on, who&apos;s late, what&apos;s open.
-        </p>
-      </header>
+      {header}
 
-      <RoleDecisionQueue />
-      <MyPlanCard />
-
-      {/* KPI tiles */}
-      <section aria-label="Site snapshot" className="space-y-3">
-        <SectionTitle icon={Activity}>Site snapshot</SectionTitle>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {activeQuery.error ? (
-            <QueryErrorCard
-              label="On the clock now — failed to load"
-              onRetry={() => void activeQuery.refetch()}
-            />
-          ) : activeEntries === null ? (
-            <KpiSkeleton />
-          ) : (
-            <KpiTile
-              icon={Clock}
-              label="On the clock now"
-              value={String(activeEntries.length)}
-              hint={
-                activeEntries.length === 0
-                  ? 'No one clocked in right now.'
-                  : activeEntries.some((e) => e.onBreak)
-                    ? `${activeEntries.filter((e) => e.onBreak).length} on break`
-                    : undefined
-              }
-              to="/time-attendance"
-            />
-          )}
-          {shiftsQuery.error ? (
-            <QueryErrorCard
-              label="Today's shifts — failed to load"
-              onRetry={() => void shiftsQuery.refetch()}
-            />
-          ) : todayShifts === null ? (
-            <KpiSkeleton />
-          ) : (
-            <KpiTile
-              icon={Calendar}
-              label="Today's shifts"
-              value={String(todayShifts.length)}
-              hint={
-                todayShifts.length === 0
-                  ? 'Nothing scheduled today.'
-                  : undefined
-              }
-              to="/scheduling"
-            />
-          )}
-          {shiftsQuery.error ? (
-            <QueryErrorCard
-              label="Open shifts — failed to load"
-              onRetry={() => void shiftsQuery.refetch()}
-            />
-          ) : shifts === null ? (
-            <KpiSkeleton />
-          ) : (
-            <KpiTile
-              icon={Store}
-              label="Open shifts today"
-              value={String(openToday)}
-              hint={
-                openWeek > 0
-                  ? `${openWeek} open in the next 7 days`
-                  : 'Week fully covered'
-              }
-              to="/scheduling"
-            />
-          )}
-          {approvalsTotal === null ? (
-            <KpiSkeleton />
-          ) : (
-            <KpiTile
-              icon={Inbox}
-              label="Pending approvals"
-              value={String(approvalsTotal)}
-              hint="Swaps, pickups, time off, timesheets"
-              to="/approvals"
-            />
-          )}
-        </div>
-      </section>
-
-      <TodaySection
-        clientName={clientName}
-        todayShifts={todayShifts}
-        error={Boolean(shiftsQuery.error)}
-        onRetry={() => void shiftsQuery.refetch()}
-        activeByAssociate={activeByAssociate}
-        nowMs={now.getTime()}
-      />
-
-      <DecisionsSection
-        pendingSwaps={pendingSwaps}
-        pendingPickups={pendingPickups}
-        pendingTimeOff={pendingTimeOff}
-        loading={
-          (!swapsQuery.error && swapsQuery.data === undefined) ||
-          (!claimsQuery.error && claimsQuery.data === undefined) ||
-          (!timeOffQuery.error && timeOffQuery.data === undefined)
-        }
-        error={Boolean(
-          swapsQuery.error ?? claimsQuery.error ?? timeOffQuery.error,
+      {/* ---- Hero: the floor right now, drawn across the day ------------- */}
+      <Card
+        className={cn(
+          'relative overflow-hidden animate-enter',
+          heroTone === 'warning'
+            ? 'border-warning/30 bg-gradient-to-br from-warning/[0.14] via-transparent to-transparent'
+            : 'border-gold/30 bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent',
         )}
-        onRetry={() => {
-          if (swapsQuery.error) void swapsQuery.refetch();
-          if (claimsQuery.error) void claimsQuery.refetch();
-          if (timeOffQuery.error) void timeOffQuery.refetch();
-        }}
-      />
+      >
+        <div
+          aria-hidden="true"
+          className={cn(
+            'pointer-events-none absolute inset-0',
+            heroTone === 'success'
+              ? 'bg-[radial-gradient(circle_at_10%_0%,rgb(var(--color-success)/0.14),transparent_50%)]'
+              : heroTone === 'warning'
+                ? 'bg-[radial-gradient(circle_at_10%_0%,rgb(var(--color-warning)/0.14),transparent_50%)]'
+                : 'bg-[radial-gradient(circle_at_10%_0%,rgb(var(--color-gold)/0.14),transparent_50%)]',
+          )}
+        />
+        <CardContent className="relative p-5">
+          <div className="grid gap-5 md:grid-cols-12">
+            <div className="md:col-span-4">
+              <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
+                <Users className="h-3.5 w-3.5" aria-hidden="true" />
+                {t('portal.onFloorNow')}
+              </span>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span
+                  className={cn(
+                    'text-5xl font-bold leading-none tracking-tight sm:text-6xl',
+                    short ? 'text-warning' : 'text-white',
+                  )}
+                >
+                  {onFloor.length}
+                </span>
+                {target !== null && (
+                  <span className="text-2xl font-semibold text-silver/60">/ {target}</span>
+                )}
+              </div>
+              <p className="mt-2 text-sm text-silver">
+                {target !== null
+                  ? short
+                    ? t('portal.heroShort', { missing: target - onFloor.length, window: t('portal.heroContracted') })
+                    : t('portal.heroMet', { window: t('portal.heroContracted') })
+                  : scheduledNow > 0
+                    ? t('portal.onOfSched', { on: onFloor.length, sched: scheduledNow })
+                    : onFloor.length > 0
+                      ? t('portal.onPlain', { on: onFloor.length })
+                      : t('portal.nobodyNow')}
+              </p>
+              {onFloor.length > 0 && (
+                <Link to="/today" className="mt-3 flex items-center -space-x-2" aria-label={t('portal.todayOpen')}>
+                  {onFloor.slice(0, 8).map((p) => (
+                    <Avatar
+                      key={p.shiftId}
+                      src={p.associateId ? photoUrl(p.associateId) : null}
+                      name={p.name ?? ''}
+                      email=""
+                      size="md"
+                      ringed
+                    />
+                  ))}
+                  {onFloor.length > 8 && (
+                    <span className="pl-4 text-sm text-silver tabular-nums">+{onFloor.length - 8}</span>
+                  )}
+                </Link>
+              )}
+            </div>
+            <div className="md:col-span-8">
+              <div className="flex items-baseline justify-between gap-3">
+                <h2 className="text-sm font-medium text-white">{t('portal.curveTitle')}</h2>
+                <span className="text-xs text-silver/60 tabular-nums">
+                  {t('portal.todayMeta', { filled: data.summary.expected, open: data.summary.open })}
+                </span>
+              </div>
+              <div className="mt-2">
+                <CoverageCurve
+                  points={curve}
+                  target={target}
+                  nowHour={nowHour}
+                  labels={{
+                    scheduled: t('portal.chartScheduled'),
+                    open: t('portal.chartOpen'),
+                    contracted: t('portal.chartContracted'),
+                    now: t('portal.chartNow'),
+                    at: (h) => t('portal.chartAt', { hour: h }),
+                  }}
+                />
+                <DetailsTable
+                  label={t('portal.details')}
+                  columns={[t('portal.chartHour'), t('portal.chartScheduled'), t('portal.chartOpen')]}
+                  rows={curve.filter((p) => p.scheduled + p.open > 0).map((p) => [p.label, p.scheduled, p.open])}
+                />
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ---- KPI strip: the four numbers the week runs on ----------------- */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 animate-enter" style={enterStagger(1)}>
+        <StatTile
+          label="Fill rate · this week"
+          value={k ? `${k.fillRatePercent}%` : '—'}
+          delta={fillDelta !== null ? `${fillDelta > 0 ? '+' : ''}${fillDelta} ${t('portal.kpiPts')}` : null}
+          deltaTone={fillDelta === null || fillDelta === 0 ? 'neutral' : fillDelta > 0 ? 'good' : 'bad'}
+          meter={
+            k
+              ? { percent: k.fillRatePercent, tone: k.fillRatePercent >= 95 ? 'good' : k.fillRatePercent >= 85 ? 'primary' : 'warn' }
+              : null
+          }
+          sub={k ? `${filledWeek} of ${filledWeek + k.openShifts} shifts filled` : undefined}
+        />
+        <TileLink to="/scheduling">
+          <StatTile
+            className="h-full"
+            label="Open shifts · next 7 days"
+            value={openAhead ?? '—'}
+            meter={
+              openAhead !== null && filledAhead + openAhead > 0
+                ? {
+                    percent: Math.round((filledAhead / (filledAhead + openAhead)) * 100),
+                    tone: openAhead > 0 ? 'warn' : 'good',
+                  }
+                : null
+            }
+            sub={
+              aheadDays
+                ? openAhead === 0
+                  ? 'Every shift covered'
+                  : `${aheadDays[0]!.open} today · ${aheadDays[1]!.open} tomorrow`
+                : undefined
+            }
+          />
+        </TileLink>
+        <StatTile
+          label="Tomorrow · confirmed"
+          value={tm === null ? '—' : tmTotal === 0 ? '—' : tmConfirmed}
+          unit={tm !== null && tmTotal > 0 ? `/ ${tmTotal}` : undefined}
+          meter={
+            tmTotal > 0
+              ? { percent: Math.round((tmConfirmed / tmTotal) * 100), tone: tmOpen > 0 ? 'warn' : 'good' }
+              : null
+          }
+          sub={
+            tm === null
+              ? undefined
+              : tmTotal === 0
+                ? t('portal.tomorrowNone')
+                : [
+                    tmOpen > 0 && t('portal.openCount', { count: tmOpen }),
+                    tmUnconfirmed > 0 && t('portal.awaiting', { count: tmUnconfirmed }),
+                  ]
+                    .filter(Boolean)
+                    .join(' · ') || t('portal.tomorrowAllSet')
+          }
+        />
+        <TileLink to="/approvals">
+          <StatTile
+            className="h-full"
+            label="Waiting on you"
+            value={ap ? ap.total : '—'}
+            sub={
+              ap
+                ? ap.total === 0
+                  ? 'Nothing waiting — inbox zero'
+                  : [
+                      ap.clockIns > 0 && plural(ap.clockIns, 'walk-in', 'walk-ins'),
+                      ap.swaps > 0 && plural(ap.swaps, 'swap', 'swaps'),
+                      ap.pickups > 0 && plural(ap.pickups, 'pickup', 'pickups'),
+                      ap.timeOff > 0 && `${ap.timeOff} time off`,
+                      ap.timesheets > 0 && plural(ap.timesheets, 'timesheet', 'timesheets'),
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')
+                : undefined
+            }
+          />
+        </TileLink>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
+        {/* ---- What's waiting on them -------------------------------------- */}
+        <div className="animate-enter md:col-span-2 xl:col-span-7" style={enterStagger(2)}>
+          <RoleDecisionQueue />
+        </div>
+
+        {/* ---- Today by shift (the faces live on /today) ------------------- */}
+        <Card className="animate-enter md:col-span-2 xl:col-span-5" style={enterStagger(3)}>
+          <CardContent className="p-5">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className="text-sm font-medium text-white">{t('portal.todayByShift')}</h2>
+              <Link to="/today" className="text-xs text-gold underline-offset-2 hover:underline">
+                {t('portal.todayOpen')}
+              </Link>
+            </div>
+            {waves.length === 0 ? (
+              <p className="mt-3 text-sm text-silver/60">{t('portal.noShiftsToday')}</p>
+            ) : (
+              <ul className="mt-3 space-y-3">
+                {waves.map((w) => {
+                  const inCount = w.phase === 'finished' ? wavePresent(w) : w.clockedIn.length;
+                  const pct = w.expected > 0 ? Math.round((inCount / w.expected) * 100) : 0;
+                  const waveShort = w.phase === 'live' && inCount < w.expected;
+                  return (
+                    <li key={w.key}>
+                      <Link
+                        to={`/today?wave=${encodeURIComponent(w.startsAt)}`}
+                        className="-mx-2 block rounded-md px-2 py-1 hover:bg-navy-secondary/30"
+                      >
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span
+                            className={cn(
+                              'text-sm tabular-nums',
+                              w.phase === 'finished' ? 'text-silver/70' : 'text-white',
+                            )}
+                          >
+                            {fmtShiftRangeTz(w.startsAt, w.endsAt, w.timezone)}
+                            {w.phase === 'live' && (
+                              <span className="ml-2 text-2xs font-medium uppercase tracking-wider text-success">
+                                {t('portal.live')}
+                              </span>
+                            )}
+                          </span>
+                          <span
+                            className={cn(
+                              'shrink-0 text-sm font-semibold tabular-nums',
+                              waveShort ? 'text-warning' : w.phase === 'finished' ? 'text-silver/70' : 'text-white',
+                            )}
+                          >
+                            {w.phase === 'upcoming'
+                              ? t('portal.waveExpected', { expected: w.expected })
+                              : t('portal.waveInOfShort', { in: inCount, expected: w.expected })}
+                            {w.open.length > 0 && (
+                              <span className="text-alert"> · {t('portal.openCount', { count: w.open.length })}</span>
+                            )}
+                          </span>
+                        </div>
+                        <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">
+                          <div
+                            className={cn(
+                              'h-full rounded-full',
+                              w.phase === 'upcoming' ? 'bg-silver/30' : waveShort ? 'bg-warning' : 'bg-success',
+                            )}
+                            style={{ width: `${w.phase === 'upcoming' ? 100 : pct}%` }}
+                          />
+                        </div>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ---- The next seven days: fill by day ---------------------------- */}
+        <Card className="animate-enter xl:col-span-7" style={enterStagger(4)}>
+          <CardContent className="p-5">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
+                <CalendarDays className="h-4 w-4 text-gold" aria-hidden="true" />
+                Next 7 days
+              </h2>
+              <Link to="/scheduling" className="text-xs text-gold underline-offset-2 hover:underline">
+                Open schedule
+              </Link>
+            </div>
+            {aheadDays === null ? (
+              <Skeleton className="mt-3 h-40" />
+            ) : (
+              <>
+                <div className="mt-3">
+                  <WeekFillChart
+                    days={aheadDays}
+                    todayKey={todayKey}
+                    labels={{
+                      filled: t('portal.chartFilled'),
+                      open: t('portal.chartOpen'),
+                      heading: (d) => {
+                        const row = aheadDays.find((x) => x.day === d);
+                        return row ? fmtDate(parseYmd(row.date)) : d;
+                      },
+                    }}
+                  />
+                </div>
+                <p className="mt-2 text-sm text-silver tabular-nums">
+                  {filledAhead + (openAhead ?? 0) === 0
+                    ? 'Nothing scheduled in the next seven days.'
+                    : `${filledAhead} of ${filledAhead + (openAhead ?? 0)} filled`}
+                  {openAhead ? <span className="text-alert"> · {t('portal.openCount', { count: openAhead })}</span> : null}
+                </p>
+                <DetailsTable
+                  label={t('portal.details')}
+                  columns={['Day', t('portal.chartFilled'), t('portal.chartOpen')]}
+                  rows={aheadDays.map((d) => [fmtDate(parseYmd(d.date)), d.filled, d.open])}
+                />
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ---- Their own plan ---------------------------------------------- */}
+        <div className="animate-enter xl:col-span-5" style={enterStagger(5)}>
+          <MyPlanCard />
+        </div>
+      </div>
     </div>
   );
 }
 
-/* ========================= Today at {client} ============================= */
-
-function TodaySection({
-  clientName,
-  todayShifts,
-  error,
-  onRetry,
-  activeByAssociate,
-  nowMs,
-}: {
-  clientName: string | null;
-  todayShifts: Shift[] | null;
-  error: boolean;
-  onRetry: () => void;
-  activeByAssociate: Map<string, ActiveDashboardEntry>;
-  nowMs: number;
-}) {
-  const title = clientName ? `Today at ${clientName}` : 'Today at your site';
-  return (
-    <section aria-label={title} className="space-y-3">
-      <div className="flex items-end justify-between gap-3">
-        <SectionTitle icon={Users}>{title}</SectionTitle>
-        <Link
-          to="/scheduling"
-          className="text-xs text-gold hover:text-gold-bright inline-flex items-center gap-1"
-        >
-          Open schedule
-          <ArrowRight className="h-3 w-3" />
-        </Link>
-      </div>
-      <Card>
-        <CardContent className="p-0">
-          {error ? (
-            <div className="p-6 text-center">
-              <div role="alert" className="text-sm text-alert">
-                Couldn&apos;t load today&apos;s shifts.
-              </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                className="mt-3"
-                onClick={onRetry}
-              >
-                Retry
-              </Button>
-            </div>
-          ) : todayShifts === null ? (
-            <div className="p-5 space-y-3">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-3">
-                  <Skeleton className="h-9 w-9 rounded-full" />
-                  <div className="flex-1">
-                    <Skeleton className="h-3 w-2/3 mb-1.5" />
-                    <Skeleton className="h-3 w-1/3" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : todayShifts.length === 0 ? (
-            <div className="p-6 text-center text-silver text-sm">
-              No shifts scheduled today.{' '}
-              <Link
-                to="/scheduling"
-                className="text-gold hover:text-gold-bright"
-              >
-                Plan the week
-              </Link>
-              .
-            </div>
-          ) : (
-            <ul className="divide-y divide-navy-secondary">
-              {todayShifts.map((s) => {
-                const activeEntry = s.assignedAssociateId
-                  ? activeByAssociate.get(s.assignedAssociateId)
-                  : undefined;
-                return (
-                  <li
-                    key={s.id}
-                    className="px-5 py-3 flex items-center gap-3 hover:bg-navy-secondary/20 transition-colors"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-white truncate flex items-center gap-2">
-                        {s.assignedAssociateName ??
-                          (s.status === 'OPEN' ? (
-                            <Badge variant="pending" size="sm">
-                              Open
-                            </Badge>
-                          ) : (
-                            'Unassigned'
-                          ))}
-                      </div>
-                      <div className="text-xs2 text-silver/80 truncate tabular-nums">
-                        {s.position} ·{' '}
-                        {fmtShiftRangeTz(s.startsAt, s.endsAt, s.timezone)}
-                        {s.locationName ? ` · ${s.locationName}` : ''}
-                      </div>
-                    </div>
-                    <ShiftStatusPill
-                      shift={s}
-                      activeEntry={activeEntry}
-                      nowMs={nowMs}
-                    />
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
-    </section>
-  );
-}
-
-function ShiftStatusPill({
-  shift,
-  activeEntry,
-  nowMs,
-}: {
-  shift: Shift;
-  activeEntry: ActiveDashboardEntry | undefined;
-  nowMs: number;
-}) {
-  // Sentence-case status chips on the Badge variant contract: success =
-  // live on the clock, default = finished, info = scheduled/upcoming.
-  if (activeEntry) {
-    return (
-      <Badge variant="success" className="shrink-0 normal-case tracking-normal">
-        On the clock · since {fmtTime(activeEntry.clockInAt)}
-      </Badge>
-    );
-  }
-  const ended =
-    shift.status === 'COMPLETED' ||
-    new Date(shift.endsAt).getTime() < nowMs;
-  if (ended) {
-    return (
-      <Badge variant="default" className="shrink-0 normal-case tracking-normal">
-        Done
-      </Badge>
-    );
-  }
-  return (
-    <Badge variant="info" className="shrink-0 normal-case tracking-normal">
-      Upcoming
-    </Badge>
-  );
-}
-
-/* ========================= Needs your decision =========================== */
-
-function DecisionsSection({
-  pendingSwaps,
-  pendingPickups,
-  pendingTimeOff,
-  loading,
-  error,
-  onRetry,
-}: {
-  pendingSwaps: number;
-  pendingPickups: number;
-  pendingTimeOff: number;
-  loading: boolean;
-  error: boolean;
-  onRetry: () => void;
-}) {
-  if (error) {
-    return (
-      <section aria-label="Needs your decision" className="space-y-3">
-        <SectionTitle icon={ClipboardList}>Needs your decision</SectionTitle>
-        <QueryErrorCard
-          label="Couldn't load your decision queues"
-          onRetry={onRetry}
-        />
-      </section>
-    );
-  }
-  if (loading) {
-    return (
-      <section aria-label="Needs your decision" className="space-y-3">
-        <SectionTitle icon={ClipboardList}>Needs your decision</SectionTitle>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <Card key={i}>
-              <CardContent className="pt-5">
-                <Skeleton className="h-3 w-20 mb-3" />
-                <Skeleton className="h-7 w-1/2 mb-2" />
-                <Skeleton className="h-3 w-2/3" />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </section>
-    );
-  }
-  if (pendingSwaps === 0 && pendingPickups === 0 && pendingTimeOff === 0) {
-    return (
-      <section aria-label="Needs your decision">
-        <Card className="border-success/30 bg-success/5">
-          <CardContent className="py-5 flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-success/15 grid place-items-center text-success shrink-0">
-              <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
-            </div>
-            <div>
-              <div className="text-white font-medium">Inbox zero</div>
-              <div className="text-sm text-silver">
-                No swaps, pickups, or time-off requests waiting on you.
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </section>
-    );
-  }
-  return (
-    <section aria-label="Needs your decision" className="space-y-3">
-      <SectionTitle icon={ClipboardList}>Needs your decision</SectionTitle>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <DecisionCard
-          icon={ArrowLeftRight}
-          count={pendingSwaps}
-          label={
-            pendingSwaps === 1
-              ? 'Swap awaiting approval'
-              : 'Swaps awaiting approval'
-          }
-          hint="The peer already accepted — your call now."
-          to="/approvals"
-          cta="Open approvals"
-          show={pendingSwaps > 0}
-        />
-        <DecisionCard
-          icon={Store}
-          count={pendingPickups}
-          label={
-            pendingPickups === 1
-              ? 'Open-shift pickup requested'
-              : 'Open-shift pickups requested'
-          }
-          hint="Approve to fill the shift."
-          to="/approvals"
-          cta="Open approvals"
-          show={pendingPickups > 0}
-        />
-        <DecisionCard
-          icon={CalendarOff}
-          count={pendingTimeOff}
-          label={
-            pendingTimeOff === 1
-              ? 'Time-off request waiting'
-              : 'Time-off requests waiting'
-          }
-          hint="Decide before the requested dates."
-          to="/time-off"
-          cta="Open time off"
-          show={pendingTimeOff > 0}
-        />
-      </div>
-    </section>
-  );
-}
-
-function DecisionCard({
-  icon: Icon,
-  count,
-  label,
-  hint,
-  to,
-  cta,
-  show,
-}: {
-  icon: LucideIcon;
-  count: number;
-  label: string;
-  hint?: string;
-  to: string;
-  cta: string;
-  show: boolean;
-}) {
-  if (!show) return null;
+/** A KPI tile that opens where the number is worked. */
+function TileLink({ to, children }: { to: string; children: React.ReactNode }) {
   return (
     <Link
       to={to}
-      className={cn(
-        // Same elevation ladder as the AdminDashboard cards: rest at
-        // elev-1, lift to elev-2 on hover.
-        'group flex flex-col rounded-lg border bg-navy p-5 elev-1 transition-all',
-        'border-warning/25 hover:border-warning/55',
-        'hover:-translate-y-0.5 hover:elev-2',
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight',
-      )}
+      className="group block rounded-lg transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright [&>div]:transition-colors [&>div]:hover:border-gold/40"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="h-10 w-10 rounded-lg grid place-items-center shrink-0 bg-warning/15 text-warning">
-          <Icon className="h-5 w-5" aria-hidden="true" />
-        </div>
-        <div className="font-display text-3xl tabular-nums leading-none text-warning">
-          {count}
-        </div>
-      </div>
-      <div className="mt-4 text-white font-medium leading-snug">{label}</div>
-      {hint && <div className="mt-1 text-xs text-silver">{hint}</div>}
-      <div className="mt-4 flex items-center gap-1 text-sm text-gold group-hover:text-gold-bright">
-        {cta}
-        <ArrowRight className="h-3.5 w-3.5 group-hover:translate-x-0.5 transition-transform" />
-      </div>
-    </Link>
-  );
-}
-
-/* ============================ Shared bits ================================ */
-
-function KpiTile({
-  icon: Icon,
-  label,
-  value,
-  hint,
-  to,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: string;
-  hint?: string;
-  to: string;
-}) {
-  return (
-    <Link
-      to={to}
-      className={cn(
-        'group block rounded-lg border border-navy-secondary border-l-2 border-l-gold/40 bg-navy p-5 elev-1 transition-all',
-        'hover:-translate-y-0.5 hover:border-l-gold-bright hover:elev-2',
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright focus-visible:ring-offset-2 focus-visible:ring-offset-midnight',
-      )}
-    >
-      <div className="flex items-center justify-between">
-        {/* Canonical KPI label spec (matches MetricCard). */}
-        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-          {label}
-        </div>
-        <Icon
-          className="h-3.5 w-3.5 text-gold/70 group-hover:text-gold-bright transition-colors"
-          aria-hidden="true"
-        />
-      </div>
-      <div className="font-display text-3xl md:text-hero text-gold-bright mt-3 leading-none tabular-nums">
-        {value}
-      </div>
-      {hint && <div className="text-xs text-silver mt-2 truncate">{hint}</div>}
-    </Link>
-  );
-}
-
-function KpiSkeleton() {
-  return (
-    <Card>
-      <CardContent className="pt-5">
-        <Skeleton className="h-3 w-20 mb-3" />
-        <Skeleton className="h-9 w-1/2 mb-2" />
-        <Skeleton className="h-3 w-1/3" />
-      </CardContent>
-    </Card>
-  );
-}
-
-/**
- * Rendered in place of a card whose query failed. Deliberately NOT a
- * skeleton or a zero count — "0 on the clock" when the request never
- * landed is confidently wrong.
- */
-function QueryErrorCard({
-  label,
-  onRetry,
-}: {
-  label: string;
-  onRetry: () => void;
-}) {
-  return (
-    <Card className="border-alert/40">
-      <CardContent className="pt-5">
-        <div role="alert" className="flex items-start gap-2 text-sm text-alert">
-          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" aria-hidden="true" />
-          <span>{label}</span>
-        </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          className="mt-3"
-          onClick={onRetry}
-        >
-          Retry
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
-function SectionTitle({
-  icon: Icon,
-  children,
-}: {
-  icon: LucideIcon;
-  children: React.ReactNode;
-}) {
-  return (
-    <h2 className="text-xs uppercase tracking-[0.18em] text-silver/80 flex items-center gap-2">
-      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
       {children}
-    </h2>
+    </Link>
   );
 }

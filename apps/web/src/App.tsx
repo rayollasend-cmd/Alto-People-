@@ -368,6 +368,8 @@ const LAYOUT_ROUTES = [
   // page gates internally, since no single capability fits both).
   { path: 'portal', element: <ClientPortalHome /> },
   { path: 'portal/today', element: <PortalToday /> },
+  // The shift supervisor's Today — the same page, opened on their client.
+  { path: 'today', element: <PortalToday /> },
   { path: 'portal/schedule', element: <PortalSchedule /> },
   { path: 'portal/requests', element: <PortalRequestsPage /> },
   { path: 'portal/history', element: <PortalHistory /> },

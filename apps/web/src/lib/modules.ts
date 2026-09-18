@@ -11,6 +11,7 @@ export type ModuleKey =
   | 'portal-schedule'
   | 'portal-history'
   | 'portal-requests'
+  | 'floor-today'
   | 'relay'
   | 'statements'
   | 'timesheets'
@@ -291,6 +292,7 @@ const RECRUITER_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
 const SHIFT_SUPERVISOR_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
   'messages',
+  'floor-today', // the face wall — the store manager's Today page, their client
   'scheduling',
   'approvals',
   'time-attendance',
@@ -320,6 +322,10 @@ export function visibleModules(
     (m) =>
       (!m.key.startsWith('portal') || role === 'CLIENT_PORTAL') &&
       (m.key !== 'region' || role === 'CLIENT_PORTAL') &&
+      // The supervisor's Today is the portal's Day page opened on their
+      // own client (/client-portal/day opts the role in). Nobody else has
+      // a client to open it on without a preview id.
+      (m.key !== 'floor-today' || role === 'SHIFT_SUPERVISOR') &&
       (m.key !== 'messages' || (role !== 'ASSOCIATE' && role !== 'LIVE_ASN')),
   ).filter(
     // "Timesheets" is Finance's name for the T&A surface — everyone else
@@ -408,6 +414,15 @@ export const MODULES: ModuleNav[] = [
     description:
       'Every store in your region at a glance — on the floor vs contracted, today, tomorrow, the grade, open requests — with each store one tap away.',
     requires: 'view:dashboard',
+    group: 'core',
+  },
+  {
+    key: 'floor-today',
+    path: '/today',
+    label: 'Today',
+    description:
+      'Who is on your floor right now, shift by shift, as faces — clocked in, not in yet, unfilled — with any past day one tap back.',
+    requires: 'manage:scheduling',
     group: 'core',
   },
   {
