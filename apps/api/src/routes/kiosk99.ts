@@ -677,6 +677,7 @@ kiosk99Router.post('/kiosk-pins/:id/email', MANAGE, async (req, res) => {
   try {
     await send({
       channel: 'EMAIL',
+      category: 'kiosk_pin',
       recipient: { userId: null, phone: null, email: pin.associate.email },
       subject,
       body,
@@ -750,6 +751,7 @@ kiosk99Router.post('/kiosk-pins/email', MANAGE, async (req, res) => {
     );
     return send({
       channel: 'EMAIL',
+      category: 'kiosk_pin',
       recipient: { userId: null, phone: null, email: p.associate.email },
       subject,
       body,

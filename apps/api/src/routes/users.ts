@@ -577,6 +577,7 @@ usersRouter.post(
     try {
       await send({
         channel: 'EMAIL',
+        category: 'forced_password_reset',
         recipient: { userId: target.id, phone: null, email: target.email },
         subject,
         body,

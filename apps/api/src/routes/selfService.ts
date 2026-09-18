@@ -809,6 +809,7 @@ selfServiceRouter.post('/me/payout-method', async (req, res) => {
   if (associate?.email) {
     void send({
       channel: 'EMAIL',
+      category: 'direct_deposit_change',
       recipient: { userId: req.user!.id, phone: null, email: associate.email },
       subject: 'Your direct deposit account was changed',
       body:

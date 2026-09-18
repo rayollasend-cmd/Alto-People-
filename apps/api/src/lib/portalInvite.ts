@@ -165,6 +165,8 @@ export async function invitePortalAccount(input: {
   try {
     const r = await send({
       channel: 'EMAIL',
+      // This caller writes its own Notification row for the attempt.
+      audit: false,
       recipient: { userId: user.id, phone: null, email },
       subject: template.subject,
       body: template.text,

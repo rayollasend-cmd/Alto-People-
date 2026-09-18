@@ -187,6 +187,8 @@ function sendEmailNotification(
       try {
         const r = await send({
           channel: 'EMAIL',
+          // This caller writes its own Notification row for the attempt.
+          audit: false,
           recipient: { userId, phone: null, email },
           subject: opts.subject,
           body: branded.text,
@@ -474,6 +476,8 @@ export function notifyAssociate(
           });
       await send({
         channel: 'EMAIL',
+        // This caller writes its own Notification row for the attempt.
+        audit: false,
         recipient: { userId: null, phone: null, email: associate.email },
         subject: opts.subject ?? 'Notification from Alto HR',
         body: tpl.text,

@@ -701,6 +701,7 @@ async function sendRecipientCopyForForm(
     form.kind === 'W2' ? 'W-2' : form.kind === 'W2C' ? 'W-2c (corrected W-2)' : form.kind === 'F1099_NEC' ? '1099-NEC' : '1099-MISC';
   await send({
     channel: 'EMAIL',
+    category: 'tax_form',
     recipient: { userId: null, phone: null, email: form.associate.email },
     subject: `Your ${form.taxYear} ${label} from Alto HR`,
     body:

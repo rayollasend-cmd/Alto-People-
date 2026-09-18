@@ -237,6 +237,8 @@ export async function runDueReportSchedules(
         try {
           const r = await send({
             channel: 'EMAIL',
+            // This caller writes its own Notification row for the attempt.
+            audit: false,
             recipient: { userId: null, phone: null, email },
             subject: tpl.subject,
             body: tpl.text,

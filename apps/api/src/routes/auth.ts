@@ -144,6 +144,7 @@ async function sendMfaSecurityEmail(
     const tpl = template({ firstName, email, occurredAt });
     await send({
       channel: 'EMAIL',
+      category: 'security_alert',
       recipient: { userId, phone: null, email },
       subject: tpl.subject,
       body: tpl.text,
@@ -1071,6 +1072,7 @@ authRouter.post(
         // Errors are logged for HR to investigate undelivered resets.
         void send({
           channel: 'EMAIL',
+          category: 'password_reset',
           recipient: { userId: user.id, phone: null, email: user.email },
           subject: tpl.subject,
           body: tpl.text,
@@ -1956,6 +1958,7 @@ authRouter.post('/me/email-change/request', requireAuth, changePasswordLimiter, 
     try {
       await send({
         channel: 'EMAIL',
+        category: 'email_change_verify',
         recipient: { userId: user.id, phone: null, email: newEmail },
         subject,
         body,
@@ -2083,6 +2086,7 @@ authRouter.post('/email-change/confirm', async (req, res, next) => {
     try {
       await send({
         channel: 'EMAIL',
+        category: 'email_change_notice',
         recipient: { userId: request.userId, phone: null, email: oldEmail },
         subject: 'Your Alto People email was changed',
         body: [

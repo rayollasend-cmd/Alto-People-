@@ -169,6 +169,8 @@ export async function runServiceReportMailSweep(
       try {
         await send({
           channel: 'EMAIL',
+          // This caller writes its own Notification row for the attempt.
+          audit: false,
           recipient: { userId: u.id, phone: null, email: u.email },
           subject,
           body: tpl.text,

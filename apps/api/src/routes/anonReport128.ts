@@ -36,6 +36,7 @@ const MANAGE_PERF = requireCapability('manage:performance');
 function nudgeReporter(contactEmail: string): void {
   void send({
     channel: 'EMAIL',
+    category: 'hotline_reply',
     recipient: { userId: null, phone: null, email: contactEmail },
     subject: 'Update on your confidential report',
     body: 'There is a new reply on your report. Visit the hotline page and enter your tracking code to read it.',

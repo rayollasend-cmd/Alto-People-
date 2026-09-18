@@ -366,7 +366,7 @@ export async function runPortalEngagementDigest(
     }
     let status: 'SENT' | 'FAILED' = 'SENT';
     try {
-      await send({ channel: 'EMAIL', recipient: { userId: r.id, phone: null, email: r.email }, subject, body: tpl.text, html: tpl.html });
+      await send({ channel: 'EMAIL', audit: false, recipient: { userId: r.id, phone: null, email: r.email }, subject, body: tpl.text, html: tpl.html });
     } catch (err) {
       status = 'FAILED';
       console.warn('[portal-engagement] digest send failed:', err instanceof Error ? err.message : err);

@@ -193,6 +193,8 @@ export async function sendReminderForUser(
   try {
     const r = await send({
       channel: 'EMAIL',
+      // This caller writes its own Notification row for the attempt.
+      audit: false,
       recipient: { userId: user.id, phone: null, email: user.email },
       subject,
       body,

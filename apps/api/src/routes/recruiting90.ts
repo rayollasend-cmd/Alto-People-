@@ -293,6 +293,7 @@ recruiting90Router.post('/offers/:id/send', MANAGE, async (req, res) => {
           : 'to be discussed';
     void send({
       channel: 'EMAIL',
+      category: 'offer_letter',
       recipient: { userId: null, phone: null, email: candidateEmail },
       subject: 'Your offer from Alto People',
       body: [

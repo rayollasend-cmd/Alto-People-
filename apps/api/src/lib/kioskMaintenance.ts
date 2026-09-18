@@ -301,6 +301,7 @@ export async function sendKioskFleetNotices(
   for (const admin of admins) {
     await send({
       channel: 'EMAIL',
+      category: 'kiosk_device_alert',
       recipient: { userId: admin.id, email: admin.email, phone: null },
       subject: `Kiosk devices need attention (${expiring.length + silent.length})`,
       body,

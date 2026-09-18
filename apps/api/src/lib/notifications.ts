@@ -151,6 +151,18 @@ export interface SendInput {
    * W-4 campaign) must never advertise an unsubscribe.
    */
   includeUnsubscribe?: boolean;
+  /**
+   * Which flow this message belongs to ("password_reset", "tax_form",
+   * "offer"). Written onto the failure row so an outage can be read back
+   * as a list of affected flows rather than a pile of anonymous rows.
+   */
+  category?: string | null;
+  /**
+   * Set false by callers that write their own Notification row for the
+   * attempt (notify.ts, the invite paths, the mailers). Everyone else
+   * gets a FAILED row written here, so no send can fail invisibly.
+   */
+  audit?: boolean;
 }
 
 export interface SendResult {
@@ -170,10 +182,59 @@ export async function sendStubbed(
 ): Promise<SendResult> {
   // Backwards-compatible signature for existing callers that don't have
   // subject/body to forward. EMAIL still falls back to stub here.
-  return send({ channel, recipient, subject: null, body: '' });
+  // audit:false — every caller of this one (the admin composer) already
+  // owns a Notification row and flips it to FAILED itself.
+  return send({ channel, recipient, subject: null, body: '', audit: false });
+}
+
+/**
+ * Write the failure down. Without this, a provider outage (a quota block,
+ * a bad key, a 5xx) was invisible for every caller that didn't keep its
+ * own Notification row: the message simply never arrived and the only
+ * trace was a console line in a log that rotates. A FAILED row makes the
+ * outage enumerable — filter Communications by status FAILED, read the
+ * categories, and resend by hand.
+ *
+ * Never throws: an audit write must not turn a failed send into a crash.
+ */
+async function recordFailedSend(input: SendInput, err: unknown): Promise<void> {
+  try {
+    await prisma.notification.create({
+      data: {
+        channel: input.channel,
+        status: err instanceof EmailSuppressedError ? 'SUPPRESSED' : 'FAILED',
+        recipientUserId: input.recipient.userId,
+        recipientEmail: input.recipient.email,
+        subject: input.subject,
+        // Bodies can be long (and carry a magic link); keep the row small
+        // and the link out of it — this is an audit trail, not a copy.
+        body: input.body.slice(0, 500),
+        category: input.category ?? null,
+        failureReason: (err instanceof Error ? err.message : String(err)).slice(
+          0,
+          500,
+        ),
+        sentAt: null,
+      },
+    });
+  } catch (auditErr) {
+    console.warn(
+      '[notifications.send] could not record the failed send:',
+      auditErr instanceof Error ? auditErr.message : auditErr,
+    );
+  }
 }
 
 export async function send(input: SendInput): Promise<SendResult> {
+  try {
+    return await dispatch(input);
+  } catch (err) {
+    if (input.audit !== false) await recordFailedSend(input, err);
+    throw err;
+  }
+}
+
+async function dispatch(input: SendInput): Promise<SendResult> {
   await new Promise((r) => setTimeout(r, 1));
 
   switch (input.channel) {
