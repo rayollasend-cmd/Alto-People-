@@ -1,7 +1,9 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
+import type { Prisma } from '@prisma/client';
 import {
   hasCapability,
+  isClientBoundedRole,
   ROLE_LABELS,
   rolesWithCapability,
   type Role,
@@ -129,14 +131,33 @@ async function resolveItemForUser(req: Request, key: string) {
       };
     }
   }
-  // The item may have RESOLVED while its room still holds history — allow
-  // opening a room that has any trace (thread or claim), so links in old
-  // notifications don't dead-end.
-  const [comment, claim] = await Promise.all([
-    prisma.decisionComment.findFirst({ where: { key }, select: { id: true } }),
-    prisma.decisionClaim.findUnique({ where: { key }, select: { id: true } }),
+  // The item may have RESOLVED while its room still holds history — its
+  // PARTICIPANTS may still open it, so their links don't dead-end. Any
+  // trace used to be enough, which opened every admin room (walk-ins,
+  // no-show risk, receivables…) to any signed-in account that could name
+  // a key. Participation is recorded only through routes that already
+  // required the item in the caller's own queue: a comment, holding or
+  // assigning the claim, setting or owning the next step, or any logged
+  // room action. (Plan items don't count — their key isn't validated.)
+  const [comment, claim, step, acted] = await Promise.all([
+    prisma.decisionComment.findFirst({ where: { key, userId: me.id }, select: { id: true } }),
+    prisma.decisionClaim.findFirst({
+      where: {
+        key,
+        OR: [{ claimedById: me.id }, { assignedById: me.id }, { escalatedById: me.id }],
+      },
+      select: { id: true },
+    }),
+    prisma.decisionNextStep.findFirst({
+      where: { key, OR: [{ ownerId: me.id }, { setById: me.id }] },
+      select: { id: true },
+    }),
+    prisma.auditLog.findFirst({
+      where: { entityType: 'DecisionClaim', entityId: key, actorUserId: me.id },
+      select: { id: true },
+    }),
   ]);
-  if (comment || claim) {
+  if (comment || claim || step || acted) {
     return { label: key, detail: '', linkUrl: '/', severity: null, stakes: null, ageDays: null };
   }
   return null;
@@ -275,27 +296,47 @@ async function computeItemFacts(
  *  scoped roles plus the org admins; org-wide roles get every operator
  *  and admin. Associates collaborate upward only (their supervisors +
  *  admins). */
-async function listColleagues(req: Request) {
-  const me = queueUser(req);
+function colleagueWhere(me: ReturnType<typeof queueUser>): Prisma.UserWhereInput {
   const adminRoles = rolesWithCapability('manage:org');
   const operatorRoles: Role[] = [...adminRoles, 'SHIFT_SUPERVISOR', 'FINANCE_ACCOUNTANT'];
-  const rows = await prisma.user.findMany({
-    where: {
-      deletedAt: null,
-      status: 'ACTIVE',
-      id: { not: me.id },
-      OR: [
-        { role: { in: adminRoles } },
-        me.clientId
-          ? { role: { in: operatorRoles }, clientId: me.clientId }
+  return {
+    deletedAt: null,
+    status: 'ACTIVE',
+    id: { not: me.id },
+    OR: [
+      { role: { in: adminRoles } },
+      me.clientId
+        ? { role: { in: operatorRoles }, clientId: me.clientId }
+        : isClientBoundedRole(me.role)
+          ? // A store-bound account with no client on file fails closed —
+            // it used to get every store's operators, org-wide.
+            { id: { in: [] } }
           : { role: { in: operatorRoles } },
-      ],
-    },
+    ],
+  };
+}
+
+async function listColleagues(req: Request) {
+  const me = queueUser(req);
+  const rows = await prisma.user.findMany({
+    where: colleagueWhere(me),
     select: { ...CLAIMER_SELECT, role: true, clientId: true },
     orderBy: { email: 'asc' },
     take: 50,
   });
   return rows.map((u) => personOf(u as ClaimerRow));
+}
+
+/** Mentions and next-step owners get a notification whose text the caller
+ *  writes — same circle as assign/tag, never an arbitrary user id. */
+async function assertColleague(req: Request, userId: string) {
+  const hit = await prisma.user.findFirst({
+    where: { AND: [colleagueWhere(queueUser(req)), { id: userId }] },
+    select: { id: true },
+  });
+  if (!hit) {
+    throw new HttpError(400, 'invalid_target', 'That person is not in your collaboration circle.');
+  }
 }
 
 roleDecisionsRouter.get('/colleagues', requireAuth, async (req: Request, res: Response) => {
@@ -726,6 +767,9 @@ roleDecisionsRouter.post(
     const item = await resolveItemForUser(req, input.key);
     if (!item) throw new HttpError(404, 'not_found', 'That item is not visible to you.');
 
+    if (input.ownerUserId && input.ownerUserId !== req.user!.id) {
+      await assertColleague(req, input.ownerUserId);
+    }
     if (!input.text) {
       await prisma.decisionNextStep.deleteMany({ where: { key: input.key } });
     } else {
@@ -780,6 +824,9 @@ roleDecisionsRouter.post('/decisions/comment', requireAuth, async (req: Request,
   const input = CommentInputSchema.parse(req.body);
   const item = await resolveItemForUser(req, input.key);
   if (!item) throw new HttpError(404, 'not_found', 'That item is not visible to you.');
+  if (input.mentionUserId && input.mentionUserId !== req.user!.id) {
+    await assertColleague(req, input.mentionUserId);
+  }
 
   await prisma.decisionComment.create({
     data: { key: input.key, userId: req.user!.id, body: input.body },

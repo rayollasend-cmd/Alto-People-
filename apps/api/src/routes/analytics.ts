@@ -11,12 +11,20 @@ import {
 } from '@alto-people/shared';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
+import { requireCapability } from '../middleware/auth.js';
 import { startOfWeekUTC } from '../lib/timeAnomalies.js';
 import { associatesOfClient, effectiveClientIdFilter } from '../lib/scope.js';
 
 export const analyticsRouter = Router();
 
 /* ---------------------------------------------------------------- helpers */
+
+// The mount is view:dashboard (the home dashboard's KPIs), which every
+// signed-in role holds. The analytics-page reads below are gated to the
+// page's own audience: without it the watch-only FLOOR_SUPERVISOR (and
+// the shift supervisor) could pull org-wide onboarding and retention.
+const VIEW_ANALYTICS = requireCapability('view:analytics');
+const NO_CLIENT = '00000000-0000-0000-0000-000000000000';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const ONE_WEEK_MS = 7 * ONE_DAY_MS;
@@ -114,7 +122,7 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
     // (`null` = bounded-but-unassigned → fail closed via an impossible id.)
     const bounded = effectiveClientIdFilter(req.user!, undefined);
     const boundedClientId =
-      bounded === null ? '00000000-0000-0000-0000-000000000000' : bounded;
+      bounded === null ? NO_CLIENT : bounded;
     const clientClamp = boundedClientId ? { clientId: boundedClientId } : {};
     const associateClamp = boundedClientId
       ? associatesOfClient(boundedClientId)
@@ -294,7 +302,7 @@ const ANALYTICS_MONTHS = 6;
  * onboarded); separation reasons split voluntary vs involuntary.
  * ========================================================================== */
 
-analyticsRouter.get('/retention', async (req, res, next) => {
+analyticsRouter.get('/retention', VIEW_ANALYTICS, async (req, res, next) => {
   try {
     const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
     const now = new Date();
@@ -328,7 +336,14 @@ analyticsRouter.get('/retention', async (req, res, next) => {
         hired: a.hireDate ?? a.createdAt,
         separatedAt: a.separatedAt,
         reason: reasonByAssociate.get(a.id) ?? null,
-        firstLocation: a.assignments[0]?.location ?? null,
+        // Their first store — within the caller's client when clamped, so
+        // someone who started elsewhere never carries another client's
+        // location (name + counts) into this client's comparison.
+        firstLocation:
+          (typeof clamped === 'string'
+            ? a.assignments.find((asg) => asg.location.clientId === clamped)
+            : a.assignments[0]
+          )?.location ?? null,
         activeNow:
           a.separatedAt === null &&
           a.assignments.some((asg) => asg.endedAt === null),
@@ -438,8 +453,13 @@ analyticsRouter.get('/retention', async (req, res, next) => {
   }
 });
 
-analyticsRouter.get('/onboarding', async (_req, res, next) => {
+analyticsRouter.get('/onboarding', VIEW_ANALYTICS, async (req, res, next) => {
   try {
+    // Tenant clamp: CLIENT_PORTAL holds view:analytics — it gets its own
+    // client's funnel, never the org's per-client breakdown.
+    const clamped = effectiveClientIdFilter(req.user!, undefined);
+    const clientClamp: Prisma.ApplicationWhereInput =
+      clamped === undefined ? {} : { clientId: clamped ?? NO_CLIENT };
     const now = new Date();
     const windowStart = new Date(now.getTime() - ANALYTICS_LOOKBACK_DAYS * ONE_DAY_MS);
     const monthlyStart = new Date(
@@ -450,7 +470,7 @@ analyticsRouter.get('/onboarding', async (_req, res, next) => {
     // to see where everyone is right now).
     const statusGroups = await prisma.application.groupBy({
       by: ['status'],
-      where: { deletedAt: null },
+      where: { deletedAt: null, ...clientClamp },
       _count: { _all: true },
     });
     const byStatus: Record<string, number> = {};
@@ -460,7 +480,7 @@ analyticsRouter.get('/onboarding', async (_req, res, next) => {
     // completion / track / client / monthly stats.
     const inWindow = await prisma.application.findMany({
       take: 500,
-      where: { deletedAt: null, invitedAt: { gte: windowStart } },
+      where: { deletedAt: null, ...clientClamp, invitedAt: { gte: windowStart } },
       select: {
         clientId: true,
         onboardingTrack: true,
@@ -536,6 +556,7 @@ analyticsRouter.get('/onboarding', async (_req, res, next) => {
       take: 500,
       where: {
         deletedAt: null,
+        ...clientClamp,
         OR: [
           { invitedAt: { gte: monthlyStart } },
           { submittedAt: { gte: monthlyStart } },

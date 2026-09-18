@@ -495,7 +495,10 @@ export async function computeRoleDecisions(
       ).length ?? 0;
     if (remaining > 0) {
       out.push({
-        key: 'me:onboarding-tasks',
+        // Personal keys carry the user id: the room (thread, claim, next
+        // step) hangs off the key, and a shared 'me:…' key pooled every
+        // user's personal room into one thread everyone could read.
+        key: `me:${user.id}:onboarding-tasks`,
         domain: 'personal',
         severity: 'high',
         label: `${remaining} onboarding task${remaining === 1 ? '' : 's'} left to finish`,
@@ -507,7 +510,7 @@ export async function computeRoleDecisions(
     }
     if (expiringOwn > 0) {
       out.push({
-        key: 'me:expiring-docs',
+        key: `me:${user.id}:expiring-docs`,
         domain: 'personal',
         severity: 'high',
         label: `${expiringOwn} of your documents expire${expiringOwn === 1 ? 's' : ''} within 60 days`,
