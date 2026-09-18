@@ -57,16 +57,21 @@ function day(roster: ReturnType<typeof row>[]) {
   };
 }
 
-function renderPage() {
+type Live = Array<{ associateId: string; name: string; clockInAt: string; position: string | null }>;
+
+function renderPage(opts: { onFloorNow?: Live } = {}) {
   vi.mocked(apiFetch).mockImplementation(async (path: string) => {
     if (path.startsWith('/client-portal/day?date=')) return day([row('t1', 'Cy Dale', 'unconfirmed', 20, 28)]);
     if (path.startsWith('/client-portal/day'))
-      return day([
-        row('s1', 'Ann Lee', 'on-floor'),
-        row('s2', 'Ben Ray', 'on-floor'),
-        row('s3', 'Cy Dale', 'not-in'),
-        row('s4', null, 'open'),
-      ]);
+      return {
+        ...day([
+          row('s1', 'Ann Lee', 'on-floor'),
+          row('s2', 'Ben Ray', 'on-floor'),
+          row('s3', 'Cy Dale', 'not-in'),
+          row('s4', null, 'open'),
+        ]),
+        ...(opts.onFloorNow ? { onFloorNow: opts.onFloorNow } : {}),
+      };
     if (path === '/approvals/count')
       return { swaps: 1, pickups: 2, timeOff: 2, timesheets: 6, clockIns: 1, total: 12 };
     throw new Error(`unexpected ${path}`);
@@ -164,5 +169,22 @@ describe('<SupervisorDashboard> — My floor', () => {
     expect(screen.queryByText('Ann Lee')).not.toBeInTheDocument();
     expect(screen.queryByText('Cy Dale')).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/\$/);
+  });
+
+  it('counts everyone clocked in — walk-ins and covers too — not just matched shifts', async () => {
+    // Two matched to their shifts, plus a walk-in and a cover with none.
+    const clockIn = new Date().toISOString();
+    renderPage({
+      onFloorNow: [
+        { associateId: 'a-s1', name: 'Ann Lee', clockInAt: clockIn, position: 'Server' },
+        { associateId: 'a-s2', name: 'Ben Ray', clockInAt: clockIn, position: 'Server' },
+        { associateId: 'a-w1', name: 'Wes Park', clockInAt: clockIn, position: null },
+        { associateId: 'a-w2', name: 'Rosa Vega', clockInAt: clockIn, position: null },
+      ],
+    });
+    await screen.findByRole('heading', { level: 1, name: 'Front Beach 218' });
+    // 4 on the floor against a target of 4 — met, not "2 short".
+    expect(screen.getByText(/Staffed to the contracted headcount/)).toBeInTheDocument();
+    expect(screen.queryByText(/short of the contracted headcount/)).not.toBeInTheDocument();
   });
 });

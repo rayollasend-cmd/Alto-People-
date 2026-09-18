@@ -50,6 +50,8 @@ interface DayPayload {
   generatedAt: string;
   target: number | null;
   roster: WaveRow[];
+  /** Every open clock-in right now (today only) — the live board's count. */
+  onFloorNow?: Array<{ associateId: string; name: string; clockInAt: string; position: string | null }>;
   summary: { expected: number; worked: number; onFloor: number; missed: number; open: number };
 }
 
@@ -269,7 +271,11 @@ export function PortalToday() {
         <>
           <p className="text-sm text-silver tabular-nums">
             {isToday
-              ? t('portal.todaySummary', { on: data.summary.onFloor, expected: data.summary.expected, waves: waves.length })
+              ? t('portal.todaySummary', {
+                  on: data.onFloorNow?.length ?? data.summary.onFloor,
+                  expected: data.summary.expected,
+                  waves: waves.length,
+                })
               : isPast
                 ? t('portal.daySummaryPast', {
                     worked: data.summary.worked,
@@ -283,9 +289,78 @@ export function PortalToday() {
           {waves.map((w) => (
             <WaveCard key={w.key} wave={w} multiStore={multiStore} focused={focusWave === w.startsAt} />
           ))}
+          {isToday && <OffScheduleCard data={data} />}
         </>
       )}
     </div>
+  );
+}
+
+/* ---- Clocked in, but not on a scheduled shift -------------------------- */
+
+/**
+ * People on the floor right now whose punch isn't matched to an assigned
+ * shift — a walk-in, someone covering a shift under another name, a shift
+ * still in draft, or a person staying past their end. They count in "on
+ * the floor now"; this is where they have a face.
+ */
+function OffScheduleCard({ data }: { data: DayPayload }) {
+  const { t } = useI18n();
+  const [selected, setSelected] = useState<string | null>(null);
+  const inShift = new Set(
+    data.roster.filter((r) => r.state === 'on-floor' && r.associateId).map((r) => r.associateId!),
+  );
+  const people = (data.onFloorNow ?? []).filter((e) => !inShift.has(e.associateId));
+  if (people.length === 0) return null;
+  const tz = data.store?.timezone ?? data.roster[0]?.timezone ?? null;
+  const caption = (e: (typeof people)[number]) =>
+    `${e.name}${e.position ? ` · ${e.position}` : ''} · ${t('portal.clockedInAt', { time: fmtTimeTz(e.clockInAt, tz) })}`;
+  const picked = people.find((e) => e.associateId === selected) ?? null;
+  return (
+    <Card className="border-success/30">
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <h2 className="text-sm font-medium text-white">{t('portal.offSchedule')}</h2>
+          <span className="text-sm font-semibold tabular-nums text-white">{people.length}</span>
+        </div>
+        <ul className="mt-3 flex flex-wrap gap-2" role="list">
+          {people.map((e) => {
+            const isSel = selected === e.associateId;
+            return (
+              <li key={e.associateId}>
+                <button
+                  type="button"
+                  onClick={() => setSelected(isSel ? null : e.associateId)}
+                  aria-pressed={isSel}
+                  aria-label={caption(e)}
+                  title={caption(e)}
+                  className={cn(
+                    'relative block rounded-full transition-transform focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                    'coarse:active:scale-95',
+                    isSel && 'scale-110',
+                  )}
+                >
+                  <Avatar
+                    src={photoUrl(e.associateId)}
+                    name={e.name}
+                    email=""
+                    size="lg"
+                    className={cn('ring-2 ring-offset-2 ring-offset-navy', isSel ? 'ring-gold' : 'ring-success')}
+                  />
+                  <span className="absolute -right-0.5 -top-0.5 inline-flex h-2.5 w-2.5 rounded-full bg-success ring-2 ring-navy" aria-hidden="true" />
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        <div
+          className={cn('mt-3 min-h-5 text-sm transition-opacity', picked ? 'text-white opacity-100' : 'opacity-0')}
+          aria-live="polite"
+        >
+          {picked ? caption(picked) : ''}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

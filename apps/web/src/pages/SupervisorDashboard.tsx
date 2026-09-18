@@ -58,6 +58,8 @@ interface DayPayload {
   generatedAt: string;
   target: number | null;
   roster: WaveRow[];
+  /** Every open clock-in right now (today only) — the live board's count. */
+  onFloorNow?: Array<{ associateId: string; name: string; clockInAt: string; position: string | null }>;
   summary: { expected: number; worked: number; onFloor: number; missed: number; open: number };
 }
 
@@ -291,7 +293,14 @@ export function SupervisorDashboard() {
   }
 
   // ---- Hero figures ------------------------------------------------------
-  const onFloor = data.roster.filter((r) => r.state === 'on-floor');
+  // Everyone clocked in right now — the live board's definition. Counting
+  // only roster rows matched to an assigned shift read "0 / 10" while the
+  // floor was full of walk-ins, covers and people on draft shifts.
+  const onFloor =
+    data.onFloorNow ??
+    data.roster
+      .filter((r) => r.state === 'on-floor' && r.associateId)
+      .map((r) => ({ associateId: r.associateId!, name: r.name ?? '' }));
   const target = data.target;
   const short = target !== null && onFloor.length < target;
   const staffed = target !== null ? onFloor.length >= target : onFloor.length > 0;
@@ -379,9 +388,9 @@ export function SupervisorDashboard() {
                 <Link to="/today" className="mt-3 flex items-center -space-x-2" aria-label={t('portal.todayOpen')}>
                   {onFloor.slice(0, 8).map((p) => (
                     <Avatar
-                      key={p.shiftId}
-                      src={p.associateId ? photoUrl(p.associateId) : null}
-                      name={p.name ?? ''}
+                      key={p.associateId}
+                      src={photoUrl(p.associateId)}
+                      name={p.name}
                       email=""
                       size="md"
                       ringed

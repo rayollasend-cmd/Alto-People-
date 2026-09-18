@@ -1017,7 +1017,15 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
     const dayStart = utcInstantOfLocalMidnight(dateKey, ORG_TZ);
     const dayEnd = utcInstantOfLocalMidnight(nextKey(dateKey, 1), ORG_TZ);
 
-    const [rows, leadPositions, { punchFor }, target] = await Promise.all([
+    // "Now" belongs to the page the viewer calls today, and that's the
+    // BROWSER's calendar: a Pacific store at 9:30 PM asks for the 17th while
+    // the org day (Eastern) is already the 18th. Any date within a day of
+    // the org's today carries the live list; the page shows it only for its
+    // own today.
+    const orgToday = orgDateKey(now);
+    const isToday =
+      dateKey === orgToday || dateKey === nextKey(orgToday, -1) || dateKey === nextKey(orgToday, 1);
+    const [rows, leadPositions, { punchFor }, target, liveEntries] = await Promise.all([
       prisma.shift.findMany({
         where: { ...shiftScope(scope), startsAt: { lt: dayEnd }, endsAt: { gt: dayStart } },
         select: {
@@ -1041,6 +1049,24 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
       }),
       loadPunches(scope, dayStart, dayEnd, now),
       currentTarget(scope, now),
+      // Who is on the floor RIGHT NOW is every open clock-in — the live
+      // board's (and the home hero's) definition, not just punches matched
+      // to an assigned shift. A walk-in, someone covering a shift assigned
+      // to another name, a shift still in draft, or a person staying past
+      // their end is on the floor all the same; the roster alone read 0.
+      isToday
+        ? prisma.timeEntry.findMany({
+            where: { ...entryScope(scope), status: 'ACTIVE' },
+            select: {
+              associateId: true,
+              clockInAt: true,
+              associate: { select: { firstName: true, lastName: true } },
+              shift: { select: { position: true } },
+            },
+            orderBy: { clockInAt: 'asc' },
+            take: 300,
+          })
+        : Promise.resolve([]),
     ]);
     const ncns = new Set(
       (
@@ -1095,6 +1121,12 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
       generatedAt: now.toISOString(),
       target: target.target,
       roster,
+      onFloorNow: liveEntries.map((e) => ({
+        associateId: e.associateId,
+        name: fullName(e.associate),
+        clockInAt: e.clockInAt.toISOString(),
+        position: e.shift?.position ?? null,
+      })),
       summary: {
         expected: roster.filter((r) => r.state !== 'open').length,
         worked: roster.filter((r) => r.state === 'worked' || r.state === 'on-floor').length,
