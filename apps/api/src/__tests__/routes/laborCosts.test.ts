@@ -411,7 +411,7 @@ describe('GET /scheduling/labor-costs', () => {
     expect(await prisma.staffingTarget.count()).toBe(0);
   });
 
-  it('clamps a supervisor to their own client, whatever clientId they request', async () => {
+  it('refuses a supervisor outright — labor cost is not a store-bound read', async () => {
     const mine = await createClient('Mine LLC');
     const other = await createClient('Other Corp');
     const mineLoc = await prisma.location.findFirstOrThrow({ where: { clientId: mine.id } });
@@ -443,12 +443,13 @@ describe('GET /scheduling/labor-costs', () => {
 
     const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: mine.id });
     const a = await loginAs(sup.email);
-    const res = await a.get(
-      `/scheduling/labor-costs?from=${RANGE.from}&to=${RANGE.to}&clientId=${other.id}`,
-    );
-    expect(res.status).toBe(200);
-    expect(res.body.rows).toHaveLength(1);
-    expect(res.body.rows[0].clientId).toBe(mine.id);
-    expect(res.body.rows[0].scheduledCost).toBe(80);
+    // Their own client and someone else's alike (owner decision 2026-09-17).
+    for (const clientId of [mine.id, other.id]) {
+      const res = await a.get(
+        `/scheduling/labor-costs?from=${RANGE.from}&to=${RANGE.to}&clientId=${clientId}`,
+      );
+      expect(res.status).toBe(403);
+      expect(res.body.rows).toBeUndefined();
+    }
   });
 });

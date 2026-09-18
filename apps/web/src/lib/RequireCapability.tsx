@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { Capability } from '@alto-people/shared';
+import { isClientBoundedRole, type Capability } from '@alto-people/shared';
 import { useAuth } from './auth';
 import { NotFound } from '@/pages/NotFound';
 
@@ -18,15 +18,22 @@ import { NotFound } from '@/pages/NotFound';
 export function RequireCapability({
   cap,
   anyOf,
+  notClientBounded = false,
   children,
 }: {
   cap: Capability;
   /** When set, holding ANY of these also grants the page (cap ∪ anyOf). */
   anyOf?: Capability[];
+  /** Refuse client-bound roles (SHIFT_SUPERVISOR…) even when they hold the
+   *  capability — for org-level pages like Labor costs, which the
+   *  supervisor's manage:scheduling would otherwise unlock. */
+  notClientBounded?: boolean;
   children: ReactNode;
 }) {
-  const { can } = useAuth();
-  const ok = can(cap) || (anyOf?.some(can) ?? false);
+  const { can, user } = useAuth();
+  const ok =
+    (can(cap) || (anyOf?.some(can) ?? false)) &&
+    !(notClientBounded && user && isClientBoundedRole(user.role));
   if (!ok) {
     return <NotFound />;
   }

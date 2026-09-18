@@ -376,7 +376,9 @@ const LAYOUT_ROUTES = [
   { path: 'messages/:id', element: <MessagesHome /> },
   { path: 'scheduling', element: <SchedulingHome /> },
   { path: 'approvals', element: <RequireCapability cap="manage:scheduling"><ApprovalsHome /></RequireCapability> },
-  { path: 'labor-costs', element: <RequireCapability cap="manage:scheduling" anyOf={['view:executive', 'process:payroll']}><LaborCostsHome /></RequireCapability> },
+  // notClientBounded: the shift supervisor holds manage:scheduling, but labor
+  // cost is org economics — the API refuses bounded roles on every read here.
+  { path: 'labor-costs', element: <RequireCapability cap="manage:scheduling" anyOf={['view:executive', 'process:payroll']} notClientBounded><LaborCostsHome /></RequireCapability> },
   { path: 'ops', element: <RequireCapability cap="run:ops-shifts" anyOf={['view:ops']}><OpsHome /></RequireCapability> },
   { path: 'payroll', element: <RequireCapability cap="view:payroll"><PayrollHome /></RequireCapability> },
   { path: 'documents', element: <RequireCapability cap="view:documents"><DocumentsHome /></RequireCapability> },

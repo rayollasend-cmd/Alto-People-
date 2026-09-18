@@ -19,7 +19,7 @@ import {
  * kiosk PINs/punches/selfies/devices, shift templates (incl. the apply
  * path that creates shifts), marketplace claim decisions, the approvals
  * badge counts, onboarding applications, the holiday calendar, and
- * time-off entitlements.
+ * time-off entitlements — and the labor-cost reads it is refused outright.
  */
 
 const app = () => createApp();
@@ -965,5 +965,55 @@ describe('time-off entitlements tenant boundary', () => {
       carryoverMaxMinutes: 0,
     });
     expect(res.status).toBe(200);
+  });
+});
+
+describe('labor cost is withheld from the supervisor', () => {
+  // manage:scheduling opened every money read on the scheduling router to
+  // the supervisor (clamped to their client). Labor cost is org economics
+  // — owner decision 2026-09-17: bounded roles never see it.
+  it('refuses the money-only reads', async () => {
+    const { sup } = await seedTwoClients();
+    for (const path of [
+      '/scheduling/labor-costs',
+      '/scheduling/store-trends',
+      '/scheduling/floor-now',
+      '/scheduling/ot-outlook',
+    ]) {
+      expect((await sup.get(path)).status, path).toBe(403);
+    }
+  });
+
+  it('keeps the KPI counts but nulls the cost fields', async () => {
+    const { mine, sup } = await seedTwoClients();
+    const startsAt = new Date(Date.now() + 2 * 3_600_000);
+    await prisma.shift.create({
+      data: {
+        clientId: mine.id,
+        position: 'Server',
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + 4 * 3_600_000),
+        status: 'OPEN',
+        payRate: 20,
+      },
+    });
+    const window = `from=${new Date(Date.now() - 3_600_000).toISOString()}&to=${new Date(
+      Date.now() + 48 * 3_600_000,
+    ).toISOString()}`;
+
+    const res = await sup.get(`/scheduling/kpis?${window}`);
+    expect(res.status).toBe(200);
+    expect(res.body.openShifts).toBe(1);
+    expect(res.body.totalScheduledMinutes).toBe(240);
+    expect(res.body.projectedLaborCost).toBeNull();
+    expect(res.body.shiftsWithoutRate).toBeNull();
+
+    // An org-wide role still gets the money.
+    const { user: hrUser } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hr = await loginAs(hrUser.email);
+    const hrRes = await hr.get(`/scheduling/kpis?${window}`);
+    expect(hrRes.status).toBe(200);
+    expect(hrRes.body.projectedLaborCost).toBe(80);
+    expect((await hr.get(`/scheduling/labor-costs?${window}`)).status).toBe(200);
   });
 });

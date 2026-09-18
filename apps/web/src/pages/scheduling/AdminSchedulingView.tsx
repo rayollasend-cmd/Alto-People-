@@ -3780,9 +3780,12 @@ function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
         : 'text-alert';
   // Compact currency: $1.2k / $24k / $1.4M — keeps the strip readable on
   // 13" laptops without giving up signal on six-figure weeks.
-  const cost = fmtMoneyCompact(kpis.projectedLaborCost);
+  // Null for client-bound roles: the API withholds labor cost from the
+  // shift supervisor, so the tile goes rather than reading "$0".
+  const cost =
+    kpis.projectedLaborCost === null ? null : fmtMoneyCompact(kpis.projectedLaborCost);
   const costSuffix =
-    kpis.shiftsWithoutRate > 0
+    kpis.shiftsWithoutRate !== null && kpis.shiftsWithoutRate > 0
       ? `${kpis.shiftsWithoutRate} no rate`
       : null;
   return (
@@ -3791,11 +3794,13 @@ function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
       <Kpi label="Filled" value={String(kpis.assignedShifts + kpis.completedShifts)} />
       <Kpi label="Fill rate" value={`${kpis.fillRatePercent}%`} tone={fillTone} />
       <Kpi label="Hours scheduled" value={hours.toFixed(0)} />
-      <Kpi
-        label="Projected labor"
-        value={cost}
-        suffix={costSuffix}
-      />
+      {cost !== null && (
+        <Kpi
+          label="Projected labor"
+          value={cost}
+          suffix={costSuffix}
+        />
+      )}
       {kpis.draftShifts > 0 && (
         <Kpi label="Draft" value={String(kpis.draftShifts)} tone="text-silver" />
       )}

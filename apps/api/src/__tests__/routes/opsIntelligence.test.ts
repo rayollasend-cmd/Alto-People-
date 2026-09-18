@@ -248,7 +248,7 @@ describe('OT radar', () => {
     expect(stamps).toHaveLength(1);
   });
 
-  it('ot-outlook names who is projected over, clamped by client', async () => {
+  it('ot-outlook names who is projected over; supervisors are refused', async () => {
     const client = await createClient();
     const other = await createClient('Other Corp');
     const assoc = await createAssociate({ firstName: 'Long', lastName: 'Week' });
@@ -281,17 +281,13 @@ describe('OT radar', () => {
       expect(row.projectedOtMinutes).toBeGreaterThan(0);
     }
 
-    // A supervisor at another client never sees them.
-    const { user: sup } = await createUser({
-      role: 'SHIFT_SUPERVISOR',
-      clientId: other.id,
-    });
-    const s = await loginAs(sup.email);
-    const blind = await s.get('/scheduling/ot-outlook');
-    expect(blind.status).toBe(200);
-    expect(
-      blind.body.rows.find((r: { associateId: string }) => r.associateId === assoc.id),
-    ).toBeUndefined();
+    // The outlook prices the OT (billed cost at 1.5x) — labor cost is not
+    // a store-bound read, so any supervisor is refused, own client or not.
+    for (const clientId of [client.id, other.id]) {
+      const { user: sup } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId });
+      const s = await loginAs(sup.email);
+      expect((await s.get('/scheduling/ot-outlook')).status).toBe(403);
+    }
   });
 });
 

@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type RequestHandler } from 'express';
 import { Prisma } from '@prisma/client';
 import {
   AdminOpenShiftClaimListResponseSchema,
@@ -62,6 +62,7 @@ import {
   type PublishWeekSkip,
   type Shift,
   MAX_SHIFT_WALL_MIN,
+  isClientBoundedRole,
   paidMinutesForRange,
   type ShiftConflict,
   type ShiftListResponse,
@@ -135,6 +136,22 @@ const MANAGE_OR_EXEC = requireAnyCapability(
   'view:executive',
   'process:payroll',
 );
+
+/**
+ * Labor cost is org economics — wages, burn, bill rates, margin. The
+ * client-bounded SHIFT_SUPERVISOR holds manage:scheduling to RUN their
+ * floor, not to read what it costs (owner decision 2026-09-17), so the
+ * money-only reads refuse bounded roles outright. /kpis stays open — its
+ * counts run the schedule — with its cost fields nulled for them instead.
+ * Mount AFTER MANAGE_OR_EXEC (it reads req.user).
+ */
+const NOT_CLIENT_BOUNDED: RequestHandler = (req, _res, next) => {
+  if (isClientBoundedRole(req.user!.role)) {
+    next(new HttpError(403, 'forbidden', 'Labor cost is not available to store-bound roles.'));
+    return;
+  }
+  next();
+};
 
 /**
  * GET /scheduling/clients — the OPERATIONAL client directory: id, name,
@@ -801,6 +818,8 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
     const shiftsWithoutRate = Number(rollup?.norate ?? 0);
     // Round to cents — JSON floats survive 2dp safely; the UI formats as $.
     const projectedLaborCost = Math.round(Number(rollup?.cost ?? 0) * 100) / 100;
+    // Bounded roles get the counts, never the money (see NOT_CLIENT_BOUNDED).
+    const showCost = !isClientBoundedRole(req.user!.role);
 
     let openShifts = 0;
     let assignedShifts = 0;
@@ -826,8 +845,8 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
       totalShifts: openShifts + assignedShifts + draftShifts + completedShifts,
       fillRatePercent,
       totalScheduledMinutes,
-      projectedLaborCost,
-      shiftsWithoutRate,
+      projectedLaborCost: showCost ? projectedLaborCost : null,
+      shiftsWithoutRate: showCost ? shiftsWithoutRate : null,
     });
   } catch (err) {
     next(err);
@@ -848,7 +867,7 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
  * MANAGE + the usual tenant clamp: supervisors get their own client only
  * (they already see per-shift rates), org roles see everything.
  */
-schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, async (req, res, next) => {
+schedulingRouter.get('/labor-costs', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (req, res, next) => {
   try {
     const from = parseDateParam(req.query.from?.toString(), 'from');
     const to = parseDateParam(req.query.to?.toString(), 'to');
@@ -1542,7 +1561,7 @@ schedulingRouter.post('/staffing-targets', MANAGE, async (req, res, next) => {
  * page's sparklines and the "speed of light" benchmark (each store vs
  * the best any store ran). Client-bounded callers see their store(s).
  */
-schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, async (req, res, next) => {
+schedulingRouter.get('/store-trends', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (req, res, next) => {
   try {
     const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
     const trendClientId = clamped === null ? NO_MATCH_ID : clamped;
@@ -1703,7 +1722,7 @@ schedulingRouter.post('/broadcast-bench', MANAGE, async (req, res, next) => {
   }
 });
 
-schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, async (req, res, next) => {
+schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (req, res, next) => {
   try {
     const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
     const fnClientId = clamped === null ? NO_MATCH_ID : clamped;
@@ -1984,7 +2003,7 @@ schedulingRouter.get('/floor-now', MANAGE_OR_EXEC, async (req, res, next) => {
  * supervisor works from when trimming Friday's schedule. Bounded callers
  * see only associates with remaining shifts at their client.
  */
-schedulingRouter.get('/ot-outlook', MANAGE_OR_EXEC, async (req, res, next) => {
+schedulingRouter.get('/ot-outlook', MANAGE_OR_EXEC, NOT_CLIENT_BOUNDED, async (req, res, next) => {
   try {
     const clamped = effectiveClientIdFilter(req.user!, req.query.clientId?.toString());
     const otClientId = clamped === null ? NO_MATCH_ID : clamped;

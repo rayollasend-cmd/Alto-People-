@@ -92,8 +92,10 @@ export interface SchedulingKpis {
   totalShifts: number;
   fillRatePercent: number;
   totalScheduledMinutes: number;
-  projectedLaborCost: number;
-  shiftsWithoutRate: number;
+  /** Null for client-bound roles (SHIFT_SUPERVISOR) — the API withholds
+   *  labor cost from them; the counts above still come through. */
+  projectedLaborCost: number | null;
+  shiftsWithoutRate: number | null;
 }
 
 export function getSchedulingKpis(
