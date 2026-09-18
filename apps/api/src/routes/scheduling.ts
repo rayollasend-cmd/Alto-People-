@@ -109,6 +109,7 @@ import { renderSchedulePdf } from '../lib/scheduleReport.js';
 import { mintCalendarToken } from '../lib/calendarFeed.js';
 import { env } from '../config/env.js';
 import { runShiftAutofillSweep } from '../lib/shiftAutofill.js';
+import { ORG_TZ, portalCalendar, storeCalendar } from '../lib/portalMetrics.js';
 
 export const schedulingRouter = Router();
 
@@ -740,9 +741,13 @@ schedulingRouter.get('/shifts', SCHED_READ, async (req, res, next) => {
 
 /**
  * GET /scheduling/kpis?from=ISO&to=ISO[&clientId=UUID]
+ * GET /scheduling/kpis?week=this|last[&clientId=UUID]
  *
  * Phase 50 — top-of-page signal strip. Defaults to the current
- * Sunday→Saturday calendar week if from/to are missing. Returns:
+ * Sunday→Saturday calendar week if from/to are missing. `week` asks for
+ * the workweek (Sat→Fri) on the client's store calendar — the week the
+ * client portal grades, so a supervisor's "fill rate this week" is the
+ * store manager's. Returns:
  *   - openShifts        — count of OPEN status (unfilled, published)
  *   - assignedShifts    — count of ASSIGNED + COMPLETED
  *   - totalShifts       — non-cancelled count in the window
@@ -756,20 +761,37 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
     const clientId = req.query.clientId?.toString();
     const fromParam = req.query.from?.toString();
     const toParam = req.query.to?.toString();
+    const weekParam = req.query.week?.toString();
+    if (weekParam !== undefined && weekParam !== 'this' && weekParam !== 'last') {
+      throw new HttpError(400, 'invalid_week', '`week` must be "this" or "last"');
+    }
     const now = new Date();
-    // Default window: Sunday 00:00 → next Sunday 00:00 (local time).
-    const defaultFrom = new Date(now);
-    defaultFrom.setHours(0, 0, 0, 0);
-    defaultFrom.setDate(defaultFrom.getDate() - defaultFrom.getDay());
-    const defaultTo = new Date(defaultFrom);
-    defaultTo.setDate(defaultTo.getDate() + 7);
-    const from = parseDateParam(fromParam, 'from') ?? defaultFrom;
-    const to = parseDateParam(toParam, 'to') ?? defaultTo;
 
     // Tenant clamp FIRST — the old spread let a bounded caller's clientId
     // query param override scopeShifts' clamp (cross-tenant KPI read).
     const kpiClientId = effectiveClientIdFilter(req.user!, clientId);
     const effectiveKpiClient = kpiClientId === null ? NO_MATCH_ID : kpiClientId;
+
+    let from: Date;
+    let to: Date;
+    if (weekParam) {
+      // The store's workweek: its zone when the client's stores share one.
+      const cal = effectiveKpiClient
+        ? await portalCalendar({ clientId: effectiveKpiClient, location: null })
+        : storeCalendar(ORG_TZ);
+      const anchor = weekParam === 'last' ? new Date(cal.weekStart(now).getTime() - 1) : now;
+      from = cal.weekStart(anchor);
+      to = cal.weekEnd(anchor);
+    } else {
+      // Default window: Sunday 00:00 → next Sunday 00:00 (local time).
+      const defaultFrom = new Date(now);
+      defaultFrom.setHours(0, 0, 0, 0);
+      defaultFrom.setDate(defaultFrom.getDate() - defaultFrom.getDay());
+      const defaultTo = new Date(defaultFrom);
+      defaultTo.setDate(defaultTo.getDate() + 7);
+      from = parseDateParam(fromParam, 'from') ?? defaultFrom;
+      to = parseDateParam(toParam, 'to') ?? defaultTo;
+    }
     const scope = scopeShifts(req.user!);
     const where: Prisma.ShiftWhereInput = {
       ...scope,

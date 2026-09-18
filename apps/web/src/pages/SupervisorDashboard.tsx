@@ -90,15 +90,6 @@ interface ApprovalsCount {
 const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
 const DAY_MS = 86_400_000;
 
-/** Local midnight of the Sunday that starts this week — the same window
- *  the scheduling KPI strip defaults to. */
-function weekStart(offsetWeeks = 0): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() - d.getDay() + offsetWeeks * 7);
-  return d;
-}
-
 const WEEKDAY = new Intl.DateTimeFormat('en-US', { weekday: 'short' });
 function weekdayShort(ymd: string): string {
   const d = parseYmd(ymd);
@@ -147,15 +138,15 @@ export function SupervisorDashboard() {
       return listShifts({ from: from.toISOString(), to: new Date(from.getTime() + 7 * DAY_MS).toISOString() });
     },
   });
+  // Fill rate by the store's workweek (Sat→Fri, on the store's clock) —
+  // the week the store manager's portal grades, so both read one number.
   const kpiThis = useQuery({
     queryKey: ['floor', 'kpis', 'this', todayKey],
-    queryFn: () =>
-      getSchedulingKpis({ from: weekStart(0).toISOString(), to: weekStart(1).toISOString() }),
+    queryFn: () => getSchedulingKpis({ week: 'this' }),
   });
   const kpiLast = useQuery({
     queryKey: ['floor', 'kpis', 'last', todayKey],
-    queryFn: () =>
-      getSchedulingKpis({ from: weekStart(-1).toISOString(), to: weekStart(0).toISOString() }),
+    queryFn: () => getSchedulingKpis({ week: 'last' }),
   });
   const approvalsQuery = useQuery({
     queryKey: ['floor', 'approvals-count'],
@@ -359,8 +350,10 @@ export function SupervisorDashboard() {
   const k = kpiThis.data;
   const kLast = kpiLast.data;
   const filledWeek = k ? k.assignedShifts + k.completedShifts : 0;
+  // No shifts yet this week is "—", not 0% (the portal reads it the same).
+  const weekBase = k ? filledWeek + k.openShifts : 0;
   const fillDelta =
-    k && kLast && kLast.openShifts + kLast.assignedShifts + kLast.completedShifts > 0
+    k && kLast && weekBase > 0 && kLast.openShifts + kLast.assignedShifts + kLast.completedShifts > 0
       ? k.fillRatePercent - kLast.fillRatePercent
       : null;
   const openAhead = aheadDays?.reduce((n, d) => n + d.open, 0) ?? null;
@@ -509,15 +502,21 @@ export function SupervisorDashboard() {
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 animate-enter" style={enterStagger(1)}>
         <StatTile
           label="Fill rate · this week"
-          value={k ? `${k.fillRatePercent}%` : '—'}
+          value={k && weekBase > 0 ? `${k.fillRatePercent}%` : '—'}
           delta={fillDelta !== null ? `${fillDelta > 0 ? '+' : ''}${fillDelta} ${t('portal.kpiPts')}` : null}
           deltaTone={fillDelta === null || fillDelta === 0 ? 'neutral' : fillDelta > 0 ? 'good' : 'bad'}
           meter={
-            k
+            k && weekBase > 0
               ? { percent: k.fillRatePercent, tone: k.fillRatePercent >= 95 ? 'good' : k.fillRatePercent >= 85 ? 'primary' : 'warn' }
               : null
           }
-          sub={k ? `${filledWeek} of ${filledWeek + k.openShifts} shifts filled` : undefined}
+          sub={
+            k
+              ? weekBase > 0
+                ? `${filledWeek} of ${weekBase} shifts filled`
+                : 'Nothing scheduled this week yet'
+              : undefined
+          }
         />
         <TileLink to="/scheduling">
           <StatTile

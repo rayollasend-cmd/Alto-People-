@@ -5,6 +5,7 @@ import { createApp } from '../../app.js';
 import { DEFAULT_TEST_PASSWORD, createClient, createUser, prisma, truncateAll } from '../../../test/db.js';
 import { buildPortalReport, portalScopeFor } from '../../lib/portalDayReport.js';
 import { storeSnapshot } from '../../lib/storeSnapshot.js';
+import { storeCalendar } from '../../lib/portalMetrics.js';
 
 /**
  * The portal reads a store on the store's own calendar. On the org's
@@ -97,5 +98,56 @@ describe("the portal reads a store on the store's calendar", () => {
     expect(snap.today.open).toBe(1);
     const openHours = snap.hours.filter((h) => h.open > 0).map((h) => h.hour);
     expect(openHours).toEqual([22, 23]);
+  });
+});
+
+describe("the supervisor's fill rate is the store manager's", () => {
+  it('reads the store workweek (Sat→Fri, store clock) — the edges land where the portal puts them', async () => {
+    const { client, store, manager } = await pacificStore();
+    await prisma.shift.deleteMany({ where: { clientId: client.id } });
+    const cal = storeCalendar(PT);
+    const now = new Date();
+    const ws = cal.weekStart(now);
+    const we = cal.weekEnd(now);
+    const H = 3_600_000;
+    const mk = (startsAt: Date, status: 'OPEN' | 'ASSIGNED') =>
+      prisma.shift.create({
+        data: {
+          clientId: client.id,
+          locationId: store.id,
+          position: 'Porter',
+          startsAt,
+          endsAt: new Date(startsAt.getTime() + 8 * H),
+          status,
+          publishedAt: new Date('2026-01-01'),
+        },
+      });
+    // Last Friday 10 PM Pacific (Saturday 1 AM Eastern): LAST week, open.
+    await mk(new Date(ws.getTime() - 2 * H), 'OPEN');
+    // This week: Saturday 1 AM, Sunday 6 AM, and Friday 11 PM Pacific
+    // (Saturday 2 AM Eastern) — all filled.
+    await mk(new Date(ws.getTime() + H), 'ASSIGNED');
+    await mk(new Date(ws.getTime() + 30 * H), 'ASSIGNED');
+    await mk(new Date(we.getTime() - H), 'ASSIGNED');
+
+    const { user } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });
+    const sup = await loginAs(user.email);
+    const thisWeek = await sup.get('/scheduling/kpis?week=this');
+    expect(thisWeek.status).toBe(200);
+    expect(thisWeek.body).toMatchObject({
+      from: ws.toISOString(),
+      to: we.toISOString(),
+      assignedShifts: 3,
+      openShifts: 0,
+      fillRatePercent: 100,
+    });
+    const lastWeek = await sup.get('/scheduling/kpis?week=last');
+    expect(lastWeek.body).toMatchObject({ assignedShifts: 0, openShifts: 1, fillRatePercent: 0 });
+
+    // The store manager's home grades the same week the same way.
+    const portal = await manager.get('/client-portal/overview');
+    expect(portal.body.week).toMatchObject({ filled: 3, open: 0, fillRatePct: 100 });
+
+    expect((await sup.get('/scheduling/kpis?week=next')).status).toBe(400);
   });
 });

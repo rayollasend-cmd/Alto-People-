@@ -99,9 +99,17 @@ export interface SchedulingKpis {
 }
 
 export function getSchedulingKpis(
-  filters: { from?: string; to?: string; clientId?: string } = {}
+  filters: {
+    from?: string;
+    to?: string;
+    clientId?: string;
+    /** The workweek (Sat→Fri) on the client's store calendar — the week
+     *  the client portal grades. Takes the place of from/to. */
+    week?: 'this' | 'last';
+  } = {}
 ): Promise<SchedulingKpis> {
   const p = new URLSearchParams();
+  if (filters.week) p.set('week', filters.week);
   if (filters.from) p.set('from', filters.from);
   if (filters.to) p.set('to', filters.to);
   if (filters.clientId) p.set('clientId', filters.clientId);

@@ -63,7 +63,14 @@ function day(roster: ReturnType<typeof row>[]) {
 type Live = Array<{ associateId: string; name: string; clockInAt: string; position: string | null }>;
 type MyWindow = { label: string; startMinute: number; endMinute: number; targetCount: number };
 
-function renderPage(opts: { onFloorNow?: Live; extraRows?: ReturnType<typeof row>[]; myWindows?: MyWindow[] } = {}) {
+function renderPage(
+  opts: {
+    onFloorNow?: Live;
+    extraRows?: ReturnType<typeof row>[];
+    myWindows?: MyWindow[];
+    kpis?: { fillRatePercent: number; assignedShifts: number; completedShifts: number; openShifts: number };
+  } = {},
+) {
   vi.mocked(apiFetch).mockImplementation(async (path: string) => {
     if (path === '/me/shift-windows')
       return {
@@ -103,6 +110,7 @@ function renderPage(opts: { onFloorNow?: Live; extraRows?: ReturnType<typeof row
     shiftsWithoutRate: null,
     from: '',
     to: '',
+    ...opts.kpis,
   });
   vi.mocked(listClientLocations).mockResolvedValue({
     locations: [
@@ -166,6 +174,9 @@ describe('<SupervisorDashboard> — My floor', () => {
   it('carries the four numbers the week runs on, each explained', async () => {
     renderPage();
     expect(await screen.findByText('94%')).toBeInTheDocument();
+    // The store's workweek — the week the store manager's portal grades.
+    expect(getSchedulingKpis).toHaveBeenCalledWith({ week: 'this' });
+    expect(getSchedulingKpis).toHaveBeenCalledWith({ week: 'last' });
     expect(screen.getByText('88 of 94 shifts filled')).toBeInTheDocument();
     expect(await screen.findByText('1 walk-in · 1 swap · 2 pickups · 2 time off · 6 timesheets')).toBeInTheDocument();
     expect(screen.getByText('Waiting on you').closest('a')).toHaveAttribute('href', '/approvals');
@@ -232,5 +243,11 @@ describe('<SupervisorDashboard> — My floor', () => {
     // All four against the store's contracted 4.
     expect(await screen.findByText(/Staffed to the contracted headcount/)).toBeInTheDocument();
     expect(screen.getByText('/ 4')).toBeInTheDocument();
+  });
+
+  it('reads a week with nothing scheduled yet as a dash, not 0%', async () => {
+    renderPage({ kpis: { fillRatePercent: 0, assignedShifts: 0, completedShifts: 0, openShifts: 0 } });
+    expect(await screen.findByText('Nothing scheduled this week yet')).toBeInTheDocument();
+    expect(screen.queryByText('0%')).not.toBeInTheDocument();
   });
 });
