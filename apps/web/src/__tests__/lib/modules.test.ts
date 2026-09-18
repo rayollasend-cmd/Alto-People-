@@ -114,3 +114,13 @@ describe('visibleModules — SHIFT_SUPERVISOR curation', () => {
     }
   });
 });
+
+describe('visibleModules — FLOOR_SUPERVISOR curation', () => {
+  // Watch-only: the live board, their own profile, and messages — nothing
+  // to decide, nothing to spend.
+  it('shows exactly the live board plus the personal baseline', () => {
+    expect(new Set(keysFor('FLOOR_SUPERVISOR'))).toEqual(
+      new Set<ModuleKey>(['me', 'messages', 'time-attendance']),
+    );
+  });
+});

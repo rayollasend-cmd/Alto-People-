@@ -1017,6 +1017,9 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
   const pullState = usePullToRefresh(() => Promise.all([refresh(), refreshActive()]));
 
   const refreshPendingCount = useCallback(async () => {
+    // Watch-only mode has no queue and no manage:time — the count endpoint
+    // would only 403, so the tile isn't rendered and nothing is fetched.
+    if (liveOnly) return;
     try {
       // Follows the client/site filter so the badge and the queue agree;
       // still all-time — it's the total backlog, not the date window.
@@ -1028,7 +1031,7 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
     } catch {
       // KPI is best-effort; leave previous value.
     }
-  }, [clientFilter, locationFilter]);
+  }, [clientFilter, locationFilter, liveOnly]);
 
   // Refresh after an admin create/edit/clock-out — only the visible tab's
   // data plus the pending-review KPI. The other tab refetches on switch.
@@ -1616,7 +1619,12 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
       {/* KPI strip — mirrors the onboarding analytics pattern. Tiles are
           shortcuts too: the live trio jumps to the live board (Off-site
           also applies the off-site lens), Pending review opens the queue. */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+      <div
+        className={cn(
+          'grid grid-cols-2 gap-3 mb-6',
+          liveOnly ? 'md:grid-cols-3' : 'md:grid-cols-4',
+        )}
+      >
         <KpiCard
           icon={Activity}
           label="Clocked in"
@@ -1647,13 +1655,17 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
             setTab('live');
           }}
         />
-        <KpiCard
-          icon={ListChecks}
-          label="Pending review"
-          value={pendingCount === null ? '—' : String(pendingCount)}
-          tone={pendingCount && pendingCount > 0 ? 'warning' : 'success'}
-          onClick={liveOnly ? undefined : () => setTab('queue')}
-        />
+        {/* Watch-only (FLOOR_SUPERVISOR) never reviews time: no queue, no
+            count — the tile read a permanent "—". */}
+        {!liveOnly && (
+          <KpiCard
+            icon={ListChecks}
+            label="Pending review"
+            value={pendingCount === null ? '—' : String(pendingCount)}
+            tone={pendingCount && pendingCount > 0 ? 'warning' : 'success'}
+            onClick={() => setTab('queue')}
+          />
+        )}
       </div>
 
       {!liveOnly && (

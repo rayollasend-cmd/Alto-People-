@@ -77,6 +77,7 @@ const SUBTITLE_BY_ROLE: Partial<Record<Role, string>> = {
   // Harmless fallback — SHIFT_SUPERVISOR normally routes to the dedicated
   // SupervisorDashboard before this component ever renders.
   SHIFT_SUPERVISOR: "Your site today — who's on, who's late, what's open.",
+  FLOOR_SUPERVISOR: "Your site right now — who's on the floor.",
 };
 
 // Thousands-separated integer ("1,234"). Kept local because @/lib/format
@@ -143,6 +144,15 @@ export function AdminDashboard() {
   // for everyone else.
   const canSeeAudit = can('view:audit');
   const canSeeOnboarding = can('view:onboarding');
+  // Every "Action required" item needs one of these. A role holding none
+  // (the watch-only FLOOR_SUPERVISOR lands here) would only ever see the
+  // "all caught up — no applications, I-9s, documents or payroll" card and
+  // a welcome tour describing that section, so both are left out for it.
+  const canAct =
+    can('manage:onboarding') ||
+    can('manage:compliance') ||
+    can('manage:documents') ||
+    can('process:payroll');
 
   const kpisQuery = useQuery({
     queryKey: ['dashboard', 'kpis'],
@@ -223,22 +233,24 @@ export function AdminDashboard() {
         <ClockStrip className="mt-2" />
       </header>
 
-      <WelcomeCard greetingName={greetingName} />
+      {canAct && <WelcomeCard greetingName={greetingName} />}
 
       <RoleDecisionQueue />
       <MyPlanCard />
 
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
-      <ActionRequiredSection
-        kpis={kpis}
-        canManageOnboarding={can('manage:onboarding')}
-        canManageCompliance={canManageCompliance}
-        canManageDocuments={can('manage:documents')}
-        canProcessPayroll={canProcessPayroll}
-        ssnRecollectionOutstanding={ssnRecollectionOutstanding}
-        openIncidents={openIncidents}
-      />
+      {canAct && (
+        <ActionRequiredSection
+          kpis={kpis}
+          canManageOnboarding={can('manage:onboarding')}
+          canManageCompliance={canManageCompliance}
+          canManageDocuments={can('manage:documents')}
+          canProcessPayroll={canProcessPayroll}
+          ssnRecollectionOutstanding={ssnRecollectionOutstanding}
+          openIncidents={openIncidents}
+        />
+      )}
 
       <KpiSection kpis={kpis} role={role} />
 
