@@ -259,8 +259,8 @@ export function HandOverDialog({
         <DialogHeader>
           <DialogTitle>Hand over {whose} shift</DialogTitle>
           <DialogDescription>
-            On these days their clock-in opens {whose} shift&apos;s SOP. They read the previous shift&apos;s notes,
-            run the checklist, hand over, and can&apos;t clock out until it&apos;s submitted.
+            On these days, clocking in at the store tablet opens {whose} shift&apos;s SOP for them. They read the
+            previous shift&apos;s notes, run the checklist, hand over, and can&apos;t clock out until it&apos;s submitted.
             {lead ? ` If ${lead.name.split(' ')[0]} clocks in, it goes back to them.` : ' Clock in yourself and it comes back to you.'}
           </DialogDescription>
         </DialogHeader>

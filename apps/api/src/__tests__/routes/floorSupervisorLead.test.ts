@@ -3,6 +3,8 @@ import request, { type Test } from 'supertest';
 import type TestAgent from 'supertest/lib/agent.js';
 import { minuteOfDayInZone } from '@alto-people/shared';
 import { createApp } from '../../app.js';
+import { generateDeviceToken, hashDeviceToken, hmacPin } from '../../lib/kioskAuth.js';
+import { _resetKioskRateLimit } from '../../lib/kioskRateLimit.js';
 import { runSopCoverSweep } from '../../lib/storeShiftSop.js';
 import { supervisorRecipients } from '../../lib/shiftWindows.js';
 import { flushPendingNotifications } from '../../lib/notify.js';
@@ -21,11 +23,13 @@ import {
  * supervisor in charge of them. They help on that shift's SOP; they run it
  * — gate and all — when the shift supervisor hands them the day, or isn't
  * on the clock 30 minutes in; the shift supervisor's clock-in takes it back.
+ * They punch at the store tablet only — never in the app.
  */
 
 const app = () => createApp();
 beforeEach(async () => {
   await truncateAll();
+  _resetKioskRateLimit();
 });
 afterAll(async () => {
   await prisma.$disconnect();
@@ -87,7 +91,26 @@ async function seed(opts: { startedMin?: number } = {}) {
   const marcus = await person('Marcus', 'Hill', 'FLOOR_SUPERVISOR');
   await prisma.user.update({ where: { id: marcus.user.id }, data: { leadUserId: dana.user.id } });
   const { user: hr } = await createUser({ role: 'HR_ADMINISTRATOR' });
-  return { client, store, template, dana, marcus, hr };
+
+  // The store tablet, and Marcus's PIN — the only place he punches.
+  const pin = '2468';
+  await prisma.kioskPin.create({ data: { clientId: client.id, associateId: marcus.associate.id, pinHmac: hmacPin(pin) } });
+  const { plaintext, prefix } = generateDeviceToken();
+  await prisma.kioskDevice.create({
+    data: {
+      clientId: client.id,
+      locationId: store.id,
+      name: 'Front Beach tablet',
+      tokenHash: hashDeviceToken(plaintext),
+      tokenPrefix: prefix,
+      tokenExpiresAt: new Date(Date.now() + 90 * 24 * 60 * MIN),
+    },
+  });
+  const tablet = async () => {
+    _resetKioskRateLimit();
+    return request(app()).post('/kiosk/punch').send({ deviceToken: plaintext, pin });
+  };
+  return { client, store, template, dana, marcus, hr, tablet };
 }
 
 const bell = (userId: string, subject: string | { startsWith: string }) =>
@@ -157,11 +180,27 @@ describe('assigning a floor supervisor their shift supervisor', () => {
   });
 });
 
+describe('floor supervisors punch at the tablet only', () => {
+  it('the app refuses every punch — in, out, and breaks — and points them to the tablet', async () => {
+    const { marcus, tablet } = await seed();
+    const m = await loginAs(marcus.user.email);
+    for (const path of ['/time/me/clock-in', '/time/me/clock-out', '/time/me/break/start', '/time/me/break/end']) {
+      const res = await m.post(path).send({});
+      expect(res.status, path).toBe(403);
+      expect(res.body.error.code, path).toBe('use_kiosk');
+    }
+    expect((await m.post('/time/me/clock-in').send({})).body.error.message).toMatch(/store tablet/);
+    // The tablet takes the punch — and the app still shows they're on.
+    expect((await tablet()).body.action).toBe('CLOCK_IN');
+    expect((await m.get('/time/me/active')).body.active).not.toBeNull();
+  });
+});
+
 describe('the floor team, each side', () => {
   it("the shift supervisor sees their floor supervisors on the clock; the floor supervisor sees their lead", async () => {
-    const { dana, marcus } = await seed();
+    const { dana, marcus, tablet } = await seed();
     const m = await loginAs(marcus.user.email);
-    expect((await m.post('/time/me/clock-in').send({})).status).toBe(201);
+    expect((await tablet()).body.action).toBe('CLOCK_IN');
 
     const team = await (await loginAs(dana.user.email)).get('/me/floor-team');
     expect(team.body.role).toBe('lead');
@@ -176,9 +215,9 @@ describe('the floor team, each side', () => {
 
 describe('helping on the shift supervisor\'s SOP', () => {
   it("the floor supervisor's clock-in opens nothing; on the lead's SOP they check items off but can't submit it", async () => {
-    const { dana, marcus } = await seed();
+    const { dana, marcus, tablet } = await seed();
     const m = await loginAs(marcus.user.email);
-    expect((await m.post('/time/me/clock-in').send({})).status).toBe(201);
+    expect((await tablet()).body.action).toBe('CLOCK_IN');
     expect(await prisma.opsShift.count()).toBe(0);
 
     const d = await loginAs(dana.user.email);
@@ -201,7 +240,7 @@ describe('helping on the shift supervisor\'s SOP', () => {
     expect(close.body.error.code).toBe('not_running');
     expect((await m.post(`/ops/shifts/${sop.id}/handover`).send({ items: [{ kind: 'NOTE', body: 'x' }] })).status).toBe(403);
     // Their clock-out isn't held by an SOP they don't run.
-    expect((await m.post('/time/me/clock-out').send({})).status).toBe(200);
+    expect((await tablet()).body.action).toBe('CLOCK_OUT');
   });
 
   it("an SOP that isn't their shift's stays closed to them", async () => {
@@ -228,7 +267,7 @@ describe('helping on the shift supervisor\'s SOP', () => {
 
 describe('handing the shift over', () => {
   it('the shift supervisor hands a day to their floor supervisor, who is told; the clock-in opens the SOP for THEM and holds their clock-out', async () => {
-    const { dana, marcus } = await seed();
+    const { dana, marcus, tablet } = await seed();
     const d = await loginAs(dana.user.email);
     const cover = await d
       .post('/shift-covers')
@@ -236,17 +275,17 @@ describe('handing the shift over', () => {
     expect(cover.status).toBe(201);
     await flushPendingNotifications();
     const told = await bell(marcus.user.id, { startsWith: 'Dana handed you the Swing shift' });
-    expect(told?.body).toMatch(/your clock-in opens the SOP/);
+    expect(told?.body).toMatch(/clocking in at the store tablet opens the SOP for you/);
     expect(told?.body).toMatch(/Dentist — back tomorrow\./);
 
     const m = await loginAs(marcus.user.email);
-    expect((await m.post('/time/me/clock-in').send({})).status).toBe(201);
+    expect((await tablet()).body.action).toBe('CLOCK_IN');
     const sop = await prisma.opsShift.findFirstOrThrow();
     expect(sop).toMatchObject({ openedById: marcus.user.id, coveringForId: dana.user.id, windowLabel: 'Swing' });
 
     const my = await m.get('/ops/my-sop');
     expect(my.body.sop).toMatchObject({ id: sop.id, coveringFor: { id: dana.user.id, name: 'Dana Reyes' } });
-    const out = await m.post('/time/me/clock-out').send({});
+    const out = await tablet();
     expect(out.status).toBe(409);
     expect(out.body.error.code).toBe('sop_open');
 
@@ -261,7 +300,7 @@ describe('handing the shift over', () => {
     await flushPendingNotifications();
     const report = await bell(dana.user.id, 'Marcus Hill submitted your Swing SOP');
     expect(report?.body).toMatch(/2 of 2 done/);
-    expect((await m.post('/time/me/clock-out').send({})).status).toBe(200);
+    expect((await tablet()).body.action).toBe('CLOCK_OUT');
   });
 
   it("only to their own floor supervisors, never overlapping; HR can hand over for them; taking it back tells the cover", async () => {
@@ -327,10 +366,10 @@ describe('handing the shift over', () => {
 
 describe('the shift supervisor is not on the clock', () => {
   it('30 minutes in, the SOP moves to the floor supervisor on the clock — lead and Workforce told; the lead clocking in takes it back', async () => {
-    const { dana, marcus } = await seed({ startedMin: 45 });
+    const { dana, marcus, tablet } = await seed({ startedMin: 45 });
     const { user: wfm } = await createUser({ role: 'WORKFORCE_MANAGER' });
     const m = await loginAs(marcus.user.email);
-    expect((await m.post('/time/me/clock-in').send({})).status).toBe(201);
+    expect((await tablet()).body.action).toBe('CLOCK_IN');
 
     expect(await runSopCoverSweep(prisma)).toEqual({ opened: 1 });
     // Once — never a second SOP for the same shift.
@@ -341,7 +380,7 @@ describe('the shift supervisor is not on the clock', () => {
     expect((await bell(marcus.user.id, 'The Swing SOP is yours today'))?.body).toMatch(/Dana Reyes isn't on the clock 30 minutes/);
     expect(await bell(dana.user.id, 'Marcus Hill is running your Swing SOP')).not.toBeNull();
     expect(await bell(wfm.id, { startsWith: 'SOP moved to a floor supervisor' })).not.toBeNull();
-    expect((await m.post('/time/me/clock-out').send({})).status).toBe(409);
+    expect((await tablet()).status).toBe(409);
 
     // A checked item survives the hand-back.
     const detail = await m.get(`/ops/shifts/${sop.id}`);
@@ -356,13 +395,12 @@ describe('the shift supervisor is not on the clock', () => {
     await flushPendingNotifications();
     expect(await bell(marcus.user.id, 'Dana Reyes took the Swing SOP back')).not.toBeNull();
     // Marcus's clock-out is free again.
-    expect((await m.post('/time/me/clock-out').send({})).status).toBe(200);
+    expect((await tablet()).body.action).toBe('CLOCK_OUT');
   });
 
   it("not before 30 minutes, and never while the shift supervisor is on the clock", async () => {
     const early = await seed({ startedMin: 10 });
-    const m = await loginAs(early.marcus.user.email);
-    expect((await m.post('/time/me/clock-in').send({})).status).toBe(201);
+    expect((await early.tablet()).body.action).toBe('CLOCK_IN');
     expect(await runSopCoverSweep(prisma)).toEqual({ opened: 0 });
 
     // 45 minutes in — but Dana is on the clock (clocked in elsewhere, say).

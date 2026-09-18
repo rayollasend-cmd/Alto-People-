@@ -319,9 +319,9 @@ floorTeamRouter.post('/shift-covers', requireAuth, async (req, res) => {
     notifyUser(cover.id, {
       subject: `${firstName(lead)} handed you the ${labels} shift — ${span}`,
       body:
-        `On ${span} you run ${firstName(lead)}'s ${labels} shift${stores ? ` at ${stores}` : ''}: your clock-in ` +
-        `opens the SOP. Read the previous shift's notes, work the checklist, hand over, and submit it before ` +
-        `you clock out.` +
+        `On ${span} you run ${firstName(lead)}'s ${labels} shift${stores ? ` at ${stores}` : ''}: clocking in at ` +
+        `the store tablet opens the SOP for you. Read the previous shift's notes, work the checklist, hand over, ` +
+        `and submit it before you clock out.` +
         (input.note ? `\n\n${firstName(lead)}: ${input.note}` : ''),
       category: 'ops.sop',
       linkUrl: '/',

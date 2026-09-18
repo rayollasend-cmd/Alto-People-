@@ -35,7 +35,9 @@ import {
  * Floor supervisors (lib/floorLeads): they help on their shift's SOP, and
  * run it — gate included — when it's theirs:
  *   handed the shift  → on a day their shift supervisor handed them
- *                       (ShiftCover), their clock-in opens it for them
+ *                       (ShiftCover), their clock-in — at the store
+ *                       tablet; they never punch in the app — opens it
+ *                       for them
  *   lead not on clock → 30 minutes into the shift, with no shift
  *                       supervisor for it on the clock, the sweep opens it
  *                       for the floor supervisor who is
@@ -320,7 +322,7 @@ async function openStoreShiftSop(
  * when the store shift has no SOP assigned, or they're not a supervisor.
  *
  * A shift supervisor takes back an SOP a floor supervisor is running for
- * their shift. A floor supervisor's clock-in opens one only on a day
+ * their shift. A floor supervisor's clock-in (always at the tablet) opens one only on a day
  * they've been handed the shift — otherwise they help on the lead's.
  */
 export async function openSopOnClockIn(

@@ -237,7 +237,10 @@ export function OpsRunner() {
         setShiftParam(null);
         // The end of the shift, in one more tap: the SOP was the last thing
         // standing between them and the clock-out.
-        if (isSupervisor) {
+        if (assistOnly) {
+          // Floor supervisors punch at the store tablet, never in the app.
+          toast.success('SOP submitted — clock out at the store tablet when you’re done.', { duration: 12_000 });
+        } else if (isSupervisor) {
           toast.success('SOP submitted — the record is final.', {
             duration: 12_000,
             action: { label: 'Clock out now', onClick: () => void clock.clockOutNow() },

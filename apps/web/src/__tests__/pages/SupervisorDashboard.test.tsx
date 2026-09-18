@@ -408,8 +408,28 @@ describe('<SupervisorDashboard> — the floor supervisor\'s floor', () => {
       ]),
     });
     expect(await screen.findByText("You're running Dana's shift today")).toBeInTheDocument();
-    expect(screen.getByText(/the shift's SOP opens for you, and it's yours to submit/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Clock in' })).toBeInTheDocument();
+    expect(
+      screen.getByText(/Clock in at the store tablet with your PIN — the shift's SOP opens for you, and it's yours to submit/),
+    ).toBeInTheDocument();
+    // They punch at the tablet only — no clock button in the app.
+    expect(screen.queryByRole('button', { name: 'Clock in' })).not.toBeInTheDocument();
+  });
+
+  it('off the clock on an ordinary day: where to clock in, never a clock button', async () => {
+    renderPage({ role: 'FLOOR_SUPERVISOR', clockedIn: false, floorTeam: floorTeam() });
+    expect(await screen.findByText(/Clock in at the store tablet with your PIN — you help on Dana's SOP/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clock in' })).not.toBeInTheDocument();
+  });
+
+  it("SOP submitted: clock out at the tablet — no clock-out button", async () => {
+    renderPage({
+      role: 'FLOOR_SUPERVISOR',
+      clockedIn: true,
+      floorTeam: floorTeam(),
+      submitted: { id: 'sop1', windowLabel: 'Swing', position: 'Swing shift', closedAt: new Date().toISOString(), closedIncomplete: false },
+    });
+    expect(await screen.findByText('Clock out at the store tablet whenever you’re done.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clock out' })).not.toBeInTheDocument();
   });
 
   it('running it for their shift supervisor: the SOP card says for whom', async () => {

@@ -138,7 +138,7 @@ export function AssociateTimeView({
   // open) takes them there too.
   const { user } = useAuth();
   const navigate = useNavigate();
-  const isSupervisor = user?.role === 'SHIFT_SUPERVISOR' || user?.role === 'FLOOR_SUPERVISOR';
+  const isSupervisor = user?.role === 'SHIFT_SUPERVISOR';
   const openSop = (id: string) => navigate(`/ops?tab=shift&shift=${id}`);
 
   const handleClockIn = async () => {

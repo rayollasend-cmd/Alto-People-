@@ -437,11 +437,17 @@ export function SupervisorDashboard() {
             <div className="text-sm font-medium text-white">
               Your {sopQuery.data.submitted.windowLabel ?? sopQuery.data.submitted.position} SOP is submitted
             </div>
-            <div className="mt-0.5 text-xs text-silver">You can clock out whenever you&apos;re done.</div>
+            <div className="mt-0.5 text-xs text-silver">
+              {watchOnly
+                ? 'Clock out at the store tablet whenever you’re done.'
+                : 'You can clock out whenever you’re done.'}
+            </div>
           </div>
-          <Button variant="secondary" onClick={() => void clock.clockOutNow()} loading={clock.busy}>
-            Clock out
-          </Button>
+          {!watchOnly && (
+            <Button variant="secondary" onClick={() => void clock.clockOutNow()} loading={clock.busy}>
+              Clock out
+            </Button>
+          )}
         </div>
       ) : clock.active === null ? (
         <div
@@ -458,16 +464,20 @@ export function SupervisorDashboard() {
                 : "You're off the clock"}
             </div>
             <div className="mt-0.5 text-xs text-silver">
+              {/* Floor supervisors punch at the store tablet only (the API
+                  refuses app punches) — so no button here, just where. */}
               {coveringToday
-                ? "Clock in here or at the kiosk — the shift's SOP opens for you, and it's yours to submit."
+                ? "Clock in at the store tablet with your PIN — the shift's SOP opens for you, and it's yours to submit."
                 : watchOnly
-                  ? `Clock in here or at the kiosk — you help on ${leadFirst ? `${leadFirst}'s` : 'your shift’s'} SOP.`
+                  ? `Clock in at the store tablet with your PIN — you help on ${leadFirst ? `${leadFirst}'s` : 'your shift’s'} SOP.`
                   : "Clock in here or at the kiosk — your shift's SOP opens by itself."}
             </div>
           </div>
-          <Button onClick={() => void clock.clockInNow()} loading={clock.busy}>
-            Clock in
-          </Button>
+          {!watchOnly && (
+            <Button onClick={() => void clock.clockInNow()} loading={clock.busy}>
+              Clock in
+            </Button>
+          )}
         </div>
       ) : watchOnly && sopQuery.data?.helping ? (
         <HelpingBanner sop={sopQuery.data.helping} />

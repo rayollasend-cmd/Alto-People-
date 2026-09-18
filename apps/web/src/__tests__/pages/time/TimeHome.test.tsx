@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ROLE_CAPABILITIES, type Capability, type Role } from '@alto-people/shared';
 import { AuthContext } from '@/lib/auth';
 
@@ -22,11 +23,17 @@ vi.mock('@/pages/time/AssociateTimeView', () => ({
   ),
 }));
 
+vi.mock('@/pages/time/MyTimesheet', () => ({ MyTimesheet: () => <div>my timesheet</div> }));
+vi.mock('@/lib/timeApi', () => ({
+  getActiveTimeEntry: vi.fn().mockResolvedValue({ active: { id: 'e1', clockInAt: new Date().toISOString() } }),
+}));
+
 import { TimeHome } from '@/pages/time/TimeHome';
 
 function renderAt(url: string, role: Role = 'SHIFT_SUPERVISOR') {
   const caps = ROLE_CAPABILITIES[role];
   return render(
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
     <AuthContext.Provider
       value={{
         isInitializing: false,
@@ -42,7 +49,8 @@ function renderAt(url: string, role: Role = 'SHIFT_SUPERVISOR') {
       <MemoryRouter initialEntries={[url]}>
         <TimeHome />
       </MemoryRouter>
-    </AuthContext.Provider>,
+    </AuthContext.Provider>
+    </QueryClientProvider>,
   );
 }
 
@@ -59,6 +67,26 @@ describe('<TimeHome> — one page for people who run the floor and punch', () =>
     renderAt('/time-attendance?mine=1');
     expect(screen.getByText('personal full')).toBeInTheDocument();
     expect(screen.queryByText('floor view')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /the floor/i })).toHaveAttribute('href', '/time-attendance');
+  });
+});
+
+describe('<TimeHome> — the floor supervisor punches at the tablet only', () => {
+  it('the live board with their clock read-only — no clock buttons, where to punch instead', async () => {
+    renderAt('/time-attendance', 'FLOOR_SUPERVISOR');
+    expect(screen.getByText('floor view')).toBeInTheDocument();
+    expect(screen.queryByText('personal strip')).not.toBeInTheDocument();
+    expect(await screen.findByText(/On the clock since/)).toBeInTheDocument();
+    expect(screen.getByText('Punch in and out at the store tablet with your PIN.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /clock (in|out)/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'My time →' })).toHaveAttribute('href', '/time-attendance?mine=1');
+  });
+
+  it('"My time" is their timesheet and the tablet note — never the clock-in screen', () => {
+    renderAt('/time-attendance?mine=1', 'FLOOR_SUPERVISOR');
+    expect(screen.getByText('my timesheet')).toBeInTheDocument();
+    expect(screen.getByText(/clock in and out at the store tablet/)).toBeInTheDocument();
+    expect(screen.queryByText('personal full')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /the floor/i })).toHaveAttribute('href', '/time-attendance');
   });
 });

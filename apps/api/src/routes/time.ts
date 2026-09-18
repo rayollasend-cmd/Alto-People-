@@ -387,9 +387,10 @@ timeRouter.get('/me/entries', async (req, res, next) => {
   }
 });
 
-// Hourly associates clock in via the kiosk (PIN + selfie) at the worksite —
-// not from their personal phones. The web/app /me/clock-in path is for
-// managers and other salaried roles whose time we still track.
+// Hourly associates — and floor supervisors — clock in via the kiosk (PIN +
+// selfie) at the worksite, not from their phones: every punch, in, out, and
+// breaks. The web/app /me/clock-in path is for managers and other salaried
+// roles whose time we still track.
 type SelfClockUser = NonNullable<Express.Request['user']>;
 function assertCanSelfClock(
   user: SelfClockUser,
@@ -399,6 +400,13 @@ function assertCanSelfClock(
       403,
       'use_kiosk',
       'Hourly associates clock in at the worksite kiosk with their 4-digit PIN. The clock-in/out buttons in the web app are reserved for managers.',
+    );
+  }
+  if (user.role === 'FLOOR_SUPERVISOR') {
+    throw new HttpError(
+      403,
+      'use_kiosk',
+      'Floor supervisors clock in and out at the store tablet with their 4-digit PIN — not in the app.',
     );
   }
   if (!user.associateId) {
