@@ -210,7 +210,7 @@ export function OpsBoard() {
       <div className="relative overflow-hidden rounded-lg border border-navy-secondary bg-gradient-to-br from-navy-secondary/60 via-navy to-navy p-5">
         <div
           aria-hidden
-          className="pointer-events-none absolute -right-10 -top-10 h-44 w-44 rounded-full bg-gold/10 blur-3xl"
+          className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full glow [--glow:rgb(var(--color-gold)/0.12)]"
         />
         <div className="relative flex flex-wrap items-center gap-x-8 gap-y-4">
           <div>

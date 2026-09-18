@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, IdCard, LogOut, Menu, Search, User, WifiOff } from 'lucide-react';
+import { ChevronRight, IdCard, LogOut, Search, User, WifiOff } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { shortStoreName, useStoreScope } from '@/lib/storeScope';
@@ -24,7 +24,6 @@ import { InstallAppButton } from './InstallAppButton';
 import { Logo } from '@/components/Logo';
 
 interface TopbarProps {
-  onOpenMobileNav: () => void;
   onOpenCommandPalette: () => void;
 }
 
@@ -94,7 +93,7 @@ function StoreScopeBar() {
   );
 }
 
-export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
+export function Topbar({ onOpenCommandPalette }: TopbarProps) {
   const { user, signOut, isOffline } = useAuth();
   const navigate = useNavigate();
   const pageTitle = usePageTitle();
@@ -116,15 +115,8 @@ export function Topbar({ onOpenMobileNav, onOpenCommandPalette }: TopbarProps) {
     <header
       className="bg-navy/95 backdrop-blur elev-1 border-b border-navy-secondary flex items-center gap-3 min-h-14 pt-[env(safe-area-inset-top)] pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:pl-[max(1.5rem,env(safe-area-inset-left))] md:pr-[max(1.5rem,env(safe-area-inset-right))]"
     >
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        className="md:hidden -ml-1"
-        onClick={onOpenMobileNav}
-        aria-label="Open navigation menu"
-      >
-        <Menu className="h-5 w-5" />
-      </Button>
+      {/* No ☰ on phones: the tab bar's More opens the same menu, and two
+          doors to one room read as a website, not an app. */}
       <Logo size="xs" className="md:hidden" alt="Alto HR" />
 
       {/* Page title / breadcrumbs — sticks in chrome so wayfinding survives

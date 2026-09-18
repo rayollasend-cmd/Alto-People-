@@ -64,26 +64,45 @@ export function InstallPrompt() {
     }
   };
 
+  // Phones and iPads: an in-page banner at the top of the content — the
+  // shape of Safari's own app banner — that scrolls away with the page.
+  // It was a fixed card pinned bottom-right, which on a phone sat squarely
+  // on the tab bar (every page, until dismissed). Desktop keeps the corner
+  // card. lg, not md: the supervisor's and store manager's tab bar stays
+  // through iPad widths.
   return (
-    <div className="fixed z-50 max-w-sm bg-navy-secondary border border-gold/40 rounded-lg elev-2 p-4 flex items-start gap-3 bottom-[max(1rem,env(safe-area-inset-bottom))] right-[max(1rem,env(safe-area-inset-right))]">
-      <Download className="h-5 w-5 text-gold mt-0.5 flex-shrink-0" />
-      <div className="flex-1">
+    <div
+      role="region"
+      aria-label="Install Alto"
+      className="mb-4 flex items-center gap-3 rounded-xl border border-gold/30 bg-navy-secondary/60 px-3 py-2.5 lg:fixed lg:bottom-6 lg:right-6 lg:z-50 lg:mb-0 lg:max-w-sm lg:items-start lg:rounded-lg lg:border-gold/40 lg:bg-navy-secondary lg:p-4 lg:elev-2"
+    >
+      <img
+        src="/icon-96.png"
+        alt=""
+        aria-hidden="true"
+        className="h-10 w-10 shrink-0 rounded-[0.6rem] lg:hidden"
+      />
+      <Download className="mt-0.5 hidden h-5 w-5 shrink-0 text-gold lg:block" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-white">
-          Install Alto on this device
+          <span className="lg:hidden">Install Alto</span>
+          <span className="hidden lg:inline">Install Alto on this device</span>
         </div>
         {ios && !promptAvailable ? (
-          <div className="text-xs text-silver mt-1">
+          <div className="text-xs text-silver">
             Tap{' '}
             <Share className="inline h-3.5 w-3.5 align-text-bottom text-gold" aria-label="Share" />{' '}
-            then <span className="text-white">Add to Home Screen</span>. Installing
-            is also what lets Alto send you notifications on iPhone and iPad.
+            then <span className="text-white">Add to Home Screen</span>
+            <span className="hidden lg:inline">
+              . Installing is also what lets Alto send you notifications on iPhone and iPad.
+            </span>
           </div>
         ) : (
-          <div className="text-xs text-silver mt-1">
-            Quicker launches and an offline shell. Works on desktop and mobile.
+          <div className="text-xs text-silver">
+            Opens like an app, with an offline shell.
           </div>
         )}
-        <div className="mt-3 flex gap-2">
+        <div className="mt-3 hidden gap-2 lg:flex">
           {promptAvailable && (
             <Button size="sm" onClick={onInstall}>
               Install
@@ -94,9 +113,15 @@ export function InstallPrompt() {
           </Button>
         </div>
       </div>
+      {promptAvailable && (
+        <Button size="sm" onClick={onInstall} className="shrink-0 lg:hidden">
+          Install
+        </Button>
+      )}
       <button
+        type="button"
         onClick={onDismiss}
-        className="text-silver hover:text-white transition-colors p-1 coarse:p-2 -m-1 coarse:-m-2"
+        className="shrink-0 rounded-md p-2 -m-1 text-silver transition-colors hover:text-white"
         aria-label="Dismiss"
       >
         <X className="h-4 w-4" />

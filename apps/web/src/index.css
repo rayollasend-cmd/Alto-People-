@@ -856,3 +856,11 @@ input[type='radio'] {
     font-size: 16px;
   }
 }
+
+/* A soft light — a radial gradient, never `filter: blur`. WebKit (every
+   iPhone/iPad browser) composites a large blurred layer inside a scrolling
+   container as black tiles: scroll Store Ops on an iPhone and a black box
+   ate the top bar. Tone it with [--glow:rgb(var(--color-gold)/0.12)]. */
+.glow {
+  background-image: radial-gradient(closest-side, var(--glow, transparent), transparent);
+}

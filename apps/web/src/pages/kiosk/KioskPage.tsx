@@ -1822,10 +1822,10 @@ function ResultScreen({ result, t }: { result: PunchResult; t: KioskStrings }) {
         : 'text-warning';
   const halo =
     result.action === 'CLOCK_IN'
-      ? 'bg-success/20'
+      ? '[--glow:rgb(var(--color-success)/0.24)]'
       : result.action === 'CLOCK_OUT'
-        ? 'bg-gold/20'
-        : 'bg-warning/20';
+        ? '[--glow:rgb(var(--color-gold)/0.24)]'
+        : '[--glow:rgb(var(--color-warning)/0.24)]';
   return (
     <div className="relative text-center px-6">
       <style>{`@keyframes kiosk-celebrate-in {
@@ -1841,7 +1841,7 @@ function ResultScreen({ result, t }: { result: PunchResult; t: KioskStrings }) {
           layer so the text reads cleanly while still feeling lit-from-within. */}
       <div
         aria-hidden="true"
-        className={`pointer-events-none absolute left-1/2 top-1/2 h-[28rem] w-[28rem] rounded-full ${halo} blur-3xl`}
+        className={`pointer-events-none absolute left-1/2 top-1/2 h-[36rem] w-[36rem] rounded-full glow ${halo}`}
         style={{ animation: 'kiosk-halo 2.4s ease-in-out infinite' }}
       />
       <div

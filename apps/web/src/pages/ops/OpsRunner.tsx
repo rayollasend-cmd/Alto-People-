@@ -359,7 +359,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
       <div className="relative overflow-hidden rounded-lg border border-navy-secondary bg-gradient-to-br from-navy-secondary/60 via-navy to-navy p-5">
         <div
           aria-hidden
-          className="pointer-events-none absolute -right-8 -top-8 h-40 w-40 rounded-full bg-gold/10 blur-3xl"
+          className="pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full glow [--glow:rgb(var(--color-gold)/0.12)]"
         />
         <div className="relative">
           <div className="text-2xs uppercase tracking-[0.2em] text-gold">
@@ -583,8 +583,8 @@ function ShiftRunner({
         <div
           aria-hidden
           className={cn(
-            'pointer-events-none absolute -right-8 -top-8 h-40 w-40 rounded-full blur-3xl',
-            allDone ? 'bg-success/15' : 'bg-gold/10',
+            'pointer-events-none absolute -right-16 -top-16 h-64 w-64 rounded-full glow',
+            allDone ? '[--glow:rgb(var(--color-success)/0.18)]' : '[--glow:rgb(var(--color-gold)/0.12)]',
           )}
         />
         <div className="relative flex flex-wrap items-center gap-4">

@@ -1033,7 +1033,7 @@ function ApprovedCelebration({
         <div className="relative border-l-2 border-l-success/70 bg-gradient-to-br from-success/[0.08] via-navy to-navy p-8 md:p-10">
           <div
             aria-hidden="true"
-            className="absolute -top-8 -right-8 h-32 w-32 rounded-full bg-success/15 blur-2xl"
+            className="absolute -top-14 -right-14 h-48 w-48 rounded-full glow [--glow:rgb(var(--color-success)/0.16)]"
           />
           <div className="relative">
             <div className="inline-flex items-center gap-2 text-2xs uppercase tracking-widest text-success">

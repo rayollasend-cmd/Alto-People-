@@ -58,9 +58,14 @@ export function PageHeader({
   usePublishPageTitle(published, breadcrumbs ?? null);
 
   return (
-    <header className={cn('mb-7', className)}>
+    <header className={cn('mb-5 md:mb-7', className)}>
+      {/* Phones read like an app's large-title header: no breadcrumb trail
+          (the top bar names the page, the tab bar navigates), a two-line
+          description, and one swipeable row of actions. */}
       {breadcrumbs && breadcrumbs.length > 0 && (
-        <Breadcrumb segments={breadcrumbs} />
+        <div className="hidden md:block">
+          <Breadcrumb segments={breadcrumbs} />
+        </div>
       )}
       <div className="flex items-end justify-between gap-4 flex-wrap">
         {/* min-w-[16rem] (not min-w-0): with a long action row, flex-1 +
@@ -80,7 +85,7 @@ export function PageHeader({
             {title}
           </h1>
           {subtitle && (
-            <p className="text-silver mt-2 text-sm md:text-base max-w-3xl leading-relaxed">
+            <p className="text-silver mt-2 text-sm md:text-base max-w-3xl leading-relaxed line-clamp-2 md:line-clamp-none">
               {subtitle}
             </p>
           )}
@@ -90,9 +95,17 @@ export function PageHeader({
           // row sat at its one-line max-content width — wider than a
           // phone — and made the whole page pannable sideways. Constrained
           // to the container, the internal flex-wrap actually wraps.
-          <div className="flex flex-wrap gap-2 items-center min-w-0 max-w-full">
+          // Phone: ONE row that swipes sideways (edge to edge, like an
+          // app's action strip) with the main action first — it wrapped
+          // into two or three rows of outlined buttons before any content.
+          // md+: the wrapping row, main action last, as before.
+          <div className="-mx-4 flex w-[calc(100%+2rem)] max-w-none items-center gap-2 overflow-x-auto px-4 pb-0.5 scrollbar-none md:mx-0 md:w-auto md:max-w-full md:min-w-0 md:flex-wrap md:overflow-visible md:px-0 md:pb-0 [&>*]:shrink-0 md:[&>*]:shrink">
             {secondaryActions}
-            {primaryAction}
+            {primaryAction && (
+              <div className="order-first flex shrink-0 items-center gap-2 md:order-none">
+                {primaryAction}
+              </div>
+            )}
           </div>
         )}
       </div>

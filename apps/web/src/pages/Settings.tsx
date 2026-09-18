@@ -565,7 +565,7 @@ function MfaCard() {
                 }`}</style>
                 <div
                   aria-hidden="true"
-                  className="pointer-events-none absolute -top-6 -right-6 h-24 w-24 rounded-full bg-success/20 blur-2xl"
+                  className="pointer-events-none absolute -top-12 -right-12 h-40 w-40 rounded-full glow [--glow:rgb(var(--color-success)/0.2)]"
                 />
                 <div className="relative flex items-center gap-4">
                   <div className="flex h-12 w-12 items-center justify-center rounded-full bg-success/20 border border-success/40">

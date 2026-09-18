@@ -155,7 +155,6 @@ export function Layout() {
         />
         <div className="flex-1 flex flex-col min-w-0">
           <Topbar
-            onOpenMobileNav={() => setMobileOpen(true)}
             onOpenCommandPalette={() => setPaletteOpen(true)}
           />
           <main
@@ -184,6 +183,9 @@ export function Layout() {
                 anywhere in the chain), so ultrawide monitors stretched
                 every table to 2400px+. One content ceiling here fixes all
                 of them. */}
+            <div className="mx-auto w-full max-w-[1600px]">
+              <InstallPrompt />
+            </div>
             <div key={location.pathname} className="route-fade mx-auto w-full max-w-[1600px]">
               <Suspense fallback={<RouteFallback />}>
                 <Outlet />
@@ -201,7 +203,6 @@ export function Layout() {
           open={shortcutsOpen}
           onOpenChange={setShortcutsOpen}
         />
-        <InstallPrompt />
         <WhatsNew />
       </div>
     </TooltipProvider>
