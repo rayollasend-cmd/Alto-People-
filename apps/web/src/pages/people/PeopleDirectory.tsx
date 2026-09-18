@@ -2876,10 +2876,16 @@ function TransferDialog({
   }, [open, a.id, a.workplaceClientId, a.currentLocationId, today]);
 
   const targetLocation = locations.find((l) => l.id === locationId) ?? null;
+  // ISO date strings compare correctly as plain strings.
+  const assignmentFloorBroken =
+    a.currentAssignmentStartedAt !== null &&
+    startedAt.length === 10 &&
+    startedAt < a.currentAssignmentStartedAt;
   const valid =
     clientId.length > 0 &&
     locationId.length > 0 &&
     startedAt.length === 10 &&
+    !assignmentFloorBroken &&
     (crossClient || locationId !== a.currentLocationId);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -3012,11 +3018,22 @@ function TransferDialog({
               <Input
                 type="date"
                 value={startedAt}
+                // The effective date closes the assignment they are leaving,
+                // so it can never fall before that assignment started. The
+                // server refuses it either way; this keeps the picker from
+                // offering the impossible day in the first place.
+                min={a.currentAssignmentStartedAt ?? undefined}
                 onChange={(e) => setStartedAt(e.target.value)}
                 {...p}
               />
             )}
           </Field>
+          {assignmentFloorBroken && (
+            <p className="text-xs text-rose-300">
+              {a.firstName}&apos;s current assignment started on{' '}
+              {a.currentAssignmentStartedAt}. Pick that date or later.
+            </p>
+          )}
 
           <Field label="Reason (optional)">
             {(p) => (

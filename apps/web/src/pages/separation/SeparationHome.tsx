@@ -435,9 +435,24 @@ function NewSeparationDrawer({
   const [finalPaycheckDate, setFinalPaycheckDate] = useState(lastDayWorked);
   const [saving, setSaving] = useState(false);
 
+  // Dates have to read forward: notice → last day → final paycheck. A
+  // reversed pair is always a typo, and the last day worked is what closes
+  // their site assignment, so a backwards one is rejected by the server.
+  // ISO date strings compare correctly as plain strings.
+  const dateError =
+    noticeDate && lastDayWorked && noticeDate > lastDayWorked
+      ? 'The last day worked is before the notice date.'
+      : finalPaycheckDate && lastDayWorked && finalPaycheckDate < lastDayWorked
+        ? 'The final paycheck date is before the last day worked.'
+        : null;
+
   const submit = async () => {
     if (!assoc) {
       toast.error('Pick an associate.');
+      return;
+    }
+    if (dateError) {
+      toast.error(dateError);
       return;
     }
     setSaving(true);
@@ -497,6 +512,7 @@ function NewSeparationDrawer({
               type="date"
               className="mt-1"
               value={noticeDate}
+              max={lastDayWorked || undefined}
               onChange={(e) => setNoticeDate(e.target.value)}
             />
           </div>
@@ -506,6 +522,7 @@ function NewSeparationDrawer({
               type="date"
               className="mt-1"
               value={lastDayWorked}
+              min={noticeDate || undefined}
               onChange={(e) => {
                 const v = e.target.value;
                 // Keep the paycheck date in lockstep until it's been
@@ -521,6 +538,7 @@ function NewSeparationDrawer({
               type="date"
               className="mt-1"
               value={finalPaycheckDate}
+              min={lastDayWorked || undefined}
               onChange={(e) => setFinalPaycheckDate(e.target.value)}
             />
           </div>

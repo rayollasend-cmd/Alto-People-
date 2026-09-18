@@ -142,6 +142,7 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
           where: { endedAt: null },
           select: {
             locationId: true,
+            startedAt: true,
             location: {
               select: {
                 name: true,
@@ -284,6 +285,9 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
         }),
         currentLocationId: a.assignments[0]?.locationId ?? null,
         currentLocationName: a.assignments[0]?.location?.name ?? null,
+        currentAssignmentStartedAt: a.assignments[0]?.startedAt
+          ? a.assignments[0].startedAt.toISOString().slice(0, 10)
+          : null,
       };
     });
 

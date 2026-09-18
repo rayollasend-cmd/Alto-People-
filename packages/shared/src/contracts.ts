@@ -4961,6 +4961,10 @@ export const DirectoryEntrySchema = z.object({
   // associate has never been placed at a Location.
   currentLocationId: UuidSchema.nullable(),
   currentLocationName: z.string().nullable(),
+  // Start date (YYYY-MM-DD) of that open assignment. The transfer and
+  // separation date pickers use it as a floor: an effective date before
+  // it would close the assignment before it began.
+  currentAssignmentStartedAt: z.string().nullable(),
 });
 export type DirectoryEntry = z.infer<typeof DirectoryEntrySchema>;
 

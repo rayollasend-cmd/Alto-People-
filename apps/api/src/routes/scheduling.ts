@@ -110,6 +110,7 @@ import { mintCalendarToken } from '../lib/calendarFeed.js';
 import { env } from '../config/env.js';
 import { runShiftAutofillSweep } from '../lib/shiftAutofill.js';
 import { ORG_TZ, nextKey, portalCalendar, storeCalendar } from '../lib/portalMetrics.js';
+import { closeOpenAssignments } from '../lib/assignmentDates.js';
 
 export const schedulingRouter = Router();
 
@@ -5981,9 +5982,13 @@ schedulingRouter.post(
       const startedAt = new Date();
       const created = await prisma.$transaction(async (tx) => {
         if (openAssignment) {
-          await tx.associateAssignment.update({
-            where: { id: openAssignment.id },
-            data: { endedAt: startedAt },
+          // Effective today, so this only bites when the open assignment
+          // was forward-dated; refuse clearly rather than 500 on the
+          // dates CHECK constraint.
+          await closeOpenAssignments(tx, {
+            associateId,
+            endedAt: startedAt,
+            endLabel: 'assignment date',
           });
         }
         return tx.associateAssignment.create({

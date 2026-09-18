@@ -8,6 +8,10 @@ import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { maybeNotifyFinanceDeparture } from '../lib/fieldglassNotify.js';
 import { notifyAllAdmins, notifyManager, trackNotificationWork } from '../lib/notify.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
+import {
+  assertCanCloseAssignments,
+  closeOpenAssignments,
+} from '../lib/assignmentDates.js';
 
 /**
  * Phase 119 â€” Separations + exit interviews.
@@ -166,6 +170,32 @@ separation119Router.post('/separations', MANAGE, async (req, res) => {
   if (!associate || associate.deletedAt) {
     throw new HttpError(404, 'associate_not_found', 'Associate not found.');
   }
+  // Dates in order, checked here rather than discovered later. A last day
+  // worked before the notice date (or a final paycheck before the last day)
+  // is a typo every time, and left alone it propagates into assignment
+  // spans, final-pay timing and the audit packet.
+  if (input.noticeDate && input.noticeDate > input.lastDayWorked) {
+    throw new HttpError(
+      400,
+      'invalid_date_range',
+      `The last day worked (${input.lastDayWorked}) is before the notice date (${input.noticeDate}). Check both dates.`,
+    );
+  }
+  if (input.finalPaycheckDate && input.finalPaycheckDate < input.lastDayWorked) {
+    throw new HttpError(
+      400,
+      'invalid_date_range',
+      `The final paycheck date (${input.finalPaycheckDate}) is before the last day worked (${input.lastDayWorked}). Check both dates.`,
+    );
+  }
+  // The last day worked also closes their open site assignment on
+  // completion — refuse now if it already can't, so the conflict surfaces
+  // while the form is still open instead of weeks later.
+  await assertCanCloseAssignments(prisma, {
+    associateId: input.associateId,
+    endedAt: new Date(input.lastDayWorked),
+    endLabel: 'last day worked',
+  });
   try {
     const created = await prisma.separation.create({
       data: {
@@ -257,10 +287,13 @@ separation119Router.post(
       });
       // Close any open site assignment as of the last day worked, so
       // location rosters and the audit packet's assignment spans reflect
-      // reality.
-      await tx.associateAssignment.updateMany({
-        where: { associateId: existing.associateId, endedAt: null },
-        data: { endedAt: existing.lastDayWorked },
+      // reality. Guarded: a last day worked that precedes the start of the
+      // assignment it closes is a 400 naming both dates, not a raw
+      // constraint violation out of Postgres.
+      await closeOpenAssignments(tx, {
+        associateId: existing.associateId,
+        endedAt: existing.lastDayWorked,
+        endLabel: 'last day worked',
       });
       // Off every shift still ahead of them — completing a separation used
       // to leave the person assigned on the schedule indefinitely (same

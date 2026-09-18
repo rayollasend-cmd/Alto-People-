@@ -39,6 +39,7 @@ import { decryptString } from '../lib/crypto.js';
 import { maskRoutingNumber, readRoutingNumber } from '../lib/payoutMethod.js';
 import { z } from 'zod';
 import { hasCapability } from '@alto-people/shared';
+import { closeOpenAssignments } from '../lib/assignmentDates.js';
 
 export const orgRouter = Router();
 
@@ -1833,9 +1834,13 @@ orgRouter.post(
     let kioskPinMoved = false;
     const created = await prisma.$transaction(async (tx) => {
       if (open) {
-        await tx.associateAssignment.update({
-          where: { id: open.id },
-          data: { endedAt: startedAt },
+        // The effective date closes the assignment they are leaving, so a
+        // transfer dated before that assignment began is refused by name
+        // instead of failing on the dates CHECK constraint.
+        await closeOpenAssignments(tx, {
+          associateId: id,
+          endedAt: startedAt,
+          endLabel: 'transfer date',
         });
       }
       const row = await tx.associateAssignment.create({

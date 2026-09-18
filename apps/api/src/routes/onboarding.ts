@@ -107,6 +107,7 @@ import {
   type PacketData,
 } from '../lib/compliancePacket.js';
 import { AGREEMENT_BODY, AGREEMENT_TITLE } from '../lib/altoHrContent.js';
+import { closeOpenAssignments } from '../lib/assignmentDates.js';
 
 export const onboardingRouter = Router();
 
@@ -476,6 +477,8 @@ async function inviteOneApplicant(
   try {
     const r = await send({
       channel: 'EMAIL',
+      // This caller writes its own Notification row for the attempt.
+      audit: false,
       recipient: { userId: result.user.id, phone: null, email },
       subject,
       body,
@@ -1110,9 +1113,13 @@ async function approveOneApplication(
     // row first (re-hire / re-onboarding edge case) so the partial
     // unique index never trips.
     if (app.locationId) {
-      await tx.associateAssignment.updateMany({
-        where: { associateId: app.associateId, endedAt: null },
-        data: { endedAt: hireDateValue },
+      // Guarded close: a hire date earlier than an assignment already open
+      // (a re-hire approved with a backdated start, say) would otherwise
+      // end that row before it began and trip the dates CHECK constraint.
+      await closeOpenAssignments(tx, {
+        associateId: app.associateId,
+        endedAt: hireDateValue,
+        endLabel: 'hire date',
       });
       await tx.associateAssignment.create({
         data: {
@@ -3668,6 +3675,8 @@ onboardingRouter.post(
         try {
           const r = await send({
             channel: 'EMAIL',
+            // This caller writes its own Notification row for the attempt.
+            audit: false,
             recipient: {
               userId: req.user!.id,
               phone: null,
@@ -4300,6 +4309,8 @@ export async function deliverNudge(
   try {
     const r = await send({
       channel: 'EMAIL',
+      // This caller writes its own Notification row for the attempt.
+      audit: false,
       recipient: { userId: recipient.id, phone: null, email: recipient.email },
       subject,
       body,
