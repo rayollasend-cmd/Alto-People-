@@ -36,7 +36,65 @@ import { Select } from '@/components/ui/Select';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { toast } from '@/components/ui/Toaster';
 import { cn } from '@/lib/cn';
-import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
+import { parseYmd, ymdLocal } from '@/lib/format';
+import { workweekStart } from '@/lib/workweek';
+
+/** "Fri, Oct 2" — the weekday is the point of a pay date. */
+function fmtDay(ymd: string): string {
+  const d = parseYmd(ymd);
+  return d ? d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : ymd;
+}
+
+function addDaysYmd(ymd: string, n: number): string {
+  const d = parseYmd(ymd);
+  if (!d) return ymd;
+  d.setDate(d.getDate() + n);
+  return ymdLocal(d);
+}
+
+/**
+ * What the form will do, before it's saved: the first two pay periods and
+ * the Friday each is paid — so a schedule can't be saved counting from a
+ * Wednesday by accident (the old "any date inside the first period" hint
+ * did exactly that: periods are counted FROM the date given).
+ */
+function SchedulePreview({
+  frequency,
+  anchorDate,
+  payOffset,
+}: {
+  frequency: PayrollFrequency;
+  anchorDate: string;
+  payOffset: number;
+}) {
+  if (!anchorDate || (frequency !== 'WEEKLY' && frequency !== 'BIWEEKLY')) return null;
+  const len = frequency === 'BIWEEKLY' ? 14 : 7;
+  const start = parseYmd(anchorDate);
+  const notSaturday = start ? start.getDay() !== 6 : false;
+  const periods = [0, 1].map((i) => {
+    const from = addDaysYmd(anchorDate, i * len);
+    const to = addDaysYmd(from, len - 1);
+    return { from, to, pay: addDaysYmd(to, payOffset) };
+  });
+  return (
+    <div className="rounded-md border border-navy-secondary bg-navy-secondary/20 p-3 text-xs">
+      <div className="mb-1.5 font-medium uppercase tracking-wide text-silver/80">Pay periods</div>
+      <ul className="space-y-1 text-silver">
+        {periods.map((p) => (
+          <li key={p.from}>
+            <span className="text-white">{fmtDay(p.from)} → {fmtDay(p.to)}</span> · paid{' '}
+            <span className="text-gold">{fmtDay(p.pay)}</span>
+          </li>
+        ))}
+      </ul>
+      {notSaturday && (
+        <p className="mt-2 text-warning">
+          Your workweek starts on Saturday — periods starting on a {start!.toLocaleDateString(undefined, { weekday: 'long' })} won&apos;t line up with it.
+        </p>
+      )}
+    </div>
+  );
+}
 
 const FREQ_LABEL: Record<PayrollFrequency, string> = {
   WEEKLY: 'Weekly',
@@ -188,16 +246,16 @@ export function PaySchedulesView({ canProcess }: Props) {
                     <span className="text-silver/80 italic">All clients</span>
                   )}
                 </MetaRow>
-                <MetaRow label="Anchor date">{fmtDate(parseYmd(s.anchorDate))}</MetaRow>
-                <MetaRow label="Next period">
-                  {fmtDate(parseYmd(s.nextPeriodStart))} → {fmtDate(parseYmd(s.nextPeriodEnd))}
-                </MetaRow>
-                <MetaRow label="Next pay date">
-                  <span className="text-gold">{fmtDate(parseYmd(s.nextPayDate))}</span>
+                <MetaRow label="Next payday">
+                  <span className="text-gold">{fmtDay(s.nextPayDate)}</span>
                   <span className="text-silver/70 ml-1">
-                    (+{s.payDateOffsetDays}d after period end)
+                    (+{s.payDateOffsetDays}d after the period ends)
                   </span>
                 </MetaRow>
+                <MetaRow label="Pays for">
+                  {fmtDay(s.nextPeriodStart)} → {fmtDay(s.nextPeriodEnd)}
+                </MetaRow>
+                <MetaRow label="Periods counted from">{fmtDay(s.anchorDate)}</MetaRow>
                 <MetaRow label="Assigned associates">
                   <span className="inline-flex items-center gap-1">
                     <Users className="h-3 w-3" />
@@ -277,7 +335,7 @@ function ScheduleFormDialog({
   const [name, setName] = useState('');
   const [frequency, setFrequency] = useState<PayrollFrequency>('BIWEEKLY');
   const [anchorDate, setAnchorDate] = useState('');
-  const [payOffset, setPayOffset] = useState('5');
+  const [payOffset, setPayOffset] = useState('7');
   const [notes, setNotes] = useState('');
   const [isActive, setIsActive] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -294,8 +352,9 @@ function ScheduleFormDialog({
     } else {
       setName('');
       setFrequency('BIWEEKLY');
-      setAnchorDate(ymdLocal());
-      setPayOffset('5');
+      // The org week starts Saturday — default to this week's.
+      setAnchorDate(ymdLocal(workweekStart()));
+      setPayOffset('7');
       setNotes('');
       setIsActive(true);
     }
@@ -370,9 +429,9 @@ function ScheduleFormDialog({
               )}
             </Field>
             <Field
-              label="Anchor date"
+              label="First day of a pay period"
               required
-              hint="For weekly/biweekly: any date inside the first period. For semi-monthly/monthly: just used as a tiebreaker."
+              hint="Weekly / biweekly: the day ONE pay period starts (your workweek starts Saturday) — every period is counted from it. Semi-monthly / monthly: just a tiebreaker."
             >
               {(p) => (
                 <Input
@@ -384,7 +443,8 @@ function ScheduleFormDialog({
               )}
             </Field>
           </div>
-          <Field label="Pay date offset (days after period end)">
+          <SchedulePreview frequency={frequency} anchorDate={anchorDate} payOffset={Number(payOffset) || 0} />
+          <Field label="Payday — days after the period's last day">
             {(p) => (
               <Input
                 type="number"

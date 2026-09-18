@@ -55,6 +55,7 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import { getActiveTimeEntry } from '@/lib/timeApi';
 import { MyShiftHero } from '@/pages/associate/MyShiftHero';
+import { workweekStart } from '@/lib/workweek';
 
 type ScheduleViewMode = 'list' | 'week' | 'month';
 const VIEW_STORAGE_KEY = 'alto:mySchedule.view.v1';
@@ -271,8 +272,7 @@ export function AssociateScheduleView() {
 
   // Split at "now" (ticks once a minute) into upcoming (ascending) and past
   // (descending), then group the upcoming list by store-local day. Week
-  // totals use the viewer's local Sunday-start week — close enough for a
-  // personal "am I heading into overtime" glance; payroll does its own math.
+  // totals use the Sat→Fri workweek payroll counts overtime on.
   const {
     upcomingDays,
     past,
@@ -286,9 +286,8 @@ export function AssociateScheduleView() {
     // 7 × 86.4e6 ms — a week containing a DST change is 167 or 169 hours, so
     // millisecond arithmetic puts the boundary at 23:00 Saturday or 01:00
     // Sunday and shifts near midnight land in the wrong week's hour total.
-    const weekStart = new Date(now);
-    weekStart.setHours(0, 0, 0, 0);
-    weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+    // The Sat→Fri workweek payroll and overtime count (lib/workweek).
+    const weekStart = workweekStart(now);
     const addLocalDays = (from: Date, days: number) => {
       const d = new Date(from);
       d.setDate(d.getDate() + days);

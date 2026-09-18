@@ -8,13 +8,11 @@ vi.mock('@/lib/schedulingApi', () => ({ listMyShifts: vi.fn() }));
 import { listMyTimeEntries } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
 import { MyWeekHours } from '@/pages/time/MyWeekHours';
+import { workweekStart } from '@/lib/workweek';
 
-/** A moment inside this local Sunday-start week. */
-function thisWeek(hoursAfterSundayMidnight: number): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() - d.getDay());
-  return new Date(d.getTime() + hoursAfterSundayMidnight * 3_600_000);
+/** A moment inside this Sat→Fri workweek. */
+function thisWeek(hoursAfterSaturdayMidnight: number): Date {
+  return new Date(workweekStart().getTime() + hoursAfterSaturdayMidnight * 3_600_000);
 }
 
 const entry = (minutes: number) => ({ status: 'APPROVED', netMinutes: minutes, minutesElapsed: minutes }) as never;
@@ -56,5 +54,16 @@ describe('<MyWeekHours> — the week at a glance on the Time page', () => {
     const { container } = renderIt();
     await vi.waitFor(() => expect(listMyShifts).toHaveBeenCalled());
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe('the workweek is Saturday → Friday', () => {
+  it('a Saturday starts its own week; a Friday ends the one that began the Saturday before', async () => {
+    const sat = new Date(2026, 8, 19, 15); // Sat Sep 19 2026, 3 PM
+    expect(workweekStart(sat).getDate()).toBe(19);
+    const fri = new Date(2026, 8, 25, 23); // Fri Sep 25, 11 PM
+    expect(workweekStart(fri).getDate()).toBe(19);
+    const sun = new Date(2026, 8, 20, 9); // Sun Sep 20
+    expect(workweekStart(sun).getDate()).toBe(19);
   });
 });

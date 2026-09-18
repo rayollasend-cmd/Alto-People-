@@ -35,7 +35,7 @@ import { HttpError } from '../middleware/error.js';
 import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopePayrollRuns, scopePayrollSchedules } from '../lib/scope.js';
-import { getCurrentPeriod, getNextPayday, getNextPeriod } from '../lib/payrollSchedule.js';
+import { getNextPayday, getPeriodAfter } from '../lib/payrollSchedule.js';
 import { placedClientIds } from '../lib/openShiftEligibility.js';
 import { round2 } from '../lib/payroll.js';
 import { isStateTaxSupported } from '../lib/payrollTax.js';
@@ -473,9 +473,11 @@ payrollRouter.post('/runs/exceptions', PROCESS, async (req, res, next) => {
 payrollRouter.get('/upcoming', async (req, res, next) => {
   try {
     // Pick the schedule with the SOONEST nextPeriodEnd among the ones the
-    // user can see. We compute periods in JS using getCurrentPeriod /
-    // getNextPeriod against the schedule's anchor, since today might fall
-    // mid-period. Fall back to today's biweekly frame if no schedule.
+    // user can see. The period to run is the one paid NEXT (getNextPayday):
+    // pay lands after the period ends, so in the week between a period's
+    // last day and its payday that's the period that already ended — not
+    // the one today falls in. Fall back to today's biweekly frame if no
+    // schedule.
     const schedules = await prisma.payrollSchedule.findMany({
       take: 1000,
       where: {
@@ -500,7 +502,7 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
     const currentBySchedule = new Map(
       schedules.map((s) => [
         s.id,
-        getCurrentPeriod(
+        getNextPayday(
           {
             frequency: s.frequency,
             anchorDate: s.anchorDate,
@@ -544,13 +546,13 @@ payrollRouter.get('/upcoming', async (req, res, next) => {
         (existingRun.status === 'FINALIZED' ||
           existingRun.status === 'DISBURSED');
       const w = isCompleted
-        ? getNextPeriod(
+        ? getPeriodAfter(
             {
               frequency: s.frequency,
               anchorDate: s.anchorDate,
               payDateOffsetDays: s.payDateOffsetDays,
             },
-            today
+            cur,
           )
         : cur;
       const draftRunId =
@@ -3158,21 +3160,14 @@ type RawSchedule = Prisma.PayrollScheduleGetPayload<{
 }>;
 
 function toSchedule(s: RawSchedule): PayrollScheduleDto {
-  const cur = getCurrentPeriod({
+  // The next payday and the period it pays for — pay lands after the
+  // period ends (a Sat–Fri biweekly period paid the Friday after), so this
+  // is often the period that has already ended, not the one running now.
+  const nxt = getNextPayday({
     frequency: s.frequency,
     anchorDate: s.anchorDate,
     payDateOffsetDays: s.payDateOffsetDays,
   });
-  const nxt = getNextPeriod({
-    frequency: s.frequency,
-    anchorDate: s.anchorDate,
-    payDateOffsetDays: s.payDateOffsetDays,
-  });
-  // Use the next un-disbursed window as the wizard suggestion. We can't
-  // tell here whether the current period has been run yet (would need a
-  // cross-table check); UI will handle the "is this period already run?"
-  // affordance. For the schedule listing, surfacing "next" is honest.
-  void cur;
   return {
     id: s.id,
     clientId: s.clientId,

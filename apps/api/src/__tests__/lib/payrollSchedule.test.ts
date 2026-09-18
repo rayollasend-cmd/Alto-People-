@@ -204,3 +204,46 @@ describe('getNextPayday — the check they are waiting for', () => {
     });
   });
 });
+
+describe("Alto's schedule — biweekly, Saturday → Friday, paid the Friday after", () => {
+  // Periods: Sat Sep 12 → Fri Sep 25 (paid Fri Oct 2), Sat Sep 26 → Fri
+  // Oct 9 (paid Fri Oct 16), …
+  const alto = { frequency: 'BIWEEKLY' as const, anchorDate: '2026-09-12', payDateOffsetDays: 7 };
+
+  it("on a payday it's today's check — Fri Sep 18 pays Aug 29 – Sep 11", () => {
+    expect(getNextPayday(alto, day('2026-09-18'))).toEqual({
+      periodStart: '2026-08-29',
+      periodEnd: '2026-09-11',
+      payDate: '2026-09-18',
+    });
+  });
+
+  it('mid-period, the next check is Oct 2 for Sep 12 – Sep 25', () => {
+    expect(getNextPayday(alto, day('2026-09-21'))).toEqual({
+      periodStart: '2026-09-12',
+      periodEnd: '2026-09-25',
+      payDate: '2026-10-02',
+    });
+  });
+
+  it('in the week between the period ending and payday, it is STILL that period — the one to run', () => {
+    expect(getNextPayday(alto, day('2026-09-26')).payDate).toBe('2026-10-02');
+    expect(getNextPayday(alto, day('2026-10-01')).periodEnd).toBe('2026-09-25');
+  });
+
+  it('payday is payday; the day after, the next one is two weeks on', () => {
+    expect(getNextPayday(alto, day('2026-10-02')).payDate).toBe('2026-10-02');
+    expect(getNextPayday(alto, day('2026-10-03'))).toEqual({
+      periodStart: '2026-09-26',
+      periodEnd: '2026-10-09',
+      payDate: '2026-10-16',
+    });
+  });
+
+  it("the Finance and Workforce countdown names the same Friday (it used to read the anchor as a period END)", async () => {
+    const { nextPayDate } = await import('../../lib/payday.js');
+    const s = { frequency: 'BIWEEKLY', anchorDate: new Date('2026-09-12T00:00:00Z'), payDateOffsetDays: 7 };
+    expect(nextPayDate(s, day('2026-09-21'))!.toISOString().slice(0, 10)).toBe('2026-10-02');
+    expect(nextPayDate(s, day('2026-10-03'))!.toISOString().slice(0, 10)).toBe('2026-10-16');
+  });
+});

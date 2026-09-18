@@ -210,6 +210,28 @@ describe('overtime-aware earnings (fixed past week — no clock dependence)', ()
     expect(e.onClock).toBe(false);
   });
 
+  it("on the clock: this punch's pay so far, for the shift card's live ticker", async () => {
+    const { computeAssociateEarnings } = await import('../../lib/associateEarnings.js');
+    const client = await createClient();
+    const associate = await createAssociate();
+    const now = REF;
+    // 2h ago, still clocked in, at the org default $15.
+    await prisma.timeEntry.create({
+      data: {
+        associateId: associate.id,
+        clientId: client.id,
+        clockInAt: new Date(now.getTime() - 2 * 3600_000),
+        status: 'ACTIVE',
+      },
+    });
+    const e = await computeAssociateEarnings(prisma, associate.id, now);
+    expect(e.onClock).toBe(true);
+    expect(e.currentShiftEarned).toBeCloseTo(30, 0);
+    // Off the clock there's no shift to count.
+    await prisma.timeEntry.updateMany({ where: { associateId: associate.id }, data: { status: 'COMPLETED', clockOutAt: now } });
+    expect((await computeAssociateEarnings(prisma, associate.id, now)).currentShiftEarned).toBeNull();
+  });
+
   it('clock-out notification includes the 1.5× premium once the week crossed 40h', async () => {
     const { startOfWeekUTC } = await import('../../lib/timeAnomalies.js');
     const weekStart = startOfWeekUTC(REF);

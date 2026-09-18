@@ -50,6 +50,7 @@ import { FirstPaycheckCard } from '@/components/FirstPaycheckCard';
 import { StatTile } from '@/pages/portal/portalCharts';
 import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
 import { MyShiftHero, MyWeekStrip, pickNextShift } from '@/pages/associate/MyShiftHero';
+import { workweekBounds } from '@/lib/workweek';
 
 /**
  * 403/404 are fully expected for accounts without the linked records
@@ -529,8 +530,8 @@ const CATEGORY_KEY: Record<string, MessageKey> = {
 };
 
 /**
- * Their four numbers, as tiles — hours this week (the schedule page's
- * Sunday-start week, same math), the last paycheck, time off, and the open
+ * Their four numbers, as tiles — hours this week (the Sat→Fri workweek
+ * payroll counts, lib/workweek), the last paycheck, time off, and the open
  * shifts they can grab. They replace two tall cards whose empty states
  * ("No paystubs yet", "No balance yet") filled a phone screen by themselves.
  */
@@ -559,11 +560,7 @@ function MyNumbers({
   const nextPayday = paydayQuery.data?.nextPayday ?? null;
   const week = (() => {
     if (!shifts) return null;
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    start.setDate(start.getDate() - start.getDay());
-    const end = new Date(start);
-    end.setDate(end.getDate() + 7);
+    const { start, end } = workweekBounds();
     const inWeek = shifts.filter((s) => {
       const at = new Date(s.startsAt).getTime();
       return s.status !== 'CANCELLED' && at >= start.getTime() && at < end.getTime();
@@ -603,7 +600,14 @@ function MyNumbers({
                     ? t('tile.paidOn', { date: fmtDate(paystub.disbursedAt) })
                     : t('dash.netWorked', { hours: fmtHours(paystub.hoursWorked) })
                   : nextPayday
-                    ? t('tile.nextPayday', { date: fmtDate(parseYmd(nextPayday.payDate)) })
+                    ? t('tile.nextPayday', {
+                        date:
+                          parseYmd(nextPayday.payDate)?.toLocaleDateString(undefined, {
+                            weekday: 'short',
+                            month: 'short',
+                            day: 'numeric',
+                          }) ?? nextPayday.payDate,
+                      })
                     : t('tile.noPayYet')
           }
         />

@@ -1,5 +1,6 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router-dom';
+import { workweekStart } from '@/lib/workweek';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
   Activity,
@@ -262,14 +263,12 @@ function FocusBanner({
   const fmtH = (m: number) => `${(m / 60).toFixed(1)}h`;
 
   // Weekly overtime across the loaded range: net minutes beyond 40h in any
-  // local Sunday-based week (same grouping the associate timesheet uses).
+  // Sat→Fri workweek — payroll's week, and the associate timesheet's.
   const byWeek = new Map<number, number>();
   for (const e of list) {
     if (e.status === 'REJECTED') continue;
-    const d = new Date(e.clockInAt);
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - d.getDay());
-    byWeek.set(d.getTime(), (byWeek.get(d.getTime()) ?? 0) + (e.netMinutes ?? e.minutesElapsed));
+    const wk = workweekStart(e.clockInAt).getTime();
+    byWeek.set(wk, (byWeek.get(wk) ?? 0) + (e.netMinutes ?? e.minutesElapsed));
   }
   const otMin = [...byWeek.values()].reduce((s, m) => s + Math.max(0, m - 40 * 60), 0);
 

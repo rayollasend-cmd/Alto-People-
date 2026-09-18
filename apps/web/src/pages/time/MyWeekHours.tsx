@@ -6,27 +6,19 @@ import { fmtHours } from '@/lib/format';
 import { listMyTimeEntries } from '@/lib/timeApi';
 import { listMyShifts } from '@/lib/schedulingApi';
 import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
+import { workweekBounds } from '@/lib/workweek';
 
 /**
  * The week at a glance, on the Time page: hours worked (every punch this
- * week, the running one included) against hours scheduled — the same
- * local Sunday-start week as the schedule page and the home tile — and how
- * close that runs to the 40-hour overtime line.
+ * week, the running one included) against hours scheduled — the Sat→Fri
+ * workweek payroll and overtime run on (lib/workweek) — and how close that
+ * runs to the 40-hour overtime line.
  */
 const OT_MIN = 40 * 60;
 
-function weekBounds(now = new Date()): { start: Date; end: Date } {
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  start.setDate(start.getDate() - start.getDay());
-  const end = new Date(start);
-  end.setDate(end.getDate() + 7);
-  return { start, end };
-}
-
 export function MyWeekHours() {
   const { t } = useI18n();
-  const { start, end } = weekBounds();
+  const { start, end } = workweekBounds();
   const entries = useQuery({
     queryKey: ['me', 'timeEntries', 'week', start.toISOString()],
     queryFn: () => listMyTimeEntries({ from: start.toISOString(), to: end.toISOString() }).catch(() => null),

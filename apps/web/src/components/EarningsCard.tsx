@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { ChevronDown, ReceiptText, TrendingUp } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
@@ -33,7 +34,7 @@ interface EarningsDay {
   scheduledAmount: number;
 }
 
-interface Earnings {
+export interface Earnings {
   weekStart: string;
   weekEnd: string;
   hourlyRate: number;
@@ -43,6 +44,8 @@ interface Earnings {
   remainingHours: number;
   onClock: boolean;
   currentRatePerHour: number;
+  /** On the clock: this punch's pay so far (OT-aware). */
+  currentShiftEarned?: number | null;
   overtime: {
     thresholdHours: number;
     multiplier: number;
@@ -72,47 +75,41 @@ function splitMoney(v: number): { main: string; cents: string } {
   return i === -1 ? { main: s, cents: '' } : { main: s.slice(0, i), cents: s.slice(i) };
 }
 
-export function EarningsCard() {
-  const { t } = useI18n();
-  const [data, setData] = useState<Earnings | null>(null);
-  const [failed, setFailed] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  // Seconds elapsed since the last server truth — drives the live ticker.
+/** The week's pay, shared by this card and the shift card's live
+ *  "earned this shift" — one request a minute, not two. */
+export function useMyEarnings() {
+  return useQuery({
+    queryKey: ['me', 'earnings'],
+    queryFn: () => apiFetch<Earnings>('/time/me/earnings'),
+    refetchInterval: REFRESH_MS,
+    retry: false,
+  });
+}
+
+/** Seconds since the last server truth, ticking once a second while on the
+ *  clock — what the live money numbers add at the current rate. */
+export function useTickSeconds(onClock: boolean, fetchedAt: number): number {
   const [tickSeconds, setTickSeconds] = useState(0);
-  const fetchedAt = useRef(0);
-
   useEffect(() => {
-    let cancelled = false;
-    const load = () => {
-      apiFetch<Earnings>('/time/me/earnings')
-        .then((d) => {
-          if (cancelled) return;
-          fetchedAt.current = Date.now();
-          setTickSeconds(0);
-          setData(d);
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setFailed((f) => f || fetchedAt.current === 0);
-        });
-    };
-    load();
-    const id = setInterval(load, REFRESH_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, []);
-
-  // The Uber moment: while clocked in, the number moves every second.
-  const onClock = data?.onClock ?? false;
-  useEffect(() => {
+    setTickSeconds(0);
     if (!onClock) return;
     const id = setInterval(() => {
-      setTickSeconds(Math.floor((Date.now() - fetchedAt.current) / 1000));
+      setTickSeconds(Math.max(0, Math.floor((Date.now() - fetchedAt) / 1000)));
     }, 1000);
     return () => clearInterval(id);
-  }, [onClock]);
+  }, [onClock, fetchedAt]);
+  return tickSeconds;
+}
+
+export function EarningsCard() {
+  const { t } = useI18n();
+  const q = useMyEarnings();
+  const data = q.data ?? null;
+  const failed = q.isError;
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  // The Uber moment: while clocked in, the number moves every second.
+  const onClock = data?.onClock ?? false;
+  const tickSeconds = useTickSeconds(onClock, q.dataUpdatedAt);
 
   const dayInitials = useMemo(() => {
     const fmt = new Intl.DateTimeFormat(displayLocale(), { weekday: 'narrow' });

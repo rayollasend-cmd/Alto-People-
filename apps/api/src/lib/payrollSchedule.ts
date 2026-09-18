@@ -126,6 +126,11 @@ export function getNextPayday(schedule: ScheduleInput, today: Date = new Date())
   return previous.payDate >= todayKey ? previous : current;
 }
 
+/** The period right after `w` — the one that runs once `w` is paid. */
+export function getPeriodAfter(schedule: ScheduleInput, w: PeriodWindow): PeriodWindow {
+  return getCurrentPeriod(schedule, addDays(toUtcDate(w.periodEnd), 1));
+}
+
 function buildWindow(start: Date, end: Date, payOffset: number): PeriodWindow {
   return {
     periodStart: fmt(start),

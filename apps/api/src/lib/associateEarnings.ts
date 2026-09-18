@@ -75,6 +75,9 @@ export interface AssociateEarnings {
   onClock: boolean;
   /** What the NEXT minute pays: the base rate, or 1.5× once past 40h. */
   currentRatePerHour: number;
+  /** On the clock: what this punch has earned so far (OT-aware) — the
+   *  shift card ticks it live from here at currentRatePerHour. */
+  currentShiftEarned: number | null;
   overtime: {
     thresholdHours: number;
     multiplier: number;
@@ -174,6 +177,7 @@ export async function computeAssociateEarnings(
   let cumMin = 0;
   let earnedSoFar = 0;
   let onClock = false;
+  let currentShiftEarned: number | null = null;
   for (const e of entries) {
     let mins = 0;
     if (e.clockOutAt) {
@@ -192,6 +196,7 @@ export async function computeAssociateEarnings(
     }
     if (mins <= 0) continue;
     const amount = payForBlock(cumMin, mins, rate);
+    if (!e.clockOutAt && e.status === 'ACTIVE') currentShiftEarned = round2(amount);
     const d = days[dayIndex(e.clockInAt)];
     d.workedMinutes += mins;
     d.workedAmount = round2(d.workedAmount + amount);
@@ -284,6 +289,7 @@ export async function computeAssociateEarnings(
     currentRatePerHour: round2(
       workedMin >= OT_THRESHOLD_MIN ? rate * OT_MULTIPLIER : rate,
     ),
+    currentShiftEarned: onClock ? (currentShiftEarned ?? 0) : null,
     overtime: {
       thresholdHours: OT_THRESHOLD_MIN / 60,
       multiplier: OT_MULTIPLIER,

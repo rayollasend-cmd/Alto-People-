@@ -2,40 +2,27 @@
  * Next-payday math shared by the Finance cockpit and the Workforce
  * command center — both portals count down to the same sacred date.
  */
+import type { PayrollFrequency } from '@prisma/client';
+import { getNextPayday } from './payrollSchedule.js';
 
-const DAY_MS = 86_400_000;
-
-/** Next pay date for a schedule: anchorDate treated as a period end;
- *  period ends advance by the frequency; payday = periodEnd + offset. */
+/**
+ * Next pay date for a schedule — lib/payrollSchedule's getNextPayday, the
+ * one payday calculation (the anchor is the FIRST day of a pay period; pay
+ * lands payDateOffsetDays after the period's last day). This used to treat
+ * the anchor as a period END, so the Finance/Workforce countdown and the
+ * payroll wizard named different Fridays for the same schedule. Payday
+ * itself counts (it's "today" until the day is over).
+ */
 export function nextPayDate(
   s: { frequency: string; anchorDate: Date; payDateOffsetDays: number },
   now: Date,
 ): Date | null {
-  const stepDays =
-    s.frequency === 'WEEKLY' ? 7 : s.frequency === 'BIWEEKLY' ? 14 : null;
-  if (stepDays !== null) {
-    const t = new Date(s.anchorDate);
-    // Jump close, then walk — bounded either way.
-    const behind = Math.floor((now.getTime() - t.getTime()) / (stepDays * DAY_MS));
-    if (behind > 0) t.setUTCDate(t.getUTCDate() + behind * stepDays);
-    let pay = new Date(t.getTime() + s.payDateOffsetDays * DAY_MS);
-    for (let i = 0; i < 5 && pay <= now; i++) {
-      t.setUTCDate(t.getUTCDate() + stepDays);
-      pay = new Date(t.getTime() + s.payDateOffsetDays * DAY_MS);
-    }
-    return pay > now ? pay : null;
-  }
-  if (s.frequency === 'MONTHLY' || s.frequency === 'SEMIMONTHLY') {
-    const t = new Date(s.anchorDate);
-    const stepMonths = s.frequency === 'MONTHLY' ? 1 : 0;
-    for (let i = 0; i < 40; i++) {
-      const pay = new Date(t.getTime() + s.payDateOffsetDays * DAY_MS);
-      if (pay > now) return pay;
-      if (stepMonths) t.setUTCMonth(t.getUTCMonth() + 1);
-      else t.setUTCDate(t.getUTCDate() + 15); // semimonthly ≈ 15-day walk
-    }
-  }
-  return null;
+  if (!['WEEKLY', 'BIWEEKLY', 'SEMIMONTHLY', 'MONTHLY'].includes(s.frequency)) return null;
+  const w = getNextPayday(
+    { frequency: s.frequency as PayrollFrequency, anchorDate: s.anchorDate, payDateOffsetDays: s.payDateOffsetDays },
+    now,
+  );
+  return new Date(`${w.payDate}T12:00:00.000Z`);
 }
 
 /** Soonest upcoming payday across the active schedules, or null. */

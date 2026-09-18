@@ -39,6 +39,7 @@ import { ShiftTimeline } from './ShiftTimeline';
 import { AttendanceCard } from './AttendanceCard';
 import { TimesheetWeeks } from './TimesheetWeeks';
 import { fmtPunchTime, formatHM, punchDayOffset } from './punchFormat';
+import { workweekStart } from '@/lib/workweek';
 
 // Domain wording only — COMPLETED reads "Pending" to the associate because a
 // completed punch is still awaiting review. Tones come from the shared
@@ -230,15 +231,13 @@ export function AssociateTimeView({
     ? Math.max(0, Math.floor((Date.now() - new Date(active.clockInAt).getTime()) / 60_000))
     : 0;
 
-  // Approaching-overtime nudge. Sum this workweek's worked minutes (Sun 00:00
-  // local → now) from loaded history plus any in-progress shift, and warn as
-  // the associate nears the federal 40h/week overtime line. Directional, not a
-  // payroll figure — breaks and the employer's exact workweek may differ.
+  // Approaching-overtime nudge. Sum this workweek's worked minutes (the Sat
+  // 00:00 → Fri workweek payroll counts, lib/workweek) from loaded history
+  // plus any in-progress shift, and warn as they near the 40h/week overtime
+  // line. Directional, not a payroll figure — breaks may differ.
   const WEEKLY_OT_MIN = 40 * 60;
   const OT_WARN_MIN = 35 * 60;
-  const weekStart = new Date();
-  weekStart.setHours(0, 0, 0, 0);
-  weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+  const weekStart = workweekStart();
   // The open shift is excluded from the history sum and re-added as
   // liveMinutes: /me/entries applies no status filter, so the ACTIVE entry is
   // already in `entries` with minutesElapsed = now - clockInAt — the very same

@@ -9,6 +9,7 @@ import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { hapticConfirm } from '@/lib/haptics';
 import {
+  fmtMoney,
   fmtMoneyEst,
   fmtRelativeDayTz,
   fmtShiftRangeTz,
@@ -24,6 +25,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
+import { useMyEarnings, useTickSeconds } from '@/components/EarningsCard';
 
 /**
  * The associate's shift, the way the supervisor's floor reads: ONE hero that
@@ -213,6 +215,7 @@ export function MyShiftHero({
             <div className="mt-2 text-3xl font-bold leading-tight tracking-tight text-white tabular-nums sm:text-4xl">
               {fmtSpan(Math.max(0, Math.floor((now - new Date(entry.clockInAt).getTime()) / MIN)))}
             </div>
+            <LiveShiftEarnings />
             <p className="mt-1 text-sm text-silver">
               {t('hero.started', { time: fmtTime(entry.clockInAt) })}
               {next && started && (
@@ -414,5 +417,25 @@ export function MyWeekStrip({ shifts }: { shifts: Shift[] | null | undefined }) 
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * On the clock: what this shift has earned so far, ticking every second at
+ * the current rate (1.5× once the week is past 40h) — the money at the top
+ * while they work. Same numbers as the weekly earnings card below.
+ */
+function LiveShiftEarnings() {
+  const { t } = useI18n();
+  const q = useMyEarnings();
+  const d = q.data;
+  const onClock = !!d?.onClock && d.currentShiftEarned != null;
+  const tick = useTickSeconds(onClock, q.dataUpdatedAt);
+  if (!d || !onClock) return null;
+  const earned = (d.currentShiftEarned ?? 0) + (d.currentRatePerHour / 3600) * tick;
+  return (
+    <p className="mt-1 text-lg font-semibold tabular-nums text-gold" aria-live="off">
+      {t('hero.earnedShift', { amount: fmtMoney(earned) })}
+    </p>
   );
 }

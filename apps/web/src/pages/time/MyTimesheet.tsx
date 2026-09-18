@@ -45,11 +45,12 @@ import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { cn } from '@/lib/cn';
+import { workweekStart } from '@/lib/workweek';
 
 /**
  * Read-only punch history for hourly associates — the answer to "how
  * many hours did I get approved for?" without asking a manager.
- * Entries group by week (local Sunday-start) with per-week totals and
+ * Entries group by the Sat→Fri workweek with per-week totals and
  * an overtime callout past 40h, each row shows kiosk in/out vs the
  * scheduled shift, and approved hours roll up into a summary band with
  * an estimated-gross figure when every approved entry carries a rate.
@@ -77,12 +78,9 @@ function daysAgoYmd(days: number): string {
   return ymdLocal(d);
 }
 
-/** Local Sunday-start week anchor for grouping. */
+/** The Sat→Fri workweek a punch belongs to — payroll's week. */
 function weekStartMs(input: string | Date): number {
-  const d = new Date(input);
-  d.setHours(0, 0, 0, 0);
-  d.setDate(d.getDate() - d.getDay());
-  return d.getTime();
+  return workweekStart(input).getTime();
 }
 
 // The app-wide hours dialect ("38.5h", locale-aware) — this page used to
@@ -125,9 +123,7 @@ export function MyTimesheet() {
       setToYmd(ymdLocal(now));
       return;
     }
-    const thisWeekStart = new Date(now);
-    thisWeekStart.setHours(0, 0, 0, 0);
-    thisWeekStart.setDate(thisWeekStart.getDate() - thisWeekStart.getDay());
+    const thisWeekStart = workweekStart(now);
     if (p === 'THIS_WEEK') {
       setFromYmd(ymdLocal(thisWeekStart));
       setToYmd(ymdLocal(now));
