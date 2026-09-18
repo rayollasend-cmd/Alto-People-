@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
+import { getNextPayday,
   getCurrentPeriod,
   getNextPeriod,
   payPeriodsPerYear,
@@ -176,5 +176,31 @@ describe('payDateOffsetDays', () => {
     );
     expect(w.periodEnd).toBe('2026-01-31');
     expect(w.payDate).toBe('2026-02-05');
+  });
+});
+
+describe('getNextPayday — the check they are waiting for', () => {
+  // Mon–Sun weeks anchored on Mon Sep 7 2026, paid 5 days after Sunday
+  // (the Friday).
+  const weekly = { frequency: 'WEEKLY' as const, anchorDate: '2026-09-07', payDateOffsetDays: 5 };
+
+  it("early in the week it's LAST week's Friday check, still owed", () => {
+    expect(getNextPayday(weekly, new Date('2026-09-15T12:00:00Z'))).toEqual({
+      periodStart: '2026-09-07',
+      periodEnd: '2026-09-13',
+      payDate: '2026-09-18',
+    });
+  });
+
+  it('on payday itself, it is today', () => {
+    expect(getNextPayday(weekly, new Date('2026-09-18T12:00:00Z')).payDate).toBe('2026-09-18');
+  });
+
+  it("once that Friday has passed, it's this week's", () => {
+    expect(getNextPayday(weekly, new Date('2026-09-19T12:00:00Z'))).toEqual({
+      periodStart: '2026-09-14',
+      periodEnd: '2026-09-20',
+      payDate: '2026-09-25',
+    });
   });
 });

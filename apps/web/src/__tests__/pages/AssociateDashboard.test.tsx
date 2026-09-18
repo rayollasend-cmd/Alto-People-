@@ -22,6 +22,7 @@ vi.mock('@/lib/qualApi', () => ({
 }));
 vi.mock('@/lib/payrollApi', () => ({
   listMyPayrollItems: vi.fn(),
+  getMyNextPayday: vi.fn().mockResolvedValue({ nextPayday: null }),
 }));
 vi.mock('@/lib/timeOffApi', () => ({
   getMyBalance: vi.fn(),

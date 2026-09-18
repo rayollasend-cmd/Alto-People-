@@ -263,6 +263,11 @@ describe('open shifts money (live clock — the eligibility rule needs real futu
   it("prices this week's eligible open shifts on the marketplace rule", async () => {
     const client = await createClient();
     const associate = await createAssociate();
+    // Placed at the client — the open-shift rule only offers shifts where
+    // they work (lib/openShiftEligibility).
+    await prisma.application.create({
+      data: { associateId: associate.id, clientId: client.id, onboardingTrack: 'STANDARD', status: 'APPROVED' },
+    });
     const { endOfWeekUTC } = await import('../../lib/timeAnomalies.js');
     const weekEnd = endOfWeekUTC(new Date()).getTime();
     const startsAt = new Date(Date.now() + 30 * 60_000);

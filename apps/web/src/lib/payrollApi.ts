@@ -156,6 +156,19 @@ export function setBranchEnrollment(
   );
 }
 
+/** When they're paid next and for which days (their pay schedule). */
+export interface NextPayday {
+  /** YYYY-MM-DD */
+  payDate: string;
+  periodStart: string;
+  periodEnd: string;
+  schedule: string;
+}
+
+export function getMyNextPayday(): Promise<{ nextPayday: NextPayday | null }> {
+  return apiFetch('/payroll/me/next-payday');
+}
+
 export function listMyPayrollItems(): Promise<PayrollItemListResponse> {
   return apiFetch<PayrollItemListResponse>('/payroll/me/items');
 }

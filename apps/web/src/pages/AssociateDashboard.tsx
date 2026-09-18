@@ -30,8 +30,8 @@ import { listOpenShifts } from '@/lib/qualApi';
 import { listMyAgreements } from '@/lib/agreements122Api';
 import { listMyDocuments } from '@/lib/documentsApi';
 import { listMyInbox } from '@/lib/communicationsApi';
-import { fmtDate, fmtHours, fmtMoney } from '@/lib/format';
-import { listMyPayrollItems } from '@/lib/payrollApi';
+import { fmtDate, fmtHours, fmtMoney, parseYmd } from '@/lib/format';
+import { getMyNextPayday, listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { getEmployeeNumber } from '@/lib/selfApi';
 import { Button } from '@/components/ui/Button';
@@ -550,6 +550,13 @@ function MyNumbers({
   openShiftCount: number | null;
 }) {
   const { t } = useI18n();
+  // Before the first paycheck, the date it lands is the useful number.
+  const paydayQuery = useQuery({
+    queryKey: ['me', 'nextPayday'],
+    queryFn: () => getMyNextPayday().catch(() => ({ nextPayday: null })),
+    staleTime: 10 * 60_000,
+  });
+  const nextPayday = paydayQuery.data?.nextPayday ?? null;
   const week = (() => {
     if (!shifts) return null;
     const start = new Date();
@@ -595,7 +602,9 @@ function MyNumbers({
                   ? paystub.disbursedAt
                     ? t('tile.paidOn', { date: fmtDate(paystub.disbursedAt) })
                     : t('dash.netWorked', { hours: fmtHours(paystub.hoursWorked) })
-                  : t('tile.noPayYet')
+                  : nextPayday
+                    ? t('tile.nextPayday', { date: fmtDate(parseYmd(nextPayday.payDate)) })
+                    : t('tile.noPayYet')
           }
         />
       </TileLink>

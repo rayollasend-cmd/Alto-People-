@@ -9,6 +9,7 @@ import { hasCapability } from '@alto-people/shared';
 import { notifyAssociate, notifyManager } from '../lib/notify.js';
 import { formatShiftLine } from '../lib/notifyShift.js';
 import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
+import { assertCanClaimOpenShift, eligibleOpenShifts } from '../lib/openShiftEligibility.js';
 
 /**
  * Phase 85 — Qualifications + open-shift marketplace.
@@ -272,97 +273,36 @@ qualificationsRouter.delete(
 // ----- Open-shift marketplace --------------------------------------------
 
 /**
- * The marketplace eligibility rule, reusable: OPEN future shifts where every
- * required qualification exists (unexpired) on the associate. Exported so the
- * earnings card can price the same list this endpoint shows — the "up to ~$X
- * in open shifts" number and the marketplace page can never disagree.
- */
-/**
- * The same eligibility rule as `listEligibleOpenShifts`, but reading only
- * what a price calculation needs: start, end, and the qualification ids to
- * match on. The full version joins each shift's client, its qualification
- * catalog rows and the caller's pending claims — three joins the earnings
- * widget renders nothing from, on the hottest associate-facing endpoint.
+ * The open shifts an associate may pick up — lib/openShiftEligibility, the
+ * one rule every surface reads (this page, My schedule's open-shift
+ * section, the earnings card). Just start and end for a price calculation;
+ * the full rows for the page.
  */
 export async function listEligibleOpenShiftSlots(
   associateId: string,
   opts: { before?: Date } = {},
 ): Promise<{ startsAt: Date; endsAt: Date }[]> {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const [myQuals, openShifts] = await Promise.all([
-    prisma.associateQualification.findMany({
-      take: 500,
-      where: {
-        associateId,
-        deletedAt: null,
-        OR: [{ expiresAt: null }, { expiresAt: { gte: today } }],
-      },
-      select: { qualificationId: true },
-    }),
-    prisma.shift.findMany({
-      where: {
-        status: 'OPEN',
-        startsAt: { gte: new Date(), ...(opts.before ? { lt: opts.before } : {}) },
-      },
-      select: {
-        startsAt: true,
-        endsAt: true,
-        qualReqs: { select: { qualificationId: true } },
-      },
-      orderBy: { startsAt: 'asc' },
-      take: 200,
-    }),
-  ]);
-  const myQualIds = new Set(myQuals.map((q) => q.qualificationId));
-  return openShifts
-    .filter((s) => s.qualReqs.every((r) => myQualIds.has(r.qualificationId)))
-    .map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt }));
+  return (await eligibleOpenShifts(associateId, opts)).map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt }));
 }
 
-export async function listEligibleOpenShifts(
-  associateId: string,
-  opts: { before?: Date } = {},
-) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  // Fetch live (unexpired) quals once.
-  const myQuals = await prisma.associateQualification.findMany({
-    take: 500,
-    where: {
-      associateId,
-      deletedAt: null,
-      OR: [{ expiresAt: null }, { expiresAt: { gte: today } }],
-    },
-    select: { qualificationId: true },
-  });
-  const myQualIds = new Set(myQuals.map((q) => q.qualificationId));
-
-  // OPEN, future shifts at any client the associate has visibility into.
-  const openShifts = await prisma.shift.findMany({
-    where: {
-      status: 'OPEN',
-      startsAt: { gte: new Date(), ...(opts.before ? { lt: opts.before } : {}) },
-    },
+export async function listEligibleOpenShifts(associateId: string, opts: { before?: Date } = {}) {
+  const ids = (await eligibleOpenShifts(associateId, opts)).map((s) => s.id);
+  if (ids.length === 0) return [];
+  const rows = await prisma.shift.findMany({
+    where: { id: { in: ids } },
     include: {
       qualReqs: { include: { qualification: true } },
       client: { select: { id: true, name: true } },
       claims: { where: { status: 'PENDING', associateId } },
     },
-    orderBy: { startsAt: 'asc' },
-    take: 200,
   });
-
-  return openShifts.filter((s) =>
-    s.qualReqs.every((req) => myQualIds.has(req.qualificationId)),
-  );
+  const byId = new Map(rows.map((s) => [s.id, s]));
+  return ids.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
 }
 
 /**
- * List OPEN shifts the requesting associate is qualified to claim. Filters
- * by status=OPEN AND every required qual on the shift exists (and isn't
- * expired) on the associate.
+ * List the OPEN shifts the requesting associate may claim — placed at the
+ * client, qualified, free that day (lib/openShiftEligibility).
  */
 qualificationsRouter.get(
   '/shifts/open',
@@ -416,32 +356,10 @@ qualificationsRouter.post(
       throw new HttpError(400, 'not_open', 'Shift is not open.');
     }
 
-    // Verify qualifications.
-    if (shift.qualReqs.length > 0) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const myQuals = await prisma.associateQualification.findMany({
-        take: 500,
-        where: {
-          associateId,
-          deletedAt: null,
-          qualificationId: { in: shift.qualReqs.map((r) => r.qualificationId) },
-          OR: [{ expiresAt: null }, { expiresAt: { gte: today } }],
-        },
-        select: { qualificationId: true },
-      });
-      const have = new Set(myQuals.map((q) => q.qualificationId));
-      const missing = shift.qualReqs.filter((r) => !have.has(r.qualificationId));
-      if (missing.length > 0) {
-        throw new HttpError(
-          403,
-          'unqualified',
-          `Missing required qualifications: ${missing
-            .map((m) => m.qualificationId)
-            .join(', ')}.`,
-        );
-      }
-    }
+    // Placed at the client, qualified, published, free that day — the
+    // same rule as the list, so a claim can't land where the list wouldn't
+    // have shown the shift.
+    await assertCanClaimOpenShift(associateId, shiftId);
 
     // One PENDING per (associate, shift) is enforced by the partial unique.
     // A double tap (impatient second press, a retried request, two tabs)

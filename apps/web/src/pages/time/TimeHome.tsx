@@ -12,6 +12,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { AssociateTimeView } from './AssociateTimeView';
 import { AdminTimeView } from './AdminTimeView';
 import { MyTimesheet } from './MyTimesheet';
+import { MyWeekHours } from './MyWeekHours';
 
 export function TimeHome() {
   const { user, can } = useAuth();
@@ -139,6 +140,8 @@ function AssociateKioskOnlyView({
         subtitle={t('time.subtitle')}
         secondaryActions={headerActions}
       />
+      {/* The week first: worked against scheduled, and the 40h line. */}
+      <MyWeekHours />
       {/* Compact kiosk note — the "how punches happen" explainer stays,
           but the timesheet below is the primary content of this page,
           not a dead end. */}

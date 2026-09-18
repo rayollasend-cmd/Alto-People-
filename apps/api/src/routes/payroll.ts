@@ -35,7 +35,8 @@ import { HttpError } from '../middleware/error.js';
 import { idempotent } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/auth.js';
 import { scopePayrollRuns, scopePayrollSchedules } from '../lib/scope.js';
-import { getCurrentPeriod, getNextPeriod } from '../lib/payrollSchedule.js';
+import { getCurrentPeriod, getNextPayday, getNextPeriod } from '../lib/payrollSchedule.js';
+import { placedClientIds } from '../lib/openShiftEligibility.js';
 import { round2 } from '../lib/payroll.js';
 import { isStateTaxSupported } from '../lib/payrollTax.js';
 import { aggregatePayrollProjection, type AddOnKind } from '../lib/payrollAggregator.js';
@@ -59,7 +60,7 @@ import {
 } from '../lib/garnishmentRemittance.js';
 import { decryptString, tryDecryptString } from '../lib/crypto.js';
 import { readRoutingNumber } from '../lib/payoutMethod.js';
-import type { PayoutMethod } from '@prisma/client';
+import type { PayoutMethod, PayrollFrequency } from '@prisma/client';
 import { enqueueAudit, recordCriticalAudit, recordPayrollEvent } from '../lib/audit.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 import {
@@ -2968,6 +2969,57 @@ payrollRouter.post(
 );
 
 /* ===== Associate-facing /me ============================================ */
+
+/**
+ * GET /payroll/me/next-payday — when they're paid next, and for which days.
+ * Their own pay schedule, else their client's, else the org default; null
+ * when none is set up.
+ */
+payrollRouter.get('/me/next-payday', async (req, res, next) => {
+  try {
+    const user = req.user!;
+    if (!user.associateId) {
+      res.json({ nextPayday: null });
+      return;
+    }
+    const live = { isActive: true, deletedAt: null } as const;
+    const scheduleSelect = { name: true, frequency: true, anchorDate: true, payDateOffsetDays: true } as const;
+    const own = await prisma.associate.findUnique({
+      where: { id: user.associateId },
+      select: { payrollSchedule: { select: { ...scheduleSelect, isActive: true, deletedAt: true } } },
+    });
+    let schedule: { name: string; frequency: PayrollFrequency; anchorDate: Date; payDateOffsetDays: number } | null =
+      own?.payrollSchedule && own.payrollSchedule.isActive && !own.payrollSchedule.deletedAt
+        ? own.payrollSchedule
+        : null;
+    if (!schedule) {
+      const clientIds = await placedClientIds(user.associateId);
+      schedule =
+        (clientIds.length
+          ? await prisma.payrollSchedule.findFirst({
+              where: { ...live, clientId: { in: clientIds } },
+              orderBy: { createdAt: 'asc' },
+              select: scheduleSelect,
+            })
+          : null) ??
+        (await prisma.payrollSchedule.findFirst({
+          where: { ...live, clientId: null },
+          orderBy: { createdAt: 'asc' },
+          select: scheduleSelect,
+        }));
+    }
+    if (!schedule) {
+      res.json({ nextPayday: null });
+      return;
+    }
+    const w = getNextPayday(schedule);
+    res.json({
+      nextPayday: { payDate: w.payDate, periodStart: w.periodStart, periodEnd: w.periodEnd, schedule: schedule.name },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 payrollRouter.get('/me/items', async (req, res, next) => {
   try {

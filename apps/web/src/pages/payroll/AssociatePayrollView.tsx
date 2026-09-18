@@ -14,6 +14,7 @@ import {
   downloadMyPaystub,
   getMyPayoutMethod,
   getMyW4,
+  getMyNextPayday,
   getMyPayrollItemYtd,
   listMyPayrollItems,
   updateMyPayoutMethod,
@@ -47,6 +48,7 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton, SkeletonRows } from '@/components/ui/Skeleton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import {
+  CalendarCheck,
   ChevronDown,
   ChevronRight,
   Download,
@@ -138,6 +140,8 @@ export function AssociatePayrollView() {
         subtitle={t('pay.subtitle')}
       />
 
+      <NextPaydayCard />
+
       <TaxAndPaySettings />
 
       {error && (
@@ -201,6 +205,60 @@ export function AssociatePayrollView() {
 
       <AskPaycheckDialog item={askItem} onClose={() => setAskItem(null)} />
     </div>
+  );
+}
+
+/**
+ * The first thing a worker opens Pay for: when's the next check, and what
+ * days does it cover. From their pay schedule (theirs, else their client's,
+ * else the org default); nothing when none is set up.
+ */
+/** "Sep 7" — the year is noise on a date this close. */
+function shortDay(ymd: string): string {
+  const d = parseYmd(ymd);
+  return d ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ymd;
+}
+
+function NextPaydayCard() {
+  const { t } = useI18n();
+  const q = useQuery({
+    queryKey: ['me', 'nextPayday'],
+    queryFn: () => getMyNextPayday().catch(() => ({ nextPayday: null })),
+    staleTime: 10 * 60_000,
+  });
+  const p = q.data?.nextPayday;
+  if (!p) return null;
+  const pay = parseYmd(p.payDate);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = pay ? Math.round((pay.getTime() - today.getTime()) / 86_400_000) : null;
+  const when =
+    days === 0 ? t('pay.paidToday') : days === 1 ? t('pay.paidTomorrow') : days !== null ? t('pay.paidInDays', { count: days }) : '';
+  return (
+    <section
+      aria-label={t('pay.nextPayday')}
+      className="relative mb-4 overflow-hidden rounded-lg border border-gold/30 bg-navy bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent animate-enter"
+    >
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]"
+      />
+      <div className="relative p-5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
+            <CalendarCheck className="h-3.5 w-3.5" aria-hidden="true" />
+            {t('pay.nextPayday')}
+          </span>
+          {when && <span className="text-xs tabular-nums text-silver/80">{when}</span>}
+        </div>
+        <div className="mt-2 text-3xl font-bold tracking-tight text-white">
+          {pay ? pay.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) : p.payDate}
+        </div>
+        <p className="mt-1 text-sm text-silver">
+          {t('pay.forWork', { from: shortDay(p.periodStart), to: shortDay(p.periodEnd) })}
+        </p>
+      </div>
+    </section>
   );
 }
 

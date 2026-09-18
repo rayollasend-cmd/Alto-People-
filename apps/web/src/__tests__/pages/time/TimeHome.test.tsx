@@ -26,6 +26,10 @@ vi.mock('@/pages/time/AssociateTimeView', () => ({
 vi.mock('@/pages/time/MyTimesheet', () => ({ MyTimesheet: () => <div>my timesheet</div> }));
 vi.mock('@/lib/timeApi', () => ({
   getActiveTimeEntry: vi.fn().mockResolvedValue({ active: { id: 'e1', clockInAt: new Date().toISOString() } }),
+  listMyTimeEntries: vi.fn().mockResolvedValue({ entries: [] }),
+}));
+vi.mock('@/lib/schedulingApi', () => ({
+  listMyShifts: vi.fn().mockResolvedValue({ shifts: [] }),
 }));
 
 import { TimeHome } from '@/pages/time/TimeHome';

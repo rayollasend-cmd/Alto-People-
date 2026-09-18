@@ -6,7 +6,6 @@ import type {
   Shift,
 } from '@alto-people/shared';
 import {
-  acknowledgeMyShift,
   claimOpenShift,
   getMyCalendarUrl,
   listMyAvailabilityExceptions,
@@ -53,6 +52,9 @@ import {
   ScheduleMonthView,
   ScheduleWeekView,
 } from './AssociateScheduleCalendar';
+import { useQuery } from '@tanstack/react-query';
+import { getActiveTimeEntry } from '@/lib/timeApi';
+import { MyShiftHero } from '@/pages/associate/MyShiftHero';
 
 type ScheduleViewMode = 'list' | 'week' | 'month';
 const VIEW_STORAGE_KEY = 'alto:mySchedule.view.v1';
@@ -232,6 +234,12 @@ export function AssociateScheduleView() {
   // endpoint that powers the earnings card) — prices every "~$" on this
   // page. Decorative: a failed fetch just leaves the money off.
   const [estRate, setEstRate] = useState<number | null>(null);
+  // Their punch, from the kiosk — the shift card reads on / late / coming up
+  // off it (same cache as the home's).
+  const activeQuery = useQuery({
+    queryKey: ['me', 'activeEntry'],
+    queryFn: () => getActiveTimeEntry().catch(() => null),
+  });
   useEffect(() => {
     let cancelled = false;
     apiFetch<{ hourlyRate: number }>('/time/me/earnings')
@@ -373,11 +381,16 @@ export function AssociateScheduleView() {
 
       {/* The answer FIRST: the next shift as a hero, before any controls. */}
       {loaded && !isEmpty && next && (
-        <NextShiftHero
-          shift={next}
+        // The home's live shift card: late (amber) when the shift has
+        // started and there's no punch — this said "Happening now" in green
+        // to someone who hadn't clocked in.
+        <MyShiftHero
+          active={activeQuery.data}
+          shifts={shifts ?? []}
+          openShiftCount={null}
           estRate={estRate}
-          now={now}
           onAcknowledged={markAcknowledged}
+          showScheduleLink={false}
         />
       )}
 
@@ -592,162 +605,6 @@ export function AssociateScheduleView() {
         <AvailabilityEditor />
       </div>
     </div>
-  );
-}
-
-/**
- * The page's answer, as a hero: WHEN do I work next, and what's it worth.
- * Day + time in heavy sans, the shift's ~$ value, and the two actions that
- * matter (confirm, directions) zero taps deep. The list below stays the
- * full ledger — this is the scoreboard. Same card family as the earnings
- * hero: gradient face, one inset radial glow (success-green once the shift
- * is actually happening), never a negative-offset blur (e2e rect guard).
- */
-function NextShiftHero({
-  shift,
-  estRate,
-  now,
-  onAcknowledged,
-}: {
-  shift: Shift;
-  estRate: number | null;
-  now: number;
-  onAcknowledged: (shiftId: string, acknowledgedAt: string) => void;
-}) {
-  const { t } = useI18n();
-  const [acking, setAcking] = useState(false);
-  const started = new Date(shift.startsAt).getTime() <= now;
-  const needsConfirm =
-    shift.status === 'ASSIGNED' && !shift.acknowledgedAt && !started;
-  const confirmed =
-    shift.status === 'ASSIGNED' && Boolean(shift.acknowledgedAt) && !started;
-  const est = estRate != null ? (paidShiftMinutes(shift) / 60) * estRate : null;
-  const minsToStart = Math.max(
-    0,
-    Math.round((new Date(shift.startsAt).getTime() - now) / 60_000),
-  );
-  const countdown =
-    minsToStart >= 60
-      ? `${Math.floor(minsToStart / 60)}h${minsToStart % 60 ? ` ${minsToStart % 60}m` : ''}`
-      : `${minsToStart}m`;
-  const site = [shift.locationName, shift.location].filter(Boolean).join(' · ');
-
-  const acknowledge = async () => {
-    setAcking(true);
-    try {
-      const updated = await acknowledgeMyShift(shift.id);
-      onAcknowledged(
-        shift.id,
-        updated.acknowledgedAt ?? new Date().toISOString(),
-      );
-      hapticConfirm();
-      toast.success(t('shift.confirmedToast'));
-    } catch (err) {
-      toast.error(
-        err instanceof ApiError ? err.message : t('shift.confirmFailed'),
-      );
-    } finally {
-      setAcking(false);
-    }
-  };
-
-  return (
-    <section
-      aria-label={t('sched.nextShift')}
-      className={cn(
-        'relative overflow-hidden rounded-lg border mb-4 animate-enter',
-        started
-          ? 'border-success/40 bg-navy bg-gradient-to-br from-success/[0.12] via-transparent to-transparent'
-          : 'border-gold/30 bg-navy bg-gradient-to-br from-gold/[0.14] via-transparent to-transparent',
-      )}
-    >
-      <div
-        aria-hidden="true"
-        className={cn(
-          'pointer-events-none absolute inset-0',
-          started
-            ? 'bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-success)/0.14),transparent_55%)]'
-            : 'bg-[radial-gradient(circle_at_15%_0%,rgb(var(--color-gold)/0.14),transparent_55%)]',
-        )}
-      />
-      <div className="relative p-5">
-        <div className="flex items-center justify-between gap-2">
-          <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
-            <CalendarDays className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('sched.nextShift')}
-          </span>
-          {started ? (
-            <span className="flex items-center gap-1.5 text-xs text-success">
-              <span className="relative flex h-2 w-2" aria-hidden="true">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
-              </span>
-              {t('sched.heroNow')}
-            </span>
-          ) : (
-            minsToStart < 24 * 60 && (
-              <span className="text-xs text-silver/80 tabular-nums">
-                {t('sched.startsIn', { time: countdown })}
-              </span>
-            )
-          )}
-        </div>
-        <div className="mt-2 text-3xl sm:text-4xl font-bold tracking-tight leading-tight text-white">
-          {fmtRelativeDayTz(shift.startsAt, shift.timezone, now)}
-          <span className="text-silver/50"> · </span>
-          <span className="tabular-nums">
-            {fmtShiftRangeTz(shift.startsAt, shift.endsAt, shift.timezone)}
-          </span>
-        </div>
-        <p className="mt-1.5 text-sm text-silver">
-          {shift.position}
-          {shift.clientName ? ` · ${shift.clientName}` : ''}
-          {est != null && est > 0 && (
-            <span className="font-semibold text-gold">
-              {' '}· {t('sched.heroWorth', { amount: fmtMoneyEst(est) })}
-            </span>
-          )}
-        </p>
-        {(needsConfirm || confirmed || site) && (
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-            {needsConfirm && (
-              <Button
-                size="sm"
-                onClick={acknowledge}
-                loading={acking}
-                disabled={acking}
-              >
-                <Check className="h-3.5 w-3.5" />
-                {t('shift.illBeThere')}
-              </Button>
-            )}
-            {confirmed && (
-              <span className="inline-flex items-center gap-1 text-xs text-success">
-                <Check
-                  className="h-3.5 w-3.5 animate-check-pop"
-                  aria-hidden="true"
-                />
-                {t('shift.youConfirmed')}
-              </span>
-            )}
-            {site && (
-              <a
-                href={mapsUrl(
-                  [shift.clientName, shift.locationName, shift.location]
-                    .filter(Boolean)
-                    .join(' '),
-                )}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center coarse:min-h-11 text-sm text-gold hover:text-gold-bright underline underline-offset-2"
-              >
-                {t('shift.directions')}
-              </a>
-            )}
-          </div>
-        )}
-      </div>
-    </section>
   );
 }
 

@@ -58,7 +58,51 @@ interface TabsListProps extends React.HTMLAttributes<HTMLDivElement> {
 }
 
 export const TabsList = React.forwardRef<HTMLDivElement, TabsListProps>(
-  ({ className, children, ...props }, ref) => {
+  ({ className, children, style, ...props }, ref) => {
+    // On a phone a long strip scrolls sideways with its scrollbar hidden —
+    // it read as cut off ("Depende…"). Fade the edge that has more tabs
+    // past it, and keep the selected tab in view.
+    const innerRef = React.useRef<HTMLDivElement | null>(null);
+    const setRefs = (el: HTMLDivElement | null) => {
+      innerRef.current = el;
+      if (typeof ref === 'function') ref(el);
+      else if (ref) ref.current = el;
+    };
+    const [edges, setEdges] = React.useState({ left: false, right: false });
+    React.useEffect(() => {
+      const el = innerRef.current;
+      if (!el) return;
+      const update = () =>
+        setEdges({
+          left: el.scrollLeft > 2,
+          right: el.scrollLeft + el.clientWidth < el.scrollWidth - 2,
+        });
+      update();
+      el.addEventListener('scroll', update, { passive: true });
+      const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
+      ro?.observe(el);
+      return () => {
+        el.removeEventListener('scroll', update);
+        ro?.disconnect();
+      };
+    }, []);
+    const active = React.useContext(TabsContext)?.value;
+    React.useEffect(() => {
+      const el = innerRef.current;
+      const sel = el?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+      if (!el || !sel || el.scrollWidth <= el.clientWidth) return;
+      // Horizontal only — never scroll the page to reach the strip.
+      const left = sel.getBoundingClientRect().left - el.getBoundingClientRect().left + el.scrollLeft;
+      if (left < el.scrollLeft || left + sel.offsetWidth > el.scrollLeft + el.clientWidth) {
+        el.scrollLeft = Math.max(0, left - (el.clientWidth - sel.offsetWidth) / 2);
+      }
+    }, [active]);
+    const mask =
+      edges.left || edges.right
+        ? `linear-gradient(to right, ${edges.left ? 'transparent, black 2rem' : 'black'}, ${
+            edges.right ? 'black calc(100% - 2rem), transparent' : 'black'
+          })`
+        : undefined;
     const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
       const target = e.target as HTMLElement;
       if (target.getAttribute('role') !== 'tab') return;
@@ -80,9 +124,10 @@ export const TabsList = React.forwardRef<HTMLDivElement, TabsListProps>(
     };
     return (
       <div
-        ref={ref}
+        ref={setRefs}
         role="tablist"
         onKeyDown={onKeyDown}
+        style={mask ? { ...style, maskImage: mask, WebkitMaskImage: mask } : style}
         className={cn(
           // Single-row scrollable strip — keeps the bottom-border underline
           // pattern intact when there are too many tabs to fit on a phone.

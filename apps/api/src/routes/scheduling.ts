@@ -113,6 +113,7 @@ import { runShiftAutofillSweep } from '../lib/shiftAutofill.js';
 import { ORG_TZ, nextKey, portalCalendar, storeCalendar } from '../lib/portalMetrics.js';
 import { closeOpenAssignments } from '../lib/assignmentDates.js';
 import { ledWindows, windowCovers } from '../lib/shiftWindows.js';
+import { assertCanClaimOpenShift, eligibleOpenShifts } from '../lib/openShiftEligibility.js';
 
 export const schedulingRouter = Router();
 
@@ -4070,25 +4071,6 @@ schedulingRouter.delete('/me/availability/exceptions/:id', async (req, res, next
 
 /** ClientIds where the associate is placed — approved application or an
  *  open assignment. Open shifts outside these clients aren't offered. */
-async function placedClientIds(associateId: string): Promise<string[]> {
-  const [apps, assignments] = await Promise.all([
-    prisma.application.findMany({
-      where: { associateId, status: 'APPROVED' },
-      select: { clientId: true },
-    }),
-    prisma.associateAssignment.findMany({
-      where: { associateId, endedAt: null },
-      select: { location: { select: { clientId: true } } },
-    }),
-  ]);
-  return Array.from(
-    new Set([
-      ...apps.map((a) => a.clientId),
-      ...assignments.map((a) => a.location.clientId),
-    ]),
-  );
-}
-
 schedulingRouter.get('/me/open-shifts', async (req, res, next) => {
   try {
     const user = req.user!;
@@ -4096,79 +4078,14 @@ schedulingRouter.get('/me/open-shifts', async (req, res, next) => {
       res.json(OpenShiftsResponseSchema.parse({ shifts: [] }));
       return;
     }
-    const clientIds = await placedClientIds(user.associateId);
-    if (clientIds.length === 0) {
-      res.json(OpenShiftsResponseSchema.parse({ shifts: [] }));
-      return;
-    }
-    const rows = await prisma.shift.findMany({
-      where: {
-        clientId: { in: clientIds },
-        status: 'OPEN',
-        assignedAssociateId: null,
-        publishedAt: { not: null },
-        startsAt: { gt: new Date() },
-      },
-      orderBy: { startsAt: 'asc' },
-      take: 50,
-      include: SHIFT_INCLUDE,
-    });
-
-    // Hide shifts the associate couldn't actually take: overlapping their
-    // own schedule, or on a day they're off (PTO / exception). One batched
-    // fetch of their schedule + blocking rows, then in-memory filtering —
-    // the per-shift blockedForWindow loop here was a 100-query N+1 (July
-    // review).
-    const horizon = rows.length
-      ? new Date(Math.max(...rows.map((s) => s.endsAt.getTime())))
-      : new Date();
-    const [mine, ptoRows, exceptionRows] = await Promise.all([
-      prisma.shift.findMany({
-        where: {
-          assignedAssociateId: user.associateId,
-          status: { notIn: ['CANCELLED'] },
-          endsAt: { gt: new Date() },
-        },
-        select: { startsAt: true, endsAt: true },
-      }),
-      prisma.timeOffRequest.findMany({
-        where: {
-          associateId: user.associateId,
-          status: 'APPROVED',
-          startDate: { lte: horizon },
-          endDate: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-        },
-        select: { startDate: true, endDate: true },
-      }),
-      prisma.availabilityException.findMany({
-        where: {
-          associateId: user.associateId,
-          date: {
-            gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
-            lte: horizon,
-          },
-        },
-        select: { date: true },
-      }),
-    ]);
-    const dayOfRow = (d: Date) => d.toISOString().slice(0, 10);
-    const eligible = rows.filter((s) => {
-      const overlaps = mine.some(
-        (m) => m.startsAt < s.endsAt && m.endsAt > s.startsAt,
-      );
-      if (overlaps) return false;
-      const tz = s.locationRel?.timezone ?? DEFAULT_TIMEZONE;
-      const startKey = dayKeyInZone(s.startsAt, tz);
-      const endKey = dayKeyInZone(s.endsAt, tz);
-      const ptoBlocked = ptoRows.some(
-        (r) => dayOfRow(r.startDate) <= endKey && dayOfRow(r.endDate) >= startKey,
-      );
-      if (ptoBlocked) return false;
-      return !exceptionRows.some((x) => {
-        const k = dayOfRow(x.date);
-        return k >= startKey && k <= endKey;
-      });
-    });
+    // The one open-shift rule (lib/openShiftEligibility) — the Open shifts
+    // page and the earnings card read the same list.
+    const ids = (await eligibleOpenShifts(user.associateId)).map((s) => s.id);
+    const loaded = ids.length
+      ? await prisma.shift.findMany({ where: { id: { in: ids } }, include: SHIFT_INCLUDE })
+      : [];
+    const byId = new Map(loaded.map((s) => [s.id, s]));
+    const eligible = ids.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
 
     const claims = await prisma.openShiftClaim.findMany({
       where: {
@@ -4213,20 +4130,9 @@ schedulingRouter.post('/me/open-shifts/:id/claim', async (req, res, next) => {
     if (!shift) {
       throw new HttpError(404, 'shift_not_available', 'This shift is no longer open');
     }
-    const clientIds = await placedClientIds(user.associateId);
-    if (!clientIds.includes(shift.clientId)) {
-      throw new HttpError(403, 'not_placed_at_client', 'You are not placed at this client');
-    }
-    if (
-      await associateHasOverlap(prisma, user.associateId, shift.startsAt, shift.endsAt, shift.id)
-    ) {
-      throw new HttpError(409, 'overlaps_your_schedule', 'This shift overlaps one of yours');
-    }
+    // Placed, qualified, free that day — the same rule as the list.
+    await assertCanClaimOpenShift(user.associateId, shift.id);
     const tz = shift.locationRel?.timezone ?? DEFAULT_TIMEZONE;
-    const blocked = await blockedForWindow([user.associateId], shift.startsAt, shift.endsAt, tz);
-    if (blocked.size > 0) {
-      throw new HttpError(409, 'day_unavailable', 'You have time off or a day off then');
-    }
     const existing = await prisma.openShiftClaim.findFirst({
       where: { shiftId: shift.id, associateId: user.associateId, status: 'PENDING' },
       select: { id: true },

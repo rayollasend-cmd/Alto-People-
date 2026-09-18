@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/schedulingApi', () => ({
   listMyShifts: vi.fn(),
@@ -26,6 +27,9 @@ vi.mock('@/lib/schedulingApi', () => ({
 }));
 vi.mock('@/lib/timeOffApi', () => ({
   listMyRequests: vi.fn().mockResolvedValue({ requests: [] }),
+}));
+vi.mock('@/lib/timeApi', () => ({
+  getActiveTimeEntry: vi.fn().mockResolvedValue({ active: null }),
 }));
 
 import {
@@ -104,11 +108,13 @@ function renderView() {
   // SwapMarketplace's Decline action now routes through the shared
   // confirm dialog, so the provider must be mounted like in the app.
   return render(
-    <ConfirmProvider>
-      <MemoryRouter>
-        <AssociateScheduleView />
-      </MemoryRouter>
-    </ConfirmProvider>,
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ConfirmProvider>
+        <MemoryRouter>
+          <AssociateScheduleView />
+        </MemoryRouter>
+      </ConfirmProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -129,7 +135,8 @@ describe('<AssociateScheduleView> shift detail', () => {
     expect(screen.getByText(/Cashier/)).toBeInTheDocument();
     // Duration, site, and manager note.
     expect(screen.getByText('8h')).toBeInTheDocument();
-    expect(screen.getByText(/Store 1424 · Front end/)).toBeInTheDocument();
+    // The site shows in the expanded card — and in the shift card on top.
+    expect(screen.getAllByText(/Store 1424 · Front end/).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText(/Bring your food-safety card\./)).toBeInTheDocument();
     expect(getMyShiftDetail).toHaveBeenCalledWith('s1');
   });
@@ -339,5 +346,22 @@ describe('<AssociateScheduleView> shift detail', () => {
     expect(
       screen.queryByRole('button', { name: /offer this shift to a teammate/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe('<AssociateScheduleView> — the shift card knows about the punch', () => {
+  it("a started shift with no punch is late, not \"Happening now\"", async () => {
+    const { listMyShifts } = await import('@/lib/schedulingApi');
+    vi.mocked(listMyShifts).mockResolvedValue({
+      shifts: [
+        shift({
+          startsAt: new Date(Date.now() - 40 * 60_000).toISOString(),
+          endsAt: new Date(Date.now() + 7 * 3_600_000).toISOString(),
+        }),
+      ],
+    } as never);
+    renderView();
+    expect(await screen.findByText('Your shift started 40m ago')).toBeInTheDocument();
+    expect(screen.queryByText('Happening now')).not.toBeInTheDocument();
   });
 });

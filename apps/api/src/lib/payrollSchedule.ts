@@ -114,6 +114,18 @@ export function getNextPeriod(schedule: ScheduleInput, today: Date = new Date())
   return getCurrentPeriod(schedule, dayAfterEnd);
 }
 
+/**
+ * The next payday on or after `today`, and the period it pays for. Usually
+ * the PREVIOUS period's pay date (a Mon–Sun week paid the Friday after is
+ * still owed on Tuesday) — else the current period's.
+ */
+export function getNextPayday(schedule: ScheduleInput, today: Date = new Date()): PeriodWindow {
+  const todayKey = fmt(toUtcDate(today));
+  const current = getCurrentPeriod(schedule, today);
+  const previous = getCurrentPeriod(schedule, addDays(toUtcDate(current.periodStart), -1));
+  return previous.payDate >= todayKey ? previous : current;
+}
+
 function buildWindow(start: Date, end: Date, payOffset: number): PeriodWindow {
   return {
     periodStart: fmt(start),

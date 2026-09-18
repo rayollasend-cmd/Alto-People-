@@ -9,6 +9,7 @@ import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/cn';
 import { hapticConfirm } from '@/lib/haptics';
 import {
+  fmtMoneyEst,
   fmtRelativeDayTz,
   fmtShiftRangeTz,
   fmtTime,
@@ -22,6 +23,7 @@ import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
 
 /**
  * The associate's shift, the way the supervisor's floor reads: ONE hero that
@@ -75,6 +77,9 @@ export function MyShiftHero({
   shifts,
   openShiftCount,
   footer,
+  estRate = null,
+  onAcknowledged,
+  showScheduleLink = true,
 }: {
   active: ActiveTimeEntryResponse | null | undefined;
   shifts: Shift[] | null | undefined;
@@ -82,6 +87,12 @@ export function MyShiftHero({
   openShiftCount: number | null;
   /** Under the hero when they're not on the clock (their kiosk number). */
   footer?: (state: 'late' | 'upcoming' | 'none') => React.ReactNode;
+  /** Their hourly rate, for "worth ~$105" on an upcoming shift. */
+  estRate?: number | null;
+  /** A page holding its own copy of the shifts (My schedule) hears the confirm. */
+  onAcknowledged?: (shiftId: string, acknowledgedAt: string) => void;
+  /** Off on the schedule page itself. */
+  showScheduleLink?: boolean;
 }) {
   const { t } = useI18n();
   const now = useNow();
@@ -128,9 +139,10 @@ export function MyShiftHero({
     if (!next || acking) return;
     setAcking(true);
     try {
-      await acknowledgeMyShift(next.id);
+      const updated = await acknowledgeMyShift(next.id);
       hapticConfirm();
       toast.success(t('shift.confirmedToast'));
+      onAcknowledged?.(next.id, updated?.acknowledgedAt ?? new Date().toISOString());
       await queryClient.invalidateQueries({ queryKey: ['me', 'shifts'] });
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : t('shift.confirmFailed'));
@@ -229,6 +241,11 @@ export function MyShiftHero({
             <p className="mt-1.5 text-sm text-silver">
               {next.position}
               {next.clientName ? ` · ${next.clientName}` : ''}
+              {estRate != null && paidShiftMinutes(next) > 0 && (
+                <span className="font-semibold text-gold">
+                  {' '}· {t('sched.heroWorth', { amount: fmtMoneyEst((paidShiftMinutes(next) / 60) * estRate) })}
+                </span>
+              )}
             </p>
           </>
         ) : (
@@ -303,12 +320,14 @@ export function MyShiftHero({
               <Link to="/marketplace">{t('hero.pickUp')}</Link>
             </Button>
           ) : (
-            <Link
-              to="/scheduling"
-              className="inline-flex items-center text-sm text-gold hover:text-gold-bright coarse:min-h-11"
-            >
-              {t('dash.seeFullSchedule')} →
-            </Link>
+            showScheduleLink && (
+              <Link
+                to="/scheduling"
+                className="inline-flex items-center text-sm text-gold hover:text-gold-bright coarse:min-h-11"
+              >
+                {t('dash.seeFullSchedule')} →
+              </Link>
+            )
           )}
         </div>
         {state !== 'on' && footer?.(state)}
