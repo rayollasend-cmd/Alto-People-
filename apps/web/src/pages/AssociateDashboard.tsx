@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   AlertCircle,
   ArrowRight,
   CalendarCheck,
   CalendarOff,
   Clock,
-  DollarSign,
   FileSignature,
   FileText,
   FileWarning,
   Inbox,
+  MapPin,
   Timer,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -25,11 +25,12 @@ import { useAuth } from '@/lib/auth';
 import { useI18n, type MessageKey } from '@/lib/i18n';
 import { ApiError } from '@/lib/api';
 import { getActiveTimeEntry } from '@/lib/timeApi';
-import { acknowledgeMyShift, listMyShifts } from '@/lib/schedulingApi';
+import { listMyShifts } from '@/lib/schedulingApi';
+import { listOpenShifts } from '@/lib/qualApi';
 import { listMyAgreements } from '@/lib/agreements122Api';
 import { listMyDocuments } from '@/lib/documentsApi';
 import { listMyInbox } from '@/lib/communicationsApi';
-import { fmtDate, fmtHours, fmtMoney, fmtRelativeDayTz, fmtShiftRangeTz, fmtTime } from '@/lib/format';
+import { fmtDate, fmtHours, fmtMoney } from '@/lib/format';
 import { listMyPayrollItems } from '@/lib/payrollApi';
 import { getMyBalance } from '@/lib/timeOffApi';
 import { getEmployeeNumber } from '@/lib/selfApi';
@@ -42,12 +43,13 @@ import {
 } from '@/lib/usePullToRefresh';
 import { hapticConfirm } from '@/lib/haptics';
 import { getPushStatus, subscribeToPush } from '@/lib/push';
-import { Skeleton } from '@/components/ui/Skeleton';
 import { OnboardingBanner } from '@/components/OnboardingBanner';
-import { cn } from '@/lib/cn';
 import { CelebrationRibbon } from '@/components/CelebrationRibbon';
 import { EarningsCard } from '@/components/EarningsCard';
 import { FirstPaycheckCard } from '@/components/FirstPaycheckCard';
+import { StatTile } from '@/pages/portal/portalCharts';
+import { paidShiftMinutes } from '@/pages/scheduling/ShiftCard';
+import { MyShiftHero, MyWeekStrip, pickNextShift } from '@/pages/associate/MyShiftHero';
 
 /**
  * 403/404 are fully expected for accounts without the linked records
@@ -70,7 +72,6 @@ async function emptyOnExpectedDenial<T>(p: Promise<T>): Promise<T | null> {
 export function AssociateDashboard() {
   const { user } = useAuth();
   const { t } = useI18n();
-  const navigate = useNavigate();
 
   const greetingName =
     user?.firstName?.trim() ||
@@ -97,13 +98,18 @@ export function AssociateDashboard() {
     queryKey: ['me', 'timeOffBalance'],
     queryFn: () => emptyOnExpectedDenial(getMyBalance()),
   });
+  // The Open shifts page's own list, so the tile's number is what the tap
+  // opens onto.
+  const openQuery = useQuery({
+    queryKey: ['me', 'marketplace', 'open'],
+    queryFn: () => emptyOnExpectedDenial(listOpenShifts()),
+  });
 
   // undefined → still loading (skeleton); null/[] → honest empty state.
   const active: ActiveTimeEntryResponse | null | undefined = activeQuery.data;
-  const nextShift: Shift | null | undefined =
-    shiftsQuery.data === undefined
-      ? undefined
-      : pickNextShift(shiftsQuery.data?.shifts ?? []);
+  const shifts: Shift[] | undefined =
+    shiftsQuery.data === undefined ? undefined : (shiftsQuery.data?.shifts ?? []);
+  const nextShift = shifts ? pickNextShift(shifts) : null;
   const latestPaystub: PayrollItem | null | undefined =
     payQuery.data === undefined
       ? undefined
@@ -112,35 +118,45 @@ export function AssociateDashboard() {
     balanceQuery.data === undefined
       ? undefined
       : (balanceQuery.data?.balances ?? []);
-  const failed = {
-    clock: activeQuery.isError,
-    shift: shiftsQuery.isError,
-    pay: payQuery.isError,
-    timeOff: balanceQuery.isError,
-  };
+  const openShiftCount = openQuery.data === undefined ? null : (openQuery.data?.shifts?.length ?? 0);
 
   const { refetch: refetchActive } = activeQuery;
   const { refetch: refetchShifts } = shiftsQuery;
   const { refetch: refetchPay } = payQuery;
   const { refetch: refetchBalance } = balanceQuery;
+  const { refetch: refetchOpen } = openQuery;
   const refreshAll = useCallback(async () => {
     await Promise.all([
       refetchActive(),
       refetchShifts(),
       refetchPay(),
       refetchBalance(),
+      refetchOpen(),
     ]);
-  }, [refetchActive, refetchShifts, refetchPay, refetchBalance]);
+  }, [refetchActive, refetchShifts, refetchPay, refetchBalance, refetchOpen]);
 
   const pullState = usePullToRefresh(refreshAll);
-  const isClockedIn = !!active?.active;
+  // The place, the way the supervisor's floor leads with its store: where
+  // their next (or current) shift is.
+  const place = nextShift
+    ? [nextShift.locationName, nextShift.clientName].filter(Boolean).join(' · ')
+    : '';
 
   return (
     <div className="mx-auto">
       <PullToRefreshIndicator state={pullState} />
       <PageHeader
         title={t('dash.greeting', { name: greetingName })}
-        subtitle={t('dash.subtitle')}
+        subtitle={
+          place ? (
+            <span className="flex items-center gap-1.5">
+              <MapPin className="h-3.5 w-3.5 shrink-0 text-silver/70" aria-hidden="true" />
+              {place}
+            </span>
+          ) : (
+            t('dash.subtitle')
+          )
+        }
         // The hero is a greeting; the chrome should say the page name, not
         // echo "Hey Maria 👋" right above its own h1.
         topbarTitle={t('tabs.home')}
@@ -153,60 +169,58 @@ export function AssociateDashboard() {
           ActionNeededCard below already say, in ops jargon. */}
       <CelebrationRibbon />
       <OnboardingBanner />
+
+      {/* The hero: their shift, in the tone of the moment — on the clock,
+          late, coming up, or nothing scheduled. It replaced two cards
+          ("Clock" + "Next shift") that never told anyone they were late. */}
+      {activeQuery.isError || shiftsQuery.isError ? (
+        <LoadFailedCard label={t('dash.nextShift')} icon={Timer} onRetry={refreshAll} className="mb-4" />
+      ) : (
+        <MyShiftHero
+          active={active}
+          shifts={shifts}
+          openShiftCount={openShiftCount}
+          footer={(state) =>
+            // Late already says where to punch; the number is what they
+            // need at the tablet.
+            state === 'late' ? (
+              <EmployeeNumberLine />
+            ) : (
+              <div className="mt-4 border-t border-navy-secondary/60 pt-3">
+                <p className="text-xs text-silver/80">
+                  {t('dash.offClock')} · {t('dash.kioskHint')}
+                </p>
+                <EmployeeNumberLine />
+              </div>
+            )
+          }
+        />
+      )}
+
+      <EnablePushCard />
+      <ActionNeededCard
+        shifts={shiftsQuery.isError ? null : shifts}
+      />
+
+      {/* The four numbers their week runs on — the supervisor's KPI strip,
+          for one person. */}
+      <MyNumbers
+        shifts={shifts}
+        paystub={latestPaystub}
+        payFailed={payQuery.isError}
+        balances={balances}
+        balanceFailed={balanceQuery.isError}
+        openShiftCount={openShiftCount}
+      />
+
       <div className="mb-4 space-y-4">
         <EarningsCard />
         {/* New hires see their own relay lane — every "where's my check?"
             this answers is a case that never gets filed. */}
         <FirstPaycheckCard />
       </div>
-      <EnablePushCard />
-      <ActionNeededCard
-        shifts={
-          shiftsQuery.isError
-            ? null
-            : shiftsQuery.data === undefined
-              ? undefined
-              : (shiftsQuery.data?.shifts ?? [])
-        }
-      />
 
-      {/* Top row — clock-in and next shift get the spotlight. */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 mb-4">
-        {failed.clock ? (
-          <LoadFailedCard
-            label={t('dash.clock')}
-            icon={Clock}
-            onRetry={refreshAll}
-            className="md:col-span-1"
-          />
-        ) : (
-          <ClockCard active={active} isClockedIn={isClockedIn} />
-        )}
-        {failed.shift ? (
-          <LoadFailedCard
-            label={t('dash.nextShift')}
-            icon={Timer}
-            onRetry={refreshAll}
-            className="md:col-span-2"
-          />
-        ) : (
-          <NextShiftCard nextShift={nextShift} />
-        )}
-      </div>
-
-      {/* Second row — pay + time-off balance. Quieter, but still front-page. */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4 mb-6">
-        {failed.pay ? (
-          <LoadFailedCard label={t('dash.lastPaystub')} icon={DollarSign} onRetry={refreshAll} />
-        ) : (
-          <PaystubCard item={latestPaystub} onView={() => navigate('/payroll')} />
-        )}
-        {failed.timeOff ? (
-          <LoadFailedCard label={t('dash.timeOff')} icon={CalendarOff} onRetry={refreshAll} />
-        ) : (
-          <TimeOffCard balances={balances} onView={() => navigate('/time-off?new=1')} />
-        )}
-      </div>
+      <MyWeekStrip shifts={shiftsQuery.isError ? null : shifts} />
 
       <QuickActions />
     </div>
@@ -436,28 +450,6 @@ function ActionNeededCard({ shifts }: { shifts: Shift[] | null | undefined }) {
   );
 }
 
-// Same definition of "next" as the My Schedule page (endsAt >= now): an
-// in-progress shift IS the next shift until it ends. The old startsAt-based
-// window made this card skip ahead to the following shift an hour into the
-// current one while the schedule page still highlighted the current one.
-function pickNextShift(shifts: Shift[]): Shift | null {
-  const now = Date.now();
-  const upcoming = shifts
-    .filter((s) => new Date(s.endsAt).getTime() >= now && s.status !== 'CANCELLED')
-    .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
-  return upcoming[0] ?? null;
-}
-
-// Decimal hours, matching every other time surface (the time page's live
-// counter, the queue, the Fieldglass sheet). Sub-hour stays in minutes —
-// "12m on the clock" is clearer than "0.20h".
-function fmtElapsed(sinceIso: string): string {
-  const ms = Date.now() - new Date(sinceIso).getTime();
-  const totalMin = Math.max(0, Math.floor(ms / 60_000));
-  if (totalMin < 60) return `${totalMin}m`;
-  return `${(totalMin / 60).toFixed(2)}h`;
-}
-
 /**
  * Rendered in place of a card whose fetch failed for a non-expected reason
  * (network down, 500). Deliberately NOT the card's empty state — "Nothing
@@ -495,62 +487,6 @@ function LoadFailedCard({
   );
 }
 
-interface ClockCardProps {
-  active: ActiveTimeEntryResponse | null | undefined;
-  isClockedIn: boolean;
-}
-
-/**
- * Live clock STATUS only — associates punch at the worksite kiosk
- * (company policy, and the API rejects phone punches for the ASSOCIATE
- * role). This card used to offer a Clock in button that contradicted
- * the Time page's kiosk-only explainer and could never succeed; now it
- * mirrors the kiosk state and points at the tablet.
- */
-function ClockCard({ active, isClockedIn }: ClockCardProps) {
-  const { t } = useI18n();
-  if (active === undefined) {
-    return (
-      <Card className="md:col-span-1">
-        <CardContent className="pt-6">
-          <Skeleton className="h-3 w-24 mb-3" />
-          <Skeleton className="h-8 w-32 mb-3" />
-          <Skeleton className="h-9 w-full" />
-        </CardContent>
-      </Card>
-    );
-  }
-  return (
-    <Card
-      className={cn(
-        'md:col-span-1',
-        isClockedIn && 'border-success/40 bg-success/5'
-      )}
-    >
-      <CardContent className="pt-5">
-        <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
-          <Clock className="h-3 w-3" aria-hidden="true" />
-          {t('dash.clock')}
-        </div>
-        <div className="text-2xl font-semibold tracking-tight text-white mt-2 leading-tight">
-          {isClockedIn ? t('dash.onClock') : t('dash.offClock')}
-        </div>
-        {isClockedIn && active?.active ? (
-          <div className="text-xs text-silver mt-1 tabular-nums">
-            {t('dash.startedIn', {
-              time: fmtTime(active.active.clockInAt),
-              elapsed: fmtElapsed(active.active.clockInAt),
-            })}
-          </div>
-        ) : (
-          <p className="text-xs text-silver/70 mt-1">{t('dash.kioskHint')}</p>
-        )}
-        <EmployeeNumberLine />
-      </CardContent>
-    </Card>
-  );
-}
-
 /**
  * The kiosk clock-in number, on the card that talks about clocking in.
  * It used to live only at More → My profile → scroll — three-plus taps
@@ -581,179 +517,6 @@ function EmployeeNumberLine() {
   );
 }
 
-function NextShiftCard({ nextShift }: { nextShift: Shift | null | undefined }) {
-  const { t } = useI18n();
-  const queryClient = useQueryClient();
-  const [acking, setAcking] = useState(false);
-
-  // Same acknowledge mutation the schedule page's ShiftCard uses —
-  // idempotent POST, then refetch so the card flips to confirmed.
-  const acknowledge = async () => {
-    if (!nextShift || acking) return;
-    setAcking(true);
-    try {
-      await acknowledgeMyShift(nextShift.id);
-      hapticConfirm();
-      toast.success(t('shift.confirmedToast'));
-      await queryClient.invalidateQueries({ queryKey: ['me', 'shifts'] });
-    } catch (err) {
-      toast.error(
-        err instanceof ApiError ? err.message : t('shift.confirmFailed')
-      );
-    } finally {
-      setAcking(false);
-    }
-  };
-
-  if (nextShift === undefined) {
-    return (
-      <Card className="md:col-span-2">
-        <CardContent className="pt-6">
-          <Skeleton className="h-3 w-32 mb-3" />
-          <Skeleton className="h-8 w-2/3 mb-2" />
-          <Skeleton className="h-4 w-1/2" />
-        </CardContent>
-      </Card>
-    );
-  }
-  if (!nextShift) {
-    return (
-      <Card className="md:col-span-2">
-        <CardContent className="pt-5">
-          <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
-            <Timer className="h-3 w-3" aria-hidden="true" />
-            {t('dash.nextShift')}
-          </div>
-          <div className="text-xl text-white mt-2">
-            {t('dash.nothingScheduled')}
-          </div>
-          <p className="text-sm text-silver mt-1">{t('dash.managerWillPublish')}</p>
-          <Link
-            to="/scheduling"
-            className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
-          >
-            {t('dash.viewSchedule')}
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
-        </CardContent>
-      </Card>
-    );
-  }
-  return (
-    <Card className="md:col-span-2">
-      <CardContent className="pt-5">
-        <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
-          <Timer className="h-3 w-3" aria-hidden="true" />
-          {t('dash.nextShift')}
-        </div>
-        {/* Same hero grammar as the schedule page's next-shift block —
-            day + time in heavy sans, one quiet line for everything else. */}
-        <div className="mt-2 text-3xl font-bold tracking-tight leading-tight text-white">
-          {fmtRelativeDayTz(nextShift.startsAt, nextShift.timezone)}
-          <span className="text-silver/50"> · </span>
-          <span className="tabular-nums">
-            {fmtShiftRangeTz(nextShift.startsAt, nextShift.endsAt, nextShift.timezone)}
-          </span>
-        </div>
-        <div className="text-sm text-silver mt-1.5">
-          {nextShift.position}
-          {nextShift.clientName && ` · ${nextShift.clientName}`}
-          {nextShift.location && ` · ${nextShift.location}`}
-        </div>
-        <div className="mt-3 flex items-center gap-3 flex-wrap">
-          {nextShift.status === 'ASSIGNED' &&
-            !nextShift.acknowledgedAt &&
-            new Date(nextShift.startsAt).getTime() > Date.now() && (
-              <Button size="sm" onClick={acknowledge} loading={acking}>
-                {t('shift.illBeThere')}
-              </Button>
-            )}
-          <Link
-            to="/scheduling"
-            className="text-sm text-gold hover:text-gold-bright active:text-gold-bright inline-flex items-center gap-1 coarse:min-h-11"
-          >
-            {t('dash.seeFullSchedule')}
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function PaystubCard({
-  item,
-  onView,
-}: {
-  item: PayrollItem | null | undefined;
-  onView: () => void;
-}) {
-  const { t } = useI18n();
-  if (item === undefined) {
-    return (
-      <Card>
-        <CardContent className="pt-6">
-          <Skeleton className="h-3 w-32 mb-3" />
-          <Skeleton className="h-8 w-1/2 mb-2" />
-          <Skeleton className="h-4 w-1/3" />
-        </CardContent>
-      </Card>
-    );
-  }
-  if (!item) {
-    return (
-      <Card>
-        <CardContent className="pt-5">
-          <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
-            <DollarSign className="h-3 w-3" aria-hidden="true" />
-            {t('dash.lastPaystub')}
-          </div>
-          <div className="text-xl text-white mt-2">{t('dash.noPaystubs')}</div>
-          <p className="text-sm text-silver mt-1">{t('dash.firstPaystub')}</p>
-          <button
-            type="button"
-            onClick={onView}
-            className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
-          >
-            {t('dash.viewPayHistory')}
-            <ArrowRight className="h-3.5 w-3.5" />
-          </button>
-        </CardContent>
-      </Card>
-    );
-  }
-  const showDisbursed = !!item.disbursedAt;
-  return (
-    <Card>
-      <CardContent className="pt-5">
-        <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
-          <DollarSign className="h-3 w-3" aria-hidden="true" />
-          {t('dash.lastPaystub')}
-        </div>
-        {/* Heavy sans, WHITE — the earnings hero above is the page's one
-            gold crown; a second gold money number dilutes it. */}
-        <div className="text-3xl font-bold tracking-tight text-white mt-2 tabular-nums">
-          {fmtMoney(item.netPay)}
-        </div>
-        <div className="text-xs text-silver mt-1 tabular-nums">
-          {t('dash.netWorked', { hours: fmtHours(item.hoursWorked) })}
-          {showDisbursed && item.disbursedAt && (
-            <> · {t('dash.paidOn', { date: fmtDate(item.disbursedAt) })}</>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={onView}
-          className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
-        >
-          {t('dash.viewPayHistory')}
-          <ArrowRight className="h-3.5 w-3.5" />
-        </button>
-      </CardContent>
-    </Card>
-  );
-}
-
 // Same keys the Time-off page uses for these categories — the dashboard
 // chip and the Time-off balance card must never disagree on wording.
 const CATEGORY_KEY: Record<string, MessageKey> = {
@@ -765,90 +528,116 @@ const CATEGORY_KEY: Record<string, MessageKey> = {
   OTHER: 'timeoff.cat.OTHER',
 };
 
-function TimeOffCard({
+/**
+ * Their four numbers, as tiles — hours this week (the schedule page's
+ * Sunday-start week, same math), the last paycheck, time off, and the open
+ * shifts they can grab. They replace two tall cards whose empty states
+ * ("No paystubs yet", "No balance yet") filled a phone screen by themselves.
+ */
+function MyNumbers({
+  shifts,
+  paystub,
+  payFailed,
   balances,
-  onView,
+  balanceFailed,
+  openShiftCount,
 }: {
+  shifts: Shift[] | undefined;
+  paystub: PayrollItem | null | undefined;
+  payFailed: boolean;
   balances: TimeOffBalance[] | null | undefined;
-  onView: () => void;
+  balanceFailed: boolean;
+  openShiftCount: number | null;
 }) {
   const { t } = useI18n();
-  if (balances === undefined) {
-    return (
-      <Card>
-        <CardContent className="pt-6">
-          <Skeleton className="h-3 w-24 mb-3" />
-          <Skeleton className="h-8 w-1/3 mb-2" />
-          <Skeleton className="h-4 w-2/3" />
-        </CardContent>
-      </Card>
-    );
-  }
-  if (!balances || balances.length === 0) {
-    return (
-      <Card>
-        <CardContent className="pt-5">
-          <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
-            <CalendarOff className="h-3 w-3" aria-hidden="true" />
-            {t('dash.timeOff')}
-          </div>
-          <div className="text-xl text-white mt-2">{t('dash.noBalance')}</div>
-          <p className="text-sm text-silver mt-1">{t('dash.sickAccrues')}</p>
-          <button
-            type="button"
-            onClick={onView}
-            className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
-          >
-            {t('dash.openTimeOff')}
-            <ArrowRight className="h-3.5 w-3.5" />
-          </button>
-        </CardContent>
-      </Card>
-    );
-  }
-  // Show the largest balance prominently; list any others as small chips.
-  const sorted = [...balances].sort((a, b) => b.balanceMinutes - a.balanceMinutes);
-  const primary = sorted[0];
-  const rest = sorted.slice(1);
+  const week = (() => {
+    if (!shifts) return null;
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - start.getDay());
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    const inWeek = shifts.filter((s) => {
+      const at = new Date(s.startsAt).getTime();
+      return s.status !== 'CANCELLED' && at >= start.getTime() && at < end.getTime();
+    });
+    return { count: inWeek.length, minutes: inWeek.reduce((n, s) => n + paidShiftMinutes(s), 0) };
+  })();
+  const primary = balances && balances.length > 0 ? [...balances].sort((a, b) => b.balanceMinutes - a.balanceMinutes)[0]! : null;
+
   return (
-    <Card>
-      <CardContent className="pt-5">
-        <div className="text-xs font-medium text-silver/70 flex items-center gap-1.5">
-          <CalendarOff className="h-3 w-3" aria-hidden="true" />
-          {t('dash.timeOff')}
-        </div>
-        <div className="flex items-baseline gap-2 mt-2 flex-wrap">
-          <div className="text-3xl font-bold tracking-tight text-white tabular-nums">
-            {fmtHours(primary.balanceMinutes / 60)}
-          </div>
-          <div className="text-sm text-silver">
-            {CATEGORY_KEY[primary.category] ? t(CATEGORY_KEY[primary.category]) : primary.category}
-          </div>
-        </div>
-        {/* The other balances as one quiet sentence, not a row of chips —
-            same grammar as the Time-off page's hero breakdown. */}
-        {rest.length > 0 && (
-          <div className="text-xs text-silver mt-1 tabular-nums">
-            {rest
-              .map(
-                (b) =>
-                  `${fmtHours(b.balanceMinutes / 60)} ${
-                    CATEGORY_KEY[b.category] ? t(CATEGORY_KEY[b.category]) : b.category
-                  }`,
-              )
-              .join(' · ')}
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={onView}
-          className="text-sm text-gold hover:text-gold-bright active:text-gold-bright mt-3 inline-flex items-center gap-1 coarse:min-h-11"
-        >
-          {t('dash.requestOrView')}
-          <ArrowRight className="h-3.5 w-3.5" />
-        </button>
-      </CardContent>
-    </Card>
+    <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4 animate-enter">
+      <TileLink to="/scheduling">
+        <StatTile
+          className="h-full"
+          label={t('tile.thisWeek')}
+          value={week ? fmtHours(week.minutes / 60) : '—'}
+          sub={
+            week
+              ? week.count === 0
+                ? t('tile.noShifts')
+                : t(week.count === 1 ? 'tile.shiftsOne' : 'tile.shiftsMany', { count: week.count })
+              : undefined
+          }
+        />
+      </TileLink>
+      <TileLink to="/payroll">
+        <StatTile
+          className="h-full"
+          label={t('tile.lastPay')}
+          value={paystub ? fmtMoney(paystub.netPay) : '—'}
+          sub={
+            payFailed
+              ? t('dash.loadFailed')
+              : paystub === undefined
+                ? undefined
+                : paystub
+                  ? paystub.disbursedAt
+                    ? t('tile.paidOn', { date: fmtDate(paystub.disbursedAt) })
+                    : t('dash.netWorked', { hours: fmtHours(paystub.hoursWorked) })
+                  : t('tile.noPayYet')
+          }
+        />
+      </TileLink>
+      <TileLink to="/time-off">
+        <StatTile
+          className="h-full"
+          label={t('tile.timeOff')}
+          value={primary ? fmtHours(primary.balanceMinutes / 60) : '—'}
+          sub={
+            balanceFailed
+              ? t('dash.loadFailed')
+              : balances === undefined
+                ? undefined
+                : primary
+                  ? CATEGORY_KEY[primary.category]
+                    ? t(CATEGORY_KEY[primary.category]!)
+                    : primary.category
+                  : t('tile.accrues')
+          }
+        />
+      </TileLink>
+      <TileLink to="/marketplace">
+        <StatTile
+          className="h-full"
+          label={t('tile.openShifts')}
+          value={openShiftCount ?? '—'}
+          sub={openShiftCount === null ? undefined : openShiftCount > 0 ? t('tile.openSome') : t('tile.openNone')}
+        />
+      </TileLink>
+    </div>
+  );
+}
+
+/** A tile that opens where the number is worked — same as My floor's. */
+function TileLink({ to, children }: { to: string; children: React.ReactNode }) {
+  return (
+    <Link
+      to={to}
+      className="group block rounded-lg transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright [&>div]:transition-colors [&>div]:hover:border-gold/40"
+    >
+      {children}
+    </Link>
   );
 }
 
@@ -873,7 +662,7 @@ function QuickActions() {
             className="group flex items-center gap-2 px-3 py-3 min-h-12 rounded-md border border-navy-secondary bg-navy hover:border-gold/50 hover:bg-navy/80 active:bg-navy-secondary/60 active:border-gold/50 transition-colors text-sm text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
           >
             <Icon className="h-4 w-4 text-silver group-hover:text-gold transition-colors" aria-hidden="true" />
-            <span className="flex-1 truncate">{t(labelKey)}</span>
+            <span className="min-w-0 flex-1 leading-tight">{t(labelKey)}</span>
             <ArrowRight className="h-3.5 w-3.5 text-silver/70 group-hover:text-gold transition-colors" />
           </Link>
         ))}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { Award, Briefcase, RefreshCw } from 'lucide-react';
+import { Award, Briefcase, CalendarDays, RefreshCw } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import {
   claimShift,
@@ -47,7 +47,17 @@ import {
   TabsTrigger,
 } from '@/components/ui';
 import { Label } from '@/components/ui/Label';
-import { fmtDateTime, fmtPayRate, fmtTime, mapsUrl, parseYmd } from '@/lib/format';
+import {
+  fmtDateTime,
+  fmtMoneyEst,
+  fmtPayRate,
+  fmtRelativeDayTz,
+  fmtShiftRangeTz,
+  fmtTime,
+  mapsUrl,
+  parseYmd,
+  zonedDayKey,
+} from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { toast } from 'sonner';
@@ -76,11 +86,14 @@ export function MarketplaceHome() {
       />
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-        <TabsList>
-          {canPickUp && <TabsTrigger value="open">{t('mk.tab.available')}</TabsTrigger>}
-          {canManage && <TabsTrigger value="claims">Pending claims</TabsTrigger>}
-          {canManage && <TabsTrigger value="catalog">Qualifications</TabsTrigger>}
-        </TabsList>
+        {/* An associate has one view — a lone "Available" tab was chrome. */}
+        {canManage && (
+          <TabsList>
+            {canPickUp && <TabsTrigger value="open">{t('mk.tab.available')}</TabsTrigger>}
+            <TabsTrigger value="claims">Pending claims</TabsTrigger>
+            <TabsTrigger value="catalog">Qualifications</TabsTrigger>
+          </TabsList>
+        )}
 
         {canPickUp && (
           <TabsContent value="open"><AvailableTab /></TabsContent>
@@ -110,6 +123,9 @@ function AvailableTab() {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [clientFilter, setClientFilter] = useState<Set<string>>(new Set());
+  // Dates fold away until asked for — they used to be the first thing on
+  // the page, above the shifts themselves.
+  const [showDates, setShowDates] = useState(false);
 
   const refresh = () => {
     setRows(null);
@@ -229,11 +245,51 @@ function AvailableTab() {
 
   const hasFilters = fromDate !== '' || toDate !== '' || clientFilter.size > 0;
 
+  // By day, the way My schedule reads: "Today", "Tomorrow", "Sun, Sep 21".
+  const days: Array<{ key: string; label: string; shifts: OpenShiftListItem[] }> = [];
+  for (const s of filtered) {
+    const key = zonedDayKey(s.startsAt, null);
+    const last = days[days.length - 1];
+    if (last && last.key === key) last.shifts.push(s);
+    else days.push({ key, label: fmtRelativeDayTz(s.startsAt, null), shifts: [s] });
+  }
+
   return (
     <div className="space-y-3">
-      <Card>
-        <CardContent className="p-4 space-y-3">
-          <div className="flex flex-wrap items-end gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm text-silver">
+          {filtered.length === 1
+            ? t('mk.shiftOne', { n: filtered.length })
+            : t('mk.shiftMany', { n: filtered.length })}
+        </span>
+        <div className="ml-auto flex items-center gap-2">
+          {hasFilters && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setFromDate('');
+                setToDate('');
+                setClientFilter(new Set());
+              }}
+            >
+              {t('mk.clearFilters')}
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant={showDates || fromDate || toDate ? 'secondary' : 'outline'}
+            onClick={() => setShowDates((v) => !v)}
+            aria-expanded={showDates}
+          >
+            <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+            {t('mk.dates')}
+          </Button>
+        </div>
+      </div>
+      {(showDates || fromDate || toDate) && (
+        <Card className="animate-enter">
+          <CardContent className="grid grid-cols-2 gap-3 p-4">
             <div>
               <Label htmlFor="marketplace-from">{t('mk.from')}</Label>
               <Input
@@ -254,40 +310,18 @@ function AvailableTab() {
                 onChange={(e) => setToDate(e.target.value)}
               />
             </div>
-            {hasFilters && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  setFromDate('');
-                  setToDate('');
-                  setClientFilter(new Set());
-                }}
-              >
-                {t('mk.clearFilters')}
-              </Button>
-            )}
-            <div className="ml-auto text-sm text-silver self-center">
-              {filtered.length === 1
-                ? t('mk.shiftOne', { n: filtered.length })
-                : t('mk.shiftMany', { n: filtered.length })}
-            </div>
-          </div>
-          {clients.length > 1 && (
-            <div className="flex flex-wrap gap-2">
-              {clients.map((c) => (
-                <FilterChip
-                  key={c}
-                  active={clientFilter.has(c)}
-                  onClick={() => toggleClient(c)}
-                >
-                  {c}
-                </FilterChip>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
+      {clients.length > 1 && (
+        <div className="flex flex-wrap gap-2">
+          {clients.map((c) => (
+            <FilterChip key={c} active={clientFilter.has(c)} onClick={() => toggleClient(c)}>
+              {c}
+            </FilterChip>
+          ))}
+        </div>
+      )}
       {filtered.length === 0 ? (
         <EmptyState
           icon={Briefcase}
@@ -295,70 +329,84 @@ function AvailableTab() {
           description={t('mk.noMatchDesc')}
         />
       ) : (
-        filtered.map((s, i) => (
-          <Card
-            key={s.id}
-            style={enterStagger(i)}
-            className={cn(
-              // Rows cascade in; a just-claimed card flashes its success
-              // in step with the toast (animate-* classes can't stack).
-              flashId === s.id ? 'animate-flash-success' : 'animate-enter',
-            )}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="text-white font-medium">{s.position}</div>
-                  <div className="text-sm text-silver mt-0.5">{s.clientName}</div>
-                  <div className="text-sm text-silver mt-0.5">
-                    {fmtDateTime(s.startsAt)} –{' '}
-                    {fmtTime(s.endsAt)}
-                  </div>
-                  {s.location && (
-                    <div className="flex flex-wrap items-center gap-x-2 text-sm text-silver mt-0.5">
-                      <span>{s.location}</span>
-                      <a
-                        href={mapsUrl([s.clientName, s.location].filter(Boolean).join(' '))}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center coarse:min-h-11 text-xs text-gold hover:text-gold-bright underline underline-offset-2"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {t('shift.directions')}
-                      </a>
+        days.map((d) => (
+          <section key={d.key} className="space-y-2">
+            <h2 className="pt-1 text-sm font-medium text-gold">{d.label}</h2>
+            {d.shifts.map((s, i) => {
+              const hours = (new Date(s.endsAt).getTime() - new Date(s.startsAt).getTime()) / 3_600_000;
+              const rate = s.payRate ? Number(s.payRate) : null;
+              const worth = rate && hours > 0 ? rate * hours : null;
+              return (
+                <Card
+                  key={s.id}
+                  style={enterStagger(i)}
+                  className={cn(
+                    // Rows cascade in; a just-claimed card flashes its success
+                    // in step with the toast (animate-* classes can't stack).
+                    flashId === s.id ? 'animate-flash-success' : 'animate-enter',
+                  )}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="text-lg font-semibold tabular-nums text-white">
+                          {fmtShiftRangeTz(s.startsAt, s.endsAt, null)}
+                        </div>
+                        <div className="mt-0.5 text-sm text-white">{s.position}</div>
+                        <div className="mt-0.5 text-sm text-silver">{s.clientName}</div>
+                        {s.location && (
+                          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-sm text-silver">
+                            <span>{s.location}</span>
+                            <a
+                              href={mapsUrl([s.clientName, s.location].filter(Boolean).join(' '))}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center coarse:min-h-11 text-xs text-gold hover:text-gold-bright underline underline-offset-2"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {t('shift.directions')}
+                            </a>
+                          </div>
+                        )}
+                        {s.payRate && (
+                          <div className="mt-1 text-sm text-success">
+                            {fmtPayRate(s.payRate, 'HOURLY')}
+                            {worth !== null && (
+                              <span className="font-semibold text-gold">
+                                {' '}· {t('sched.heroWorth', { amount: fmtMoneyEst(worth) })}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {s.requirements.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {s.requirements.map((r) => (
+                              <Badge key={r.id} variant="outline">
+                                {r.code}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="shrink-0">
+                        {s.myPendingClaim ? (
+                          <Badge variant="pending">{t('mk.claimPending')}</Badge>
+                        ) : (
+                          <Button
+                            onClick={() => onClaim(s.id)}
+                            disabled={claimingId !== null}
+                            loading={claimingId === s.id}
+                          >
+                            {claimingId === s.id ? t('mk.claiming') : t('mk.claim')}
+                          </Button>
+                        )}
+                      </div>
                     </div>
-                  )}
-                  {s.payRate && (
-                    <div className="text-sm text-success mt-0.5">
-                      {fmtPayRate(s.payRate, 'HOURLY')}
-                    </div>
-                  )}
-                  {s.requirements.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {s.requirements.map((r) => (
-                        <Badge key={r.id} variant="outline">
-                          {r.code}
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div>
-                  {s.myPendingClaim ? (
-                    <Badge variant="pending">{t('mk.claimPending')}</Badge>
-                  ) : (
-                    <Button
-                      onClick={() => onClaim(s.id)}
-                      disabled={claimingId !== null}
-                      loading={claimingId === s.id}
-                    >
-                      {claimingId === s.id ? t('mk.claiming') : t('mk.claim')}
-                    </Button>
-                  )}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </section>
         ))
       )}
     </div>

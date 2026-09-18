@@ -1646,9 +1646,20 @@ export const ShiftTeammateSchema = z.object({
 });
 export type ShiftTeammate = z.infer<typeof ShiftTeammateSchema>;
 
+/** The shift supervisor who leads the store shift window a shift starts in
+ *  — "your shift supervisor" on the associate's shift. */
+export const ShiftSupervisorSchema = z.object({
+  userId: UuidSchema,
+  name: z.string(),
+  associateId: UuidSchema.nullable(),
+});
+export type ShiftSupervisor = z.infer<typeof ShiftSupervisorSchema>;
+
 export const MyShiftDetailResponseSchema = z.object({
   shift: ShiftSchema,
   teammates: z.array(ShiftTeammateSchema),
+  /** Who leads the store shift it starts in (empty when nobody does). */
+  supervisors: z.array(ShiftSupervisorSchema).default([]),
 });
 export type MyShiftDetailResponse = z.infer<typeof MyShiftDetailResponseSchema>;
 

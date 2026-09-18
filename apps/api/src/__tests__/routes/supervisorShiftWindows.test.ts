@@ -194,6 +194,41 @@ describe('alerts go to the shift’s lead', () => {
   });
 });
 
+describe("the associate sees their shift's supervisor", () => {
+  it("names who leads the window their shift starts in — and nobody when no one leads it", async () => {
+    const { client, store, dana, omar } = await seedStore();
+    await prisma.supervisorShiftWindow.createMany({
+      data: [
+        { userId: dana.id, locationId: store.id, label: 'Overnight' },
+        { userId: omar.id, locationId: store.id, label: 'Morning' },
+      ],
+    });
+    const maria = await createAssociate({ firstName: 'Maria', lastName: 'Lopez' });
+    const { user } = await createUser({ role: 'ASSOCIATE', associateId: maria.id });
+    const agent = await loginAs(user.email);
+    const shiftAt = async (hh: number) => {
+      const startsAt = soonAtStoreHour(hh);
+      const s = await prisma.shift.create({
+        data: {
+          clientId: client.id,
+          locationId: store.id,
+          position: 'Stocker',
+          startsAt,
+          endsAt: new Date(startsAt.getTime() + 6 * 3_600_000),
+          status: 'ASSIGNED',
+          assignedAssociateId: maria.id,
+          publishedAt: new Date(),
+        },
+      });
+      return (await agent.get(`/scheduling/me/shifts/${s.id}`)).body.supervisors as Array<{ name: string }>;
+    };
+    expect((await shiftAt(23)).map((x) => x.name)).toEqual(['Dana Lead']);
+    expect((await shiftAt(7)).map((x) => x.name)).toEqual(['Omar Lead']);
+    // 3 PM: no window covers it — no name, rather than a guess.
+    expect(await shiftAt(15)).toEqual([]);
+  });
+});
+
 describe('the store manager sees who leads each shift', () => {
   it("the day payload names each window's leads; the store's lead card lists theirs", async () => {
     const { client, store, dana, omar } = await seedStore();

@@ -112,6 +112,7 @@ import { env } from '../config/env.js';
 import { runShiftAutofillSweep } from '../lib/shiftAutofill.js';
 import { ORG_TZ, nextKey, portalCalendar, storeCalendar } from '../lib/portalMetrics.js';
 import { closeOpenAssignments } from '../lib/assignmentDates.js';
+import { ledWindows, windowCovers } from '../lib/shiftWindows.js';
 
 export const schedulingRouter = Router();
 
@@ -3809,10 +3810,33 @@ schedulingRouter.get('/me/shifts/:id', async (req, res, next) => {
       ];
     });
 
+    // Their shift supervisor: whoever leads the store shift window this
+    // shift starts in (lib/shiftWindows — the same rule that pages them).
+    const leadIds = shift.locationId
+      ? [
+          ...new Set(
+            (await ledWindows(prisma, { clientId: shift.clientId }))
+              .filter((w) => windowCovers(w, { locationId: shift.locationId, startsAt: shift.startsAt }))
+              .map((w) => w.userId),
+          ),
+        ]
+      : [];
+    const leads = leadIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: leadIds } },
+          select: { id: true, email: true, associateId: true, associate: { select: { firstName: true, lastName: true } } },
+        })
+      : [];
+
     res.json(
       MyShiftDetailResponseSchema.parse({
         shift: toAssociateShift(shift),
         teammates,
+        supervisors: leads.map((u) => ({
+          userId: u.id,
+          name: u.associate ? `${u.associate.firstName} ${u.associate.lastName}` : (u.email.split('@')[0] ?? u.email),
+          associateId: u.associateId,
+        })),
       }),
     );
   } catch (err) {

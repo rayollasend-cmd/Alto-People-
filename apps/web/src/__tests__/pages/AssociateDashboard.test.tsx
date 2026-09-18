@@ -14,6 +14,11 @@ vi.mock('@/lib/timeApi', () => ({
 }));
 vi.mock('@/lib/schedulingApi', () => ({
   listMyShifts: vi.fn(),
+  getMyShiftDetail: vi.fn(),
+  acknowledgeMyShift: vi.fn(),
+}));
+vi.mock('@/lib/qualApi', () => ({
+  listOpenShifts: vi.fn(),
 }));
 vi.mock('@/lib/payrollApi', () => ({
   listMyPayrollItems: vi.fn(),
@@ -40,7 +45,8 @@ vi.mock('@/lib/onboardingApi', () => ({
 }));
 
 import { clockIn, clockOut, getActiveTimeEntry } from '@/lib/timeApi';
-import { listMyShifts } from '@/lib/schedulingApi';
+import { getMyShiftDetail, listMyShifts } from '@/lib/schedulingApi';
+import { listOpenShifts } from '@/lib/qualApi';
 import { listMyAgreements } from '@/lib/agreements122Api';
 import { listMyDocuments } from '@/lib/documentsApi';
 import { listMyInbox } from '@/lib/communicationsApi';
@@ -121,6 +127,8 @@ beforeEach(() => {
   vi.mocked(listMyAgreements).mockResolvedValue({ agreements: [] } as never);
   vi.mocked(listMyDocuments).mockResolvedValue({ documents: [] } as never);
   vi.mocked(listMyInbox).mockResolvedValue({ notifications: [] } as never);
+  vi.mocked(listOpenShifts).mockResolvedValue({ shifts: [] });
+  vi.mocked(getMyShiftDetail).mockResolvedValue({ shift: {} as never, teammates: [], supervisors: [] });
 });
 
 describe('<AssociateDashboard>', () => {
@@ -172,7 +180,7 @@ describe('<AssociateDashboard>', () => {
     renderDashboard();
     await waitFor(() => expect(getActiveTimeEntry).toHaveBeenCalled());
 
-    expect(await screen.findByText(/On the clock/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/On the clock/)).length).toBeGreaterThan(0);
     expect(screen.getByText(/Started/)).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: /clock (in|out)/i })
@@ -294,5 +302,67 @@ describe("<AssociateDashboard> action-needed card", () => {
 
     expect(await screen.findByText(/agreement/i)).toBeInTheDocument();
     expect(screen.queryByText(/all caught up/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('<AssociateDashboard> — the shift hero', () => {
+  it('a started shift with no punch reads as late, amber, and points to the tablet', async () => {
+    vi.mocked(listMyShifts).mockResolvedValue({
+      shifts: [shiftFixture(new Date(Date.now() - 25 * 60_000), new Date(Date.now() + 7 * 3_600_000))],
+    });
+    renderDashboard();
+    expect(await screen.findByText('Your shift started 25m ago')).toBeInTheDocument();
+    expect(screen.getByText(/punch in with your PIN at the worksite kiosk tablet/)).toBeInTheDocument();
+    expect(screen.getByText('Not clocked in')).toBeInTheDocument();
+  });
+
+  it('an upcoming shift names who runs it and who is on with them, and asks for the confirm', async () => {
+    vi.mocked(listMyShifts).mockResolvedValue({
+      shifts: [shiftFixture(new Date(Date.now() + 3 * 3_600_000), new Date(Date.now() + 11 * 3_600_000))],
+    });
+    vi.mocked(getMyShiftDetail).mockResolvedValue({
+      shift: {} as never,
+      teammates: [
+        { associateId: 'b', name: 'Ann Lee', position: 'Stocker', startsAt: '', endsAt: '', location: null },
+        { associateId: 'c', name: 'Ben Ray', position: 'Stocker', startsAt: '', endsAt: '', location: null },
+      ] as never,
+      supervisors: [{ userId: 'u-dana', name: 'Dana Reyes', associateId: 'd' }],
+    });
+    renderDashboard();
+    expect(await screen.findByText('Starts in 3h')).toBeInTheDocument();
+    expect(await screen.findByText('Dana Reyes')).toBeInTheDocument();
+    expect(screen.getByText('2 teammates on with you')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /I'll be there/ })).toBeInTheDocument();
+  });
+
+  it('nothing scheduled: the open shifts are the way out', async () => {
+    vi.mocked(listOpenShifts).mockResolvedValue({ shifts: [{ id: 'o1' }, { id: 'o2' }] as never });
+    renderDashboard();
+    expect(await screen.findByText('2 open shifts you can pick up.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Pick up a shift' })).toHaveAttribute('href', '/marketplace');
+  });
+});
+
+describe('<AssociateDashboard> — their numbers and their week', () => {
+  it('tiles: hours this week, last paycheck, time off, open shifts — each opens where it is worked', async () => {
+    vi.mocked(listMyShifts).mockResolvedValue({
+      shifts: [shiftFixture(new Date(Date.now() + 3 * 3_600_000), new Date(Date.now() + 11 * 3_600_000))],
+    });
+    renderDashboard();
+    expect(await screen.findByText('This week')).toBeInTheDocument();
+    expect(screen.getByText('Last paycheck').closest('a')).toHaveAttribute('href', '/payroll');
+    expect(screen.getByText('Open shifts').closest('a')).toHaveAttribute('href', '/marketplace');
+    expect(screen.getByText('Time off').closest('a')).toHaveAttribute('href', '/time-off');
+  });
+
+  it('the week strip marks the days on and the ones still to confirm', async () => {
+    vi.mocked(listMyShifts).mockResolvedValue({
+      shifts: [shiftFixture(new Date(Date.now() + 26 * 3_600_000), new Date(Date.now() + 30 * 3_600_000))],
+    });
+    renderDashboard();
+    expect(await screen.findByText('Your week')).toBeInTheDocument();
+    expect(screen.getByText('1 day on')).toBeInTheDocument();
+    expect(screen.getAllByText('Off').length).toBeGreaterThanOrEqual(5);
+    expect(screen.getByText('Needs your confirm')).toBeInTheDocument();
   });
 });
