@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { isClientBoundedRole } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { effectiveClientIdFilter } from '../lib/scope.js';
+import type { SessionUser } from '../types/express.js';
 
 /**
  * Phase 117 — Holiday calendar.
@@ -22,6 +24,45 @@ const VIEW = requireCapability('view:scheduling');
 const MANAGE = requireCapability('manage:scheduling');
 
 const TYPE = z.enum(['FEDERAL', 'STATE', 'COMPANY', 'CLIENT_SPECIFIC']);
+
+const COMPANY_CALENDAR_HR_ONLY =
+  'Company-wide holidays are managed by HR. Add a client-specific holiday for your client instead.';
+
+/**
+ * Company-wide holidays (clientId NULL) drive premium pay for EVERY client,
+ * but MANAGE is manage:scheduling — which the client-bounded
+ * SHIFT_SUPERVISOR holds. So a bounded caller writes only its OWN client's
+ * holidays. Returns that pinned client id, or null for org-wide callers;
+ * a bounded caller with no client on file fails closed.
+ */
+function pinnedWriteClient(user: SessionUser): string | null {
+  if (!isClientBoundedRole(user.role)) return null;
+  if (!user.clientId) {
+    throw new HttpError(403, 'forbidden', 'Your account is not assigned to a client.');
+  }
+  return user.clientId;
+}
+
+/** Edit/delete gate: a bounded caller may touch only its own client's rows.
+ *  Another client's row is 404 (it never appears in their list); a
+ *  company-wide row is 403 (it does). */
+function assertCanWriteHoliday(user: SessionUser, holidayClientId: string | null) {
+  const pinned = pinnedWriteClient(user);
+  if (pinned === null) return;
+  if (holidayClientId === null) {
+    throw new HttpError(403, 'forbidden', COMPANY_CALENDAR_HR_ONLY);
+  }
+  if (holidayClientId !== pinned) {
+    throw new HttpError(404, 'not_found', 'Holiday not found.');
+  }
+}
+
+/** The federal imports write company-wide rows — org-wide callers only. */
+function assertCanWriteCompanyCalendar(user: SessionUser) {
+  if (isClientBoundedRole(user.role)) {
+    throw new HttpError(403, 'forbidden', COMPANY_CALENDAR_HR_ONLY);
+  }
+}
 
 // ----- List ----------------------------------------------------------------
 
@@ -129,10 +170,16 @@ const CreateInputSchema = z.object({
 
 holiday117Router.post('/holidays', MANAGE, async (req, res) => {
   const input = CreateInputSchema.parse(req.body);
+  const pinned = pinnedWriteClient(req.user!);
+  if (pinned && input.type !== 'CLIENT_SPECIFIC') {
+    throw new HttpError(403, 'forbidden', COMPANY_CALENDAR_HR_ONLY);
+  }
+  // A bounded caller's own client wins over anything in the body.
+  const clientId = pinned ?? input.clientId ?? null;
   if (input.type === 'STATE' && !input.state) {
     throw new HttpError(400, 'state_required', 'STATE holidays must include a state code.');
   }
-  if (input.type === 'CLIENT_SPECIFIC' && !input.clientId) {
+  if (input.type === 'CLIENT_SPECIFIC' && !clientId) {
     throw new HttpError(
       400,
       'client_required',
@@ -142,7 +189,7 @@ holiday117Router.post('/holidays', MANAGE, async (req, res) => {
   try {
     const created = await prisma.holiday.create({
       data: {
-        clientId: input.clientId ?? null,
+        clientId,
         name: input.name,
         date: new Date(input.date),
         type: input.type,
@@ -184,6 +231,7 @@ holiday117Router.patch('/holidays/:id', MANAGE, async (req, res) => {
   if (!existing) {
     throw new HttpError(404, 'not_found', 'Holiday not found.');
   }
+  assertCanWriteHoliday(req.user!, existing.clientId);
   await prisma.holiday.update({
     where: { id },
     data: {
@@ -202,6 +250,7 @@ holiday117Router.delete('/holidays/:id', MANAGE, async (req, res) => {
   if (!existing) {
     throw new HttpError(404, 'not_found', 'Holiday not found.');
   }
+  assertCanWriteHoliday(req.user!, existing.clientId);
   await prisma.holiday.delete({ where: { id } });
   res.status(204).end();
 });
@@ -227,6 +276,7 @@ holiday117Router.post(
   '/holidays/import-us-federal-2026',
   MANAGE,
   async (req, res) => {
+    assertCanWriteCompanyCalendar(req.user!);
     // Single batched insert; skipDuplicates makes re-runs idempotent (the
     // unique index on (client, date, name) absorbs already-imported rows).
     const result = await prisma.holiday.createMany({
@@ -283,6 +333,7 @@ function usFederalHolidays(year: number): { name: string; date: Date }[] {
 }
 
 holiday117Router.post('/holidays/import-us-federal', MANAGE, async (req, res) => {
+  assertCanWriteCompanyCalendar(req.user!);
   const { year } = z
     .object({ year: z.number().int().min(2000).max(2100) })
     .parse(req.body);

@@ -38,7 +38,7 @@ import {
   parseDateUTC,
 } from '../lib/timeOffRequests.js';
 import { ensureEntitlementApplied } from '../lib/timeOffEntitlement.js';
-import { scopeTimeOffRequests } from '../lib/scope.js';
+import { scopeAssociates, scopeTimeOffRequests } from '../lib/scope.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
 
 export const timeOffRouter = Router();
@@ -711,6 +711,11 @@ timeOffRouter.post('/admin/requests/:id/deny', MANAGE, async (req, res, next) =>
 });
 
 /* ----------- Phase 43 — entitlements (annual lump-sum config) ----------- */
+//
+// Both routes are clamped to the associates the caller can see: MANAGE is
+// manage:time, which the client-bounded SHIFT_SUPERVISOR holds, and
+// without the clamp a supervisor listed every client's PTO policy and
+// could rewrite anyone's annual allowance.
 
 timeOffRouter.get('/admin/entitlements', MANAGE, async (req, res, next) => {
   try {
@@ -718,7 +723,10 @@ timeOffRouter.get('/admin/entitlements', MANAGE, async (req, res, next) => {
       typeof req.query.associateId === 'string' ? req.query.associateId : undefined;
     const rows = await prisma.timeOffEntitlement.findMany({
       take: 500,
-      where: associateIdFilter ? { associateId: associateIdFilter } : undefined,
+      where: {
+        associate: { is: scopeAssociates(req.user!) },
+        ...(associateIdFilter ? { associateId: associateIdFilter } : {}),
+      },
       orderBy: [{ associateId: 'asc' }, { category: 'asc' }],
       include: {
         associate: { select: { firstName: true, lastName: true } },
@@ -750,8 +758,10 @@ timeOffRouter.put('/admin/entitlements', MANAGE, async (req, res, next) => {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
     }
     const input = parsed.data;
-    const associate = await prisma.associate.findUnique({
-      where: { id: input.associateId },
+    // Out-of-scope associates read as not found — existence isn't leaked
+    // across clients.
+    const associate = await prisma.associate.findFirst({
+      where: { ...scopeAssociates(req.user!), id: input.associateId },
       select: { id: true },
     });
     if (!associate) {

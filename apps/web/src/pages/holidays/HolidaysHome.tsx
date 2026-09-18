@@ -15,7 +15,7 @@ import { useClients } from '@/lib/useClients';
 import type { ClientListItem } from '@alto-people/shared';
 import { useAuth } from '@/lib/auth';
 import { useConfirm } from '@/lib/confirm';
-import { boundedClientOf, hasCapability } from '@/lib/roles';
+import { boundedClientOf, hasCapability, isClientBoundedRole } from '@/lib/roles';
 import { fmtDate, parseYmd, ymdLocal } from '@/lib/format';
 import {
   Badge,
@@ -174,6 +174,14 @@ export function HolidaysHome() {
   // 403s for them. Seed the chips/drawers with their one client so the
   // filter and CLIENT_SPECIFIC holidays still work.
   const boundedClient = useMemo(() => boundedClientOf(user), [user]);
+  // Company-wide holidays drive premium pay for every client, so a
+  // client-bound role (the shift supervisor holds manage:scheduling) only
+  // writes its own client's holidays: no federal import, no org-wide
+  // types, no edits to company rows. The server enforces the same line.
+  const bounded = user ? isClientBoundedRole(user.role) : false;
+  const canManageCompany = canManage && !bounded;
+  const canEditRow = (h: HolidayRow) =>
+    canManage && (!bounded || (h.clientId !== null && h.clientId === boundedClient?.id));
   const [year, setYear] = useState(CURRENT_YEAR);
   const [typeFilter, setTypeFilter] = useState<HolidayType | 'ALL'>('ALL');
   const [clientFilter, setClientFilter] = useState<string>('ALL');
@@ -282,15 +290,17 @@ export function HolidaysHome() {
         </div>
         {canManage && (
           <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={importing}
-              onClick={importFederal}
-            >
-              <Download className="mr-1 h-3 w-3" />
-              {importing ? 'Importing…' : `Import US federal holidays ${year}`}
-            </Button>
+            {canManageCompany && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={importing}
+                onClick={importFederal}
+              >
+                <Download className="mr-1 h-3 w-3" />
+                {importing ? 'Importing…' : `Import US federal holidays ${year}`}
+              </Button>
+            )}
             <Button onClick={() => setShowNew(true)}>
               <Plus className="mr-2 h-4 w-4" /> New holiday
             </Button>
@@ -360,9 +370,11 @@ export function HolidaysHome() {
               description={
                 typeFilter !== 'ALL' || clientFilter !== 'ALL'
                   ? 'Nothing matches the current filters.'
-                  : canManage
+                  : canManageCompany
                     ? 'Add company holidays manually or import the US federal calendar.'
-                    : 'Ask HR to set up the calendar for this year.'
+                    : canManage
+                      ? 'Add a holiday for your client, or ask HR to set up the company calendar.'
+                      : 'Ask HR to set up the calendar for this year.'
               }
               action={
                 canManage && typeFilter === 'ALL' && clientFilter === 'ALL' ? (
@@ -390,11 +402,11 @@ export function HolidaysHome() {
                       <div
                         key={h.id}
                         className={`px-4 py-3 flex items-center gap-3 group ${
-                          canManage
+                          canEditRow(h)
                             ? 'cursor-pointer hover:bg-navy-secondary/30 transition-colors'
                             : ''
                         }`}
-                        onClick={canManage ? () => setEditing(h) : undefined}
+                        onClick={canEditRow(h) ? () => setEditing(h) : undefined}
                       >
                         <div className="text-2xl font-bold text-white tabular-nums w-10 text-center">
                           {parseInt(h.date.slice(8, 10), 10)}
@@ -422,7 +434,7 @@ export function HolidaysHome() {
                             </div>
                           )}
                         </div>
-                        {canManage && (
+                        {canEditRow(h) && (
                           <button
                             aria-label={`Delete ${h.name}`}
                             onClick={async (e) => {
@@ -505,7 +517,10 @@ function NewHolidayDrawer({
       ? today
       : `${shownYear}-01-01`;
   });
-  const [type, setType] = useState<HolidayType>('COMPANY');
+  // A client-bound role may only create its own client's holidays.
+  const [type, setType] = useState<HolidayType>(
+    boundedClient ? 'CLIENT_SPECIFIC' : 'COMPANY',
+  );
   const [state, setState] = useState('');
   const [clientId, setClientId] = useState(boundedClient?.id ?? '');
   const [paid, setPaid] = useState(true);
@@ -582,9 +597,13 @@ function NewHolidayDrawer({
               value={type}
               onChange={(e) => setType(e.target.value as HolidayType)}
             >
-              <option value="COMPANY">Company-wide</option>
-              <option value="FEDERAL">Federal</option>
-              <option value="STATE">State</option>
+              {!boundedClient && (
+                <>
+                  <option value="COMPANY">Company-wide</option>
+                  <option value="FEDERAL">Federal</option>
+                  <option value="STATE">State</option>
+                </>
+              )}
               <option value="CLIENT_SPECIFIC">Client-specific</option>
             </Select>
           </div>

@@ -18,7 +18,8 @@ import {
  * boundary on the surfaces that used to leak org-wide: time-off decisions,
  * kiosk PINs/punches/selfies/devices, shift templates (incl. the apply
  * path that creates shifts), marketplace claim decisions, the approvals
- * badge counts, and onboarding applications.
+ * badge counts, onboarding applications, the holiday calendar, and
+ * time-off entitlements.
  */
 
 const app = () => createApp();
@@ -808,5 +809,161 @@ describe('clientId params cannot override the supervisor tenant clamp', () => {
     // the export for a bounded caller.
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toContain('application/pdf');
+  });
+});
+
+describe('holiday calendar tenant boundary', () => {
+  // The writes were gated on manage:scheduling alone, which the supervisor
+  // holds — so they could add company-wide holidays (premium pay for every
+  // client), edit or delete any client's, and run the federal import.
+  async function seedHolidays(mineId: string, otherId: string) {
+    const [company, mineHol, theirsHol] = await Promise.all([
+      prisma.holiday.create({
+        data: { clientId: null, name: 'Founders Day', date: new Date('2026-03-02'), type: 'COMPANY' },
+      }),
+      prisma.holiday.create({
+        data: { clientId: mineId, name: 'Store Day', date: new Date('2026-04-06'), type: 'CLIENT_SPECIFIC' },
+      }),
+      prisma.holiday.create({
+        data: { clientId: otherId, name: 'Their Day', date: new Date('2026-05-04'), type: 'CLIENT_SPECIFIC' },
+      }),
+    ]);
+    return { company, mineHol, theirsHol };
+  }
+
+  it('supervisor cannot create a company-wide holiday', async () => {
+    const { sup } = await seedTwoClients();
+    for (const type of ['COMPANY', 'FEDERAL'] as const) {
+      const res = await sup
+        .post('/holidays')
+        .send({ name: 'Day off', date: '2026-06-01', type });
+      expect(res.status).toBe(403);
+    }
+    const state = await sup
+      .post('/holidays')
+      .send({ name: 'Day off', date: '2026-06-01', type: 'STATE', state: 'CA' });
+    expect(state.status).toBe(403);
+    expect(await prisma.holiday.count()).toBe(0);
+  });
+
+  it("supervisor's client-specific holiday is pinned to their own client", async () => {
+    const { mine, other, sup } = await seedTwoClients();
+    const res = await sup
+      .post('/holidays')
+      .send({ name: 'Inventory', date: '2026-06-01', type: 'CLIENT_SPECIFIC', clientId: other.id });
+    expect(res.status).toBe(201);
+    const row = await prisma.holiday.findUniqueOrThrow({ where: { id: res.body.id } });
+    expect(row.clientId).toBe(mine.id);
+  });
+
+  it('supervisor edits and deletes only their own client’s holidays', async () => {
+    const { mine, other, sup } = await seedTwoClients();
+    const { company, mineHol, theirsHol } = await seedHolidays(mine.id, other.id);
+
+    expect((await sup.patch(`/holidays/${company.id}`).send({ paid: false })).status).toBe(403);
+    expect((await sup.delete(`/holidays/${company.id}`)).status).toBe(403);
+    expect((await sup.patch(`/holidays/${theirsHol.id}`).send({ paid: false })).status).toBe(404);
+    expect((await sup.delete(`/holidays/${theirsHol.id}`)).status).toBe(404);
+    expect(
+      await prisma.holiday.count({ where: { id: { in: [company.id, theirsHol.id] }, paid: true } }),
+    ).toBe(2);
+
+    expect((await sup.patch(`/holidays/${mineHol.id}`).send({ paid: false })).status).toBe(200);
+    expect((await sup.delete(`/holidays/${mineHol.id}`)).status).toBe(204);
+    expect(await prisma.holiday.findUnique({ where: { id: mineHol.id } })).toBeNull();
+  });
+
+  it('supervisor cannot run either federal import', async () => {
+    const { sup } = await seedTwoClients();
+    expect((await sup.post('/holidays/import-us-federal').send({ year: 2027 })).status).toBe(403);
+    expect((await sup.post('/holidays/import-us-federal-2026')).status).toBe(403);
+    expect(await prisma.holiday.count()).toBe(0);
+  });
+
+  it('HR admin keeps the company calendar', async () => {
+    const { mine, other } = await seedTwoClients();
+    const { company, theirsHol } = await seedHolidays(mine.id, other.id);
+    const { user: hrUser } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hr = await loginAs(hrUser.email);
+
+    const created = await hr
+      .post('/holidays')
+      .send({ name: 'Company picnic', date: '2026-07-10', type: 'COMPANY' });
+    expect(created.status).toBe(201);
+    expect((await hr.patch(`/holidays/${company.id}`).send({ paid: false })).status).toBe(200);
+    expect((await hr.delete(`/holidays/${theirsHol.id}`)).status).toBe(204);
+    const imported = await hr.post('/holidays/import-us-federal').send({ year: 2027 });
+    expect(imported.status).toBe(200);
+    expect(imported.body.inserted).toBe(11);
+  });
+});
+
+describe('time-off entitlements tenant boundary', () => {
+  // GET/PUT /time-off/admin/entitlements ran unscoped under manage:time, so
+  // a supervisor listed every client's PTO policy and could rewrite any
+  // associate's annual allowance.
+  it("supervisor lists and edits only their own client's entitlements", async () => {
+    const { myAssoc, otherAssoc, sup } = await seedTwoClients();
+    await prisma.timeOffEntitlement.createMany({
+      data: [
+        { associateId: myAssoc.id, category: 'PTO', annualMinutes: 2400 },
+        { associateId: otherAssoc.id, category: 'PTO', annualMinutes: 4800 },
+      ],
+    });
+
+    const list = await sup.get('/time-off/admin/entitlements');
+    expect(list.status).toBe(200);
+    expect(list.body.entitlements.map((e: { associateId: string }) => e.associateId)).toEqual([
+      myAssoc.id,
+    ]);
+
+    const probe = await sup.get(`/time-off/admin/entitlements?associateId=${otherAssoc.id}`);
+    expect(probe.status).toBe(200);
+    expect(probe.body.entitlements).toHaveLength(0);
+
+    const theirs = await sup.put('/time-off/admin/entitlements').send({
+      associateId: otherAssoc.id,
+      category: 'PTO',
+      annualMinutes: 0,
+      carryoverMaxMinutes: 0,
+    });
+    expect(theirs.status).toBe(404);
+    const untouched = await prisma.timeOffEntitlement.findUniqueOrThrow({
+      where: { associateId_category: { associateId: otherAssoc.id, category: 'PTO' } },
+    });
+    expect(untouched.annualMinutes).toBe(4800);
+
+    const mineRes = await sup.put('/time-off/admin/entitlements').send({
+      associateId: myAssoc.id,
+      category: 'PTO',
+      annualMinutes: 3000,
+      carryoverMaxMinutes: 0,
+    });
+    expect(mineRes.status).toBe(200);
+    expect(mineRes.body.annualMinutes).toBe(3000);
+  });
+
+  it('HR admin still sees and edits every client’s entitlements', async () => {
+    const { myAssoc, otherAssoc } = await seedTwoClients();
+    await prisma.timeOffEntitlement.createMany({
+      data: [
+        { associateId: myAssoc.id, category: 'PTO', annualMinutes: 2400 },
+        { associateId: otherAssoc.id, category: 'PTO', annualMinutes: 4800 },
+      ],
+    });
+    const { user: hrUser } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hr = await loginAs(hrUser.email);
+
+    const list = await hr.get('/time-off/admin/entitlements');
+    expect(list.status).toBe(200);
+    expect(list.body.entitlements).toHaveLength(2);
+
+    const res = await hr.put('/time-off/admin/entitlements').send({
+      associateId: otherAssoc.id,
+      category: 'PTO',
+      annualMinutes: 0,
+      carryoverMaxMinutes: 0,
+    });
+    expect(res.status).toBe(200);
   });
 });
