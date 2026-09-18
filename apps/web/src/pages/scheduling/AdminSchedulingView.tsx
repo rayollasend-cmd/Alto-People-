@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AssociateLink } from '@/components/ui/AssociateLink';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   Calendar,
@@ -14,6 +14,7 @@ import {
   Download,
   FileText,
   Filter,
+  Inbox,
   LayoutTemplate,
   List,
   Plus,
@@ -90,6 +91,8 @@ import {
   fmtDayHeaderTz,
   fmtMoneyCompact,
   fmtMonthYearTz,
+  fmtRelativeDayTz,
+  fmtShiftRangeTz,
   fmtTime,
   fmtTimeTz,
   fmtWeekdayTz,
@@ -146,12 +149,10 @@ import {
   TileDensityProvider,
   type TileDensity,
 } from './shiftTile';
-import {
-  AdminPickupPanel,
-  AdminSwapsPanel,
-  AdminUnconfirmedPanel,
-} from './AdminApprovalPanels';
 import type { LucideIcon } from 'lucide-react';
+import { Avatar } from '@/components/ui/Avatar';
+import { StatTile } from '@/pages/portal/portalCharts';
+import { useApprovalsCount } from '@/lib/useApprovalsCount';
 
 // Loads the curated shift-position names for a client (Org → Shift positions).
 // null = still loading / no client picked. The dropdown in the shift dialogs
@@ -594,8 +595,13 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
   useEffect(() => {
     if (searchParams.get('view')) return;
     if (typeof window === 'undefined') return;
-    const stored = parseView(window.localStorage.getItem(VIEW_KEY));
+    const raw = window.localStorage.getItem(VIEW_KEY);
+    const stored = parseView(raw);
     if (stored !== 'list') setView(stored);
+    // A store's supervisor plans a week of their own floor — the week grid,
+    // not an org-wide list of open shifts, is where they start (once; their
+    // own pick is remembered from then on).
+    else if (raw === null && boundedClient) setView('week');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -3255,9 +3261,8 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Position</TableHead>
-                <TableHead className="hidden lg:table-cell">Client</TableHead>
-                <TableHead>Starts</TableHead>
-                <TableHead className="hidden md:table-cell">Ends</TableHead>
+                {!boundedClient && <TableHead className="hidden lg:table-cell">Client</TableHead>}
+                <TableHead>When</TableHead>
                 <TableHead className="hidden md:table-cell">Assigned</TableHead>
                 <TableHead>Status</TableHead>
                 {canManage && <TableHead className="text-right no-print">Actions</TableHead>}
@@ -3271,15 +3276,34 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                       <div className="truncate">{s.position}</div>
                       <div className="md:hidden text-xs2 text-silver/70 truncate">
                         {s.assignedAssociateName ?? 'Unassigned'}
-                        {s.clientName ? ` · ${s.clientName}` : ''}
+                        {!boundedClient && s.clientName ? ` · ${s.clientName}` : ''}
                       </div>
                     </div>
                   </TableCell>
-                  <TableCell className="hidden lg:table-cell text-silver">{s.clientName ?? '—'}</TableCell>
-                  <TableCell className="tabular-nums">{fmt(s.startsAt)}</TableCell>
-                  <TableCell className="hidden md:table-cell tabular-nums">{fmt(s.endsAt)}</TableCell>
+                  {!boundedClient && (
+                    <TableCell className="hidden lg:table-cell text-silver">{s.clientName ?? '—'}</TableCell>
+                  )}
+                  {/* One line, the way a floor reads a shift: the day, then
+                      the hours — "Today · 2:00 PM – 10:00 PM". */}
+                  <TableCell className="whitespace-nowrap tabular-nums">
+                    <span className="text-silver">{fmtRelativeDayTz(s.startsAt, s.timezone)}</span>
+                    <span className="text-silver/50"> · </span>
+                    {fmtShiftRangeTz(s.startsAt, s.endsAt, s.timezone)}
+                  </TableCell>
                   <TableCell className="hidden md:table-cell text-silver">
-                    {s.assignedAssociateName ?? '—'}
+                    {s.assignedAssociateId && s.assignedAssociateName ? (
+                      <span className="flex items-center gap-2">
+                        <Avatar
+                          src={`/api/associates/${s.assignedAssociateId}/photo`}
+                          name={s.assignedAssociateName}
+                          email=""
+                          size="sm"
+                        />
+                        <span className="truncate text-white">{s.assignedAssociateName}</span>
+                      </span>
+                    ) : (
+                      '—'
+                    )}
                   </TableCell>
                   <TableCell>
                     <Badge
@@ -3330,9 +3354,12 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
                           </Button>
                         )}
                         {s.status !== 'COMPLETED' && s.status !== 'CANCELLED' && (
+                          // Quiet until it's meant: a red block on every row
+                          // shouted louder than the work (the dialog confirms).
                           <Button
                             size="sm"
-                            variant="destructive"
+                            variant="ghost"
+                            className="text-alert/80 hover:text-alert"
                             onClick={() => setCancelTarget(s)}
                             disabled={pendingId === s.id}
                           >
@@ -3362,13 +3389,9 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         </Card>
       )}
 
-      {canManage && (
-        <div className="no-print">
-          <AdminSwapsPanel />
-          <AdminPickupPanel />
-          <AdminUnconfirmedPanel />
-        </div>
-      )}
+      {/* Swaps, pickups and the unconfirmed chase live in ONE inbox
+          (/approvals) — here they were a second copy under the grid. */}
+      {canManage && <ApprovalsLine />}
 
       {/* Assign-with-conflicts dialog */}
       <AssignDialog
@@ -3757,79 +3780,87 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
 function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
   if (!kpis) {
-    // Match the resolved strip's height (px-4 py-3 + two text lines) so the
-    // skeleton→data swap doesn't nudge the grid down.
     return (
-      <div className="mb-5">
-        <Skeleton className="h-[68px]" />
+      <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Skeleton className="h-[88px]" />
+        <Skeleton className="h-[88px]" />
+        <Skeleton className="h-[88px]" />
+        <Skeleton className="h-[88px]" />
       </div>
     );
   }
   const hours = kpis.totalScheduledMinutes / 60;
+  const filled = kpis.assignedShifts + kpis.completedShifts;
   // An empty week (nothing scheduled → 0 open + 0 filled) is "no data",
-  // not a staffing failure — don't alarm-red a 0% that just means the
-  // schedule hasn't been built yet. Neutral until there's something to
-  // fill.
-  const noShifts = kpis.openShifts + kpis.assignedShifts + kpis.completedShifts === 0;
-  const fillTone = noShifts
-    ? 'text-silver'
-    : kpis.fillRatePercent >= 90
-      ? 'text-success'
-      : kpis.fillRatePercent >= 70
-        ? 'text-warning'
-        : 'text-alert';
-  // Compact currency: $1.2k / $24k / $1.4M — keeps the strip readable on
-  // 13" laptops without giving up signal on six-figure weeks.
+  // not a staffing failure — don't alarm a 0% that just means the
+  // schedule hasn't been built yet.
+  const noShifts = filled + kpis.openShifts === 0;
   // Null for client-bound roles: the API withholds labor cost from the
   // shift supervisor, so the tile goes rather than reading "$0".
   const cost =
     kpis.projectedLaborCost === null ? null : fmtMoneyCompact(kpis.projectedLaborCost);
-  const costSuffix =
-    kpis.shiftsWithoutRate !== null && kpis.shiftsWithoutRate > 0
-      ? `${kpis.shiftsWithoutRate} no rate`
-      : null;
   return (
-    <div className="mb-5 flex flex-wrap gap-x-6 gap-y-2 px-4 py-3 rounded-md border border-navy-secondary bg-navy-secondary/30">
-      <Kpi label="Open shifts" value={String(kpis.openShifts)} tone={kpis.openShifts > 0 ? 'text-warning' : 'text-silver'} />
-      <Kpi label="Filled" value={String(kpis.assignedShifts + kpis.completedShifts)} />
-      <Kpi label="Fill rate" value={`${kpis.fillRatePercent}%`} tone={fillTone} />
-      <Kpi label="Hours scheduled" value={hours.toFixed(0)} />
+    <div className={cn('mb-5 grid grid-cols-2 gap-3', cost !== null ? 'md:grid-cols-5' : 'md:grid-cols-4')}>
+      <StatTile
+        label="Fill rate · this week"
+        value={noShifts ? '—' : `${kpis.fillRatePercent}%`}
+        meter={
+          noShifts
+            ? null
+            : {
+                percent: kpis.fillRatePercent,
+                tone: kpis.fillRatePercent >= 95 ? 'good' : kpis.fillRatePercent >= 85 ? 'primary' : 'warn',
+              }
+        }
+        sub={noShifts ? 'Nothing scheduled yet' : `${filled} of ${filled + kpis.openShifts} filled`}
+      />
+      <StatTile
+        label="Open shifts"
+        value={kpis.openShifts}
+        sub={kpis.openShifts > 0 ? 'Need an associate' : noShifts ? '—' : 'Every shift covered'}
+        className={kpis.openShifts > 0 ? 'border-warning/35' : undefined}
+      />
+      <StatTile
+        label="Hours scheduled"
+        value={hours.toFixed(0)}
+        unit="h"
+        sub={`${kpis.totalShifts} shift${kpis.totalShifts === 1 ? '' : 's'}`}
+      />
+      <StatTile
+        label="Drafts"
+        value={kpis.draftShifts}
+        sub={kpis.draftShifts > 0 ? 'Not published yet' : 'Everything published'}
+      />
       {cost !== null && (
-        <Kpi
+        <StatTile
           label="Projected labor"
           value={cost}
-          suffix={costSuffix}
+          sub={
+            kpis.shiftsWithoutRate !== null && kpis.shiftsWithoutRate > 0
+              ? `${kpis.shiftsWithoutRate} without a rate`
+              : 'This week'
+          }
         />
       )}
-      {kpis.draftShifts > 0 && (
-        <Kpi label="Draft" value={String(kpis.draftShifts)} tone="text-silver" />
-      )}
-      <div className="text-2xs uppercase tracking-wider text-silver/70 self-end ml-auto">
-        this week
-      </div>
     </div>
   );
 }
 
-function Kpi({
-  label,
-  value,
-  tone = 'text-white',
-  suffix,
-}: {
-  label: string;
-  value: string;
-  tone?: string;
-  suffix?: string | null;
-}) {
+/** One line to the decisions inbox — shown only while something waits. */
+function ApprovalsLine() {
+  const n = useApprovalsCount();
+  if (!n) return null;
   return (
-    <div className="min-w-[6rem]">
-      <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">{label}</div>
-      <div className={cn('text-xl font-semibold tabular-nums', tone)}>{value}</div>
-      {suffix ? (
-        <div className="text-2xs text-warning/80 tabular-nums">{suffix}</div>
-      ) : null}
-    </div>
+    <Link
+      to="/approvals"
+      className="no-print mt-6 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gold/25 bg-gold/[0.05] px-4 py-3 text-sm transition-colors hover:border-gold/50"
+    >
+      <span className="flex items-center gap-2 text-white">
+        <Inbox className="h-4 w-4 text-gold" aria-hidden="true" />
+        {n} decision{n === 1 ? '' : 's'} waiting — swaps, pickups, time off, timesheets
+      </span>
+      <span className="text-gold">Open approvals →</span>
+    </Link>
   );
 }
 

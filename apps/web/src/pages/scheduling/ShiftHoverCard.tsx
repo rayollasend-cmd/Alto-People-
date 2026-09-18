@@ -4,6 +4,7 @@ import { Calendar, Clock, MapPin, StickyNote, User, X } from 'lucide-react';
 import type { AutoFillCandidate, Shift } from '@alto-people/shared';
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/cn';
+import { useLaborCostVisible } from '@/lib/useLaborCostVisible';
 import {
   fmtDateTz,
   fmtMoney,
@@ -114,6 +115,8 @@ export function ShiftHoverCard({
 }: Props) {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const [acting, setActing] = useState<null | string>(null);
+  // Store-bound roles see the rate they set, never the projected cost.
+  const showCost = useLaborCostVisible();
 
   // Top-ranked candidate for an OPEN (unassigned) shift — powers the
   // one-click "Assign → <name>" button. null = none / not applicable.
@@ -274,11 +277,15 @@ export function ShiftHoverCard({
             {shift.payRate == null && shift.effectivePayRate != null && (
               <span className="text-silver/50"> (default)</span>
             )}
-            {' '}· projected{' '}
-            {fmtMoney(
-              ((shift.effectivePayRate ?? shift.payRate)! *
-                (shift.scheduledMinutes ?? 0)) /
-                60,
+            {showCost && (
+              <>
+                {' '}· projected{' '}
+                {fmtMoney(
+                  ((shift.effectivePayRate ?? shift.payRate)! *
+                    (shift.scheduledMinutes ?? 0)) /
+                    60,
+                )}
+              </>
             )}
           </div>
         )}

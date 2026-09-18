@@ -14,6 +14,7 @@ import { VirtualizedRows } from './VirtualizedRows';
 import { AlertTriangle, Plus, GripVertical, UserMinus } from 'lucide-react';
 import type { AssociateLite, Shift } from '@alto-people/shared';
 import { cn } from '@/lib/cn';
+import { useLaborCostVisible } from '@/lib/useLaborCostVisible';
 import { colorForPosition } from '@/lib/positionColor';
 import {
   fmtDateTz,
@@ -297,6 +298,8 @@ export function WeekCalendarView({
 
   // Per-day totals: shift count + scheduled minutes + projected cost.
   // Powers the footer row under each day column.
+  // Store-bound roles never see labor cost — counts and hours only.
+  const showCost = useLaborCostVisible();
   const dayTotals = useMemo(() => {
     const out = new Map<string, { count: number; minutes: number; cost: number }>();
     for (const k of dayKeys) {
@@ -770,7 +773,7 @@ export function WeekCalendarView({
                     <span className="text-white font-medium">{count}</span>
                     <span className="text-silver/70">·</span>
                     <span className="text-silver">{hrs.toFixed(1)}h</span>
-                    {cost > 0 && (
+                    {showCost && cost > 0 && (
                       <>
                         <span className="text-silver/70">·</span>
                         <span className="text-silver">{fmtMoneyCompact(cost)}</span>

@@ -45,20 +45,22 @@ function fmtMin(min: number): string {
   return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2, '0')}${period}`;
 }
 
+// .v2: the rail now starts collapsed to its edge tab — open, it's a fixed
+// 256px panel over the week grid's last columns, and v1 persisted "open"
+// for everyone on first mount. Opening it is one click and it remembers.
+const RAIL_KEY = 'alto:scheduling.templatesRail.v2';
+
 export function TemplatesRail({ clientId, onManage }: Props) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem('alto:scheduling.templatesRail') === 'collapsed';
+    if (typeof window === 'undefined') return true;
+    return window.localStorage.getItem(RAIL_KEY) !== 'open';
   });
   const [templates, setTemplates] = useState<ShiftTemplate[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    window.localStorage.setItem(
-      'alto:scheduling.templatesRail',
-      collapsed ? 'collapsed' : 'open',
-    );
+    window.localStorage.setItem(RAIL_KEY, collapsed ? 'collapsed' : 'open');
   }, [collapsed]);
 
   useEffect(() => {
@@ -80,11 +82,14 @@ export function TemplatesRail({ clientId, onManage }: Props) {
     };
   }, [clientId]);
 
-  if (collapsed) {
+  // Nothing to drag yet: an open rail would be an empty panel over the
+  // grid, so the tab stays and opens the template manager instead.
+  const empty = templates !== null && templates.length === 0;
+  if (collapsed || empty) {
     return (
       <button
         type="button"
-        onClick={() => setCollapsed(false)}
+        onClick={() => (empty ? onManage() : setCollapsed(false))}
         className="hidden fine:lg:block fixed right-0 top-1/3 z-30 px-1.5 py-3 rounded-l-md border-y border-l border-navy-secondary bg-navy hover:bg-navy-secondary/80 text-silver hover:text-gold no-print"
         title="Show templates"
         aria-label="Show templates rail"

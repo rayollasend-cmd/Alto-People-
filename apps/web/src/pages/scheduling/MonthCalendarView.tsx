@@ -1,3 +1,4 @@
+import { useClientBounded } from '@/lib/useClientBounded';
 import { useMemo, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import type { Shift, ShiftStatus } from '@alto-people/shared';
@@ -409,6 +410,7 @@ function MonthShiftChip({
   shift: Shift;
   onClick: () => void;
 }) {
+  const hideClient = useClientBounded();
   const start = new Date(shift.startsAt);
   const end = new Date(shift.endsAt);
   const initials = initialsOf(shift.assignedAssociateName);
@@ -459,7 +461,7 @@ function MonthShiftChip({
               {(shift.scheduledMinutes / 60).toFixed(2)}h
             </span>
           </div>
-          {shift.clientName && (
+          {shift.clientName && !hideClient && (
             <div className="text-silver/80">{shift.clientName}</div>
           )}
           {shift.location && (
@@ -509,6 +511,7 @@ function DayDetailDialog({
   onCreate: (d: Date) => void;
   onOpenDayView: (d: Date) => void;
 }) {
+  const hideClient = useClientBounded();
   return (
     <Dialog open={day !== null} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-md">
@@ -553,7 +556,7 @@ function DayDetailDialog({
                   </div>
                   <div className="text-xs text-silver mt-0.5 tabular-nums">
                     {fmtTime(start, s.timezone)} – {fmtTime(end, s.timezone)}
-                    {s.clientName && (
+                    {s.clientName && !hideClient && (
                       <span className="ml-2">· {s.clientName}</span>
                     )}
                   </div>

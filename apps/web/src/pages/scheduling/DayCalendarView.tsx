@@ -1,3 +1,4 @@
+import { useClientBounded } from '@/lib/useClientBounded';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DndContext,
@@ -440,6 +441,8 @@ function DayShiftChip({
     onPointerLeave: () => void;
   };
 }) {
+  // A store-bound viewer's client is every tile's client — no line for it.
+  const hideClient = useClientBounded();
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: shift.id,
   });
@@ -587,7 +590,7 @@ function DayShiftChip({
         >
           {shift.position}
         </div>
-        {shift.clientName && (
+        {shift.clientName && !hideClient && (
           <div className="text-2xs text-silver/70 truncate">
             {shift.clientName}
           </div>
