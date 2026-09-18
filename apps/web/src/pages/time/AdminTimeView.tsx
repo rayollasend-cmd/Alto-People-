@@ -67,6 +67,8 @@ import { TIME_ANOMALY_LABELS, timeAnomalyLabel } from '@/lib/timeLabels';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { ShiftTimeline } from './ShiftTimeline';
 import { TimesheetWeeks } from './TimesheetWeeks';
+import { FocusToggle } from '@/pages/portal/FocusToggle';
+import { clockInInWindows, inWindows, useShiftFocus } from '@/pages/portal/shiftFocus';
 import { fmtPunchDateTime, fmtPunchTime, formatHM, punchDayOffset } from './punchFormat';
 import {
   browserTimeZone,
@@ -643,7 +645,23 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
     (v): v is TimeEntryStatus | 'ALL' => STATUS_FILTERS.some((f) => f.value === v),
   );
   const [entries, setEntries] = useState<TimeEntry[] | null>(null);
-  const [active, setActive] = useState<ActiveDashboardEntry[] | null>(null);
+  const [activeAll, setActive] = useState<ActiveDashboardEntry[] | null>(null);
+  // A shift supervisor's board opens on their shift (focus, not a lock —
+  // "Whole store" is one tap away): whoever's shift starts in a window they
+  // lead, or, with no shift, clocked in for it. Every lens below reads
+  // `active`, so the counts, shift picker and table all follow the focus.
+  const { windows: myWindows, focus, setFocus, mine } = useShiftFocus();
+  const active = useMemo(() => {
+    if (!activeAll || !mine) return activeAll;
+    return activeAll.filter((e) =>
+      e.shiftStartsAt
+        ? inWindows(
+            { locationId: e.locationId, startsAt: e.shiftStartsAt, timezone: e.locationTimezone ?? '' },
+            myWindows,
+          )
+        : clockInInWindows(e.clockInAt, myWindows),
+    );
+  }, [activeAll, mine, myWindows]);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -1717,6 +1735,9 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
         </ErrorBanner>
       )}
 
+      {tab === 'live' && myWindows.length > 0 && (
+        <FocusToggle windows={myWindows} focus={focus} onChange={setFocus} className="mb-3" />
+      )}
       {tab === 'live' && (
         <Card>
           <CardHeader className="flex-row flex-wrap items-center justify-between gap-2">
@@ -1774,10 +1795,22 @@ export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTi
           <CardContent className="pt-0">
             {!active && !error && <SkeletonRows count={5} rowHeight="h-12" />}
             {active && active.length === 0 && (
-              <EmptyState
-                title="No one is clocked in"
-                description="Active sessions will appear here in real time."
-              />
+              mine && (activeAll?.length ?? 0) > 0 ? (
+                <EmptyState
+                  title="No one on your shift is clocked in"
+                  description={`${activeAll!.length} clocked in on other shifts.`}
+                  action={
+                    <Button size="sm" variant="secondary" onClick={() => setFocus('store')}>
+                      Show the whole store
+                    </Button>
+                  }
+                />
+              ) : (
+                <EmptyState
+                  title="No one is clocked in"
+                  description="Active sessions will appear here in real time."
+                />
+              )
             )}
             {active && active.length > 0 && filteredActive && (
               <>

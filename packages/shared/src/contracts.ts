@@ -4041,6 +4041,9 @@ export const ActiveDashboardEntrySchema = z.object({
   clockInLng: z.number().nullable(),
   /** IANA zone of the entry's site, so punch times render on the site's wall clock. */
   locationTimezone: z.string().nullable().optional(),
+  /** The entry's store (the punch's, else its shift's) — places it in a
+   *  supervisor's shift window. */
+  locationId: UuidSchema.nullable().optional(),
   /** Matched shift bounds — powers the live board's shift-window filter. */
   shiftStartsAt: z.string().datetime().nullable().optional(),
   shiftEndsAt: z.string().datetime().nullable().optional(),

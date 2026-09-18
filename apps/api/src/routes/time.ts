@@ -748,7 +748,7 @@ timeRouter.get('/admin/active', requireAnyCapability('manage:time', 'view:time-l
         breaks: { where: { endedAt: null } },
         // Matched shift bounds — the live board's shift-window filter
         // groups on these the same way the approval queue does.
-        shift: { select: { startsAt: true, endsAt: true } },
+        shift: { select: { startsAt: true, endsAt: true, locationId: true } },
       },
     });
     const clientIds = Array.from(new Set(rows.map((r) => r.clientId).filter(Boolean) as string[]));
@@ -810,6 +810,9 @@ timeRouter.get('/admin/active', requireAnyCapability('manage:time', 'view:time-l
         clockInLat: r.clockInLat ? Number(r.clockInLat) : null,
         clockInLng: r.clockInLng ? Number(r.clockInLng) : null,
         locationTimezone: l?.timezone ?? null,
+        // The store — the punch's own, else its shift's. Places the row in
+        // a supervisor's shift window ("My shift" on the live board).
+        locationId: r.locationId ?? r.shift?.locationId ?? null,
         shiftStartsAt: r.shift?.startsAt ? r.shift.startsAt.toISOString() : null,
         shiftEndsAt: r.shift?.endsAt ? r.shift.endsAt.toISOString() : null,
       };

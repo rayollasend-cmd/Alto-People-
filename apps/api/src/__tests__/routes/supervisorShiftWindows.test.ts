@@ -283,3 +283,37 @@ describe('who is missing a lead — across every client', () => {
     expect((await (await loginAs(assoc.email)).get('/admin/shift-windows/gaps')).status).toBe(403);
   });
 });
+
+describe("the live board places each punch at its store", () => {
+  it('carries the store — the punch\'s own, else its shift\'s — so "My shift" can place it', async () => {
+    const { client, store, dana } = await seedStore();
+    const a = await createAssociate({ firstName: 'Ann', lastName: 'Lee' });
+    const b = await createAssociate({ firstName: 'Ben', lastName: 'Ray' });
+    const shift = await prisma.shift.create({
+      data: {
+        clientId: client.id,
+        locationId: store.id,
+        position: 'Porter',
+        startsAt: new Date(Date.now() - 3_600_000),
+        endsAt: new Date(Date.now() + 7 * 3_600_000),
+        status: 'ASSIGNED',
+        assignedAssociateId: a.id,
+        publishedAt: new Date(),
+      },
+    });
+    await prisma.timeEntry.createMany({
+      data: [
+        // Kiosk punch with no stamped site — inherits the shift's store.
+        { associateId: a.id, clientId: client.id, shiftId: shift.id, clockInAt: new Date(), status: 'ACTIVE' },
+        // Walk-in at the store's kiosk — its own store, no shift.
+        { associateId: b.id, clientId: client.id, locationId: store.id, clockInAt: new Date(), status: 'ACTIVE' },
+      ],
+    });
+    const res = await (await loginAs(dana.email)).get('/time/admin/active');
+    expect(res.status).toBe(200);
+    const byName = Object.fromEntries(
+      (res.body.entries as Array<{ associateName: string; locationId: string | null }>).map((e) => [e.associateName, e.locationId]),
+    );
+    expect(byName).toEqual({ 'Ann Lee': store.id, 'Ben Ray': store.id });
+  });
+});
