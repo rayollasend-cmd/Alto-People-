@@ -225,6 +225,15 @@ export function createApp() {
       contentSecurityPolicy: {
         useDefaults: true,
         directives: {
+          // Document scanning (the ID/void-cheque capture on onboarding)
+          // runs OpenCV compiled to WebAssembly. Instantiating a .wasm
+          // module counts as script evaluation under CSP, so helmet's
+          // default script-src 'self' blocks it and edge detection /
+          // deskew silently dies in the browser. 'wasm-unsafe-eval'
+          // permits WebAssembly compilation ONLY — it does not re-enable
+          // eval() or new Function() for JavaScript, which is why we add
+          // it instead of 'unsafe-eval'.
+          'script-src': ["'self'", "'wasm-unsafe-eval'"],
           'connect-src': [
             "'self'",
             'https://*.ingest.sentry.io',
