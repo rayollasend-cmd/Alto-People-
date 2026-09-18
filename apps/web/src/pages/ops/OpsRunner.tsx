@@ -212,6 +212,14 @@ export function OpsRunner() {
 
 /* ===== Open / resume ===================================================== */
 
+const FLOOR_DAY = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+/** "2026-09-17" → "Thursday, Sep 17" — the day as the floor says it. */
+function floorDay(dateKey: string): string {
+  const [y, m, d] = dateKey.split('-').map(Number);
+  if (!y || !m || !d) return dateKey;
+  return FLOOR_DAY.format(new Date(y, m - 1, d));
+}
+
 function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
   const [options, setOptions] = useState<Awaited<
     ReturnType<typeof getOpsOpenOptions>
@@ -219,6 +227,10 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [manualDept, setManualDept] = useState<Record<string, string>>({});
+  // A position not yet linked to an SOP department asks for one only when
+  // it's opened — the picker used to sit in every such card, a grid of
+  // forms before anyone had started anything.
+  const [choosing, setChoosing] = useState<string | null>(null);
 
   useEffect(() => {
     getOpsOpenOptions()
@@ -253,7 +265,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
         />
         <div className="relative">
           <div className="text-2xs uppercase tracking-[0.2em] text-gold">
-            Your floor · {options.dateKey}
+            Your floor · {floorDay(options.dateKey)}
           </div>
           <div className="mt-1 text-xl font-medium text-white">
             {options.resumeShift ? 'Pick up where you left off' : 'Start your shift'}
@@ -322,7 +334,9 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
                       {p.position}
                     </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-silver">
-                      <span>{p.department ?? 'Department?'}</span>
+                      <span className={cn(!p.department && 'text-silver/60')}>
+                        {p.department ?? 'No SOP department yet'}
+                      </span>
                       <span className="rounded-full border border-navy-secondary px-1.5 py-px text-2xs text-silver/70">
                         {PERIOD_LABEL[p.period]}
                       </span>
@@ -331,10 +345,11 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
                         {p.scheduledCount} scheduled
                       </span>
                     </div>
-                    {needsDept && (
+                    {needsDept && choosing === p.position && (
                       <Select
                         size="sm"
                         className="mt-2"
+                        autoFocus
                         aria-label={`Department for ${p.position}`}
                         value={manualDept[p.position] ?? ''}
                         onChange={(e) =>
@@ -354,15 +369,34 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
                     )}
                   </div>
                 </div>
-                <Button
-                  className="mt-3 w-full"
-                  onClick={() => void open(p.position, manualDept[p.position] || undefined)}
-                  loading={busy === p.position}
-                  disabled={busy !== null || (needsDept && !manualDept[p.position])}
-                >
-                  Open shift
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
+                {needsDept && choosing !== p.position ? (
+                  <Button
+                    className="mt-3 w-full"
+                    variant="outline"
+                    onClick={() => setChoosing(p.position)}
+                    disabled={busy !== null}
+                  >
+                    Open shift
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                ) : (
+                  <div className="mt-3 flex gap-2">
+                    {needsDept && (
+                      <Button variant="ghost" onClick={() => setChoosing(null)} disabled={busy !== null}>
+                        Cancel
+                      </Button>
+                    )}
+                    <Button
+                      className="flex-1"
+                      onClick={() => void open(p.position, manualDept[p.position] || undefined)}
+                      loading={busy === p.position}
+                      disabled={busy !== null || (needsDept && !manualDept[p.position])}
+                    >
+                      {needsDept ? 'Open with this department' : 'Open shift'}
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
               </div>
             );
           })}
