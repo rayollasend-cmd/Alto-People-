@@ -249,3 +249,37 @@ describe("the day is the store's day", () => {
     expect((after.body.roster as Array<{ shiftId: string }>).map((r) => r.shiftId)).not.toContain(tonight.id);
   });
 });
+
+describe('who is missing a lead — across every client', () => {
+  it('lists the shifts nobody leads and the supervisors with no shift; clears as they are assigned', async () => {
+    const { client, store, dana, omar, hr } = await seedStore();
+    await prisma.supervisorShiftWindow.create({ data: { userId: dana.id, locationId: store.id, label: 'Overnight' } });
+    // A client with no named shifts has nothing to report.
+    await createClient('Pier Park');
+
+    const gaps = await hr.get('/admin/shift-windows/gaps');
+    expect(gaps.status).toBe(200);
+    expect(gaps.body).toMatchObject({ total: 2, covered: 1 });
+    expect(gaps.body.clients).toHaveLength(1);
+    const c = gaps.body.clients[0];
+    expect(c.clientId).toBe(client.id);
+    expect(c.uncovered.map((w: { label: string }) => w.label)).toEqual(['Morning']);
+    expect(c.noShift).toEqual([omar.id]);
+    expect(c.supervisors.map((u: { name: string }) => u.name).sort()).toEqual(['Dana Lead', 'Omar Lead']);
+
+    await hr.put(`/admin/users/${omar.id}/shift-windows`).send({ windows: [{ locationId: store.id, label: 'Morning' }] });
+    const after = await hr.get('/admin/shift-windows/gaps');
+    expect(after.body).toEqual({ total: 2, covered: 2, clients: [] });
+  });
+
+  it('the Workforce Manager, who staffs supervisors, can read the picker and the gaps', async () => {
+    const { client } = await seedStore();
+    const { user: wf } = await createUser({ role: 'WORKFORCE_MANAGER' });
+    const agent = await loginAs(wf.email);
+    expect((await agent.get('/admin/shift-windows/gaps')).status).toBe(200);
+    expect((await agent.get(`/admin/shift-windows?clientId=${client.id}`)).status).toBe(200);
+    // An associate can't.
+    const { user: assoc } = await createUser({ role: 'ASSOCIATE' });
+    expect((await (await loginAs(assoc.email)).get('/admin/shift-windows/gaps')).status).toBe(403);
+  });
+});

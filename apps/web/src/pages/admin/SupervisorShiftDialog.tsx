@@ -30,16 +30,24 @@ const keyOf = (locationId: string, label: string) => `${locationId}|${label}`;
  * open and who hears about a shift first; they still see the whole store.
  * Every supervisor has at least one once the client's stores name any.
  */
+export type ShiftDialogUser = Pick<
+  AdminUser,
+  'id' | 'email' | 'associateName' | 'clientId' | 'clientName' | 'shiftWindows'
+>;
+
 export function SupervisorShiftDialog({
   user,
   open,
   onOpenChange,
   onSaved,
+  readOnly = false,
 }: {
-  user: AdminUser;
+  user: ShiftDialogUser;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
+  /** A viewer who can see assignments but not change them (manage:org). */
+  readOnly?: boolean;
 }) {
   const [stores, setStores] = useState<StoreShiftWindows[] | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -135,7 +143,8 @@ export function SupervisorShiftDialog({
                       <label
                         key={k}
                         className={cn(
-                          'flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2.5 transition',
+                          'flex items-center gap-3 rounded-md border px-3 py-2.5 transition',
+                          !readOnly && 'cursor-pointer',
                           on
                             ? 'border-gold/50 bg-gold/10'
                             : 'border-navy-secondary bg-navy-secondary/30 hover:border-silver/30',
@@ -145,6 +154,7 @@ export function SupervisorShiftDialog({
                           type="checkbox"
                           checked={on}
                           onChange={() => toggle(k)}
+                          disabled={readOnly}
                           className="h-4 w-4 accent-gold"
                         />
                         <div className="min-w-0 flex-1">
@@ -174,13 +184,13 @@ export function SupervisorShiftDialog({
         )}
 
         <DialogFooter>
-          {defined && picked.size === 0 && (
+          {defined && !readOnly && picked.size === 0 && (
             <span className="mr-auto self-center text-xs text-warning">Pick at least one shift.</span>
           )}
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            {defined ? 'Cancel' : 'Close'}
+            {defined && !readOnly ? 'Cancel' : 'Close'}
           </Button>
-          {defined && (
+          {defined && !readOnly && (
             <Button onClick={() => void save()} loading={saving} disabled={picked.size === 0}>
               Save
             </Button>

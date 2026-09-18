@@ -1,7 +1,6 @@
 import PDFDocument from 'pdfkit';
 import { paidMinutesForRange } from '@alto-people/shared';
 import { prisma } from '../db.js';
-import { orgDateKey, startOfWeekUTC, utcInstantOfLocalMidnight } from './timeAnomalies.js';
 import { formatTimeInZone, zonedMinutes } from './timezone.js';
 import {
   DAY,
@@ -16,9 +15,11 @@ import {
   loadTargets,
   netMinutes,
   nextKey,
+  portalCalendar,
   shiftScope,
   targetAtMinute,
   type PortalScope,
+  type StoreCalendar,
 } from './portalMetrics.js';
 
 /**
@@ -128,6 +129,8 @@ export interface PortalReportData {
   orgName: string;
   clientName: string;
   storeName: string | null;
+  /** The zone the report's days are cut in (the store's clock). */
+  timezone: string;
   from: string;
   to: string;
   isRange: boolean;
@@ -215,17 +218,20 @@ export async function buildPortalReport(
   toKey: string,
   orgName: string,
   now: Date = new Date(),
+  /** Days and weeks on the store's clock — the live page's calendar. */
+  calendar?: StoreCalendar,
 ): Promise<PortalReportData> {
-  const from = utcInstantOfLocalMidnight(fromKey, ORG_TZ);
-  const toExclusive = utcInstantOfLocalMidnight(nextKey(toKey, 1), ORG_TZ);
-  const todayKey = orgDateKey(now);
+  const cal = calendar ?? (await portalCalendar(scope));
+  const from = cal.midnight(fromKey);
+  const toExclusive = cal.midnight(nextKey(toKey, 1));
+  const todayKey = cal.key(now);
   const nowMs = now.getTime();
   // Everything the dashboard reads for any day in the range, fetched
   // once: the 4 completed weeks before the first day's week (the grade
   // and the fill delta), through the end of the last day's week and
   // the day after (tomorrow's tile).
-  const trendStart = new Date(startOfWeekUTC(from).getTime() - 4 * 7 * DAY);
-  const lastWeekEnd = new Date(startOfWeekUTC(new Date(toExclusive.getTime() - 1)).getTime() + 7 * DAY);
+  const trendStart = cal.midnight(nextKey(cal.key(cal.weekStart(from)), -4 * 7));
+  const lastWeekEnd = cal.weekEnd(new Date(toExclusive.getTime() - 1));
   const spanEnd = new Date(Math.max(lastWeekEnd.getTime(), toExclusive.getTime() + DAY));
   const dayKeys: string[] = [];
   for (let k = fromKey; k <= toKey; k = nextKey(k, 1)) dayKeys.push(k);
@@ -320,7 +326,7 @@ export async function buildPortalReport(
       take: 5000,
     }),
     prisma.timeEntry.findMany({
-      where: { ...entryScope(scope), status: { in: ['ACTIVE', 'COMPLETED', 'APPROVED'] }, clockInAt: { gte: startOfWeekUTC(from), lt: spanEnd } },
+      where: { ...entryScope(scope), status: { in: ['ACTIVE', 'COMPLETED', 'APPROVED'] }, clockInAt: { gte: cal.weekStart(from), lt: spanEnd } },
       select: { associateId: true, clockInAt: true, clockOutAt: true, breaks: { select: { startedAt: true, endedAt: true } } },
       take: 20000,
     }),
@@ -342,7 +348,7 @@ export async function buildPortalReport(
 
   const inRange = rows.filter((s) => s.startsAt < toExclusive && s.endsAt > from);
 
-  const weekKeyOf = (d: Date) => orgDateKey(startOfWeekUTC(d));
+  const weekKeyOf = (d: Date) => cal.key(cal.weekStart(d));
   const opsDay = (key: string): OpsDaySnapshot | null => {
     const list = opsShifts.filter((o) => o.dateKey === key);
     if (list.length === 0) return null;
@@ -367,8 +373,8 @@ export async function buildPortalReport(
 
   const days: ReportDay[] = [];
   for (const key of dayKeys) {
-    const dayStart = utcInstantOfLocalMidnight(key, ORG_TZ);
-    const dayEnd = utcInstantOfLocalMidnight(nextKey(key, 1), ORG_TZ);
+    const dayStart = cal.midnight(key);
+    const dayEnd = cal.midnight(nextKey(key, 1));
     const isToday = key === todayKey;
     const isFuture = key > todayKey;
     // The snapshot instant: the live page for today, the close of the
@@ -504,12 +510,12 @@ export async function buildPortalReport(
     const graded = gradeWeeks([{ contracted: contractedHours, delivered: deliveredHours, ended: ended.length, showed: showedEnded }]);
 
     /* ---- the dashboard cards, as of the day ------------------------------ */
-    const weekStartD = startOfWeekUTC(dayStart);
-    const weekKeyD = orgDateKey(weekStartD);
-    const weekEndD = new Date(weekStartD.getTime() + 7 * DAY);
+    const weekStartD = cal.weekStart(dayStart);
+    const weekKeyD = cal.key(weekStartD);
+    const weekEndD = cal.weekEnd(dayStart);
     const weekKeys: string[] = [];
-    for (let i = 4; i >= 0; i--) weekKeys.push(orgDateKey(new Date(weekStartD.getTime() - i * 7 * DAY)));
-    const prevWeekKey = orgDateKey(new Date(weekStartD.getTime() - 7 * DAY));
+    for (let i = 4; i >= 0; i--) weekKeys.push(nextKey(weekKeyD, -7 * i));
+    const prevWeekKey = nextKey(weekKeyD, -7);
     const agg = new Map(
       weekKeys.map((k) => [k, { start: k, filled: 0, total: 0, ended: 0, showed: 0, contracted: 0, delivered: 0, ncns: 0, callOuts: 0, lates: 0, replaced: 0 }]),
     );
@@ -562,15 +568,15 @@ export async function buildPortalReport(
     const weekShifts = rows.filter((s) => s.startsAt >= weekStartD && s.startsAt < weekEndD);
     const weekDays = Array.from({ length: 7 }, (_, i) => nextKey(weekKeyD, i)).map((d) => ({
       date: d,
-      filled: weekShifts.filter((s) => orgDateKey(s.startsAt) === d && s.status !== 'OPEN').length,
-      open: weekShifts.filter((s) => orgDateKey(s.startsAt) === d && s.status === 'OPEN').length,
+      filled: weekShifts.filter((s) => cal.key(s.startsAt) === d && s.status !== 'OPEN').length,
+      open: weekShifts.filter((s) => cal.key(s.startsAt) === d && s.status === 'OPEN').length,
     }));
     const scheduledMin = weekShifts.reduce((a, s) => a + paidMinutesForRange(s.startsAt, s.endsAt), 0);
     const workedMin = weekEntries
       .filter((e) => e.clockInAt >= weekStartD && e.clockInAt < weekEndD && e.clockInAt.getTime() < asOfMs)
       .reduce((a, e) => a + netMinutes({ ...e, clockOutAt: e.clockOutAt && e.clockOutAt.getTime() <= asOfMs ? e.clockOutAt : null }, asOf), 0);
     const tomorrowKey = nextKey(key, 1);
-    const tomorrowShifts = rows.filter((s) => orgDateKey(s.startsAt) === tomorrowKey);
+    const tomorrowShifts = rows.filter((s) => cal.key(s.startsAt) === tomorrowKey);
     const crewIds = [...new Set(weekShifts.map((s) => s.assignedAssociateId).filter((x): x is string => !!x))];
     const inFlight = new Set(['INITIATED', 'IN_PROGRESS']);
     const bad = new Set(['FAILED', 'NEEDS_REVIEW']);
@@ -583,7 +589,7 @@ export async function buildPortalReport(
       if (st.some((x) => bad.has(x))) flagged += 1;
       else if (st.some((x) => inFlight.has(x))) checksInFlight += 1;
     }
-    const monthStart = utcInstantOfLocalMidnight(`${key.slice(0, 7)}-01`, ORG_TZ);
+    const monthStart = cal.midnight(`${key.slice(0, 7)}-01`);
     const lastIncident = incidents
       .filter((i) => i.occurredAt.getTime() < asOfMs && i.occurredAt.getTime() >= asOfMs - 365 * DAY)
       .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())[0];
@@ -670,7 +676,7 @@ export async function buildPortalReport(
             kind: r.kind,
             subject: r.subject,
             status: r.status === 'RESOLVED' ? 'IN_PROGRESS' : r.status,
-            at: orgDateKey(r.createdAt),
+            at: cal.key(r.createdAt),
             overdue: !!r.dueAt && r.dueAt.getTime() < asOfMs,
           })),
         loggedToday: requests.filter((r) => r.createdAt >= dayStart && r.createdAt.getTime() < Math.min(asOfMs, dayEnd.getTime())).length,
@@ -715,7 +721,8 @@ export async function buildPortalReport(
     from: fromKey,
     to: toKey,
     isRange: fromKey !== toKey,
-    generatedAt: `${orgDateKey(now)} ${formatTimeInZone(now, ORG_TZ)}`,
+    generatedAt: `${cal.key(now)} ${formatTimeInZone(now, cal.tz)}`,
+    timezone: cal.tz,
     days,
     totals: {
       expected: sum((d) => d.summary.expected),
@@ -1075,7 +1082,7 @@ export function renderPortalReportPdf(data: PortalReportData): Promise<Buffer> {
       });
       if (pen) doc.stroke();
       if (d.isToday) {
-        const nx = plotX + (zonedMinutes(new Date(), ORG_TZ) / 60) * slot;
+        const nx = plotX + (zonedMinutes(new Date(), data.timezone) / 60) * slot;
         doc.moveTo(nx, y0).lineTo(nx, y0 + h).lineWidth(0.75).dash(2, { space: 2 }).strokeColor(C.ink3).stroke().undash();
         text('Now', nx + 3, y0, { size: T.label, color: C.ink3 });
       }

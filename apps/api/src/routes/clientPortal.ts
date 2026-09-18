@@ -5,12 +5,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAuth } from '../middleware/auth.js';
 import type { SessionUser } from '../types/express.js';
-import {
-  orgDateKey,
-  startOfWeekUTC,
-  endOfWeekUTC,
-  utcInstantOfLocalMidnight,
-} from '../lib/timeAnomalies.js';
+import { orgDateKey } from '../lib/timeAnomalies.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { ensureBrandingLoaded } from '../lib/branding.js';
 import { renderStatementPdf } from '../lib/statementPdf.js';
@@ -18,7 +13,6 @@ import { REPORT_MAX_DAYS, buildPortalReport, renderPortalReportPdf } from '../li
 import { notePortalReportDownload } from '../lib/portalEngagement.js';
 import { trackNotificationWork } from '../lib/notify.js';
 import { currentStoreWindows, ledWindows } from '../lib/shiftWindows.js';
-import { localDateKey } from '../lib/timezone.js';
 import type { StatementSnapshot } from '../lib/clientStatement.js';
 import {
   DAY,
@@ -34,6 +28,7 @@ import {
   loadTargets,
   netMinutes,
   nextKey,
+  portalCalendar,
   reviewerName,
   shiftScope,
   type PortalScope,
@@ -176,21 +171,6 @@ async function resolveScope(
 
 type RosterState = 'open' | 'on-floor' | 'done' | 'confirmed' | 'unconfirmed';
 
-/** The zone a day is cut in: the store's own clock — the scoped store, or
- *  the client's when all its stores share one — else the org's. An 11 PM
- *  Pacific overnight crew belongs to the Pacific day it starts on, not to
- *  the Eastern tomorrow. */
-async function dayZone(scope: PortalScope): Promise<string> {
-  if (scope.location) return scope.location.timezone;
-  const zones = await prisma.location.findMany({
-    where: { clientId: scope.clientId, deletedAt: null, isActive: true },
-    select: { timezone: true },
-    distinct: ['timezone'],
-    take: 2,
-  });
-  return zones.length === 1 ? zones[0]!.timezone : ORG_TZ;
-}
-
 /** Every shift window at the scope's store(s) with the supervisors who lead
  *  it (empty = nobody yet). */
 async function dayWindowLeads(scope: PortalScope) {
@@ -220,18 +200,23 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
     const scope = await resolveScope(req.user!, req.query);
     const { clientId } = scope;
 
+    // Days and weeks on the store's own clock (lib/portalMetrics).
+    const cal = await portalCalendar(scope);
     const now = new Date();
-    const todayKey = orgDateKey(now);
-    const todayStart = utcInstantOfLocalMidnight(todayKey, ORG_TZ);
-    const tomorrowStart = utcInstantOfLocalMidnight(nextKey(todayKey, 1), ORG_TZ);
-    const dayAfterStart = utcInstantOfLocalMidnight(nextKey(todayKey, 2), ORG_TZ);
-    const weekStart = startOfWeekUTC(now);
-    const weekEnd = endOfWeekUTC(now);
+    const todayKey = cal.key(now);
+    const todayStart = cal.midnight(todayKey);
+    const tomorrowStart = cal.midnight(nextKey(todayKey, 1));
+    const dayAfterStart = cal.midnight(nextKey(todayKey, 2));
+    const weekStart = cal.weekStart(now);
+    const weekEnd = cal.weekEnd(now);
+    const thisWeekKey = cal.key(weekStart);
     // Reliability window: the 4 completed weeks before this one, plus
     // this one (rendered separately as "so far").
-    const trendStart = new Date(weekStart.getTime() - 4 * 7 * DAY);
-    const monthStart = utcInstantOfLocalMidnight(`${todayKey.slice(0, 7)}-01`, ORG_TZ);
-    const yesterdayKey = nextKey(todayKey, -1);
+    const trendStart = cal.midnight(nextKey(thisWeekKey, -4 * 7));
+    const monthStart = cal.midnight(`${todayKey.slice(0, 7)}-01`);
+    // Store Ops keys its shifts by the org day it opened on.
+    const opsTodayKey = orgDateKey(now);
+    const opsYesterdayKey = nextKey(opsTodayKey, -1);
 
     const shifts = shiftScope(scope);
     const entries = entryScope(scope);
@@ -368,7 +353,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         take: 50,
       }),
       prisma.opsShift.findMany({
-        where: { clientId, dateKey: { in: [yesterdayKey, todayKey] } },
+        where: { clientId, dateKey: { in: [opsYesterdayKey, opsTodayKey] } },
         select: {
           id: true,
           dateKey: true,
@@ -473,13 +458,10 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       };
     });
 
-    // ---- Week shape + reliability trend (org weeks, Sat→Fri) ----------
-    const weekKeyOf = (d: Date) => orgDateKey(startOfWeekUTC(d));
-    const thisWeekKey = orgDateKey(weekStart);
+    // ---- Week shape + reliability trend (store weeks, Sat→Fri) --------
+    const weekKeyOf = (d: Date) => cal.key(cal.weekStart(d));
     const weekKeys: string[] = [];
-    for (let i = 4; i >= 0; i--) {
-      weekKeys.push(orgDateKey(new Date(weekStart.getTime() - i * 7 * DAY)));
-    }
+    for (let i = 4; i >= 0; i--) weekKeys.push(nextKey(thisWeekKey, -7 * i));
     const weekAgg = new Map(
       weekKeys.map((k) => [
         k,
@@ -514,7 +496,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
         }
       }
       if (s.startsAt >= weekStart) {
-        const bucket = dayMap.get(orgDateKey(s.startsAt));
+        const bucket = dayMap.get(cal.key(s.startsAt));
         if (bucket) {
           if (s.status === 'OPEN') bucket.open += 1;
           else bucket.filled += 1;
@@ -613,7 +595,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
 
     // ---- Alto leadership on site ----------------------------------------
     const opsRunners = new Set(
-      opsShifts.filter((o) => o.dateKey === todayKey && o.status === 'ACTIVE').map((o) => o.openedById),
+      opsShifts.filter((o) => o.dateKey === opsTodayKey && o.status === 'ACTIVE').map((o) => o.openedById),
     );
     // Supervisors lead named shift windows ("Overnight"). A store account
     // sees the leads of ITS store's windows (plus anyone not yet given a
@@ -699,7 +681,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
 
     const workedMinutes = weekEntries.reduce((a, e) => a + netMinutes(e, now), 0);
     const reviewed = await loadAcknowledgements(clientId);
-    const lastCompletedWeek = orgDateKey(new Date(weekStart.getTime() - 7 * DAY));
+    const lastCompletedWeek = nextKey(thisWeekKey, -7);
     const preview = req.user!.role !== 'CLIENT_PORTAL';
     const previewQs = preview
       ? `clientId=${encodeURIComponent(clientId)}${scope.locationId ? `&locationId=${encodeURIComponent(scope.locationId)}` : ''}`
@@ -774,7 +756,7 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
       leads: { people: leads, supportEmail: orgSetting?.supportEmail ?? null },
       ops:
         opsShifts.length > 0
-          ? { yesterday: opsDay(yesterdayKey), today: opsDay(todayKey) }
+          ? { yesterday: opsDay(opsYesterdayKey), today: opsDay(opsTodayKey) }
           : null,
       reliability: { weeks, grade: graded.grade, score: graded.score, basis: graded.basis },
       clearance,
@@ -838,11 +820,13 @@ clientPortalRouter.get('/client-portal/schedule', requireAuth, async (req, res, 
     if (weekParam && !/^\d{4}-\d{2}-\d{2}$/.test(weekParam)) {
       throw new HttpError(400, 'invalid_week', '`week` must be YYYY-MM-DD');
     }
-    const anchor = weekParam ? new Date(`${weekParam}T12:00:00.000Z`) : new Date();
-    const weekStart = startOfWeekUTC(anchor);
-    const weekEnd = endOfWeekUTC(anchor);
+    const cal = await portalCalendar(scope);
+    // A ?week= day is a calendar date: its store-local noon is on that day.
+    const anchor = weekParam ? cal.midnight(weekParam) : new Date();
+    const weekStart = cal.weekStart(anchor);
+    const weekEnd = cal.weekEnd(anchor);
     const now = new Date();
-    const startKey = orgDateKey(weekStart);
+    const startKey = cal.key(weekStart);
 
     const [rows, live] = await Promise.all([
       prisma.shift.findMany({
@@ -871,7 +855,7 @@ clientPortalRouter.get('/client-portal/schedule', requireAuth, async (req, res, 
     const days = new Map<string, Array<Record<string, unknown>>>();
     for (let i = 0; i < 7; i++) days.set(nextKey(startKey, i), []);
     for (const s of rows) {
-      const list = days.get(orgDateKey(s.startsAt));
+      const list = days.get(cal.key(s.startsAt));
       if (!list) continue;
       const done = s.status === 'COMPLETED' || s.endsAt.getTime() <= now.getTime();
       const state: RosterState =
@@ -925,28 +909,28 @@ clientPortalRouter.get(
   async (req, res, next) => {
     try {
       const scope = await resolveScope(req.user!, req.query);
+      const cal = await portalCalendar(scope);
       const now = new Date();
       let fromKey: string;
       let toKey: string;
       if (req.query.week !== undefined) {
         const weekParam = parseDayKey(req.query.week, 'week');
-        const weekStart = startOfWeekUTC(new Date(`${weekParam}T12:00:00.000Z`));
-        fromKey = orgDateKey(weekStart);
+        fromKey = cal.key(cal.weekStart(cal.midnight(weekParam)));
         toKey = nextKey(fromKey, 6);
       } else if (req.query.from !== undefined || req.query.to !== undefined) {
         fromKey = parseDayKey(req.query.from, 'from');
         toKey = parseDayKey(req.query.to, 'to');
         if (toKey < fromKey) throw new HttpError(400, 'invalid_range', '`to` is before `from`');
         const span = Math.round(
-          (utcInstantOfLocalMidnight(nextKey(toKey, 1), ORG_TZ).getTime() - utcInstantOfLocalMidnight(fromKey, ORG_TZ).getTime()) / DAY,
+          (cal.midnight(nextKey(toKey, 1)).getTime() - cal.midnight(fromKey).getTime()) / DAY,
         );
         if (span > REPORT_MAX_DAYS) throw new HttpError(400, 'range_too_long', `Pick ${REPORT_MAX_DAYS} days or fewer.`);
       } else {
-        fromKey = req.query.date === undefined ? orgDateKey(now) : parseDayKey(req.query.date, 'date');
+        fromKey = req.query.date === undefined ? cal.key(now) : parseDayKey(req.query.date, 'date');
         toKey = fromKey;
       }
       const branding = await ensureBrandingLoaded(prisma);
-      const data = await buildPortalReport(scope, fromKey, toKey, branding.orgName, now);
+      const data = await buildPortalReport(scope, fromKey, toKey, branding.orgName, now, cal);
       const pdf = await renderPortalReportPdf(data);
       enqueueAudit(
         {
@@ -1064,11 +1048,11 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
     const scope = await resolveScope(req.user!, req.query, { floorLead: true });
     const now = new Date();
     // The day is the store's calendar day, cut at the store's midnight.
-    const tz = await dayZone(scope);
-    const storeToday = localDateKey(now, tz);
+    const cal = await portalCalendar(scope);
+    const storeToday = cal.key(now);
     const dateKey = req.query.date === undefined ? storeToday : parseDayKey(req.query.date, 'date');
-    const dayStart = utcInstantOfLocalMidnight(dateKey, tz);
-    const dayEnd = utcInstantOfLocalMidnight(nextKey(dateKey, 1), tz);
+    const dayStart = cal.midnight(dateKey);
+    const dayEnd = cal.midnight(nextKey(dateKey, 1));
 
     // "Now" belongs to the page the viewer calls today, and that's the
     // BROWSER's calendar, which can sit a day off the store's (a viewer in
@@ -1208,12 +1192,13 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
 clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, next) => {
   try {
     const scope = await resolveScope(req.user!, req.query);
+    const cal = await portalCalendar(scope);
     const now = new Date();
     const fromKey = parseDayKey(req.query.from, 'from');
     const toKey = parseDayKey(req.query.to, 'to');
     if (toKey < fromKey) throw new HttpError(400, 'invalid_range', '`to` is before `from`');
-    const from = utcInstantOfLocalMidnight(fromKey, ORG_TZ);
-    const toExclusive = utcInstantOfLocalMidnight(nextKey(toKey, 1), ORG_TZ);
+    const from = cal.midnight(fromKey);
+    const toExclusive = cal.midnight(nextKey(toKey, 1));
     const spanDays = Math.round((toExclusive.getTime() - from.getTime()) / DAY);
     if (spanDays > 92) throw new HttpError(400, 'range_too_long', 'Pick 92 days or fewer.');
 
@@ -1387,7 +1372,7 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
       ]),
     );
     for (const s of shifts) {
-      const d = days.get(orgDateKey(s.startsAt));
+      const d = days.get(cal.key(s.startsAt));
       if (!d) continue;
       d.published += 1;
       if (s.status === 'OPEN') d.open += 1;
@@ -1399,14 +1384,14 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
       }
     }
     for (const h of rangeHours) {
-      const d = days.get(orgDateKey(h.instant));
+      const d = days.get(cal.key(h.instant));
       if (!d) continue;
       d.contracted += h.target;
       d.delivered += h.delivered;
     }
     const workedByDay = new Map<string, number>();
     for (const e of worked) {
-      const k = orgDateKey(e.clockInAt);
+      const k = cal.key(e.clockInAt);
       workedByDay.set(k, (workedByDay.get(k) ?? 0) + netMinutes(e, now) / 60);
     }
     const dayRows = [...days.values()].map((d) => ({
@@ -1429,9 +1414,9 @@ clientPortalRouter.get('/client-portal/history', requireAuth, async (req, res, n
     const count = (kind: string) => events.filter((e) => e.kind === kind).length;
     const opsSum = (f: (o: (typeof ops)[number]) => number) => ops.reduce((a, o) => a + f(o), 0);
 
-    // One service report per org week the range touches.
+    // One service report per store week the range touches.
     const weekStarts: string[] = [];
-    for (let k = orgDateKey(startOfWeekUTC(from)); k <= toKey; k = nextKey(k, 7)) weekStarts.push(k);
+    for (let k = cal.key(cal.weekStart(from)); k <= toKey; k = nextKey(k, 7)) weekStarts.push(k);
     const preview = req.user!.role !== 'CLIENT_PORTAL';
     const previewQs = preview
       ? `&clientId=${encodeURIComponent(scope.clientId)}${scope.locationId ? `&locationId=${encodeURIComponent(scope.locationId)}` : ''}`

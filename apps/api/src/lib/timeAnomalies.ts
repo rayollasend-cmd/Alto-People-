@@ -200,34 +200,51 @@ export function utcInstantOfLocalMidnight(ymdKey: string, tz: string): Date {
   return guess;
 }
 
-/** YYYY-MM-DD of the instant in the org zone, without importing
+const keyFormats = new Map<string, Intl.DateTimeFormat>();
+
+/** YYYY-MM-DD of the instant on a zone's calendar, without importing
  *  timezone.ts (kept dependency-free; en-CA renders ISO order). */
-export function orgDateKey(d: Date): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: WEEK_TZ_FALLBACK,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(d);
+export function dateKeyInZone(d: Date, tz: string): string {
+  let fmt = keyFormats.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+    keyFormats.set(tz, fmt);
+  }
+  return fmt.format(d);
 }
 
-/** UTC instant of the Saturday 00:00 (org-local) beginning the workweek
+/** YYYY-MM-DD of the instant in the org zone. */
+export function orgDateKey(d: Date): string {
+  return dateKeyInZone(d, WEEK_TZ_FALLBACK);
+}
+
+/** UTC instant of the Saturday 00:00 (zone-local) beginning the workweek
  *  that contains `d`. */
-export function startOfWeekUTC(d: Date): Date {
-  const localKey = orgDateKey(d);
+export function startOfWeekInZone(d: Date, tz: string): Date {
+  const localKey = dateKeyInZone(d, tz);
   // Noon-UTC anchor keeps the weekday stable across DST edges — same
   // trick as timesheetWeek.saturdayWeek.
   const anchor = new Date(`${localKey}T12:00:00Z`);
   const back = (anchor.getUTCDay() + 1) % 7; // Sat→0, Sun→1, … Fri→6
   anchor.setUTCDate(anchor.getUTCDate() - back);
-  return utcInstantOfLocalMidnight(anchor.toISOString().slice(0, 10), WEEK_TZ_FALLBACK);
+  return utcInstantOfLocalMidnight(anchor.toISOString().slice(0, 10), tz);
 }
 
-/** UTC instant of the NEXT Saturday 00:00 (org-local) — the exclusive end
+/** UTC instant of the NEXT Saturday 00:00 (zone-local) — the exclusive end
  *  of the workweek containing `d`. DST weeks are 167/169 real hours. */
-export function endOfWeekUTC(d: Date): Date {
-  const start = startOfWeekUTC(d);
-  const anchor = new Date(`${orgDateKey(start)}T12:00:00Z`);
+export function endOfWeekInZone(d: Date, tz: string): Date {
+  const start = startOfWeekInZone(d, tz);
+  const anchor = new Date(`${dateKeyInZone(start, tz)}T12:00:00Z`);
   anchor.setUTCDate(anchor.getUTCDate() + 7);
-  return utcInstantOfLocalMidnight(anchor.toISOString().slice(0, 10), WEEK_TZ_FALLBACK);
+  return utcInstantOfLocalMidnight(anchor.toISOString().slice(0, 10), tz);
+}
+
+/** The org workweek (Sat 00:00 Eastern) containing `d`. */
+export function startOfWeekUTC(d: Date): Date {
+  return startOfWeekInZone(d, WEEK_TZ_FALLBACK);
+}
+
+/** The exclusive end of the org workweek containing `d`. */
+export function endOfWeekUTC(d: Date): Date {
+  return endOfWeekInZone(d, WEEK_TZ_FALLBACK);
 }

@@ -30,7 +30,9 @@ import {
 } from '@/lib/usersAdminApi';
 import { listClients, listClientLocations } from '@/lib/clientsApi';
 import { listRegions } from '@/lib/regionsApi';
+import { useQueryClient } from '@tanstack/react-query';
 import { SupervisorShiftDialog } from './SupervisorShiftDialog';
+import { ShiftLeadsCard } from '@/components/ShiftLeadsCard';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -134,7 +136,8 @@ function statusVariant(status: UserStatus) {
  * — HR uses /settings to change their own password.
  */
 export function UsersAdmin() {
-  const { user: me } = useAuth();
+  const { user: me, can } = useAuth();
+  const queryClient = useQueryClient();
   const confirm = useConfirm();
   const [rows, setRows] = useState<AdminUser[] | null>(null);
   const [total, setTotal] = useState<number | null>(null);
@@ -606,6 +609,9 @@ export function UsersAdmin() {
         subtitle="Every account in the org. Change a role, disable a compromised account, or force a password reset."
         breadcrumbs={[{ label: 'Compliance' }, { label: 'Users & access' }]}
       />
+
+      {/* Shifts nobody leads / supervisors with no shift — only when any. */}
+      <ShiftLeadsCard hideWhenClear onChanged={() => void load()} />
 
       <Card>
         <CardContent className="p-4 flex flex-wrap items-end gap-3">
@@ -1080,7 +1086,11 @@ export function UsersAdmin() {
           user={shiftFor}
           open
           onOpenChange={(o) => !o && setShiftFor(null)}
-          onSaved={() => void load()}
+          onSaved={() => {
+            void load();
+            void queryClient.invalidateQueries({ queryKey: ['shift-windows', 'gaps'] });
+          }}
+          readOnly={!can('manage:org')}
         />
       )}
 

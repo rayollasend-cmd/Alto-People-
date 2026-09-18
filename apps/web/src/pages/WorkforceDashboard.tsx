@@ -22,6 +22,7 @@ import { cn } from '@/lib/cn';
 import { enterStagger } from '@/lib/motion';
 import { Card, CardContent } from '@/components/ui/Card';
 import { ClockStrip } from '@/components/ClockStrip';
+import { ShiftLeadsCard } from '@/components/ShiftLeadsCard';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -564,6 +565,9 @@ export function WorkforceDashboard() {
               )}
             </CardContent>
           </Card>
+
+          {/* ---- Supervisors on every shift ------------------------------ */}
+          <ShiftLeadsCard className="animate-enter" style={enterStagger(3)} />
 
           {/* ---- The internal market: short stores vs the bench ---------- */}
           {data.rebalance.length > 0 && (

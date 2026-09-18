@@ -1,6 +1,12 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { zonedMinutes } from './timezone.js';
+import {
+  dateKeyInZone,
+  endOfWeekInZone,
+  startOfWeekInZone,
+  utcInstantOfLocalMidnight,
+} from './timeAnomalies.js';
 
 /**
  * The portal's measuring instruments — shared by the store site
@@ -25,6 +31,48 @@ export function fullName(a: { firstName: string; lastName: string }): string {
 export function nextKey(key: string, days: number): string {
   const [y, m, d] = key.split('-').map(Number);
   return new Date(Date.UTC(y!, m! - 1, d! + days)).toISOString().slice(0, 10);
+}
+
+/**
+ * The store's calendar: days cut at the store's midnight, Saturday-start
+ * weeks on the store's clock. A 10 PM Pacific overnight crew belongs to the
+ * Pacific day it starts on — on the org's (Eastern) calendar it would be
+ * tomorrow, and the store manager would see it in the wrong column.
+ */
+export interface StoreCalendar {
+  tz: string;
+  /** YYYY-MM-DD of an instant on the store's calendar. */
+  key(d: Date): string;
+  /** The instant a store day begins. */
+  midnight(key: string): Date;
+  weekStart(d: Date): Date;
+  weekEnd(d: Date): Date;
+}
+
+export function storeCalendar(tz: string): StoreCalendar {
+  return {
+    tz,
+    key: (d) => dateKeyInZone(d, tz),
+    midnight: (k) => utcInstantOfLocalMidnight(k, tz),
+    weekStart: (d) => startOfWeekInZone(d, tz),
+    weekEnd: (d) => endOfWeekInZone(d, tz),
+  };
+}
+
+/** The calendar a portal scope reads in: the scoped store's clock, or the
+ *  client's when all its stores share one, else the org's. */
+export async function portalCalendar(scope: {
+  clientId: string;
+  location: { timezone: string } | null;
+}): Promise<StoreCalendar> {
+  if (scope.location) return storeCalendar(scope.location.timezone);
+  const zones = await prisma.location.findMany({
+    where: { clientId: scope.clientId, deletedAt: null, isActive: true },
+    select: { timezone: true },
+    distinct: ['timezone'],
+    take: 2,
+  });
+  return storeCalendar(zones.length === 1 ? zones[0]!.timezone : ORG_TZ);
 }
 
 export interface PortalScope {

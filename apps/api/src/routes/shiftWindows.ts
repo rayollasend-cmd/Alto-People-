@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { requireAuth, requireCapability } from '../middleware/auth.js';
+import { requireAnyCapability, requireAuth, requireCapability } from '../middleware/auth.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { currentStoreWindows, ledWindows } from '../lib/shiftWindows.js';
 
@@ -13,7 +13,13 @@ import { currentStoreWindows, ledWindows } from '../lib/shiftWindows.js';
  *   GET /me/shift-windows                 the caller's own windows (focus)
  *   GET /admin/shift-windows?clientId=    a client's stores, their windows,
  *                                         and who leads each (gaps show)
+ *   GET /admin/shift-windows/gaps         every client: shifts nobody leads,
+ *                                         supervisors with no shift
  *   PUT /admin/users/:id/shift-windows    set a supervisor's windows
+ *
+ * The reads are open to whoever can view the users admin OR assign a
+ * shift (manage:org — the Workforce Manager staffs supervisors without
+ * the HR admin view); the write is manage:org, as assigning a client is.
  *
  * Focus, not a lock — see lib/shiftWindows.ts.
  */
@@ -44,9 +50,80 @@ shiftWindowsRouter.get('/me/shift-windows', requireAuth, async (req, res) => {
   });
 });
 
+const CAN_READ = requireAnyCapability('view:hr-admin', 'manage:org');
+
+shiftWindowsRouter.get('/admin/shift-windows/gaps', CAN_READ, async (_req, res) => {
+  const stores = await prisma.location.findMany({
+    where: { deletedAt: null, isActive: true, client: { deletedAt: null, status: 'ACTIVE' } },
+    select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
+  });
+  const [defs, supervisors] = await Promise.all([
+    currentStoreWindows(prisma, stores.map((s) => s.id)),
+    prisma.user.findMany({
+      where: {
+        role: 'SHIFT_SUPERVISOR',
+        status: 'ACTIVE',
+        deletedAt: null,
+        clientId: { in: [...new Set(stores.map((s) => s.clientId))] },
+      },
+      select: {
+        id: true,
+        email: true,
+        clientId: true,
+        associate: { select: { firstName: true, lastName: true } },
+        supervisorShiftWindows: { select: { locationId: true, label: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    }),
+  ]);
+  const storeById = new Map(stores.map((s) => [s.id, s]));
+  const byClient = new Map<string, { clientId: string; clientName: string }>();
+  for (const s of stores) byClient.set(s.clientId, { clientId: s.clientId, clientName: s.client.name });
+
+  let total = 0;
+  let covered = 0;
+  const clients = [];
+  for (const c of [...byClient.values()].sort((a, b) => a.clientName.localeCompare(b.clientName))) {
+    const windows = [...defs.values()].filter((w) => storeById.get(w.locationId)?.clientId === c.clientId);
+    if (windows.length === 0) continue;
+    const sups = supervisors
+      .filter((u) => u.clientId === c.clientId)
+      .map((u) => ({
+        userId: u.id,
+        name: personName(u),
+        email: u.email,
+        // Only assignments the store still defines count as a shift.
+        windows: u.supervisorShiftWindows
+          .filter((w) => defs.has(`${w.locationId}|${w.label}`))
+          .map((w) => ({ ...w, locationName: storeById.get(w.locationId)?.name ?? '' })),
+      }));
+    const led = new Set(sups.flatMap((u) => u.windows.map((w) => `${w.locationId}|${w.label}`)));
+    const uncovered = windows
+      .filter((w) => !led.has(`${w.locationId}|${w.label}`))
+      .sort(
+        (a, b) =>
+          (storeById.get(a.locationId)?.name ?? '').localeCompare(storeById.get(b.locationId)?.name ?? '') ||
+          a.startMinute - b.startMinute,
+      )
+      .map((w) => ({
+        locationId: w.locationId,
+        locationName: storeById.get(w.locationId)?.name ?? '',
+        label: w.label,
+        startMinute: w.startMinute,
+        endMinute: w.endMinute,
+      }));
+    const noShift = sups.filter((u) => u.windows.length === 0);
+    total += windows.length;
+    covered += windows.length - uncovered.length;
+    if (uncovered.length === 0 && noShift.length === 0) continue;
+    clients.push({ ...c, uncovered, noShift: noShift.map((u) => u.userId), supervisors: sups });
+  }
+  res.json({ total, covered, clients });
+});
+
 shiftWindowsRouter.get(
   '/admin/shift-windows',
-  requireCapability('view:hr-admin'),
+  CAN_READ,
   async (req, res) => {
     const clientId = z.string().uuid().parse(req.query.clientId);
     const stores = await prisma.location.findMany({

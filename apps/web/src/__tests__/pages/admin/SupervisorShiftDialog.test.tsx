@@ -30,12 +30,12 @@ const dana: AdminUser = {
   shiftWindows: [{ locationId: 'l1', locationName: 'Front Beach 218', label: 'Overnight' }],
 };
 
-function renderDialog(stores: unknown[], onSaved = vi.fn()) {
+function renderDialog(stores: unknown[], onSaved = vi.fn(), readOnly = false) {
   vi.mocked(listClientShiftWindows).mockResolvedValue({ stores } as never);
   vi.mocked(setSupervisorShiftWindows).mockResolvedValue({ windows: [] });
   render(
     <MemoryRouter>
-      <SupervisorShiftDialog user={dana} open onOpenChange={vi.fn()} onSaved={onSaved} />
+      <SupervisorShiftDialog user={dana} open onOpenChange={vi.fn()} onSaved={onSaved} readOnly={readOnly} />
     </MemoryRouter>,
   );
   return { onSaved };
@@ -88,5 +88,12 @@ describe('<SupervisorShiftDialog> — a supervisor is assigned their shift', () 
     expect(await screen.findByText(/hasn’t named its shifts yet/)).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Labor costs' })).toHaveAttribute('href', '/labor-costs');
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+  });
+
+  it('shows a read-only viewer the assignment without letting them change it', async () => {
+    renderDialog([frontBeach], vi.fn(), true);
+    expect(await screen.findByRole('checkbox', { name: /Overnight/ })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Close' }).length).toBeGreaterThan(0);
   });
 });

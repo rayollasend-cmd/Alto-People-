@@ -49,3 +49,27 @@ export function setSupervisorShiftWindows(
     body: { windows },
   });
 }
+
+export interface ShiftCoverageGaps {
+  /** Named shift windows across every active client, and how many have a lead. */
+  total: number;
+  covered: number;
+  /** Only clients with something missing. */
+  clients: Array<{
+    clientId: string;
+    clientName: string;
+    uncovered: Array<{ locationId: string; locationName: string; label: string; startMinute: number; endMinute: number }>;
+    /** Supervisors at the client with no shift (user ids). */
+    noShift: string[];
+    supervisors: Array<{
+      userId: string;
+      name: string;
+      email: string;
+      windows: Array<{ locationId: string; locationName: string; label: string }>;
+    }>;
+  }>;
+}
+
+export function getShiftCoverageGaps(): Promise<ShiftCoverageGaps> {
+  return apiFetch<ShiftCoverageGaps>('/admin/shift-windows/gaps');
+}

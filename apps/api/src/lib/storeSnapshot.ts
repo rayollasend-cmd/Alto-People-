@@ -1,11 +1,8 @@
 import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
-import { orgDateKey, startOfWeekUTC, utcInstantOfLocalMidnight } from './timeAnomalies.js';
 import { zonedMinutes } from './timezone.js';
 import {
-  DAY,
   HOUR,
-  ORG_TZ,
   attendanceWhere,
   coverageByHours,
   currentTarget,
@@ -15,6 +12,7 @@ import {
   loadTargets,
   nextKey,
   shiftScope,
+  storeCalendar,
   targetAtMinute,
   type PortalScope,
 } from './portalMetrics.js';
@@ -48,7 +46,7 @@ export interface StoreSnapshot {
   leads: { onFloor: number; total: number };
   /** Live alert this minute: a wave under way is short. */
   alert: string | null;
-  /** Today by hour (org day): assigned, unfilled, contracted — the store's
+  /** Today by hour (the store's day): assigned, unfilled, contracted — the store's
    *  own coverage curve, summable across a region. */
   hours: Array<{ hour: number; scheduled: number; open: number; target: number | null }>;
   /** 4 completed weeks + this one: delivered vs contracted (or showed-up). */
@@ -75,12 +73,15 @@ export async function storeSnapshot(
       zip: null,
     },
   };
-  const todayKey = orgDateKey(now);
-  const todayStart = utcInstantOfLocalMidnight(todayKey, ORG_TZ);
-  const tomorrowStart = utcInstantOfLocalMidnight(nextKey(todayKey, 1), ORG_TZ);
-  const dayAfterStart = utcInstantOfLocalMidnight(nextKey(todayKey, 2), ORG_TZ);
-  const weekStart = startOfWeekUTC(now);
-  const trendStart = new Date(weekStart.getTime() - 4 * 7 * DAY);
+  // Days and weeks on the store's own clock.
+  const cal = storeCalendar(location.timezone);
+  const todayKey = cal.key(now);
+  const todayStart = cal.midnight(todayKey);
+  const tomorrowStart = cal.midnight(nextKey(todayKey, 1));
+  const dayAfterStart = cal.midnight(nextKey(todayKey, 2));
+  const weekStart = cal.weekStart(now);
+  const thisWeekKey = cal.key(weekStart);
+  const trendStart = cal.midnight(nextKey(thisWeekKey, -4 * 7));
   const shifts = shiftScope(scope);
 
   const [onFloor, todayShifts, tomorrowShifts, trendShifts, target, targets, punches, requests, leads] =
@@ -170,8 +171,8 @@ export async function storeSnapshot(
   ]);
   // Week by week (4 completed + this one), on the same basis.
   const weekKeys: string[] = [];
-  for (let i = 4; i >= 0; i--) weekKeys.push(orgDateKey(new Date(weekStart.getTime() - i * 7 * DAY)));
-  const weekOf = (d: Date) => orgDateKey(startOfWeekUTC(d));
+  for (let i = 4; i >= 0; i--) weekKeys.push(nextKey(thisWeekKey, -7 * i));
+  const weekOf = (d: Date) => cal.key(cal.weekStart(d));
   const weeks = weekKeys.map((k) => {
     const hs = hours.filter((h) => weekOf(h.instant) === k);
     const ws = trendShifts.filter((s) => weekOf(s.startsAt) === k && s.endsAt.getTime() <= nowMs);
@@ -179,7 +180,7 @@ export async function storeSnapshot(
     const delivered = hs.reduce((a, h) => a + h.delivered, 0);
     const showedW = ws.filter((s) => s.status !== 'OPEN' && !ncns.has(s.id) && punches.punched(s)).length;
     const g = gradeWeeks([{ contracted, delivered, ended: ws.length, showed: showedW }]);
-    return { start: k, reliabilityPct: g.score, current: k === orgDateKey(weekStart) };
+    return { start: k, reliabilityPct: g.score, current: k === thisWeekKey };
   });
   // Today by hour in the store's own zone: assigned, unfilled, contracted.
   const tz = location.timezone;
