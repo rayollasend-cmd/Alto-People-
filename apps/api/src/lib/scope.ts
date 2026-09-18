@@ -135,16 +135,50 @@ export function scopeShifts(user: SessionUser): Prisma.ShiftWhereInput {
 }
 
 /**
- * Associates that belong to a client: an APPROVED application there, or an
- * open assignment at one of its locations. Mirrors the roster query used by
- * /scheduling/associates so "your client's people" means the same thing on
- * every surface.
+ * Associates that belong to a client (the roster: scheduling, time, the
+ * supervisor's and the portal's views): see atClient — an open assignment
+ * there, else (no open assignment anywhere) an APPROVED application there.
  */
 export function associatesOfClient(clientId: string): Prisma.AssociateWhereInput {
+  return atClient(clientId, { approvedOnly: true });
+}
+
+/**
+ * "This client's people" — ONE answer, the same one
+ * lib/associateClients.primaryClientsForAssociates gives:
+ *
+ *   1. an OPEN assignment places them — where they work today;
+ *   2. only someone with NO open assignment anywhere falls back to their
+ *      application at the client (approved, or — for the directory,
+ *      which lists people still onboarding — any live application).
+ *
+ * It used to be "an approved application OR an open assignment", so a
+ * cross-client transfer (which moves the assignment; the approved
+ * application stays filed under the old client) left the associate at
+ * BOTH clients: still on the old store's roster and schedule, and missing
+ * from every application-keyed count and filter at the new one.
+ */
+export function atClient(
+  clientId: string,
+  opts: { approvedOnly?: boolean } = {},
+): Prisma.AssociateWhereInput {
   return {
     OR: [
-      { applications: { some: { status: 'APPROVED', clientId } } },
       { assignments: { some: { endedAt: null, location: { clientId } } } },
+      {
+        AND: [
+          {
+            applications: {
+              some: {
+                clientId,
+                deletedAt: null,
+                ...(opts.approvedOnly ? { status: 'APPROVED' as const } : {}),
+              },
+            },
+          },
+          { assignments: { none: { endedAt: null } } },
+        ],
+      },
     ],
   };
 }

@@ -7,6 +7,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
+import { atClient } from './scope.js';
 import { notifyUser } from './notify.js';
 import { supervisorRecipients } from './shiftWindows.js';
 import { orgDateKey, utcInstantOfLocalMidnight } from './timeAnomalies.js';
@@ -104,10 +105,8 @@ async function suggestBackups(prisma: PrismaClient, clientId: string, dayStart: 
       erasedAt: null,
       separatedAt: null,
       deactivatedAt: null,
-      OR: [
-        { assignments: { some: { endedAt: null, location: { clientId } } } },
-        { applications: { some: { status: 'APPROVED', deletedAt: null, clientId } } },
-      ],
+      // At this client now (lib/scope.atClient) — a transfer moves them.
+      AND: [atClient(clientId, { approvedOnly: true })],
       assignedShifts: {
         none: {
           status: { notIn: ['CANCELLED'] },

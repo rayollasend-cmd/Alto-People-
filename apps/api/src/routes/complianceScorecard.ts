@@ -36,6 +36,7 @@ import {
   type ScorecardSafetyResponse,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { primaryClientsForAssociates } from '../lib/associateClients.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { addBusinessDays } from '../lib/everifyReadiness.js';
@@ -152,7 +153,17 @@ async function loadActiveAssociates(clientId?: string | null) {
       status: 'APPROVED',
       deletedAt: null,
       associate: { deletedAt: null },
-      ...(clientId ? { clientId } : {}),
+      // A client's people: applied there, or transferred in (their approved
+      // application stays filed under the client they started at). Who's
+      // REALLY here is settled below by where they work now.
+      ...(clientId
+        ? {
+            OR: [
+              { clientId },
+              { associate: { assignments: { some: { endedAt: null, location: { clientId } } } } },
+            ],
+          }
+        : {}),
     },
     select: {
       associateId: true,
@@ -181,14 +192,21 @@ async function loadActiveAssociates(clientId?: string | null) {
     dob: Date | null;
     hireDate: Date | null;
   }> = [];
+  // Their client is where they work now — an open assignment wins over the
+  // application's client (lib/associateClients), so a transferred associate
+  // is scored at the client they moved to, not the one they started at.
+  const current = await primaryClientsForAssociates([...new Set(apps.map((a) => a.associateId))]);
   for (const a of apps) {
     if (seen.has(a.associateId)) continue;
     seen.add(a.associateId);
+    const now = current.get(a.associateId);
+    const rowClientId = now?.clientId ?? a.clientId;
+    if (clientId && rowClientId !== clientId) continue;
     rows.push({
       associateId: a.associateId,
       associateName: `${a.associate.firstName} ${a.associate.lastName}`,
-      clientId: a.clientId,
-      clientName: a.client.name,
+      clientId: rowClientId,
+      clientName: now?.clientName ?? a.client.name,
       dob: a.associate.dob,
       hireDate: a.associate.hireDate,
     });

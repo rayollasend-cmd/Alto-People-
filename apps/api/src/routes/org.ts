@@ -27,13 +27,13 @@ import { prisma } from '../db.js';
 import { piiRevealLimiter, bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireAnyCapability, requireCapability } from '../middleware/auth.js';
-import { effectiveClientIdFilter } from '../lib/scope.js';
+import { atClient, effectiveClientIdFilter } from '../lib/scope.js';
 import { asOf, recordChange } from '../lib/associateHistory.js';
 import { eraseAssociate } from '../lib/erasure.js';
 import { executeDeactivation } from '../lib/deactivation.js';
 import { enqueueAudit, recordCriticalAudit } from '../lib/audit.js';
-import { maybeNotifyFinanceNewWorker } from '../lib/fieldglassNotify.js';
-import { notifyAssociate, notifyManager, notifyUser } from '../lib/notify.js';
+import { notifyFinanceOfTransfer } from '../lib/fieldglassNotify.js';
+import { notifyAssociate, notifyManager, notifyUser, trackNotificationWork } from '../lib/notify.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
 import { decryptString } from '../lib/crypto.js';
 import { maskRoutingNumber, readRoutingNumber } from '../lib/payoutMethod.js';
@@ -594,13 +594,9 @@ orgRouter.get('/associates', VIEW, async (req: Request, res: Response) => {
     take: 1000,
     where: {
       deletedAt: null,
-      ...(clientId
-        ? {
-            applications: {
-              some: { clientId, deletedAt: null },
-            },
-          }
-        : {}),
+      // Where they work now (a transfer moves them), else the client
+      // they applied to — lib/scope.atClient.
+      ...(clientId ? atClient(clientId) : {}),
     },
     select: {
       id: true,
@@ -1909,11 +1905,21 @@ orgRouter.post(
       }
       return row;
     });
+    if (crossClient && currentClientId) {
+      // Accounts moves the worker in Fieldglass too: every cross-client
+      // transfer reaches every Finance seat — bell and email — whatever
+      // the Fieldglass registration says. Fire-and-forget, deduped by the
+      // transfer.
+      void trackNotificationWork(notifyFinanceOfTransfer({
+        associateId: id,
+        fromClientId: currentClientId,
+        toClientId: target.clientId,
+        toLocationName: target.name,
+        effectiveDate: input.startedAt,
+        transferId: created.id,
+      }));
+    }
     if (crossClient) {
-      // Finance's Fieldglass handoff: a cross-client move means "close
-      // the old Fieldglass account, open one under the new client".
-      // Fire-and-forget + deduped inside.
-      void maybeNotifyFinanceNewWorker(id);
       // The org-tree fields just changed — snapshot into the
       // effective-dated history so as-of reads stay truthful.
       await recordChange(prisma, {

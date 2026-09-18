@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { createHmac } from 'node:crypto';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { atClient } from '../lib/scope.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireAuth, requireCapability } from '../middleware/auth.js';
@@ -89,9 +90,7 @@ pulseSurveysRouter.post('/pulse-surveys', VIEW_ADMIN, async (req, res) => {
               ...(input.audience === 'BY_DEPARTMENT'
                 ? { departmentId: input.audienceDepartmentId! }
                 : {}),
-              ...(input.audience === 'BY_CLIENT'
-                ? { applications: { some: { clientId: input.audienceClientId! } } }
-                : {}),
+              ...(input.audience === 'BY_CLIENT' ? atClient(input.audienceClientId!) : {}),
             },
           },
         },

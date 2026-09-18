@@ -1,5 +1,6 @@
 import { prisma } from '../db.js';
 import { emitLiveEvent } from './liveEvents.js';
+import { notifyUser } from './notify.js';
 
 /**
  * "Add this worker to Fieldglass" — the handoff between HR and Finance.
@@ -114,6 +115,9 @@ export async function sendToFinance(opts: {
   body: string;
   linkUrl: string;
   category?: string;
+  /** Also email each seat (their per-category email mute still applies) —
+   *  for handoffs Accounts must act on outside Alto, like a transfer. */
+  email?: boolean;
 }): Promise<void> {
   let recipients = await prisma.user.findMany({
     where: { status: 'ACTIVE', role: 'FINANCE_ACCOUNTANT' },
@@ -128,6 +132,20 @@ export async function sendToFinance(opts: {
     });
   }
   if (recipients.length === 0) return;
+  if (opts.email) {
+    // notifyUser writes the same bell row AND sends the email.
+    await Promise.all(
+      recipients.map((u) =>
+        notifyUser(u.id, {
+          subject: opts.subject,
+          body: opts.body,
+          category: opts.category ?? CATEGORY,
+          linkUrl: opts.linkUrl,
+        }),
+      ),
+    );
+    return;
+  }
   await prisma.notification.createMany({
     data: recipients.map((u) => ({
       channel: 'IN_APP' as const,
@@ -254,7 +272,10 @@ export async function maybeNotifyFinanceNewWorker(
     if (!associate || !application || !firstShift) return;
 
     const name = `${associate.firstName} ${associate.lastName}`.trim();
-    const clientName = firstShift.client?.name ?? application.client?.name ?? '—';
+    // The client they work at NOW — after a transfer, their first shift and
+    // their application both sit at the client they left.
+    const current = await currentClientOf(associateId);
+    const clientName = current?.name ?? firstShift.client?.name ?? application.client?.name ?? '—';
     const onboarded = application.approvedAt ?? associate.hireDate;
     const contact = [associate.email, associate.phone].filter(Boolean).join(' · ');
 
@@ -270,5 +291,86 @@ export async function maybeNotifyFinanceNewWorker(
     await sendToFinance({ subject, body, linkUrl });
   } catch {
     // Never let the Fieldglass nudge break an approval or an assignment.
+  }
+}
+
+/**
+ * A cross-client transfer, told to Accounts (every Finance seat — bell AND
+ * email) the moment it's recorded, so the worker moves in Fieldglass too.
+ * Whatever the Fieldglass state:
+ *   - registered under the client they left → close there, add under the
+ *     new client;
+ *   - not marked as added yet → add them under the NEW client (not the old);
+ *   - already registered under the new client → make sure nothing is left
+ *     open under the old one.
+ * The effective date and the new store ride along. Deduped per transfer
+ * (a retried request never double-sends; a second transfer is new news).
+ * The old path only spoke when Fieldglass registration was already on
+ * file, and only in the bell — most transfers reached nobody.
+ */
+export async function notifyFinanceOfTransfer(input: {
+  associateId: string;
+  fromClientId: string;
+  toClientId: string;
+  toLocationName: string;
+  effectiveDate: string;
+  transferId: string;
+}): Promise<void> {
+  try {
+    const linkUrl =
+      `/people?associateId=${input.associateId}&fgClient=${input.toClientId}` +
+      `&fgTransfer=${input.transferId}`;
+    const existing = await prisma.notification.findFirst({
+      where: { category: CATEGORY, linkUrl: { contains: `fgTransfer=${input.transferId}` } },
+      select: { id: true },
+    });
+    if (existing) return;
+
+    const [associate, from, to, registration] = await Promise.all([
+      prisma.associate.findFirst({
+        where: { id: input.associateId, deletedAt: null },
+        select: { firstName: true, lastName: true, email: true, phone: true },
+      }),
+      prisma.client.findUnique({
+        where: { id: input.fromClientId },
+        select: { name: true, fieldglassSiteName: true },
+      }),
+      prisma.client.findUnique({
+        where: { id: input.toClientId },
+        select: { name: true, fieldglassSiteName: true },
+      }),
+      prisma.fieldglassRegistration.findUnique({
+        where: { associateId: input.associateId },
+        select: { clientId: true },
+      }),
+    ]);
+    if (!associate || !from || !to) return;
+    const name = `${associate.firstName} ${associate.lastName}`.trim();
+    const contact = [associate.email, associate.phone].filter(Boolean).join(' · ');
+    // Fieldglass knows sites by their own label when the client has one.
+    const site = (c: { name: string; fieldglassSiteName: string | null }) =>
+      c.fieldglassSiteName ? `${c.name} (Fieldglass site "${c.fieldglassSiteName}")` : c.name;
+    const [y, m, d] = input.effectiveDate.split('-').map(Number);
+    const effective = DATE_FMT.format(new Date(Date.UTC(y!, m! - 1, d!, 12)));
+
+    const todo =
+      registration?.clientId === input.toClientId
+        ? `They're already registered under ${to.name} in Fieldglass — make sure nothing is left open under ${site(from)}.`
+        : registration
+          ? `In Fieldglass: close their worker record under ${site(from)} and add them under ${site(to)}.`
+          : `They aren't marked as added in Fieldglass yet — add them under ${site(to)}, not ${from.name}.`;
+
+    await sendToFinance({
+      subject: `Fieldglass transfer — ${name}: ${from.name} → ${to.name}`,
+      body:
+        `${name} is moving from ${from.name} to ${to.name} (${input.toLocationName}), effective ${effective}. ` +
+        `${todo} ` +
+        (contact ? `Contact: ${contact}. ` : '') +
+        'The Fieldglass queue on your dashboard tracks this until you mark it done.',
+      linkUrl,
+      email: true,
+    });
+  } catch {
+    // Never let the Fieldglass nudge break a transfer.
   }
 }

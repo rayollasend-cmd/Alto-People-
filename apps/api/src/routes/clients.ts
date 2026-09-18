@@ -15,6 +15,7 @@ import {
 } from '@alto-people/shared';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
+import { activeAssociateCountsByClient } from '../lib/associateClients.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import { z } from 'zod';
@@ -162,8 +163,8 @@ clientsRouter.get('/', async (req, res, next) => {
     });
     const ids = rows.map((r) => r.id);
 
-    // Three batched aggregates regardless of N — no per-row queries.
-    const [appCounts, approvedCounts, lastPayrolls] = ids.length
+    // Batched aggregates regardless of N — no per-row queries.
+    const [appCounts, activeCounts, lastPayrolls] = ids.length
       ? await Promise.all([
           prisma.application.groupBy({
             by: ['clientId'],
@@ -174,30 +175,19 @@ clientsRouter.get('/', async (req, res, next) => {
             },
             _count: { _all: true },
           }),
-          prisma.application.groupBy({
-            by: ['clientId'],
-            where: {
-              clientId: { in: ids },
-              status: 'APPROVED',
-              deletedAt: null,
-            },
-            _count: { _all: true },
-          }),
+          // Where people work NOW — a transfer moves them (lib/associateClients).
+          activeAssociateCountsByClient(ids),
           prisma.payrollRun.groupBy({
             by: ['clientId'],
             where: { clientId: { in: ids }, disbursedAt: { not: null } },
             _max: { disbursedAt: true },
           }),
         ])
-      : [[], [], []];
+      : [[], new Map<string, number>(), []];
 
     const appCountByClient = new Map<string, number>();
     for (const r of appCounts) {
       if (r.clientId) appCountByClient.set(r.clientId, r._count._all);
-    }
-    const approvedCountByClient = new Map<string, number>();
-    for (const r of approvedCounts) {
-      if (r.clientId) approvedCountByClient.set(r.clientId, r._count._all);
     }
     const lastPayrollByClient = new Map<string, Date | null>();
     for (const r of lastPayrolls) {
@@ -207,7 +197,7 @@ clientsRouter.get('/', async (req, res, next) => {
     const clients: ClientListItem[] = rows.map((row) => ({
       ...toSummary(row),
       openApplications: appCountByClient.get(row.id) ?? 0,
-      activeAssociateCount: approvedCountByClient.get(row.id) ?? 0,
+      activeAssociateCount: activeCounts.get(row.id) ?? 0,
       lastPayrollDisbursedAt:
         lastPayrollByClient.get(row.id)?.toISOString() ?? null,
     }));

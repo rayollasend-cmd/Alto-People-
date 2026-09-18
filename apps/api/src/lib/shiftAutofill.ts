@@ -9,6 +9,7 @@
 
 import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
+import { atClient } from './scope.js';
 import { notifyUser } from './notify.js';
 import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
 
@@ -62,10 +63,9 @@ export async function runShiftAutofillSweep(
           erasedAt: null,
           separatedAt: null,
           deactivatedAt: null,
-          OR: [
-            { assignments: { some: { endedAt: null, location: { clientId: shift.clientId } } } },
-            { applications: { some: { status: 'APPROVED', deletedAt: null, clientId: shift.clientId } } },
-          ],
+          // At this client now — a transferred associate is theirs, not
+          // the old client's (lib/scope.atClient).
+          AND: [atClient(shift.clientId, { approvedOnly: true })],
           assignedShifts: {
             none: {
               status: { notIn: ['CANCELLED'] },

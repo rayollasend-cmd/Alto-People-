@@ -75,6 +75,7 @@ import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
 import {
   associatesOfClient,
+  atClient,
   effectiveClientIdFilter,
   scopeClients,
   scopeShifts,
@@ -2364,10 +2365,13 @@ schedulingRouter.get('/associates', SCHED_READ, async (req, res, next) => {
 
     // Scope the roster to the selected work-site so the grid rows + the
     // create-dialog picker show only people who actually work there. An
-    // associate "belongs" to a client/location via an APPROVED application
-    // or an open assignment there. Falls back to the org-wide schedulable
-    // set when nothing is selected. Login status deliberately does NOT
-    // gate any branch — see SCHEDULABLE_USER_FILTER.
+    // associate belongs to a client/location by their open assignment
+    // there; only someone with no open assignment anywhere falls back to
+    // their approved application (lib/scope.atClient) — so a transferred
+    // associate leaves the old store's roster and joins the new one. Falls
+    // back to the org-wide schedulable set when nothing is selected. Login
+    // status deliberately does NOT gate any branch — see
+    // SCHEDULABLE_USER_FILTER.
     let where: Prisma.AssociateWhereInput;
     if (teamId) {
       // Tightest scope: a standing shift crew. Membership already implies
@@ -2393,20 +2397,25 @@ schedulingRouter.get('/associates', SCHED_READ, async (req, res, next) => {
     } else if (locationId) {
       where = {
         ...EMPLOYED,
-        AND: [SCHEDULABLE_USER_FILTER],
-        OR: [
-          { applications: { some: { status: 'APPROVED', locationId } } },
-          { assignments: { some: { endedAt: null, locationId } } },
+        AND: [
+          SCHEDULABLE_USER_FILTER,
+          {
+            OR: [
+              { assignments: { some: { endedAt: null, locationId } } },
+              {
+                AND: [
+                  { applications: { some: { status: 'APPROVED', locationId } } },
+                  { assignments: { none: { endedAt: null } } },
+                ],
+              },
+            ],
+          },
         ],
       };
     } else if (clientId) {
       where = {
         ...EMPLOYED,
-        AND: [SCHEDULABLE_USER_FILTER],
-        OR: [
-          { applications: { some: { status: 'APPROVED', clientId } } },
-          { assignments: { some: { endedAt: null, location: { clientId } } } },
-        ],
+        AND: [SCHEDULABLE_USER_FILTER, atClient(clientId, { approvedOnly: true })],
       };
     } else {
       where = ACTIVE_ASSOCIATE_FILTER;
@@ -2509,11 +2518,7 @@ schedulingRouter.post('/roster-order', MANAGE, async (req, res, next) => {
       const roster = await prisma.associate.findMany({
         where: {
           deletedAt: null,
-          AND: [SCHEDULABLE_USER_FILTER],
-          OR: [
-            { applications: { some: { status: 'APPROVED', clientId } } },
-            { assignments: { some: { endedAt: null, location: { clientId } } } },
-          ],
+          AND: [SCHEDULABLE_USER_FILTER, atClient(clientId, { approvedOnly: true })],
         },
         orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
         select: { id: true },
@@ -3857,16 +3862,8 @@ schedulingRouter.get('/me/shifts/:id/swap-candidates', async (req, res, next) =>
         AND: [
           ACTIVE_ASSOCIATE_FILTER,
           { id: { not: user.associateId } },
-          {
-            OR: [
-              { applications: { some: { clientId: shift.clientId, status: 'APPROVED' } } },
-              {
-                assignments: {
-                  some: { endedAt: null, location: { is: { clientId: shift.clientId } } },
-                },
-              },
-            ],
-          },
+          // Placed at THIS client now (a transfer moves them) — lib/scope.
+          atClient(shift.clientId, { approvedOnly: true }),
         ],
       },
       select: { id: true, firstName: true, lastName: true },

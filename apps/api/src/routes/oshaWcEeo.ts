@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { atClient } from '../lib/scope.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyAllAdmins, notifyUser } from '../lib/notify.js';
 
@@ -365,14 +366,14 @@ oshaWcEeoRouter.put('/eeo/associates/:id', MANAGE_COMP, async (req, res) => {
  */
 oshaWcEeoRouter.get('/eeo/report', VIEW_COMP, async (req, res) => {
   const clientId = z.string().uuid().parse(req.query.clientId);
-  // We approximate "associates of a client" via Application linkage; an
-  // associate may have applications across clients. Phase 76's
-  // ClientPortal scoping already takes this approach.
+  // "Associates of a client": where they work now — an open assignment
+  // there, else (none open) their application there (lib/scope.atClient),
+  // so a transferred associate reports under the client they moved to.
   const associates = await prisma.associate.findMany({
     take: 1000,
     where: {
       deletedAt: null,
-      applications: { some: { clientId } },
+      ...atClient(clientId),
     },
     include: { eeo: true },
   });

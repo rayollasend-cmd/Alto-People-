@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { atClient } from '../lib/scope.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import { notifyUser } from '../lib/notify.js';
@@ -195,9 +196,8 @@ directoryAndCommsRouter.post(
     // Resolve recipients via Associate ↔ User join, applying targeting.
     const associateWhere: Prisma.AssociateWhereInput = {
       deletedAt: null,
-      ...(b.clientId
-        ? { applications: { some: { clientId: b.clientId } } }
-        : {}),
+      // The client's people now — a transfer moves them (lib/scope.atClient).
+      ...(b.clientId ? atClient(b.clientId) : {}),
       ...(b.departmentId ? { departmentId: b.departmentId } : {}),
       ...(b.costCenterId ? { costCenterId: b.costCenterId } : {}),
     };

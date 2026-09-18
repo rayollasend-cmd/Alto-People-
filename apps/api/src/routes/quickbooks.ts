@@ -10,6 +10,7 @@ import {
   type QboSyncResponse,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { atClient } from '../lib/scope.js';
 import { env } from '../config/env.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -377,7 +378,8 @@ quickbooksRouter.post('/sync-associates', MANAGE, async (req, res, next) => {
       take: 1000,
       where: {
         deletedAt: null,
-        applications: { some: { clientId, deletedAt: null } },
+        // Working at this client now — a transfer moves them (lib/scope).
+        ...atClient(clientId),
       },
       select: {
         id: true,

@@ -80,3 +80,57 @@ export async function clientNamesById(
   });
   return new Map(rows.map((r) => [r.id, r.name]));
 }
+
+/**
+ * Active associates per client, for the client list — placed by the same
+ * rule as primaryClientsForAssociates: an open assignment's client, else
+ * (no open assignment) the newest approved application's. Active = not
+ * separated, deactivated or erased.
+ *
+ * It used to count APPROVED applications filed under each client, so a
+ * cross-client transfer (the assignment moves; the application stays) was
+ * counted at the old client forever and never at the new one — and
+ * separated people kept counting too. Two bounded reads regardless of the
+ * number of clients.
+ */
+export async function activeAssociateCountsByClient(
+  clientIds: string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const ids = [...new Set(clientIds)];
+  if (ids.length === 0) return out;
+  const rows = await prisma.associate.findMany({
+    where: {
+      deletedAt: null,
+      separatedAt: null,
+      deactivatedAt: null,
+      OR: [
+        { assignments: { some: { endedAt: null, location: { clientId: { in: ids } } } } },
+        {
+          applications: { some: { status: 'APPROVED', deletedAt: null, clientId: { in: ids } } },
+          assignments: { none: { endedAt: null } },
+        },
+      ],
+    },
+    select: {
+      assignments: {
+        where: { endedAt: null },
+        orderBy: { startedAt: 'desc' },
+        take: 1,
+        select: { location: { select: { clientId: true } } },
+      },
+      applications: {
+        where: { status: 'APPROVED', deletedAt: null },
+        orderBy: { approvedAt: 'desc' },
+        take: 1,
+        select: { clientId: true },
+      },
+    },
+  });
+  const wanted = new Set(ids);
+  for (const r of rows) {
+    const clientId = r.assignments[0]?.location.clientId ?? r.applications[0]?.clientId ?? null;
+    if (clientId && wanted.has(clientId)) out.set(clientId, (out.get(clientId) ?? 0) + 1);
+  }
+  return out;
+}

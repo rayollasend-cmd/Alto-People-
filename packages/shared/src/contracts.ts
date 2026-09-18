@@ -100,10 +100,10 @@ export type ClientSummary = z.infer<typeof ClientSummarySchema>;
 // lastPayrollDisbursedAt is the most recent PayrollRun that actually
 // settled for this client; null when no run has ever disbursed.
 //
-// Phase 72 — activeAssociateCount counts Application rows that have
-// reached APPROVED. It's a coarse proxy for "successfully onboarded";
-// dedup-by-associate isn't perfect but the same associate having two
-// approved apps for the same client is a very rare edge case.
+// activeAssociateCount — the associates working at the client now: an open
+// assignment there, else (none open) their approved application there;
+// separated / deactivated people excluded. A cross-client transfer moves
+// them (lib/associateClients.activeAssociateCountsByClient).
 export const ClientListItemSchema = ClientSummarySchema.extend({
   openApplications: z.number().int().nonnegative(),
   activeAssociateCount: z.number().int().nonnegative(),

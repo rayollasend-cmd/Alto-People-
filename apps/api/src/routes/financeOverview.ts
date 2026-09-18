@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { primaryClientsForAssociates } from '../lib/associateClients.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
 import {
@@ -251,6 +252,10 @@ financeOverviewRouter.get(
               },
             })
           : [];
+      // Where each candidate works NOW: a transfer before they were added
+      // to Fieldglass means "add under the new client" — their first shift
+      // and their application both sit at the client they left.
+      const fgCurrent = await primaryClientsForAssociates(fgCandidates.map((a) => a.associateId));
       const firstShiftByAssociate = new Map<string, (typeof fgShifts)[number]>();
       for (const s of fgShifts) {
         if (s.assignedAssociateId && !firstShiftByAssociate.has(s.assignedAssociateId)) {
@@ -370,8 +375,14 @@ financeOverviewRouter.get(
             kind: 'add' as const,
             associateId: a.associateId,
             name: `${a.associate.firstName} ${a.associate.lastName}`.trim(),
-            clientName: shift.client?.name ?? a.client?.name ?? null,
-            fromClientName: null as string | null,
+            clientName: fgCurrent.get(a.associateId)?.clientName ?? shift.client?.name ?? a.client?.name ?? null,
+            // Moved before being added: say where from, so nobody adds them
+            // under the client they left.
+            fromClientName: (() => {
+              const now = fgCurrent.get(a.associateId)?.clientName;
+              const started = shift.client?.name ?? a.client?.name ?? null;
+              return now && started && now !== started ? started : null;
+            })() as string | null,
             position: shift.position as string | null,
             firstShiftAt: shift.startsAt.toISOString() as string | null,
             approvedAt: a.approvedAt ? a.approvedAt.toISOString() : null,

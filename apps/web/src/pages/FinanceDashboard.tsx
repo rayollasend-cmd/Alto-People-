@@ -511,6 +511,16 @@ export function FinanceDashboard() {
                                 </span>
                               )}
                               {w.kind === 'transfer' && ' · '}
+                              {/* Moved before being added to Fieldglass —
+                                  add under where they work now. */}
+                              {w.kind === 'add' && w.fromClientName && (
+                                <>
+                                  <span className="font-medium text-warning">
+                                    {t('fin.fgMovedLine', { from: w.fromClientName, to: w.clientName ?? '—' })}
+                                  </span>
+                                  {' · '}
+                                </>
+                              )}
                               <span className={cn(soon && 'font-medium text-warning')}>
                                 {w.firstShiftAt
                                   ? t('fin.fgFirstShift', { date: fmtDate(w.firstShiftAt) })

@@ -6,6 +6,7 @@ import {
   type DirectoryStatus,
 } from '@alto-people/shared';
 import { prisma } from '../db.js';
+import { atClient } from '../lib/scope.js';
 import { requireCapability } from '../middleware/auth.js';
 import { computePercent } from '../lib/checklist.js';
 import { profilePhotoUrlFor } from '../lib/profilePhotoUrl.js';
@@ -78,13 +79,9 @@ directoryRouter.get('/directory', VIEW, async (req, res, next) => {
               },
             }
           : {}),
-        ...(filters.clientId
-          ? {
-              applications: {
-                some: { clientId: filters.clientId, deletedAt: null },
-              },
-            }
-          : {}),
+        // Where they work now (a transfer moves them), else — nobody
+        // placed yet — the client they applied to (lib/scope.atClient).
+        ...(filters.clientId ? atClient(filters.clientId) : {}),
         ...(filters.q
           ? {
               OR: [
