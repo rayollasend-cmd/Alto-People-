@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { invalidateUserCache } from '../middleware/auth.js';
 
 /**
@@ -8,10 +8,10 @@ import { invalidateUserCache } from '../middleware/auth.js';
  * associate fully out of circulation:
  *
  *   - deactivatedAt / reason stamped (byUserId null = system sweep),
- *   - future ASSIGNED shifts released back to OPEN (the no-show engine
- *     must not accrue points against someone who isn't supposed to be
- *     there, and supervisors can re-cover the slots),
- *   - pending open-shift claims expired,
+ *   - future shifts released (releaseFutureShifts: ASSIGNED back to OPEN
+ *     so supervisors can re-cover the slots and the no-show engine never
+ *     accrues points against someone who isn't supposed to be there;
+ *     DRAFT assignments unassigned) and pending pickup claims expired,
  *   - login DISABLED with live sessions killed (tokenVersion bump).
  *
  * Directory INACTIVE display and the kiosk punch rejection are both
@@ -23,6 +23,35 @@ import { invalidateUserCache } from '../middleware/auth.js';
  * deactivated. User-cache invalidation happens here so no caller can
  * forget it.
  */
+/**
+ * Take someone who no longer works here off every shift still ahead of
+ * them — the one rule shared by deactivation, separation completion, and
+ * the one-off cleanup script. Published assignments go back to OPEN so a
+ * supervisor can re-cover the slot; DRAFT assignments are unassigned and
+ * stay drafts (the manager's plan, minus the person). Pending pickup
+ * requests expire. Past and in-progress shifts are history — untouched.
+ */
+export async function releaseFutureShifts(
+  tx: Prisma.TransactionClient,
+  associateId: string,
+  now: Date,
+  note: string,
+): Promise<{ releasedShifts: number; expiredClaims: number }> {
+  const published = await tx.shift.updateMany({
+    where: { assignedAssociateId: associateId, status: 'ASSIGNED', startsAt: { gt: now } },
+    data: { status: 'OPEN', assignedAssociateId: null, assignedAt: null },
+  });
+  const drafts = await tx.shift.updateMany({
+    where: { assignedAssociateId: associateId, status: 'DRAFT', startsAt: { gt: now } },
+    data: { assignedAssociateId: null, assignedAt: null },
+  });
+  const expired = await tx.openShiftClaim.updateMany({
+    where: { associateId, status: 'PENDING' },
+    data: { status: 'EXPIRED', decisionNote: note },
+  });
+  return { releasedShifts: published.count + drafts.count, expiredClaims: expired.count };
+}
+
 export interface DeactivationResult {
   releasedShifts: number;
   expiredClaims: number;
@@ -51,20 +80,14 @@ export async function executeDeactivation(
         deactivationReason: opts.reason,
       },
     });
-    const released = await tx.shift.updateMany({
-      where: {
-        assignedAssociateId: opts.associateId,
-        status: 'ASSIGNED',
-        startsAt: { gt: now },
-      },
-      data: { status: 'OPEN', assignedAssociateId: null },
-    });
-    releasedShifts = released.count;
-    const expired = await tx.openShiftClaim.updateMany({
-      where: { associateId: opts.associateId, status: 'PENDING' },
-      data: { status: 'EXPIRED', decisionNote: 'Associate deactivated.' },
-    });
-    expiredClaims = expired.count;
+    // Drafts assigned to them used to survive deactivation and keep the
+    // person on next week's schedule; the shared rule releases both.
+    ({ releasedShifts, expiredClaims } = await releaseFutureShifts(
+      tx,
+      opts.associateId,
+      now,
+      'Associate deactivated.',
+    ));
     // Same access-revocation pattern as separation completion.
     const users = await tx.user.findMany({
       where: {

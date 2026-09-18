@@ -228,15 +228,36 @@ const SCHEDULABLE_USER_FILTER: Prisma.AssociateWhereInput = {
   ],
 };
 
-const ACTIVE_ASSOCIATE_FILTER: Prisma.AssociateWhereInput = {
+// Employment-state stamps beat everything: a separated or manually-
+// deactivated associate is out of the pool even when they have no portal
+// account at all (the { user: null } arm of SCHEDULABLE_USER_FILTER would
+// otherwise keep them schedulable forever — which is exactly how kiosk-only
+// associates stayed on store rosters after deactivation). Rehire
+// (re-invite) clears separatedAt; Reactivate clears deactivatedAt.
+const EMPLOYED: Prisma.AssociateWhereInput = {
   deletedAt: null,
-  // Employment-state stamps beat everything: a separated or manually-
-  // deactivated associate is out of the pool even when they have no
-  // portal account at all (the { user: null } arm below would otherwise
-  // keep them schedulable forever). Rehire (re-invite) clears separatedAt;
-  // Reactivate clears deactivatedAt.
   separatedAt: null,
   deactivatedAt: null,
+};
+
+/** Refuse to put someone who no longer works here on a shift. */
+function assertEmployed(a: {
+  firstName: string;
+  lastName: string;
+  deactivatedAt: Date | null;
+  separatedAt: Date | null;
+}): void {
+  if (a.deactivatedAt || a.separatedAt) {
+    throw new HttpError(
+      409,
+      'associate_inactive',
+      `${a.firstName} ${a.lastName} is ${a.separatedAt ? 'separated' : 'deactivated'} — reactivate them before scheduling.`,
+    );
+  }
+}
+
+const ACTIVE_ASSOCIATE_FILTER: Prisma.AssociateWhereInput = {
+  ...EMPLOYED,
   AND: [SCHEDULABLE_USER_FILTER],
   OR: [
     { applications: { some: { status: 'APPROVED' } } },
@@ -2325,13 +2346,13 @@ schedulingRouter.get('/associates', SCHED_READ, async (req, res, next) => {
         return;
       }
       where = {
-        deletedAt: null,
+        ...EMPLOYED,
         AND: [SCHEDULABLE_USER_FILTER],
         teamMemberships: { some: { teamId } },
       };
     } else if (locationId) {
       where = {
-        deletedAt: null,
+        ...EMPLOYED,
         AND: [SCHEDULABLE_USER_FILTER],
         OR: [
           { applications: { some: { status: 'APPROVED', locationId } } },
@@ -2340,7 +2361,7 @@ schedulingRouter.get('/associates', SCHED_READ, async (req, res, next) => {
       };
     } else if (clientId) {
       where = {
-        deletedAt: null,
+        ...EMPLOYED,
         AND: [SCHEDULABLE_USER_FILTER],
         OR: [
           { applications: { some: { status: 'APPROVED', clientId } } },
@@ -2709,20 +2730,32 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
     // Names for the skip report + notifications, and a validity check.
     const associates = await prisma.associate.findMany({
       where: { id: { in: associateIds }, deletedAt: null },
-      select: { id: true, firstName: true, lastName: true },
+      select: { id: true, firstName: true, lastName: true, deactivatedAt: true, separatedAt: true },
     });
+    const inactive = associates.filter((a) => a.deactivatedAt || a.separatedAt);
     const nameById = new Map(
-      associates.map((a) => [a.id, `${a.firstName} ${a.lastName}`]),
+      associates
+        .filter((a) => !a.deactivatedAt && !a.separatedAt)
+        .map((a) => [a.id, `${a.firstName} ${a.lastName}`]),
     );
 
-    // Employees that don't resolve to a real associate are skipped up front;
-    // the overlap conflict check happens INSIDE the transaction (below) so it
-    // and the createMany are atomic — otherwise a concurrent assign between a
-    // pre-check and the insert could slip a double-booking through.
+    // Employees that don't resolve to a real, still-employed associate are
+    // skipped up front; the overlap conflict check happens INSIDE the
+    // transaction (below) so it and the createMany are atomic — otherwise a
+    // concurrent assign between a pre-check and the insert could slip a
+    // double-booking through.
     const candidateIds = associateIds.filter((id) => nameById.has(id));
-    const notFoundSkips = associateIds
-      .filter((id) => !nameById.has(id))
-      .map((id) => ({ associateId: id, associateName: 'Unknown', reason: 'not_found' }));
+    const inactiveIds = new Set(inactive.map((a) => a.id));
+    const notFoundSkips = [
+      ...inactive.map((a) => ({
+        associateId: a.id,
+        associateName: `${a.firstName} ${a.lastName}`,
+        reason: 'inactive',
+      })),
+      ...associateIds
+        .filter((id) => !nameById.has(id) && !inactiveIds.has(id))
+        .map((id) => ({ associateId: id, associateName: 'Unknown', reason: 'not_found' })),
+    ];
 
     const baseData = {
       clientId: input.clientId,
@@ -3268,6 +3301,7 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
       where: { id: parsed.data.associateId, deletedAt: null },
     });
     if (!associate) throw new HttpError(404, 'associate_not_found', 'Associate not found');
+    assertEmployed(associate);
 
     // Conflict + unavailability checks + write in one transaction so two
     // managers can't assign the same associate to overlapping shifts at
@@ -4279,6 +4313,11 @@ schedulingRouter.post('/open-shift-claims/:id/approve', MANAGE, async (req, res,
     if (claim.status !== 'PENDING') {
       throw new HttpError(409, 'not_pending', `Request is ${claim.status}`);
     }
+    const claimant = await prisma.associate.findUnique({
+      where: { id: claim.associateId },
+      select: { firstName: true, lastName: true, deactivatedAt: true, separatedAt: true },
+    });
+    if (claimant) assertEmployed(claimant);
 
     // Atomic: CAS the claim, guarded-claim the shift (it must STILL be
     // open+unassigned — mirrors the auto-scheduler's TOCTOU guard), verify
@@ -5261,6 +5300,13 @@ schedulingRouter.post('/swap-requests/:id/manager-approve', MANAGE, async (req, 
         'not_peer_accepted',
         'Counterparty must accept the swap before HR approval'
       );
+    }
+    // Neither side of a swap may be someone who no longer works here.
+    for (const who of await prisma.associate.findMany({
+      where: { id: { in: [swap.requesterAssociateId, swap.counterpartyAssociateId] } },
+      select: { firstName: true, lastName: true, deactivatedAt: true, separatedAt: true },
+    })) {
+      assertEmployed(who);
     }
 
     // Declared unavailability blocks the receiving side of each leg — PTO

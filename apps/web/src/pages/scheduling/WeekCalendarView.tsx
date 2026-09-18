@@ -13,6 +13,10 @@ import {
 import { VirtualizedRows } from './VirtualizedRows';
 import { AlertTriangle, Plus, GripVertical, UserMinus } from 'lucide-react';
 import type { AssociateLite, Shift } from '@alto-people/shared';
+
+/** A grid row: a roster associate, or someone assigned this week who is no
+ *  longer on the active roster (flagged, never silently dropped). */
+type RosterRow = AssociateLite & { offRoster?: boolean };
 import { cn } from '@/lib/cn';
 import { useLaborCostVisible } from '@/lib/useLaborCostVisible';
 import { colorForPosition } from '@/lib/positionColor';
@@ -377,16 +381,28 @@ export function WeekCalendarView({
   // membership check keeps an associate whose only shift sits on a padded
   // fetch day from getting a phantom empty row.
   // showAllAssociates = the full roster (Sling default for managers).
-  const visibleAssociates = useMemo(() => {
-    if (showAllAssociates) return associates;
+  const visibleAssociates = useMemo<RosterRow[]>(() => {
     const daySet = new Set(dayKeys);
-    const withShifts = new Set<string>();
+    const inView = new Map<string, string>();
     for (const s of shifts) {
       if (!s.assignedAssociateId) continue;
       if (!daySet.has(zonedDayKey(s.startsAt, displayTimeZone))) continue;
-      withShifts.add(s.assignedAssociateId);
+      if (!inView.has(s.assignedAssociateId)) inView.set(s.assignedAssociateId, s.assignedAssociateName ?? '');
     }
-    return associates.filter((a) => withShifts.has(a.id));
+    const base = showAllAssociates ? associates : associates.filter((a) => inView.has(a.id));
+    // Assigned in this week but not on the active roster — deactivated or
+    // separated after these shifts, or covering from another site. Their
+    // shifts still count in the day totals, so they keep a (flagged) row
+    // instead of vanishing: history stays readable and a stray future
+    // assignment stays visible to be re-covered.
+    const rosterIds = new Set(associates.map((a) => a.id));
+    const offRoster: RosterRow[] = [...inView]
+      .filter(([id]) => !rosterIds.has(id))
+      .map(([id, name]) => {
+        const [first = '', ...rest] = name.trim().split(/\s+/);
+        return { id, firstName: first, lastName: rest.join(' '), email: '', offRoster: true };
+      });
+    return [...base, ...offRoster];
   }, [associates, shifts, showAllAssociates, dayKeys, displayTimeZone]);
 
   const today = startOfDay(new Date());
@@ -685,7 +701,7 @@ export function WeekCalendarView({
                 nearOT={nearOT}
                 highlighted={a.id === highlightAssociateId}
                 colsStyle={colsStyle}
-                reorderArmed={!!onReorderRow}
+                reorderArmed={!!onReorderRow && !a.offRoster}
                 rowDragActive={draggingRowId !== null}
                 onRemoveFromCrew={
                   onRemoveFromCrew ? () => onRemoveFromCrew(a.id) : undefined
@@ -879,7 +895,7 @@ const Row = memo(function Row({
   onRemoveFromCrew,
   onSelectRow,
 }: {
-  associate: AssociateLite;
+  associate: RosterRow;
   minutes: number;
   /** The counted shifts behind `minutes`, one line each — the receipts. */
   breakdown?: string[] | null;
@@ -911,7 +927,8 @@ const Row = memo(function Row({
   });
   const rowDrop = useDroppable({
     id: `rowdrop:${associate.id}`,
-    disabled: !rowDragActive,
+    // Off-roster rows sit outside the saved order — never a drop target.
+    disabled: !rowDragActive || !!associate.offRoster,
   });
   const dragStyle: React.CSSProperties = rowDrag.transform
     ? {
@@ -978,6 +995,14 @@ const Row = memo(function Row({
               title={`${associate.firstName} ${associate.lastName}`}
             >
               {associate.firstName} {associate.lastName}
+            </div>
+          )}
+          {associate.offRoster && (
+            <div
+              className="text-2xs text-warning/80"
+              title="Not on this store's active roster — deactivated, separated, or from another site. Shown because they have shifts this week."
+            >
+              Off the roster
             </div>
           )}
           <div className="text-2xs tabular-nums">

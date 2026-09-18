@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { invalidateUserCache, requireCapability } from '../middleware/auth.js';
+import { releaseFutureShifts } from '../lib/deactivation.js';
 import { purgeAssociateBiometrics } from '../lib/kioskMaintenance.js';
 import { maybeNotifyFinanceDeparture } from '../lib/fieldglassNotify.js';
 import { notifyAllAdmins, notifyManager, trackNotificationWork } from '../lib/notify.js';
@@ -261,6 +262,10 @@ separation119Router.post(
         where: { associateId: existing.associateId, endedAt: null },
         data: { endedAt: existing.lastDayWorked },
       });
+      // Off every shift still ahead of them — completing a separation used
+      // to leave the person assigned on the schedule indefinitely (same
+      // rule as deactivation).
+      await releaseFutureShifts(tx, existing.associateId, new Date(), 'Associate separated.');
       // Actually revoke access: disable the login and kill live sessions.
       const users = await tx.user.findMany({
         where: { associateId: existing.associateId, deletedAt: null, status: { not: 'DISABLED' } },
