@@ -151,3 +151,27 @@ describe("the supervisor's fill rate is the store manager's", () => {
     expect((await sup.get('/scheduling/kpis?week=next')).status).toBe(400);
   });
 });
+
+describe("the schedule grid's strip counts the days on screen", () => {
+  it("cuts the visible days on the store's calendar — a 10 PM Friday shift is in its Friday's week", async () => {
+    const { client, shift } = await pacificStore();
+    const { user } = await createUser({ role: 'SHIFT_SUPERVISOR', clientId: client.id });
+    const sup = await loginAs(user.email);
+    // The week of Sat Oct 3 – Fri Oct 9 holds the Friday 10 PM Pacific shift…
+    const week = await sup.get('/scheduling/kpis?fromDay=2026-10-03&toDay=2026-10-09');
+    expect(week.status).toBe(200);
+    expect(week.body).toMatchObject({
+      from: '2026-10-03T07:00:00.000Z',
+      to: '2026-10-10T07:00:00.000Z',
+      openShifts: 1,
+    });
+    // …and the next week doesn't, though it starts Saturday 1 AM Eastern.
+    const next = await sup.get('/scheduling/kpis?fromDay=2026-10-10&toDay=2026-10-16');
+    expect(next.body.openShifts).toBe(0);
+    expect(shift.startsAt.toISOString()).toBe('2026-10-10T05:00:00.000Z');
+
+    expect((await sup.get('/scheduling/kpis?fromDay=2026-10-09&toDay=2026-10-03')).status).toBe(400);
+    expect((await sup.get('/scheduling/kpis?fromDay=2026-10-03&toDay=2027-01-03')).status).toBe(400);
+    expect((await sup.get('/scheduling/kpis?fromDay=Oct-3')).status).toBe(400);
+  });
+});

@@ -109,7 +109,7 @@ import { renderSchedulePdf } from '../lib/scheduleReport.js';
 import { mintCalendarToken } from '../lib/calendarFeed.js';
 import { env } from '../config/env.js';
 import { runShiftAutofillSweep } from '../lib/shiftAutofill.js';
-import { ORG_TZ, portalCalendar, storeCalendar } from '../lib/portalMetrics.js';
+import { ORG_TZ, nextKey, portalCalendar, storeCalendar } from '../lib/portalMetrics.js';
 
 export const schedulingRouter = Router();
 
@@ -742,12 +742,15 @@ schedulingRouter.get('/shifts', SCHED_READ, async (req, res, next) => {
 /**
  * GET /scheduling/kpis?from=ISO&to=ISO[&clientId=UUID]
  * GET /scheduling/kpis?week=this|last[&clientId=UUID]
+ * GET /scheduling/kpis?fromDay=YYYY-MM-DD&toDay=YYYY-MM-DD[&clientId=UUID]
  *
  * Phase 50 — top-of-page signal strip. Defaults to the current
  * Sunday→Saturday calendar week if from/to are missing. `week` asks for
  * the workweek (Sat→Fri) on the client's store calendar — the week the
  * client portal grades, so a supervisor's "fill rate this week" is the
- * store manager's. Returns:
+ * store manager's. `fromDay`/`toDay` (inclusive) are days on that same
+ * store calendar — the days a schedule grid shows, whose columns are store
+ * days — so the strip counts exactly the shifts on screen. Returns:
  *   - openShifts        — count of OPEN status (unfilled, published)
  *   - assignedShifts    — count of ASSIGNED + COMPLETED
  *   - totalShifts       — non-cancelled count in the window
@@ -765,6 +768,12 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
     if (weekParam !== undefined && weekParam !== 'this' && weekParam !== 'last') {
       throw new HttpError(400, 'invalid_week', '`week` must be "this" or "last"');
     }
+    const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
+    const fromDay = req.query.fromDay?.toString();
+    const toDay = req.query.toDay?.toString() ?? fromDay;
+    if (fromDay !== undefined && (!DAY_KEY.test(fromDay) || !DAY_KEY.test(toDay!) || toDay! < fromDay)) {
+      throw new HttpError(400, 'invalid_days', '`fromDay`/`toDay` must be YYYY-MM-DD, in order');
+    }
     const now = new Date();
 
     // Tenant clamp FIRST — the old spread let a bounded caller's clientId
@@ -774,14 +783,22 @@ schedulingRouter.get('/kpis', MANAGE_OR_EXEC, async (req, res, next) => {
 
     let from: Date;
     let to: Date;
-    if (weekParam) {
-      // The store's workweek: its zone when the client's stores share one.
+    if (weekParam || fromDay) {
+      // The store's calendar: its zone when the client's stores share one.
       const cal = effectiveKpiClient
         ? await portalCalendar({ clientId: effectiveKpiClient, location: null })
         : storeCalendar(ORG_TZ);
-      const anchor = weekParam === 'last' ? new Date(cal.weekStart(now).getTime() - 1) : now;
-      from = cal.weekStart(anchor);
-      to = cal.weekEnd(anchor);
+      if (fromDay) {
+        from = cal.midnight(fromDay);
+        to = cal.midnight(nextKey(toDay!, 1));
+        if (to.getTime() - from.getTime() > 62 * 86_400_000) {
+          throw new HttpError(400, 'range_too_long', 'Pick 62 days or fewer.');
+        }
+      } else {
+        const anchor = weekParam === 'last' ? new Date(cal.weekStart(now).getTime() - 1) : now;
+        from = cal.weekStart(anchor);
+        to = cal.weekEnd(anchor);
+      }
     } else {
       // Default window: Sunday 00:00 → next Sunday 00:00 (local time).
       const defaultFrom = new Date(now);

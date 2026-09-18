@@ -106,10 +106,16 @@ export function getSchedulingKpis(
     /** The workweek (Sat→Fri) on the client's store calendar — the week
      *  the client portal grades. Takes the place of from/to. */
     week?: 'this' | 'last';
+    /** Inclusive days (YYYY-MM-DD) on that same store calendar — the days a
+     *  schedule grid shows. Takes the place of from/to. */
+    fromDay?: string;
+    toDay?: string;
   } = {}
 ): Promise<SchedulingKpis> {
   const p = new URLSearchParams();
   if (filters.week) p.set('week', filters.week);
+  if (filters.fromDay) p.set('fromDay', filters.fromDay);
+  if (filters.toDay) p.set('toDay', filters.toDay);
   if (filters.from) p.set('from', filters.from);
   if (filters.to) p.set('to', filters.to);
   if (filters.clientId) p.set('clientId', filters.clientId);

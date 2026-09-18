@@ -138,6 +138,7 @@ import {
   shiftWeek,
   startOfWeekMonday,
 } from './WeekCalendarView';
+import { kpiWindow } from './kpiWindow';
 import { DayCalendarView } from './DayCalendarView';
 import { TimeGridWeekView } from './TimeGridWeekView';
 import { SelectionToolbar } from './SelectionToolbar';
@@ -1006,15 +1007,15 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       ? hasCapability(user.role, 'view:executive') ||
         hasCapability(user.role, 'process:payroll')
       : false);
+  // Counted on the STORE's calendar, server-side (see kpiWindow).
+  const kpi = useMemo(() => kpiWindow({ view, weekStart, weekDayCount }), [view, weekStart, weekDayCount]);
   const kpiSeq = useRef(0);
   useEffect(() => {
     if (!canSeeKpis) return;
     const seq = ++kpiSeq.current;
     const t = window.setTimeout(() => {
       getSchedulingKpis({
-        ...(view === 'week'
-          ? { from: weekStart.toISOString(), to: weekEnd.toISOString() }
-          : {}),
+        ...kpi.query,
         ...(clientFilter ? { clientId: clientFilter } : {}),
       })
         .then((k) => {
@@ -1025,7 +1026,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
         });
     }, 300);
     return () => window.clearTimeout(t);
-  }, [shifts, view, weekStart, weekEnd, clientFilter, canSeeKpis]);
+  }, [shifts, kpi, clientFilter, canSeeKpis]);
 
   // Last position used in the create dialog this session — most weeks
   // schedule one role at a time, so it prefills the next create.
@@ -2461,7 +2462,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
       {canSeeKpis && (
         <div className="no-print">
-          <KpiStrip kpis={kpis} />
+          <KpiStrip kpis={kpis} period={kpi.period} />
         </div>
       )}
 
@@ -3780,7 +3781,7 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
 
 /* ===== KPI strip ========================================================== */
 
-function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
+function KpiStrip({ kpis, period }: { kpis: SchedulingKpis | null; period: string }) {
   if (!kpis) {
     return (
       <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -3804,7 +3805,7 @@ function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
   return (
     <div className={cn('mb-5 grid grid-cols-2 gap-3', cost !== null ? 'md:grid-cols-5' : 'md:grid-cols-4')}>
       <StatTile
-        label="Fill rate · this week"
+        label={`Fill rate · ${period}`}
         value={noShifts ? '—' : `${kpis.fillRatePercent}%`}
         meter={
           noShifts
@@ -3840,7 +3841,7 @@ function KpiStrip({ kpis }: { kpis: SchedulingKpis | null }) {
           sub={
             kpis.shiftsWithoutRate !== null && kpis.shiftsWithoutRate > 0
               ? `${kpis.shiftsWithoutRate} without a rate`
-              : 'This week'
+              : period.charAt(0).toUpperCase() + period.slice(1)
           }
         />
       )}
