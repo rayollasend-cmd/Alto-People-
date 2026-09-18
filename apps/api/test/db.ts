@@ -65,7 +65,30 @@ const TABLES = [
   'User',
   'Associate',
   'Client',
+  // No FK path from any table above reaches these, so CASCADE never
+  // cleared them and rows piled up across tests (a leftover ClientProspect
+  // flaked the executive command-center test). src/__tests__/
+  // testIsolation.test.ts fails when a new table lands here unlisted.
+  'Asset',
+  'ClientProspect',
+  'ExecDecisionState',
+  'ExecTarget',
+  'LocalTaxRule',
+  'SchedulingRosterOrder',
+  'Skill',
+  'SubmitterProfile',
+  'TimesheetFiling',
+  'WcClassCode',
+  'WebAuthnChallenge',
+  'Worktag',
+  'WorktagCategory',
 ] as const;
+
+/** Tables truncateAll clears (CASCADE reaches everything that references them). */
+export const TRUNCATED_TABLES: readonly string[] = TABLES;
+
+/** Reference data a migration seeds — never truncated. */
+export const PRESERVED_TABLES: readonly string[] = ['payroll_config'];
 
 export async function truncateAll(): Promise<void> {
   // Wait for any in-flight fire-and-forget audit writes from the previous
