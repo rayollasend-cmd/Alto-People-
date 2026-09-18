@@ -1046,3 +1046,118 @@ describe('the day roster (the supervisor Today page)', () => {
     expect((await (await loginAs(floor.email)).get('/client-portal/day')).status).toBe(403);
   });
 });
+
+describe('the client bill rate is never the supervisor’s', () => {
+  // Shift.hourlyRate (and the template / rate-default bill rates) is the
+  // revenue side of the contract — owner decision 2026-09-17. Responses
+  // null it for the supervisor; their writes ignore it, so an edit can't
+  // clear a rate they can't see. Pay rates stay theirs.
+  const inDays = (d: number, h = 0) => new Date(Date.now() + (d * 24 + h) * 3_600_000);
+
+  it('shifts: hidden in reads, ignored on create, preserved on edit', async () => {
+    const { mine, sup } = await seedTwoClients();
+    const office = await prisma.shift.create({
+      data: {
+        clientId: mine.id,
+        position: 'Server',
+        startsAt: inDays(3),
+        endsAt: inDays(3, 8),
+        status: 'OPEN',
+        hourlyRate: 30,
+        payRate: 17,
+        publishedAt: new Date(),
+      },
+    });
+
+    const list = await sup.get(`/scheduling/shifts?from=${inDays(2).toISOString()}&to=${inDays(4).toISOString()}`);
+    expect(list.status).toBe(200);
+    const seen = list.body.shifts.find((s: { id: string }) => s.id === office.id);
+    expect(seen.hourlyRate).toBeNull();
+    expect(seen.payRate).toBe(17);
+
+    const edit = await sup.patch(`/scheduling/shifts/${office.id}`).send({ hourlyRate: null, notes: 'bring aprons' });
+    expect(edit.status).toBe(200);
+    expect(edit.body.hourlyRate).toBeNull();
+    const kept = await prisma.shift.findUniqueOrThrow({ where: { id: office.id } });
+    expect(Number(kept.hourlyRate)).toBe(30);
+    expect(kept.notes).toBe('bring aprons');
+
+    const created = await sup.post('/scheduling/shifts').send({
+      clientId: mine.id,
+      position: 'Server',
+      startsAt: inDays(5).toISOString(),
+      endsAt: inDays(5, 8).toISOString(),
+      hourlyRate: 99,
+      payRate: 18,
+    });
+    expect(created.status).toBe(201);
+    expect(created.body.hourlyRate).toBeNull();
+    expect(created.body.payRate).toBe(18);
+    const row = await prisma.shift.findUniqueOrThrow({ where: { id: created.body.id } });
+    // Null → the statement prices it at the client's per-position default.
+    expect(row.hourlyRate).toBeNull();
+
+    // The office still sees and owns it.
+    const { user: hrUser } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hr = await loginAs(hrUser.email);
+    const hrList = await hr.get(`/scheduling/shifts?clientId=${mine.id}&from=${inDays(2).toISOString()}&to=${inDays(4).toISOString()}`);
+    expect(hrList.body.shifts.find((s: { id: string }) => s.id === office.id).hourlyRate).toBe(30);
+  });
+
+  it('templates and rate defaults: the bill side stays the office’s', async () => {
+    const { mine, sup } = await seedTwoClients();
+    await prisma.shiftTemplate.create({
+      data: { clientId: mine.id, name: 'AM', position: 'Server', dayOfWeek: 1, startMinute: 360, endMinute: 840, hourlyRate: 30 },
+    });
+    const templates = await sup.get('/scheduling/templates');
+    expect(templates.status).toBe(200);
+    expect(templates.body.templates[0].hourlyRate).toBeNull();
+    const tpl = await sup.post('/scheduling/templates').send({
+      clientId: mine.id, name: 'PM', position: 'Server', dayOfWeek: 2, startMinute: 840, endMinute: 1320, hourlyRate: 45,
+    });
+    expect(tpl.status).toBe(201);
+    expect((await prisma.shiftTemplate.findUniqueOrThrow({ where: { id: tpl.body.id } })).hourlyRate).toBeNull();
+
+    await prisma.shiftRateDefault.create({
+      data: { clientId: mine.id, position: 'Server', payRate: 17, billRate: 28 },
+    });
+    const defaults = await sup.get(`/scheduling/rate-defaults?clientId=${mine.id}`);
+    expect(defaults.body.rateDefaults[0]).toMatchObject({ payRate: 17, billRate: null });
+    const put = await sup.put('/scheduling/rate-defaults').send({
+      clientId: mine.id, position: 'Server', payRate: 19, billRate: 0,
+    });
+    expect(put.status).toBe(200);
+    expect(put.body.billRate).toBeNull();
+    const saved = await prisma.shiftRateDefault.findFirstOrThrow({ where: { clientId: mine.id, position: 'Server' } });
+    expect(Number(saved.payRate)).toBe(19);
+    expect(Number(saved.billRate)).toBe(28);
+  });
+
+  it('the timesheet drill-down carries no bill rate or billed amount', async () => {
+    const { mine, myAssoc, sup } = await seedTwoClients();
+    await prisma.client.update({ where: { id: mine.id }, data: { fieldglassBillRate: 30 } });
+    const mon = new Date('2026-06-15T13:00:00.000Z');
+    await prisma.timeEntry.create({
+      data: {
+        associateId: myAssoc.id,
+        clientId: mine.id,
+        clockInAt: mon,
+        clockOutAt: new Date(mon.getTime() + 4 * 3_600_000),
+        status: 'APPROVED',
+      },
+    });
+    const body = { associateId: myAssoc.id, weekStart: '2026-06-15T12:00:00.000Z' };
+
+    const supRes = await sup.post('/time/admin/timesheets/associate').send(body);
+    expect(supRes.status).toBe(200);
+    expect(supRes.body.totalHours).toBe(4);
+    expect(supRes.body.billRate).toBeNull();
+    expect(supRes.body.amount).toBeNull();
+
+    const { user: hrUser } = await createUser({ role: 'HR_ADMINISTRATOR' });
+    const hr = await loginAs(hrUser.email);
+    const hrRes = await hr.post('/time/admin/timesheets/associate').send(body);
+    expect(hrRes.body.billRate).toBe(30);
+    expect(hrRes.body.amount).toBe(120);
+  });
+});

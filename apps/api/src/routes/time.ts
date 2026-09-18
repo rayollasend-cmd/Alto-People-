@@ -28,7 +28,7 @@ import {
   type TimeEntry,
   type TimeEntryListResponse,
 } from '@alto-people/shared';
-import { csvCell as sharedCsvCell } from '@alto-people/shared';
+import { csvCell as sharedCsvCell, isClientBoundedRole } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { bulkPiiExportLimiter } from '../middleware/rateLimit.js';
 import { HttpError } from '../middleware/error.js';
@@ -3118,7 +3118,11 @@ timeRouter.post('/admin/timesheets/associate', MANAGE, async (req, res, next) =>
       clientId: timesheetClientId(req.user!, parsed.data.clientId),
       scopeWhere: scopeTimeEntries(req.user!),
     });
-    res.json(result);
+    // The client bill rate and the billed Amount are the contract's revenue
+    // side — never to a store-bound role (owner decision 2026-09-17).
+    res.json(
+      isClientBoundedRole(req.user!.role) ? { ...result, billRate: null, amount: null } : result,
+    );
   } catch (err) {
     next(err);
   }

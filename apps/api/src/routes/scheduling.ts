@@ -138,6 +138,25 @@ const MANAGE_OR_EXEC = requireAnyCapability(
 );
 
 /**
+ * The client BILL rate — Shift.hourlyRate, ShiftTemplate.hourlyRate, the
+ * rate default's billRate — is the revenue side of the contract: store-
+ * bound roles (the shift supervisor) never see it or set it (owner
+ * decision 2026-09-17). Responses null it; writes from them ignore it, so
+ * an edit can never clear a rate they can't see. Their shifts bill at the
+ * client's per-position default, then the org default — the statement's
+ * existing fallback. Pay rates stay: they're the supervisor's input.
+ */
+function billRateHidden(role: Parameters<typeof isClientBoundedRole>[0]): boolean {
+  return isClientBoundedRole(role);
+}
+function forViewer<T extends { hourlyRate: number | null }>(
+  user: { role: Parameters<typeof isClientBoundedRole>[0] },
+  s: T,
+): T {
+  return billRateHidden(user.role) ? { ...s, hourlyRate: null } : s;
+}
+
+/**
  * Labor cost is org economics — wages, burn, bill rates, margin. The
  * client-bounded SHIFT_SUPERVISOR holds manage:scheduling to RUN their
  * floor, not to read what it costs (owner decision 2026-09-17), so the
@@ -688,7 +707,7 @@ schedulingRouter.get('/shifts', SCHED_READ, async (req, res, next) => {
         );
         return hideRates
           ? { ...s, payRate: null, effectivePayRate: null, hourlyRate: null }
-          : s;
+          : forViewer(req.user!, s);
       }),
       truncated,
     });
@@ -2152,7 +2171,7 @@ schedulingRouter.get('/rate-defaults', MANAGE, async (req, res, next) => {
           clientId: d.clientId,
           position: d.position,
           payRate: Number(d.payRate),
-          billRate: d.billRate ? Number(d.billRate) : null,
+          billRate: d.billRate && !billRateHidden(req.user!.role) ? Number(d.billRate) : null,
         })),
         positions: positions.map((p) => p.name),
       }),
@@ -2182,17 +2201,20 @@ schedulingRouter.put('/rate-defaults', MANAGE, async (req, res, next) => {
       throw new HttpError(404, 'client_not_found', 'Client not found.');
     }
     const position = input.position.trim();
+    // A store-bound caller sets the pay rate only; the bill rate on file
+    // stays whatever the office set (never cleared by an edit they can't see).
+    const hideBill = billRateHidden(req.user!.role);
     const saved = await prisma.shiftRateDefault.upsert({
       where: { clientId_position: { clientId: input.clientId, position } },
       create: {
         clientId: input.clientId,
         position,
         payRate: input.payRate,
-        billRate: input.billRate ?? null,
+        billRate: hideBill ? null : (input.billRate ?? null),
       },
       update: {
         payRate: input.payRate,
-        billRate: input.billRate ?? null,
+        ...(hideBill ? {} : { billRate: input.billRate ?? null }),
       },
     });
     enqueueAudit(
@@ -2215,7 +2237,7 @@ schedulingRouter.put('/rate-defaults', MANAGE, async (req, res, next) => {
       clientId: saved.clientId,
       position: saved.position,
       payRate: Number(saved.payRate),
-      billRate: saved.billRate ? Number(saved.billRate) : null,
+      billRate: saved.billRate && !hideBill ? Number(saved.billRate) : null,
     });
   } catch (err) {
     next(err);
@@ -2559,7 +2581,7 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
         startsAt: new Date(input.startsAt),
         endsAt: new Date(input.endsAt),
         location: input.location ?? null,
-        hourlyRate: input.hourlyRate ?? null,
+        hourlyRate: billRateHidden(req.user!.role) ? null : (input.hourlyRate ?? null),
         payRate: input.payRate ?? null,
         notes: input.notes ?? null,
         status,
@@ -2589,7 +2611,7 @@ schedulingRouter.post('/shifts', MANAGE, async (req, res, next) => {
       void maybeNotifyFinanceNewWorker(created.assignedAssociateId);
     }
 
-    res.status(201).json(await withEffectiveRate(created));
+    res.status(201).json(forViewer(req.user!, await withEffectiveRate(created)));
   } catch (err) {
     next(err);
   }
@@ -2707,7 +2729,7 @@ schedulingRouter.post('/shifts/bulk', MANAGE, async (req, res, next) => {
       locationId: location.id,
       position: input.position,
       location: input.location ?? null,
-      hourlyRate: input.hourlyRate ?? null,
+      hourlyRate: billRateHidden(req.user!.role) ? null : (input.hourlyRate ?? null),
       payRate: input.payRate ?? null,
       notes: input.notes ?? null,
       status,
@@ -3042,7 +3064,7 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
       );
     }
     if (i.location !== undefined) data.location = i.location;
-    if (i.hourlyRate !== undefined) data.hourlyRate = i.hourlyRate;
+    if (i.hourlyRate !== undefined && !billRateHidden(req.user!.role)) data.hourlyRate = i.hourlyRate;
     if (i.payRate !== undefined) data.payRate = i.payRate;
     if (i.notes !== undefined) data.notes = i.notes;
     if (i.status !== undefined) data.status = i.status;
@@ -3175,7 +3197,7 @@ schedulingRouter.patch('/shifts/:id', MANAGE, async (req, res, next) => {
       });
     }
 
-    res.json(await withEffectiveRate(updated));
+    res.json(forViewer(req.user!, await withEffectiveRate(updated)));
   } catch (err) {
     next(err);
   }
@@ -3360,7 +3382,7 @@ schedulingRouter.post('/shifts/:id/assign', MANAGE, async (req, res, next) => {
       });
     }
 
-    res.json(await withEffectiveRate(updated));
+    res.json(forViewer(req.user!, await withEffectiveRate(updated)));
   } catch (err) {
     next(err);
   }
@@ -3415,7 +3437,7 @@ schedulingRouter.post('/shifts/:id/unassign', MANAGE, async (req, res, next) => 
       });
     }
 
-    res.json(await withEffectiveRate(updated));
+    res.json(forViewer(req.user!, await withEffectiveRate(updated)));
   } catch (err) {
     next(err);
   }
@@ -3515,7 +3537,7 @@ schedulingRouter.post('/shifts/:id/cancel', MANAGE, async (req, res, next) => {
       });
     }
 
-    res.json(await withEffectiveRate(updated));
+    res.json(forViewer(req.user!, await withEffectiveRate(updated)));
   } catch (err) {
     next(err);
   }
@@ -6007,7 +6029,9 @@ schedulingRouter.get('/templates', MANAGE, async (req, res, next) => {
       include: TEMPLATE_INCLUDE,
     });
     res.json(
-      ShiftTemplateListResponseSchema.parse({ templates: rows.map(toTemplate) })
+      ShiftTemplateListResponseSchema.parse({
+        templates: rows.map((r) => forViewer(req.user!, toTemplate(r))),
+      })
     );
   } catch (err) {
     next(err);
@@ -6040,13 +6064,13 @@ schedulingRouter.post('/templates', MANAGE, async (req, res, next) => {
         startMinute: i.startMinute,
         endMinute: i.endMinute,
         location: i.location ?? null,
-        hourlyRate: i.hourlyRate ?? null,
+        hourlyRate: billRateHidden(req.user!.role) ? null : (i.hourlyRate ?? null),
         payRate: i.payRate ?? null,
         notes: i.notes ?? null,
       },
       include: TEMPLATE_INCLUDE,
     });
-    res.status(201).json(toTemplate(created));
+    res.status(201).json(forViewer(req.user!, toTemplate(created)));
   } catch (err) {
     next(err);
   }
@@ -6191,7 +6215,7 @@ schedulingRouter.post('/templates/:id/apply', MANAGE, async (req, res, next) => 
       req,
     });
 
-    res.status(201).json(await withEffectiveRate(created));
+    res.status(201).json(forViewer(req.user!, await withEffectiveRate(created)));
   } catch (err) {
     next(err);
   }
@@ -7289,9 +7313,11 @@ schedulingRouter.post('/export.pdf', MANAGE, async (req, res, next) => {
           ? `${r.assignedAssociate.firstName} ${r.assignedAssociate.lastName}`
           : null,
         status: r.status,
-        hourlyRate: r.hourlyRate ? Number(r.hourlyRate) : null,
+        hourlyRate:
+          r.hourlyRate && !billRateHidden(req.user!.role) ? Number(r.hourlyRate) : null,
         scheduledMinutes: scheduledMinutes(r),
       })),
+      showRate: !billRateHidden(req.user!.role),
     });
 
     const fname = `shifts-${from.toISOString().slice(0, 10)}-to-${new Date(

@@ -43,6 +43,9 @@ export interface ScheduleReportData {
     clientName: string | null; // null = all
   };
   shifts: ScheduleReportShift[];
+  /** False for store-bound viewers — the client bill rate isn't theirs to
+   *  see, so the Rate column goes rather than printing blanks. */
+  showRate?: boolean;
 }
 
 const COLS = [
@@ -63,6 +66,7 @@ const ROW_PT = 9;
 const PAGE_MARGIN = 36;
 
 export async function renderSchedulePdf(data: ScheduleReportData): Promise<Buffer> {
+  const COLS_SHOWN = data.showRate === false ? COLS.filter((c) => c.key !== 'rate') : COLS;
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'LETTER', layout: 'landscape', margin: PAGE_MARGIN });
     const chunks: Buffer[] = [];
@@ -93,7 +97,7 @@ export async function renderSchedulePdf(data: ScheduleReportData): Promise<Buffe
     const drawTableHeader = (top: number) => {
       doc.font('Helvetica-Bold').fontSize(HEADER_PT).fillColor('#000');
       let x = PAGE_MARGIN;
-      for (const c of COLS) {
+      for (const c of COLS_SHOWN) {
         doc.text(c.label, x + 2, top + 4, {
           width: c.width - 4,
           align: c.align ?? 'left',
@@ -157,7 +161,7 @@ export async function renderSchedulePdf(data: ScheduleReportData): Promise<Buffe
       if (showDate && y > PAGE_MARGIN + 78 + ROW_HEIGHT) {
         doc
           .moveTo(PAGE_MARGIN, y - 1)
-          .lineTo(PAGE_MARGIN + COLS.reduce((a, c) => a + c.width, 0), y - 1)
+          .lineTo(PAGE_MARGIN + COLS_SHOWN.reduce((a, c) => a + c.width, 0), y - 1)
           .lineWidth(0.25)
           .strokeColor('#ddd')
           .stroke();
@@ -186,7 +190,7 @@ export async function renderSchedulePdf(data: ScheduleReportData): Promise<Buffe
 
       let x = PAGE_MARGIN;
       doc.font('Helvetica').fontSize(ROW_PT).fillColor('#111');
-      for (const c of COLS) {
+      for (const c of COLS_SHOWN) {
         const text = cells[c.key] ?? '';
         doc.text(text, x + 2, y + 4, {
           width: c.width - 4,

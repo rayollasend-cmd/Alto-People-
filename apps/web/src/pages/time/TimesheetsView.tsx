@@ -128,6 +128,10 @@ export function TimesheetsView() {
   // Client-bound roles (SHIFT_SUPERVISOR) can't list clients — /clients
   // 403s for them. Pin the client filter to their one client instead.
   const boundedClient = useMemo(() => boundedClientOf(user), [user]);
+  // The client bill rate and the billed Amount are never a store-bound
+  // role's (the API nulls them too) — their columns go rather than
+  // showing dashes and a "set the bill rate" prompt they can't act on.
+  const showBill = !boundedClient;
 
   // Round-trip state — the picked week (and client, below) live in the
   // URL (?week=YYYY-MM-DD&client=…, replace-written) so the fix-issue →
@@ -986,10 +990,10 @@ export function TimesheetsView() {
                       <tr className="bg-navy-secondary/40 text-silver/70">
                         <th className="p-2 text-left font-medium">Rates</th>
                         <th className="p-2 text-right font-medium">Pay Rate</th>
-                        <th className="p-2 text-right font-medium">Rate</th>
+                        {showBill && <th className="p-2 text-right font-medium">Rate</th>}
                         <th className="p-2 text-right font-medium">Quantity</th>
                         <th className="p-2 text-right font-medium">Days</th>
-                        <th className="p-2 text-right font-medium">Amount (USD)</th>
+                        {showBill && <th className="p-2 text-right font-medium">Amount (USD)</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -1001,33 +1005,39 @@ export function TimesheetsView() {
                               rate on a billing-adjacent sheet. */}
                           {detail.payRate != null ? detail.payRate.toFixed(2) : '—'}
                         </td>
-                        <td className="p-2 text-right tabular-nums text-silver">
-                          {detail.billRate != null ? detail.billRate.toFixed(2) : '—'}
-                        </td>
+                        {showBill && (
+                          <td className="p-2 text-right tabular-nums text-silver">
+                            {detail.billRate != null ? detail.billRate.toFixed(2) : '—'}
+                          </td>
+                        )}
                         <td className="p-2 text-right tabular-nums text-silver">
                           {detail.totalHours.toFixed(2)}
                         </td>
                         <td className="p-2 text-right text-silver/60">—</td>
-                        <td className="p-2 text-right tabular-nums text-white">
-                          {detail.amount != null ? detail.amount.toFixed(2) : '—'}
-                        </td>
+                        {showBill && (
+                          <td className="p-2 text-right tabular-nums text-white">
+                            {detail.amount != null ? detail.amount.toFixed(2) : '—'}
+                          </td>
+                        )}
                       </tr>
                       <tr className="border-t border-navy-secondary bg-navy-secondary/30 font-medium">
                         <td className="p-2 text-white">Subtotal</td>
                         <td className="p-2" />
-                        <td className="p-2" />
+                        {showBill && <td className="p-2" />}
                         <td className="p-2 text-right tabular-nums text-white">
                           {detail.totalHours.toFixed(2)}
                         </td>
                         <td className="p-2 text-right text-silver/60">—</td>
-                        <td className="p-2 text-right tabular-nums text-white">
-                          {detail.amount != null ? detail.amount.toFixed(2) : '—'}
-                        </td>
+                        {showBill && (
+                          <td className="p-2 text-right tabular-nums text-white">
+                            {detail.amount != null ? detail.amount.toFixed(2) : '—'}
+                          </td>
+                        )}
                       </tr>
                     </tbody>
                   </table>
                 </div>
-                {detail.billRate == null && (
+                {showBill && detail.billRate == null && (
                   <p className="text-xs text-gold/80">
                     Set this client&rsquo;s <strong>Fieldglass bill rate</strong> (client → Basics)
                     to compute the Amount.
@@ -1038,7 +1048,7 @@ export function TimesheetsView() {
               <p className="text-xs text-silver/60">
                 Times shown in {detail.timeZone}. Overnight shifts appear under their clock-in day.
                 Meal breaks are unpaid and excluded from Total Worked. Pay Rate is what Alto pays the
-                associate; Rate is the client bill rate.
+                associate{showBill ? '; Rate is the client bill rate' : ''}.
               </p>
             </div>
           )}

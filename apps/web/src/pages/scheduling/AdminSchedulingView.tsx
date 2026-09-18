@@ -153,6 +153,7 @@ import type { LucideIcon } from 'lucide-react';
 import { Avatar } from '@/components/ui/Avatar';
 import { StatTile } from '@/pages/portal/portalCharts';
 import { useApprovalsCount } from '@/lib/useApprovalsCount';
+import { useClientBounded } from '@/lib/useClientBounded';
 
 // Loads the curated shift-position names for a client (Org → Shift positions).
 // null = still loading / no client picked. The dropdown in the shift dialogs
@@ -438,7 +439,7 @@ function readStoredAnchors(): {
 // csvCell comes from lib/csv — this file used to keep a private RFC-4180
 // copy (and a private BOM); both now live in the shared helper.
 
-function csvRow(s: Shift): Array<string | number | null> {
+function csvRow(s: Shift, withBillRate = true): Array<string | number | null> {
   const start = new Date(s.startsAt);
   const end = new Date(s.endsAt);
   const hours = (s.scheduledMinutes / 60).toFixed(2);
@@ -452,7 +453,7 @@ function csvRow(s: Shift): Array<string | number | null> {
     s.location ?? '',
     s.assignedAssociateName ?? '',
     s.status,
-    s.hourlyRate ?? '',
+    ...(withBillRate ? [s.hourlyRate ?? ''] : []),
     s.notes ?? '',
   ];
 }
@@ -1660,13 +1661,14 @@ export function AdminSchedulingView({ canManage }: AdminSchedulingViewProps) {
       'Location',
       'Associate',
       'Status',
-      'Hourly rate',
+      // The client bill rate — never in a store-bound role's export.
+      ...(boundedClient ? [] : ['Hourly rate']),
       'Notes',
     ];
     // Shared helper carries RFC-4180 quoting AND the Excel BOM now.
     downloadCsv(`shifts-${exportRange.from}-to-${exportRange.to}.csv`, [
       header,
-      ...rows.map((s) => csvRow(s)),
+      ...rows.map((s) => csvRow(s, !boundedClient)),
     ]);
   };
 
@@ -4774,6 +4776,8 @@ function EditShiftDialog({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  // The client bill rate is never a store-bound role's to see or set.
+  const hideBillRate = useClientBounded();
   const [dateStr, setDateStr] = useState('');
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
@@ -4960,18 +4964,20 @@ function EditShiftDialog({
               endTime={endTime}
               extraDays={extraDays}
             />
-            <Field label="Bill rate /hr (optional)">
-              {(p) => (
-                <Input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={hourlyRate}
-                  onChange={(e) => setHourlyRate(e.target.value)}
-                  {...p}
-                />
-              )}
-            </Field>
+            {!hideBillRate && (
+              <Field label="Bill rate /hr (optional)">
+                {(p) => (
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={hourlyRate}
+                    onChange={(e) => setHourlyRate(e.target.value)}
+                    {...p}
+                  />
+                )}
+              </Field>
+            )}
             <Field label="Pay rate /hr (optional)">
               {(p) => (
                 <Input
@@ -5071,6 +5077,8 @@ function CreateShiftDialog({
   onCreated: () => void;
   onPositionUsed?: (position: string) => void;
 }) {
+  // The client bill rate is never a store-bound role's to see or set.
+  const hideBillRate = useClientBounded();
   const [clientId, setClientId] = useState(clients[0]?.id ?? '');
   const [locationId, setLocationId] = useState('');
   const [locations, setLocations] = useState<LocationSummary[] | null>(null);
@@ -5807,19 +5815,21 @@ function CreateShiftDialog({
                     />
                   )}
                 </Field>
-                <Field label="Bill rate ($/hr)">
-                  {(p) => (
-                    <Input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={hourlyRate}
-                      onChange={(e) => setHourlyRate(e.target.value)}
-                      placeholder="What the client is billed"
-                      {...p}
-                    />
-                  )}
-                </Field>
+                {!hideBillRate && (
+                  <Field label="Bill rate ($/hr)">
+                    {(p) => (
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={hourlyRate}
+                        onChange={(e) => setHourlyRate(e.target.value)}
+                        placeholder="What the client is billed"
+                        {...p}
+                      />
+                    )}
+                  </Field>
+                )}
                 <Field label="Late-notice reason" className="md:col-span-2">
                   {(p) => (
                     <Textarea
@@ -6116,6 +6126,8 @@ function CreateTemplateDialog({
   onOpenChange: (v: boolean) => void;
   onCreated: () => void;
 }) {
+  // The client bill rate is never a store-bound role's to see or set.
+  const hideBillRate = useClientBounded();
   const [name, setName] = useState('');
   const [position, setPosition] = useState('');
   const [clientId, setClientId] = useState<string>('');
@@ -6257,18 +6269,20 @@ function CreateTemplateDialog({
                 />
               )}
             </Field>
-            <Field label="Hourly rate ($)">
-              {(p) => (
-                <Input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={hourlyRate}
-                  onChange={(e) => setHourlyRate(e.target.value)}
-                  {...p}
-                />
-              )}
-            </Field>
+            {!hideBillRate && (
+              <Field label="Hourly rate ($)">
+                {(p) => (
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={hourlyRate}
+                    onChange={(e) => setHourlyRate(e.target.value)}
+                    {...p}
+                  />
+                )}
+              </Field>
+            )}
           </div>
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
