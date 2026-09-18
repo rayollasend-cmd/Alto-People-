@@ -426,6 +426,8 @@ model User {
   deletedAt          DateTime?  @db.Timestamptz(6)
 
   signaturesGiven                   Signature[]                   @relation("UserSignatures")
+  // The store shift windows a supervisor leads ("Overnight 10p–6a").
+  supervisorShiftWindows            SupervisorShiftWindow[]       @relation("SupervisorWindows")
   i9VerificationsAsRep              I9Verification[]              @relation("I9Verifier")
   auditLogActions                   AuditLog[]                    @relation("AuditActor")
   timeApprovals                     TimeEntry[]                   @relation("TimeApprover")
@@ -756,6 +758,7 @@ model Location {
   assignments  AssociateAssignment[]
   applications Application[]
   shifts       Shift[]
+  supervisorShiftWindows SupervisorShiftWindow[]
   kioskDevices KioskDevice[]
   timeEntries  TimeEntry[]
   shiftTeams   ShiftTeam[]
@@ -7183,4 +7186,25 @@ model IdempotencyRecord {
 
   @@unique([userId, method, path, key])
   @@index([createdAt])
+}
+
+// A supervisor's shift — which of a store's named shift windows they lead,
+// the way they're assigned a client. Keyed by (store, window LABEL), not a
+// StaffingTarget row: targets are effective-dated, and a new headcount for
+// "Overnight" is a new row — the lead stays the lead. The window's hours
+// come from the store's current target for that label. Focus, not a lock:
+// it shapes a supervisor's default views and routes their alerts; it never
+// narrows what they may see.
+model SupervisorShiftWindow {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String   @db.Uuid
+  locationId String   @db.Uuid
+  label      String
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  user     User     @relation("SupervisorWindows", fields: [userId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, locationId, label])
+  @@index([locationId, label])
 }

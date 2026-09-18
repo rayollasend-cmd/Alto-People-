@@ -162,6 +162,8 @@ interface PortalOverview {
       title: 'supervisor' | 'floor-lead';
       onFloor: boolean;
       runningOps: boolean;
+      /** The store shift windows this supervisor leads ("Overnight"). */
+      shifts?: string[];
     }>;
     supportEmail: string | null;
   };
@@ -810,6 +812,7 @@ export function ClientPortalHome() {
                       </div>
                       <div className="text-xs text-silver/70">
                         {t(p.title === 'supervisor' ? 'portal.leadSupervisor' : 'portal.leadFloor')}
+                        {p.shifts && p.shifts.length > 0 && <span className="text-silver"> · {p.shifts.join(', ')}</span>}
                         {p.onFloor && <span className="text-success"> · {t('portal.leadOnFloor')}</span>}
                         {p.runningOps && <span className="text-gold"> · {t('portal.leadRunningOps')}</span>}
                       </div>

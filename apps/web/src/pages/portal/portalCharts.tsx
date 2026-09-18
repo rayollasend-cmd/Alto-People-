@@ -6,6 +6,7 @@ import {
   CartesianGrid,
   Cell,
   ComposedChart,
+  ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip as ChartTooltip,
@@ -171,13 +172,30 @@ export function CoverageCurve({
   target,
   nowHour,
   labels,
+  bands = [],
 }: {
   points: HourPoint[];
   target: number | null;
   /** Current hour in the store's zone, 0–23; null when today is over. */
   nowHour: number | null;
   labels: { scheduled: string; open: string; contracted: string; now: string; at: (h: string) => string };
+  /** Hours to shade — a supervisor's own shift inside the store's day.
+   *  Site-local minutes; end <= start wraps past midnight. */
+  bands?: Array<{ startMinute: number; endMinute: number; label: string }>;
 }) {
+  // A wrapping window (10p–6a) is two spans on a midnight-to-midnight axis.
+  // The name rides the wider half, so a 10p start doesn't clip it.
+  const spans = bands.flatMap((b) => {
+    const from = Math.floor(b.startMinute / 60);
+    const to = Math.ceil(b.endMinute / 60);
+    if (to > from) return [{ from, to, label: b.label }];
+    const lateWider = 24 - from >= to;
+    return [
+      { from, to: 24, label: lateWider ? b.label : '' },
+      { from: 0, to, label: lateWider ? '' : b.label },
+    ];
+  });
+  const at = (h: number) => points[Math.min(Math.max(h, 0), points.length - 1)]?.label;
   const series = {
     scheduled: { name: labels.scheduled, color: SERIES.primary },
     open: { name: labels.open, color: STATUS.bad },
@@ -233,6 +251,24 @@ export function CoverageCurve({
               dot={false}
               activeDot={{ r: 4, stroke: SURFACE, strokeWidth: 2 }}
             />
+            {spans.map((sp, i) =>
+              sp.to > sp.from && at(sp.from) ? (
+                <ReferenceArea
+                  key={i}
+                  x1={at(sp.from)}
+                  x2={at(sp.to === 24 ? 23 : sp.to)}
+                  fill="rgb(var(--color-gold) / 0.10)"
+                  stroke="rgb(var(--color-gold) / 0.35)"
+                  strokeDasharray="2 3"
+                  ifOverflow="extendDomain"
+                  label={
+                    sp.label
+                      ? { value: sp.label, position: 'insideTopLeft', fill: 'rgb(var(--color-gold) / 0.9)', fontSize: 10 }
+                      : undefined
+                  }
+                />
+              ) : null,
+            )}
             {target !== null && (
               <ReferenceLine
                 y={target}

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { minuteOfDayInZone } from '@alto-people/shared';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ROLE_CAPABILITIES, type Capability } from '@alto-people/shared';
@@ -40,6 +42,7 @@ const row = (id: string, name: string | null, state: string, from = -2, to = 6) 
   startsAt: at(from),
   endsAt: at(to),
   timezone: tz,
+  locationId: 'l1',
   locationName: 'Front Beach 218',
   state,
 });
@@ -58,9 +61,19 @@ function day(roster: ReturnType<typeof row>[]) {
 }
 
 type Live = Array<{ associateId: string; name: string; clockInAt: string; position: string | null }>;
+type MyWindow = { label: string; startMinute: number; endMinute: number; targetCount: number };
 
-function renderPage(opts: { onFloorNow?: Live } = {}) {
+function renderPage(opts: { onFloorNow?: Live; extraRows?: ReturnType<typeof row>[]; myWindows?: MyWindow[] } = {}) {
   vi.mocked(apiFetch).mockImplementation(async (path: string) => {
+    if (path === '/me/shift-windows')
+      return {
+        windows: (opts.myWindows ?? []).map((w) => ({
+          ...w,
+          locationId: 'l1',
+          locationName: 'Front Beach 218',
+          timezone: tz,
+        })),
+      };
     if (path.startsWith('/client-portal/day?date=')) return day([row('t1', 'Cy Dale', 'unconfirmed', 20, 28)]);
     if (path.startsWith('/client-portal/day'))
       return {
@@ -69,6 +82,7 @@ function renderPage(opts: { onFloorNow?: Live } = {}) {
           row('s2', 'Ben Ray', 'on-floor'),
           row('s3', 'Cy Dale', 'not-in'),
           row('s4', null, 'open'),
+          ...(opts.extraRows ?? []),
         ]),
         ...(opts.onFloorNow ? { onFloorNow: opts.onFloorNow } : {}),
       };
@@ -186,5 +200,37 @@ describe('<SupervisorDashboard> — My floor', () => {
     // 4 on the floor against a target of 4 — met, not "2 short".
     expect(screen.getByText(/Staffed to the contracted headcount/)).toBeInTheDocument();
     expect(screen.queryByText(/short of the contracted headcount/)).not.toBeInTheDocument();
+  });
+
+  it('opens on their shift — their crew against their window — with the whole store one tap away', async () => {
+    try {
+      sessionStorage.removeItem('alto.floor.focus');
+    } catch {
+      /* no storage in this env */
+    }
+    const user = userEvent.setup();
+    const clockIn = new Date().toISOString();
+    // Swing runs from 3 hours ago to an hour from now; Zed's shift began
+    // 8 hours ago, so he's on the floor but not on Dana's shift.
+    const mod = (h: number) => minuteOfDayInZone(new Date(Date.now() + h * 3_600_000), tz);
+    renderPage({
+      myWindows: [{ label: 'Swing', startMinute: mod(-3), endMinute: mod(1), targetCount: 5 }],
+      extraRows: [row('x1', 'Zed Old', 'on-floor', -8, 0.5)],
+      onFloorNow: [
+        { associateId: 'a-s1', name: 'Ann Lee', clockInAt: clockIn, position: 'Server' },
+        { associateId: 'a-s2', name: 'Ben Ray', clockInAt: clockIn, position: 'Server' },
+        { associateId: 'a-x1', name: 'Zed Old', clockInAt: clockIn, position: 'Server' },
+        { associateId: 'a-w1', name: 'Wes Park', clockInAt: clockIn, position: null },
+      ],
+    });
+    // Ann, Ben and walk-in Wes are Swing; Zed isn't. 3 of Swing's 5.
+    expect(await screen.findByText(/2 short of Swing's target right now/)).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /My shift · Swing/ })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByText('/ 5')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: 'Whole store' }));
+    // All four against the store's contracted 4.
+    expect(await screen.findByText(/Staffed to the contracted headcount/)).toBeInTheDocument();
+    expect(screen.getByText('/ 4')).toBeInTheDocument();
   });
 });

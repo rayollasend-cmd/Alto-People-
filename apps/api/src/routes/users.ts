@@ -96,6 +96,11 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       region: {
         select: { id: true, name: true },
       },
+      // A shift supervisor's shifts — the store windows they lead.
+      supervisorShiftWindows: {
+        select: { locationId: true, label: true, location: { select: { name: true } } },
+        orderBy: [{ location: { name: 'asc' } }, { label: 'asc' }],
+      },
     },
     orderBy: [{ createdAt: 'desc' }],
     take: 500,
@@ -118,6 +123,11 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       locationName: u.location?.name ?? null,
       regionId: u.regionId,
       regionName: u.region?.name ?? null,
+      shiftWindows: u.supervisorShiftWindows.map((w) => ({
+        locationId: w.locationId,
+        locationName: w.location.name,
+        label: w.label,
+      })),
       // Account lockout (brute-force lock). Only surfaced while still in
       // the future — an expired lock is just noise to an admin.
       lockedUntil:
@@ -348,6 +358,19 @@ usersRouter.patch(
 
     await prisma.user.update({ where: { id }, data });
     invalidateUserCache(id);
+
+    // Shift windows belong to a supervisor at a client: leaving the role
+    // drops them all; a new client drops the other client's stores.
+    if (data.role && data.role !== 'SHIFT_SUPERVISOR') {
+      await prisma.supervisorShiftWindow.deleteMany({ where: { userId: id } });
+    } else if (data.clientId !== undefined) {
+      await prisma.supervisorShiftWindow.deleteMany({
+        where: {
+          userId: id,
+          ...(data.clientId ? { location: { clientId: { not: data.clientId } } } : {}),
+        },
+      });
+    }
 
     // A store manager account just got its client or store: make sure the
     // portal will have something to show. Fire-and-forget; rings the

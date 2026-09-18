@@ -34,6 +34,8 @@ export interface WaveRow {
   startsAt: string;
   endsAt: string;
   timezone: string;
+  /** The shift's store — places it in a supervisor's shift window. */
+  locationId?: string | null;
   locationName: string | null;
   state: DayState;
 }

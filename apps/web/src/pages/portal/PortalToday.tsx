@@ -26,6 +26,8 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { groupWaves, waveName, wavePresent, type Wave, type WaveName, type WaveRow } from './waves';
 import { ServiceReportDialog } from './ServiceReportDialog';
+import { FocusToggle } from './FocusToggle';
+import { clockInInWindows, crewOnFloor, inWindows, summarize, useShiftFocus, windowOf } from './shiftFocus';
 import { scopeParams, shiftDays } from './scope';
 
 /**
@@ -53,6 +55,8 @@ interface DayPayload {
   /** Every open clock-in right now (today only) — the live board's count. */
   onFloorNow?: Array<{ associateId: string; name: string; clockInAt: string; position: string | null }>;
   summary: { expected: number; worked: number; onFloor: number; missed: number; open: number };
+  /** The store's named shift windows and who leads each. */
+  windowLeads?: Array<{ locationId: string; label: string; startMinute: number; endMinute: number; leads: string[] }>;
 }
 
 const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
@@ -99,7 +103,13 @@ export function PortalToday() {
     const el = document.getElementById(`wave-${focusWave}`);
     el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [focusWave, data, switching]);
-  const waves = useMemo(() => (data ? groupWaves(data.roster) : []), [data]);
+  // A supervisor opens on their shift; "Whole store" is one tap away.
+  const { windows: myWindows, focus, setFocus, mine } = useShiftFocus();
+  const focusRows = useMemo(
+    () => (data ? (mine ? data.roster.filter((r) => inWindows(r, myWindows)) : data.roster) : []),
+    [data, mine, myWindows],
+  );
+  const waves = useMemo(() => groupWaves(focusRows), [focusRows]);
   const [reportOpen, setReportOpen] = useState(false);
   // The store name only earns a place on a row when rows span stores.
   const multiStore = useMemo(
@@ -261,39 +271,82 @@ export function PortalToday() {
           <Skeleton className="h-40" />
           <Skeleton className="h-40" />
         </div>
-      ) : waves.length === 0 ? (
-        <Card>
-          <CardContent className="p-5 text-sm text-silver/60">
-            {isPast ? t('portal.noShiftsThatDay') : t('portal.noShiftsToday')}
-          </CardContent>
-        </Card>
       ) : (
         <>
-          <p className="text-sm text-silver tabular-nums">
-            {isToday
-              ? t('portal.todaySummary', {
-                  on: data.onFloorNow?.length ?? data.summary.onFloor,
-                  expected: data.summary.expected,
-                  waves: waves.length,
-                })
-              : isPast
-                ? t('portal.daySummaryPast', {
-                    worked: data.summary.worked,
-                    expected: data.summary.expected,
-                    missed: data.summary.missed,
-                    open: data.summary.open,
-                  })
-                : t('portal.daySummaryFuture', { expected: data.summary.expected, open: data.summary.open })}
-            <span className="text-silver/50"> · {t('portal.faceHint')}</span>
-          </p>
-          {waves.map((w) => (
-            <WaveCard key={w.key} wave={w} multiStore={multiStore} focused={focusWave === w.startsAt} />
-          ))}
-          {isToday && <OffScheduleCard data={data} />}
+          {myWindows.length > 0 && (
+            <FocusToggle windows={myWindows} focus={focus} onChange={setFocus} className="print:hidden" />
+          )}
+          {waves.length === 0 ? (
+            <Card>
+              <CardContent className="p-5 text-sm text-silver/60">
+                {mine ? t('focus.nothingToday') : isPast ? t('portal.noShiftsThatDay') : t('portal.noShiftsToday')}
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              <DaySummary data={data} rows={focusRows} windows={mine ? myWindows : null} waves={waves.length} isToday={isToday} isPast={isPast} />
+              {waves.map((w) => (
+                <WaveCard
+                  key={w.key}
+                  wave={w}
+                  multiStore={multiStore}
+                  focused={focusWave === w.startsAt}
+                  window={waveWindow(w, data.windowLeads ?? [])}
+                />
+              ))}
+            </>
+          )}
+          {isToday && <OffScheduleCard data={data} windows={mine ? myWindows : null} />}
         </>
       )}
     </div>
   );
+}
+
+/** The line above the waves — recounted over the shift in view. */
+function DaySummary({
+  data,
+  rows,
+  windows,
+  waves,
+  isToday,
+  isPast,
+}: {
+  data: DayPayload;
+  rows: WaveRow[];
+  windows: Parameters<typeof crewOnFloor>[2] | null;
+  waves: number;
+  isToday: boolean;
+  isPast: boolean;
+}) {
+  const { t } = useI18n();
+  const sum = windows ? summarize(rows) : data.summary;
+  const onNow = data.onFloorNow
+    ? (windows ? crewOnFloor(data.onFloorNow, data.roster, windows) : data.onFloorNow).length
+    : sum.onFloor;
+  return (
+    <p className="text-sm text-silver tabular-nums">
+      {isToday
+        ? t('portal.todaySummary', { on: onNow, expected: sum.expected, waves })
+        : isPast
+          ? t('portal.daySummaryPast', {
+              worked: sum.worked,
+              expected: sum.expected,
+              missed: sum.missed,
+              open: sum.open,
+            })
+          : t('portal.daySummaryFuture', { expected: sum.expected, open: sum.open })}
+      <span className="text-silver/50"> · {t('portal.faceHint')}</span>
+    </p>
+  );
+}
+
+type WindowLead = NonNullable<DayPayload['windowLeads']>[number];
+
+/** The store shift window a wave starts in — its name and its leads. */
+function waveWindow(w: Wave, windows: WindowLead[]): WindowLead | null {
+  const row = [...w.clockedIn, ...w.worked, ...w.notIn, ...w.upcoming, ...w.open].find((r) => r.locationId);
+  return row ? windowOf(row, windows) : null;
 }
 
 /* ---- Clocked in, but not on a scheduled shift -------------------------- */
@@ -304,13 +357,22 @@ export function PortalToday() {
  * still in draft, or a person staying past their end. They count in "on
  * the floor now"; this is where they have a face.
  */
-function OffScheduleCard({ data }: { data: DayPayload }) {
+function OffScheduleCard({
+  data,
+  windows = null,
+}: {
+  data: DayPayload;
+  /** My shift: only the walk-ins who clocked in for it. */
+  windows?: Parameters<typeof clockInInWindows>[1] | null;
+}) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<string | null>(null);
   const inShift = new Set(
     data.roster.filter((r) => r.state === 'on-floor' && r.associateId).map((r) => r.associateId!),
   );
-  const people = (data.onFloorNow ?? []).filter((e) => !inShift.has(e.associateId));
+  const people = (data.onFloorNow ?? []).filter(
+    (e) => !inShift.has(e.associateId) && (!windows || clockInInWindows(e.clockInAt, windows)),
+  );
   if (people.length === 0) return null;
   const tz = data.store?.timezone ?? data.roster[0]?.timezone ?? null;
   const caption = (e: (typeof people)[number]) =>
@@ -368,7 +430,18 @@ function OffScheduleCard({ data }: { data: DayPayload }) {
 
 type FaceTone = 'on-floor' | 'worked' | 'missing' | 'upcoming';
 
-function WaveCard({ wave: w, multiStore, focused = false }: { wave: Wave; multiStore: boolean; focused?: boolean }) {
+function WaveCard({
+  wave: w,
+  multiStore,
+  focused = false,
+  window: win = null,
+}: {
+  wave: Wave;
+  multiStore: boolean;
+  focused?: boolean;
+  /** The store's name for this shift and who leads it, when it has one. */
+  window?: WindowLead | null;
+}) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<WaveRow | null>(null);
   const range = fmtShiftRangeTz(w.startsAt, w.endsAt, w.timezone);
@@ -533,9 +606,14 @@ function WaveCard({ wave: w, multiStore, focused = false }: { wave: Wave; multiS
   const header = (
     <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
       <h2 className={cn('text-sm font-medium', w.phase === 'finished' ? 'text-silver' : 'text-white')}>
-        <span className="text-gold">{t(WAVE_KEY[waveName(w.startsAt, w.timezone)])}</span> · {range}
+        <span className="text-gold">{win ? win.label : t(WAVE_KEY[waveName(w.startsAt, w.timezone)])}</span> · {range}
         {w.phase === 'live' && (
           <span className="ml-2 text-2xs font-medium uppercase tracking-wider text-success">{t('portal.live')}</span>
+        )}
+        {win && win.leads.length > 0 && (
+          <span className="mt-0.5 block text-xs font-normal text-silver/70">
+            {t('portal.waveLead', { names: win.leads.join(', ') })}
+          </span>
         )}
       </h2>
       <span

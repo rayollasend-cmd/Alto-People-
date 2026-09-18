@@ -8,6 +8,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '../db.js';
 import { notifyUser } from './notify.js';
+import { supervisorRecipients } from './shiftWindows.js';
 import { orgDateKey, utcInstantOfLocalMidnight } from './timeAnomalies.js';
 import { DEFAULT_TIMEZONE, formatTimeInZone } from './timezone.js';
 
@@ -21,6 +22,8 @@ export interface RiskyShift {
   shiftId: string;
   clientId: string;
   clientName: string;
+  /** The store — routes the row to the lead of its shift window. */
+  locationId: string | null;
   position: string;
   startsAt: Date;
   holderName: string;
@@ -52,6 +55,7 @@ export async function computeNoShowRisk(
     select: {
       id: true,
       clientId: true,
+      locationId: true,
       position: true,
       startsAt: true,
       client: { select: { name: true } },
@@ -82,6 +86,7 @@ export async function computeNoShowRisk(
     .map((s) => ({
       shiftId: s.id,
       clientId: s.clientId,
+      locationId: s.locationId,
       clientName: s.client.name,
       position: s.position,
       startsAt: s.startsAt,
@@ -150,18 +155,19 @@ export async function runNoShowRiskSweep(
     (byClient.get(r.clientId) ?? byClient.set(r.clientId, []).get(r.clientId)!).push(r);
   }
   let sent = 0;
-  for (const [clientId, rows] of byClient) {
-    const supervisors = await prisma.user.findMany({
-      where: {
-        role: 'SHIFT_SUPERVISOR',
-        status: 'ACTIVE',
-        deletedAt: null,
-        clientId,
-      },
-      select: { id: true },
-      take: 10,
-    });
-    if (supervisors.length === 0) continue;
+  for (const [clientId, clientRows] of byClient) {
+    // Each supervisor's digest holds the risky shifts in the windows they
+    // lead — or every row nobody leads (lib/shiftWindows routing).
+    const rowsBySupervisor = new Map<string, RiskyShift[]>();
+    for (const r of clientRows) {
+      for (const s of await supervisorRecipients(prisma, clientId, {
+        locationId: r.locationId,
+        startsAt: r.startsAt,
+      })) {
+        (rowsBySupervisor.get(s.id) ?? rowsBySupervisor.set(s.id, []).get(s.id)!).push(r);
+      }
+    }
+    if (rowsBySupervisor.size === 0) continue;
     const t = new Date(`${orgDateKey(now)}T12:00:00Z`);
     t.setUTCDate(t.getUTCDate() + 1);
     const dStart = utcInstantOfLocalMidnight(t.toISOString().slice(0, 10), 'America/New_York');
@@ -171,15 +177,15 @@ export async function runNoShowRiskSweep(
       dStart,
       new Date(dStart.getTime() + 26 * 3600_000),
     );
-    const lines = rows
-      .map(
-        (r) =>
-          `${formatTimeInZone(r.startsAt, DEFAULT_TIMEZONE)} ${r.position} — held by ${r.holderName} (${r.points} attendance points, 90d)`,
-      )
-      .join('\n');
-    const body = `Tomorrow's coverage risk at ${rows[0].clientName}:\n${lines}${backups.length > 0 ? `\n\nAvailable backups: ${backups.join(', ')}` : ''}\n\nWorth a confirmation text tonight or a pre-arranged backup.`;
-    for (const s of supervisors) {
-      await notifyUser(s.id, {
+    for (const [supervisorId, rows] of rowsBySupervisor) {
+      const lines = rows
+        .map(
+          (r) =>
+            `${formatTimeInZone(r.startsAt, DEFAULT_TIMEZONE)} ${r.position} — held by ${r.holderName} (${r.points} attendance points, 90d)`,
+        )
+        .join('\n');
+      const body = `Tomorrow's coverage risk at ${rows[0].clientName}:\n${lines}${backups.length > 0 ? `\n\nAvailable backups: ${backups.join(', ')}` : ''}\n\nWorth a confirmation text tonight or a pre-arranged backup.`;
+      await notifyUser(supervisorId, {
         subject: `Tomorrow's coverage risk — ${rows.length} shift${rows.length === 1 ? '' : 's'}`,
         body,
         category: CATEGORY,

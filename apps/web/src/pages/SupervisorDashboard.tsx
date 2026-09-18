@@ -32,6 +32,15 @@ import { coverageByHour } from '@/pages/portal/coverage';
 import { groupWaves, wavePresent, type WaveRow } from '@/pages/portal/waves';
 import { shiftDays } from '@/pages/portal/scope';
 import { CoverageCurve, DetailsTable, StatTile, WeekFillChart } from '@/pages/portal/portalCharts';
+import { FocusToggle } from '@/pages/portal/FocusToggle';
+import {
+  activeWindows,
+  crewOnFloor,
+  focusName,
+  inWindows,
+  useShiftFocus,
+} from '@/pages/portal/shiftFocus';
+import { fmtClockMinute, fmtShiftWindow, minuteOfDayInZone } from '@alto-people/shared';
 
 /**
  * My floor — the SHIFT_SUPERVISOR's home, in the store manager's grammar.
@@ -42,6 +51,12 @@ import { CoverageCurve, DetailsTable, StatTile, WeekFillChart } from '@/pages/po
  * supervisor runs the week by, then the cards — what's waiting on them,
  * today shift by shift, the next seven days, and their own plan. The
  * roster is faces on /today, never a wall of names here.
+ *
+ * Their shift — the store shift windows they lead — is the default focus:
+ * the hero counts their crew against their window's target, the waves
+ * and the week ahead are their shift, and the coverage curve shades their
+ * hours inside the store's day. "Whole store" is one tap away; focus never
+ * narrows what they may see.
  *
  * Every read is clamped to the supervisor's client server-side. The day
  * roster is the portal's own /client-portal/day (the route opts this role
@@ -100,6 +115,7 @@ export function SupervisorDashboard() {
   const queryClient = useQueryClient();
   const pullState = usePullToRefresh(() => queryClient.invalidateQueries());
   const client = boundedClientOf(user);
+  const { windows: myWindows, focus, setFocus, mine } = useShiftFocus();
   const todayKey = ymdLocal();
   const tomorrowKey = shiftDays(todayKey, 1);
 
@@ -148,7 +164,12 @@ export function SupervisorDashboard() {
   });
 
   const data = dayQuery.data;
-  const waves = useMemo(() => (data ? groupWaves(data.roster) : []), [data]);
+  // The rows in view: their shift, or the whole store.
+  const focusRows = useMemo(
+    () => (data ? (mine ? data.roster.filter((r) => inWindows(r, myWindows)) : data.roster) : []),
+    [data, mine, myWindows],
+  );
+  const waves = useMemo(() => groupWaves(focusRows), [focusRows]);
   const storeTz = data?.store?.timezone ?? data?.roster[0]?.timezone ?? null;
   const curve = useMemo(
     () =>
@@ -177,7 +198,8 @@ export function SupervisorDashboard() {
         (s) =>
           s.status !== 'CANCELLED' &&
           s.status !== 'DRAFT' &&
-          zonedDayKey(s.startsAt, s.timezone) === date,
+          zonedDayKey(s.startsAt, s.timezone) === date &&
+          (!mine || inWindows(s, myWindows)),
       );
       const open = onDay.filter((s) => s.status === 'OPEN').length;
       return {
@@ -187,7 +209,7 @@ export function SupervisorDashboard() {
         open,
       };
     });
-  }, [aheadQuery.data, todayKey]);
+  }, [aheadQuery.data, todayKey, mine, myWindows]);
 
   // ---- The place ---------------------------------------------------------
   const locations = (locationsQuery.data?.locations ?? []).filter((l) => l.isActive);
@@ -296,16 +318,38 @@ export function SupervisorDashboard() {
   // Everyone clocked in right now — the live board's definition. Counting
   // only roster rows matched to an assigned shift read "0 / 10" while the
   // floor was full of walk-ins, covers and people on draft shifts.
-  const onFloor =
+  const everyoneOn: Array<{ associateId: string; name: string; clockInAt?: string }> =
     data.onFloorNow ??
     data.roster
       .filter((r) => r.state === 'on-floor' && r.associateId)
-      .map((r) => ({ associateId: r.associateId!, name: r.name ?? '' }));
-  const target = data.target;
-  const short = target !== null && onFloor.length < target;
+      .map((r) => ({ associateId: r.associateId!, name: r.name ?? '', clockInAt: r.clockInAt ?? undefined }));
+  // My shift: their crew is whoever's shift starts in their window — a
+  // walk-in (or last night's crew, off today's roster) goes by clock-in.
+  const onFloor = mine ? crewOnFloor(everyoneOn, data.roster, myWindows) : everyoneOn;
+  const runningNow = mine ? activeWindows(myWindows) : [];
+  // Off the clock: the next of their windows to start, on its store's clock.
+  const nextUp =
+    mine && runningNow.length === 0
+      ? ([...myWindows].sort((a, b) => {
+          const wait = (w: typeof a) => (w.startMinute - minuteOfDayInZone(new Date(), w.timezone) + 1440) % 1440;
+          return wait(a) - wait(b);
+        })[0] ?? null)
+      : null;
+  const target = mine
+    ? runningNow.length > 0
+      ? runningNow.reduce((n, w) => n + w.targetCount, 0)
+      : (nextUp?.targetCount ?? null)
+    : data.target;
+  const nextScheduled = nextUp
+    ? focusRows.filter((r) => r.state !== 'open' && inWindows(r, [nextUp])).length
+    : 0;
+  const short = target !== null && onFloor.length < target && !nextUp;
   const staffed = target !== null ? onFloor.length >= target : onFloor.length > 0;
   const heroTone = short ? 'warning' : staffed ? 'success' : 'gold';
-  const scheduledNow = data.roster.filter((r) => r.state === 'on-floor' || r.state === 'not-in').length;
+  const scheduledNow = focusRows.filter((r) => r.state === 'on-floor' || r.state === 'not-in').length;
+  const heroWindow = mine && runningNow.length > 0
+    ? t('focus.windowTarget', { label: focusName(runningNow) })
+    : t('portal.heroContracted');
   const nowHour =
     zonedDayKey(new Date(), storeTz) === data.date
       ? Math.floor(zonedMinutesOfDay(new Date(), storeTz) / 60)
@@ -321,7 +365,8 @@ export function SupervisorDashboard() {
       : null;
   const openAhead = aheadDays?.reduce((n, d) => n + d.open, 0) ?? null;
   const filledAhead = aheadDays?.reduce((n, d) => n + d.filled, 0) ?? 0;
-  const tm = tomorrowQuery.data?.roster ?? null;
+  const tmAll = tomorrowQuery.data?.roster ?? null;
+  const tm = tmAll && mine ? tmAll.filter((r) => inWindows(r, myWindows)) : tmAll;
   const tmConfirmed = tm?.filter((r) => r.state === 'confirmed').length ?? 0;
   const tmUnconfirmed = tm?.filter((r) => r.state === 'unconfirmed').length ?? 0;
   const tmOpen = tm?.filter((r) => r.state === 'open').length ?? 0;
@@ -332,6 +377,19 @@ export function SupervisorDashboard() {
     <div className="mx-auto space-y-4">
       <PullToRefreshIndicator state={pullState} />
       {header}
+
+      {myWindows.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 animate-enter">
+          <FocusToggle windows={myWindows} focus={focus} onChange={setFocus} />
+          {mine && (
+            <span className="text-xs text-silver/70">
+              {myWindows
+                .map((w) => `${w.label} ${fmtShiftWindow(w)}${locations.length > 1 ? ` · ${w.locationName}` : ''}`)
+                .join('  ·  ')}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* ---- Hero: the floor right now, drawn across the day ------------- */}
       <Card
@@ -358,7 +416,14 @@ export function SupervisorDashboard() {
             <div className="md:col-span-4">
               <span className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-gold">
                 <Users className="h-3.5 w-3.5" aria-hidden="true" />
-                {t('portal.onFloorNow')}
+                <span>
+                  {t('portal.onFloorNow')}
+                  {mine && (
+                    <span className="normal-case tracking-normal text-silver/70">
+                      {' '}· {focusName(runningNow.length > 0 ? runningNow : nextUp ? [nextUp] : myWindows)}
+                    </span>
+                  )}
+                </span>
               </span>
               <div className="mt-2 flex items-baseline gap-2">
                 <span
@@ -374,10 +439,16 @@ export function SupervisorDashboard() {
                 )}
               </div>
               <p className="mt-2 text-sm text-silver">
-                {target !== null
+                {nextUp
+                  ? t('focus.startsAt', {
+                      label: nextUp.label,
+                      time: fmtClockMinute(nextUp.startMinute),
+                      count: nextScheduled,
+                    })
+                  : target !== null
                   ? short
-                    ? t('portal.heroShort', { missing: target - onFloor.length, window: t('portal.heroContracted') })
-                    : t('portal.heroMet', { window: t('portal.heroContracted') })
+                    ? t('portal.heroShort', { missing: target - onFloor.length, window: heroWindow })
+                    : t('portal.heroMet', { window: heroWindow })
                   : scheduledNow > 0
                     ? t('portal.onOfSched', { on: onFloor.length, sched: scheduledNow })
                     : onFloor.length > 0
@@ -412,8 +483,9 @@ export function SupervisorDashboard() {
               <div className="mt-2">
                 <CoverageCurve
                   points={curve}
-                  target={target}
+                  target={data.target}
                   nowHour={nowHour}
+                  bands={mine ? myWindows : []}
                   labels={{
                     scheduled: t('portal.chartScheduled'),
                     open: t('portal.chartOpen'),
@@ -531,7 +603,7 @@ export function SupervisorDashboard() {
               </Link>
             </div>
             {waves.length === 0 ? (
-              <p className="mt-3 text-sm text-silver/60">{t('portal.noShiftsToday')}</p>
+              <p className="mt-3 text-sm text-silver/60">{mine ? t('focus.nothingToday') : t('portal.noShiftsToday')}</p>
             ) : (
               <ul className="mt-3 space-y-3">
                 {waves.map((w) => {
@@ -597,6 +669,7 @@ export function SupervisorDashboard() {
               <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
                 <CalendarDays className="h-4 w-4 text-gold" aria-hidden="true" />
                 Next 7 days
+                {mine && <span className="font-normal text-silver/70">· {focusName(myWindows)}</span>}
               </h2>
               <Link to="/scheduling" className="text-xs text-gold underline-offset-2 hover:underline">
                 Open schedule

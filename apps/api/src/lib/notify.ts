@@ -53,6 +53,7 @@ import {
   onboardingCompleteTemplate,
 } from './emailTemplates.js';
 import { env } from '../config/env.js';
+import { supervisorRecipients } from './shiftWindows.js';
 
 // Snapshot at module load. Drives the notifyAllAdmins recipient query.
 // Capability-based (not a hardcoded role list) so a future role gaining
@@ -378,27 +379,29 @@ export function notifyAllAdmins(
 }
 
 /**
- * Notify every ACTIVE SHIFT_SUPERVISOR bound to `clientId`. Supervisors
+ * Notify the ACTIVE SHIFT_SUPERVISORs bound to `clientId`. Supervisors
  * hold no admin capability, so notifyAllAdmins never reaches them — yet
  * they're the person physically on the floor for client-attributable
  * events (shift claims, swaps, possible no-shows). Call this ALONGSIDE
  * the existing notifyManager/notifyAllAdmins fan-outs, not instead.
+ *
+ * `at` places the event on a shift (its store and start): it goes to the
+ * supervisors who lead that shift window, or to every supervisor at the
+ * client when nobody leads it (lib/shiftWindows). Without `at` (time off,
+ * week-level signals) it reaches every supervisor at the client.
  */
 export function notifyClientSupervisors(
   clientId: string | null | undefined,
-  opts: NotifyOpts & { excludeUserId?: string | null },
+  opts: NotifyOpts & {
+    excludeUserId?: string | null;
+    at?: { locationId: string | null; startsAt: Date } | null;
+  },
 ): Promise<void> {
   return track(
     (async () => {
       if (!clientId) return;
-      const recipients = await prisma.user.findMany({
-        where: {
-          role: 'SHIFT_SUPERVISOR',
-          status: 'ACTIVE',
-          clientId,
-          ...(opts.excludeUserId ? { NOT: { id: opts.excludeUserId } } : {}),
-        },
-        select: { id: true, email: true },
+      const recipients = await supervisorRecipients(prisma, clientId, opts.at, {
+        excludeUserId: opts.excludeUserId,
       });
       if (recipients.length === 0) return;
       const now = new Date();

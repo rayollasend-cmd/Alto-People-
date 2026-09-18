@@ -3,6 +3,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  Clock,
   Download,
   KeyRound,
   Lock,
@@ -29,6 +30,7 @@ import {
 } from '@/lib/usersAdminApi';
 import { listClients, listClientLocations } from '@/lib/clientsApi';
 import { listRegions } from '@/lib/regionsApi';
+import { SupervisorShiftDialog } from './SupervisorShiftDialog';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -163,6 +165,9 @@ export function UsersAdmin() {
   // A role change to a client-scoped role for a user with no client is held
   // here until a client is picked, then applied together.
   const [draftRole, setDraftRole] = useState<Record<string, Role>>({});
+  // The supervisor whose shift is being picked. Opens on its own right after
+  // a supervisor gets a client — every supervisor has a shift.
+  const [shiftFor, setShiftFor] = useState<AdminUser | null>(null);
 
   // Store pickers for CLIENT_PORTAL rows: locations load per client on
   // demand (a Walmart store manager is ONE Location under the client; a
@@ -488,6 +493,9 @@ export function UsersAdmin() {
       });
       toast.success('Role updated.');
       await load();
+      if (newRole === 'SHIFT_SUPERVISOR' && u.clientId) {
+        setShiftFor({ ...u, role: newRole, shiftWindows: [] });
+      }
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     } finally {
@@ -516,6 +524,11 @@ export function UsersAdmin() {
       });
       toast.success(pendingRole ? 'Role and client assigned.' : 'Client updated.');
       await load();
+      // A new client means new stores — their shift is picked next.
+      if (effRole === 'SHIFT_SUPERVISOR' && newClientId) {
+        const client = clients.find((c) => c.id === newClientId);
+        setShiftFor({ ...u, role: effRole, clientId: newClientId, clientName: client?.name ?? null, shiftWindows: [] });
+      }
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
     } finally {
@@ -961,6 +974,25 @@ export function UsersAdmin() {
                             ))}
                           </Select>
                         )}
+                        {u.role === 'SHIFT_SUPERVISOR' && !draftRole[u.id] && u.clientId && (
+                          <button
+                            type="button"
+                            onClick={() => setShiftFor(u)}
+                            disabled={busy}
+                            aria-label={`Assign shift for ${u.associateName ?? u.email}`}
+                            title="The shifts this supervisor leads — where their pages open and who hears about a shift first. They still see the whole store."
+                            className="mt-1 flex w-full items-center gap-1.5 rounded-md border border-navy-secondary px-2 py-1 text-left text-xs hover:border-silver/40"
+                          >
+                            <Clock className="h-3 w-3 shrink-0 text-silver" aria-hidden="true" />
+                            {u.shiftWindows && u.shiftWindows.length > 0 ? (
+                              <span className="truncate text-white">
+                                {u.shiftWindows.map((w) => w.label).join(', ')}
+                              </span>
+                            ) : (
+                              <Badge variant="pending" size="sm">No shift</Badge>
+                            )}
+                          </button>
+                        )}
                         {(draftRole[u.id] ?? u.role) === 'CLIENT_PORTAL' && (
                           <Select
                             size="sm"
@@ -1042,6 +1074,15 @@ export function UsersAdmin() {
           )}
         </CardContent>
       </Card>
+
+      {shiftFor && (
+        <SupervisorShiftDialog
+          user={shiftFor}
+          open
+          onOpenChange={(o) => !o && setShiftFor(null)}
+          onSaved={() => void load()}
+        />
+      )}
 
       <div className="text-xs text-silver flex items-center gap-1">
         <ShieldCheck className="h-3 w-3" />

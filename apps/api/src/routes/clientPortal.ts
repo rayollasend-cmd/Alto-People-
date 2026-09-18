@@ -17,6 +17,8 @@ import { renderStatementPdf } from '../lib/statementPdf.js';
 import { REPORT_MAX_DAYS, buildPortalReport, renderPortalReportPdf } from '../lib/portalDayReport.js';
 import { notePortalReportDownload } from '../lib/portalEngagement.js';
 import { trackNotificationWork } from '../lib/notify.js';
+import { currentStoreWindows, ledWindows } from '../lib/shiftWindows.js';
+import { localDateKey } from '../lib/timezone.js';
 import type { StatementSnapshot } from '../lib/clientStatement.js';
 import {
   DAY,
@@ -173,6 +175,45 @@ async function resolveScope(
  *  shift belongs to the client, not to any one store. */
 
 type RosterState = 'open' | 'on-floor' | 'done' | 'confirmed' | 'unconfirmed';
+
+/** The zone a day is cut in: the store's own clock — the scoped store, or
+ *  the client's when all its stores share one — else the org's. An 11 PM
+ *  Pacific overnight crew belongs to the Pacific day it starts on, not to
+ *  the Eastern tomorrow. */
+async function dayZone(scope: PortalScope): Promise<string> {
+  if (scope.location) return scope.location.timezone;
+  const zones = await prisma.location.findMany({
+    where: { clientId: scope.clientId, deletedAt: null, isActive: true },
+    select: { timezone: true },
+    distinct: ['timezone'],
+    take: 2,
+  });
+  return zones.length === 1 ? zones[0]!.timezone : ORG_TZ;
+}
+
+/** Every shift window at the scope's store(s) with the supervisors who lead
+ *  it (empty = nobody yet). */
+async function dayWindowLeads(scope: PortalScope) {
+  const stores = scope.locationId
+    ? [{ id: scope.locationId }]
+    : await prisma.location.findMany({
+        where: { clientId: scope.clientId, deletedAt: null },
+        select: { id: true },
+      });
+  const [defs, led] = await Promise.all([
+    currentStoreWindows(prisma, stores.map((s) => s.id)),
+    ledWindows(prisma, { clientId: scope.clientId }),
+  ]);
+  return [...defs.values()].map((w) => ({
+    locationId: w.locationId,
+    label: w.label,
+    startMinute: w.startMinute,
+    endMinute: w.endMinute,
+    leads: led
+      .filter((l) => l.locationId === w.locationId && l.label === w.label)
+      .map((l) => l.userName),
+  }));
+}
 
 clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, next) => {
   try {
@@ -574,15 +615,24 @@ clientPortalRouter.get('/client-portal/overview', requireAuth, async (req, res, 
     const opsRunners = new Set(
       opsShifts.filter((o) => o.dateKey === todayKey && o.status === 'ACTIVE').map((o) => o.openedById),
     );
-    const leads = leadUsers.map((u) => ({
-      userId: u.id,
-      name: u.associate ? fullName(u.associate) : u.email.split('@')[0] ?? u.email,
-      phone: u.associate?.phone ?? null,
-      email: u.email,
-      title: u.role === 'SHIFT_SUPERVISOR' ? ('supervisor' as const) : ('floor-lead' as const),
-      onFloor: !!u.associateId && onFloorIds.has(u.associateId),
-      runningOps: opsRunners.has(u.id),
-    }));
+    // Supervisors lead named shift windows ("Overnight"). A store account
+    // sees the leads of ITS store's windows (plus anyone not yet given a
+    // shift, as before); each lead carries the shifts they hold there.
+    const led = await ledWindows(prisma, { clientId: scope.clientId });
+    const ledHere = led.filter((w) => !scope.locationId || w.locationId === scope.locationId);
+    const withShifts = new Set(led.map((w) => w.userId));
+    const leads = leadUsers
+      .filter((u) => !withShifts.has(u.id) || ledHere.some((w) => w.userId === u.id))
+      .map((u) => ({
+        userId: u.id,
+        name: u.associate ? fullName(u.associate) : u.email.split('@')[0] ?? u.email,
+        phone: u.associate?.phone ?? null,
+        email: u.email,
+        title: u.role === 'SHIFT_SUPERVISOR' ? ('supervisor' as const) : ('floor-lead' as const),
+        onFloor: !!u.associateId && onFloorIds.has(u.associateId),
+        runningOps: opsRunners.has(u.id),
+        shifts: [...new Set(ledHere.filter((w) => w.userId === u.id).map((w) => w.label))],
+      }));
 
     // ---- Store ops evidence: yesterday + today --------------------------
     const opsDay = (key: string) => {
@@ -1013,18 +1063,20 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
     // The supervisor's Today page is this page — same grammar, own client.
     const scope = await resolveScope(req.user!, req.query, { floorLead: true });
     const now = new Date();
-    const dateKey = req.query.date === undefined ? orgDateKey(now) : parseDayKey(req.query.date, 'date');
-    const dayStart = utcInstantOfLocalMidnight(dateKey, ORG_TZ);
-    const dayEnd = utcInstantOfLocalMidnight(nextKey(dateKey, 1), ORG_TZ);
+    // The day is the store's calendar day, cut at the store's midnight.
+    const tz = await dayZone(scope);
+    const storeToday = localDateKey(now, tz);
+    const dateKey = req.query.date === undefined ? storeToday : parseDayKey(req.query.date, 'date');
+    const dayStart = utcInstantOfLocalMidnight(dateKey, tz);
+    const dayEnd = utcInstantOfLocalMidnight(nextKey(dateKey, 1), tz);
 
     // "Now" belongs to the page the viewer calls today, and that's the
-    // BROWSER's calendar: a Pacific store at 9:30 PM asks for the 17th while
-    // the org day (Eastern) is already the 18th. Any date within a day of
-    // the org's today carries the live list; the page shows it only for its
-    // own today.
-    const orgToday = orgDateKey(now);
+    // BROWSER's calendar, which can sit a day off the store's (a viewer in
+    // New York at 1 AM looking at a Pacific store). Any date within a day of
+    // the store's today carries the live list; the page shows it only for
+    // its own today.
     const isToday =
-      dateKey === orgToday || dateKey === nextKey(orgToday, -1) || dateKey === nextKey(orgToday, 1);
+      dateKey === storeToday || dateKey === nextKey(storeToday, -1) || dateKey === nextKey(storeToday, 1);
     const [rows, leadPositions, { punchFor }, target, liveEntries] = await Promise.all([
       prisma.shift.findMany({
         where: { ...shiftScope(scope), startsAt: { lt: dayEnd }, endsAt: { gt: dayStart } },
@@ -1037,6 +1089,7 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
           acknowledgedAt: true,
           assignedAssociateId: true,
           assignedAssociate: { select: { firstName: true, lastName: true } },
+          locationId: true,
           locationRel: { select: { name: true, timezone: true } },
         },
         orderBy: { startsAt: 'asc' },
@@ -1104,6 +1157,7 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
         startsAt: s.startsAt.toISOString(),
         endsAt: s.endsAt.toISOString(),
         timezone: s.locationRel?.timezone ?? ORG_TZ,
+        locationId: s.locationId,
         locationName: s.locationRel?.name ?? null,
         state,
         clockInAt: punch && state !== 'missed' ? punch.clockInAt.toISOString() : null,
@@ -1117,10 +1171,13 @@ clientPortalRouter.get('/client-portal/day', requireAuth, async (req, res, next)
         ? { id: scope.location.id, name: scope.location.name, timezone: scope.location.timezone }
         : null,
       date: dateKey,
-      today: orgDateKey(now),
+      today: storeToday,
       generatedAt: now.toISOString(),
       target: target.target,
       roster,
+      // Who leads each of the store's shift windows — the wave header
+      // names its lead ("Lead · Dana Reyes").
+      windowLeads: await dayWindowLeads(scope),
       onFloorNow: liveEntries.map((e) => ({
         associateId: e.associateId,
         name: fullName(e.associate),

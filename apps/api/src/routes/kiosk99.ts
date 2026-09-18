@@ -31,6 +31,7 @@ import { send } from '../lib/notifications.js';
 import { associatesOfClient, effectiveClientIdFilter } from '../lib/scope.js';
 import { emitLiveEvent } from '../lib/liveEvents.js';
 import { notifyClockOutEarnings } from '../lib/associateEarnings.js';
+import { supervisorRecipients } from '../lib/shiftWindows.js';
 import { recordAttendanceForEntry } from '../lib/attendance.js';
 import { env } from '../config/env.js';
 import { ROLE_CAPABILITIES, type Role } from '@alto-people/shared';
@@ -1799,16 +1800,22 @@ async function fileClockInRequest(opts: {
           })
         )?.name ?? null
       : null;
-    const recipients = await prisma.user.findMany({
-      where: {
-        status: 'ACTIVE',
-        OR: [
-          { role: 'SHIFT_SUPERVISOR', clientId: opts.device.clientId },
-          { role: { in: TIME_ADMIN_ROLES } },
-        ],
-      },
-      select: { id: true },
-    });
+    // The time admins, plus the supervisor who leads the shift window this
+    // punch lands in at this store (everyone at the client when nobody
+    // leads it — lib/shiftWindows).
+    const [admins, supervisors] = await Promise.all([
+      prisma.user.findMany({
+        where: { status: 'ACTIVE', role: { in: TIME_ADMIN_ROLES } },
+        select: { id: true },
+      }),
+      supervisorRecipients(prisma, opts.device.clientId, {
+        locationId: opts.device.locationId,
+        startsAt: new Date(),
+      }),
+    ]);
+    const recipients = [
+      ...new Map([...admins, ...supervisors].map((u) => [u.id, { id: u.id }])).values(),
+    ];
     if (recipients.length === 0) return;
     const now = new Date();
     await prisma.notification.createMany({

@@ -244,7 +244,11 @@ export async function runShiftReminderSweep(
       void notifyAllAdmins(noShowNotice);
       // The on-site supervisor is the one person who can physically walk
       // the floor and find (or replace) the associate.
-      void notifyClientSupervisors(shift.clientId, noShowNotice);
+      void notifyClientSupervisors(shift.clientId, {
+        ...noShowNotice,
+        // The lead of the window this shift starts in walks the floor first.
+        at: { locationId: shift.locationId, startsAt: shift.startsAt },
+      });
       // Attendance points: approved time off = excused (no event), a
       // pending same-day request = CALL_OUT, silence = NO_CALL_NO_SHOW.
       void recordNoShowAttendance(prisma, {
@@ -375,7 +379,12 @@ async function runOtRadar(prisma: PrismaClient, now: Date): Promise<number> {
       linkUrl: '/scheduling',
     };
     void notifyAllAdmins(notice);
-    void notifyClientSupervisors(rem.clientId, notice);
+    // Supervisors get the hours, never the billed cost — money is withheld
+    // from store-bound roles (owner decision 2026-09-17).
+    void notifyClientSupervisors(rem.clientId, {
+      ...notice,
+      body: notice.body.replace(cost, ''),
+    });
     alerts++;
   }
   return alerts;

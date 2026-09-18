@@ -4217,8 +4217,12 @@ schedulingRouter.post('/me/open-shifts/:id/claim', async (req, res, next) => {
     };
     void notifyAllAdmins(pickupNotice);
     // The supervisor whose floor this shift is on hears about it too —
-    // they hold the approve capability but no admin role.
-    void notifyClientSupervisors(shift.clientId, pickupNotice);
+    // they hold the approve capability but no admin role. Routed to the
+    // lead of the shift window it starts in (everyone when nobody leads it).
+    void notifyClientSupervisors(shift.clientId, {
+      ...pickupNotice,
+      at: { locationId: shift.locationId, startsAt: shift.startsAt },
+    });
 
     res.status(201).json(
       OpenShiftClaimSchema.parse({
@@ -5007,6 +5011,7 @@ schedulingRouter.post('/swap-requests', async (req, res, next) => {
       html: mgrSwapTpl.html,
       category: 'scheduling',
       linkUrl: '/approvals',
+      at: { locationId: created.shift.locationId, startsAt: created.shift.startsAt },
     });
 
     res.status(201).json(toSwap(created));

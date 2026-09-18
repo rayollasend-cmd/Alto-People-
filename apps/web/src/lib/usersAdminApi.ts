@@ -23,6 +23,8 @@ export interface AdminUser {
   /** Non-null iff the account is currently brute-force locked (the server
    *  only surfaces locks that are still in the future). */
   lockedUntil: string | null;
+  /** SHIFT_SUPERVISOR: the store shift windows they lead ("their shift"). */
+  shiftWindows?: Array<{ locationId: string; locationName: string; label: string }>;
 }
 
 export interface ListUsersFilters {
