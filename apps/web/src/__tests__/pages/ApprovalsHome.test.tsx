@@ -3,7 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { TimeOffRequest } from '@alto-people/shared';
+import { ROLE_CAPABILITIES, type Capability, type Role, type TimeOffRequest } from '@alto-people/shared';
+import { AuthContext } from '@/lib/auth';
 
 // The unconfirmed-shifts panel is integration-tested with the scheduling
 // page; the swap/pickup panels are now ApprovalsHome-local, so their API
@@ -58,7 +59,7 @@ const requestFixture: TimeOffRequest = {
   createdAt: new Date().toISOString(),
 } as TimeOffRequest;
 
-function renderPage() {
+function renderPage(role: Role = 'HR_ADMINISTRATOR') {
   // Fresh client per render so cached lists never leak between tests;
   // retry off so mocked failures surface immediately.
   const queryClient = new QueryClient({
@@ -67,14 +68,46 @@ function renderPage() {
       mutations: { retry: false },
     },
   });
+  const caps = ROLE_CAPABILITIES[role];
+  const auth = {
+    isInitializing: false,
+    isOffline: false,
+    user: {
+      id: 'u',
+      email: 'someone@altohr.com',
+      role,
+      status: 'ACTIVE' as const,
+      clientId: role === 'SHIFT_SUPERVISOR' ? 'c1' : null,
+      associateId: null,
+    },
+    role,
+    capabilities: new Set<Capability>(caps),
+    signIn: vi.fn(),
+    signOut: vi.fn(),
+    can: (c: Capability) => caps.has(c),
+  };
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
-        <ApprovalsHome />
-      </MemoryRouter>
+      <AuthContext.Provider value={auth}>
+        <MemoryRouter>
+          <ApprovalsHome />
+        </MemoryRouter>
+      </AuthContext.Provider>
     </QueryClientProvider>
   );
 }
+
+const claimFixture = {
+  id: 'claim-1',
+  shiftId: 'shift-1',
+  associateId: 'assoc-9',
+  associateName: 'Victor Diaz',
+  shiftPosition: 'Front Desk',
+  shiftClientName: 'Coastal Resort Holdings',
+  shiftStartsAt: new Date(Date.now() + 3 * 3_600_000).toISOString(),
+  status: 'PENDING',
+  wouldExceed40h: false,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -89,17 +122,41 @@ beforeEach(() => {
 });
 
 describe('<ApprovalsHome>', () => {
-  it('renders every queue plus the timesheet KPI', async () => {
+  it('with every queue empty: one clear state, the tiles, and no empty cards', async () => {
     renderPage();
     expect(screen.getByText('Approvals')).toBeInTheDocument();
-    expect(
-      screen.getByText('Swap requests awaiting your approval'),
-    ).toBeInTheDocument();
-    expect(screen.getByText('Open-shift pickup requests')).toBeInTheDocument();
+    expect(await screen.findByText('Nothing waiting on you')).toBeInTheDocument();
+    // The timesheet tile still carries its count and opens the review queue.
     expect(await screen.findByText('3')).toBeInTheDocument();
-    expect(
-      await screen.findByText(/No time-off requests waiting/)
-    ).toBeInTheDocument();
+    expect(screen.getByText('Timesheets', { selector: 'div' }).closest('a')).toHaveAttribute(
+      'href',
+      '/time-attendance?tab=queue',
+    );
+    // Empty queues don't render a card of their own.
+    expect(screen.queryByRole('heading', { name: /^Swaps/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /Open-shift pickups/ })).not.toBeInTheDocument();
+  });
+
+  it('a queue with work renders as a card with the face, the count and a relative time', async () => {
+    vi.mocked(listOpenShiftClaims).mockResolvedValue({
+      claims: [claimFixture],
+    } as unknown as Awaited<ReturnType<typeof listOpenShiftClaims>>);
+    renderPage();
+    expect(await screen.findByRole('heading', { name: /Open-shift pickups/ })).toBeInTheDocument();
+    expect(await screen.findByText(/1 decision waiting/)).toBeInTheDocument();
+    expect(screen.getByText(/Today · /)).toBeInTheDocument();
+    // An org-wide approver sees which client the shift belongs to…
+    expect(screen.getByText(/Coastal Resort Holdings · Today/)).toBeInTheDocument();
+    expect(screen.queryByText('Nothing waiting on you')).not.toBeInTheDocument();
+  });
+
+  it("a store-bound supervisor's rows drop the client they never leave", async () => {
+    vi.mocked(listOpenShiftClaims).mockResolvedValue({
+      claims: [claimFixture],
+    } as unknown as Awaited<ReturnType<typeof listOpenShiftClaims>>);
+    renderPage('SHIFT_SUPERVISOR');
+    expect(await screen.findByRole('heading', { name: /Open-shift pickups/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Coastal Resort Holdings/)).not.toBeInTheDocument();
   });
 
   it('lists pending time off and approves on tap', async () => {

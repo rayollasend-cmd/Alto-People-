@@ -4,7 +4,17 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePullToRefresh, PullToRefreshIndicator } from '@/lib/usePullToRefresh';
 import { hapticConfirm } from '@/lib/haptics';
-import { CalendarCheck, Check, X } from 'lucide-react';
+import {
+  ArrowLeftRight,
+  CalendarCheck,
+  CalendarOff,
+  Check,
+  ClipboardCheck,
+  DoorOpen,
+  Store,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import type { TimeOffRequest } from '@alto-people/shared';
 import {
@@ -29,17 +39,16 @@ import {
 } from '@/lib/timeApi';
 import type { ClockInRequestRow } from '@alto-people/shared';
 import { ApiError } from '@/lib/api';
-import { fmtDate, fmtDateTime, fmtTime, parseYmd } from '@/lib/format';
+import { fmtDate, fmtRelativeDayTz, fmtTime, parseYmd } from '@/lib/format';
+import { useClientBounded } from '@/lib/useClientBounded';
 import { useSelection } from '@/lib/useSelection';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { MetricCard } from '@/components/ui/MetricCard';
 import { Button } from '@/components/ui/Button';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/Card';
+import { Card, CardContent } from '@/components/ui/Card';
+import { Avatar } from '@/components/ui/Avatar';
+import { cn } from '@/lib/cn';
+import { enterStagger } from '@/lib/motion';
+import { StatTile } from '@/pages/portal/portalCharts';
 import {
   Dialog,
   DialogContent,
@@ -71,89 +80,214 @@ import { AdminUnconfirmedPanel } from '@/pages/scheduling/AdminApprovalPanels';
 const TIME_OFF_KEY = ['approvals', 'timeOff'] as const;
 const SWAPS_KEY = ['approvals', 'swaps'] as const;
 const PICKUPS_KEY = ['approvals', 'pickups'] as const;
+const CLOCK_INS_KEY = ['approvals', 'clockIns'] as const;
+
+/* Query options shared by the summary strip and the panels — one cache
+ * entry per queue, so the count on a tile is always the list below it. */
+const clockInsQuery = {
+  queryKey: CLOCK_INS_KEY,
+  queryFn: async () => {
+    try {
+      return (await listClockInRequests('PENDING')).requests;
+    } catch (err) {
+      // 403 = not permitted — hide the whole panel (null), never an
+      // asserted "no one is waiting" the caller can't actually know.
+      if (err instanceof ApiError && err.status === 403) return null;
+      throw err;
+    }
+  },
+  // Someone is at the kiosk — keep this fresher than the other panels.
+  refetchInterval: 60_000,
+};
+const timeOffQuery = {
+  queryKey: TIME_OFF_KEY,
+  queryFn: async () => {
+    try {
+      return (await listAdminRequests('PENDING')).requests;
+    } catch (err) {
+      // 403 = not permitted to see the admin queue — an honest empty
+      // list, not an error.
+      if (err instanceof ApiError && err.status === 403) return [];
+      throw err;
+    }
+  },
+};
+const swapsQuery = {
+  queryKey: SWAPS_KEY,
+  queryFn: () => listAdminSwaps({ status: 'PEER_ACCEPTED' }),
+};
+const pickupsQuery = {
+  queryKey: PICKUPS_KEY,
+  queryFn: () => listOpenShiftClaims(),
+};
+
+const photoUrl = (associateId: string) => `/api/associates/${associateId}/photo`;
+
+/** "Today · 9:00 PM", "Tomorrow · 6:00 AM", "Sat, Sep 19 · 6:00 AM". */
+const when = (iso: string) => `${fmtRelativeDayTz(iso)} · ${fmtTime(iso)}`;
+
+
+/** Bring a queue into view — the summary tiles are its table of contents. */
+function jumpTo(id: string) {
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 
 export function ApprovalsHome() {
   const queryClient = useQueryClient();
   // Pull down from the top = refetch everything on the page — the gesture
   // approvers reach for by habit on a phone.
   const pullState = usePullToRefresh(() => queryClient.invalidateQueries());
-  // KPI is best-effort — the panels below are the real content. A failure
-  // renders an inline retry affordance on the tile instead of a dash.
+  // Timesheets are reviewed on Time & attendance; the tile is best-effort
+  // and carries its own retry when the count fails.
   const timesheetQuery = useQuery({
     queryKey: ['approvals', 'timesheetCount'],
     queryFn: () => countAdminTimeEntries('COMPLETED'),
   });
-
-  const timeOffQuery = useQuery({
-    queryKey: TIME_OFF_KEY,
-    queryFn: async () => {
-      try {
-        return (await listAdminRequests('PENDING')).requests;
-      } catch (err) {
-        // 403 = not permitted to see the admin queue — an honest empty
-        // list, not an error.
-        if (err instanceof ApiError && err.status === 403) return [];
-        throw err;
-      }
-    },
-  });
+  const clockIns = useQuery(clockInsQuery);
+  const timeOffQ = useQuery(timeOffQuery);
+  const swaps = useQuery(swapsQuery);
+  const pickups = useQuery(pickupsQuery);
 
   const timesheetCount = timesheetQuery.data?.count ?? null;
   const timesheetFailed = timesheetQuery.isError;
-  const timeOff = timeOffQuery.data ?? null;
-  const timeOffError = timeOffQuery.isError
-    ? timeOffQuery.error instanceof Error
-      ? timeOffQuery.error.message
+  const timeOff = timeOffQ.data ?? null;
+  const timeOffError = timeOffQ.isError
+    ? timeOffQ.error instanceof Error
+      ? timeOffQ.error.message
       : 'Could not load time-off requests.'
     : null;
 
+  // null = still loading (or not permitted, for the kiosk queue).
+  const walkIns = clockIns.data === undefined ? undefined : (clockIns.data?.length ?? null);
+  const counts = {
+    walkIns,
+    timeOff: timeOff?.length,
+    swaps: swaps.data?.requests.length,
+    pickups: pickups.data?.claims.length,
+  };
+  const loaded =
+    counts.walkIns !== undefined &&
+    counts.timeOff !== undefined &&
+    counts.swaps !== undefined &&
+    counts.pickups !== undefined;
+  const decisions =
+    (counts.walkIns ?? 0) + (counts.timeOff ?? 0) + (counts.swaps ?? 0) + (counts.pickups ?? 0);
+  const anyError = !!timeOffError || clockIns.isError || swaps.isError || pickups.isError;
+  const oldestWalkIn = (clockIns.data ?? [])
+    .map((r) => r.requestedAt)
+    .sort()[0];
+  const clear = loaded && decisions === 0 && !anyError;
+
+  const subtitle = !loaded
+    ? 'Everything waiting on your decision, in one place.'
+    : decisions === 0
+      ? timesheetCount
+        ? `No decisions waiting — ${timesheetCount} timesheet${timesheetCount === 1 ? '' : 's'} to review.`
+        : 'Nothing waiting on you.'
+      : `${decisions} decision${decisions === 1 ? '' : 's'} waiting${
+          oldestWalkIn ? ` — someone has been at the kiosk ${waitingSince(oldestWalkIn).replace('waiting ', '')}` : ''
+        }.`;
+
   return (
-    <div>
+    <div className="mx-auto max-w-5xl space-y-4">
       <PullToRefreshIndicator state={pullState} />
       <PageHeader
         title="Approvals"
-        subtitle="Everything waiting on your decision — swaps, pickups, time off, and timesheets."
+        subtitle={subtitle}
+        secondaryActions={
+          <Button size="sm" variant="outline" asChild>
+            <Link to="/time-attendance?tab=queue">
+              <ClipboardCheck className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              Timesheets
+            </Link>
+          </Button>
+        }
       />
 
-      <div className="grid grid-cols-2 gap-3 sm:max-w-md">
-        <MetricCard
-          label="Time off pending"
-          value={timeOffError ? '—' : timeOff === null ? '…' : timeOff.length}
-          accent={(timeOff?.length ?? 0) > 0}
+      {/* ---- The queues at a glance — each tile jumps to its list -------- */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 animate-enter">
+        {counts.walkIns !== null && (
+          <QueueTile
+            label="Walk-ins"
+            value={counts.walkIns}
+            sub={
+              counts.walkIns
+                ? oldestWalkIn
+                  ? `Oldest ${waitingSince(oldestWalkIn)}`
+                  : 'At the kiosk'
+                : 'No one at the kiosk'
+            }
+            urgent={!!counts.walkIns}
+            onClick={counts.walkIns ? () => jumpTo('queue-walk-ins') : undefined}
+          />
+        )}
+        <QueueTile
+          label="Time off"
+          value={timeOffError ? null : counts.timeOff}
+          sub={counts.timeOff ? 'Decide before the dates' : 'Nothing pending'}
+          onClick={counts.timeOff ? () => jumpTo('queue-time-off') : undefined}
         />
-        <MetricCard
-          label="Timesheets to review"
-          value={
-            timesheetFailed ? '—' : timesheetCount === null ? '…' : timesheetCount
-          }
-          accent={timesheetFailed || (timesheetCount ?? 0) > 0}
-          hint={
-            timesheetFailed ? (
-              <span className="inline-flex items-center gap-2">
-                <span role="alert" className="text-alert">
-                  Couldn't load
-                </span>
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={() => timesheetQuery.refetch()}
-                >
-                  Retry
-                </Button>
+        <QueueTile
+          label="Swaps"
+          value={swaps.isError ? null : counts.swaps}
+          sub={counts.swaps ? 'Peer already said yes' : 'Nothing pending'}
+          onClick={counts.swaps ? () => jumpTo('queue-swaps') : undefined}
+        />
+        <QueueTile
+          label="Pickups"
+          value={pickups.isError ? null : counts.pickups}
+          sub={counts.pickups ? 'Approve to fill the shift' : 'Nothing pending'}
+          onClick={counts.pickups ? () => jumpTo('queue-pickups') : undefined}
+        />
+        {timesheetFailed ? (
+          <div
+            className={cn(
+              'rounded-lg border border-alert/40 bg-navy-secondary/20 p-4',
+              counts.walkIns !== null && 'col-span-2 sm:col-span-1',
+            )}
+          >
+            <div className="text-2xs font-medium uppercase tracking-wider text-silver/60">Timesheets</div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+              <span role="alert" className="text-alert">
+                Couldn't load
               </span>
-            ) : (
-              'Review on Time & attendance'
-            )
-          }
-          // A retry button inside a link is invalid markup — drop the link
-          // while the tile is in its error state.
-          wrap={
-            timesheetFailed
-              ? undefined
-              : (children) => <Link to="/time-attendance?tab=queue">{children}</Link>
-          }
-        />
+              <Button size="xs" variant="outline" onClick={() => timesheetQuery.refetch()}>
+                Retry
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Link
+            to="/time-attendance?tab=queue"
+            className={cn(
+              counts.walkIns !== null && 'col-span-2 sm:col-span-1',
+              'block rounded-lg transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright [&>div]:h-full [&>div]:transition-colors [&>div]:hover:border-gold/40',
+            )}
+          >
+            <StatTile
+              label="Timesheets"
+              value={timesheetCount ?? '—'}
+              sub="Review on Time & attendance"
+            />
+          </Link>
+        )}
       </div>
+
+      {clear && (
+        <Card className="border-success/30 bg-success/5 animate-enter">
+          <CardContent className="flex items-center gap-3 p-5">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-success/15 text-success">
+              <CalendarCheck className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <div>
+              <div className="font-medium text-white">Nothing waiting on you</div>
+              <div className="text-sm text-silver">
+                No one at the kiosk, and no time off, swaps, or pickups to decide.
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* First in the stack — someone is physically standing at a kiosk
           waiting on this decision. */}
@@ -161,12 +295,123 @@ export function ApprovalsHome() {
       <PendingTimeOffPanel
         items={timeOffError ? null : timeOff}
         error={timeOffError}
-        onRetry={() => timeOffQuery.refetch()}
+        onRetry={() => timeOffQ.refetch()}
       />
       <SwapsPanel />
       <PickupsPanel />
-      <AdminUnconfirmedPanel />
+      <AdminUnconfirmedPanel className="" />
     </div>
+  );
+}
+
+/** A summary tile that jumps to its queue (inert when the queue is empty). */
+function QueueTile({
+  label,
+  value,
+  sub,
+  urgent = false,
+  onClick,
+}: {
+  label: string;
+  value: number | null | undefined;
+  sub: string;
+  urgent?: boolean;
+  onClick?: () => void;
+}) {
+  const tile = (
+    <StatTile
+      label={label}
+      value={value === undefined ? '…' : value === null ? '—' : value}
+      sub={value === undefined || value === null ? undefined : sub}
+      className={cn('h-full', urgent && 'border-alert/40 bg-alert/[0.06]')}
+    />
+  );
+  if (!onClick) return tile;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="block w-full rounded-lg text-left transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright [&>div]:transition-colors [&>div]:hover:border-gold/40"
+    >
+      {tile}
+    </button>
+  );
+}
+
+/**
+ * One queue: a card with its icon, title and count, the bulk actions on
+ * the right, and its rows. Queues with nothing in them don't render — the
+ * summary strip already says "nothing pending".
+ */
+function QueueCard({
+  id,
+  icon: Icon,
+  title,
+  count,
+  urgent = false,
+  actions,
+  children,
+  stagger = 2,
+}: {
+  id: string;
+  icon: LucideIcon;
+  title: string;
+  count: number | null;
+  urgent?: boolean;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+  stagger?: number;
+}) {
+  return (
+    <Card
+      id={id}
+      className={cn('scroll-mt-20 animate-enter', urgent && 'border-alert/40')}
+      style={enterStagger(stagger)}
+    >
+      <CardContent className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="flex items-center gap-2 text-sm font-medium text-white">
+            <Icon className={cn('h-4 w-4', urgent ? 'text-alert' : 'text-gold')} aria-hidden="true" />
+            {title}
+            {count !== null && count > 0 && (
+              <span className="rounded-full bg-navy-secondary px-2 py-0.5 text-2xs tabular-nums text-silver">
+                {count}
+              </span>
+            )}
+          </h2>
+          {actions}
+        </div>
+        <div className="mt-3">{children}</div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Tri-state select-all over a queue's row checkboxes. */
+function SelectAll({
+  label,
+  allSelected,
+  someSelected,
+  onToggle,
+}: {
+  label: string;
+  allSelected: boolean;
+  someSelected: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <label className="flex w-fit cursor-pointer items-center gap-3 pb-1 text-xs text-silver">
+      <input
+        type="checkbox"
+        aria-label={label}
+        checked={allSelected}
+        ref={(el) => {
+          if (el) el.indeterminate = someSelected;
+        }}
+        onChange={onToggle}
+      />
+      Select all
+    </label>
   );
 }
 
@@ -258,8 +503,6 @@ async function approveAllSettled(
 
 /* --------------------------------------------- walk-in clock-ins panel */
 
-const CLOCK_INS_KEY = ['approvals', 'clockIns'] as const;
-
 /** "8:02 AM · waiting 14m" — how long they've been standing at the kiosk. */
 function waitingSince(iso: string): string {
   const min = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60_000));
@@ -278,21 +521,7 @@ function WalkInClockInsPanel() {
   const [bulkDenyOpen, setBulkDenyOpen] = useState(false);
   const [denyReason, setDenyReason] = useState('');
 
-  const query = useQuery({
-    queryKey: CLOCK_INS_KEY,
-    queryFn: async () => {
-      try {
-        return (await listClockInRequests('PENDING')).requests;
-      } catch (err) {
-        // 403 = not permitted — hide the whole panel (null), never an
-        // asserted "no one is waiting" the caller can't actually know.
-        if (err instanceof ApiError && err.status === 403) return null;
-        throw err;
-      }
-    },
-    // Someone is at the kiosk — keep this fresher than the other panels.
-    refetchInterval: 60_000,
-  });
+  const query = useQuery(clockInsQuery);
   const items = query.data ?? null;
   const forbidden = query.data === null && !query.isLoading && !query.isError;
   const error = query.isError
@@ -383,13 +612,18 @@ function WalkInClockInsPanel() {
   };
 
   if (forbidden) return null;
+  // Nobody at the kiosk — the summary tile already says so.
+  if (!error && items && items.length === 0) return null;
 
   return (
-    <Card className="mt-8">
-      <CardHeader>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle>Walk-in clock-ins waiting at the kiosk</CardTitle>
-          {selected.size > 0 && (
+    <QueueCard
+      id="queue-walk-ins"
+      icon={DoorOpen}
+      title="Walk-ins at the kiosk"
+      count={items?.length ?? null}
+      urgent={!!items && items.length > 0}
+      actions={
+          selected.size > 0 && (
             <div className="flex items-center gap-2">
               <Button
                 size="sm"
@@ -412,10 +646,9 @@ function WalkInClockInsPanel() {
                 Deny selected ({selected.size})
               </Button>
             </div>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent>
+          )
+      }
+    >
         {error && (
           <div className="space-y-3">
             <ErrorBanner>{error}</ErrorBanner>
@@ -425,44 +658,33 @@ function WalkInClockInsPanel() {
           </div>
         )}
         {!error && !items && <Skeleton className="h-16" />}
-        {!error && items && items.length === 0 && (
-          <p className="text-silver text-sm">
-            No one is waiting. Unscheduled associates who try to clock in
-            appear here for your decision.
-          </p>
-        )}
         {!error && items && items.length > 0 && (
           <>
-            {/* Tri-state select-all — same pattern as the sibling panels. */}
-            <label className="flex w-fit cursor-pointer items-center gap-3 px-3 pb-2 text-xs text-silver">
-              <input
-                type="checkbox"
-                aria-label="Select all clock-in requests"
-                checked={allSelected}
-                ref={(el) => {
-                  if (el) el.indeterminate = someSelected;
-                }}
-                onChange={toggleAll}
-              />
-              Select all
-            </label>
+            {items.length > 1 && (
+            <SelectAll
+              label="Select all clock-in requests"
+              allSelected={allSelected}
+              someSelected={someSelected}
+              onToggle={toggleAll}
+            />
+            )}
           <ul className="divide-y divide-navy-secondary/60">
             {items.map((r) => (
               <li
                 key={r.id}
                 id={`walkin-${r.id}`}
-                className={`flex flex-wrap items-center justify-between gap-3 py-2.5${
+                className={`flex flex-wrap items-center justify-between gap-3 py-3${
                   flashId === r.id ? ` rounded-md ${FLASH_ROW_CLASS}` : ''
                 }`}
               >
-                <div className="flex items-start gap-3 min-w-0">
+                <div className="flex min-w-0 items-center gap-3">
                   <input
                     type="checkbox"
-                    className="mt-1"
                     aria-label={`Select clock-in from ${r.associateName}`}
                     checked={selected.has(r.id)}
                     onChange={() => toggle(r.id)}
                   />
+                  <Avatar src={photoUrl(r.associateId)} name={r.associateName} email="" size="md" />
                   <div className="min-w-0">
                     <div className="font-medium text-white">
                       <AssociateLink associateId={r.associateId}>
@@ -520,7 +742,6 @@ function WalkInClockInsPanel() {
           </ul>
           </>
         )}
-      </CardContent>
 
       <Dialog
         open={denyTarget !== null || bulkDenyOpen}
@@ -595,7 +816,7 @@ function WalkInClockInsPanel() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </QueueCard>
   );
 }
 
@@ -721,19 +942,24 @@ function PendingTimeOffPanel({
     }
   };
 
+  // Nothing to decide — the summary tile already says so.
+  if (!error && items && items.length === 0) return null;
+
   return (
-    <Card className="mt-8">
-      <CardHeader>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle>Time-off requests awaiting your decision</CardTitle>
-          {selected.size > 0 && (
-            <Button size="sm" onClick={bulkApprove} loading={bulkBusy}>
-              Approve selected ({selected.size})
-            </Button>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent>
+    <QueueCard
+      id="queue-time-off"
+      icon={CalendarOff}
+      title="Time off"
+      count={items?.length ?? null}
+      stagger={3}
+      actions={
+        selected.size > 0 && (
+          <Button size="sm" onClick={bulkApprove} loading={bulkBusy}>
+            Approve selected ({selected.size})
+          </Button>
+        )
+      }
+    >
         {error && (
           <div className="space-y-3">
             <ErrorBanner>{error}</ErrorBanner>
@@ -743,46 +969,34 @@ function PendingTimeOffPanel({
           </div>
         )}
         {!error && !items && <Skeleton className="h-16" />}
-        {!error && items && items.length === 0 && (
-          <p className="text-silver text-sm flex items-center gap-2">
-            <CalendarCheck className="h-4 w-4" aria-hidden="true" />
-            No time-off requests waiting.
-          </p>
-        )}
         {!error && items && items.length > 0 && (
           <>
-            {/* Tri-state select-all — same pattern as AdminTimeView's
-                header checkbox, aligned over the row checkboxes. */}
-            <label className="flex w-fit cursor-pointer items-center gap-3 px-3 pb-2 text-xs text-silver">
-              <input
-                type="checkbox"
-                aria-label="Select all time-off requests"
-                checked={allSelected}
-                ref={(el) => {
-                  if (el) el.indeterminate = someSelected;
-                }}
-                onChange={toggleAll}
-              />
-              Select all
-            </label>
-          <ul className="space-y-2">
+            {items.length > 1 && (
+            <SelectAll
+              label="Select all time-off requests"
+              allSelected={allSelected}
+              someSelected={someSelected}
+              onToggle={toggleAll}
+            />
+            )}
+          <ul className="divide-y divide-navy-secondary/60">
             {items.map((r) => (
               <li
                 key={r.id}
                 id={`request-${r.id}`}
-                className={`p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md flex items-start justify-between gap-3 flex-wrap${
-                  flashId === r.id ? ` ${FLASH_ROW_CLASS}` : ''
+                className={`flex flex-wrap items-center justify-between gap-3 py-3${
+                  flashId === r.id ? ` rounded-md ${FLASH_ROW_CLASS}` : ''
                 }`}
               >
-                <div className="flex items-start gap-3">
+                <div className="flex min-w-0 items-center gap-3">
                   <input
                     type="checkbox"
-                    className="mt-1"
                     aria-label={`Select request from ${r.associateName ?? 'associate'}`}
                     checked={selected.has(r.id)}
                     onChange={() => toggle(r.id)}
                   />
-                  <div>
+                  <Avatar src={photoUrl(r.associateId)} name={r.associateName ?? ''} email="" size="md" />
+                  <div className="min-w-0">
                     <div className="text-white text-sm font-medium">
                       {r.associateName ?? '—'}
                     </div>
@@ -799,7 +1013,6 @@ function PendingTimeOffPanel({
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant="pending">Pending</Badge>
                   <Button
                     size="sm"
                     onClick={() => onApprove(r)}
@@ -810,7 +1023,7 @@ function PendingTimeOffPanel({
                   </Button>
                   <Button
                     size="sm"
-                    variant="destructive"
+                    variant="outline"
                     onClick={() => setDenyTarget(r)}
                     disabled={pendingId === r.id || bulkBusy}
                   >
@@ -823,14 +1036,13 @@ function PendingTimeOffPanel({
           </ul>
           </>
         )}
-      </CardContent>
 
       <DenyDialog
         target={denyTarget}
         onSubmit={(target, note) => denyMutation.mutateAsync({ target, note })}
         onClose={() => setDenyTarget(null)}
       />
-    </Card>
+    </QueueCard>
   );
 }
 
@@ -919,20 +1131,18 @@ function DenyDialog({
 
 function SwapsPanel() {
   const queryClient = useQueryClient();
+  const showClient = !useClientBounded();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  const swapsQuery = useQuery({
-    queryKey: SWAPS_KEY,
-    queryFn: () => listAdminSwaps({ status: 'PEER_ACCEPTED' }),
-  });
-  const items = swapsQuery.data?.requests ?? null;
+  const swapsQ = useQuery(swapsQuery);
+  const items = swapsQ.data?.requests ?? null;
   const itemIds = useMemo(() => items?.map((s) => s.id) ?? [], [items]);
   const { selected, toggle, clear, selectAll, allSelected, someSelected, toggleAll } =
     useSelection(itemIds);
-  const error = swapsQuery.isError
-    ? swapsQuery.error instanceof ApiError
-      ? swapsQuery.error.message
+  const error = swapsQ.isError
+    ? swapsQ.error instanceof ApiError
+      ? swapsQ.error.message
       : 'Failed to load swaps.'
     : null;
 
@@ -971,77 +1181,73 @@ function SwapsPanel() {
     queryClient.invalidateQueries({ queryKey: SWAPS_KEY });
   };
 
+  if (!error && items && items.length === 0) return null;
+
   return (
-    <Card className="mt-8">
-      <CardHeader>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle>Swap requests awaiting your approval</CardTitle>
-          {selected.size > 0 && (
-            <Button size="sm" onClick={bulkApprove} loading={bulkBusy}>
-              Approve selected ({selected.size})
-            </Button>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent>
+    <QueueCard
+      id="queue-swaps"
+      icon={ArrowLeftRight}
+      title="Swaps"
+      count={items?.length ?? null}
+      stagger={4}
+      actions={
+        selected.size > 0 && (
+          <Button size="sm" onClick={bulkApprove} loading={bulkBusy}>
+            Approve selected ({selected.size})
+          </Button>
+        )
+      }
+    >
         {error && (
           <div className="space-y-3">
             <ErrorBanner>{error}</ErrorBanner>
-            <Button size="sm" variant="secondary" onClick={() => swapsQuery.refetch()}>
+            <Button size="sm" variant="secondary" onClick={() => swapsQ.refetch()}>
               Retry
             </Button>
           </div>
         )}
         {!error && !items && <Skeleton className="h-16" />}
-        {!error && items && items.length === 0 && (
-          <p className="text-silver text-sm">
-            No swap requests need your approval.
-          </p>
-        )}
         {!error && items && items.length > 0 && (
           <>
-            <label className="flex w-fit cursor-pointer items-center gap-3 px-3 pb-2 text-xs text-silver">
-              <input
-                type="checkbox"
-                aria-label="Select all swap requests"
-                checked={allSelected}
-                ref={(el) => {
-                  if (el) el.indeterminate = someSelected;
-                }}
-                onChange={toggleAll}
-              />
-              Select all
-            </label>
-          <ul className="space-y-2">
+            {items.length > 1 && (
+            <SelectAll
+              label="Select all swap requests"
+              allSelected={allSelected}
+              someSelected={someSelected}
+              onToggle={toggleAll}
+            />
+            )}
+          <ul className="divide-y divide-navy-secondary/60">
             {items.map((s) => (
-              <li
-                key={s.id}
-                className="p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md flex items-start justify-between gap-3 flex-wrap"
-              >
-                <div className="flex items-start gap-3">
+              <li key={s.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <div className="flex min-w-0 items-center gap-3">
                   <input
                     type="checkbox"
-                    className="mt-1"
                     aria-label={`Select swap from ${s.requesterName}`}
                     checked={selected.has(s.id)}
                     onChange={() => toggle(s.id)}
                   />
-                  <div>
+                  {/* Who gives it up → who takes it, as faces. */}
+                  <div className="flex shrink-0 items-center" aria-hidden="true">
+                    <Avatar src={photoUrl(s.requesterAssociateId)} name={s.requesterName} email="" size="sm" />
+                    <ArrowLeftRight className="mx-1 h-3 w-3 text-silver/60" />
+                    <Avatar src={photoUrl(s.counterpartyAssociateId)} name={s.counterpartyName} email="" size="sm" />
+                  </div>
+                  <div className="min-w-0">
                     <div className="text-white text-sm">
                       <span className="font-medium">{s.requesterName}</span>
                       {' → '}
                       <span className="font-medium">{s.counterpartyName}</span>
                     </div>
                     <div className="text-xs text-silver mt-0.5">
-                      {s.shiftPosition} · {s.shiftClientName ?? '—'} ·{' '}
-                      <span className="tabular-nums">
-                        {fmtDateTime(s.shiftStartsAt)}
-                      </span>
+                      {s.shiftPosition}
+                      {showClient && ` · ${s.shiftClientName ?? '—'}`} ·{' '}
+                      <span className="tabular-nums">{when(s.shiftStartsAt)}</span>
                     </div>
                     {s.inExchange && (
                       <div className="text-xs text-gold/90 mt-0.5 tabular-nums">
                         Trade — {s.requesterName} takes: {s.inExchange.position} ·{' '}
-                        {fmtDateTime(s.inExchange.startsAt)}
+                        {when(s.inExchange.startsAt)}
                       </div>
                     )}
                     {s.note && (
@@ -1066,7 +1272,7 @@ function SwapsPanel() {
                   </Button>
                   <Button
                     size="sm"
-                    variant="destructive"
+                    variant="outline"
                     onClick={() =>
                       decide(s.id, () => managerRejectSwap(s.id), 'Swap rejected.')
                     }
@@ -1080,8 +1286,7 @@ function SwapsPanel() {
           </ul>
           </>
         )}
-      </CardContent>
-    </Card>
+    </QueueCard>
   );
 }
 
@@ -1089,20 +1294,18 @@ function SwapsPanel() {
 
 function PickupsPanel() {
   const queryClient = useQueryClient();
+  const showClient = !useClientBounded();
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
 
-  const pickupsQuery = useQuery({
-    queryKey: PICKUPS_KEY,
-    queryFn: () => listOpenShiftClaims(),
-  });
-  const items = pickupsQuery.data?.claims ?? null;
+  const pickupsQ = useQuery(pickupsQuery);
+  const items = pickupsQ.data?.claims ?? null;
   const itemIds = useMemo(() => items?.map((c) => c.id) ?? [], [items]);
   const { selected, toggle, clear, selectAll, allSelected, someSelected, toggleAll } =
     useSelection(itemIds);
-  const error = pickupsQuery.isError
-    ? pickupsQuery.error instanceof ApiError
-      ? pickupsQuery.error.message
+  const error = pickupsQ.isError
+    ? pickupsQ.error instanceof ApiError
+      ? pickupsQ.error.message
       : 'Failed to load pickup requests.'
     : null;
 
@@ -1139,67 +1342,54 @@ function PickupsPanel() {
     queryClient.invalidateQueries({ queryKey: PICKUPS_KEY });
   };
 
+  if (!error && items && items.length === 0) return null;
+
   return (
-    <Card className="mt-8">
-      <CardHeader>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle>Open-shift pickup requests</CardTitle>
-          {selected.size > 0 && (
-            <Button size="sm" onClick={bulkApprove} loading={bulkBusy}>
-              Approve selected ({selected.size})
-            </Button>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent>
+    <QueueCard
+      id="queue-pickups"
+      icon={Store}
+      title="Open-shift pickups"
+      count={items?.length ?? null}
+      stagger={5}
+      actions={
+        selected.size > 0 && (
+          <Button size="sm" onClick={bulkApprove} loading={bulkBusy}>
+            Approve selected ({selected.size})
+          </Button>
+        )
+      }
+    >
         {error && (
           <div className="space-y-3">
             <ErrorBanner>{error}</ErrorBanner>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => pickupsQuery.refetch()}
-            >
+            <Button size="sm" variant="secondary" onClick={() => pickupsQ.refetch()}>
               Retry
             </Button>
           </div>
         )}
         {!error && !items && <Skeleton className="h-16" />}
-        {!error && items && items.length === 0 && (
-          <p className="text-silver text-sm">
-            No pickup requests waiting. Associates see published open shifts
-            at their clients and can ask to take them.
-          </p>
-        )}
         {!error && items && items.length > 0 && (
           <>
-            <label className="flex w-fit cursor-pointer items-center gap-3 px-3 pb-2 text-xs text-silver">
-              <input
-                type="checkbox"
-                aria-label="Select all pickup requests"
-                checked={allSelected}
-                ref={(el) => {
-                  if (el) el.indeterminate = someSelected;
-                }}
-                onChange={toggleAll}
-              />
-              Select all
-            </label>
-          <ul className="space-y-2">
+            {items.length > 1 && (
+            <SelectAll
+              label="Select all pickup requests"
+              allSelected={allSelected}
+              someSelected={someSelected}
+              onToggle={toggleAll}
+            />
+            )}
+          <ul className="divide-y divide-navy-secondary/60">
             {items.map((c) => (
-              <li
-                key={c.id}
-                className="p-3 bg-navy-secondary/30 border border-navy-secondary rounded-md flex items-start justify-between gap-3 flex-wrap"
-              >
-                <div className="flex items-start gap-3">
+              <li key={c.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <div className="flex min-w-0 items-center gap-3">
                   <input
                     type="checkbox"
-                    className="mt-1"
                     aria-label={`Select pickup from ${c.associateName}`}
                     checked={selected.has(c.id)}
                     onChange={() => toggle(c.id)}
                   />
-                  <div>
+                  <Avatar src={photoUrl(c.associateId)} name={c.associateName} email="" size="md" />
+                  <div className="min-w-0">
                     <div className="text-white text-sm">
                       <AssociateLink associateId={c.associateId} className="font-medium">
                         {c.associateName}
@@ -1208,7 +1398,8 @@ function PickupsPanel() {
                       <span className="font-medium">{c.shiftPosition}</span>
                     </div>
                     <div className="text-xs text-silver mt-0.5 tabular-nums">
-                      {c.shiftClientName ?? '—'} · {fmtDateTime(c.shiftStartsAt)}
+                      {showClient && `${c.shiftClientName ?? '—'} · `}
+                      {when(c.shiftStartsAt)}
                     </div>
                   </div>
                 </div>
@@ -1231,7 +1422,7 @@ function PickupsPanel() {
                   </Button>
                   <Button
                     size="sm"
-                    variant="destructive"
+                    variant="outline"
                     onClick={() =>
                       decide(c.id, () => rejectOpenShiftClaim(c.id), 'Pickup rejected.')
                     }
@@ -1245,7 +1436,6 @@ function PickupsPanel() {
           </ul>
           </>
         )}
-      </CardContent>
-    </Card>
+    </QueueCard>
   );
 }
