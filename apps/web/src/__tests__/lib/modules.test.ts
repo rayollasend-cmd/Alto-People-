@@ -68,3 +68,49 @@ describe('visibleModules — INTERNAL_RECRUITER curation', () => {
     }
   });
 });
+
+describe('visibleModules — SHIFT_SUPERVISOR curation', () => {
+  // The role had no curation branch, so its capability slice rendered 24
+  // rows — employee perks, a 403ing Reimbursements page, the company
+  // holiday calendar, and a margin page. This pins the nav to the store
+  // floor plus the personal baseline.
+  it('shows exactly the floor surfaces plus the personal baseline', () => {
+    const keys = keysFor('SHIFT_SUPERVISOR');
+    expect(new Set(keys)).toEqual(
+      new Set<ModuleKey>([
+        'me',
+        'messages',
+        'scheduling',
+        'approvals',
+        'time-attendance',
+        'ops',
+        'marketplace',
+        'time-off',
+        'onboarding',
+        'kiosk',
+        'hr-cases',
+        'agreements',
+        'learning',
+      ]),
+    );
+  });
+
+  it('drops the perks, dead ends, company config and money rows', () => {
+    const keys = new Set(keysFor('SHIFT_SUPERVISOR'));
+    for (const gone of [
+      'pulse',
+      'career',
+      'equity',
+      'tuition',
+      'volunteer',
+      'internal-jobs',
+      'help-center',
+      'reimbursements',
+      'holidays',
+      'labor-costs',
+      'communications',
+    ] as ModuleKey[]) {
+      expect(keys.has(gone)).toBe(false);
+    }
+  });
+});

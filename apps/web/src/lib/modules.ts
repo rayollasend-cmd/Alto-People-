@@ -275,6 +275,35 @@ const RECRUITER_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'hr-cases',
 ]);
 
+/**
+ * The shift supervisor's curated nav: running one store's floor — the
+ * schedule, the decisions inbox, the live board and timesheets, the SOP
+ * shift, open-shift claims, time-off requests, new-hire invites, and the
+ * store's kiosk PINs — plus the personal baseline. The uncurated slice was
+ * 24 rows: employee perks the associate nav already dropped (Pulse,
+ * Career, Equity, Tuition, Volunteer, Internal jobs, Help center), a
+ * Reimbursements page that 403s for this role (no view:payroll /
+ * submit:reimbursement), company config (the holiday calendar) and money
+ * (Labor costs — pay AND bill rates), and a Communications inbox the bell
+ * and Messages already cover. Everything trimmed stays reachable by URL —
+ * out of the NAV, not the app.
+ */
+const SHIFT_SUPERVISOR_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
+  'me',
+  'messages',
+  'scheduling',
+  'approvals',
+  'time-attendance',
+  'ops',
+  'marketplace', // pending claims + the qualifications catalog
+  'time-off',
+  'onboarding', // invites + checklist progress for their client
+  'kiosk',
+  'hr-cases',
+  'agreements',
+  'learning',
+]);
+
 /** Capability-filtered module list, with per-role curation applied.
  *  `scope.regionId` marks a CLIENT_PORTAL command-center account, whose nav
  *  is the region and messages — never the single-store pages. */
@@ -311,6 +340,9 @@ export function visibleModules(
     return base.filter((m) => RECRUITER_MODULE_KEYS.has(m.key));
   }
   if (role === 'EXECUTIVE_CHAIRMAN') return base.filter((m) => EXEC_MODULE_KEYS.has(m.key));
+  if (role === 'SHIFT_SUPERVISOR') {
+    return base.filter((m) => SHIFT_SUPERVISOR_MODULE_KEYS.has(m.key));
+  }
   if (role === 'FLOOR_SUPERVISOR') {
     return base.filter((m) => FLOOR_SUPERVISOR_MODULE_KEYS.has(m.key));
   }
