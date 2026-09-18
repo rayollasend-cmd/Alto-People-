@@ -20,7 +20,7 @@ import type { PrismaClient } from '@prisma/client';
 import { paidMinutesForRange } from '@alto-people/shared';
 import { env } from '../config/env.js';
 import { notifyAssociate } from './notify.js';
-import { listEligibleOpenShifts } from '../routes/qualifications.js';
+import { listEligibleOpenShiftSlots } from '../routes/qualifications.js';
 import { endOfWeekUTC, netWorkedMinutes, startOfWeekUTC } from './timeAnomalies.js';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -107,54 +107,57 @@ export async function computeAssociateEarnings(
 ): Promise<AssociateEarnings> {
   const weekStart = startOfWeekUTC(now);
   const weekEnd = endOfWeekUTC(now);
-  const { rate, source } = await hourlyRateFor(prisma, associateId);
-
-  const [entries, shifts, lastWeekEntries, openEligible] = await Promise.all([
-    prisma.timeEntry.findMany({
-      where: {
-        associateId,
-        status: { in: ['APPROVED', 'COMPLETED', 'ACTIVE'] },
-        clockInAt: { gte: weekStart, lt: weekEnd },
-      },
-      // Chronological — the OT split walks the week in order.
-      orderBy: { clockInAt: 'asc' },
-      select: {
-        clockInAt: true,
-        clockOutAt: true,
-        status: true,
-        breaks: { select: { type: true, startedAt: true, endedAt: true } },
-      },
-      take: 100,
-    }),
-    prisma.shift.findMany({
-      where: {
-        assignedAssociateId: associateId,
-        status: 'ASSIGNED',
-        endsAt: { gt: now },
-        startsAt: { lt: weekEnd },
-      },
-      orderBy: { startsAt: 'asc' },
-      select: { startsAt: true, endsAt: true },
-      take: 30,
-    }),
-    prisma.timeEntry.findMany({
-      where: {
-        associateId,
-        status: { in: ['APPROVED', 'COMPLETED'] },
-        clockInAt: {
-          gte: new Date(weekStart.getTime() - 7 * DAY_MS),
-          lt: weekStart,
+  // The rate query used to run on its own before the batch below, which
+  // put a whole round trip in front of everything else. It depends on
+  // nothing here, so it rides along with the rest.
+  const [{ rate, source }, entries, shifts, lastWeekEntries, openEligible] =
+    await Promise.all([
+      hourlyRateFor(prisma, associateId),
+      prisma.timeEntry.findMany({
+        where: {
+          associateId,
+          status: { in: ['APPROVED', 'COMPLETED', 'ACTIVE'] },
+          clockInAt: { gte: weekStart, lt: weekEnd },
         },
-      },
-      select: {
-        clockInAt: true,
-        clockOutAt: true,
-        breaks: { select: { type: true, startedAt: true, endedAt: true } },
-      },
-      take: 100,
-    }),
-    listEligibleOpenShifts(associateId, { before: weekEnd }),
-  ]);
+        // Chronological — the OT split walks the week in order.
+        orderBy: { clockInAt: 'asc' },
+        select: {
+          clockInAt: true,
+          clockOutAt: true,
+          status: true,
+          breaks: { select: { type: true, startedAt: true, endedAt: true } },
+        },
+        take: 100,
+      }),
+      prisma.shift.findMany({
+        where: {
+          assignedAssociateId: associateId,
+          status: 'ASSIGNED',
+          endsAt: { gt: now },
+          startsAt: { lt: weekEnd },
+        },
+        orderBy: { startsAt: 'asc' },
+        select: { startsAt: true, endsAt: true },
+        take: 30,
+      }),
+      prisma.timeEntry.findMany({
+        where: {
+          associateId,
+          status: { in: ['APPROVED', 'COMPLETED'] },
+          clockInAt: {
+            gte: new Date(weekStart.getTime() - 7 * DAY_MS),
+            lt: weekStart,
+          },
+        },
+        select: {
+          clockInAt: true,
+          clockOutAt: true,
+          breaks: { select: { type: true, startedAt: true, endedAt: true } },
+        },
+        take: 100,
+      }),
+      listEligibleOpenShiftSlots(associateId, { before: weekEnd }),
+    ]);
 
   const days: EarningsDay[] = Array.from({ length: 7 }, (_, i) => ({
     date: new Date(weekStart.getTime() + i * DAY_MS).toISOString().slice(0, 10),

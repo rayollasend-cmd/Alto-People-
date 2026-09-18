@@ -19,6 +19,8 @@ import type { Response } from 'express';
 
 const MAX_STREAMS_PER_USER = 3;
 const PING_INTERVAL_MS = 25_000;
+// One minute under the 15-minute request ceiling the platform enforces.
+const MAX_STREAM_MS = 14 * 60_000;
 
 const streams = new Map<string, Set<Response>>();
 
@@ -54,7 +56,16 @@ export function registerLiveStream(userId: string, res: Response): void {
   }, PING_INTERVAL_MS);
   ping.unref?.();
 
+  // Deliberate lifetime. The edge proxy in front of the API cuts any
+  // single request at 15 minutes, which showed up as a wall of
+  // ~899,998ms /events/stream transactions — a timeout, not a slow
+  // handler. Retiring the stream a minute early makes the turnover ours:
+  // the client gets a clean end plus a retry hint and reconnects, instead
+  // of the socket being torn out from under it.
+  let lifetime: ReturnType<typeof setTimeout> | null = null;
+
   const cleanup = () => {
+    if (lifetime) clearTimeout(lifetime);
     clearInterval(ping);
     const s = streams.get(userId);
     if (s) {
@@ -62,6 +73,18 @@ export function registerLiveStream(userId: string, res: Response): void {
       if (s.size === 0) streams.delete(userId);
     }
   };
+  lifetime = setTimeout(() => {
+    try {
+      // `retry:` sets the browser's reconnect delay for this close only.
+      res.write('retry: 1000\n\n');
+      res.end();
+    } catch {
+      /* already gone */
+    }
+    cleanup();
+  }, MAX_STREAM_MS);
+  lifetime.unref?.();
+
   res.on('close', cleanup);
 }
 

@@ -53,4 +53,27 @@ describe('liveEvents registry', () => {
     // Emitting to a user with no streams is a no-op.
     emitLiveEvent('user-cap', 'notification');
   });
+
+  it('retires a stream before the 15-minute request ceiling', () => {
+    vi.useFakeTimers();
+    try {
+      const before = liveStreamCount();
+      const s = fakeRes();
+      registerLiveStream('user-lifetime', s);
+      expect(liveStreamCount()).toBe(before + 1);
+
+      // Still open at 13 minutes.
+      vi.advanceTimersByTime(13 * 60_000);
+      expect(liveStreamCount()).toBe(before + 1);
+      expect(s.end).not.toHaveBeenCalled();
+
+      // Retired at 14, with a reconnect hint so the browser comes back.
+      vi.advanceTimersByTime(60_000 + 1);
+      expect(s.write).toHaveBeenCalledWith('retry: 1000\n\n');
+      expect(s.end).toHaveBeenCalled();
+      expect(liveStreamCount()).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

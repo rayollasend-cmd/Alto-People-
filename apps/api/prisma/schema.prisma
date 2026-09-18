@@ -1705,6 +1705,9 @@ model Application {
   @@index([locationId])
   @@index([status])
   @@index([invitedAt])
+  // The list orders by invitedAt DESC under a status chip or client scope.
+  @@index([status, invitedAt(sort: Desc)])
+  @@index([clientId, invitedAt(sort: Desc)])
   @@index([deletedAt])
   @@index([cohortId])
 }
@@ -3347,6 +3350,8 @@ model Notification {
   // ORDER BY createdAt DESC. Matching index order lets the planner do an
   // in-order index scan instead of reverse-scanning.
   @@index([recipientUserId, createdAt(sort: Desc)])
+  // Latest invite delivery per associate: recipient + category, newest first.
+  @@index([recipientUserId, category, createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])
   @@index([category, createdAt(sort: Desc)])
   @@index([channel, createdAt(sort: Desc)])
@@ -4329,6 +4334,11 @@ model AssociateQualification {
 
   associate     Associate     @relation(fields: [associateId], references: [id], onDelete: Cascade)
   qualification Qualification @relation(fields: [qualificationId], references: [id], onDelete: Cascade)
+
+  // Eligibility checks (open-shift list, claim guard, earnings widget) all
+  // filter associateId + deletedAt; the table had no indexes at all.
+  @@index([associateId, deletedAt])
+  @@index([qualificationId])
 }
 
 model ShiftQualificationRequirement {
