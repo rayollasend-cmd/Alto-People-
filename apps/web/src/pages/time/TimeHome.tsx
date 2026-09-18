@@ -1,4 +1,6 @@
-import { ScanLine } from 'lucide-react';
+import { ArrowLeft, ScanLine } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -11,6 +13,7 @@ export function TimeHome() {
   const isAssociate = user?.role === 'ASSOCIATE';
   const canManage = can('manage:time');
   const hasAssociateRecord = !!user?.associateId;
+  const [searchParams] = useSearchParams();
 
   // Hourly associates use the kiosk PIN at the worksite, not their phone.
   // Show an explainer; the API would return 403 either way.
@@ -24,16 +27,28 @@ export function TimeHome() {
     return <AdminTimeView canManage={false} liveOnly />;
   }
 
-  // Managers (manage:time + an associate record) see BOTH: a personal
-  // clock-in widget at the top (so they can punch their own time from
-  // their phone) and the team approval queue below.
+  // People who run the floor AND punch themselves (manage:time + an
+  // associate record — supervisors, managers): ONE page, the floor, with
+  // their own clock as a slim row under the title (still one tap to clock
+  // in from the phone). Their history and attendance are "My time" —
+  // ?mine=1 — with the way back in its header. It used to stack both full
+  // pages, two "Time & attendance" titles deep.
   if (canManage && hasAssociateRecord) {
-    return (
-      <div className="space-y-8">
-        <AssociateTimeView />
-        <AdminTimeView canManage={canManage} />
-      </div>
-    );
+    if (searchParams.get('mine') === '1') {
+      return (
+        <AssociateTimeView
+          headerActions={
+            <Button size="sm" variant="ghost" asChild>
+              <Link to="/time-attendance">
+                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                The floor
+              </Link>
+            </Button>
+          }
+        />
+      );
+    }
+    return <AdminTimeView canManage={canManage} personal={<AssociateTimeView variant="strip" />} />;
   }
 
   // Managers without an associate record (e.g. the bootstrap HR_ADMIN before

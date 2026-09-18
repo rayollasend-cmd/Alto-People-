@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link as RouterLink, useNavigate, useSearchParams } from 'react-router-dom';
 import { AssociateLink } from '@/components/ui/AssociateLink';
 import {
@@ -380,6 +380,9 @@ interface AdminTimeViewProps {
   /** Watch-only mode (FLOOR_SUPERVISOR): live board only — the approval
    *  queue tab is hidden entirely. */
   liveOnly?: boolean;
+  /** The viewer's own clock, as one slim row under the title — for people
+   *  who run the floor AND punch themselves (one page, one title). */
+  personal?: ReactNode;
 }
 
 // ── Shift-window lens ─────────────────────────────────────────────────────
@@ -617,7 +620,7 @@ function ClientSiteSelects({
   );
 }
 
-export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProps) {
+export function AdminTimeView({ canManage, liveOnly = false, personal }: AdminTimeViewProps) {
   const navigate = useNavigate();
   const isDesktop = useIsDesktop();
   // Active tab lives in ?tab= — shareable ("send me the queue"), and Back
@@ -1015,6 +1018,23 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
 
   // Pull down at the top = re-fetch both the live board and the queue.
   const pullState = usePullToRefresh(() => Promise.all([refresh(), refreshActive()]));
+
+  // Live-board columns earn their place: the client only for org-wide
+  // viewers (a store-bound supervisor's client is every row's), Job and
+  // Geofence only when some row actually carries one — never a column of
+  // dashes.
+  const liveCols = useMemo(() => {
+    const rows = active ?? [];
+    const client = !boundedClient;
+    const job = rows.some((e) => !!e.jobName);
+    const geofence = rows.some((e) => e.geofenceOk !== null);
+    return {
+      client,
+      job,
+      geofence,
+      span: 4 + (client ? 1 : 0) + (job ? 1 : 0) + (geofence ? 1 : 0) + (canManage ? 1 : 0),
+    };
+  }, [active, boundedClient, canManage]);
 
   const refreshPendingCount = useCallback(async () => {
     // Watch-only mode has no queue and no manage:time — the count endpoint
@@ -1616,6 +1636,8 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
         }
       />
 
+      {personal}
+
       {/* KPI strip — mirrors the onboarding analytics pattern. Tiles are
           shortcuts too: the live trio jumps to the live board (Off-site
           also applies the off-site lens), Pending review opens the queue. */}
@@ -1768,12 +1790,12 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                     <TableHeader>
                       <TableRow>
                         <TableHead>Associate</TableHead>
-                        <TableHead>Client</TableHead>
-                        <TableHead>Job</TableHead>
+                        {liveCols.client && <TableHead>Client</TableHead>}
+                        {liveCols.job && <TableHead>Job</TableHead>}
                         <TableHead>Since</TableHead>
                         <TableHead>Elapsed</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead>Geofence</TableHead>
+                        {liveCols.geofence && <TableHead>Geofence</TableHead>}
                         {canManage && (
                           <TableHead className="text-right">Actions</TableHead>
                         )}
@@ -1785,7 +1807,7 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                           {showLiveGroups && (
                             <TableRow className="bg-navy-secondary/20 hover:bg-navy-secondary/20">
                               <TableCell
-                                colSpan={canManage ? 8 : 7}
+                                colSpan={liveCols.span}
                                 className="py-1.5 text-xs font-medium text-silver"
                               >
                                 <div className="flex items-center gap-2">
@@ -1817,14 +1839,20 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                         <TableRow key={e.id} className="group">
                           <TableCell className="font-medium">
                             <div className="flex items-center gap-2.5">
-                              <Avatar name={e.associateName} size="sm" />
+                              <Avatar
+                                src={`/api/associates/${e.associateId}/photo`}
+                                name={e.associateName}
+                                size="sm"
+                              />
                               <AssociateLink associateId={e.associateId}>
                                 {e.associateName}
                               </AssociateLink>
                             </div>
                           </TableCell>
-                          <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
-                          <TableCell className="text-silver">{e.jobName ?? '—'}</TableCell>
+                          {liveCols.client && (
+                            <TableCell className="text-silver">{e.clientName ?? '—'}</TableCell>
+                          )}
+                          {liveCols.job && <TableCell className="text-silver">{e.jobName ?? '—'}</TableCell>}
                           <TableCell className="tabular-nums text-silver">
                             {fmtPunchTime(e.clockInAt, e.locationTimezone)}
                           </TableCell>
@@ -1838,15 +1866,17 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                               <Badge variant="success">Working</Badge>
                             )}
                           </TableCell>
-                          <TableCell>
-                            {e.geofenceOk === null && (
-                              <span className="text-xs text-silver/70">N/A</span>
-                            )}
-                            {e.geofenceOk === true && <Badge variant="success">OK</Badge>}
-                            {e.geofenceOk === false && (
-                              <Badge variant="destructive">Off-site</Badge>
-                            )}
-                          </TableCell>
+                          {liveCols.geofence && (
+                            <TableCell>
+                              {e.geofenceOk === null && (
+                                <span className="text-xs text-silver/70">N/A</span>
+                              )}
+                              {e.geofenceOk === true && <Badge variant="success">OK</Badge>}
+                              {e.geofenceOk === false && (
+                                <Badge variant="destructive">Off-site</Badge>
+                              )}
+                            </TableCell>
+                          )}
                           {canManage && (
                             <TableCell className="text-right whitespace-nowrap">
                               <Button
@@ -1891,14 +1921,19 @@ export function AdminTimeView({ canManage, liveOnly = false }: AdminTimeViewProp
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                          <Avatar name={e.associateName} size="sm" />
+                          <Avatar
+                            src={`/api/associates/${e.associateId}/photo`}
+                            name={e.associateName}
+                            size="sm"
+                          />
                           <div className="min-w-0">
                             <div className="font-medium text-white truncate">
                               {e.associateName}
                             </div>
                             <div className="text-xs2 text-silver/70 truncate">
-                              {e.clientName ?? '—'}
-                              {e.jobName ? ` · ${e.jobName}` : ''}
+                              {[liveCols.client ? (e.clientName ?? '—') : null, e.jobName]
+                                .filter(Boolean)
+                                .join(' · ')}
                             </div>
                           </div>
                         </div>
@@ -5141,55 +5176,58 @@ interface KpiCardProps {
   onClick?: () => void;
 }
 
+// The store manager's stat-tile grammar (portalCharts StatTile): white
+// figures, colour only where it means something — a warning or an alert.
 const TONE_TEXT: Record<KpiCardProps['tone'], string> = {
-  success: 'text-success',
+  success: 'text-white',
   warning: 'text-warning',
   alert: 'text-alert',
-  default: 'text-gold',
+  default: 'text-white',
   silver: 'text-silver',
 };
 
+const KPI_TILE = 'rounded-lg border border-navy-secondary bg-navy-secondary/20 p-4 elev-1';
+
 function KpiCard({ icon: Icon, label, value, tone, onClick }: KpiCardProps) {
+  const head = (
+    <div className="flex items-start justify-between">
+      <div className="text-2xs font-medium uppercase tracking-wider text-silver/60">{label}</div>
+      <Icon className="h-3.5 w-3.5 text-silver/50" />
+    </div>
+  );
   if (value === '—') {
     return (
-      <Card className="p-4">
-        <div className="flex items-start justify-between mb-1">
-          <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-            {label}
-          </div>
-          <Icon className="h-3.5 w-3.5 text-silver/70" />
-        </div>
-        <Skeleton className="h-9 w-12 mt-1" />
-      </Card>
+      <div className={KPI_TILE}>
+        {head}
+        <Skeleton className="mt-2 h-8 w-12" />
+      </div>
     );
   }
   const body = (
     <>
-      <div className="flex items-start justify-between mb-1">
-        <div className="text-xs2 font-medium uppercase tracking-[0.14em] text-silver/70">
-          {label}
-        </div>
-        <Icon className="h-3.5 w-3.5 text-silver/70" />
-      </div>
-      <div className={cn('text-3xl font-display tabular-nums', TONE_TEXT[tone])}>
+      {head}
+      <div className={cn('mt-1.5 text-2xl font-bold tracking-tight tabular-nums sm:text-3xl', TONE_TEXT[tone])}>
         {value}
       </div>
     </>
   );
   if (onClick) {
-    // A real <button> (Card renders a div) so the shortcut is keyboard-
-    // and screen-reader reachable; classes mirror Card + interactive.
+    // A real <button> so the shortcut is keyboard- and screen-reader
+    // reachable.
     return (
       <button
         type="button"
         onClick={onClick}
-        className="rounded-lg border border-navy-secondary bg-navy text-white elev-1 p-4 text-left transition-colors hover:border-steel hover:bg-navy-secondary/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright"
+        className={cn(
+          KPI_TILE,
+          'text-left transition-colors hover:border-gold/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+        )}
       >
         {body}
       </button>
     );
   }
-  return <Card className="p-4">{body}</Card>;
+  return <div className={KPI_TILE}>{body}</div>;
 }
 
 interface RejectTimeDialogProps {

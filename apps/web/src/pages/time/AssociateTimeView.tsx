@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import type { BreakType, Job, TimeEntry } from '@alto-people/shared';
 import {
   clockIn,
@@ -69,7 +70,17 @@ function defaultHistoryToYmd(): string {
   return ymdLocal(new Date());
 }
 
-export function AssociateTimeView() {
+/**
+ * `variant="strip"`: the viewer's own clock as one slim row — for people who
+ * run the floor and punch themselves, so Time & attendance stays one page
+ * with one title (the floor), and clocking in is still one tap. The full
+ * view (history, attendance) is a link away. `headerActions` sits in the
+ * full view's header (the way back to the floor).
+ */
+export function AssociateTimeView({
+  variant = 'full',
+  headerActions,
+}: { variant?: 'full' | 'strip'; headerActions?: ReactNode } = {}) {
   const [active, setActive] = useState<TimeEntry | null>(null);
   const [entries, setEntries] = useState<TimeEntry[] | null>(null);
   // History row expanded to its punch timeline. One at a time keeps the
@@ -233,11 +244,64 @@ export function AssociateTimeView() {
           }
         : null;
 
+  if (variant === 'strip') {
+    return (
+      <section
+        aria-label="Your own clock"
+        className={cn(
+          'mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border px-4 py-3',
+          active ? 'border-gold/40 bg-gold/[0.06]' : 'border-navy-secondary bg-navy-secondary/20',
+        )}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="text-2xs font-medium uppercase tracking-wider text-silver/60">Your clock</div>
+          {active ? (
+            <div className="text-sm text-white">
+              On the clock since {fmtTime(active.clockInAt)} ·{' '}
+              <span className="font-semibold tabular-nums text-gold">{formatHM(liveMinutes)}</span>
+              {onBreak && <span className="text-warning"> · on break</span>}
+            </div>
+          ) : (
+            <div className="text-sm text-silver">Not clocked in</div>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {active ? (
+            <>
+              {onBreak ? (
+                <Button size="sm" variant="outline" onClick={handleEndBreak} loading={breakBusy} disabled={breakBusy}>
+                  End break
+                </Button>
+              ) : (
+                <Button size="sm" variant="ghost" onClick={() => handleStartBreak('MEAL')} disabled={breakBusy}>
+                  Meal break
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={handleClockOut} loading={busy} disabled={busy}>
+                Clock out
+              </Button>
+            </>
+          ) : (
+            <Button size="sm" onClick={handleClockIn} loading={busy} disabled={busy}>
+              Clock in
+            </Button>
+          )}
+          <Link to="/time-attendance?mine=1" className="text-xs text-gold underline-offset-2 hover:underline">
+            My time →
+          </Link>
+        </div>
+        {error && <ErrorBanner className="w-full">{error}</ErrorBanner>}
+        {info && <p className="w-full text-xs text-silver">{info}</p>}
+      </section>
+    );
+  }
+
   return (
     <div className="mx-auto">
       <PageHeader
-        title="Time & attendance"
+        title={headerActions ? 'My time' : 'Time & attendance'}
         subtitle="Clock in when you start. Clock out when you stop."
+        secondaryActions={headerActions}
       />
 
       {overtimeNudge && (
