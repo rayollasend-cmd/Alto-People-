@@ -104,7 +104,9 @@ const claimFixture = {
   associateName: 'Victor Diaz',
   shiftPosition: 'Front Desk',
   shiftClientName: 'Coastal Resort Holdings',
-  shiftStartsAt: new Date(Date.now() + 3 * 3_600_000).toISOString(),
+  // "Now", so the relative day is "Today" at any hour the suite runs
+  // (+3h read "Tomorrow" after 9 PM).
+  shiftStartsAt: new Date().toISOString(),
   status: 'PENDING',
   wouldExceed40h: false,
 };
