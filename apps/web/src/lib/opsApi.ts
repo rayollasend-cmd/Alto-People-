@@ -49,6 +49,8 @@ export interface OpsShiftHeader {
   /** Store-shift SOP (opened at clock-in): its window, and when it's due. */
   windowLabel?: string | null;
   locationId?: string | null;
+  /** The store, on the checklist detail (store-shift SOPs). */
+  locationName?: string | null;
   dueAt?: string | null;
   incompleteReason?: string | null;
   handoverNone?: boolean;
@@ -461,7 +463,17 @@ export interface MySop {
   handoverCount: number;
 }
 
-export function getMySop(): Promise<{ sop: MySop | null }> {
+/** The SOP they last submitted (last 16h) when nothing is open — the
+ *  end-of-shift screen reads "submitted · clock out". */
+export interface SubmittedSop {
+  id: string;
+  windowLabel: string | null;
+  position: string;
+  closedAt: string;
+  closedIncomplete: boolean;
+}
+
+export function getMySop(): Promise<{ sop: MySop | null; submitted?: SubmittedSop | null }> {
   return apiFetch('/ops/my-sop');
 }
 

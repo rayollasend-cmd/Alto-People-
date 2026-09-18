@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
   Camera,
@@ -17,6 +18,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
 import { fmtTime } from '@/lib/format';
 import { useClientBounded } from '@/lib/useClientBounded';
+import { useShiftClock } from '@/lib/useShiftClock';
 import { useClients } from '@/lib/useClients';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -41,6 +43,7 @@ import {
   addOpsHandover,
   closeOpsShift,
   decideOpsHandover,
+  getMySop,
   getOpsOpenOptions,
   getOpsShift,
   openOpsShift,
@@ -132,6 +135,9 @@ export function OpsRunner() {
   const detailRef = useRef<OpsShiftDetail | null>(null);
   detailRef.current = detail;
 
+  const isSupervisor = useClientBounded();
+  const clock = useShiftClock({ enabled: false });
+
   const setShiftParam = useCallback(
     (id: string | null) => {
       setSearchParams(
@@ -209,6 +215,16 @@ export function OpsRunner() {
         setClosedRecordId(shiftId);
         setDetail(null);
         setShiftParam(null);
+        // The end of the shift, in one more tap: the SOP was the last thing
+        // standing between them and the clock-out.
+        if (isSupervisor) {
+          toast.success('SOP submitted — the record is final.', {
+            duration: 12_000,
+            action: { label: 'Clock out now', onClick: () => void clock.clockOutNow() },
+          });
+        } else {
+          toast.success('Shift closed — the record is final.');
+        }
       }}
     />
   );
@@ -246,6 +262,16 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
   const { user } = useAuth();
   const bounded = useClientBounded();
   const { clients, isLoading: clientsLoading } = useClients({ enabled: !bounded });
+  // A supervisor off the clock starts here: clocking in opens their store
+  // shift's SOP by itself — the position picker is the fallback, folded.
+  const clock = useShiftClock({ enabled: bounded });
+  const offClock = bounded && clock.active === null;
+  // On the clock with this shift's SOP already submitted: the screen says
+  // so and offers the clock-out — not "start your shift" and a picker.
+  const mySopQuery = useQuery({ queryKey: ['ops', 'my-sop'], queryFn: getMySop, enabled: bounded });
+  const submitted = bounded && clock.active ? (mySopQuery.data?.submitted ?? null) : null;
+  const foldPicker = offClock || !!submitted;
+  const [showPicker, setShowPicker] = useState(false);
   const [pickedClient, setPickedClient] = useState<string>(
     () => (bounded ? '' : (user?.clientId ?? readStoredOpsClient() ?? '')),
   );
@@ -367,12 +393,31 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
             Your floor · {floorDay(options.dateKey)}
           </div>
           <div className="mt-1 text-xl font-medium text-white">
-            {options.resumeShift ? 'Pick up where you left off' : 'Start your shift'}
+            {options.resumeShift
+              ? 'Pick up where you left off'
+              : submitted
+                ? `Your ${submitted.windowLabel ?? submitted.position} SOP is submitted`
+                : offClock
+                  ? 'Clock in to start your shift'
+                  : 'Start your shift'}
           </div>
           <div className="mt-0.5 max-w-prose text-xs text-silver/70">
-            Open a shift and its SOP checklist loads itself — store, headcounts,
-            and standards fill in automatically.
+            {submitted
+              ? `${submitted.closedIncomplete ? 'Submitted incomplete — operations has your reason.' : 'Every required item done, handover written.'} You can clock out.`
+              : offClock
+                ? "Your shift's SOP opens by itself when you clock in — here or at the store's kiosk — and it's due when the shift ends."
+                : 'Open a shift and its SOP checklist loads itself — store, headcounts, and standards fill in automatically.'}
           </div>
+          {offClock && !options.resumeShift && (
+            <Button className="mt-3" onClick={() => void clock.clockInNow()} loading={clock.busy}>
+              Clock in
+            </Button>
+          )}
+          {submitted && !options.resumeShift && (
+            <Button className="mt-3" onClick={() => void clock.clockOutNow()} loading={clock.busy}>
+              Clock out
+            </Button>
+          )}
         </div>
       </div>
 
@@ -398,7 +443,19 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
         </button>
       )}
 
-      {options.positions.length === 0 ? (
+      {foldPicker && options.positions.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowPicker((v) => !v)}
+          aria-expanded={showPicker}
+          className="flex w-full items-center justify-between rounded-md border border-navy-secondary px-4 py-3 text-left text-sm text-silver hover:text-white coarse:min-h-11"
+        >
+          {submitted ? 'Open another checklist by hand' : 'Open a checklist by hand'}
+          <ChevronRight className={cn('h-4 w-4 transition-transform', showPicker && 'rotate-90')} />
+        </button>
+      )}
+
+      {foldPicker && !showPicker ? null : options.positions.length === 0 ? (
         <Card>
           <CardContent className="py-8">
             <EmptyState
@@ -629,23 +686,44 @@ function ShiftRunner({
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-success" />
               </span>
               <span className="text-2xs uppercase tracking-[0.2em] text-gold">
-                Shift live · {shift.dateKey}
+                Shift live · {floorDay(shift.dateKey)}
               </span>
             </div>
-            <div className="mt-1 flex items-center gap-2 text-xl font-medium text-white">
-              <Icon
-                className={cn('h-5 w-5', DEPT_TONE[shift.department] ?? 'text-gold')}
-                aria-hidden="true"
-              />
-              {shift.department}
-              <span className="text-base font-normal text-gold">
-                {PERIOD_LABEL[shift.period]}
-              </span>
-            </div>
-            <div className="mt-0.5 truncate text-xs text-silver">
-              {shift.clientName} · {shift.position}
-              {shift.templateName ? ` · ${shift.templateName}` : ''}
-            </div>
+            {/* A store-shift SOP is named for what the supervisor is running
+                — the store and the shift; the checklist it runs is the
+                subtitle. A hand-opened shift keeps department · period. */}
+            {shift.windowLabel ? (
+              <>
+                <div className="mt-1 text-xl font-medium text-white">
+                  {shift.locationName ?? shift.clientName}
+                  <span className="text-gold"> · {shift.windowLabel} shift</span>
+                </div>
+                <div className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-silver">
+                  <Icon
+                    className={cn('h-3.5 w-3.5 shrink-0', DEPT_TONE[shift.department] ?? 'text-gold')}
+                    aria-hidden="true"
+                  />
+                  {shift.templateName ?? shift.department}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="mt-1 flex items-center gap-2 text-xl font-medium text-white">
+                  <Icon
+                    className={cn('h-5 w-5', DEPT_TONE[shift.department] ?? 'text-gold')}
+                    aria-hidden="true"
+                  />
+                  {shift.department}
+                  <span className="text-base font-normal text-gold">
+                    {PERIOD_LABEL[shift.period]}
+                  </span>
+                </div>
+                <div className="mt-0.5 truncate text-xs text-silver">
+                  {shift.clientName} · {shift.position}
+                  {shift.templateName ? ` · ${shift.templateName}` : ''}
+                </div>
+              </>
+            )}
             {/* A store-shift SOP (opened at clock-in) is due with the shift
                 window, and gates the clock-out — say both, plainly. */}
             {shift.dueAt && (
@@ -700,9 +778,10 @@ function ShiftRunner({
               <Plus className="h-4 w-4" />
               Add task
             </Button>
+            {/* Phones submit from the sticky bar at the bottom. */}
             <Button
               onClick={() => setCloseOpen(true)}
-              className={cn(allDone && 'animate-pulse')}
+              className={cn('hidden md:inline-flex', allDone && 'animate-pulse')}
             >
               {allDone ? 'Ready — submit SOP' : 'Submit SOP'}
             </Button>
@@ -712,7 +791,7 @@ function ShiftRunner({
 
       {/* Section rail — one-thumb navigation with live progress. */}
       {sections.length > 1 && (
-        <div className="sticky top-2 z-10 -mx-1 overflow-x-auto px-1 pb-1">
+        <div className="sticky -top-4 z-10 -mx-4 overflow-x-auto bg-midnight/95 px-4 pb-2 pt-3 backdrop-blur md:-top-6 md:-mx-6 md:px-6 lg:-top-8 lg:-mx-8 lg:px-8">
           <div className="flex w-max gap-2 rounded-full border border-navy-secondary bg-navy/95 p-1.5 backdrop-blur">
             {sections.map(([section, rows]) => {
               const secDone = rows.filter((r) => r.status === 'DONE').length;
@@ -741,14 +820,21 @@ function ShiftRunner({
         </div>
       )}
 
-      {/* Handover from the previous shift — the FIRST thing to deal with. */}
+      {/* Handover from the previous shift — the FIRST thing to deal with,
+          and acknowledged before this shift's SOP can be submitted. */}
       {handoverIn.length > 0 && (
         <Card className="border-warning/50 bg-warning/[0.03]">
-          <CardHeader>
-            <CardTitle className="text-base">
-              <Flag className="mr-1.5 inline h-4 w-4 text-warning" aria-hidden="true" />
-              From the previous shift ({handoverIn.length})
-            </CardTitle>
+          <CardHeader className="flex-row flex-wrap items-start justify-between gap-2">
+            <div>
+              <CardTitle className="text-base">
+                <Flag className="mr-1.5 inline h-4 w-4 text-warning" aria-hidden="true" />
+                From the previous shift ({handoverIn.length})
+              </CardTitle>
+              <p className="mt-1 text-xs text-silver">
+                Read each one — tap Got it, or add it to your list. You can&apos;t submit until they&apos;re acknowledged.
+              </p>
+            </div>
+            {handoverIn.length > 1 && <AckAllButton items={handoverIn} shiftId={shift.id} onDone={refresh} />}
           </CardHeader>
           <CardContent className="space-y-2">
             {handoverIn.map((h) => (
@@ -820,6 +906,27 @@ function ShiftRunner({
           </Card>
         );
       })}
+
+      {/* Phone: the way out of the checklist is always under the thumb —
+          after the last section there used to be nothing but a scroll back
+          to the top. */}
+      <div className="sticky bottom-0 z-20 -mx-4 border-t border-navy-secondary bg-navy/95 px-4 py-3 backdrop-blur md:hidden">
+        <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1 text-xs tabular-nums text-silver">
+            <span className="font-medium text-white">
+              {done} of {tasks.length}
+            </span>{' '}
+            done
+            {handoverIn.length > 0 && (
+              <span className="text-warning"> · {handoverIn.length} note{handoverIn.length === 1 ? '' : 's'} to read</span>
+            )}
+            {shift.dueAt && <span> · due {fmtTime(shift.dueAt)}</span>}
+          </div>
+          <Button variant={allDone ? 'primary' : 'secondary'} onClick={() => setCloseOpen(true)}>
+            Submit SOP
+          </Button>
+        </div>
+      </div>
 
       <AdhocDialog
         open={adhocOpen}
@@ -1134,14 +1241,26 @@ function TaskRow({
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') recordNumber();
                     }}
+                    // The title already names the unit ("Check deli cooler
+                    // temperature"); the field shows what's in range — the
+                    // label used to be cut off mid-word ("Deli cooler °").
                     placeholder={
                       task.responseType === 'TEMPERATURE'
-                        ? (task.tempLabel ?? '°F')
+                        ? task.tempMin != null && task.tempMax != null
+                          ? `${task.tempMin}–${task.tempMax}°F`
+                          : '°F'
                         : (task.unit ?? 'count')
                     }
                     aria-label={`${task.title} — ${task.responseType === 'TEMPERATURE' ? 'temperature' : 'count'}`}
                   />
-                  <Button size="sm" onClick={recordNumber} loading={busy}>
+                  {/* Quiet until there's a value to record — a column of gold
+                      buttons down the checklist read as eight calls to act. */}
+                  <Button
+                    size="sm"
+                    variant={numberDraft.trim() ? 'primary' : 'secondary'}
+                    onClick={recordNumber}
+                    loading={busy}
+                  >
                     {task.responseType === 'TEMPERATURE' ? (
                       <Thermometer className="h-3.5 w-3.5" />
                     ) : (
@@ -1149,13 +1268,6 @@ function TaskRow({
                     )}
                     Record
                   </Button>
-                  {task.responseType === 'TEMPERATURE' &&
-                    task.tempMin != null &&
-                    task.tempMax != null && (
-                      <span className="text-2xs tabular-nums text-silver/50">
-                        {task.tempMin}–{task.tempMax}°F
-                      </span>
-                    )}
                 </>
               )}
               {isChoice &&
@@ -1426,10 +1538,10 @@ function HandoverDecisionRow({
       await decideOpsHandover(item.id, { action, shiftId });
       toast.success(
         action === 'CARRY'
-          ? 'Added to your shift.'
+          ? 'Added to your checklist.'
           : action === 'DISMISS'
             ? 'Dismissed — on the record.'
-            : 'Marked reviewed.',
+            : 'Got it.',
       );
       onDecided();
     } catch (err) {
@@ -1463,16 +1575,16 @@ function HandoverDecisionRow({
         </div>
       </div>
       <div className="flex shrink-0 gap-2">
-        <Button size="sm" onClick={() => void decide('CARRY')} loading={busy === 'CARRY'}>
-          Carry
+        <Button size="sm" onClick={() => void decide('REVIEW')} loading={busy === 'REVIEW'}>
+          Got it
         </Button>
         <Button
           size="sm"
           variant="outline"
-          onClick={() => void decide('REVIEW')}
-          loading={busy === 'REVIEW'}
+          onClick={() => void decide('CARRY')}
+          loading={busy === 'CARRY'}
         >
-          Reviewed
+          Add to my list
         </Button>
         <Button
           size="sm"
@@ -1484,6 +1596,41 @@ function HandoverDecisionRow({
         </Button>
       </div>
     </div>
+  );
+}
+
+/** Acknowledge every note from the previous shift in one tap. */
+function AckAllButton({
+  items,
+  shiftId,
+  onDone,
+}: {
+  items: OpsShiftDetail['handoverIn'];
+  shiftId: string;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      loading={busy}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          for (const h of items) await decideOpsHandover(h.id, { action: 'REVIEW', shiftId });
+          toast.success(`Got all ${items.length}.`);
+          onDone();
+        } catch (err) {
+          toast.error(err instanceof ApiError ? err.message : 'Could not acknowledge.');
+          onDone();
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      Got it on all {items.length}
+    </Button>
   );
 }
 
@@ -1608,6 +1755,10 @@ function CloseDialog({
 
   const openRequired = tasks.filter((t) => t.required && t.status !== 'DONE');
   const openWork = tasks.filter((t) => t.status !== 'DONE');
+  // The previous shift's notes are acknowledged before this one submits.
+  const unread = detail.handoverIn.length;
+  // A long unfinished list hands over as one line, not a wall of chips.
+  const [showChips, setShowChips] = useState(false);
 
   // Latest tasks, readable at open time without making the reset effect
   // depend on `tasks` — a background refresh() used to re-fire the reset
@@ -1618,6 +1769,7 @@ function CloseDialog({
   // Reset ONLY on the closed → open transition.
   useEffect(() => {
     if (open) {
+      setShowChips(false);
       setSummary('');
       setItems([]);
       setDraftBody('');
@@ -1659,6 +1811,19 @@ function CloseDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
+          {unread > 0 && (
+            <div className="rounded-md border border-warning/40 bg-warning/[0.07] p-3 text-xs">
+              <div className="font-medium text-white">
+                {unread} note{unread === 1 ? '' : 's'} from the previous shift to read first
+              </div>
+              <div className="mt-0.5 text-silver">
+                Tap Got it on each (top of your checklist) — then submit.
+              </div>
+              <Button size="sm" variant="outline" className="mt-2" onClick={() => onOpenChange(false)}>
+                Back to the notes
+              </Button>
+            </div>
+          )}
           {openRequired.length > 0 && (
             <div className="rounded-md border border-warning/40 bg-warning/[0.07] p-3 text-xs">
               <div className="font-medium text-white">
@@ -1683,8 +1848,24 @@ function CloseDialog({
             </div>
           )}
 
+          {/* Many unfinished items: hand them all over in one line. */}
+          {openWork.length > 4 && !showChips && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-navy-secondary bg-navy-secondary/20 p-3 text-xs">
+              <span className="text-white">
+                {carriedIds.size} of {openWork.length} unfinished item{openWork.length === 1 ? '' : 's'} will be handed over
+              </span>
+              <button
+                type="button"
+                className="text-gold underline underline-offset-2 coarse:min-h-9"
+                onClick={() => setShowChips(true)}
+              >
+                Choose which
+              </button>
+            </div>
+          )}
+
           {/* Unfinished work as one-tap handover chips. */}
-          {openWork.length > 0 && (
+          {openWork.length > 0 && (openWork.length <= 4 || showChips) && (
             <div className="rounded-md border border-navy-secondary bg-navy-secondary/20 p-3">
               <div className="text-xs font-medium text-white">
                 Hand these over? <span className="text-silver/60">(tap to toggle)</span>
@@ -1836,7 +2017,6 @@ function CloseDialog({
                   handoverNone: all.length === 0 && detail.handoverOut.length === 0 && nothingToHandOver,
                   incompleteReason: openRequired.length > 0 ? reason.trim() : undefined,
                 });
-                toast.success('SOP submitted — the record is final. You can clock out.');
                 onOpenChange(false);
                 onClosed();
               } catch (err) {
@@ -1847,6 +2027,7 @@ function CloseDialog({
             }}
             loading={busy}
             disabled={
+              unread > 0 ||
               (handoverCountFor(detail, items, openWork, carriedIds) === 0 && !nothingToHandOver) ||
               (openRequired.length > 0 && reason.trim().length < 5)
             }

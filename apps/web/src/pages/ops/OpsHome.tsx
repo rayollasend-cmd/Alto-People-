@@ -54,9 +54,14 @@ export function OpsHome() {
 
   return (
     <div>
+      {/* Mid-checklist the page is the checklist: no explainer above it. */}
       <PageHeader
         title="Store Ops"
-        subtitle="The floor, on the record — SOP checklists, live shifts, handover, and the standard behind them."
+        subtitle={
+          searchParams.get('shift')
+            ? undefined
+            : 'The floor, on the record — SOP checklists, live shifts, handover, and the standard behind them.'
+        }
       />
       {tabs.length > 1 && (
         <Tabs value={tab} onValueChange={setTab} className="mb-4">

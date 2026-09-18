@@ -11,9 +11,10 @@ vi.mock('@/lib/opsApi', async (orig) => ({
   getOpsShift: vi.fn(),
   closeOpsShift: vi.fn(),
   addOpsHandover: vi.fn(),
+  decideOpsHandover: vi.fn(),
 }));
 
-import { addOpsHandover, closeOpsShift, getOpsShift, type OpsShiftDetail, type OpsTaskRow } from '@/lib/opsApi';
+import { addOpsHandover, closeOpsShift, decideOpsHandover, getOpsShift, type OpsShiftDetail, type OpsTaskRow } from '@/lib/opsApi';
 import { OpsRunner } from '@/pages/ops/OpsRunner';
 
 const task = (id: string, title: string, status: OpsTaskRow['status']): OpsTaskRow => ({
@@ -23,7 +24,13 @@ const task = (id: string, title: string, status: OpsTaskRow['status']): OpsTaskR
   tempOutOfRange: false, note: null, blockedReason: null, completedAt: null, doneAssociate: null, photos: [],
 } as OpsTaskRow);
 
-function detail(tasks: OpsTaskRow[]): OpsShiftDetail {
+const note = (id: string, body: string) => ({
+  id, kind: 'NOTE' as const, body, priority: 'MEDIUM' as const, status: 'PENDING' as const,
+  createdAt: new Date().toISOString(), decidedAt: null, decidedByEmail: null,
+  from: { shiftId: 'prev', position: 'Overnight shift', period: 'OVERNIGHT' as const, dateKey: '2026-09-18' },
+});
+
+function detail(tasks: OpsTaskRow[], handoverIn: ReturnType<typeof note>[] = []): OpsShiftDetail {
   return {
     shift: {
       id: 'sop1', clientId: 'c1', clientName: 'Coastal', department: 'F&D', period: 'EVENING',
@@ -31,11 +38,12 @@ function detail(tasks: OpsTaskRow[]): OpsShiftDetail {
       closedAt: null, scheduledHeadcount: 6, actualHeadcount: 5, templateName: 'Swing Standard',
       sopTotal: tasks.length, sopDone: tasks.filter((t) => t.status === 'DONE').length, taskTotal: tasks.length,
       taskDone: tasks.filter((t) => t.status === 'DONE').length, closedIncomplete: false, tempAlerts: 0,
-      closingSummary: null, windowLabel: 'Swing', dueAt: new Date(Date.now() + 3_600_000).toISOString(),
+      closingSummary: null, windowLabel: 'Swing', locationName: 'Front Beach 218',
+      dueAt: new Date(Date.now() + 3_600_000).toISOString(),
     },
     tasks,
     handoverOut: [],
-    handoverIn: [],
+    handoverIn,
     clockedIn: [],
   } as OpsShiftDetail;
 }
@@ -76,7 +84,7 @@ describe('<OpsRunner> — submitting the shift SOP', () => {
 
   it('every submit hands over — a note, or "nothing to hand over" said out loud', async () => {
     const user = renderRunner(detail([task('t1', 'Walk the floor', 'DONE')]));
-    await user.click(await screen.findByRole('button', { name: /submit sop/i }));
+    await user.click((await screen.findAllByRole('button', { name: /submit sop/i }))[0]!);
     const dialog = await screen.findByRole('dialog');
     const submit = within(dialog).getByRole('button', { name: 'Submit SOP' });
     expect(submit).toBeDisabled();
@@ -90,7 +98,7 @@ describe('<OpsRunner> — submitting the shift SOP', () => {
 
   it('with required items open it is "Submit incomplete" — and it needs the reason', async () => {
     const user = renderRunner(detail([task('t1', 'Walk the floor', 'DONE'), task('t2', 'Check the coolers', 'OPEN')]));
-    await user.click(await screen.findByRole('button', { name: /submit sop/i }));
+    await user.click((await screen.findAllByRole('button', { name: /submit sop/i }))[0]!);
     const dialog = await screen.findByRole('dialog');
     const submit = within(dialog).getByRole('button', { name: 'Submit incomplete' });
     // The unfinished item is handed over by default — that's the handover;
@@ -109,5 +117,30 @@ describe('<OpsRunner> — submitting the shift SOP', () => {
     expect(addOpsHandover).toHaveBeenCalledWith('sop1', [
       expect.objectContaining({ kind: 'UNFINISHED_TASK', body: 'Check the coolers' }),
     ]);
+  });
+
+  it('is named for the store and shift being run', async () => {
+    renderRunner(detail([task('t1', 'Walk the floor', 'DONE')]));
+    expect(await screen.findByText('Front Beach 218')).toBeInTheDocument();
+    expect(screen.getByText(/· Swing shift/)).toBeInTheDocument();
+    expect(screen.getByText('Swing Standard')).toBeInTheDocument();
+  });
+
+  it("the previous shift's notes are read first — one tap each, or all at once — then it submits", async () => {
+    vi.mocked(decideOpsHandover).mockResolvedValue({ ok: true } as never);
+    const user = renderRunner(
+      detail([task('t1', 'Walk the floor', 'DONE')], [note('n1', 'Freezer 3 seal torn.'), note('n2', 'Two pallets in staging.')]),
+    );
+    expect(await screen.findByText('Freezer 3 seal torn.')).toBeInTheDocument();
+    await user.click((await screen.findAllByRole('button', { name: /submit sop/i }))[0]!);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('2 notes from the previous shift to read first')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Submit SOP' })).toBeDisabled();
+    await user.click(within(dialog).getByRole('button', { name: 'Back to the notes' }));
+
+    await user.click(screen.getByRole('button', { name: 'Got it on all 2' }));
+    await waitFor(() => expect(decideOpsHandover).toHaveBeenCalledTimes(2));
+    expect(decideOpsHandover).toHaveBeenCalledWith('n1', { action: 'REVIEW', shiftId: 'sop1' });
+    expect(decideOpsHandover).toHaveBeenCalledWith('n2', { action: 'REVIEW', shiftId: 'sop1' });
   });
 });

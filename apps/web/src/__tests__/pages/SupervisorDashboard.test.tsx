@@ -70,10 +70,13 @@ function renderPage(
     myWindows?: MyWindow[];
     kpis?: { fillRatePercent: number; assignedShifts: number; completedShifts: number; openShifts: number };
     sop?: Record<string, unknown> | null;
+    submitted?: Record<string, unknown> | null;
+    clockedIn?: boolean;
   } = {},
 ) {
   vi.mocked(apiFetch).mockImplementation(async (path: string) => {
-    if (path === '/ops/my-sop') return { sop: opts.sop ?? null };
+    if (path === '/ops/my-sop') return { sop: opts.sop ?? null, submitted: opts.submitted ?? null };
+    if (path === '/time/me/active') return { active: opts.clockedIn ? { id: 'e1' } : null };
     if (path === '/me/shift-windows')
       return {
         windows: (opts.myWindows ?? []).map((w) => ({
@@ -265,5 +268,26 @@ describe('<SupervisorDashboard> — My floor', () => {
     expect(screen.getByText(/3 of 12 done/)).toBeInTheDocument();
     expect(screen.getByText(/submit it before you clock out/)).toBeInTheDocument();
     expect(banner.closest('a')).toHaveAttribute('href', '/ops?tab=shift&shift=sop1');
+  });
+
+  it("off the clock, the shift starts on My floor — Clock in, and the SOP opens", async () => {
+    renderPage({ clockedIn: false });
+    expect(await screen.findByText("You're off the clock")).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clock in' })).toBeInTheDocument();
+  });
+
+  it('on the clock with no SOP open, no clock card', async () => {
+    renderPage({ clockedIn: true });
+    await screen.findByRole('heading', { level: 1, name: 'Front Beach 218' });
+    expect(screen.queryByText("You're off the clock")).not.toBeInTheDocument();
+  });
+
+  it("SOP submitted and still on the clock: it says so, and the clock-out is right there", async () => {
+    renderPage({
+      clockedIn: true,
+      submitted: { id: 's1', windowLabel: 'Morning', position: 'Morning shift', closedAt: new Date().toISOString(), closedIncomplete: false },
+    });
+    expect(await screen.findByText('Your Morning SOP is submitted')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clock out' })).toBeInTheDocument();
   });
 });

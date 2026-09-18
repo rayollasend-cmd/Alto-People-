@@ -172,6 +172,9 @@ describe("no clock-out until it's submitted", () => {
     const submitted = await agent.post(`/ops/shifts/${sopId}/close`).send({});
     expect(submitted.status).toBe(200);
     expect(submitted.body.shift).toMatchObject({ closedIncomplete: false, handoverNone: false });
+    // Nothing open now — the end-of-shift screen knows what was submitted.
+    const after = await agent.get('/ops/my-sop');
+    expect(after.body).toMatchObject({ sop: null, submitted: { id: sopId, windowLabel: 'Swing', closedIncomplete: false } });
 
     expect((await agent.post('/time/me/clock-out').send({})).status).toBe(200);
   });
@@ -256,6 +259,17 @@ describe('the handover reaches the next shift at the store', () => {
     const second = (await reliefAgent.get('/ops/my-sop')).body.sop.id;
     const detail = await reliefAgent.get(`/ops/shifts/${second}`);
     expect((detail.body.handoverIn as Array<{ body: string }>).map((h) => h.body)).toEqual(['Freezer 3 door seal torn.']);
+    expect(detail.body.shift.locationName).toBe(store.name);
+
+    // The loop closes both ways: the note is acknowledged before this
+    // shift's SOP can be submitted.
+    await finishTasks(reliefAgent, second);
+    const unread = await reliefAgent.post(`/ops/shifts/${second}/close`).send({ handoverNone: true });
+    expect(unread.status).toBe(400);
+    expect(unread.body.error.code).toBe('handover_unread');
+    const noteId = (detail.body.handoverIn as Array<{ id: string }>)[0]!.id;
+    expect((await reliefAgent.post(`/ops/handover/${noteId}/decide`).send({ action: 'REVIEW', shiftId: second })).status).toBe(200);
+    expect((await reliefAgent.post(`/ops/shifts/${second}/close`).send({ handoverNone: true })).status).toBe(200);
   });
 });
 

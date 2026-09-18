@@ -9,6 +9,7 @@ import { useI18n } from '@/lib/i18n';
 import { boundedClientOf } from '@/lib/roles';
 import { listClientLocations } from '@/lib/clientsApi';
 import { getMySop } from '@/lib/opsApi';
+import { useShiftClock } from '@/lib/useShiftClock';
 import { getSchedulingKpis, listShifts } from '@/lib/schedulingApi';
 import {
   fmtDate,
@@ -155,6 +156,8 @@ export function SupervisorDashboard() {
     queryFn: getMySop,
     refetchInterval: 60_000,
   });
+  // Off the clock: the shift starts here — clock in, and the SOP opens.
+  const clock = useShiftClock();
   const approvalsQuery = useQuery({
     queryKey: ['floor', 'approvals-count'],
     queryFn: () => apiFetch<ApprovalsCount>('/approvals/count'),
@@ -378,7 +381,33 @@ export function SupervisorDashboard() {
       <PullToRefreshIndicator state={pullState} />
       {header}
 
-      {sopQuery.data?.sop && <SopBanner sop={sopQuery.data.sop} />}
+      {sopQuery.data?.sop ? (
+        <SopBanner sop={sopQuery.data.sop} />
+      ) : clock.active && sopQuery.data?.submitted ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-success/40 bg-success/[0.06] p-4 animate-enter">
+          <ClipboardCheck className="h-6 w-6 shrink-0 text-success" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-white">
+              Your {sopQuery.data.submitted.windowLabel ?? sopQuery.data.submitted.position} SOP is submitted
+            </div>
+            <div className="mt-0.5 text-xs text-silver">You can clock out whenever you&apos;re done.</div>
+          </div>
+          <Button variant="secondary" onClick={() => void clock.clockOutNow()} loading={clock.busy}>
+            Clock out
+          </Button>
+        </div>
+      ) : clock.active === null ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-navy-secondary bg-navy-secondary/20 p-4 animate-enter">
+          <Timer className="h-6 w-6 shrink-0 text-silver" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-white">You&apos;re off the clock</div>
+            <div className="mt-0.5 text-xs text-silver">Clock in here or at the kiosk — your shift&apos;s SOP opens by itself.</div>
+          </div>
+          <Button onClick={() => void clock.clockInNow()} loading={clock.busy}>
+            Clock in
+          </Button>
+        </div>
+      ) : null}
 
       {myWindows.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 animate-enter">

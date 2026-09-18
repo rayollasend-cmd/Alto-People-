@@ -82,6 +82,9 @@ function resolveClientId(req: Request, requested?: string): string {
   return clientId;
 }
 
+/** How far back an undecided handover note still blocks a submit. */
+const UNREAD_HANDOVER_WINDOW_MS = 36 * 3_600_000;
+
 /** Which earlier shifts hand over to this one: the same store for a
  *  store-shift SOP, the same department for a hand-opened shift. */
 function handoverScope(shift: { locationId: string | null; department: string }) {
@@ -787,6 +790,9 @@ opsRouter.get('/shifts/:id', VIEW, async (req, res, next) => {
         select: { name: true },
       }),
     ]);
+    const location = shift.locationId
+      ? await prisma.location.findUnique({ where: { id: shift.locationId }, select: { name: true } })
+      : null;
     const counts =
       shift.status === 'ACTIVE'
         ? await liveCounts(shift.id)
@@ -797,7 +803,12 @@ opsRouter.get('/shifts/:id', VIEW, async (req, res, next) => {
             taskDone: shift.taskDone,
           };
     res.json({
-      shift: { ...shiftHeader(shift), ...counts, clientName: client?.name ?? null },
+      shift: {
+        ...shiftHeader(shift),
+        ...counts,
+        clientName: client?.name ?? null,
+        locationName: location?.name ?? null,
+      },
       tasks: tasks.map(toTask),
       handoverOut: handoverOut.map(toHandover),
       handoverIn: pendingIn.map(toHandover),
@@ -1258,7 +1269,29 @@ opsRouter.get('/my-sop', RUN, async (req, res, next) => {
       include: { location: { select: { name: true } } },
     });
     if (!shift) {
-      res.json({ sop: null });
+      // Nothing open: say what they last submitted, if it's this shift's —
+      // the end-of-shift screen reads "submitted · clock out", not "start".
+      const last = await prisma.opsShift.findFirst({
+        where: {
+          openedById: req.user!.id,
+          status: 'CLOSED',
+          closedAt: { gte: new Date(Date.now() - 16 * 3_600_000) },
+        },
+        orderBy: { closedAt: 'desc' },
+        select: { id: true, windowLabel: true, position: true, closedAt: true, closedIncomplete: true },
+      });
+      res.json({
+        sop: null,
+        submitted: last
+          ? {
+              id: last.id,
+              windowLabel: last.windowLabel,
+              position: last.position,
+              closedAt: last.closedAt!.toISOString(),
+              closedIncomplete: last.closedIncomplete,
+            }
+          : null,
+      });
       return;
     }
     const [counts, handoverCount, requiredOpen] = await Promise.all([
@@ -1427,6 +1460,25 @@ opsRouter.post('/shifts/:id/close', RUN, async (req, res, next) => {
       }),
       prisma.opsHandoverItem.count({ where: { fromShiftId: shift.id } }),
     ]);
+    // The handover loop closes both ways: the notes the previous shift left
+    // are acknowledged before this one is submitted. Recent ones only — a
+    // backlog nobody decided last week never blocks tonight's submit.
+    const unread = await prisma.opsHandoverItem.count({
+      where: {
+        status: 'PENDING',
+        createdAt: { gte: new Date(Date.now() - UNREAD_HANDOVER_WINDOW_MS) },
+        fromShift: {
+          is: { clientId: shift.clientId, ...handoverScope(shift), status: 'CLOSED', id: { not: shift.id } },
+        },
+      },
+    });
+    if (unread > 0) {
+      throw new HttpError(
+        400,
+        'handover_unread',
+        `Acknowledge the ${unread} note${unread === 1 ? '' : 's'} from the previous shift before you submit.`,
+      );
+    }
     // Every submit hands over: a note for the next shift, or an explicit
     // "nothing to hand over" — never silence.
     if (handoverCount === 0 && !parsed.data.handoverNone) {
