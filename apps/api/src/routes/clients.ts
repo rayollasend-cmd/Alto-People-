@@ -70,6 +70,8 @@ export function clientsAccessGate(
     req.method === 'GET' &&
     /^\/[^/]+\/locations\/?$/.test(req.path) &&
     (req.user?.role === 'SHIFT_SUPERVISOR' ||
+      // The floor supervisor's My floor names its store and address.
+      req.user?.role === 'FLOOR_SUPERVISOR' ||
       req.user?.role === 'CLIENT_PORTAL' ||
       // WORKFORCE_MANAGER runs scheduling and the time board org-wide but
       // deliberately lacks view:clients (the accounts area carries bill

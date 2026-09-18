@@ -96,10 +96,13 @@ const EXEC_TABS: TabDef[] = [
   { path: '/compliance', label: 'Compliance', icon: Timer, requires: 'view:compliance' },
 ];
 
-/** Watch-only floor supervisor: home + the live board, nothing else. */
+/** The floor supervisor: the shift supervisor's floor, watch-only — their
+ *  floor home, today's faces, the live board, and messages. */
 const FLOOR_TABS: TabDef[] = [
-  HOME_TAB,
-  { path: '/time-attendance', label: 'Live floor', icon: Timer, requires: 'view:time' },
+  { path: DASHBOARD_NAV.path, labelKey: 'floor.title', icon: Store, requires: null },
+  { path: '/today', labelKey: 'portal.todayNav', icon: Users, requires: null },
+  { path: '/time-attendance', label: 'Live board', icon: Timer, requires: 'view:time' },
+  { path: '/messages', labelKey: 'msg.title', icon: MessageSquare, requires: null, badge: 'messages' },
 ];
 
 /** The store manager (client portal): their store, the week, the loop. */
@@ -156,10 +159,12 @@ export function BottomTabBar({ onOpenMenu }: { onOpenMenu: () => void }) {
     <nav
       aria-label="Primary"
       className={cn(
-        // The store manager's and the shift supervisor's four
-        // destinations are labeled tabs, not icon-rail guesses — keep
-        // them through iPad widths.
-        user?.role === 'CLIENT_PORTAL' || user?.role === 'SHIFT_SUPERVISOR' ? 'lg:hidden' : 'md:hidden',
+        // The store manager's and the supervisors' four destinations are
+        // labeled tabs, not icon-rail guesses — keep them through iPad
+        // widths.
+        user?.role === 'CLIENT_PORTAL' || user?.role === 'SHIFT_SUPERVISOR' || user?.role === 'FLOOR_SUPERVISOR'
+          ? 'lg:hidden'
+          : 'md:hidden',
         'shrink-0 flex items-stretch border-t border-navy-secondary bg-navy pb-[env(safe-area-inset-bottom)]',
       )}
     >

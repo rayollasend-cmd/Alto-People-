@@ -428,6 +428,17 @@ model User {
   signaturesGiven                   Signature[]                   @relation("UserSignatures")
   // The store shift windows a supervisor leads ("Overnight 10p–6a").
   supervisorShiftWindows            SupervisorShiftWindow[]       @relation("SupervisorWindows")
+  // A FLOOR_SUPERVISOR's shift supervisor — the one in charge of them.
+  // Only ever a SHIFT_SUPERVISOR at the same client; a link that stops
+  // meeting that (disabled, demoted, moved) reads as "no shift supervisor"
+  // everywhere (lib/floorLeads validLead) and is cleared on the next edit.
+  leadUserId                        String?                       @db.Uuid
+  lead                              User?                         @relation("FloorLead", fields: [leadUserId], references: [id], onDelete: SetNull)
+  floorSupervisors                  User[]                        @relation("FloorLead")
+  shiftCoversLed                    ShiftCover[]                  @relation("ShiftCoverLead")
+  shiftCoversTaken                  ShiftCover[]                  @relation("ShiftCoverCover")
+  shiftCoversCreated                ShiftCover[]                  @relation("ShiftCoverCreator")
+  opsShiftsCoveredFor               OpsShift[]                    @relation("OpsShiftCoveredFor")
   i9VerificationsAsRep              I9Verification[]              @relation("I9Verifier")
   auditLogActions                   AuditLog[]                    @relation("AuditActor")
   timeApprovals                     TimeEntry[]                   @relation("TimeApprover")
@@ -585,6 +596,7 @@ model User {
 
   @@index([role])
   @@index([clientId])
+  @@index([leadUserId])
   @@index([deletedAt])
 }
 
@@ -2065,6 +2077,13 @@ model OpsShift {
   /// Reminder sent before the shift ends / escalated after it ended.
   remindedAt         DateTime?      @db.Timestamptz(6)
   escalatedAt        DateTime?      @db.Timestamptz(6)
+  /// openedById is whoever RUNS it — must submit it, can't clock out
+  /// until they do. When that's a floor supervisor covering for their
+  /// shift supervisor (handed the shift, or the lead wasn't on the clock),
+  /// this is the lead they're covering for. The lead's own clock-in takes
+  /// the SOP back: openedById returns to them and this clears.
+  coveringForId      String?        @db.Uuid
+  coveringFor        User?          @relation("OpsShiftCoveredFor", fields: [coveringForId], references: [id], onDelete: SetNull)
   tasks              OpsTask[]
   handoverOut        OpsHandoverItem[] @relation("HandoverFrom")
   handoverDecided    OpsHandoverItem[] @relation("HandoverDecidedIn")
@@ -2074,6 +2093,7 @@ model OpsShift {
   @@index([status, openedAt])
   @@index([openedById, status])
   @@index([locationId, status])
+  @@index([locationId, windowLabel, dueAt])
 }
 
 // The SOP a store runs on one of its named shift windows ("Front Beach 218 ·
@@ -7247,6 +7267,32 @@ model IdempotencyRecord {
 // come from the store's current target for that label. Focus, not a lock:
 // it shapes a supervisor's default views and routes their alerts; it never
 // narrows what they may see.
+// A shift supervisor hands their shift to one of their floor supervisors
+// for a day or a run of days (a day off, time off). On those days the
+// floor supervisor's clock-in opens the store shift's SOP for THEM — they
+// read the incoming handover, run it, hand over, and can't clock out until
+// it's submitted. Dates are the store-local day each shift occurrence
+// STARTS (an overnight that starts Sep 20 at 10p is Sep 20's), inclusive.
+// Cancelling keeps the row (cancelledAt) — the record of who covered.
+model ShiftCover {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadUserId  String    @db.Uuid
+  coverUserId String    @db.Uuid
+  fromDate    String    @db.VarChar(10)
+  toDate      String    @db.VarChar(10)
+  note        String?   @db.VarChar(500)
+  createdById String    @db.Uuid
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  cancelledAt DateTime? @db.Timestamptz(6)
+
+  lead      User @relation("ShiftCoverLead", fields: [leadUserId], references: [id], onDelete: Cascade)
+  cover     User @relation("ShiftCoverCover", fields: [coverUserId], references: [id], onDelete: Cascade)
+  createdBy User @relation("ShiftCoverCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([leadUserId, toDate])
+  @@index([coverUserId, toDate])
+}
+
 model SupervisorShiftWindow {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId     String   @db.Uuid

@@ -107,6 +107,7 @@ import { vto130Router } from './routes/vto130.js';
 import { profilePhotoRouter } from './routes/profilePhoto.js';
 import { usersRouter } from './routes/users.js';
 import { shiftWindowsRouter } from './routes/shiftWindows.js';
+import { floorTeamRouter } from './routes/floorTeam.js';
 import { orgSettingsRouter } from './routes/orgSettings.js';
 import { integrationsV1Router } from './routes/integrationsV1.js';
 import { scimRouter } from './routes/scim.js';
@@ -480,6 +481,8 @@ export function createApp() {
   // Self-gates per route on view:hr-admin.
   app.use('/', usersRouter);
   app.use('/', shiftWindowsRouter);
+  // Floor supervisors' shift supervisor, and shift hand-overs (covers).
+  app.use('/', floorTeamRouter);
   // Org-wide branding (singleton OrgSetting). Admin paths gate on
   // view:hr-admin; the logo GET is open so any signed-in chrome can
   // render it (and so HTML emails — which are public — can fetch it).

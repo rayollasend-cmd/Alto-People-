@@ -26,8 +26,9 @@ export function scopeClients(user: SessionUser): Prisma.ClientWhereInput {
   if (user.role === 'CLIENT_PORTAL') {
     return { ...base, id: (user.clientId ?? NO_CLIENT) };
   }
-  // SHIFT_SUPERVISOR only ever sees its own client (fail closed if unset).
-  if (user.role === 'SHIFT_SUPERVISOR') {
+  // SHIFT_ and FLOOR_SUPERVISOR only ever see their own client (fail
+  // closed if unset).
+  if (user.role === 'SHIFT_SUPERVISOR' || user.role === 'FLOOR_SUPERVISOR') {
     return { ...base, id: user.clientId ?? NO_CLIENT };
   }
   return base;

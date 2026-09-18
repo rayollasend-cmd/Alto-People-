@@ -117,22 +117,24 @@ describe('visibleModules — SHIFT_SUPERVISOR curation', () => {
 });
 
 describe('visibleModules — FLOOR_SUPERVISOR curation', () => {
-  // Watch-only: the live board, their own profile, and messages — nothing
-  // to decide, nothing to spend.
-  it('shows exactly the live board plus the personal baseline', () => {
+  // The shift supervisor's floor without the decisions: today's faces, the
+  // live board, their shift's SOP, messages and their profile — nothing to
+  // approve, schedule, or spend.
+  it('shows exactly the floor, the SOP, and the personal baseline', () => {
     expect(new Set(keysFor('FLOOR_SUPERVISOR'))).toEqual(
-      new Set<ModuleKey>(['me', 'messages', 'time-attendance']),
+      new Set<ModuleKey>(['me', 'messages', 'floor-today', 'time-attendance', 'ops']),
     );
   });
 });
 
 describe('visibleModules — the supervisor Today page', () => {
   // /today is the portal's Day page opened on the supervisor's own client
-  // (the day route opts SHIFT_SUPERVISOR in). Other manage:scheduling
+  // (the day route opts the store supervisors in). Other manage:scheduling
   // holders have no client to open it on, so it stays out of their nav.
-  it('is in the shift supervisor nav and nobody else\'s', () => {
+  it("is in the store supervisors' nav and nobody else's", () => {
     expect(keysFor('SHIFT_SUPERVISOR')).toContain('floor-today');
-    for (const role of ['HR_ADMINISTRATOR', 'OPERATIONS_MANAGER', 'WORKFORCE_MANAGER', 'FINANCE_ACCOUNTANT', 'FLOOR_SUPERVISOR', 'CLIENT_PORTAL'] as Role[]) {
+    expect(keysFor('FLOOR_SUPERVISOR')).toContain('floor-today');
+    for (const role of ['HR_ADMINISTRATOR', 'OPERATIONS_MANAGER', 'WORKFORCE_MANAGER', 'FINANCE_ACCOUNTANT', 'CLIENT_PORTAL'] as Role[]) {
       expect(keysFor(role)).not.toContain('floor-today');
     }
   });

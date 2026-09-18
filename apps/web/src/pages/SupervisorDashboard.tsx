@@ -8,7 +8,7 @@ import { useAuth } from '@/lib/auth';
 import { useI18n } from '@/lib/i18n';
 import { boundedClientOf } from '@/lib/roles';
 import { listClientLocations } from '@/lib/clientsApi';
-import { getMySop } from '@/lib/opsApi';
+import { getMySop, type HelpingSop } from '@/lib/opsApi';
 import { useShiftClock } from '@/lib/useShiftClock';
 import { getSchedulingKpis, listShifts } from '@/lib/schedulingApi';
 import {
@@ -30,6 +30,8 @@ import { ErrorBanner } from '@/components/ui/ErrorBanner';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { RoleDecisionQueue } from '@/components/RoleDecisionQueue';
 import { MyPlanCard } from '@/components/MyPlanCard';
+import { FloorTeamStrip, MyLeadStrip, useFloorTeam } from '@/components/FloorTeam';
+import type { FloorSupervisorTeam } from '@/lib/shiftWindowsApi';
 import { coverageByHour } from '@/pages/portal/coverage';
 import { groupWaves, wavePresent, type WaveRow } from '@/pages/portal/waves';
 import { shiftDays } from '@/pages/portal/scope';
@@ -65,6 +67,12 @@ import { fmtClockMinute, fmtShiftWindow, minuteOfDayInZone } from '@alto-people/
  * in), so the supervisor and the store manager can never disagree about
  * who is on the floor. No money anywhere — labor cost is withheld from
  * this role.
+ *
+ * The FLOOR_SUPERVISOR gets the same floor, watch-only: no schedule, no
+ * approvals, no week ahead. In their place, their shift supervisor (on the
+ * clock or not, one tap to message) and their shift's SOP — the lead's,
+ * which they help on, or their own on a day they're covering. The shift
+ * supervisor sees their floor supervisors and hands them the shift.
  */
 
 interface DayPayload {
@@ -108,7 +116,10 @@ export function SupervisorDashboard() {
   const queryClient = useQueryClient();
   const pullState = usePullToRefresh(() => queryClient.invalidateQueries());
   const client = boundedClientOf(user);
+  // The floor supervisor: the same floor, no scheduling or approval reads.
+  const watchOnly = user?.role === 'FLOOR_SUPERVISOR';
   const { windows: myWindows, focus, setFocus, mine } = useShiftFocus();
+  const teamQuery = useFloorTeam();
   const todayKey = ymdLocal();
   const tomorrowKey = shiftDays(todayKey, 1);
 
@@ -134,6 +145,7 @@ export function SupervisorDashboard() {
   // The next seven days, today first — the fill chart and the open count.
   const aheadQuery = useQuery({
     queryKey: ['floor', 'ahead', todayKey],
+    enabled: !watchOnly,
     queryFn: () => {
       const from = new Date();
       from.setHours(0, 0, 0, 0);
@@ -144,10 +156,12 @@ export function SupervisorDashboard() {
   // the week the store manager's portal grades, so both read one number.
   const kpiThis = useQuery({
     queryKey: ['floor', 'kpis', 'this', todayKey],
+    enabled: !watchOnly,
     queryFn: () => getSchedulingKpis({ week: 'this' }),
   });
   const kpiLast = useQuery({
     queryKey: ['floor', 'kpis', 'last', todayKey],
+    enabled: !watchOnly,
     queryFn: () => getSchedulingKpis({ week: 'last' }),
   });
   // The SOP their clock-in opened — on top of My floor until submitted.
@@ -162,7 +176,13 @@ export function SupervisorDashboard() {
     queryKey: ['floor', 'approvals-count'],
     queryFn: () => apiFetch<ApprovalsCount>('/approvals/count'),
     refetchInterval: 60_000,
+    enabled: !watchOnly,
   });
+  // Floor supervisor: their lead, and a day they're running the shift.
+  const teamData = teamQuery.data;
+  const floorTeam: FloorSupervisorTeam | null = teamData && teamData.role === 'floor' ? teamData : null;
+  const leadFirst = floorTeam?.lead?.name.split(' ')[0] ?? null;
+  const coveringToday = floorTeam?.covers.find((c) => c.today) ?? null;
 
   const data = dayQuery.data;
   // The rows in view: their shift, or the whole store.
@@ -263,21 +283,32 @@ export function SupervisorDashboard() {
               Live board
             </Link>
           </Button>
-          <Button size="sm" variant="outline" asChild>
+          {!watchOnly && (
+            <Button size="sm" variant="outline" asChild>
+              <Link to="/today">
+                <Users className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                {t('portal.todayNav')}
+              </Link>
+            </Button>
+          )}
+        </>
+      }
+      primaryAction={
+        watchOnly ? (
+          <Button size="sm" asChild>
             <Link to="/today">
               <Users className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
               {t('portal.todayNav')}
             </Link>
           </Button>
-        </>
-      }
-      primaryAction={
-        <Button size="sm" asChild>
-          <Link to="/scheduling">
-            <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-            Open schedule
-          </Link>
-        </Button>
+        ) : (
+          <Button size="sm" asChild>
+            <Link to="/scheduling">
+              <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              Open schedule
+            </Link>
+          </Button>
+        )
       }
     />
   );
@@ -375,6 +406,22 @@ export function SupervisorDashboard() {
   const tmOpen = tm?.filter((r) => r.state === 'open').length ?? 0;
   const tmTotal = tmConfirmed + tmUnconfirmed + tmOpen;
   const ap = approvalsQuery.data;
+  // Floor supervisor's strip: the floor today, and their shift's SOP.
+  const notIn = focusRows.filter((r) => r.state === 'not-in').length;
+  const openToday = focusRows.filter((r) => r.state === 'open').length;
+  const runningSop = sopQuery.data?.sop ?? null;
+  const helpingSop = sopQuery.data?.helping ?? null;
+  const shiftSop = runningSop
+    ? { id: runningSop.id, sopDone: runningSop.sopDone, sopTotal: runningSop.sopTotal, mine: true, runBy: '' }
+    : helpingSop
+      ? {
+          id: helpingSop.id,
+          sopDone: helpingSop.sopDone,
+          sopTotal: helpingSop.sopTotal,
+          mine: false,
+          runBy: helpingSop.runBy.name.split(' ')[0] ?? helpingSop.runBy.name,
+        }
+      : null;
 
   return (
     <div className="mx-auto space-y-4">
@@ -397,15 +444,44 @@ export function SupervisorDashboard() {
           </Button>
         </div>
       ) : clock.active === null ? (
-        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-navy-secondary bg-navy-secondary/20 p-4 animate-enter">
-          <Timer className="h-6 w-6 shrink-0 text-silver" aria-hidden="true" />
+        <div
+          className={cn(
+            'flex flex-wrap items-center gap-3 rounded-lg border p-4 animate-enter',
+            coveringToday ? 'border-gold/40 bg-gold/[0.06]' : 'border-navy-secondary bg-navy-secondary/20',
+          )}
+        >
+          <Timer className={cn('h-6 w-6 shrink-0', coveringToday ? 'text-gold' : 'text-silver')} aria-hidden="true" />
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium text-white">You&apos;re off the clock</div>
-            <div className="mt-0.5 text-xs text-silver">Clock in here or at the kiosk — your shift&apos;s SOP opens by itself.</div>
+            <div className="text-sm font-medium text-white">
+              {coveringToday
+                ? `You're running ${coveringToday.leadName.split(' ')[0]}'s shift today`
+                : "You're off the clock"}
+            </div>
+            <div className="mt-0.5 text-xs text-silver">
+              {coveringToday
+                ? "Clock in here or at the kiosk — the shift's SOP opens for you, and it's yours to submit."
+                : watchOnly
+                  ? `Clock in here or at the kiosk — you help on ${leadFirst ? `${leadFirst}'s` : 'your shift’s'} SOP.`
+                  : "Clock in here or at the kiosk — your shift's SOP opens by itself."}
+            </div>
           </div>
           <Button onClick={() => void clock.clockInNow()} loading={clock.busy}>
             Clock in
           </Button>
+        </div>
+      ) : watchOnly && sopQuery.data?.helping ? (
+        <HelpingBanner sop={sopQuery.data.helping} />
+      ) : watchOnly && clock.active ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-navy-secondary bg-navy-secondary/20 p-4 animate-enter">
+          <ClipboardCheck className="h-6 w-6 shrink-0 text-silver" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium text-white">
+              {leadFirst ? `${leadFirst}'s SOP opens when ${leadFirst} clocks in` : "Your shift's SOP isn't open yet"}
+            </div>
+            <div className="mt-0.5 text-xs text-silver">
+              You help on it. If no shift supervisor is on the clock 30 minutes into the shift, it moves to you.
+            </div>
+          </div>
         </div>
       ) : null}
 
@@ -537,101 +613,163 @@ export function SupervisorDashboard() {
       </Card>
 
       {/* ---- KPI strip: the four numbers the week runs on ----------------- */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 animate-enter" style={enterStagger(1)}>
-        <StatTile
-          label="Fill rate · this week"
-          value={k && weekBase > 0 ? `${k.fillRatePercent}%` : '—'}
-          delta={fillDelta !== null ? `${fillDelta > 0 ? '+' : ''}${fillDelta} ${t('portal.kpiPts')}` : null}
-          deltaTone={fillDelta === null || fillDelta === 0 ? 'neutral' : fillDelta > 0 ? 'good' : 'bad'}
-          meter={
-            k && weekBase > 0
-              ? { percent: k.fillRatePercent, tone: k.fillRatePercent >= 95 ? 'good' : k.fillRatePercent >= 85 ? 'primary' : 'warn' }
-              : null
-          }
-          sub={
-            k
-              ? weekBase > 0
-                ? `${filledWeek} of ${weekBase} shifts filled`
-                : 'Nothing scheduled this week yet'
-              : undefined
-          }
-        />
-        <TileLink to="/scheduling">
+      {watchOnly ? (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 animate-enter" style={enterStagger(1)}>
+          <TileLink to="/today">
+            <StatTile
+              className="h-full"
+              label="Not in yet"
+              value={notIn}
+              sub={notIn === 0 ? 'Everyone due is in' : 'Shift started, no punch'}
+            />
+          </TileLink>
           <StatTile
-            className="h-full"
-            label="Open shifts · next 7 days"
-            value={openAhead ?? '—'}
+            label="Unfilled today"
+            value={openToday}
+            sub={openToday === 0 ? 'Every slot filled' : 'Open slots on the schedule'}
+          />
+          <StatTile
+            label="Tomorrow · confirmed"
+            value={tm === null ? '—' : tmTotal === 0 ? '—' : tmConfirmed}
+            unit={tm !== null && tmTotal > 0 ? `/ ${tmTotal}` : undefined}
             meter={
-              openAhead !== null && filledAhead + openAhead > 0
-                ? {
-                    percent: Math.round((filledAhead / (filledAhead + openAhead)) * 100),
-                    tone: openAhead > 0 ? 'warn' : 'good',
-                  }
+              tmTotal > 0
+                ? { percent: Math.round((tmConfirmed / tmTotal) * 100), tone: tmOpen > 0 ? 'warn' : 'good' }
+                : null
+            }
+            sub={tm === null ? undefined : tmTotal === 0 ? t('portal.tomorrowNone') : t('portal.tomorrowAllSet')}
+          />
+          <TileLink to={shiftSop ? `/ops?tab=shift&shift=${shiftSop.id}` : '/ops'}>
+            <StatTile
+              className="h-full"
+              label="Shift SOP"
+              value={shiftSop ? shiftSop.sopDone : '—'}
+              unit={shiftSop ? `/ ${shiftSop.sopTotal}` : undefined}
+              meter={
+                shiftSop && shiftSop.sopTotal > 0
+                  ? {
+                      percent: Math.round((shiftSop.sopDone / shiftSop.sopTotal) * 100),
+                      tone: shiftSop.sopDone === shiftSop.sopTotal ? 'good' : 'primary',
+                    }
+                  : null
+              }
+              sub={
+                shiftSop
+                  ? shiftSop.mine
+                    ? 'Yours to submit'
+                    : `${shiftSop.runBy} is running it`
+                  : leadFirst
+                    ? `Opens when ${leadFirst} clocks in`
+                    : 'Not open yet'
+              }
+            />
+          </TileLink>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 animate-enter" style={enterStagger(1)}>
+          <StatTile
+            label="Fill rate · this week"
+            value={k && weekBase > 0 ? `${k.fillRatePercent}%` : '—'}
+            delta={fillDelta !== null ? `${fillDelta > 0 ? '+' : ''}${fillDelta} ${t('portal.kpiPts')}` : null}
+            deltaTone={fillDelta === null || fillDelta === 0 ? 'neutral' : fillDelta > 0 ? 'good' : 'bad'}
+            meter={
+              k && weekBase > 0
+                ? { percent: k.fillRatePercent, tone: k.fillRatePercent >= 95 ? 'good' : k.fillRatePercent >= 85 ? 'primary' : 'warn' }
                 : null
             }
             sub={
-              aheadDays
-                ? openAhead === 0
-                  ? 'Every shift covered'
-                  : `${aheadDays[0]!.open} today · ${aheadDays[1]!.open} tomorrow`
+              k
+                ? weekBase > 0
+                  ? `${filledWeek} of ${weekBase} shifts filled`
+                  : 'Nothing scheduled this week yet'
                 : undefined
             }
           />
-        </TileLink>
-        <StatTile
-          label="Tomorrow · confirmed"
-          value={tm === null ? '—' : tmTotal === 0 ? '—' : tmConfirmed}
-          unit={tm !== null && tmTotal > 0 ? `/ ${tmTotal}` : undefined}
-          meter={
-            tmTotal > 0
-              ? { percent: Math.round((tmConfirmed / tmTotal) * 100), tone: tmOpen > 0 ? 'warn' : 'good' }
-              : null
-          }
-          sub={
-            tm === null
-              ? undefined
-              : tmTotal === 0
-                ? t('portal.tomorrowNone')
-                : [
-                    tmOpen > 0 && t('portal.openCount', { count: tmOpen }),
-                    tmUnconfirmed > 0 && t('portal.awaiting', { count: tmUnconfirmed }),
-                  ]
-                    .filter(Boolean)
-                    .join(' · ') || t('portal.tomorrowAllSet')
-          }
-        />
-        <TileLink to="/approvals">
+          <TileLink to="/scheduling">
+            <StatTile
+              className="h-full"
+              label="Open shifts · next 7 days"
+              value={openAhead ?? '—'}
+              meter={
+                openAhead !== null && filledAhead + openAhead > 0
+                  ? {
+                      percent: Math.round((filledAhead / (filledAhead + openAhead)) * 100),
+                      tone: openAhead > 0 ? 'warn' : 'good',
+                    }
+                  : null
+              }
+              sub={
+                aheadDays
+                  ? openAhead === 0
+                    ? 'Every shift covered'
+                    : `${aheadDays[0]!.open} today · ${aheadDays[1]!.open} tomorrow`
+                  : undefined
+              }
+            />
+          </TileLink>
           <StatTile
-            className="h-full"
-            label="Waiting on you"
-            value={ap ? ap.total : '—'}
+            label="Tomorrow · confirmed"
+            value={tm === null ? '—' : tmTotal === 0 ? '—' : tmConfirmed}
+            unit={tm !== null && tmTotal > 0 ? `/ ${tmTotal}` : undefined}
+            meter={
+              tmTotal > 0
+                ? { percent: Math.round((tmConfirmed / tmTotal) * 100), tone: tmOpen > 0 ? 'warn' : 'good' }
+                : null
+            }
             sub={
-              ap
-                ? ap.total === 0
-                  ? 'Nothing waiting — inbox zero'
+              tm === null
+                ? undefined
+                : tmTotal === 0
+                  ? t('portal.tomorrowNone')
                   : [
-                      ap.clockIns > 0 && plural(ap.clockIns, 'walk-in', 'walk-ins'),
-                      ap.swaps > 0 && plural(ap.swaps, 'swap', 'swaps'),
-                      ap.pickups > 0 && plural(ap.pickups, 'pickup', 'pickups'),
-                      ap.timeOff > 0 && `${ap.timeOff} time off`,
-                      ap.timesheets > 0 && plural(ap.timesheets, 'timesheet', 'timesheets'),
+                      tmOpen > 0 && t('portal.openCount', { count: tmOpen }),
+                      tmUnconfirmed > 0 && t('portal.awaiting', { count: tmUnconfirmed }),
                     ]
                       .filter(Boolean)
-                      .join(' · ')
-                : undefined
+                      .join(' · ') || t('portal.tomorrowAllSet')
             }
           />
-        </TileLink>
-      </div>
+          <TileLink to="/approvals">
+            <StatTile
+              className="h-full"
+              label="Waiting on you"
+              value={ap ? ap.total : '—'}
+              sub={
+                ap
+                  ? ap.total === 0
+                    ? 'Nothing waiting — inbox zero'
+                    : [
+                        ap.clockIns > 0 && plural(ap.clockIns, 'walk-in', 'walk-ins'),
+                        ap.swaps > 0 && plural(ap.swaps, 'swap', 'swaps'),
+                        ap.pickups > 0 && plural(ap.pickups, 'pickup', 'pickups'),
+                        ap.timeOff > 0 && `${ap.timeOff} time off`,
+                        ap.timesheets > 0 && plural(ap.timesheets, 'timesheet', 'timesheets'),
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')
+                  : undefined
+              }
+            />
+          </TileLink>
+        </div>
+      )}
+
+      {/* ---- The floor team: who reports to them / who's in charge -------- */}
+      {watchOnly ? <MyLeadStrip /> : <FloorTeamStrip />}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
         {/* ---- What's waiting on them -------------------------------------- */}
-        <div className="animate-enter md:col-span-2 xl:col-span-7" style={enterStagger(2)}>
-          <RoleDecisionQueue />
-        </div>
+        {!watchOnly && (
+          <div className="animate-enter md:col-span-2 xl:col-span-7" style={enterStagger(2)}>
+            <RoleDecisionQueue />
+          </div>
+        )}
 
         {/* ---- Today by shift (the faces live on /today) ------------------- */}
-        <Card className="animate-enter md:col-span-2 xl:col-span-5" style={enterStagger(3)}>
+        <Card
+          className={cn('animate-enter md:col-span-2', watchOnly ? 'xl:col-span-7' : 'xl:col-span-5')}
+          style={enterStagger(3)}
+        >
           <CardContent className="p-5">
             <div className="flex items-baseline justify-between gap-3">
               <h2 className="text-sm font-medium text-white">{t('portal.todayByShift')}</h2>
@@ -700,54 +838,56 @@ export function SupervisorDashboard() {
         </Card>
 
         {/* ---- The next seven days: fill by day ---------------------------- */}
-        <Card className="animate-enter xl:col-span-7" style={enterStagger(4)}>
-          <CardContent className="p-5">
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
-                <CalendarDays className="h-4 w-4 text-gold" aria-hidden="true" />
-                Next 7 days
-                {mine && <span className="font-normal text-silver/70">· {focusName(myWindows)}</span>}
-              </h2>
-              <Link to="/scheduling" className="text-xs text-gold underline-offset-2 hover:underline">
-                Open schedule
-              </Link>
-            </div>
-            {aheadDays === null ? (
-              <Skeleton className="mt-3 h-40" />
-            ) : (
-              <>
-                <div className="mt-3">
-                  <WeekFillChart
-                    days={aheadDays}
-                    todayKey={todayKey}
-                    labels={{
-                      filled: t('portal.chartFilled'),
-                      open: t('portal.chartOpen'),
-                      heading: (d) => {
-                        const row = aheadDays.find((x) => x.day === d);
-                        return row ? fmtDate(parseYmd(row.date)) : d;
-                      },
-                    }}
+        {!watchOnly && (
+          <Card className="animate-enter xl:col-span-7" style={enterStagger(4)}>
+            <CardContent className="p-5">
+              <div className="flex items-baseline justify-between gap-3">
+                <h2 className="flex items-center gap-1.5 text-sm font-medium text-white">
+                  <CalendarDays className="h-4 w-4 text-gold" aria-hidden="true" />
+                  Next 7 days
+                  {mine && <span className="font-normal text-silver/70">· {focusName(myWindows)}</span>}
+                </h2>
+                <Link to="/scheduling" className="text-xs text-gold underline-offset-2 hover:underline">
+                  Open schedule
+                </Link>
+              </div>
+              {aheadDays === null ? (
+                <Skeleton className="mt-3 h-40" />
+              ) : (
+                <>
+                  <div className="mt-3">
+                    <WeekFillChart
+                      days={aheadDays}
+                      todayKey={todayKey}
+                      labels={{
+                        filled: t('portal.chartFilled'),
+                        open: t('portal.chartOpen'),
+                        heading: (d) => {
+                          const row = aheadDays.find((x) => x.day === d);
+                          return row ? fmtDate(parseYmd(row.date)) : d;
+                        },
+                      }}
+                    />
+                  </div>
+                  <p className="mt-2 text-sm text-silver tabular-nums">
+                    {filledAhead + (openAhead ?? 0) === 0
+                      ? 'Nothing scheduled in the next seven days.'
+                      : `${filledAhead} of ${filledAhead + (openAhead ?? 0)} filled`}
+                    {openAhead ? <span className="text-alert"> · {t('portal.openCount', { count: openAhead })}</span> : null}
+                  </p>
+                  <DetailsTable
+                    label={t('portal.details')}
+                    columns={['Day', t('portal.chartFilled'), t('portal.chartOpen')]}
+                    rows={aheadDays.map((d) => [fmtDate(parseYmd(d.date)), d.filled, d.open])}
                   />
-                </div>
-                <p className="mt-2 text-sm text-silver tabular-nums">
-                  {filledAhead + (openAhead ?? 0) === 0
-                    ? 'Nothing scheduled in the next seven days.'
-                    : `${filledAhead} of ${filledAhead + (openAhead ?? 0)} filled`}
-                  {openAhead ? <span className="text-alert"> · {t('portal.openCount', { count: openAhead })}</span> : null}
-                </p>
-                <DetailsTable
-                  label={t('portal.details')}
-                  columns={['Day', t('portal.chartFilled'), t('portal.chartOpen')]}
-                  rows={aheadDays.map((d) => [fmtDate(parseYmd(d.date)), d.filled, d.open])}
-                />
-              </>
-            )}
-          </CardContent>
-        </Card>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* ---- Their own plan ---------------------------------------------- */}
-        <div className="animate-enter xl:col-span-5" style={enterStagger(5)}>
+        <div className={cn('animate-enter', watchOnly ? 'md:col-span-2 xl:col-span-5' : 'xl:col-span-5')} style={enterStagger(5)}>
           <MyPlanCard />
         </div>
       </div>
@@ -782,7 +922,9 @@ function SopBanner({ sop }: { sop: NonNullable<Awaited<ReturnType<typeof getMySo
       <ClipboardCheck className={cn('h-6 w-6 shrink-0', overdue ? 'text-alert' : 'text-gold')} aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium text-white">
-          Your {sop.windowLabel ?? sop.position} SOP is open
+          {sop.coveringFor
+            ? `You're running ${sop.coveringFor.name.split(' ')[0]}'s ${sop.windowLabel ?? sop.position} SOP`
+            : `Your ${sop.windowLabel ?? sop.position} SOP is open`}
         </div>
         <div className="mt-0.5 text-xs text-silver tabular-nums">
           {sop.sopDone} of {sop.sopTotal} done
@@ -798,6 +940,33 @@ function SopBanner({ sop }: { sop: NonNullable<Awaited<ReturnType<typeof getMySo
         </div>
       </div>
       <span className="shrink-0 text-sm font-medium text-gold">Continue →</span>
+    </Link>
+  );
+}
+
+/** A floor supervisor on the clock: the SOP they help on — check items
+ *  off as they walk the floor; the one running it submits it. */
+function HelpingBanner({ sop }: { sop: HelpingSop }) {
+  const pct = sop.sopTotal > 0 ? Math.round((sop.sopDone / sop.sopTotal) * 100) : 0;
+  const first = sop.runBy.name.split(' ')[0] ?? sop.runBy.name;
+  return (
+    <Link
+      to={`/ops?tab=shift&shift=${sop.id}`}
+      className="flex items-center gap-4 rounded-lg border border-gold/40 bg-gold/[0.06] p-4 transition-colors hover:bg-gold/10 animate-enter"
+    >
+      <ClipboardCheck className="h-6 w-6 shrink-0 text-gold" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-white">
+          {first}&apos;s {sop.windowLabel ?? sop.position} SOP
+        </div>
+        <div className="mt-0.5 text-xs text-silver tabular-nums">
+          {sop.sopDone} of {sop.sopTotal} done · check items off as you walk the floor — {first} submits it
+        </div>
+        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">
+          <div className="h-full rounded-full bg-gold" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+      <span className="shrink-0 text-sm font-medium text-gold">Help →</span>
     </Link>
   );
 }

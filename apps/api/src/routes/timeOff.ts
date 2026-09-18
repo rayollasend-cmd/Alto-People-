@@ -40,6 +40,7 @@ import {
 import { ensureEntitlementApplied } from '../lib/timeOffEntitlement.js';
 import { scopeAssociates, scopeTimeOffRequests } from '../lib/scope.js';
 import { emitWebhookEvent } from '../lib/webhookDispatch.js';
+import { promptShiftHandover } from '../lib/floorLeads.js';
 
 export const timeOffRouter = Router();
 
@@ -539,6 +540,7 @@ timeOffRouter.post('/admin/requests/bulk-decide', MANAGE, async (req, res, next)
           // approveRequest owns the balance CAS — stays per-id.
           await approveRequest(prisma, id, user.id, input.note ?? null);
           void trackNotificationWork(notifyCoverageImpact(row));
+          void trackNotificationWork(promptShiftHandover(row).catch(() => undefined));
         } else {
           if (row.status !== 'PENDING') {
             throw new IllegalStateError(`Cannot deny a ${row.status} request`);
@@ -651,6 +653,8 @@ timeOffRouter.post('/admin/requests/:id/approve', MANAGE, async (req, res, next)
         endDate: updated.endDate,
       }),
     );
+    // A shift supervisor going out: who runs their SOP those days?
+    void trackNotificationWork(promptShiftHandover(updated).catch(() => undefined));
     res.json(
       TimeOffRequestResponseSchema.parse({ request: toRequestDTO(updated) })
     );

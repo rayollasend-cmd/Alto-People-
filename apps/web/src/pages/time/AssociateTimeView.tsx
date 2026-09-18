@@ -138,7 +138,7 @@ export function AssociateTimeView({
   // open) takes them there too.
   const { user } = useAuth();
   const navigate = useNavigate();
-  const isSupervisor = user?.role === 'SHIFT_SUPERVISOR';
+  const isSupervisor = user?.role === 'SHIFT_SUPERVISOR' || user?.role === 'FLOOR_SUPERVISOR';
   const openSop = (id: string) => navigate(`/ops?tab=shift&shift=${id}`);
 
   const handleClockIn = async () => {
@@ -280,7 +280,10 @@ export function AssociateTimeView({
           active ? 'border-gold/40 bg-gold/[0.06]' : 'border-navy-secondary bg-navy-secondary/20',
         )}
       >
-        <div className="min-w-0 flex-1">
+        {/* A floor under the text column: on a phone the buttons wrap to
+            their own row instead of squeezing "On the clock since…" to a
+            word per line. */}
+        <div className="min-w-[11rem] flex-1">
           <div className="text-2xs font-medium uppercase tracking-wider text-silver/60">Your clock</div>
           {active ? (
             <div className="text-sm text-white">

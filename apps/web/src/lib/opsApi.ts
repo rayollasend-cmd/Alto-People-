@@ -54,6 +54,12 @@ export interface OpsShiftHeader {
   dueAt?: string | null;
   incompleteReason?: string | null;
   handoverNone?: boolean;
+  /** Who runs it (must submit it) and — a floor supervisor covering —
+   *  the shift supervisor they're covering for. On the detail. */
+  runBy?: { id: string; name: string } | null;
+  coveringFor?: { id: string; name: string } | null;
+  /** On the board and lists. */
+  coveringForName?: string | null;
 }
 
 export type OpsFollowUpOn = 'NO' | 'NO_OR_PARTIAL' | 'OUT_OF_RANGE';
@@ -101,6 +107,9 @@ export interface OpsHandoverRow {
 
 export interface OpsShiftDetail {
   shift: OpsShiftHeader & { clientName: string | null };
+  /** What the viewer may do: run it (submit, hand over), help on it
+   *  (check items off — a floor supervisor on their lead's SOP), or read. */
+  access?: 'run' | 'help' | 'view';
   tasks: OpsTaskRow[];
   handoverOut: OpsHandoverRow[];
   handoverIn: OpsHandoverRow[];
@@ -461,6 +470,21 @@ export interface MySop {
   sopTotal: number;
   requiredOpen: number;
   handoverCount: number;
+  /** A floor supervisor running it for their shift supervisor. */
+  coveringFor?: { id: string; name: string } | null;
+}
+
+/** The running SOP a floor supervisor helps on — their shift
+ *  supervisor's, or one on a shift they work. */
+export interface HelpingSop {
+  id: string;
+  windowLabel: string | null;
+  position: string;
+  locationName: string | null;
+  dueAt: string | null;
+  sopDone: number;
+  sopTotal: number;
+  runBy: { id: string; name: string };
 }
 
 /** The SOP they last submitted (last 16h) when nothing is open — the
@@ -473,7 +497,11 @@ export interface SubmittedSop {
   closedIncomplete: boolean;
 }
 
-export function getMySop(): Promise<{ sop: MySop | null; submitted?: SubmittedSop | null }> {
+export function getMySop(): Promise<{
+  sop: MySop | null;
+  submitted?: SubmittedSop | null;
+  helping?: HelpingSop | null;
+}> {
   return apiFetch('/ops/my-sop');
 }
 

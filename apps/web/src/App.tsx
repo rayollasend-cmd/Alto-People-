@@ -368,7 +368,7 @@ const LAYOUT_ROUTES = [
   // page gates internally, since no single capability fits both).
   { path: 'portal', element: <ClientPortalHome /> },
   { path: 'portal/today', element: <PortalToday /> },
-  // The shift supervisor's Today — the same page, opened on their client.
+  // The store supervisors' Today — the same page, opened on their client.
   { path: 'today', element: <PortalToday /> },
   { path: 'portal/schedule', element: <PortalSchedule /> },
   { path: 'portal/requests', element: <PortalRequestsPage /> },
@@ -381,7 +381,7 @@ const LAYOUT_ROUTES = [
   // notClientBounded: the shift supervisor holds manage:scheduling, but labor
   // cost is org economics — the API refuses bounded roles on every read here.
   { path: 'labor-costs', element: <RequireCapability cap="manage:scheduling" anyOf={['view:executive', 'process:payroll']} notClientBounded><LaborCostsHome /></RequireCapability> },
-  { path: 'ops', element: <RequireCapability cap="run:ops-shifts" anyOf={['view:ops']}><OpsHome /></RequireCapability> },
+  { path: 'ops', element: <RequireCapability cap="run:ops-shifts" anyOf={['view:ops', 'assist:ops-shifts']}><OpsHome /></RequireCapability> },
   { path: 'payroll', element: <RequireCapability cap="view:payroll"><PayrollHome /></RequireCapability> },
   { path: 'documents', element: <RequireCapability cap="view:documents"><DocumentsHome /></RequireCapability> },
   { path: 'compliance', element: <RequireCapability cap="view:compliance"><ComplianceHome /></RequireCapability> },

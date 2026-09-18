@@ -140,12 +140,15 @@ export const EXEC_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'reports',
 ]);
 
-/** The watch-only floor supervisor's sidebar: the live board and their
- *  own profile — nothing else to wander into. */
+/** The floor supervisor's sidebar: their floor, the faces on it, the live
+ *  board, their shift's SOP, messages and their profile — the shift
+ *  supervisor's grammar without the decisions. */
 const FLOOR_SUPERVISOR_MODULE_KEYS: ReadonlySet<ModuleKey> = new Set<ModuleKey>([
   'me',
   'messages',
+  'floor-today',
   'time-attendance',
+  'ops',
 ]);
 
 /**
@@ -325,7 +328,7 @@ export function visibleModules(
       // The supervisor's Today is the portal's Day page opened on their
       // own client (/client-portal/day opts the role in). Nobody else has
       // a client to open it on without a preview id.
-      (m.key !== 'floor-today' || role === 'SHIFT_SUPERVISOR') &&
+      (m.key !== 'floor-today' || role === 'SHIFT_SUPERVISOR' || role === 'FLOOR_SUPERVISOR') &&
       (m.key !== 'messages' || (role !== 'ASSOCIATE' && role !== 'LIVE_ASN')),
   ).filter(
     // "Timesheets" is Finance's name for the T&A surface — everyone else
@@ -423,6 +426,8 @@ export const MODULES: ModuleNav[] = [
     description:
       'Who is on your floor right now, shift by shift, as faces — clocked in, not in yet, unfilled — with any past day one tap back.',
     requires: 'manage:scheduling',
+    // The floor supervisor watches the same wall (no scheduling powers).
+    requiresAny: ['manage:scheduling', 'assist:ops-shifts'],
     group: 'core',
   },
   {
@@ -813,7 +818,7 @@ export const MODULES: ModuleNav[] = [
     description:
       'SOP checklists, live operational shifts, shift-to-shift handover, and the standards library.',
     requires: 'run:ops-shifts',
-    requiresAny: ['run:ops-shifts', 'view:ops'],
+    requiresAny: ['run:ops-shifts', 'view:ops', 'assist:ops-shifts'],
     group: 'time-and-pay',
   },
   {

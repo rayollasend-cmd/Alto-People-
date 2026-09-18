@@ -88,7 +88,8 @@ export function useShiftFocus(): {
   mine: boolean;
 } {
   const { user } = useAuth();
-  const isSupervisor = user?.role === 'SHIFT_SUPERVISOR';
+  // Floor supervisors work a shift too — the same focus.
+  const isSupervisor = user?.role === 'SHIFT_SUPERVISOR' || user?.role === 'FLOOR_SUPERVISOR';
   const q = useQuery({
     queryKey: ['me', 'shift-windows'],
     queryFn: getMyShiftWindows,

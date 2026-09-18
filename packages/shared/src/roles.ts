@@ -53,7 +53,7 @@ export const ROLE_DESCRIPTIONS: Record<Role, string> = {
   SHIFT_SUPERVISOR:
     'Scheduling, time & attendance, and onboarding invites for one client only — assign the client in Users & access',
   FLOOR_SUPERVISOR:
-    'Watch-only: the live clocked-in board for one client. No time approvals, edits, or walk-in decisions — assign the client in Users & access',
+    "Watches one client's floor and helps on their shift's SOP; reports to a shift supervisor and runs the SOP when covering for them. No time approvals, edits, or walk-in decisions — assign the client, shift and shift supervisor in Users & access",
 };
 
 export type Capability =
@@ -141,7 +141,13 @@ export type Capability =
   //  - manage:ops-library edit the SOP standard itself. Per the owner's
   //    explicit call this is the ONE write the Executive/Chairman holds —
   //    the exec portal stays read-only everywhere else.
+  //  - assist:ops-shifts  the floor supervisor's part: check items off on
+  //    their shift's SOP, and — only while covering for their shift
+  //    supervisor — run it, hand over, and submit it. Never opens a shift
+  //    by hand. Every run:ops-shifts holder also holds it (a strict
+  //    subset), so granting FLOOR_SUPERVISOR is never an escalation.
   | 'run:ops-shifts'
+  | 'assist:ops-shifts'
   | 'view:ops'
   | 'manage:ops-library';
 
@@ -196,6 +202,7 @@ const FULL_ADMIN: Capability[] = [
   'view:time-live',
   'view:ops',
   'run:ops-shifts',
+  'assist:ops-shifts',
   'manage:ops-library',
 ];
 
@@ -322,7 +329,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     'view:analytics',
     // Store Ops: shift plans, checklists, handover; the Site Playbook
     // (SOP standards library) is THIS role's manual.
-    'view:ops', 'run:ops-shifts', 'manage:ops-library',
+    'view:ops', 'run:ops-shifts', 'assist:ops-shifts', 'manage:ops-library',
   ]),
   MARKETING_MANAGER: new Set<Capability>(FULL_ADMIN),
   // Client-scoped floor supervisor: full manage of Scheduling + Time for
@@ -343,6 +350,7 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
     // Run their store's operational shifts (SOP checklist, tasks,
     // handover). Client-clamped; the library and board stay above them.
     'run:ops-shifts',
+    'assist:ops-shifts',
     // The in-app inbox/bell. Without it, notifications routed to
     // supervisors (shift claims, swaps, no-shows at their site) land in a
     // mailbox they can't open — associates hold this for the same reason.
@@ -351,12 +359,14 @@ export const ROLE_CAPABILITIES: Record<Role, ReadonlySet<Capability>> = {
   // Step-down from SHIFT_SUPERVISOR: watches the live floor for one
   // client, decides nothing. Deliberately NO manage:time — walk-in
   // approvals, manual entries, and timesheet approval all stay with the
-  // shift supervisor and above.
+  // shift supervisor and above. Reports to one shift supervisor; helps
+  // on their shift's SOP, and runs it only while covering for them.
   FLOOR_SUPERVISOR: new Set<Capability>([
     'view:dashboard',
     'view:time',
     'view:time-live',
     'view:communications',
+    'assist:ops-shifts',
   ]),
 };
 

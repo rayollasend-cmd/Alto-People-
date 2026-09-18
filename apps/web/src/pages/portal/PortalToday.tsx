@@ -72,9 +72,10 @@ export function PortalToday() {
   const { user, can } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const isPortal = user?.role === 'CLIENT_PORTAL';
-  // The shift supervisor opens this page on their own client (the day
-  // route opts the role in, clamped server-side) — /today in their nav.
-  const isFloorLead = user?.role === 'SHIFT_SUPERVISOR';
+  // The store's supervisors — shift and floor — open this page on their
+  // own client (the day route opts the roles in, clamped server-side) —
+  // /today in their nav.
+  const isFloorLead = user?.role === 'SHIFT_SUPERVISOR' || user?.role === 'FLOOR_SUPERVISOR';
   const canPreview = can('view:executive') || can('manage:org');
   const previewId = searchParams.get('clientId');
   const scope = scopeParams(searchParams, isPortal);
@@ -202,18 +203,20 @@ export function PortalToday() {
               <Printer className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
               {t('portal.print')}
             </Button>
-            <Button size="sm" variant="outline" className="print:hidden" asChild>
-              <Link
-                to={
-                  isFloorLead
-                    ? '/scheduling'
-                    : `/portal/schedule${scope.toString() ? `?${scope.toString()}&` : '?'}week=${date}`
-                }
-              >
-                <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-                {t('portal.openSchedule')}
-              </Link>
-            </Button>
+            {(!isFloorLead || can('view:scheduling')) && (
+              <Button size="sm" variant="outline" className="print:hidden" asChild>
+                <Link
+                  to={
+                    isFloorLead
+                      ? '/scheduling'
+                      : `/portal/schedule${scope.toString() ? `?${scope.toString()}&` : '?'}week=${date}`
+                  }
+                >
+                  <CalendarDays className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                  {t('portal.openSchedule')}
+                </Link>
+              </Button>
+            )}
           </>
         }
       />

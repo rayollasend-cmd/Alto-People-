@@ -135,8 +135,33 @@ export async function supervisorRecipients(
   db: Db,
   clientId: string,
   at?: { locationId: string | null; startsAt: Date } | null,
-  opts: { excludeUserId?: string | null } = {},
+  opts: {
+    excludeUserId?: string | null;
+    /** The event is about this associate: when they're a floor
+     *  supervisor, their own shift supervisor hears first. */
+    aboutAssociateId?: string | null;
+  } = {},
 ): Promise<Array<{ id: string; email: string }>> {
+  if (opts.aboutAssociateId) {
+    const floor = await db.user.findFirst({
+      where: { associateId: opts.aboutAssociateId, role: 'FLOOR_SUPERVISOR', deletedAt: null },
+      select: { leadUserId: true, clientId: true },
+    });
+    if (floor?.leadUserId && floor.clientId === clientId) {
+      const lead = await db.user.findFirst({
+        where: {
+          id: floor.leadUserId,
+          role: 'SHIFT_SUPERVISOR',
+          status: 'ACTIVE',
+          deletedAt: null,
+          clientId,
+          ...(opts.excludeUserId ? { NOT: { id: opts.excludeUserId } } : {}),
+        },
+        select: { id: true, email: true },
+      });
+      if (lead) return [lead];
+    }
+  }
   const everyone = await db.user.findMany({
     where: {
       role: 'SHIFT_SUPERVISOR',

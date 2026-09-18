@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { hasCapability } from '@/lib/roles';
 import { cn } from '@/lib/cn';
 import { fmtTime } from '@/lib/format';
 import { useClientBounded } from '@/lib/useClientBounded';
@@ -128,8 +129,13 @@ export function OpsRunner() {
   const [detail, setDetail] = useState<OpsShiftDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The just-closed shift's record — the landing after closing is the
-  // final record, not an abrupt jump back to the picker.
-  const [closedRecordId, setClosedRecordId] = useState<string | null>(null);
+  // final record, not an abrupt jump back to the picker. ?record= opens one
+  // from a link ("Marcus submitted your Swing SOP").
+  const [closedRecordId, setClosedRecordId] = useState<string | null>(() => searchParams.get('record'));
+  // A floor supervisor (assist:ops-shifts only) never opens a shift by hand:
+  // their landing is their shift's SOP, not the picker.
+  const { user } = useAuth();
+  const assistOnly = !!user && !hasCapability(user.role, 'run:ops-shifts');
   // Distinguishes "restoring from the URL failed" (→ picker) from "a
   // refresh mid-shift failed" (→ error surface, context kept).
   const detailRef = useRef<OpsShiftDetail | null>(null);
@@ -190,11 +196,25 @@ export function OpsRunner() {
   if (!shiftId) {
     return (
       <>
-        <OpenShiftPanel onOpened={(id) => setShiftParam(id)} />
+        {assistOnly ? (
+          <AssistPanel onOpen={(id) => setShiftParam(id)} />
+        ) : (
+          <OpenShiftPanel onOpened={(id) => setShiftParam(id)} />
+        )}
         {closedRecordId && (
           <OpsShiftRecordDialog
             shiftId={closedRecordId}
-            onClose={() => setClosedRecordId(null)}
+            onClose={() => {
+              setClosedRecordId(null);
+              setSearchParams(
+                (prev) => {
+                  const params = new URLSearchParams(prev);
+                  params.delete('record');
+                  return params;
+                },
+                { replace: true },
+              );
+            }}
           />
         )}
       </>
@@ -248,6 +268,56 @@ function readStoredOpsClient(): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * A floor supervisor's Store Ops: the SOP they're running (covering) opens
+ * straight away; else the one they help on; else what happens next.
+ */
+function AssistPanel({ onOpen }: { onOpen: (shiftId: string) => void }) {
+  const q = useQuery({ queryKey: ['ops', 'my-sop'], queryFn: getMySop, refetchInterval: 60_000 });
+  const running = q.data?.sop ?? null;
+  useEffect(() => {
+    if (running) onOpen(running.id);
+  }, [running, onOpen]);
+  if (!q.data || running) return <Skeleton className="h-40" />;
+  const helping = q.data.helping ?? null;
+  if (helping) {
+    const first = helping.runBy.name.split(' ')[0] ?? helping.runBy.name;
+    const pct = helping.sopTotal > 0 ? Math.round((helping.sopDone / helping.sopTotal) * 100) : 0;
+    return (
+      <Card className="border-gold/40 bg-gold/[0.05]">
+        <CardContent className="space-y-3 p-5">
+          <div>
+            <div className="text-2xs uppercase tracking-[0.2em] text-gold">Your shift&apos;s SOP</div>
+            <div className="mt-1 text-lg font-medium text-white">
+              {helping.locationName ? `${helping.locationName} · ` : ''}
+              {helping.windowLabel ?? helping.position}
+            </div>
+            <p className="mt-1 text-sm text-silver">
+              {helping.runBy.name} is running it — {helping.sopDone} of {helping.sopTotal} done. Check items off as you
+              walk the floor; {first} submits it.
+            </p>
+          </div>
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-gold/15" aria-hidden="true">
+            <div className="h-full rounded-full bg-gold" style={{ width: `${pct}%` }} />
+          </div>
+          <Button onClick={() => onOpen(helping.id)}>Help on the checklist</Button>
+        </CardContent>
+      </Card>
+    );
+  }
+  return (
+    <EmptyState
+      title="No SOP running on your shift"
+      description="Your shift supervisor's clock-in opens it, and you help on it here. On a day they hand you the shift — or if no shift supervisor is on the clock 30 minutes in — it opens for you, and it's yours to submit."
+      action={
+        <Button variant="outline" asChild>
+          <Link to="/">Back to My floor</Link>
+        </Button>
+      }
+    />
+  );
 }
 
 function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
@@ -574,6 +644,11 @@ function ShiftRunner({
   onClosed: () => void;
 }) {
   const { shift, tasks, handoverIn, clockedIn } = detail;
+  // A floor supervisor helping on their shift supervisor's SOP checks
+  // items off; the one running it adds tasks, reads the notes in, and
+  // submits.
+  const helping = detail.access === 'help';
+  const runnerFirst = shift.runBy?.name.split(' ')[0] ?? 'The supervisor running it';
   const [adhocOpen, setAdhocOpen] = useState(false);
   const [closeOpen, setCloseOpen] = useState(false);
   // The same crew member usually does consecutive tasks — remember the
@@ -728,7 +803,19 @@ function ShiftRunner({
                 window, and gates the clock-out — say both, plainly. */}
             {shift.dueAt && (
               <div className="mt-1 text-xs text-gold">
-                Due by {fmtTime(shift.dueAt)} · submit it before you clock out
+                Due by {fmtTime(shift.dueAt)} ·{' '}
+                {helping ? `${runnerFirst} submits it` : 'submit it before you clock out'}
+              </div>
+            )}
+            {/* Whose it is, when it isn't simply the viewer's own. */}
+            {helping && shift.runBy && (
+              <div className="mt-1 text-xs text-silver">
+                {shift.runBy.name} is running this SOP — check items off as you walk the floor.
+              </div>
+            )}
+            {!helping && shift.coveringFor && (
+              <div className="mt-1 text-xs text-silver">
+                {shift.runBy?.name ?? 'You'} · covering for {shift.coveringFor.name}
               </div>
             )}
             {/* Evidence strip — the shift's proof, live. */}
@@ -773,19 +860,21 @@ function ShiftRunner({
           {/* Phone: the actions take their own full-width row under the
               title — beside it they squeezed "Deli & Bakery · Morning" into
               a word per line. */}
-          <div className="flex w-full shrink-0 gap-2 sm:w-auto [&>*]:flex-1 sm:[&>*]:flex-none">
-            <Button variant="outline" onClick={() => setAdhocOpen(true)}>
-              <Plus className="h-4 w-4" />
-              Add task
-            </Button>
-            {/* Phones submit from the sticky bar at the bottom. */}
-            <Button
-              onClick={() => setCloseOpen(true)}
-              className={cn('hidden md:inline-flex', allDone && 'animate-pulse')}
-            >
-              {allDone ? 'Ready — submit SOP' : 'Submit SOP'}
-            </Button>
-          </div>
+          {!helping && (
+            <div className="flex w-full shrink-0 gap-2 sm:w-auto [&>*]:flex-1 sm:[&>*]:flex-none">
+              <Button variant="outline" onClick={() => setAdhocOpen(true)}>
+                <Plus className="h-4 w-4" />
+                Add task
+              </Button>
+              {/* Phones submit from the sticky bar at the bottom. */}
+              <Button
+                onClick={() => setCloseOpen(true)}
+                className={cn('hidden md:inline-flex', allDone && 'animate-pulse')}
+              >
+                {allDone ? 'Ready — submit SOP' : 'Submit SOP'}
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -831,10 +920,14 @@ function ShiftRunner({
                 From the previous shift ({handoverIn.length})
               </CardTitle>
               <p className="mt-1 text-xs text-silver">
-                Read each one — tap Got it, or add it to your list. You can&apos;t submit until they&apos;re acknowledged.
+                {helping
+                  ? `What the last shift left — ${runnerFirst} acknowledges these.`
+                  : "Read each one — tap Got it, or add it to your list. You can't submit until they're acknowledged."}
               </p>
             </div>
-            {handoverIn.length > 1 && <AckAllButton items={handoverIn} shiftId={shift.id} onDone={refresh} />}
+            {!helping && handoverIn.length > 1 && (
+              <AckAllButton items={handoverIn} shiftId={shift.id} onDone={refresh} />
+            )}
           </CardHeader>
           <CardContent className="space-y-2">
             {handoverIn.map((h) => (
@@ -843,6 +936,7 @@ function ShiftRunner({
                 item={h}
                 shiftId={shift.id}
                 onDecided={refresh}
+                readOnly={helping}
               />
             ))}
           </CardContent>
@@ -922,9 +1016,13 @@ function ShiftRunner({
             )}
             {shift.dueAt && <span> · due {fmtTime(shift.dueAt)}</span>}
           </div>
-          <Button variant={allDone ? 'primary' : 'secondary'} onClick={() => setCloseOpen(true)}>
-            Submit SOP
-          </Button>
+          {helping ? (
+            <span className="shrink-0 text-xs text-silver">{runnerFirst} submits it</span>
+          ) : (
+            <Button variant={allDone ? 'primary' : 'secondary'} onClick={() => setCloseOpen(true)}>
+              Submit SOP
+            </Button>
+          )}
         </div>
       </div>
 
@@ -1525,10 +1623,13 @@ function HandoverDecisionRow({
   item,
   shiftId,
   onDecided,
+  readOnly = false,
 }: {
   item: OpsShiftDetail['handoverIn'][number];
   shiftId: string;
   onDecided: () => void;
+  /** Helping, not running: the note is shown, the decision isn't theirs. */
+  readOnly?: boolean;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const KindIcon = HANDOVER_KIND_ICON[item.kind];
@@ -1574,27 +1675,29 @@ function HandoverDecisionRow({
           <p className="mt-0.5 text-sm text-white">{item.body}</p>
         </div>
       </div>
-      <div className="flex shrink-0 gap-2">
-        <Button size="sm" onClick={() => void decide('REVIEW')} loading={busy === 'REVIEW'}>
-          Got it
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => void decide('CARRY')}
-          loading={busy === 'CARRY'}
-        >
-          Add to my list
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => void decide('DISMISS')}
-          loading={busy === 'DISMISS'}
-        >
-          Dismiss
-        </Button>
-      </div>
+      {!readOnly && (
+        <div className="flex shrink-0 gap-2">
+          <Button size="sm" onClick={() => void decide('REVIEW')} loading={busy === 'REVIEW'}>
+            Got it
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void decide('CARRY')}
+            loading={busy === 'CARRY'}
+          >
+            Add to my list
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => void decide('DISMISS')}
+            loading={busy === 'DISMISS'}
+          >
+            Dismiss
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

@@ -144,3 +144,37 @@ describe('<OpsRunner> — submitting the shift SOP', () => {
     expect(decideOpsHandover).toHaveBeenCalledWith('n2', { action: 'REVIEW', shiftId: 'sop1' });
   });
 });
+
+describe('<OpsRunner> — a floor supervisor helping on their shift supervisor\'s SOP', () => {
+  it('checks items off, reads the notes in — and leaves the submit to whoever runs it', async () => {
+    const d = detail([task('t1', 'Walk the floor', 'OPEN')], [note('n1', 'Freezer 3 seal torn.')]);
+    renderRunner({
+      ...d,
+      access: 'help',
+      shift: { ...d.shift, runBy: { id: 'u-dana', name: 'Dana Reyes' } },
+    });
+    expect(await screen.findByText(/Dana Reyes is running this SOP/)).toBeInTheDocument();
+    expect(screen.getByText(/Due by .* · Dana submits it/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /submit sop/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Add task/ })).not.toBeInTheDocument();
+    // The previous shift's note is there to read; acknowledging it isn't theirs.
+    expect(screen.getByText('Freezer 3 seal torn.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Got it' })).not.toBeInTheDocument();
+    expect(screen.getByText(/Dana acknowledges these/)).toBeInTheDocument();
+  });
+
+  it('covering for their shift supervisor: runs it, and the header says for whom', async () => {
+    const d = detail([task('t1', 'Walk the floor', 'DONE')]);
+    renderRunner({
+      ...d,
+      access: 'run',
+      shift: {
+        ...d.shift,
+        runBy: { id: 'u-marcus', name: 'Marcus Hill' },
+        coveringFor: { id: 'u-dana', name: 'Dana Reyes' },
+      },
+    });
+    expect(await screen.findByText('Marcus Hill · covering for Dana Reyes')).toBeInTheDocument();
+    expect((await screen.findAllByRole('button', { name: /submit sop/i })).length).toBeGreaterThan(0);
+  });
+});

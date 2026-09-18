@@ -73,10 +73,10 @@ export const clientPortalRouter = Router();
  * account without a client; 404s when the preview target doesn't exist
  * or the store isn't under the client.
  *
- * `floorLead`: the route also serves the SHIFT_SUPERVISOR its own
- * client — opt-in per route, so only payloads with nothing the role
- * can't already see (the day roster: names, positions, punches) take
- * it. The home overview and history carry statements and the client's
+ * `floorLead`: the route also serves the store's supervisors — SHIFT_ and
+ * FLOOR_SUPERVISOR — their own client, opt-in per route, so only payloads
+ * with nothing the roles can't already see (the day roster: names,
+ * positions, punches — never money) take it. The home overview and history carry statements and the client's
  * service record, and never opt in.
  */
 async function resolveScope(
@@ -115,7 +115,7 @@ async function resolveScope(
     locationId =
       user.locationId ??
       (typeof query.locationId === 'string' && query.locationId ? query.locationId : null);
-  } else if (opts.floorLead && user.role === 'SHIFT_SUPERVISOR') {
+  } else if (opts.floorLead && (user.role === 'SHIFT_SUPERVISOR' || user.role === 'FLOOR_SUPERVISOR')) {
     // Clamped to their own client; ?clientId= is ignored. A store inside
     // it may be named (validated below to belong to the same client).
     if (!user.clientId) {

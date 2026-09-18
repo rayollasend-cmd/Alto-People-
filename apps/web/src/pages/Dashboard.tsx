@@ -51,6 +51,7 @@ function DashboardFallback() {
  *   ASSOCIATE        → personal landing (clock-in, shift, paystub, time-off)
  *   MANAGER          → team-scoped (direct reports, pending approvals)
  *   SHIFT_SUPERVISOR → client-site-scoped ("your site today")
+ *   FLOOR_SUPERVISOR → the same floor, watch-only (no scheduling reads)
  *   anyone else      → org-wide AdminDashboard, role-filtered internally
  */
 export function Dashboard() {
@@ -60,7 +61,7 @@ export function Dashboard() {
       ? AssociateDashboard
       : user?.role === 'MANAGER'
         ? ManagerDashboard
-        : user?.role === 'SHIFT_SUPERVISOR'
+        : user?.role === 'SHIFT_SUPERVISOR' || user?.role === 'FLOOR_SUPERVISOR'
           ? SupervisorDashboard
           : user?.role === 'EXECUTIVE_CHAIRMAN'
             ? ExecutiveDashboard

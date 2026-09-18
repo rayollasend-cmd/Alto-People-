@@ -246,8 +246,11 @@ export async function runShiftReminderSweep(
       // the floor and find (or replace) the associate.
       void notifyClientSupervisors(shift.clientId, {
         ...noShowNotice,
-        // The lead of the window this shift starts in walks the floor first.
+        // The lead of the window this shift starts in walks the floor first
+        // — or, when the missing person is a floor supervisor, the shift
+        // supervisor in charge of them.
         at: { locationId: shift.locationId, startsAt: shift.startsAt },
+        aboutAssociateId: shift.assignedAssociateId,
       });
       // Attendance points: approved time off = excused (no event), a
       // pending same-day request = CALL_OUT, silence = NO_CALL_NO_SHOW.

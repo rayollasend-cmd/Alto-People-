@@ -21,10 +21,31 @@ export function TimeHome() {
     return <AssociateKioskOnlyView />;
   }
 
-  // FLOOR_SUPERVISOR: watch-only. The live board and nothing else — no
-  // approval queue, no add-entry, no walk-in decisions.
+  // FLOOR_SUPERVISOR: watch-only. The live board — no approval queue, no
+  // add-entry, no walk-in decisions — with their own clock as the slim row
+  // under the title, the way the shift supervisor has it.
   if (user?.role === 'FLOOR_SUPERVISOR') {
-    return <AdminTimeView canManage={false} liveOnly />;
+    if (hasAssociateRecord && searchParams.get('mine') === '1') {
+      return (
+        <AssociateTimeView
+          headerActions={
+            <Button size="sm" variant="ghost" asChild>
+              <Link to="/time-attendance">
+                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                The floor
+              </Link>
+            </Button>
+          }
+        />
+      );
+    }
+    return (
+      <AdminTimeView
+        canManage={false}
+        liveOnly
+        personal={hasAssociateRecord ? <AssociateTimeView variant="strip" /> : undefined}
+      />
+    );
   }
 
   // People who run the floor AND punch themselves (manage:time + an

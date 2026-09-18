@@ -397,6 +397,8 @@ export function notifyClientSupervisors(
   opts: NotifyOpts & {
     excludeUserId?: string | null;
     at?: { locationId: string | null; startsAt: Date } | null;
+    /** About this associate — a floor supervisor's own lead hears first. */
+    aboutAssociateId?: string | null;
   },
 ): Promise<void> {
   return track(
@@ -404,6 +406,7 @@ export function notifyClientSupervisors(
       if (!clientId) return;
       const recipients = await supervisorRecipients(prisma, clientId, opts.at, {
         excludeUserId: opts.excludeUserId,
+        aboutAssociateId: opts.aboutAssociateId,
       });
       if (recipients.length === 0) return;
       const now = new Date();

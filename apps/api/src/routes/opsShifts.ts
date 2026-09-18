@@ -4,7 +4,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { extname } from 'node:path';
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
-import { UPLOAD_MAX_BYTES } from '@alto-people/shared';
+import { UPLOAD_MAX_BYTES, hasCapability } from '@alto-people/shared';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireAnyCapability, requireCapability } from '../middleware/auth.js';
@@ -12,7 +12,7 @@ import { effectiveClientIdFilter } from '../lib/scope.js';
 import { enqueueAudit } from '../lib/audit.js';
 import { getBlobStore } from '../lib/blobStore.js';
 import { sanitizeUploadFilename, verifyFileMagic } from '../lib/uploads.js';
-import { notifyAllAdmins } from '../lib/notify.js';
+import { notifyAllAdmins, notifyUser } from '../lib/notify.js';
 import { orgDateKey, startOfWeekUTC, utcInstantOfLocalMidnight } from '../lib/timeAnomalies.js';
 import {
   OPS_DEPARTMENTS,
@@ -22,6 +22,7 @@ import {
 } from '../lib/opsSops.js';
 import { createOpsShift } from '../lib/storeShiftSop.js';
 import { currentStoreWindows } from '../lib/shiftWindows.js';
+import { personName, validLead } from '../lib/floorLeads.js';
 
 /**
  * Store Operations — the shift supervisor's floor tool and the leadership
@@ -44,7 +45,10 @@ import { currentStoreWindows } from '../lib/shiftWindows.js';
 export const opsRouter = Router();
 
 const RUN = requireCapability('run:ops-shifts');
-const VIEW = requireAnyCapability('view:ops', 'run:ops-shifts');
+// The floor supervisor's way in: check items off on their shift's SOP, and
+// run it only while it's theirs (covering) — assertMayWork narrows each.
+const RUN_OR_ASSIST = requireAnyCapability('run:ops-shifts', 'assist:ops-shifts');
+const VIEW = requireAnyCapability('view:ops', 'run:ops-shifts', 'assist:ops-shifts');
 const BOARD = requireCapability('view:ops');
 const LIB_READ = requireAnyCapability('manage:ops-library', 'view:ops', 'run:ops-shifts');
 const LIB = requireCapability('manage:ops-library');
@@ -99,6 +103,54 @@ async function loadShiftScoped(req: Request, shiftId: string) {
     throw new HttpError(403, 'forbidden', 'This shift belongs to another client.');
   }
   return shift;
+}
+
+/**
+ * What a floor supervisor (assist:ops-shifts, no run:ops-shifts) may do on
+ * a shift:
+ *   'run'  — they're running it (covering for their shift supervisor)
+ *   'help' — their lead's store-shift SOP, or one on a shift they work:
+ *            check items off, note, photograph
+ *   null   — not theirs; hand-opened department shifts never are
+ * Anyone holding run:ops-shifts runs any shift of their client, as before.
+ */
+type OpsAccess = 'run' | 'help' | null;
+
+async function opsAccess(
+  req: Request,
+  shift: { openedById: string; coveringForId: string | null; locationId: string | null; windowLabel: string | null },
+): Promise<OpsAccess> {
+  const user = req.user!;
+  if (hasCapability(user.role, 'run:ops-shifts')) return 'run';
+  if (!hasCapability(user.role, 'assist:ops-shifts')) return null;
+  if (shift.openedById === user.id) return 'run';
+  if (!shift.locationId || !shift.windowLabel) return null;
+  const me = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { leadUserId: true, clientId: true },
+  });
+  const lead = me ? await validLead(prisma, me) : null;
+  if (lead && (shift.openedById === lead.id || shift.coveringForId === lead.id)) return 'help';
+  const works = await prisma.supervisorShiftWindow.count({
+    where: { userId: user.id, locationId: shift.locationId, label: shift.windowLabel },
+  });
+  return works > 0 ? 'help' : null;
+}
+
+async function assertMayWork(
+  req: Request,
+  shift: Parameters<typeof opsAccess>[1],
+  need: 'help' | 'run',
+): Promise<void> {
+  const access = await opsAccess(req, shift);
+  if (access === 'run' || (need === 'help' && access === 'help')) return;
+  throw new HttpError(
+    403,
+    access === 'help' ? 'not_running' : 'not_your_shift',
+    access === 'help'
+      ? 'Only the supervisor running this SOP can do that — you can check items off.'
+      : "This isn't your shift's SOP.",
+  );
 }
 
 const taskSelect = {
@@ -746,6 +798,20 @@ opsRouter.post('/shifts/open', RUN, async (req, res, next) => {
 opsRouter.get('/shifts/:id', VIEW, async (req, res, next) => {
   try {
     const shift = await loadShiftScoped(req, req.params.id);
+    // A floor supervisor reads the SOPs they work on; the board roles and
+    // supervisors read any of their client's.
+    const access = await opsAccess(req, shift);
+    if (!access && !hasCapability(req.user!.role, 'view:ops')) {
+      throw new HttpError(403, 'not_your_shift', "This isn't your shift's SOP.");
+    }
+    const people = await prisma.user.findMany({
+      where: { id: { in: [shift.openedById, ...(shift.coveringForId ? [shift.coveringForId] : [])] } },
+      select: { id: true, email: true, associate: { select: { firstName: true, lastName: true } } },
+    });
+    const nameOf = (id: string | null) => {
+      const u = id ? people.find((p) => p.id === id) : null;
+      return u ? { id: u.id, name: personName(u) } : null;
+    };
     const [tasks, handoverOut, pendingIn, clockedIn, client] = await Promise.all([
       prisma.opsTask.findMany({
         where: { opsShiftId: shift.id },
@@ -808,7 +874,12 @@ opsRouter.get('/shifts/:id', VIEW, async (req, res, next) => {
         ...counts,
         clientName: client?.name ?? null,
         locationName: location?.name ?? null,
+        // Who runs it (must submit it), and who they're covering for.
+        runBy: nameOf(shift.openedById),
+        coveringFor: nameOf(shift.coveringForId),
       },
+      // What the caller may do here: run it, help on it, or only read it.
+      access: access ?? 'view',
       tasks: tasks.map(toTask),
       handoverOut: handoverOut.map(toHandover),
       handoverIn: pendingIn.map(toHandover),
@@ -831,12 +902,13 @@ const AdhocTaskSchema = z.object({
     .default('CHECK'),
 });
 
-opsRouter.post('/shifts/:id/tasks', RUN, async (req, res, next) => {
+opsRouter.post('/shifts/:id/tasks', RUN_OR_ASSIST, async (req, res, next) => {
   try {
     const shift = await loadShiftScoped(req, req.params.id);
     if (shift.status !== 'ACTIVE') {
       throw new HttpError(409, 'shift_closed', 'This shift is closed.');
     }
+    await assertMayWork(req, shift, 'run');
     const parsed = AdhocTaskSchema.safeParse(req.body);
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
@@ -873,12 +945,23 @@ const TaskPatchSchema = z.object({
   priority: z.enum(['HIGH', 'MEDIUM', 'LOW']).optional(),
 });
 
-opsRouter.patch('/tasks/:id', RUN, async (req, res, next) => {
+opsRouter.patch('/tasks/:id', RUN_OR_ASSIST, async (req, res, next) => {
   try {
     const task = await prisma.opsTask.findUnique({
       where: { id: req.params.id },
       include: {
-        opsShift: { select: { id: true, clientId: true, status: true, position: true } },
+        opsShift: {
+          select: {
+            id: true,
+            clientId: true,
+            status: true,
+            position: true,
+            openedById: true,
+            coveringForId: true,
+            locationId: true,
+            windowLabel: true,
+          },
+        },
         photos: { select: { id: true }, take: 1 },
       },
     });
@@ -890,6 +973,7 @@ opsRouter.patch('/tasks/:id', RUN, async (req, res, next) => {
     if (task.opsShift.status !== 'ACTIVE') {
       throw new HttpError(409, 'shift_closed', 'This shift is closed — the record is final.');
     }
+    await assertMayWork(req, task.opsShift, 'help');
     const parsed = TaskPatchSchema.safeParse(req.body);
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
@@ -1022,13 +1106,24 @@ opsRouter.patch('/tasks/:id', RUN, async (req, res, next) => {
 
 opsRouter.post(
   '/tasks/:id/photos',
-  RUN,
+  RUN_OR_ASSIST,
   upload.single('file'),
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       const task = await prisma.opsTask.findUnique({
         where: { id: req.params.id },
-        include: { opsShift: { select: { clientId: true, status: true } } },
+        include: {
+          opsShift: {
+            select: {
+              clientId: true,
+              status: true,
+              openedById: true,
+              coveringForId: true,
+              locationId: true,
+              windowLabel: true,
+            },
+          },
+        },
       });
       if (!task) throw new HttpError(404, 'task_not_found', 'Task not found');
       const clamped = effectiveClientIdFilter(req.user!, undefined);
@@ -1038,6 +1133,7 @@ opsRouter.post(
       if (task.opsShift.status !== 'ACTIVE') {
         throw new HttpError(409, 'shift_closed', 'This shift is closed.');
       }
+      await assertMayWork(req, task.opsShift, 'help');
       if (!req.file) {
         throw new HttpError(400, 'no_file', 'A "file" multipart field is required');
       }
@@ -1124,12 +1220,13 @@ const HandoverItemsSchema = z.object({
     .max(50),
 });
 
-opsRouter.post('/shifts/:id/handover', RUN, async (req, res, next) => {
+opsRouter.post('/shifts/:id/handover', RUN_OR_ASSIST, async (req, res, next) => {
   try {
     const shift = await loadShiftScoped(req, req.params.id);
     if (shift.status !== 'ACTIVE') {
       throw new HttpError(409, 'shift_closed', 'This shift is closed.');
     }
+    await assertMayWork(req, shift, 'run');
     const parsed = HandoverItemsSchema.safeParse(req.body);
     if (!parsed.success) {
       throw new HttpError(400, 'invalid_body', 'Invalid request body', parsed.error.flatten());
@@ -1179,7 +1276,7 @@ opsRouter.post('/shifts/:id/handover', RUN, async (req, res, next) => {
   }
 });
 
-opsRouter.post('/handover/:id/decide', RUN, async (req, res, next) => {
+opsRouter.post('/handover/:id/decide', RUN_OR_ASSIST, async (req, res, next) => {
   try {
     const parsed = z
       .object({
@@ -1202,6 +1299,7 @@ opsRouter.post('/handover/:id/decide', RUN, async (req, res, next) => {
     if (target.status !== 'ACTIVE') {
       throw new HttpError(409, 'shift_closed', 'The receiving shift is closed.');
     }
+    await assertMayWork(req, target, 'run');
     const sameLine = target.locationId
       ? item.fromShift.locationId === target.locationId
       : item.fromShift.department === target.department;
@@ -1256,18 +1354,71 @@ opsRouter.post('/handover/:id/decide', RUN, async (req, res, next) => {
 
 /* ===== Store-shift SOPs ================================================== */
 
+/** The running store-shift SOP a floor supervisor helps on: their shift
+ *  supervisor's (or one covering for them), else one on a shift they work. */
+async function helpingSop(userId: string) {
+  const me = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { leadUserId: true, clientId: true },
+  });
+  if (!me?.clientId) return null;
+  const lead = await validLead(prisma, me);
+  const windows = await prisma.supervisorShiftWindow.findMany({
+    where: { userId },
+    select: { locationId: true, label: true },
+  });
+  const or: Prisma.OpsShiftWhereInput[] = [
+    ...(lead ? [{ openedById: lead.id }, { coveringForId: lead.id }] : []),
+    ...windows.map((w) => ({ locationId: w.locationId, windowLabel: w.label })),
+  ];
+  if (or.length === 0) return null;
+  const sops = await prisma.opsShift.findMany({
+    where: { clientId: me.clientId, status: 'ACTIVE', windowLabel: { not: null }, OR: or },
+    orderBy: { openedAt: 'desc' },
+    take: 5,
+    include: {
+      location: { select: { name: true } },
+      openedBy: { select: { id: true, email: true, associate: { select: { firstName: true, lastName: true } } } },
+    },
+  });
+  // Their lead's first; then their own shift's.
+  const pick =
+    sops.find((x) => lead && (x.openedById === lead.id || x.coveringForId === lead.id)) ?? sops[0];
+  if (!pick) return null;
+  const counts = await liveCounts(pick.id);
+  return {
+    id: pick.id,
+    windowLabel: pick.windowLabel,
+    position: pick.position,
+    locationName: pick.location?.name ?? null,
+    dueAt: pick.dueAt?.toISOString() ?? null,
+    sopDone: counts.sopDone,
+    sopTotal: counts.sopTotal,
+    runBy: { id: pick.openedBy.id, name: personName(pick.openedBy) },
+  };
+}
+
 /**
  * GET /ops/my-sop — the SOP the caller has open (opened at their clock-in
  * or by hand), with progress — the "finish your SOP" banner and the
  * clock-out guard read this. null when nothing is open.
  */
-opsRouter.get('/my-sop', RUN, async (req, res, next) => {
+opsRouter.get('/my-sop', RUN_OR_ASSIST, async (req, res, next) => {
   try {
     const shift = await prisma.opsShift.findFirst({
       where: { openedById: req.user!.id, status: 'ACTIVE' },
       orderBy: { openedAt: 'desc' },
-      include: { location: { select: { name: true } } },
+      include: {
+        location: { select: { name: true } },
+        coveringFor: { select: { id: true, email: true, associate: { select: { firstName: true, lastName: true } } } },
+      },
     });
+    // A floor supervisor not running one: the SOP they help on — their
+    // shift supervisor's, or one running on a shift they work.
+    const helping =
+      !shift && !hasCapability(req.user!.role, 'run:ops-shifts')
+        ? await helpingSop(req.user!.id)
+        : null;
     if (!shift) {
       // Nothing open: say what they last submitted, if it's this shift's —
       // the end-of-shift screen reads "submitted · clock out", not "start".
@@ -1282,6 +1433,7 @@ opsRouter.get('/my-sop', RUN, async (req, res, next) => {
       });
       res.json({
         sop: null,
+        helping,
         submitted: last
           ? {
               id: last.id,
@@ -1311,7 +1463,11 @@ opsRouter.get('/my-sop', RUN, async (req, res, next) => {
         sopTotal: counts.sopTotal,
         requiredOpen,
         handoverCount,
+        coveringFor: shift.coveringFor
+          ? { id: shift.coveringFor.id, name: personName(shift.coveringFor) }
+          : null,
       },
+      helping: null,
     });
   } catch (err) {
     next(err);
@@ -1428,12 +1584,13 @@ opsRouter.put('/store-shifts', LIB, async (req, res, next) => {
 
 /* ===== Close ============================================================= */
 
-opsRouter.post('/shifts/:id/close', RUN, async (req, res, next) => {
+opsRouter.post('/shifts/:id/close', RUN_OR_ASSIST, async (req, res, next) => {
   try {
     const shift = await loadShiftScoped(req, req.params.id);
     if (shift.status !== 'ACTIVE') {
       throw new HttpError(409, 'shift_closed', 'This shift is already closed.');
     }
+    await assertMayWork(req, shift, 'run');
     const parsed = z
       .object({
         summary: z.string().trim().max(2000).optional(),
@@ -1535,12 +1692,39 @@ opsRouter.post('/shifts/:id/close', RUN, async (req, res, next) => {
       },
       'ops.shifts',
     );
+    // Covering for their shift supervisor: the record says so, and the
+    // shift supervisor hears how their shift went.
+    const coveredLead = shift.coveringForId
+      ? await prisma.user.findUnique({
+          where: { id: shift.coveringForId },
+          select: { id: true, email: true, associate: { select: { firstName: true, lastName: true } } },
+        })
+      : null;
+    const submitter = await prisma.user.findUnique({
+      where: { id: req.user!.id },
+      select: { email: true, associate: { select: { firstName: true, lastName: true } } },
+    });
+    const submittedBy = `${submitter ? personName(submitter) : req.user!.email}${
+      coveredLead ? `, covering for ${personName(coveredLead)}` : ''
+    }`;
     if (closedIncomplete) {
       await notifyAllAdmins({
         subject: `Ops shift closed incomplete — ${shift.position}`,
-        body: `${shift.windowLabel ? `${shift.windowLabel} SOP` : shift.department} (${shift.dateKey}) submitted with ${requiredOpen} required item${requiredOpen === 1 ? '' : 's'} unfinished. SOP ${counts.sopDone}/${counts.sopTotal}, tasks ${counts.taskDone}/${counts.taskTotal}. Submitted by ${req.user!.email}. Reason: ${incompleteReason}`,
+        body: `${shift.windowLabel ? `${shift.windowLabel} SOP` : shift.department} (${shift.dateKey}) submitted with ${requiredOpen} required item${requiredOpen === 1 ? '' : 's'} unfinished. SOP ${counts.sopDone}/${counts.sopTotal}, tasks ${counts.taskDone}/${counts.taskTotal}. Submitted by ${submittedBy}. Reason: ${incompleteReason}`,
         category: 'ops.incomplete_close',
         linkUrl: '/ops',
+      });
+    }
+    if (coveredLead && coveredLead.id !== req.user!.id) {
+      const label = shift.windowLabel ? `${shift.windowLabel} SOP` : 'SOP';
+      await notifyUser(coveredLead.id, {
+        subject: `${submitter ? personName(submitter) : 'Your floor supervisor'} submitted your ${label}`,
+        body:
+          `${shift.dateKey}: ${counts.sopDone} of ${counts.sopTotal} done` +
+          (closedIncomplete ? `, submitted incomplete — ${incompleteReason}` : '') +
+          `. ${handoverCount === 0 ? 'Nothing handed over.' : `${handoverCount} note${handoverCount === 1 ? '' : 's'} handed over to the next shift.`}`,
+        category: 'ops.sop',
+        linkUrl: `/ops?tab=shift&record=${shift.id}`,
       });
     }
     res.json({ shift: shiftHeader(updated) });
@@ -1568,6 +1752,7 @@ opsRouter.get('/shifts', VIEW, async (req, res, next) => {
       include: {
         client: { select: { name: true } },
         openedBy: { select: { email: true } },
+        coveringFor: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
       },
     });
     res.json({
@@ -1575,6 +1760,7 @@ opsRouter.get('/shifts', VIEW, async (req, res, next) => {
         ...shiftHeader(s),
         clientName: s.client.name,
         openedByEmail: s.openedBy.email,
+        coveringForName: s.coveringFor ? personName(s.coveringFor) : null,
       })),
     });
   } catch (err) {
@@ -1594,6 +1780,7 @@ opsRouter.get('/board', BOARD, async (_req, res, next) => {
         include: {
           client: { select: { name: true } },
           openedBy: { select: { email: true } },
+          coveringFor: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
         },
       }),
       prisma.opsShift.findMany({
@@ -1603,6 +1790,7 @@ opsRouter.get('/board', BOARD, async (_req, res, next) => {
         include: {
           client: { select: { name: true } },
           openedBy: { select: { email: true } },
+          coveringFor: { select: { email: true, associate: { select: { firstName: true, lastName: true } } } },
         },
       }),
     ]);
@@ -1612,6 +1800,7 @@ opsRouter.get('/board', BOARD, async (_req, res, next) => {
         ...(await liveCounts(s.id)),
         clientName: s.client.name,
         openedByEmail: s.openedBy.email,
+        coveringForName: s.coveringFor ? personName(s.coveringFor) : null,
       })),
     );
     res.json({
@@ -1621,6 +1810,7 @@ opsRouter.get('/board', BOARD, async (_req, res, next) => {
         ...shiftHeader(s),
         clientName: s.client.name,
         openedByEmail: s.openedBy.email,
+        coveringForName: s.coveringFor ? personName(s.coveringFor) : null,
       })),
     });
   } catch (err) {

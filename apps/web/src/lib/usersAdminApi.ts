@@ -25,6 +25,10 @@ export interface AdminUser {
   lockedUntil: string | null;
   /** SHIFT_SUPERVISOR: the store shift windows they lead ("their shift"). */
   shiftWindows?: Array<{ locationId: string; locationName: string; label: string }>;
+  /** A floor supervisor's shift supervisor (null when unassigned or the
+   *  link no longer holds). */
+  leadUserId?: string | null;
+  leadName?: string | null;
 }
 
 export interface ListUsersFilters {

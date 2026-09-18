@@ -14,7 +14,9 @@ import { currentStoreWindows, ledWindows } from '../lib/shiftWindows.js';
  *   GET /admin/shift-windows?clientId=    a client's stores, their windows,
  *                                         and who leads each (gaps show)
  *   GET /admin/shift-windows/gaps         every client: shifts nobody leads,
- *                                         supervisors with no shift
+ *                                         supervisors with no shift, floor
+ *                                         supervisors with no shift or no
+ *                                         shift supervisor
  *   PUT /admin/users/:id/shift-windows    set a supervisor's windows
  *
  * The reads are open to whoever can view the users admin OR assign a
@@ -25,7 +27,9 @@ import { currentStoreWindows, ledWindows } from '../lib/shiftWindows.js';
  */
 export const shiftWindowsRouter = Router();
 
-const WINDOW_ROLES = new Set(['SHIFT_SUPERVISOR']);
+// Floor supervisors work a shift too — it's their focus, and it's how
+// their shift supervisor is suggested (lib/floorLeads).
+const WINDOW_ROLES = new Set(['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR']);
 
 function personName(u: { email: string; associate: { firstName: string; lastName: string } | null }) {
   return u.associate ? `${u.associate.firstName} ${u.associate.lastName}` : (u.email.split('@')[0] ?? u.email);
@@ -57,19 +61,33 @@ shiftWindowsRouter.get('/admin/shift-windows/gaps', CAN_READ, async (_req, res) 
     where: { deletedAt: null, isActive: true, client: { deletedAt: null, status: 'ACTIVE' } },
     select: { id: true, name: true, clientId: true, client: { select: { name: true } } },
   });
-  const [defs, supervisors] = await Promise.all([
+  const clientIds = [...new Set(stores.map((s) => s.clientId))];
+  const [defs, supervisors, floors] = await Promise.all([
     currentStoreWindows(prisma, stores.map((s) => s.id)),
     prisma.user.findMany({
       where: {
         role: 'SHIFT_SUPERVISOR',
         status: 'ACTIVE',
         deletedAt: null,
-        clientId: { in: [...new Set(stores.map((s) => s.clientId))] },
+        clientId: { in: clientIds },
       },
       select: {
         id: true,
         email: true,
         clientId: true,
+        associate: { select: { firstName: true, lastName: true } },
+        supervisorShiftWindows: { select: { locationId: true, label: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    }),
+    // Floor supervisors: each needs a shift and a shift supervisor.
+    prisma.user.findMany({
+      where: { role: 'FLOOR_SUPERVISOR', status: 'ACTIVE', deletedAt: null, clientId: { in: clientIds } },
+      select: {
+        id: true,
+        email: true,
+        clientId: true,
+        leadUserId: true,
         associate: { select: { firstName: true, lastName: true } },
         supervisorShiftWindows: { select: { locationId: true, label: true } },
       },
@@ -113,10 +131,34 @@ shiftWindowsRouter.get('/admin/shift-windows/gaps', CAN_READ, async (_req, res) 
         endMinute: w.endMinute,
       }));
     const noShift = sups.filter((u) => u.windows.length === 0);
+    // A lead only counts while they're an active shift supervisor here.
+    const leadIds = new Set(sups.map((u) => u.userId));
+    const floorGaps = floors
+      .filter((f) => f.clientId === c.clientId)
+      .map((f) => {
+        const windows = f.supervisorShiftWindows
+          .filter((w) => defs.has(`${w.locationId}|${w.label}`))
+          .map((w) => ({ ...w, locationName: storeById.get(w.locationId)?.name ?? '' }));
+        return {
+          userId: f.id,
+          name: personName(f),
+          email: f.email,
+          windows,
+          noLead: !f.leadUserId || !leadIds.has(f.leadUserId),
+          noShift: windows.length === 0,
+        };
+      })
+      .filter((f) => f.noLead || f.noShift);
     total += windows.length;
     covered += windows.length - uncovered.length;
-    if (uncovered.length === 0 && noShift.length === 0) continue;
-    clients.push({ ...c, uncovered, noShift: noShift.map((u) => u.userId), supervisors: sups });
+    if (uncovered.length === 0 && noShift.length === 0 && floorGaps.length === 0) continue;
+    clients.push({
+      ...c,
+      uncovered,
+      noShift: noShift.map((u) => u.userId),
+      supervisors: sups,
+      floorSupervisors: floorGaps,
+    });
   }
   res.json({ total, covered, clients });
 });
@@ -131,7 +173,7 @@ shiftWindowsRouter.get(
       select: { id: true, name: true, timezone: true },
       orderBy: { name: 'asc' },
     });
-    const [defs, assignments] = await Promise.all([
+    const [defs, assignments, shiftSupervisors] = await Promise.all([
       currentStoreWindows(prisma, stores.map((s) => s.id)),
       prisma.supervisorShiftWindow.findMany({
         where: {
@@ -144,8 +186,26 @@ shiftWindowsRouter.get(
           user: { select: { id: true, email: true, associate: { select: { firstName: true, lastName: true } } } },
         },
       }),
+      // Every shift supervisor at the client — who a floor supervisor can
+      // report to, whether or not they lead a named shift yet.
+      prisma.user.findMany({
+        where: { role: 'SHIFT_SUPERVISOR', status: { in: ['ACTIVE', 'INVITED'] }, deletedAt: null, clientId },
+        select: {
+          id: true,
+          email: true,
+          associate: { select: { firstName: true, lastName: true } },
+          supervisorShiftWindows: { select: { locationId: true, label: true } },
+        },
+      }),
     ]);
     res.json({
+      supervisors: shiftSupervisors
+        .map((u) => ({
+          userId: u.id,
+          name: personName(u),
+          windows: u.supervisorShiftWindows.filter((w) => defs.has(`${w.locationId}|${w.label}`)),
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
       stores: stores.map((s) => ({
         locationId: s.id,
         locationName: s.name,
@@ -186,7 +246,7 @@ shiftWindowsRouter.put(
     });
     if (!target || target.deletedAt) throw new HttpError(404, 'not_found', 'User not found.');
     if (!WINDOW_ROLES.has(target.role)) {
-      throw new HttpError(400, 'not_a_supervisor', 'Only shift supervisors lead shift windows.');
+      throw new HttpError(400, 'not_a_supervisor', 'Only shift and floor supervisors work a shift.');
     }
     if (!target.clientId) {
       throw new HttpError(400, 'client_required', 'Assign the supervisor a client first.');
@@ -208,7 +268,13 @@ shiftWindowsRouter.put(
     }
     // Every supervisor has a shift — once the client's stores define any.
     if (wanted.size === 0 && defs.size > 0) {
-      throw new HttpError(400, 'shift_required', 'A shift supervisor needs at least one shift.');
+      throw new HttpError(
+        400,
+        'shift_required',
+        target.role === 'FLOOR_SUPERVISOR'
+          ? 'A floor supervisor needs at least one shift.'
+          : 'A shift supervisor needs at least one shift.',
+      );
     }
 
     await prisma.$transaction([

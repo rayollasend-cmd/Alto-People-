@@ -1838,14 +1838,21 @@ async function fileClockInRequest(opts: {
   })().catch(() => {});
 }
 
-/** The login behind a kiosk PIN, when it's a shift supervisor's — their
- *  punches open and gate their store shift's SOP. */
+/** The login behind a kiosk PIN, when it's a supervisor's — their punches
+ *  open and gate the store shift SOP they run. */
 async function supervisorLoginFor(
   db: Pick<typeof prisma, 'user'>,
   associateId: string,
 ): Promise<{ id: string; role: string } | null> {
   return db.user.findFirst({
-    where: { associateId, role: 'SHIFT_SUPERVISOR', status: 'ACTIVE', deletedAt: null },
+    // Floor supervisors too: covering for their shift supervisor, the
+    // SOP opens at their punch and holds their clock-out the same way.
+    where: {
+      associateId,
+      role: { in: ['SHIFT_SUPERVISOR', 'FLOOR_SUPERVISOR'] },
+      status: 'ACTIVE',
+      deletedAt: null,
+    },
     select: { id: true, role: true },
   });
 }

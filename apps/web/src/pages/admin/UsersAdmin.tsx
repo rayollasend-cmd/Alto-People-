@@ -10,6 +10,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Unlock,
+  UserRound,
   Users,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -496,8 +497,10 @@ export function UsersAdmin() {
       });
       toast.success('Role updated.');
       await load();
-      if (newRole === 'SHIFT_SUPERVISOR' && u.clientId) {
-        setShiftFor({ ...u, role: newRole, shiftWindows: [] });
+      // A supervisor at a client is assigned their shift next — and a
+      // floor supervisor, the shift supervisor in charge of them.
+      if ((newRole === 'SHIFT_SUPERVISOR' || newRole === 'FLOOR_SUPERVISOR') && u.clientId) {
+        setShiftFor({ ...u, role: newRole, shiftWindows: [], leadUserId: null, leadName: null });
       }
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -527,10 +530,19 @@ export function UsersAdmin() {
       });
       toast.success(pendingRole ? 'Role and client assigned.' : 'Client updated.');
       await load();
-      // A new client means new stores — their shift is picked next.
-      if (effRole === 'SHIFT_SUPERVISOR' && newClientId) {
+      // A new client means new stores — their shift (and, for a floor
+      // supervisor, their shift supervisor) is picked next.
+      if ((effRole === 'SHIFT_SUPERVISOR' || effRole === 'FLOOR_SUPERVISOR') && newClientId) {
         const client = clients.find((c) => c.id === newClientId);
-        setShiftFor({ ...u, role: effRole, clientId: newClientId, clientName: client?.name ?? null, shiftWindows: [] });
+        setShiftFor({
+          ...u,
+          role: effRole,
+          clientId: newClientId,
+          clientName: client?.name ?? null,
+          shiftWindows: [],
+          leadUserId: null,
+          leadName: null,
+        });
       }
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Failed.');
@@ -980,22 +992,40 @@ export function UsersAdmin() {
                             ))}
                           </Select>
                         )}
-                        {u.role === 'SHIFT_SUPERVISOR' && !draftRole[u.id] && u.clientId && (
+                        {(u.role === 'SHIFT_SUPERVISOR' || u.role === 'FLOOR_SUPERVISOR') &&
+                          !draftRole[u.id] &&
+                          u.clientId && (
                           <button
                             type="button"
                             onClick={() => setShiftFor(u)}
                             disabled={busy}
                             aria-label={`Assign shift for ${u.associateName ?? u.email}`}
-                            title="The shifts this supervisor leads — where their pages open and who hears about a shift first. They still see the whole store."
-                            className="mt-1 flex w-full items-center gap-1.5 rounded-md border border-navy-secondary px-2 py-1 text-left text-xs hover:border-silver/40"
+                            title={
+                              u.role === 'FLOOR_SUPERVISOR'
+                                ? 'The shift this floor supervisor works, and the shift supervisor in charge of them.'
+                                : 'The shifts this supervisor leads — where their pages open and who hears about a shift first. They still see the whole store.'
+                            }
+                            className="mt-1 flex w-full flex-col gap-0.5 rounded-md border border-navy-secondary px-2 py-1 text-left text-xs hover:border-silver/40"
                           >
-                            <Clock className="h-3 w-3 shrink-0 text-silver" aria-hidden="true" />
-                            {u.shiftWindows && u.shiftWindows.length > 0 ? (
-                              <span className="truncate text-white">
-                                {u.shiftWindows.map((w) => w.label).join(', ')}
+                            <span className="flex items-center gap-1.5">
+                              <Clock className="h-3 w-3 shrink-0 text-silver" aria-hidden="true" />
+                              {u.shiftWindows && u.shiftWindows.length > 0 ? (
+                                <span className="truncate text-white">
+                                  {u.shiftWindows.map((w) => w.label).join(', ')}
+                                </span>
+                              ) : (
+                                <Badge variant="pending" size="sm">No shift</Badge>
+                              )}
+                            </span>
+                            {u.role === 'FLOOR_SUPERVISOR' && (
+                              <span className="flex items-center gap-1.5">
+                                <UserRound className="h-3 w-3 shrink-0 text-silver" aria-hidden="true" />
+                                {u.leadName ? (
+                                  <span className="truncate text-silver">Reports to {u.leadName}</span>
+                                ) : (
+                                  <Badge variant="pending" size="sm">No shift supervisor</Badge>
+                                )}
                               </span>
-                            ) : (
-                              <Badge variant="pending" size="sm">No shift</Badge>
                             )}
                           </button>
                         )}

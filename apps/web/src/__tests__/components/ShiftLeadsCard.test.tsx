@@ -10,6 +10,8 @@ vi.mock('@/lib/shiftWindowsApi', () => ({
   getShiftCoverageGaps: vi.fn(),
   listClientShiftWindows: vi.fn(),
   setSupervisorShiftWindows: vi.fn(),
+  setFloorSupervisorLead: vi.fn(),
+  getLeadFloorTeam: vi.fn().mockResolvedValue({ role: 'lead', today: '2026-09-18', team: [], covers: [] }),
 }));
 
 import { getShiftCoverageGaps, listClientShiftWindows, type ShiftCoverageGaps } from '@/lib/shiftWindowsApi';
@@ -30,6 +32,16 @@ const gaps: ShiftCoverageGaps = {
       supervisors: [
         { userId: 'u-dana', name: 'Dana Reyes', email: 'dana@altohr.com', windows: [{ locationId: 'l1', locationName: 'Front Beach 218', label: 'Overnight' }] },
         { userId: 'u-omar', name: 'Omar Diaz', email: 'omar@altohr.com', windows: [] },
+      ],
+      floorSupervisors: [
+        {
+          userId: 'u-marcus',
+          name: 'Marcus Hill',
+          email: 'marcus@altohr.com',
+          windows: [{ locationId: 'l1', locationName: 'Front Beach 218', label: 'Overnight' }],
+          noLead: true,
+          noShift: false,
+        },
       ],
     },
   ],
@@ -77,6 +89,15 @@ describe('<ShiftLeadsCard> — every shift has a lead', () => {
     await user.click(await screen.findByRole('button', { name: /Omar Diaz/ }));
     expect(await screen.findByRole('heading', { name: 'Omar Diaz’s shift' })).toBeInTheDocument();
     expect(listClientShiftWindows).toHaveBeenCalledWith('c1');
+  });
+
+  it('flags a floor supervisor with no shift supervisor, and opens both pickers in one tap', async () => {
+    const user = userEvent.setup();
+    renderCard(gaps);
+    await user.click(await screen.findByRole('button', { name: /Marcus Hill · no shift supervisor/ }));
+    expect(
+      await screen.findByRole('heading', { name: 'Marcus Hill’s shift and shift supervisor' }),
+    ).toBeInTheDocument();
   });
 
   it('says so when every shift has a lead — or stays out of the way', async () => {

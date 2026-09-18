@@ -19,6 +19,7 @@ import {
 import { send } from '../lib/notifications.js';
 import { nudgePortalReadiness } from '../lib/portalReadiness.js';
 import { trackNotificationWork } from '../lib/notify.js';
+import { personName } from '../lib/floorLeads.js';
 
 /**
  * HR user-administration surface. Lets HR list every account, change a
@@ -96,10 +97,22 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
       region: {
         select: { id: true, name: true },
       },
-      // A shift supervisor's shifts — the store windows they lead.
+      // A supervisor's shifts — the store windows they lead (or work).
       supervisorShiftWindows: {
         select: { locationId: true, label: true, location: { select: { name: true } } },
         orderBy: [{ location: { name: 'asc' } }, { label: 'asc' }],
+      },
+      // A floor supervisor's shift supervisor.
+      lead: {
+        select: {
+          id: true,
+          role: true,
+          status: true,
+          clientId: true,
+          deletedAt: true,
+          email: true,
+          associate: { select: { firstName: true, lastName: true } },
+        },
       },
     },
     orderBy: [{ createdAt: 'desc' }],
@@ -128,6 +141,20 @@ usersRouter.get('/admin/users', requireCapability('view:hr-admin'), async (req, 
         locationName: w.location.name,
         label: w.label,
       })),
+      // Only a link that still holds (lib/floorLeads validLead).
+      ...(() => {
+        const l = u.lead;
+        const ok =
+          u.role === 'FLOOR_SUPERVISOR' &&
+          l &&
+          l.role === 'SHIFT_SUPERVISOR' &&
+          l.status !== 'DISABLED' &&
+          !l.deletedAt &&
+          l.clientId === u.clientId;
+        return ok
+          ? { leadUserId: l.id, leadName: personName(l) }
+          : { leadUserId: null, leadName: null };
+      })(),
       // Account lockout (brute-force lock). Only surfaced while still in
       // the future — an expired lock is just noise to an admin.
       lockedUntil:
@@ -359,9 +386,10 @@ usersRouter.patch(
     await prisma.user.update({ where: { id }, data });
     invalidateUserCache(id);
 
-    // Shift windows belong to a supervisor at a client: leaving the role
-    // drops them all; a new client drops the other client's stores.
-    if (data.role && data.role !== 'SHIFT_SUPERVISOR') {
+    // Shift windows belong to a supervisor at a client: leaving the
+    // supervisor roles drops them all; a new client drops the other
+    // client's stores.
+    if (data.role && data.role !== 'SHIFT_SUPERVISOR' && data.role !== 'FLOOR_SUPERVISOR') {
       await prisma.supervisorShiftWindow.deleteMany({ where: { userId: id } });
     } else if (data.clientId !== undefined) {
       await prisma.supervisorShiftWindow.deleteMany({
@@ -370,6 +398,15 @@ usersRouter.patch(
           ...(data.clientId ? { location: { clientId: { not: data.clientId } } } : {}),
         },
       });
+    }
+    // Floor supervisor ↔ shift supervisor links hold only within one
+    // client, between those two roles: a move or a role change undoes them
+    // (either end), and so does disabling the shift supervisor.
+    if (data.role || data.clientId !== undefined) {
+      await prisma.user.update({ where: { id }, data: { leadUserId: null } });
+    }
+    if (data.role || data.clientId !== undefined || data.status === 'DISABLED') {
+      await prisma.user.updateMany({ where: { leadUserId: id }, data: { leadUserId: null } });
     }
 
     // A store manager account just got its client or store: make sure the

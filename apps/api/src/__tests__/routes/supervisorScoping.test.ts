@@ -1042,8 +1042,16 @@ describe('the day roster (the supervisor Today page)', () => {
     for (const path of ['/client-portal/overview', '/client-portal/history', '/client-portal/schedule']) {
       expect((await sup.get(path)).status, path).toBe(403);
     }
+    // The floor supervisor watches the same wall — their own client only,
+    // and still none of the rest of the portal.
     const { user: floor } = await createUser({ role: 'FLOOR_SUPERVISOR', clientId: mine.id });
-    expect((await (await loginAs(floor.email)).get('/client-portal/day')).status).toBe(403);
+    const fa = await loginAs(floor.email);
+    const theirs = await fa.get(`/client-portal/day?clientId=${other.id}`);
+    expect(theirs.status).toBe(200);
+    expect(theirs.body.client.id).toBe(mine.id);
+    for (const path of ['/client-portal/overview', '/client-portal/history', '/client-portal/schedule']) {
+      expect((await fa.get(path)).status, path).toBe(403);
+    }
   });
 });
 

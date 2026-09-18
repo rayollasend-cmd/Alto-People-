@@ -11,9 +11,10 @@ import { Skeleton } from '@/components/ui/Skeleton';
 import { SupervisorShiftDialog, type ShiftDialogUser } from '@/pages/admin/SupervisorShiftDialog';
 
 /**
- * Shift leads — every store shift nobody leads and every supervisor with no
- * shift, across all clients, with the fix one tap away: tap a supervisor to
- * pick their shift. A supervisor's shift is focus, not a lock; a shift with
+ * Shift leads — every store shift nobody leads, every supervisor with no
+ * shift, and every floor supervisor with no shift or no shift supervisor,
+ * across all clients, with the fix one tap away: tap a person to pick their
+ * shift (and a floor supervisor's shift supervisor). A supervisor's shift is focus, not a lock; a shift with
  * no lead still pages every supervisor at the client, so this is a gap in
  * ownership, not in coverage.
  */
@@ -48,6 +49,24 @@ export function ShiftLeadsCard({
       clientId: c.clientId,
       clientName: c.clientName,
       shiftWindows: u.windows,
+      role: 'SHIFT_SUPERVISOR',
+      leadUserId: null,
+      leadName: null,
+    });
+  const openFloor = (
+    c: ShiftCoverageGaps['clients'][number],
+    f: NonNullable<ShiftCoverageGaps['clients'][number]['floorSupervisors']>[number],
+  ) =>
+    setPicking({
+      id: f.userId,
+      email: f.email,
+      associateName: f.name,
+      clientId: c.clientId,
+      clientName: c.clientName,
+      shiftWindows: f.windows,
+      role: 'FLOOR_SUPERVISOR',
+      leadUserId: null,
+      leadName: null,
     });
 
   return (
@@ -114,6 +133,24 @@ export function ShiftLeadsCard({
                         </button>
                       );
                     })}
+                  </div>
+                )}
+                {c.floorSupervisors && c.floorSupervisors.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <span className="text-silver/60">Floor supervisors:</span>
+                    {c.floorSupervisors.map((f) => (
+                      <button
+                        key={f.userId}
+                        type="button"
+                        onClick={() => openFloor(c, f)}
+                        className="rounded-full border border-warning/40 px-2 py-0.5 text-warning transition hover:border-gold/50 hover:text-white coarse:min-h-9"
+                      >
+                        {f.name}
+                        <span className="ml-1 opacity-80">
+                          · {f.noShift && f.noLead ? 'no shift or shift supervisor' : f.noShift ? t('shiftLeads.noShift') : 'no shift supervisor'}
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 )}
               </li>

@@ -71,11 +71,19 @@ function renderPage(
     kpis?: { fillRatePercent: number; assignedShifts: number; completedShifts: number; openShifts: number };
     sop?: Record<string, unknown> | null;
     submitted?: Record<string, unknown> | null;
+    helping?: Record<string, unknown> | null;
     clockedIn?: boolean;
+    role?: 'SHIFT_SUPERVISOR' | 'FLOOR_SUPERVISOR';
+    floorTeam?: Record<string, unknown>;
   } = {},
 ) {
-  vi.mocked(apiFetch).mockImplementation(async (path: string) => {
-    if (path === '/ops/my-sop') return { sop: opts.sop ?? null, submitted: opts.submitted ?? null };
+  const role = opts.role ?? 'SHIFT_SUPERVISOR';
+  vi.mocked(apiFetch).mockImplementation(async (path: string, init?: { method?: string; body?: unknown }) => {
+    if (path === '/ops/my-sop')
+      return { sop: opts.sop ?? null, submitted: opts.submitted ?? null, helping: opts.helping ?? null };
+    if (path === '/me/floor-team') return opts.floorTeam ?? { role: null };
+    if (path === '/shift-covers' && init?.method === 'POST')
+      return { cover: { id: 'cv1', ...(init.body as object), note: null, coverName: 'Marcus Hill' } };
     if (path === '/time/me/active') return { active: opts.clockedIn ? { id: 'e1' } : null };
     if (path === '/me/shift-windows')
       return {
@@ -136,20 +144,20 @@ function renderPage(
     ],
   } as never);
 
-  const caps = ROLE_CAPABILITIES.SHIFT_SUPERVISOR;
+  const caps = ROLE_CAPABILITIES[role];
   const auth = {
     isInitializing: false,
     isOffline: false,
     user: {
       id: 'u',
       email: 'dana.reyes@altohr.com',
-      role: 'SHIFT_SUPERVISOR' as const,
+      role,
       status: 'ACTIVE' as const,
       clientId: 'c1',
       clientName: 'Coastal Resort Holdings',
       associateId: 'a',
     },
-    role: 'SHIFT_SUPERVISOR' as const,
+    role,
     capabilities: new Set<Capability>(caps),
     signIn: vi.fn(),
     signOut: vi.fn(),
@@ -289,5 +297,140 @@ describe('<SupervisorDashboard> — My floor', () => {
     });
     expect(await screen.findByText('Your Morning SOP is submitted')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Clock out' })).toBeInTheDocument();
+  });
+});
+
+const marcusOn = new Date(Date.now() - 90 * 60_000).toISOString();
+const leadTeam = {
+  role: 'lead',
+  today: new Date().toISOString().slice(0, 10),
+  team: [
+    {
+      userId: 'u-marcus',
+      name: 'Marcus Hill',
+      associateId: 'a-marcus',
+      onClockSince: marcusOn,
+      windows: [{ locationId: 'l1', locationName: 'Front Beach 218', label: 'Swing', startMinute: 840, endMinute: 1320 }],
+      coveringToday: false,
+    },
+  ],
+  covers: [],
+};
+const floorTeam = (covers: unknown[] = []) => ({
+  role: 'floor',
+  today: new Date().toISOString().slice(0, 10),
+  lead: {
+    userId: 'u-dana',
+    name: 'Dana Reyes',
+    associateId: 'a-dana',
+    onClockSince: null,
+    windows: [{ locationId: 'l1', locationName: 'Front Beach 218', label: 'Swing', startMinute: 840, endMinute: 1320 }],
+  },
+  covers,
+});
+
+describe('<SupervisorDashboard> — the shift supervisor and their floor supervisors', () => {
+  it('lists who reports to them, on the clock or not, one tap to message', async () => {
+    renderPage({ clockedIn: true, floorTeam: leadTeam });
+    expect(await screen.findByText('My floor supervisors')).toBeInTheDocument();
+    expect(screen.getByText('Marcus Hill')).toBeInTheDocument();
+    expect(screen.getByText(/On the clock since/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Message Marcus Hill' })).toHaveAttribute('href', '/messages?to=u-marcus');
+  });
+
+  it('hands their shift to a floor supervisor for a day', async () => {
+    const user = userEvent.setup();
+    renderPage({ clockedIn: true, floorTeam: leadTeam });
+    await user.click(await screen.findByRole('button', { name: /Hand over my shift/ }));
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent(/can.t clock out until it.s submitted/);
+    // One floor supervisor: already picked.
+    expect(screen.getByRole('radio', { name: /Marcus Hill/ })).toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'Hand over' }));
+    const today = new Date().toISOString().slice(0, 10);
+    expect(apiFetch).toHaveBeenCalledWith('/shift-covers', {
+      method: 'POST',
+      body: { coverUserId: 'u-marcus', fromDate: today, toDate: today, note: undefined },
+    });
+  });
+});
+
+describe('<SupervisorDashboard> — the floor supervisor\'s floor', () => {
+  it('the same floor, watch-only: no schedule, approvals, or week — their shift supervisor instead', async () => {
+    vi.clearAllMocks();
+    renderPage({ role: 'FLOOR_SUPERVISOR', clockedIn: true, floorTeam: floorTeam() });
+    expect(await screen.findByRole('heading', { level: 1, name: 'Front Beach 218' })).toBeInTheDocument();
+    expect(await screen.findByText('Your shift supervisor')).toBeInTheDocument();
+    expect(screen.getByText('Dana Reyes')).toBeInTheDocument();
+    expect(screen.getByText('Off the clock')).toBeInTheDocument();
+    expect(screen.queryByText('decision queue')).not.toBeInTheDocument();
+    expect(screen.queryByText('week chart')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Open schedule/ })).not.toBeInTheDocument();
+    expect(apiFetch).not.toHaveBeenCalledWith('/approvals/count');
+    expect(listShifts).not.toHaveBeenCalled();
+    expect(getSchedulingKpis).not.toHaveBeenCalled();
+    // The floor today: who's not in, what's unfilled.
+    expect(screen.getByText('Not in yet')).toBeInTheDocument();
+    expect(screen.getByText('Unfilled today')).toBeInTheDocument();
+    // Dana's SOP isn't open yet — they help on it once it is.
+    expect(screen.getByText(/Dana's SOP opens when Dana clocks in/)).toBeInTheDocument();
+  });
+
+  it("on the clock with Dana's SOP running: help on it", async () => {
+    renderPage({
+      role: 'FLOOR_SUPERVISOR',
+      clockedIn: true,
+      floorTeam: floorTeam(),
+      helping: {
+        id: 'sop1',
+        windowLabel: 'Swing',
+        position: 'Swing shift',
+        locationName: 'Front Beach 218',
+        dueAt: null,
+        sopDone: 3,
+        sopTotal: 12,
+        runBy: { id: 'u-dana', name: 'Dana Reyes' },
+      },
+    });
+    const banner = await screen.findByRole('link', { name: /Dana's Swing SOP/ });
+    expect(banner).toHaveAttribute('href', '/ops?tab=shift&shift=sop1');
+    expect(banner).toHaveTextContent('3 of 12 done');
+    expect(banner).toHaveTextContent('Dana submits it');
+  });
+
+  it('on a day they were handed the shift, off the clock: the clock-in opens it for them', async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    renderPage({
+      role: 'FLOOR_SUPERVISOR',
+      clockedIn: false,
+      floorTeam: floorTeam([
+        { id: 'cv1', fromDate: today, toDate: today, note: null, leadUserId: 'u-dana', leadName: 'Dana Reyes', today: true },
+      ]),
+    });
+    expect(await screen.findByText("You're running Dana's shift today")).toBeInTheDocument();
+    expect(screen.getByText(/the shift's SOP opens for you, and it's yours to submit/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Clock in' })).toBeInTheDocument();
+  });
+
+  it('running it for their shift supervisor: the SOP card says for whom', async () => {
+    renderPage({
+      role: 'FLOOR_SUPERVISOR',
+      clockedIn: true,
+      floorTeam: floorTeam(),
+      sop: {
+        id: 'sop1',
+        windowLabel: 'Swing',
+        position: 'Swing shift',
+        locationName: 'Front Beach 218',
+        dueAt: null,
+        openedAt: new Date().toISOString(),
+        sopDone: 0,
+        sopTotal: 12,
+        requiredOpen: 12,
+        handoverCount: 0,
+        coveringFor: { id: 'u-dana', name: 'Dana Reyes' },
+      },
+    });
+    expect(await screen.findByText("You're running Dana's Swing SOP")).toBeInTheDocument();
   });
 });

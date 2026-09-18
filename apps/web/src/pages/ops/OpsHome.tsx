@@ -12,13 +12,18 @@ import { OpsLibrary } from './OpsLibrary';
 /**
  * Store Operations — one module, three audiences:
  *  - Shift supervisors: "My shift" (open, run the SOP checklist, close).
+ *    Floor supervisors: "My shift" too — help on it, run it covering.
  *  - Operations / HR / the chairman: the live board + scorecard.
  *  - The same leadership trio: the SOP library (the editable standard).
  * Tabs render only for the capabilities the signed-in user actually holds.
  */
 export function OpsHome() {
   const { user } = useAuth();
-  const canRun = user ? hasCapability(user.role, 'run:ops-shifts') : false;
+  // A floor supervisor (assist:ops-shifts) has "My shift" too — the SOP
+  // they help on, or run while covering; never the picker.
+  const canRun = user
+    ? hasCapability(user.role, 'run:ops-shifts') || hasCapability(user.role, 'assist:ops-shifts')
+    : false;
   const canBoard = user ? hasCapability(user.role, 'view:ops') : false;
   const canLibrary = user ? hasCapability(user.role, 'manage:ops-library') : false;
 
