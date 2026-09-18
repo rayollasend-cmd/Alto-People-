@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { hasCapability } from '@/lib/roles';
+import { useClientBounded } from '@/lib/useClientBounded';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import { OpsRunner } from './OpsRunner';
@@ -37,7 +38,12 @@ export function OpsHome() {
   // params (?shift=, ?record=) are preserved across switches so live
   // context survives a detour through another tab.
   const [searchParams, setSearchParams] = useSearchParams();
-  const roleDefault = canRun ? 'shift' : canBoard ? 'board' : 'library';
+  // Leadership (org-wide, holds the board) lands on the board — every
+  // store at once; running one floor is a deliberate pick under My shift.
+  // A supervisor lands on their own shift.
+  const bounded = useClientBounded();
+  const roleDefault =
+    canBoard && !bounded ? 'board' : canRun ? 'shift' : canBoard ? 'board' : 'library';
   const tabParam = searchParams.get('tab');
   const tab = tabs.some((t) => t.key === tabParam) ? (tabParam as string) : roleDefault;
   const setTab = (next: string) => {

@@ -13,7 +13,10 @@ import {
   X,
 } from 'lucide-react';
 import { ApiError } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/cn';
+import { useClientBounded } from '@/lib/useClientBounded';
+import { useClients } from '@/lib/useClients';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -220,11 +223,51 @@ function floorDay(dateKey: string): string {
   return FLOOR_DAY.format(new Date(y, m - 1, d));
 }
 
+const OPS_CLIENT_KEY = 'alto.ops.client';
+
+function readStoredOpsClient(): string | null {
+  try {
+    return localStorage.getItem(OPS_CLIENT_KEY);
+  } catch {
+    return null;
+  }
+}
+
 function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
   const [options, setOptions] = useState<Awaited<
     ReturnType<typeof getOpsOpenOptions>
   > | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A supervisor runs their own client's floor (clamped server-side). An
+  // org-wide role (ops, HR) covering a floor picks the client — asking the
+  // API with none read "clientId is required." in a red banner. Their home
+  // client, else the last one they ran, else the only one there is.
+  const { user } = useAuth();
+  const bounded = useClientBounded();
+  const { clients, isLoading: clientsLoading } = useClients({ enabled: !bounded });
+  const [pickedClient, setPickedClient] = useState<string>(
+    () => (bounded ? '' : (user?.clientId ?? readStoredOpsClient() ?? '')),
+  );
+  // Trust the remembered pick while the list loads (no "whose floor?"
+  // flash for someone with a home client); validate it once it's in.
+  const clientId = bounded
+    ? ''
+    : clientsLoading
+      ? pickedClient
+      : clients.some((c) => c.id === pickedClient)
+        ? pickedClient
+        : clients.length === 1
+          ? clients[0]!.id
+          : '';
+  const needsClient = !bounded && !clientId;
+  const pickClient = (id: string) => {
+    setPickedClient(id);
+    try {
+      localStorage.setItem(OPS_CLIENT_KEY, id);
+    } catch {
+      // Private mode — the pick just isn't remembered.
+    }
+  };
   const [busy, setBusy] = useState<string | null>(null);
   const [manualDept, setManualDept] = useState<Record<string, string>>({});
   // A position not yet linked to an SOP department asks for one only when
@@ -233,20 +276,74 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
   const [choosing, setChoosing] = useState<string | null>(null);
 
   useEffect(() => {
-    getOpsOpenOptions()
-      .then(setOptions)
+    if (!bounded && !clientId) return;
+    let live = true;
+    setOptions(null);
+    setError(null);
+    getOpsOpenOptions(bounded ? undefined : clientId)
+      .then((o) => live && setOptions(o))
       .catch((err) =>
-        setError(err instanceof ApiError ? err.message : 'Could not load today.'),
+        live && setError(err instanceof ApiError ? err.message : 'Could not load today.'),
       );
-  }, []);
+    return () => {
+      live = false;
+    };
+  }, [bounded, clientId]);
 
+  const clientPicker = !bounded && clients.length > 1 && (
+    <div className="flex flex-wrap items-center gap-2">
+      <Label htmlFor="ops-client" className="text-xs text-silver">
+        Floor
+      </Label>
+      <Select
+        id="ops-client"
+        size="sm"
+        className="w-auto min-w-[12rem]"
+        value={clientId}
+        onChange={(e) => pickClient(e.target.value)}
+      >
+        {!clientId && <option value="">Pick a client…</option>}
+        {clients.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </Select>
+    </div>
+  );
+
+  if (needsClient && clientsLoading) return <Skeleton className="h-48" />;
+  if (needsClient) {
+    return (
+      <div className="space-y-4">
+        {clientPicker}
+        <Card>
+          <CardContent className="py-8">
+            <EmptyState
+              icon={ClipboardList}
+              title="Whose floor are you running?"
+              description={
+                clients.length === 0
+                  ? 'No active clients yet.'
+                  : 'Pick the client above — its shifts and SOP checklists load for today.'
+              }
+            />
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
   if (error) return <ErrorBanner>{error}</ErrorBanner>;
   if (!options) return <Skeleton className="h-48" />;
 
   const open = async (position: string, department?: string) => {
     setBusy(position);
     try {
-      const res = await openOpsShift({ position, ...(department ? { department } : {}) });
+      const res = await openOpsShift({
+        ...(bounded ? {} : { clientId }),
+        position,
+        ...(department ? { department } : {}),
+      });
       onOpened(res.shiftId);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not open the shift.');
@@ -257,6 +354,7 @@ function OpenShiftPanel({ onOpened }: { onOpened: (shiftId: string) => void }) {
 
   return (
     <div className="space-y-4">
+      {clientPicker}
       {/* Hero: the day, framed. */}
       <div className="relative overflow-hidden rounded-lg border border-navy-secondary bg-gradient-to-br from-navy-secondary/60 via-navy to-navy p-5">
         <div

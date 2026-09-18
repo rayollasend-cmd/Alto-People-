@@ -221,7 +221,9 @@ export function deleteOpsTemplateTask(taskId: string): Promise<void> {
   return apiFetch(`/ops/library/tasks/${taskId}`, { method: 'DELETE' });
 }
 
-export function getOpsOpenOptions(): Promise<{
+/** Today's positions to open. `clientId` is for org-wide roles (ops, HR)
+ *  covering a floor; a supervisor's own client is applied server-side. */
+export function getOpsOpenOptions(clientId?: string): Promise<{
   clientId: string;
   dateKey: string;
   resumeShift: { id: string; position: string; department: string } | null;
@@ -233,7 +235,9 @@ export function getOpsOpenOptions(): Promise<{
   }[];
   departments: string[];
 }> {
-  return apiFetch('/ops/open-options');
+  return apiFetch(
+    `/ops/open-options${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ''}`,
+  );
 }
 
 export function openOpsShift(body: {
