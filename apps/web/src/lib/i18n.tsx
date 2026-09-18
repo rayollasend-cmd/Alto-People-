@@ -1139,6 +1139,8 @@ const en = {
   'mk.claimPending': 'Claim pending',
   'mk.claim': 'Claim',
   'mk.claimSubmitted': 'Claim submitted; awaiting manager approval.',
+  'mk.claimAlready': 'You already claimed this shift — it is still awaiting approval.',
+  'mk.claiming': 'Claiming…',
   // Help center (associate-facing)
   'kb.title': 'Help center',
   'kb.subtitle': 'Search company policies, benefits, and how-tos. Try searching before filing an HR case.',
@@ -3293,6 +3295,8 @@ const es: Record<MessageKey, string> = {
   'mk.claimPending': 'Solicitud pendiente',
   'mk.claim': 'Solicitar',
   'mk.claimSubmitted': 'Solicitud enviada; espera la aprobación del gerente.',
+  'mk.claimAlready': 'Ya solicitaste este turno — sigue pendiente de aprobación.',
+  'mk.claiming': 'Enviando…',
   // Help center (associate-facing)
   'kb.title': 'Centro de ayuda',
   'kb.subtitle': 'Busca políticas de la empresa, beneficios y guías. Intenta buscar antes de abrir un caso de RR. HH.',

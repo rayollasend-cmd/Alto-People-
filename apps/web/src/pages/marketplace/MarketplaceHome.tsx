@@ -104,6 +104,9 @@ function AvailableTab() {
   const [loadError, setLoadError] = useState<string | null>(null);
   // The card that just got claimed — plays the success flash once.
   const [flashId, setFlashId] = useState<string | null>(null);
+  // The shift whose claim is in flight — its button goes into a loading
+  // state and every other Claim button is disabled until it settles.
+  const [claimingId, setClaimingId] = useState<string | null>(null);
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [clientFilter, setClientFilter] = useState<Set<string>>(new Set());
@@ -164,10 +167,17 @@ function AvailableTab() {
   };
 
   const onClaim = async (shiftId: string) => {
+    // One claim in flight at a time. Without this, a double tap on a slow
+    // connection fired two POSTs and the second one raced the first into a
+    // unique-constraint error.
+    if (claimingId) return;
+    setClaimingId(shiftId);
     try {
       const r = await claimShift(shiftId);
       setFlashId(shiftId);
-      toast.success(t('mk.claimSubmitted'));
+      toast.success(
+        r.alreadyClaimed ? t('mk.claimAlready') : t('mk.claimSubmitted'),
+      );
       // Flip the acted card to "Claim pending" in place instead of
       // collapsing the whole list to a skeleton.
       setRows((prev) =>
@@ -180,6 +190,8 @@ function AvailableTab() {
       refetch();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : t('mk.failed'));
+    } finally {
+      setClaimingId(null);
     }
   };
 
@@ -335,7 +347,13 @@ function AvailableTab() {
                   {s.myPendingClaim ? (
                     <Badge variant="pending">{t('mk.claimPending')}</Badge>
                   ) : (
-                    <Button onClick={() => onClaim(s.id)}>{t('mk.claim')}</Button>
+                    <Button
+                      onClick={() => onClaim(s.id)}
+                      disabled={claimingId !== null}
+                      loading={claimingId === s.id}
+                    >
+                      {claimingId === s.id ? t('mk.claiming') : t('mk.claim')}
+                    </Button>
                   )}
                 </div>
               </div>

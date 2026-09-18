@@ -95,8 +95,13 @@ export const removeShiftRequirement = (shiftId: string, reqId: string) =>
 
 export const listOpenShifts = () =>
   apiFetch<{ shifts: OpenShiftListItem[] }>('/shifts/open');
+// alreadyClaimed comes back (200, not 201) when a duplicate request lands
+// on a claim that already exists — the id is that existing claim's.
 export const claimShift = (shiftId: string) =>
-  apiFetch<{ id: string }>(`/shifts/${shiftId}/claim`, { method: 'POST', body: {} });
+  apiFetch<{ id: string; alreadyClaimed?: boolean }>(
+    `/shifts/${shiftId}/claim`,
+    { method: 'POST', body: {} },
+  );
 export const updateClaim = (
   shiftId: string,
   claimId: string,

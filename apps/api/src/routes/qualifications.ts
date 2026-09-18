@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { requireCapability } from '../middleware/auth.js';
@@ -276,6 +277,49 @@ qualificationsRouter.delete(
  * earnings card can price the same list this endpoint shows — the "up to ~$X
  * in open shifts" number and the marketplace page can never disagree.
  */
+/**
+ * The same eligibility rule as `listEligibleOpenShifts`, but reading only
+ * what a price calculation needs: start, end, and the qualification ids to
+ * match on. The full version joins each shift's client, its qualification
+ * catalog rows and the caller's pending claims — three joins the earnings
+ * widget renders nothing from, on the hottest associate-facing endpoint.
+ */
+export async function listEligibleOpenShiftSlots(
+  associateId: string,
+  opts: { before?: Date } = {},
+): Promise<{ startsAt: Date; endsAt: Date }[]> {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const [myQuals, openShifts] = await Promise.all([
+    prisma.associateQualification.findMany({
+      take: 500,
+      where: {
+        associateId,
+        deletedAt: null,
+        OR: [{ expiresAt: null }, { expiresAt: { gte: today } }],
+      },
+      select: { qualificationId: true },
+    }),
+    prisma.shift.findMany({
+      where: {
+        status: 'OPEN',
+        startsAt: { gte: new Date(), ...(opts.before ? { lt: opts.before } : {}) },
+      },
+      select: {
+        startsAt: true,
+        endsAt: true,
+        qualReqs: { select: { qualificationId: true } },
+      },
+      orderBy: { startsAt: 'asc' },
+      take: 200,
+    }),
+  ]);
+  const myQualIds = new Set(myQuals.map((q) => q.qualificationId));
+  return openShifts
+    .filter((s) => s.qualReqs.every((r) => myQualIds.has(r.qualificationId)))
+    .map((s) => ({ startsAt: s.startsAt, endsAt: s.endsAt }));
+}
+
 export async function listEligibleOpenShifts(
   associateId: string,
   opts: { before?: Date } = {},
@@ -400,9 +444,45 @@ qualificationsRouter.post(
     }
 
     // One PENDING per (associate, shift) is enforced by the partial unique.
-    const created = await prisma.openShiftClaim.create({
-      data: { shiftId, associateId },
-    });
+    // A double tap (impatient second press, a retried request, two tabs)
+    // used to come back as a 500 from the raw P2002. It isn't an error
+    // from where the associate sits — their claim is already filed — so
+    // hand back the claim they already have and say so.
+    let created: { id: string };
+    let alreadyClaimed = false;
+    try {
+      created = await prisma.openShiftClaim.create({
+        data: { shiftId, associateId },
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        const existing = await prisma.openShiftClaim.findFirst({
+          where: { shiftId, associateId, status: 'PENDING' },
+          select: { id: true },
+        });
+        // If it vanished between the conflict and this read (withdrawn in
+        // the gap), the honest answer is the original conflict.
+        if (!existing) {
+          throw new HttpError(
+            409,
+            'already_claimed',
+            'You have already claimed this shift.',
+          );
+        }
+        created = existing;
+        alreadyClaimed = true;
+      } else {
+        throw err;
+      }
+    }
+    if (alreadyClaimed) {
+      // No second notification to the manager — nothing new happened.
+      res.status(200).json({ id: created.id, alreadyClaimed: true });
+      return;
+    }
     const claimant = await prisma.associate.findUnique({
       where: { id: associateId },
       select: { firstName: true, lastName: true },
