@@ -14,6 +14,8 @@ import {
   listTradeOptions,
 } from '@/lib/schedulingApi';
 import { ApiError } from '@/lib/api';
+import { cn } from '@/lib/cn';
+import { Avatar } from '@/components/ui/Avatar';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ErrorBanner } from '@/components/ui/ErrorBanner';
@@ -455,29 +457,7 @@ export function ShiftCard({
               <p className="text-xs text-silver/70">{t('shift.noTeammates')}</p>
             )}
             {teammates && teammates.length > 0 && (
-              <ul className="space-y-1.5">
-                {/* `mate`, not `t` — `t` is the translator from useI18n in
-                    the enclosing scope, and shadowing it here means the next
-                    translated string added inside this block fails at
-                    runtime rather than at compile time. */}
-                {teammates.map((mate) => (
-                  // Stacked on phones — the one-line layout crushed the
-                  // NAME ("Pat Ng…") to make room for position·time·zone
-                  // (caught by the visual walk). Single line returns at sm+
-                  // where there's room for both.
-                  <li
-                    key={mate.associateId}
-                    className="text-sm sm:flex sm:items-baseline sm:justify-between sm:gap-3"
-                  >
-                    <span className="block text-white sm:truncate">{mate.name}</span>
-                    <span className="block text-xs text-silver tabular-nums sm:text-right sm:shrink-0">
-                      {mate.position} ·{' '}
-                      {fmtShiftRangeTz(mate.startsAt, mate.endsAt, shift.timezone)}
-                      {mate.location ? ` · ${mate.location}` : ''}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <TeamFaces teammates={teammates} timezone={shift.timezone} />
             )}
           </div>
             </div>
@@ -485,6 +465,63 @@ export function ShiftCard({
         </div>
       )}
     </li>
+  );
+}
+
+const FACES_SHOWN = 8;
+
+/**
+ * Who's on with them, as faces — the home card's grammar, not a roster.
+ * A long list of names buried the card; the photos say "your crew" at a
+ * glance, and tapping one says who it is and when they work.
+ */
+function TeamFaces({ teammates, timezone }: { teammates: ShiftTeammate[]; timezone: string | null | undefined }) {
+  const { t } = useI18n();
+  const [picked, setPicked] = useState<string | null>(null);
+  const mate = teammates.find((m) => m.associateId === picked) ?? null;
+  const extra = teammates.length - FACES_SHOWN;
+  return (
+    <div>
+      <div className="flex items-center gap-2.5">
+        <div className="flex -space-x-2">
+          {teammates.slice(0, FACES_SHOWN).map((m) => (
+            <button
+              key={m.associateId}
+              type="button"
+              onClick={() => setPicked(picked === m.associateId ? null : m.associateId)}
+              aria-pressed={picked === m.associateId}
+              aria-label={m.name}
+              title={m.name}
+              className={cn(
+                'relative rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-bright',
+                picked === m.associateId && 'z-10 ring-2 ring-gold',
+              )}
+            >
+              <Avatar src={`/api/associates/${m.associateId}/photo`} name={m.name} email="" size="sm" ringed />
+            </button>
+          ))}
+          {extra > 0 && (
+            <span className="relative grid h-8 min-w-8 place-items-center rounded-full bg-navy-secondary px-1.5 text-xs font-semibold text-white ring-2 ring-navy">
+              +{extra}
+            </span>
+          )}
+        </div>
+        <span className="text-xs text-silver">
+          {t(teammates.length === 1 ? 'hero.withYouOne' : 'hero.withYouMany', { count: teammates.length })}
+        </span>
+      </div>
+      <p className="mt-1.5 text-xs text-silver tabular-nums" aria-live="polite">
+        {mate ? (
+          <>
+            <span className="font-medium text-white">{mate.name}</span> · {mate.position} ·{' '}
+            {fmtShiftRangeTz(mate.startsAt, mate.endsAt, timezone)}
+            {mate.location ? ` · ${mate.location}` : ''}
+          </>
+        ) : (
+          t('shift.tapFace')
+        )}
+      </p>
+    </div>
   );
 }
 

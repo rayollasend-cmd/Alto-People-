@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -130,8 +130,15 @@ describe('<AssociateScheduleView> shift detail', () => {
     await user.click(card);
     expect(card).toHaveAttribute('aria-expanded', 'true');
 
-    // Teammates from the detail endpoint.
-    expect(await screen.findByText('Pat Nguyen')).toBeInTheDocument();
+    // Teammates from the detail endpoint — as faces, not a list of names;
+    // tapping one says who it is and when they work.
+    const face = await screen.findByRole('button', { name: 'Pat Nguyen' });
+    // (The hero on top says it too — this is the card's own line.)
+    expect(within(card.closest('li')!).getByText('1 teammate on with you')).toBeInTheDocument();
+    expect(screen.queryByText(/Cashier/)).not.toBeInTheDocument();
+    await user.click(face);
+    expect(face).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('Pat Nguyen')).toBeInTheDocument();
     expect(screen.getByText(/Cashier/)).toBeInTheDocument();
     // Duration, site, and manager note.
     expect(screen.getByText('8h')).toBeInTheDocument();
