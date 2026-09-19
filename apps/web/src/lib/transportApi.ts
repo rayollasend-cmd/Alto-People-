@@ -283,7 +283,7 @@ export interface TransportBoard {
   rides: Ride[];
   runs: RideRun[];
   vans: Array<{ id: string; name: string; plate: string | null; capacity: number }>;
-  drivers: Array<{ userId: string; name: string; role: string }>;
+  drivers: Array<{ userId: string; name: string; role: string; phone: string | null }>;
 }
 
 export const getTransportBoard = (date?: string) =>

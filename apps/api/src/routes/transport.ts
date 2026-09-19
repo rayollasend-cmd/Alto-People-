@@ -12,6 +12,7 @@ import { DEFAULT_TIMEZONE } from '../lib/timezone.js';
 import { dateKeyInZone } from '../lib/timeAnomalies.js';
 import { nextPaydayFor } from '../lib/associatePayday.js';
 import { geocode, reverseGeocode } from '../lib/geocode.js';
+import { orderAndTime, planDay, planRideSelect } from '../lib/transportPlan.js';
 import {
   MIN_PING_GAP_MS,
   afterPing,
@@ -862,7 +863,7 @@ transportRouter.get('/board', VIEW, async (req, res) => {
     prisma.van.findMany({ where: { isActive: true }, orderBy: { name: 'asc' } }),
     prisma.user.findMany({
       where: { role: { in: ['DRIVER', 'TRANSPORTATION_DIRECTOR'] }, status: 'ACTIVE', deletedAt: null },
-      select: { id: true, email: true, role: true, associate: { select: { firstName: true, lastName: true } } },
+      select: { id: true, email: true, role: true, associate: { select: { firstName: true, lastName: true, phone: true } } },
     }),
     prisma.transportIssue.count({ where: { status: { not: 'RESOLVED' } } }),
     getTransportSettings(),
@@ -887,7 +888,7 @@ transportRouter.get('/board', VIEW, async (req, res) => {
     runs: runs.map(toRunView),
     vans: vans.map((v) => ({ id: v.id, name: v.name, plate: v.plate, capacity: v.capacity })),
     drivers: drivers
-      .map((d) => ({ userId: d.id, name: personName(d), role: d.role }))
+      .map((d) => ({ userId: d.id, name: personName(d), role: d.role, phone: d.associate?.phone ?? null }))
       .sort((a, b) => a.name.localeCompare(b.name)),
   });
 });
@@ -1165,6 +1166,52 @@ transportRouter.post('/runs/:id/cancel', MANAGE, async (req, res) => {
     notifyUser(run.driver.id, { subject: `Run cancelled: ${run.van.name}`, body: reason, category: 'transport', linkUrl: '/' }),
   );
   res.json({ ok: true });
+});
+
+/**
+ * Plan the day: every booking still waiting on a van, grouped and filled
+ * into free vans and drivers with pickups in order and timed — a proposal
+ * the director reviews and dispatches (nothing is saved here).
+ */
+transportRouter.post('/plan', MANAGE, async (req, res) => {
+  const { date } = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).parse(req.body);
+  res.json({ date, ...(await planDay(date)) });
+});
+
+/** One van's pickups in the shortest order, each with a pickup time. */
+transportRouter.post('/route', MANAGE, async (req, res) => {
+  const { rideIds } = z.object({ rideIds: z.array(z.string().uuid()).min(1).max(60) }).parse(req.body);
+  const rides = await prisma.ride.findMany({ where: { id: { in: rideIds } }, select: planRideSelect });
+  if (rides.length !== rideIds.length) throw new HttpError(400, 'ride_not_found', 'A ride on this run no longer exists.');
+  if (new Set(rides.map((r) => r.direction)).size > 1) {
+    throw new HttpError(400, 'ride_mismatch', 'Every ride on a run goes the same way.');
+  }
+  const planned = await orderAndTime(rides);
+  res.json({
+    direction: rides[0]!.direction,
+    departAt: planned.departAt.toISOString(),
+    arriveAt: planned.arriveAt?.toISOString() ?? null,
+    rides: planned.order.map((x) => ({ rideId: x.ride.id, pickupAt: x.pickupAt.toISOString() })),
+  });
+});
+
+/** A word to everyone on a van — its riders and its driver. */
+transportRouter.post('/runs/:id/message', MANAGE, async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const { body } = z.object({ body: z.string().trim().min(2).max(500) }).parse(req.body);
+  const run = await prisma.rideRun.findUnique({ where: { id }, include: runInclude });
+  if (!run) throw new HttpError(404, 'not_found', 'Run not found.');
+  const riders = run.rides.filter((r) => r.status === 'SCHEDULED' || r.status === 'BOARDED');
+  const subject = `${run.van.name}: a message from transportation`;
+  for (const r of riders) {
+    void trackNotificationWork(notifyAssociate(r.associate.id, { subject, body, category: 'transport', linkUrl: '/rides' }));
+  }
+  void trackNotificationWork(notifyUser(run.driver.id, { subject, body, category: 'transport', linkUrl: '/' }));
+  enqueueAudit(
+    { actorUserId: req.user!.id, action: 'transport.run_messaged', entityType: 'RideRun', entityId: id, metadata: { riders: riders.length } },
+    'transport',
+  );
+  res.json({ sent: riders.length + 1 });
 });
 
 /* ----- Vans, stops, drivers, issues, charges, fares ----------------------- */

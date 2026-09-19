@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -9,10 +9,14 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  Check,
   Home,
   MapPin,
+  MessageSquare,
+  Phone,
   Plus,
   Send,
+  Wand2,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -54,6 +58,7 @@ import {
   type Van,
 } from '@/lib/transportApi';
 import { onLiveEvent } from '@/lib/liveEvents';
+import { messageRun, planDay, routeRides } from '@/lib/transportDispatchApi';
 import { LazyLiveMap, type MapMarker } from '@/components/transport/LazyLiveMap';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Badge } from '@/components/ui/Badge';
@@ -320,17 +325,126 @@ function groupWaiting(rides: Ride[]): RideGroup[] {
   return [...groups.values()].sort((a, b) => a.at.localeCompare(b.at));
 }
 
+/* ----- Needs attention: what to act on, first ------------------------------ */
+
+interface Attention {
+  key: string;
+  tone: 'alert' | 'warning' | 'info';
+  title: string;
+  body?: string;
+  actions: Array<{ label: string; onClick?: () => void; href?: string }>;
+}
+
+function NeedsAttention({ items }: { items: Attention[] }) {
+  if (items.length === 0) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success/[0.06] px-4 py-3 text-sm text-success">
+        <Check className="h-4 w-4 shrink-0" aria-hidden="true" />
+        All clear — every booking has a van and every van on the road is on time.
+      </div>
+    );
+  }
+  return (
+    <section aria-label="Needs attention" className="rounded-lg border border-warning/40 bg-warning/[0.05]">
+      <h2 className="flex items-center gap-1.5 px-4 pt-3 text-xs font-semibold uppercase tracking-wider text-warning">
+        <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+        Needs attention <span className="text-white">{items.length}</span>
+      </h2>
+      <ul className="divide-y divide-navy-secondary/60 px-4">
+        {items.map((a) => (
+          <li key={a.key} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
+            <span
+              className={cn(
+                'h-2 w-2 shrink-0 rounded-full',
+                a.tone === 'alert' ? 'bg-alert' : a.tone === 'warning' ? 'bg-warning' : 'bg-gold',
+              )}
+              aria-hidden="true"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-white">{a.title}</div>
+              {a.body && <div className="text-xs text-silver">{a.body}</div>}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {a.actions.map((x, i) =>
+                x.href ? (
+                  <Button key={x.label} size="xs" variant={i === 0 ? 'primary' : 'secondary'} asChild>
+                    <a href={x.href}>{x.label}</a>
+                  </Button>
+                ) : (
+                  <Button key={x.label} size="xs" variant={i === 0 ? 'primary' : 'secondary'} onClick={x.onClick}>
+                    {x.label}
+                  </Button>
+                ),
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function KpiStrip({ k }: { k: TransportBoard['kpis'] }) {
+  const tiles: Array<{ label: string; value: string | number; warn?: boolean }> = [
+    { label: 'Booked', value: k.booked },
+    { label: 'Needs a van', value: k.needsVan, warn: k.needsVan > 0 },
+    { label: 'Vans out', value: `${k.vansOut}/${k.runs}` },
+    { label: 'On board', value: k.onBoard },
+    { label: 'Done', value: k.completed },
+    { label: 'No-shows', value: k.noShows, warn: k.noShows > 0 },
+  ];
+  return (
+    <div className="grid grid-cols-3 gap-2 lg:grid-cols-6">
+      {tiles.map((x) => (
+        <div key={x.label} className="rounded-lg border border-navy-secondary bg-navy px-3 py-2.5">
+          <div className="text-2xs font-medium uppercase tracking-wider text-silver">{x.label}</div>
+          <div className={cn('mt-0.5 text-xl font-bold tabular-nums', x.warn ? 'text-warning' : 'text-white')}>{x.value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function useMessageRun() {
+  const prompt = usePrompt();
+  return async (run: { id: string; van: { name: string } }, suggestion?: string) => {
+    const body = await prompt({
+      title: `Message everyone on ${run.van.name}`,
+      description: 'The riders and the driver get it right away.',
+      reasonLabel: 'Message',
+      reasonPlaceholder: suggestion ?? 'Running about 10 minutes late — sorry, we’re on our way.',
+      confirmLabel: 'Send',
+    });
+    if (!body) return;
+    try {
+      const { sent } = await messageRun(run.id, body);
+      toast.success(`Sent to ${sent} ${sent === 1 ? 'person' : 'people'}`);
+    } catch (err) {
+      toast.error(errMsg(err));
+    }
+  };
+}
+
 function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean }) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [dispatch, setDispatch] = useState<{ rides: Ride[] } | { run: RideRun } | null>(null);
+  const [planning, setPlanning] = useState(false);
+  const [, setParams] = useSearchParams();
   const actions = useRideActions();
   const prompt = usePrompt();
+  const message = useMessageRun();
   const queryClient = useQueryClient();
+  const live = useQuery({ queryKey: ['transport', 'live'], queryFn: () => getLiveBoard(), refetchInterval: 15_000 });
+  useEffect(
+    () => onLiveEvent('transport', () => void queryClient.invalidateQueries({ queryKey: ['transport'] })),
+    [queryClient],
+  );
+  const liveById = new Map((live.data?.runs ?? []).map((r) => [r.runId, r]));
   const waiting = board.rides.filter((r) => r.status === 'REQUESTED');
   const groups = groupWaiting(waiting);
   const pickedRides = waiting.filter((r) => picked.has(r.id));
   const mixed = new Set(pickedRides.map((r) => r.direction)).size > 1;
-  const k = board.kpis;
+  const now = Date.now();
 
   const toggle = (ids: string[], on: boolean) =>
     setPicked((prev) => {
@@ -361,38 +475,93 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
     }
   };
 
-  const liveRuns = board.runs.filter((r) => r.status !== 'CANCELLED');
+  // On the road first, then by departure.
+  const liveRuns = board.runs
+    .filter((r) => r.status !== 'CANCELLED')
+    .sort((a, b) => (a.status === 'ACTIVE' ? 0 : 1) - (b.status === 'ACTIVE' ? 0 : 1) || a.departAt.localeCompare(b.departAt));
+  const driverPhone = (userId: string) => board.drivers.find((d) => d.userId === userId)?.phone ?? null;
+
+  // What to act on, most urgent first.
+  const attention: Attention[] = [];
+  for (const r of live.data?.runs ?? []) {
+    if (r.status !== 'ACTIVE') continue;
+    const late = Math.max(0, ...r.late.map((l) => l.minutes));
+    if (late >= 5) {
+      attention.push({
+        key: `late-${r.runId}`,
+        tone: 'alert',
+        title: `${r.van.name} is running about ${late} min late`,
+        body: r.late.map((l) => `${l.store} · ${l.minutes} min`).join(' · '),
+        actions: [
+          ...(manage ? [{ label: 'Message riders', onClick: () => void message({ id: r.runId, van: r.van }, `Running about ${late} minutes late — sorry, we’re on our way.`) }] : []),
+          { label: 'Live map', onClick: () => setParams({ tab: 'live' }) },
+        ],
+      });
+    }
+    if (r.stale) {
+      const phone = driverPhone(r.driver.userId);
+      attention.push({
+        key: `stale-${r.runId}`,
+        tone: 'warning',
+        title: `${r.van.name} — no signal ${r.position ? `since ${ago(r.position.at, now)}` : 'from the driver’s phone yet'}`,
+        body: `${r.driver.name} · riders can’t see the van`,
+        actions: [...(phone ? [{ label: `Call ${r.driver.name.split(' ')[0]}`, href: `tel:${phone}` }] : []), { label: 'Live map', onClick: () => setParams({ tab: 'live' }) }],
+      });
+    }
+  }
+  if (waiting.length > 0) {
+    const first = [...waiting].sort((a, b) => a.targetAt.localeCompare(b.targetAt))[0]!;
+    const soon = Date.parse(first.targetAt) - now < 18 * 3_600_000;
+    attention.push({
+      key: 'waiting',
+      tone: soon ? 'warning' : 'info',
+      title: `${waiting.length} ${waiting.length === 1 ? 'rider needs' : 'riders need'} a van`,
+      body: `First: ${first.rider.name} · ${first.direction === 'TO_WORK' ? 'arrive by' : 'leaving'} ${fmtTimeTz(first.targetAt, first.store.timezone)} · ${first.store.name}`,
+      actions: manage ? [{ label: 'Plan runs', onClick: () => setPlanning(true) }] : [],
+    });
+  }
+  if (board.kpis.openIssues > 0) {
+    attention.push({
+      key: 'issues',
+      tone: 'info',
+      title: `${board.kpis.openIssues} open ${board.kpis.openIssues === 1 ? 'issue' : 'issues'}`,
+      actions: [{ label: 'Open issues', onClick: () => setParams({ tab: 'issues' }) }],
+    });
+  }
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-8">
-        <MetricCard label="Booked" value={k.booked} />
-        <MetricCard label="Needs a van" value={k.needsVan} accent={k.needsVan > 0} />
-        <MetricCard label="On a van" value={k.scheduled} />
-        <MetricCard label="On board" value={k.onBoard} />
-        <MetricCard label="Done" value={k.completed} />
-        <MetricCard label="No-shows" value={k.noShows} accent={k.noShows > 0} />
-        <MetricCard label="Vans out" value={`${k.vansOut}/${k.runs}`} hint="on the road / runs" />
-        <MetricCard label="Open issues" value={k.openIssues} accent={k.openIssues > 0} />
-      </div>
+      <NeedsAttention items={attention} />
+      <KpiStrip k={board.kpis} />
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
         {/* Waiting on a van */}
         <section aria-label="Needs a van">
-          <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-silver">
               Needs a van <span className="text-white">{waiting.length}</span>
             </h2>
-            {manage && pickedRides.length > 0 && (
+            {manage && (
               <div className="flex items-center gap-2">
-                {mixed && <span className="text-xs text-warning">One way per run</span>}
-                <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>
-                  Clear
-                </Button>
-                <Button size="sm" disabled={mixed} onClick={() => setDispatch({ rides: pickedRides })}>
-                  <Send className="h-3.5 w-3.5" />
-                  Dispatch {pickedRides.length}
-                </Button>
+                {pickedRides.length > 0 ? (
+                  <>
+                    {mixed && <span className="text-xs text-warning">One way per run</span>}
+                    <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>
+                      Clear
+                    </Button>
+                    <Button size="sm" disabled={mixed} onClick={() => setDispatch({ rides: pickedRides })}>
+                      <Send className="h-3.5 w-3.5" />
+                      Dispatch {pickedRides.length}
+                    </Button>
+                  </>
+                ) : (
+                  waiting.length > 0 && (
+                    <Button size="sm" onClick={() => setPlanning(true)}>
+                      <Wand2 className="h-3.5 w-3.5" />
+                      Plan runs
+                    </Button>
+                  )
+                )}
               </div>
             )}
           </div>
@@ -422,8 +591,16 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
                               {g.direction === 'TO_WORK' ? 'arrive by' : 'leaving'} {fmtTimeTz(g.at, g.tz)}
                             </span>
                           </div>
+                          <div className="text-xs text-silver">
+                            {g.rides.length} {g.rides.length === 1 ? 'rider' : 'riders'}
+                          </div>
                         </div>
-                        <Badge variant="pending">{g.rides.length}</Badge>
+                        {manage && (
+                          <Button size="xs" onClick={() => setDispatch({ rides: g.rides })} aria-label={`Dispatch ${g.storeName} ${fmtTimeTz(g.at, g.tz)}`}>
+                            <Send className="h-3.5 w-3.5" />
+                            Dispatch
+                          </Button>
+                        )}
                       </div>
                       <ul className="mt-2 divide-y divide-navy-secondary/60">
                         {g.rides.map((r) => (
@@ -468,16 +645,19 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
             Runs <span className="text-white">{liveRuns.length}</span>
           </h2>
           {liveRuns.length === 0 ? (
-            <EmptyState icon={Bus} title="No runs yet" description="Pick the bookings on the left and dispatch them onto a van." />
+            <EmptyState icon={Bus} title="No runs yet" description="Plan runs, or pick bookings on the left and dispatch them onto a van." />
           ) : (
             <div className="space-y-3">
               {liveRuns.map((run) => (
                 <RunPanel
                   key={run.id}
                   run={run}
+                  live={liveById.get(run.id) ?? null}
+                  driverPhone={driverPhone(run.driver.userId)}
                   manage={manage}
                   onEdit={() => setDispatch({ run })}
                   onCallOff={() => void callOff(run)}
+                  onMessage={() => void message(run)}
                   onCancelRide={(r) => void actions.cancel(r)}
                   onWaive={(r) => void actions.waive(r)}
                 />
@@ -497,33 +677,45 @@ function TodayBoard({ board, manage }: { board: TransportBoard; manage: boolean 
           }}
         />
       )}
+      {planning && <PlanDialog board={board} onClose={() => setPlanning(false)} />}
     </div>
   );
 }
 
 function RunPanel({
   run,
+  live,
+  driverPhone,
   manage,
   onEdit,
   onCallOff,
+  onMessage,
   onCancelRide,
   onWaive,
 }: {
   run: RideRun;
+  live: RunMap | null;
+  driverPhone: string | null;
   manage: boolean;
   onEdit: () => void;
   onCallOff: () => void;
+  onMessage: () => void;
   onCancelRide: (r: Ride) => void;
   onWaive: (r: Ride) => void;
 }) {
   const tz = run.rides[0]?.store.timezone;
   const riders = run.rides.filter((r) => r.status !== 'CANCELLED');
   const full = run.seats.taken >= run.seats.capacity;
+  const active = run.status === 'ACTIVE';
+  const late = live ? Math.max(0, ...live.late.map((l) => l.minutes)) : 0;
+  const next = live?.waypoints.find((w) => w.etaAt);
+  const riderLive = new Map((live?.riders ?? []).map((x) => [x.rideId, x]));
+  const now = Date.now();
   return (
-    <Card className={cn(run.status === 'ACTIVE' && 'border-success/40')}>
+    <Card className={cn(active && (late >= 5 ? 'border-alert/50' : 'border-success/40'))}>
       <CardContent className="pt-4">
         <div className="flex flex-wrap items-center gap-2">
-          <Bus className={cn('h-4 w-4', run.status === 'ACTIVE' ? 'text-success' : 'text-gold')} aria-hidden="true" />
+          <Bus className={cn('h-4 w-4', active ? 'text-success' : 'text-gold')} aria-hidden="true" />
           <span className="font-semibold text-white">{run.van.name}</span>
           <span className="text-sm text-silver">· {run.driver.name}</span>
           <span className="text-sm tabular-nums text-silver">· leaves {fmtTimeTz(run.departAt, tz)}</span>
@@ -531,54 +723,242 @@ function RunPanel({
             <span className={cn('text-xs tabular-nums', full ? 'text-warning' : 'text-silver')}>
               {run.seats.taken}/{run.seats.capacity} seats
             </span>
-            <Badge variant={run.status === 'ACTIVE' ? 'success' : run.status === 'COMPLETED' ? 'default' : 'accent'}>
-              {run.status === 'PLANNED' ? 'Planned' : run.status === 'ACTIVE' ? 'On the road' : run.status === 'COMPLETED' ? 'Finished' : 'Called off'}
-            </Badge>
+            {active && late >= 5 ? (
+              <Badge variant="destructive">~{late} min late</Badge>
+            ) : (
+              <Badge variant={active ? 'success' : run.status === 'COMPLETED' ? 'default' : 'accent'}>
+                {run.status === 'PLANNED' ? 'Planned' : active ? 'On the road' : run.status === 'COMPLETED' ? 'Finished' : 'Called off'}
+              </Badge>
+            )}
           </span>
         </div>
         <div className="mt-0.5 text-xs text-silver">
           {run.direction === 'TO_WORK' ? 'To work' : 'Home from work'}
           {run.notes ? ` · ${run.notes}` : ''}
         </div>
+        {active && live && (
+          <div className={cn('mt-2 rounded-md px-2.5 py-1.5 text-xs', live.stale ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success')}>
+            {next ? (
+              <>
+                Next: <span className="font-medium">{next.label}</span>
+                {next.etaAt && ` · about ${Math.max(1, Math.round((Date.parse(next.etaAt) - now) / 60_000))} min`}
+              </>
+            ) : (
+              'All stops done'
+            )}
+            {' · '}
+            {live.position ? (live.stale ? `no signal since ${ago(live.position.at, now)}` : `updated ${ago(live.position.at, now)}`) : 'waiting for the driver’s phone'}
+          </div>
+        )}
         <ol className="mt-2 divide-y divide-navy-secondary/60">
-          {riders.map((r, i) => (
-            <li key={r.id} className="flex items-center gap-3 py-2">
-              <span className="w-5 shrink-0 text-right text-xs tabular-nums text-silver">{i + 1}</span>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm text-white">{r.rider.name}</div>
-                <div className="truncate text-xs text-silver">
-                  {r.pickupAt ? fmtTimeTz(r.pickupAt, r.store.timezone) : '—'} ·{' '}
-                  {run.direction === 'TO_WORK' ? homeEnd(r) : `${r.store.name} → ${homeEnd(r)}`}
+          {riders.map((r, i) => {
+            const eta = riderLive.get(r.id)?.pickupEtaAt;
+            return (
+              <li key={r.id} className="flex items-center gap-3 py-2">
+                <span className="w-5 shrink-0 text-right text-xs tabular-nums text-silver">{i + 1}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-white">
+                    {r.rider.name}
+                    {r.riderSignal && (
+                      <Badge size="sm" variant={r.riderSignal.kind === 'OUTSIDE' ? 'success' : 'pending'}>
+                        {r.riderSignal.kind === 'OUTSIDE' ? 'Outside' : 'Running late'}
+                      </Badge>
+                    )}
+                    {r.vanArrivedAt && r.status === 'SCHEDULED' && (
+                      <Badge size="sm" variant="info">
+                        Van here {fmtTimeTz(r.vanArrivedAt, r.store.timezone)}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="truncate text-xs text-silver">
+                    {r.pickupAt ? fmtTimeTz(r.pickupAt, r.store.timezone) : '—'}
+                    {active && eta && r.status === 'SCHEDULED' && !r.vanArrivedAt && ` (ETA ${fmtTimeTz(eta, r.store.timezone)})`} ·{' '}
+                    {run.direction === 'TO_WORK' ? homeEnd(r) : `${r.store.name} → ${homeEnd(r)}`}
+                  </div>
                 </div>
-              </div>
-              <Badge size="sm" variant={statusVariant(r.status)}>
-                {STATUS_LABEL[r.status]}
-              </Badge>
-              {manage && r.owedCents > 0 && !r.charged && (
-                <Button size="xs" variant="ghost" onClick={() => onWaive(r)}>
-                  Waive {cents(r.owedCents)}
-                </Button>
-              )}
-              {manage && r.status === 'SCHEDULED' && run.status === 'PLANNED' && (
-                <Button size="icon-sm" variant="ghost" aria-label={`Cancel ${r.rider.name}'s ride`} onClick={() => onCancelRide(r)}>
-                  <X className="h-4 w-4" />
-                </Button>
-              )}
-            </li>
-          ))}
+                <Badge size="sm" variant={statusVariant(r.status)}>
+                  {STATUS_LABEL[r.status]}
+                </Badge>
+                {manage && r.owedCents > 0 && !r.charged && (
+                  <Button size="xs" variant="ghost" onClick={() => onWaive(r)}>
+                    Waive {cents(r.owedCents)}
+                  </Button>
+                )}
+                {manage && r.status === 'SCHEDULED' && run.status === 'PLANNED' && (
+                  <Button size="icon-sm" variant="ghost" aria-label={`Cancel ${r.rider.name}'s ride`} onClick={() => onCancelRide(r)}>
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </li>
+            );
+          })}
         </ol>
-        {manage && run.status === 'PLANNED' && (
-          <div className="mt-2 flex gap-2">
-            <Button size="sm" variant="secondary" onClick={onEdit}>
-              Edit run
+        {manage && (run.status === 'PLANNED' || active) && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button size="sm" variant="secondary" onClick={onMessage}>
+              <MessageSquare className="h-3.5 w-3.5" />
+              Message riders
             </Button>
-            <Button size="sm" variant="ghost" onClick={onCallOff}>
-              Call off
-            </Button>
+            {driverPhone && (
+              <Button size="sm" variant="secondary" asChild>
+                <a href={`tel:${driverPhone}`}>
+                  <Phone className="h-3.5 w-3.5" />
+                  Call {run.driver.name.split(' ')[0]}
+                </a>
+              </Button>
+            )}
+            {run.status === 'PLANNED' && (
+              <>
+                <Button size="sm" variant="secondary" onClick={onEdit}>
+                  Edit run
+                </Button>
+                <Button size="sm" variant="ghost" onClick={onCallOff}>
+                  Call off
+                </Button>
+              </>
+            )}
           </div>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/* ----- Plan runs: the whole day's waiting bookings, in one go ---------------- */
+
+function PlanDialog({ board, onClose }: { board: TransportBoard; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const plan = useQuery({ queryKey: ['transport', 'plan', board.date], queryFn: () => planDay(board.date), staleTime: 0 });
+  const [edits, setEdits] = useState<Record<string, { vanId?: string; driverUserId?: string; skip?: boolean }>>({});
+  const [busy, setBusy] = useState(false);
+  const proposals = (plan.data?.proposals ?? []).map((p) => ({ ...p, ...edits[p.key] }));
+  const ready = proposals.filter((p) => !p.skip && p.vanId && p.driverUserId);
+
+  const dispatchAll = async () => {
+    setBusy(true);
+    let made = 0;
+    try {
+      for (const p of ready) {
+        await createRun({
+          vanId: p.vanId!,
+          driverUserId: p.driverUserId!,
+          direction: p.direction,
+          serviceDate: p.serviceDate,
+          departAt: p.departAt,
+          rides: p.rides.map((r) => ({ rideId: r.rideId, pickupAt: r.pickupAt })),
+        });
+        made += 1;
+      }
+      toast.success(`${made} ${made === 1 ? 'run' : 'runs'} dispatched — every rider has their van and pickup time`);
+      onClose();
+    } catch (err) {
+      toast.error(`${made} dispatched, then: ${errMsg(err)}`);
+    } finally {
+      setBusy(false);
+      await queryClient.invalidateQueries({ queryKey: ['transport'] });
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Plan runs</DialogTitle>
+          <DialogDescription>
+            Every booking still waiting on a van, grouped by way, store and time, filled into free vans and drivers,
+            pickups in the shortest order with times worked back from the arrive-by. Change anything, then dispatch.
+          </DialogDescription>
+        </DialogHeader>
+        {plan.isLoading ? (
+          <Skeleton className="h-48" />
+        ) : plan.error ? (
+          <p className="text-sm text-alert">{errMsg(plan.error)}</p>
+        ) : proposals.length === 0 ? (
+          <p className="text-sm text-silver">Nothing to plan — every booking this day has a van.</p>
+        ) : (
+          <div className="space-y-3">
+            {proposals.map((p) => {
+              const tz = p.store.timezone;
+              const van = board.vans.find((v) => v.id === p.vanId);
+              return (
+                <div key={p.key} className={cn('rounded-lg border p-3', p.skip ? 'border-navy-secondary opacity-60' : 'border-gold/40')}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-gold"
+                      aria-label={`Include ${p.store.name} ${fmtTimeTz(p.departAt, tz)}`}
+                      checked={!p.skip}
+                      onChange={(e) => setEdits((x) => ({ ...x, [p.key]: { ...x[p.key], skip: !e.target.checked } }))}
+                    />
+                    <span className="text-sm font-semibold text-white">
+                      {p.direction === 'TO_WORK' ? 'To' : 'Home from'} {p.store.name}
+                    </span>
+                    <span className="text-xs tabular-nums text-silver">
+                      · leaves {fmtTimeTz(p.departAt, tz)}
+                      {p.arriveAt && ` · there ${fmtTimeTz(p.arriveAt, tz)}`} · {p.rides.length}/{van?.capacity ?? '—'} seats
+                    </span>
+                  </div>
+                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <Select
+                      size="sm"
+                      aria-label="Van"
+                      value={p.vanId ?? ''}
+                      onChange={(e) => setEdits((x) => ({ ...x, [p.key]: { ...x[p.key], vanId: e.target.value } }))}
+                    >
+                      <option value="">Pick a van</option>
+                      {board.vans.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.name} · {v.capacity} seats
+                        </option>
+                      ))}
+                    </Select>
+                    <Select
+                      size="sm"
+                      aria-label="Driver"
+                      value={p.driverUserId ?? ''}
+                      onChange={(e) => setEdits((x) => ({ ...x, [p.key]: { ...x[p.key], driverUserId: e.target.value } }))}
+                    >
+                      <option value="">Pick a driver</option>
+                      {board.drivers.map((d) => (
+                        <option key={d.userId} value={d.userId}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                  <ol className="mt-2 space-y-1 text-xs">
+                    {p.rides.map((r, i) => (
+                      <li key={r.rideId} className="flex items-center gap-2">
+                        <span className="w-4 text-right tabular-nums text-silver">{i + 1}</span>
+                        <span className="tabular-nums text-white">{fmtTimeTz(r.pickupAt, tz)}</span>
+                        <span className="min-w-0 flex-1 truncate text-silver">
+                          {r.name} · {r.place}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                  {p.warnings.length > 0 && <p className="mt-2 text-xs text-warning">{p.warnings.join(' ')}</p>}
+                </div>
+              );
+            })}
+            {(plan.data?.unplaced.length ?? 0) > 0 && (
+              <p className="text-xs text-warning">
+                Not planned: {plan.data!.unplaced.map((u) => `${u.name} (${u.reason})`).join(', ')}
+              </p>
+            )}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+          <Button onClick={() => void dispatchAll()} loading={busy} disabled={busy || ready.length === 0}>
+            <Send className="h-4 w-4" />
+            Dispatch {ready.length} {ready.length === 1 ? 'run' : 'runs'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -656,6 +1036,36 @@ function DispatchDialog({
     const times = planPickups(direction, depart, order.length);
     setOrder((prev) => prev.map((o, i) => ({ ...o, pickup: times[i]! })));
   };
+
+  // The shortest pickup order, times worked back from the arrive-by — done
+  // for you when a new dispatch opens.
+  const [routing, setRouting] = useState(false);
+  const bestOrder = async () => {
+    setRouting(true);
+    try {
+      const r = await routeRides(order.map((o) => o.ride.id));
+      setDepart(wall(r.departAt, tz));
+      setOrder((prev) =>
+        r.rides
+          .map((x) => {
+            const o = prev.find((p) => p.ride.id === x.rideId);
+            return o ? { ride: o.ride, pickup: wall(x.pickupAt, tz) } : null;
+          })
+          .filter((x): x is { ride: Ride; pickup: string } => !!x),
+      );
+    } catch (err) {
+      if (!quietRoute.current) toast.error(errMsg(err));
+    } finally {
+      setRouting(false);
+      quietRoute.current = false;
+    }
+  };
+  const quietRoute = useRef(true);
+  useEffect(() => {
+    if (!editing && startRides.length > 0) void bestOrder();
+    // Once, when the dialog opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toIso = (hhmm: string) => {
     // A pickup "before" the departure on the clock is past midnight.
@@ -742,9 +1152,15 @@ function DispatchDialog({
                     {order.length}/{van?.capacity ?? '—'}
                   </span>
                 </span>
-                <Button size="xs" variant="ghost" onClick={retime}>
-                  Re-time from departure
-                </Button>
+                <span className="flex items-center gap-1">
+                  <Button size="xs" variant="secondary" onClick={() => void bestOrder()} loading={routing} disabled={routing}>
+                    <Wand2 className="h-3.5 w-3.5" />
+                    Best order
+                  </Button>
+                  <Button size="xs" variant="ghost" onClick={retime}>
+                    Re-time from departure
+                  </Button>
+                </span>
               </div>
               <ol className="divide-y divide-navy-secondary/60 rounded-md border border-navy-secondary">
                 {order.map((o, i) => (
